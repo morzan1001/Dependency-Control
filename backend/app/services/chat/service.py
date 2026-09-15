@@ -163,7 +163,7 @@ class ChatService:
                         yield f"data: {json.dumps({'type': 'tool_call_end', 'tool_name': tool_name, 'arguments': tool_args, 'result': result}, default=str)}\n\n"
 
                         messages.append({"role": "assistant", "content": "", "tool_calls": [{"function": fn}]})
-                        messages.append(build_tool_result_message(tool_name, result))
+                        messages.append(build_tool_result_message(result))
                         messages = trim_to_token_budget(messages, settings.CHAT_MAX_TOKEN_BUDGET)
 
                     elif chunk_type == "done":

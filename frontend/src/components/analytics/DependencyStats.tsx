@@ -23,7 +23,7 @@ const DEP_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4', 'ds5']
 
 const VERSION_BADGES_SHOWN = 3
 
-export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
+export function DependencyStats({ onSelectDependency }: Readonly<DependencyStatsProps>) {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined)
   const [limit, setLimit] = useState(20)
 

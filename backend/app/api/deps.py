@@ -212,8 +212,7 @@ def _within_cap(source: str, would_own: set[str], repository_path: str) -> bool:
 
 
 def _owner_budget(project: Project, source: str) -> int:
-    """How many owners this provider's answer may leave behind: the cap minus the owners it does not
-    replace.
+    """How many owners this provider's answer may leave behind.
 
     Handed to the provider rather than only checked here, so a resolution past the cap is refused
     before it creates the teams for a write that is then refused.

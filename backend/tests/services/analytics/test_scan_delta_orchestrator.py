@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.schemas.scan_delta import DeltaCategory, ScanDeltaResponse, ScanDeltaSide, ScanDeltaTotals
-from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
+from app.services.analytics.scan_delta import _MAX_PAGE_SIZE, InvalidDeltaQuery, compute_scan_delta_dispatch
 
 _PROJECT = "p1"
 _FROM_SCAN = "a"
@@ -19,6 +19,7 @@ _PAGE = 1
 _PAGE_SIZE = 50
 _PAGE_BELOW_MINIMUM = 0
 _PAGE_SIZE_ABOVE_MAXIMUM = 500
+_PAGE_SIZE_AT_MAXIMUM = _MAX_PAGE_SIZE
 
 _CRITICAL = ["critical"]
 _UPPERCASE_CRITICAL = ["CRITICAL"]
@@ -317,6 +318,30 @@ async def test_dispatch_rejects_page_size_above_max(db):
             finding_type=None,
             allow_same_scan=False,
         )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_accepts_the_maximum_page_size(db):
+    """The advertised maximum is inclusive: the largest page a caller may ask for is answered."""
+    with patch(
+        "app.services.analytics.scan_delta.compute_findings_delta",
+        new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
+    ) as mock:
+        result = await compute_scan_delta_dispatch(
+            db=db,
+            project_id=_PROJECT,
+            category=_FINDINGS,
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
+            page=_PAGE,
+            page_size=_PAGE_SIZE_AT_MAXIMUM,
+            change=None,
+            severity=None,
+            finding_type=None,
+            allow_same_scan=False,
+        )
+        assert result.category == DeltaCategory.FINDINGS
+        assert mock.await_args.kwargs["page_size"] == _PAGE_SIZE_AT_MAXIMUM
 
 
 @pytest.mark.asyncio

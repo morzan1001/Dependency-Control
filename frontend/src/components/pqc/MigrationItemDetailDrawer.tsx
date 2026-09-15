@@ -9,7 +9,7 @@ interface Props {
   onClose: () => void;
 }
 
-export function MigrationItemDetailDrawer({ item, onClose }: Props) {
+export function MigrationItemDetailDrawer({ item, onClose }: Readonly<Props>) {
   return (
     <Dialog open={!!item} onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="max-w-2xl">

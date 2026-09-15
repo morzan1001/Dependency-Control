@@ -6,10 +6,10 @@ import { useAuth } from './useAuth'
 export function RequirePermission({
   children,
   permission,
-}: {
+}: Readonly<{
   children: React.ReactNode
   permission: string | string[]
-}) {
+}>) {
   const { hasPermission, isLoading } = useAuth()
 
   if (isLoading) {

@@ -52,6 +52,16 @@ def test_response_configured_booleans_false_when_unset():
         assert dumped[flag] is False, f"{flag} should be False when secret is unset"
 
 
+def test_each_configured_flag_reports_only_its_own_secret():
+    for field, value in SECRET_FIELDS.items():
+        dumped = SystemSettingsResponse.model_validate(SystemSettings(**{field: value})).model_dump()
+
+        for other in SECRET_FIELDS:
+            expected = other == field
+            flag = f"{other}_configured"
+            assert dumped[flag] is expected, f"{flag} should be {expected} when only {field} is set"
+
+
 def test_response_still_exposes_non_secret_fields():
     settings = SystemSettings(
         instance_name="My Instance",

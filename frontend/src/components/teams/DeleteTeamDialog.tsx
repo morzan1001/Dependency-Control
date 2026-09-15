@@ -17,7 +17,7 @@ interface DeleteTeamDialogProps {
   onClose: () => void;
 }
 
-export function DeleteTeamDialog({ teamId, isOpen, onClose }: DeleteTeamDialogProps) {
+export function DeleteTeamDialog({ teamId, isOpen, onClose }: Readonly<DeleteTeamDialogProps>) {
   const deleteTeamMutation = useDeleteTeam();
 
   const handleDelete = () => {

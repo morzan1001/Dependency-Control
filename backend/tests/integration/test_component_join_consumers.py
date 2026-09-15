@@ -223,6 +223,30 @@ async def test_findings_export_prefers_the_direct_row_on_a_name_version_collisio
 
 
 @pytest.mark.asyncio
+async def test_findings_export_prefers_the_direct_row_stored_after_the_transitive_one(db, seeded):
+    """The sibling case above seeds the direct row first, where first-wins looks like the
+    tie-break; only the reverse insertion order tells the two apart."""
+    from app.models.project import Scan
+    from app.services.inventory.findings_export import iter_findings_rows
+
+    transitive = _dependency("d-netty-jar", name="netty-common", direct=False)
+    transitive["group"] = "io.netty"
+    transitive["purl"] = f"pkg:maven/io.netty/netty-common@{VERSION}?type=jar"
+    await db.dependencies.insert_one(transitive)
+    declared = _dependency("d-netty", name="netty-common")
+    declared["group"] = "io.netty"
+    declared["purl"] = f"pkg:maven/io.netty/netty-common@{VERSION}"
+    await db.dependencies.insert_one(declared)
+    await db.findings.insert_one(_finding("f-netty", "io.netty:netty-common"))
+
+    scan = Scan(**(await db.scans.find_one({"_id": SCAN_ID})))
+    rows = {row["component"]: row async for row in iter_findings_rows(db, [scan])}
+
+    assert rows["io.netty:netty-common"]["direct"] is True
+    assert rows["io.netty:netty-common"]["purl"] == f"pkg:maven/io.netty/netty-common@{VERSION}"
+
+
+@pytest.mark.asyncio
 async def test_inferred_direct_is_reported_the_same_way_by_both_tools(db, seeded):
     """generate_remediation_plan treated an inferred-direct package as transitive while
     find_component_usage treated it as direct (and never read the flag). Both now report

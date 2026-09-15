@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.api.v1.endpoints.notifications import _PACKAGE_SUGGESTION_LIMIT, suggest_packages
 from app.models.user import User
+from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.notifications"
 
@@ -35,3 +36,19 @@ def test_a_query_the_cap_answers_whole_claims_nothing_more():
 
     assert len(suggestions.names) == _PACKAGE_SUGGESTION_LIMIT
     assert suggestions.more is False
+
+
+def test_the_cap_keeps_the_alphabetically_first_matches_in_order():
+    """An over-full query is cut from the front, so the tail of the alphabet is what the user narrows away."""
+
+    async def _suggest_over_a_real_collection():
+        db = FakeDatabase()
+        # Inserted back to front so the ordering cannot come from insertion order.
+        for index in reversed(range(_PACKAGE_SUGGESTION_LIMIT + 2)):
+            await db.dependencies.insert_one({"_id": f"d{index:03d}", "name": f"lib{index:03d}"})
+        return await suggest_packages(db=db, current_user=_user(), q="lib")
+
+    suggestions = asyncio.run(_suggest_over_a_real_collection())
+
+    assert suggestions.names == [f"lib{index:03d}" for index in range(_PACKAGE_SUGGESTION_LIMIT)]
+    assert suggestions.more is True

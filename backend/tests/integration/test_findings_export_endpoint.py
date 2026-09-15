@@ -111,6 +111,19 @@ async def test_license_and_waived_columns(client, db, member_auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_a_finding_document_without_the_waived_field_exports_as_not_waived(client, db, member_auth_headers):
+    """Findings written outside the model carry no `waived` key; the column must not fail open
+    and report an unreviewed finding as an accepted risk."""
+    await _seed_scan(db, "s1", "main")
+    await _seed_finding(db, "s1", finding_id="CVE-1")
+    await db.findings.update_one({"finding_id": "CVE-1"}, {"$unset": {"waived": ""}})
+
+    row = _parse(await client.get(f"/api/v1/projects/{_PID}/export/csv", headers=member_auth_headers))[0]
+
+    assert row["waived"] == "false"
+
+
+@pytest.mark.asyncio
 async def test_404_when_no_branch_has_a_completed_scan(client, db, member_auth_headers):
     await _seed_scan(db, "s1", "main", status="processing")
     resp = await client.get(f"/api/v1/projects/{_PID}/export/csv", headers=member_auth_headers)

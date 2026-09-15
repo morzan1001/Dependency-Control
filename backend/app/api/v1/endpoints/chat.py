@@ -54,7 +54,7 @@ def _check_permission(user: User, permission: str) -> None:
         )
 
 
-@router.post("/conversations", response_model=ConversationResponse, responses=RESP_AUTH)
+@router.post("/conversations", responses=RESP_AUTH)
 async def create_conversation(
     body: ConversationCreate,
     current_user: CurrentUserDep,
@@ -76,7 +76,7 @@ async def create_conversation(
     )
 
 
-@router.get("/conversations", response_model=ConversationListResponse, responses=RESP_AUTH)
+@router.get("/conversations", responses=RESP_AUTH)
 async def list_conversations(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -104,7 +104,7 @@ async def list_conversations(
     )
 
 
-@router.get("/conversations/{conversation_id}", response_model=ConversationDetailResponse, responses=RESP_AUTH_404)
+@router.get("/conversations/{conversation_id}", responses=RESP_AUTH_404)
 async def get_conversation(
     conversation_id: str,
     current_user: CurrentUserDep,

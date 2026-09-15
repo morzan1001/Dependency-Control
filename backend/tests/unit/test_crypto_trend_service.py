@@ -124,6 +124,76 @@ async def test_trend_buckets_by_month_and_latest_scan_wins(db):
     assert by_month == {1: 1.0, 2: 3.0}  # Jan = latest scan count (1); Feb = 3
 
 
+@pytest.mark.asyncio
+async def test_a_project_scoped_trend_counts_only_that_projects_findings(db):
+    """The scoped project list is the tenant boundary: another project's crypto findings stay out."""
+    now = datetime.now(timezone.utc)
+    ts = now - timedelta(days=2)
+    await _seed_findings(
+        db,
+        [
+            _crypto_finding("m1", "scanMine", ts, project_id="mine"),
+            _crypto_finding("m2", "scanMine", ts, project_id="mine"),
+            _crypto_finding("o1", "scanOther", ts, project_id="other"),
+            _crypto_finding("o2", "scanOther", ts, project_id="other"),
+            _crypto_finding("o3", "scanOther", ts, project_id="other"),
+        ],
+    )
+    resolved = ResolvedScope(scope="project", scope_id="mine", project_ids=["mine"])
+    points = await CryptoTrendService(db)._finding_buckets(
+        resolved, "total_crypto_findings", "day", now - timedelta(days=7), now
+    )
+    assert sum(p.value for p in points) == 2.0
+
+
+@pytest.mark.asyncio
+async def test_a_global_trend_counts_every_project(db):
+    """Global scope carries no project list and must query the estate rather than an empty set."""
+    now = datetime.now(timezone.utc)
+    ts = now - timedelta(days=2)
+    await _seed_findings(
+        db,
+        [
+            _crypto_finding("m1", "scanMine", ts, project_id="mine"),
+            _crypto_finding("m2", "scanMine", ts, project_id="mine"),
+            _crypto_finding("o1", "scanOther", ts, project_id="other"),
+        ],
+    )
+    resolved = ResolvedScope(scope="global", scope_id=None, project_ids=None)
+    points = await CryptoTrendService(db)._finding_buckets(
+        resolved, "total_crypto_findings", "day", now - timedelta(days=7), now
+    )
+    assert sum(p.value for p in points) == 3.0
+
+
+@pytest.mark.asyncio
+async def test_a_second_bucket_over_the_same_range_is_not_served_the_first_buckets_series(db):
+    """bucket is an independent query parameter, so day and month over one range are two answers."""
+    resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
+    await _seed_findings(
+        db,
+        [
+            _crypto_finding("j1", "sjan-early", datetime(2026, 1, 10, tzinfo=timezone.utc)),
+            _crypto_finding("j2", "sjan-late", datetime(2026, 1, 20, tzinfo=timezone.utc)),
+            _crypto_finding("f1", "sfeb", datetime(2026, 2, 15, tzinfo=timezone.utc)),
+        ],
+    )
+    svc = CryptoTrendService(db)
+    query = {
+        "resolved": resolved,
+        "metric": "total_crypto_findings",
+        "range_start": datetime(2025, 12, 1, tzinfo=timezone.utc),
+        "range_end": datetime(2026, 3, 1, tzinfo=timezone.utc),
+    }
+    monthly = await svc.trend(bucket="month", **query)
+    daily = await svc.trend(bucket="day", **query)
+
+    assert daily.cache_hit is False
+    assert daily.bucket == "day"
+    assert len(monthly.points) == 2
+    assert len(daily.points) == 3
+
+
 def test_cache_key_distinguishes_users_under_user_scope(db):
     """User-scope keys must differ by project_ids so the shared cache can't leak across tenants."""
     svc = CryptoTrendService(db)

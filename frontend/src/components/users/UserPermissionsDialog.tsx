@@ -28,7 +28,7 @@ interface UserPermissionsDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissionsDialogProps) {
+export function UserPermissionsDialog({ user, open, onOpenChange }: Readonly<UserPermissionsDialogProps>) {
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(user?.permissions || []);
   const [prevUserId, setPrevUserId] = useState<string | null>(user?.id || null);
   const [prevOpen, setPrevOpen] = useState(open);

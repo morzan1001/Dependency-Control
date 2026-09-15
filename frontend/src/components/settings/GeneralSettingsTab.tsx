@@ -24,7 +24,7 @@ export function GeneralSettingsTab({
   handleSave,
   hasPermission,
   isPending,
-}: SettingsTabProps) {
+}: Readonly<SettingsTabProps>) {
   const { data: appConfig } = useAppConfig()
   const analyzers = formData.default_active_analyzers ?? DEFAULT_ANALYZERS;
 

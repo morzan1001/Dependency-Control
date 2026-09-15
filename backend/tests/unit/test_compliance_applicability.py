@@ -77,6 +77,20 @@ def test_rsa_control_not_applicable_with_only_aes_and_no_findings():
     assert result.status == ControlStatus.NOT_APPLICABLE
 
 
+def test_rsa_control_applicable_when_one_of_several_assets_is_in_scope():
+    """A real inventory is mixed; one matching asset makes the control evaluable, not every asset."""
+    aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER, key_size_bits=256)
+    rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
+    assert _applicability(_RSA_CONTROL, _input([aes, rsa])) is _Applicability.APPLICABLE
+
+
+def test_rsa_control_passes_on_a_mixed_inventory_with_no_findings():
+    aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER, key_size_bits=256)
+    rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
+    result = default_evaluator(_RSA_CONTROL, _input([aes, rsa]))
+    assert result.status == ControlStatus.PASSED
+
+
 def test_no_assets_is_not_applicable():
     assert _applicability(_RSA_CONTROL, _input([])) is _Applicability.NO_ASSET_IN_SCOPE
 

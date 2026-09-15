@@ -16,7 +16,7 @@ interface Props {
   onSelect?: (entry: HotspotEntry) => void;
 }
 
-export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Props) {
+export function HotspotTable({ scope, scopeId, groupBy, scanId, onSelect }: Readonly<Props>) {
   const { items, isLoading, isEmpty } = useAnalyticsList<HotspotResponse, HotspotEntry>({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),

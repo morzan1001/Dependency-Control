@@ -37,7 +37,7 @@ interface TeamMembersDialogProps {
   onClose: () => void;
 }
 
-export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogProps) {
+export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMembersDialogProps>) {
   const updateMemberMutation = useUpdateTeamMember();
   const removeMemberMutation = useRemoveTeamMember();
   const { permissions } = useAuth();

@@ -34,7 +34,7 @@ function releaseHeadline(environment: string | null, branch: string): string {
   return environment ? `Release in ${environment} on ${branch}` : `Release on ${branch}`
 }
 
-export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
+export function ProjectOverview({ projectId, selectedBranches }: Readonly<ProjectOverviewProps>) {
   const navigate = useNavigate()
   // The trend line is the only consumer of this page: every branch-level number below comes
   // from branch-tips, which reads the whole project rather than a page of it.
@@ -106,9 +106,10 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const activeScan = releaseShown ?? headScan;
   const activeRun = activeScan ? resolveRun(activeScan) : undefined;
   const activeScanId = activeRun?.scanId;
+  const branchHeadline = activeBranch ? `Branch ${activeBranch}` : null;
   const headlineSource = releaseShown
     ? releaseHeadline(releaseEnvironment, releaseShown.branch)
-    : activeBranch ? `Branch ${activeBranch}` : null;
+    : branchHeadline;
   const { data: scanResults } = useScanResults(activeScanId || '');
 
   if (isLoading) {

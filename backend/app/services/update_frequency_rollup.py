@@ -12,6 +12,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.constants import RECENT_UPDATES_LIMIT, SCAN_USABLE_STATUSES, UPDATE_SAMPLE_RANK
+from app.core.log_utils import sanitize_for_log
 from app.core.metrics import update_frequency_delta_writes_total
 from app.models.update_frequency import ScanOutdatedSet, ScanUpdateDelta, UpdateCounts, UpdateSample
 from app.repositories.analysis_results import AnalysisResultRepository
@@ -95,7 +96,7 @@ async def record_scan_update_delta(db: Any, scan_id: str) -> None:
                 only_when_linked=False,
             )
     except Exception:
-        logger.exception("Update-frequency rollup aborted for scan %s", scan_id)
+        logger.exception("Update-frequency rollup aborted for scan %s", sanitize_for_log(scan_id))
         update_frequency_delta_writes_total.labels(result="error").inc()
 
 
@@ -131,7 +132,7 @@ async def _load_scan(db: Any, scan_id: str) -> _ScanRef | None:
         return None
     created_at = doc.get("created_at")
     if not isinstance(created_at, datetime):
-        logger.warning("Scan %s has no usable created_at; skipping its update delta", scan_id)
+        logger.warning("Scan %s has no usable created_at; skipping its update delta", sanitize_for_log(scan_id))
         return None
     return _ScanRef(
         scan_id=scan_id,

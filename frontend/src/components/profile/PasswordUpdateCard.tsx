@@ -14,7 +14,7 @@ interface PasswordUpdateCardProps {
   user?: User;
 }
 
-export function PasswordUpdateCard({ user }: PasswordUpdateCardProps) {
+export function PasswordUpdateCard({ user }: Readonly<PasswordUpdateCardProps>) {
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');

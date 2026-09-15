@@ -19,6 +19,8 @@ _PROJECT = "p-breakdown"
 _SCAN = "s-breakdown"
 _MORE_RULES_THAN_SHOWN = _NOISY_RULE_SAMPLE + 4
 _FINDINGS_PER_RULE = 2
+_LOUDEST_RULE = "rule-zz"
+_FINDINGS_FOR_LOUDEST = _FINDINGS_PER_RULE + 1
 
 
 def _caller() -> User:
@@ -41,6 +43,16 @@ def _seed_project(db: FakeDatabase) -> None:
         "project_id": _PROJECT,
         "status": "completed",
         "created_at": "2026-09-01T00:00:00Z",
+    }
+
+
+def _crypto_finding(key: str, rule_id: str) -> dict:
+    return {
+        "_id": key,
+        "project_id": _PROJECT,
+        "scan_id": _SCAN,
+        "type": FindingType.CRYPTO_WEAK_ALGORITHM.value,
+        "details": {"rule_id": rule_id},
     }
 
 
@@ -106,6 +118,27 @@ async def test_the_noisy_rule_sample_names_how_many_rules_there_are():
 
     assert len(result["top_noisy_rules"]) == _NOISY_RULE_SAMPLE
     assert result["top_noisy_rules_total"] == _MORE_RULES_THAN_SHOWN
+
+
+@pytest.mark.asyncio
+async def test_rules_tied_on_findings_are_sampled_by_rule_id():
+    db = FakeDatabase()
+    for occurrence in range(_FINDINGS_FOR_LOUDEST):
+        key = f"loud-{occurrence}"
+        db.findings._docs[key] = _crypto_finding(key, _LOUDEST_RULE)
+    # Seeded against rule-id order so collection order cannot stand in for the tiebreak.
+    for rule in reversed(range(_MORE_RULES_THAN_SHOWN)):
+        for occurrence in range(_FINDINGS_PER_RULE):
+            key = f"r{rule}-{occurrence}"
+            db.findings._docs[key] = _crypto_finding(key, f"rule-{rule:02d}")
+
+    result = await suggest_crypto_policy_override(db, project_id=_PROJECT, scan_id=_SCAN)
+
+    tied_shown = _NOISY_RULE_SAMPLE - 1
+    assert [row["rule_id"] for row in result["top_noisy_rules"]] == [
+        _LOUDEST_RULE,
+        *[f"rule-{rule:02d}" for rule in range(tied_shown)],
+    ]
 
 
 @pytest.mark.asyncio

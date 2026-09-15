@@ -12,7 +12,7 @@ interface RecommendationsProps {
   scanId?: string
 }
 
-export function Recommendations({ projectId: initialProjectId, scanId }: RecommendationsProps) {
+export function Recommendations({ projectId: initialProjectId, scanId }: Readonly<RecommendationsProps>) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjectId || '')
 
   const { data, isLoading, error } = useProjectRecommendations(selectedProjectId, scanId)

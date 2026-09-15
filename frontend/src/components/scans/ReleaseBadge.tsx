@@ -7,7 +7,7 @@ interface ReleaseBadgeProps {
   className?: string
 }
 
-export function ReleaseBadge({ environment, version, className = '' }: ReleaseBadgeProps) {
+export function ReleaseBadge({ environment, version, className = '' }: Readonly<ReleaseBadgeProps>) {
   const label = environment || 'release'
   const named = version ? `Release ${version}` : 'Release'
   const ariaLabel = environment ? `${named} in ${environment}` : named

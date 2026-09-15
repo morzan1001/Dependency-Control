@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import Header, Request, status
 from fastapi.responses import JSONResponse
@@ -142,7 +142,7 @@ async def _dispatch(method: str, params: dict[str, Any], user: User, db: AsyncIO
 async def mcp_rpc(
     request: Request,
     db: DatabaseDep,
-    authorization: str = Header(default=""),
+    authorization: Annotated[str, Header()] = "",
 ) -> Any:
     user, _ = await _authenticate(authorization=authorization, db=db)
 

@@ -20,7 +20,7 @@ interface EditTeamDialogProps {
   onClose: () => void;
 }
 
-export function EditTeamDialog({ team, isOpen, onClose }: EditTeamDialogProps) {
+export function EditTeamDialog({ team, isOpen, onClose }: Readonly<EditTeamDialogProps>) {
   const [name, setName] = useState(team?.name || '');
   const [description, setDescription] = useState(team?.description || '');
   const [prevTeamId, setPrevTeamId] = useState<string | null>(team?.id || null);

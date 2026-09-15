@@ -49,6 +49,30 @@ async def test_seed_is_idempotent(db):
 
 
 @pytest.mark.asyncio
+async def test_seeding_is_audited_as_a_seed_not_as_an_operator_edit(db):
+    from app.services.audit.history import record_policy_change
+
+    with patch("app.services.crypto_policy.seeder.record_policy_change", new=record_policy_change):
+        await seed_crypto_policies(db)
+
+    entries = await db.crypto_policy_history.find({}).to_list(None)
+    assert [e["action"] for e in entries] == ["seed"]
+    assert entries[0]["actor_user_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_reseeding_the_same_version_writes_no_second_audit_entry(db):
+    """The skip is what keeps every restart from appending an identical policy revision."""
+    from app.services.audit.history import record_policy_change
+
+    with patch("app.services.crypto_policy.seeder.record_policy_change", new=record_policy_change):
+        await seed_crypto_policies(db)
+        await seed_crypto_policies(db)
+
+    assert await db.crypto_policy_history.count_documents({}) == 1
+
+
+@pytest.mark.asyncio
 async def test_seed_skipped_when_version_higher(db):
     from app.models.crypto_policy import CryptoPolicy
 

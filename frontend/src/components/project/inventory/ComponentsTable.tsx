@@ -34,7 +34,7 @@ function LifecycleBadge({ item }: { readonly item: ComponentItem }) {
   return <span className="text-muted-foreground">—</span>
 }
 
-export function ComponentsTable({ projectId, projectName, branch }: ComponentsTableProps) {
+export function ComponentsTable({ projectId, projectName, branch }: Readonly<ComponentsTableProps>) {
   const [page, setPage] = useState(1)
   const [search, setSearch] = useState('')
   const [sortBy, setSortBy] = useState('name')

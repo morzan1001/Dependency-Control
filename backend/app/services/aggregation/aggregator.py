@@ -70,7 +70,7 @@ from app.services.normalizers.vulnerability import (
 
 _LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
 _SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
-_SPDX_WITH_SPLIT = re.compile(r"\s+WITH\s+")
+_SPDX_WITH_SPLIT = re.compile(r"\s++WITH\s++")
 _CATEGORY_RANK_BY_VALUE = {category.value: rank for category, rank in CATEGORY_RESTRICTIVENESS.items()}
 
 

@@ -77,7 +77,7 @@ export interface EPSSKEVSummary {
 
 const HIGH_RISK_ROWS_SHOWN = 10;
 
-export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
+export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
   // Target the Progress indicator, not the track, so bars aren't all rendered full.
   const getMaturityColor = (maturity: string) => {
     switch (maturity) {
@@ -376,7 +376,7 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
   );
 }
 
-export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
+export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySummary }>) {
   const totalAnalyzed = 
     data.reachability_levels.confirmed + 
     data.reachability_levels.likely + 
@@ -671,7 +671,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
   );
 }
 
-export function PostProcessorResultCard({ analyzerName, result }: { analyzerName: string; result: unknown }) {
+export function PostProcessorResultCard({ analyzerName, result }: Readonly<{ analyzerName: string; result: unknown }>) {
   const getIcon = () => {
     switch (analyzerName) {
       case "epss_kev":

@@ -141,12 +141,7 @@ def build_messages(
             messages.append(assistant_entry)
 
             for tc in stored_tool_calls:
-                messages.append(
-                    build_tool_result_message(
-                        tc.get("tool_name", ""),
-                        tc.get("result", {}),
-                    )
-                )
+                messages.append(build_tool_result_message(tc.get("result", {})))
             continue
 
         entry: dict[str, Any] = {"role": role, "content": msg.get("content", "")}
@@ -163,7 +158,7 @@ def build_messages(
     return messages
 
 
-def build_tool_result_message(tool_name: str, result: dict[str, Any]) -> dict[str, Any]:
+def build_tool_result_message(result: dict[str, Any]) -> dict[str, Any]:
     return {
         "role": "tool",
         "content": json.dumps(result, default=str),

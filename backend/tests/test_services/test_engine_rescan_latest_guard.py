@@ -107,11 +107,18 @@ async def _seed_parent_pointer_chain(db, depth):
 
 
 @pytest.mark.asyncio
-async def test_a_rescan_of_the_current_latest_still_updates_it(db):
+@pytest.mark.parametrize(
+    ("rescanned_scan_id", "takes_the_slot"),
+    [
+        pytest.param(_HEAD_SCAN_ID, True, id="rescan_of_the_current_latest"),
+        pytest.param(_RELEASE_SCAN_ID, False, id="rescan_of_an_older_release"),
+    ],
+)
+async def test_a_rescan_takes_the_slot_only_for_the_lineage_that_holds_it(db, rescanned_scan_id, takes_the_slot):
     await _seed(db, _HEAD_SCAN_ID)
-    scan_doc = _ScanDoc(_NOW + _LATER, is_rescan=True, original_scan_id=_HEAD_SCAN_ID)
+    scan_doc = _ScanDoc(_NOW + _LATER, is_rescan=True, original_scan_id=rescanned_scan_id)
 
-    assert await _decide(db, _INCOMING_RESCAN_ID, scan_doc) is True
+    assert await _decide(db, _INCOMING_RESCAN_ID, scan_doc) is takes_the_slot
 
 
 @pytest.mark.asyncio
@@ -130,14 +137,6 @@ async def test_the_guard_and_the_head_resolver_name_the_same_scan_either_side_of
     after = await scan_repo.get_latest_active_scan_ids([await db.projects.find_one({"_id": _PROJECT_ID})])
 
     assert before == after == {_PROJECT_ID: _INCOMING_RESCAN_ID}
-
-
-@pytest.mark.asyncio
-async def test_a_rescan_of_the_release_does_not_hijack_the_project_tile(db):
-    await _seed(db, _HEAD_SCAN_ID)
-    scan_doc = _ScanDoc(_NOW + _LATER, is_rescan=True, original_scan_id=_RELEASE_SCAN_ID)
-
-    assert await _decide(db, _INCOMING_RESCAN_ID, scan_doc) is False
 
 
 @pytest.mark.asyncio
@@ -231,45 +230,30 @@ async def _seed_with_default_branch(db, default_branch):
 
 
 @pytest.mark.asyncio
-async def test_a_feature_branch_scan_does_not_take_the_head_slot_from_the_default_branch(db):
+@pytest.mark.parametrize(
+    ("default_branch", "scanned_branch", "takes_the_slot"),
+    [
+        pytest.param(_MAIN_BRANCH, _FEATURE_BRANCH, False, id="a_feature_branch_against_the_default"),
+        pytest.param(_MAIN_BRANCH, _TAG_REF, False, id="a_tag_build_against_the_default"),
+        pytest.param(_MAIN_BRANCH, _MAIN_BRANCH, True, id="a_newer_scan_on_the_default"),
+        # CI wired to one branch while the VCS default is another: the slot follows recency there, or
+        # nothing would ever update it.
+        pytest.param(_UNSCANNED_DEFAULT_BRANCH, _FEATURE_BRANCH, True, id="a_default_branch_nothing_scans"),
+    ],
+)
+async def test_the_head_slot_stays_with_the_default_branch(db, default_branch, scanned_branch, takes_the_slot):
     """The slot answers "what is on main"; a feature pipeline finishing later answers something else,
     and letting it in makes a delta against head report main's findings as removed."""
-    await _seed_with_default_branch(db, _MAIN_BRANCH)
-    scan_doc = _ScanDoc(_NOW + _LATER, branch=_FEATURE_BRANCH)
+    await _seed_with_default_branch(db, default_branch)
+    scan_doc = _ScanDoc(_NOW + _LATER, branch=scanned_branch)
 
-    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is False
-
-
-@pytest.mark.asyncio
-async def test_a_tag_build_does_not_take_the_head_slot(db):
-    await _seed_with_default_branch(db, _MAIN_BRANCH)
-    scan_doc = _ScanDoc(_NOW + _LATER, branch=_TAG_REF)
-
-    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is False
-
-
-@pytest.mark.asyncio
-async def test_a_newer_scan_on_the_default_branch_still_takes_the_slot(db):
-    await _seed_with_default_branch(db, _MAIN_BRANCH)
-    scan_doc = _ScanDoc(_NOW + _LATER, branch=_MAIN_BRANCH)
-
-    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is True
+    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is takes_the_slot
 
 
 @pytest.mark.asyncio
 async def test_a_project_with_no_known_default_branch_keeps_the_created_at_rule(db):
     """Without VCS integration nothing says which branch is the tip, so recency decides as before."""
     await _seed(db, _HEAD_SCAN_ID)
-    scan_doc = _ScanDoc(_NOW + _LATER, branch=_FEATURE_BRANCH)
-
-    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is True
-
-
-@pytest.mark.asyncio
-async def test_a_branch_scan_still_wins_when_the_current_latest_is_not_on_the_default_branch(db):
-    """CI wired to one branch while the VCS default is another: the slot follows recency there, or
-    nothing would ever update it."""
-    await _seed_with_default_branch(db, _UNSCANNED_DEFAULT_BRANCH)
     scan_doc = _ScanDoc(_NOW + _LATER, branch=_FEATURE_BRANCH)
 
     assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is True

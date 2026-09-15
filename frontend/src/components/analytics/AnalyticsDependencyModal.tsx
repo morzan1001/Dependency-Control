@@ -88,7 +88,7 @@ interface AnalyticsDependencyModalProps {
   onOpenChange: (open: boolean) => void;
 }
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text }: Readonly<{ text: string }>) {
   const { copied, copy } = useCopyToClipboard()
 
   return (
@@ -113,13 +113,13 @@ function InfoRow({
   value,
   href,
   copyable = false,
-}: {
+}: Readonly<{
   icon: React.ElementType
   label: string
   value?: string | null
   href?: string
   copyable?: boolean
-}) {
+}>) {
   if (!value) return null
 
   const validHref = safeHref(href)
@@ -156,7 +156,7 @@ function getLicenseBadgeVariant(category?: string): 'default' | 'secondary' | 'd
   return 'outline'
 }
 
-function ScorecardDisplay({ metadata }: { metadata: DependencyMetadata }) {
+function ScorecardDisplay({ metadata }: Readonly<{ metadata: DependencyMetadata }>) {
   const scorecard = metadata.deps_dev?.scorecard
   if (!scorecard) return null
 
@@ -198,7 +198,7 @@ function ScorecardDisplay({ metadata }: { metadata: DependencyMetadata }) {
   )
 }
 
-function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata }) {
+function DependencyMetadataSection({ metadata }: Readonly<{ metadata: DependencyMetadata }>) {
   const [showDetails, setShowDetails] = useState(false)
 
   const homepageHref = safeHref(metadata.homepage)
@@ -486,9 +486,9 @@ export function AnalyticsDependencyModal({
   component, 
   version,
   type,
-  open, 
-  onOpenChange 
-}: AnalyticsDependencyModalProps) {
+  open,
+  onOpenChange
+}: Readonly<AnalyticsDependencyModalProps>) {
   const [sortBy, setSortBy] = useState<SortField>('severity')
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc')
   const [selectedFinding, setSelectedFinding] = useState<ComponentFinding | null>(null)
@@ -540,6 +540,10 @@ export function AnalyticsDependencyModal({
     }
   }
 
+  const metadataSection = metadata ? (
+    <DependencyMetadataSection metadata={metadata} />
+  ) : null
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-5xl max-h-[90vh] overflow-hidden flex flex-col">
@@ -560,9 +564,9 @@ export function AnalyticsDependencyModal({
               <Skeleton className="h-8 w-3/4" />
               <Skeleton className="h-24 w-full" />
             </div>
-          ) : metadata ? (
-            <DependencyMetadataSection metadata={metadata} />
-          ) : null}
+          ) : (
+            metadataSection
+          )}
 
           <div className="space-y-3">
             <h3 className="text-lg font-medium flex items-center gap-2">

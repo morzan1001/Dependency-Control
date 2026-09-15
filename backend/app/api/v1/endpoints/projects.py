@@ -48,6 +48,7 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_SOURCE_MANUAL,
 )
+from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
 from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
@@ -313,13 +314,7 @@ async def read_projects(
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> dict[str, Any]:
-    """
-    Retrieve projects.
-
-    - **Superusers** see all projects.
-    - **Regular users** see projects they own or are members of.
-    - **team_id** optional filter to show only projects of a specific team.
-    """
+    """Retrieve projects; superusers see all, everyone else those they are a member of or that a team of theirs owns."""
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
@@ -664,7 +659,9 @@ async def _audit_license_policy_change(
             comment=None,
         )
     except Exception:  # pragma: no cover - defensive
-        logging.getLogger(__name__).exception("License-policy audit for project %s failed (non-blocking)", project_id)
+        logging.getLogger(__name__).exception(
+            "License-policy audit for project %s failed (non-blocking)", sanitize_for_log(project_id)
+        )
 
 
 @router.put("/{project_id}", summary="Update project details", responses=RESP_AUTH_404)

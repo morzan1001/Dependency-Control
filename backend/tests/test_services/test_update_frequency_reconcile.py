@@ -302,6 +302,31 @@ class TestOrphanDelta:
         assert await db.scan_update_deltas.find({}).to_list(None) == []
         assert spy == []
 
+    @pytest.mark.asyncio
+    async def test_a_delta_that_moved_to_another_chain_survives_the_delete(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        """The orphan verdict is made against a census. A re-ingest that rewrites the delta's
+        branch in between has already re-derived it under the new chain, so this run's verdict no
+        longer describes the document it is about to delete."""
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
+        await db.scans.delete_one({"_id": "s1"})
+
+        real_ledger_census = ScanUpdateDeltaRepository.window_ledger_by_branch
+
+        async def _census_then_reingest(self: Any, *args: Any, **kwargs: Any) -> Any:
+            result = await real_ledger_census(self, *args, **kwargs)
+            await db.scan_update_deltas.update_one({"_id": "s1"}, {"$set": {"branch": "release-1.2"}})
+            return result
+
+        monkeypatch.setattr(ScanUpdateDeltaRepository, "window_ledger_by_branch", _census_then_reingest)
+
+        await run_update_frequency_reconcile(db)
+
+        assert await _delta(db, "s1") is not None
+
 
 class TestConcurrentIngest:
     @pytest.mark.asyncio
@@ -453,6 +478,24 @@ class TestCaps:
         # The delta left behind is the deleted one's successor, but its own scan is gone
         # too: handing it to the writer would count a repair the writer cannot make.
         assert spy == []
+
+    @pytest.mark.asyncio
+    async def test_an_orphan_delete_does_not_spend_the_repair_budget(
+        self, monkeypatch: pytest.MonkeyPatch, spy: list[str]
+    ):
+        """The repair budget bounds re-derivations, which re-read two dependency sets each; a bulk
+        delete costs nothing like that, so a sweep of orphans must not stall the repairs behind it."""
+        db = FakeDatabase()
+        await _seed_project(db)
+        await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
+        await db.scans.delete_one({"_id": "s1"})
+        monkeypatch.setattr(reconcile_module, "_MAX_REPAIRS", 1)
+
+        report = await run_update_frequency_reconcile(db)
+
+        assert spy == ["s2"]
+        assert report.resolved == {"orphan": 1, "dependent": 1}
+        assert report.deferred == {}
 
     @pytest.mark.asyncio
     async def test_the_orphan_cap_is_spent_across_chains(self, monkeypatch: pytest.MonkeyPatch, spy: list[str]):

@@ -15,7 +15,7 @@ interface TwoFactorAuthCardProps {
   user: User | undefined;
 }
 
-export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
+export function TwoFactorAuthCard({ user }: Readonly<TwoFactorAuthCardProps>) {
   const [isSetupOpen, setIsSetupOpen] = useState(false);
   const [isDisableOpen, setIsDisableOpen] = useState(false);
   const [setupData, setSetupData] = useState<TwoFASetup | null>(null);

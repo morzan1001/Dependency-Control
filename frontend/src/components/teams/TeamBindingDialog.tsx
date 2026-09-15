@@ -18,7 +18,7 @@ import {
   ProviderInstance,
   PROVIDER_LABEL,
 } from '@/lib/team-binding';
-import { extractErrorMessage } from '@/lib/errors';
+import { getErrorMessage } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -64,7 +64,7 @@ function bindingDescription(teamName: string, providers: BindingProvider[]): str
   return `Repositories held by a bound team or group ${suffix}`;
 }
 
-function FieldRow({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
+function FieldRow({ label, htmlFor, children }: Readonly<{ label: string; htmlFor: string; children: React.ReactNode }>) {
   return (
     <div className="grid grid-cols-4 items-center gap-4">
       <Label htmlFor={htmlFor} className="text-right">{label}</Label>
@@ -79,13 +79,13 @@ function BoundInstance({
   note,
   onRemove,
   isRemoving,
-}: {
+}: Readonly<{
   binding: TeamBinding;
   instance?: ProviderInstance;
   note?: string;
   onRemove: () => void;
   isRemoving: boolean;
-}) {
+}>) {
   const instanceName = instance?.name ?? binding.instance_id;
   return (
     <div className="grid grid-cols-4 items-baseline gap-4">
@@ -122,7 +122,7 @@ function useBindingWrite(teamId: string, onSaved: () => void) {
           onSaved();
           toast.success("Binding saved");
         },
-        onError: (error) => toast.error(extractErrorMessage(error)),
+        onError: (error) => toast.error(getErrorMessage(error)),
       },
     );
   return { write, isPending: setBinding.isPending };
@@ -132,11 +132,11 @@ function GitHubBindingForm({
   teamId,
   instanceId,
   onSaved,
-}: {
+}: Readonly<{
   teamId: string;
   instanceId: string;
   onSaved: () => void;
-}) {
+}>) {
   const [org, setOrg] = useState<string | null>(null);
   const [githubTeamId, setGithubTeamId] = useState<string | null>(null);
 
@@ -172,7 +172,7 @@ function GitHubBindingForm({
               ))}
             </SelectContent>
           </Select>
-          {orgsError && <p className="mt-1 text-xs text-destructive">{extractErrorMessage(orgsError)}</p>}
+          {orgsError && <p className="mt-1 text-xs text-destructive">{getErrorMessage(orgsError)}</p>}
         </FieldRow>
 
         <FieldRow label="GitHub team" htmlFor="binding-team">
@@ -188,7 +188,7 @@ function GitHubBindingForm({
               ))}
             </SelectContent>
           </Select>
-          {teamsError && <p className="mt-1 text-xs text-destructive">{extractErrorMessage(teamsError)}</p>}
+          {teamsError && <p className="mt-1 text-xs text-destructive">{getErrorMessage(teamsError)}</p>}
         </FieldRow>
       </div>
       <DialogFooter>
@@ -204,11 +204,11 @@ function GitLabBindingForm({
   teamId,
   instanceId,
   onSaved,
-}: {
+}: Readonly<{
   teamId: string;
   instanceId: string;
   onSaved: () => void;
-}) {
+}>) {
   const [groupId, setGroupId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
@@ -252,7 +252,7 @@ function GitLabBindingForm({
               ))}
             </SelectContent>
           </Select>
-          {groupsError && <p className="mt-1 text-xs text-destructive">{extractErrorMessage(groupsError)}</p>}
+          {groupsError && <p className="mt-1 text-xs text-destructive">{getErrorMessage(groupsError)}</p>}
         </FieldRow>
       </div>
       <DialogFooter>
@@ -264,7 +264,7 @@ function GitLabBindingForm({
   );
 }
 
-export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogProps) {
+export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindingDialogProps>) {
   const [pickedInstanceId, setPickedInstanceId] = useState<string | null>(null);
 
   const { data: githubInstances, isLoading: githubLoading, error: githubError } = useGitHubInstances();
@@ -310,7 +310,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogPr
       { teamId: team.id, instanceId },
       {
         onSuccess: () => toast.success("Binding removed"),
-        onError: (error) => toast.error(extractErrorMessage(error)),
+        onError: (error) => toast.error(getErrorMessage(error)),
       },
     );
   };
@@ -347,7 +347,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogPr
         {instancesError && (
           <p className="text-sm text-destructive">
             {'The instance list could not be loaded, so an instance may be missing here and a binding ' +
-              `above that names one is not orphaned. ${extractErrorMessage(instancesError)}`}
+              `above that names one is not orphaned. ${getErrorMessage(instancesError)}`}
           </p>
         )}
 

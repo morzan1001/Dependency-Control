@@ -41,18 +41,13 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         date_from: datetime | None = None,
         date_to: datetime | None = None,
     ) -> list[ArchiveMetadata]:
-        query = self._build_filter_query(
-            project_id=project_id,
+        return await self.find_all(
+            skip=skip,
+            limit=limit,
             branch=branch,
             date_from=date_from,
             date_to=date_to,
-        )
-        return await self.find_many(
-            query=query,
-            skip=skip,
-            limit=limit,
-            sort_by="archived_at",
-            sort_order=-1,
+            project_id=project_id,
         )
 
     async def count_by_project(
@@ -62,13 +57,12 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         date_from: datetime | None = None,
         date_to: datetime | None = None,
     ) -> int:
-        query = self._build_filter_query(
-            project_id=project_id,
+        return await self.count_all(
             branch=branch,
             date_from=date_from,
             date_to=date_to,
+            project_id=project_id,
         )
-        return await self.count(query)
 
     async def find_by_scan_id(self, scan_id: str) -> ArchiveMetadata | None:
         return await self.find_one({"scan_id": scan_id})

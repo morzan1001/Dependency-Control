@@ -1,5 +1,7 @@
 """Integration tests for Teams webhook type auto-detection."""
 
+import pytest
+
 from app.models.webhook import Webhook
 from app.schemas.webhook import WebhookCreate, WebhookUpdate
 from app.services.webhooks.validation import detect_webhook_type
@@ -10,52 +12,42 @@ class TestDetectWebhookTypeIntegration:
         """Simulate the endpoint logic: use explicit type or auto-detect."""
         return webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
 
-    def test_teams_url_auto_detected(self):
-        webhook_in = WebhookCreate(
-            url="https://contoso.webhook.office.com/webhookb2/abc/IncomingWebhook/xyz",
-            events=["scan.completed"],
-        )
-        assert self._resolve_type(webhook_in) == "teams"
-
-    def test_power_automate_url_auto_detected(self):
-        webhook_in = WebhookCreate(
-            url="https://prod-12.westeurope.logic.azure.com/workflows/abc/triggers/manual/paths/invoke",
-            events=["scan.completed"],
-        )
-        assert self._resolve_type(webhook_in) == "teams"
-
-    def test_power_platform_url_auto_detected(self):
-        webhook_in = WebhookCreate(
-            url=(
-                "https://default047b2e1fa2714bc197a4703bf7adf1.35.environment.api.powerplatform.com"
-                "/powerautomate/automations/direct/workflows/67fa2e06/triggers/manual/paths/invoke"
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            pytest.param(
+                "https://contoso.webhook.office.com/webhookb2/abc/IncomingWebhook/xyz",
+                "teams",
+                id="teams-incoming-webhook",
             ),
-            events=["scan.completed"],
-        )
-        assert self._resolve_type(webhook_in) == "teams"
+            pytest.param(
+                "https://prod-12.westeurope.logic.azure.com/workflows/abc/triggers/manual/paths/invoke",
+                "teams",
+                id="power-automate",
+            ),
+            pytest.param(
+                "https://default047b2e1fa2714bc197a4703bf7adf1.35.environment.api.powerplatform.com"
+                "/powerautomate/automations/direct/workflows/67fa2e06/triggers/manual/paths/invoke",
+                "teams",
+                id="power-platform",
+            ),
+            pytest.param("https://my-server.example.com/webhook", "generic", id="unknown-host"),
+        ],
+    )
+    def test_url_auto_detected(self, url, expected):
+        webhook_in = WebhookCreate(url=url, events=["scan.completed"])
+        assert self._resolve_type(webhook_in) == expected
 
-    def test_generic_url_defaults_to_generic(self):
-        webhook_in = WebhookCreate(
-            url="https://my-server.example.com/webhook",
-            events=["scan.completed"],
-        )
-        assert self._resolve_type(webhook_in) == "generic"
-
-    def test_explicit_generic_overrides_teams_url(self):
-        webhook_in = WebhookCreate(
-            url="https://contoso.webhook.office.com/webhookb2/abc",
-            events=["scan.completed"],
-            webhook_type="generic",
-        )
-        assert self._resolve_type(webhook_in) == "generic"
-
-    def test_explicit_teams_overrides_generic_url(self):
-        webhook_in = WebhookCreate(
-            url="https://my-server.example.com/webhook",
-            events=["scan.completed"],
-            webhook_type="teams",
-        )
-        assert self._resolve_type(webhook_in) == "teams"
+    @pytest.mark.parametrize(
+        ("url", "webhook_type"),
+        [
+            pytest.param("https://contoso.webhook.office.com/webhookb2/abc", "generic", id="generic-over-teams-url"),
+            pytest.param("https://my-server.example.com/webhook", "teams", id="teams-over-generic-url"),
+        ],
+    )
+    def test_explicit_type_overrides_url(self, url, webhook_type):
+        webhook_in = WebhookCreate(url=url, events=["scan.completed"], webhook_type=webhook_type)
+        assert self._resolve_type(webhook_in) == webhook_type
 
 
 class TestWebhookModelCreationWithType:
@@ -80,22 +72,33 @@ class TestDetectWebhookTypeOnUpdate:
             update_data["webhook_type"] = detect_webhook_type(update_data["url"])
         return update_data.get("webhook_type", existing_type)
 
-    def test_url_change_to_teams_auto_detects(self):
-        update = WebhookUpdate(url="https://contoso.webhook.office.com/webhookb2/abc")
-        assert self._apply_update("generic", update) == "teams"
-
-    def test_url_change_to_power_platform_auto_detects(self):
-        update = WebhookUpdate(
-            url=(
+    @pytest.mark.parametrize(
+        ("existing_type", "url", "expected"),
+        [
+            pytest.param(
+                "generic",
+                "https://contoso.webhook.office.com/webhookb2/abc",
+                "teams",
+                id="to-teams",
+            ),
+            pytest.param(
+                "generic",
                 "https://default123.environment.api.powerplatform.com"
-                "/powerautomate/automations/direct/workflows/abc/triggers/manual/paths/invoke"
-            )
-        )
-        assert self._apply_update("generic", update) == "teams"
-
-    def test_url_change_to_generic_auto_detects(self):
-        update = WebhookUpdate(url="https://my-server.example.com/webhook")
-        assert self._apply_update("teams", update) == "generic"
+                "/powerautomate/automations/direct/workflows/abc/triggers/manual/paths/invoke",
+                "teams",
+                id="to-power-platform",
+            ),
+            pytest.param(
+                "teams",
+                "https://my-server.example.com/webhook",
+                "generic",
+                id="to-generic",
+            ),
+        ],
+    )
+    def test_url_change_auto_detects(self, existing_type, url, expected):
+        update = WebhookUpdate(url=url)
+        assert self._apply_update(existing_type, update) == expected
 
     def test_explicit_override_respected_even_when_url_present(self):
         update = WebhookUpdate(

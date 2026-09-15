@@ -1,9 +1,7 @@
-"""
-Scope resolution for analytics queries.
+"""Scope resolution for analytics queries.
 
-Translates a (scope, scope_id) pair into a ResolvedScope that carries the
-set of project_ids the caller is authorised to query.  Permission gating is
-enforced here so that individual query functions stay scope-agnostic.
+Translates a (scope, scope_id) pair into a ResolvedScope carrying the project_ids the caller is
+authorised to query. Permission gating is enforced here so query functions stay scope-agnostic.
 """
 
 import logging

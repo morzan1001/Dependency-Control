@@ -139,6 +139,18 @@ class TestDetectCriticalHotspotsHighEpssReachable:
         rec = result[0]
         assert "high-EPSS" in rec.description
 
+    def test_high_epss_alone_is_not_a_hotspot(self):
+        findings = [
+            _vuln("pkg", "MEDIUM", epss_score=0.5, finding_id="CVE-2024-001"),
+        ]
+        assert detect_critical_hotspots(findings, []) == []
+
+    def test_reachability_alone_is_not_a_hotspot(self):
+        findings = [
+            _vuln("pkg", "MEDIUM", epss_score=0.0, reachable=True, finding_id="CVE-2024-001"),
+        ]
+        assert detect_critical_hotspots(findings, []) == []
+
 
 class TestDetectCriticalHotspotsNotHotspot:
     def test_only_2_low_vulns_not_hotspot(self):

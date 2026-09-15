@@ -35,7 +35,7 @@ function rescanNote(status?: string): string {
   return status === SCAN_STATUS_FAILED ? RESCAN_NOTE_FAILED : RESCAN_NOTE_IN_FLIGHT
 }
 
-export function ProjectScans({ projectId }: ProjectScansProps) {
+export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
   const [page, setPage] = useState(1)
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
   const [sortBy, setSortBy] = useState("created_at")

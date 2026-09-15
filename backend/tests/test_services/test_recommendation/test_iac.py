@@ -1,5 +1,7 @@
 """Tests for app.services.recommendation.iac."""
 
+import pytest
+
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.iac import process_iac
 
@@ -26,12 +28,9 @@ class TestProcessIacEmpty:
 
 
 class TestProcessIacDocker:
-    def test_docker_platform_normalized(self):
-        rec = process_iac([_iac(platform="docker")])[0]
-        assert "Docker" in rec.title
-
-    def test_dockerfile_platform_normalized(self):
-        rec = process_iac([_iac(platform="Dockerfile")])[0]
+    @pytest.mark.parametrize("platform", ["docker", "Dockerfile"])
+    def test_docker_platform_normalized(self, platform):
+        rec = process_iac([_iac(platform=platform)])[0]
         assert "Docker" in rec.title
 
     def test_type_is_fix_infrastructure(self):
@@ -44,32 +43,23 @@ class TestProcessIacDocker:
 
 
 class TestProcessIacKubernetes:
-    def test_kubernetes_keyword(self):
-        rec = process_iac([_iac(platform="kubernetes")])[0]
-        assert "Kubernetes" in rec.title
-
-    def test_k8s_keyword(self):
-        rec = process_iac([_iac(platform="k8s")])[0]
+    @pytest.mark.parametrize("platform", ["kubernetes", "k8s"])
+    def test_kubernetes_keyword(self, platform):
+        rec = process_iac([_iac(platform=platform)])[0]
         assert "Kubernetes" in rec.title
 
 
 class TestProcessIacTerraform:
-    def test_terraform_keyword(self):
-        rec = process_iac([_iac(platform="terraform")])[0]
-        assert "Terraform" in rec.title
-
-    def test_terraform_mixed_case(self):
-        rec = process_iac([_iac(platform="Terraform")])[0]
+    @pytest.mark.parametrize("platform", ["terraform", "Terraform"])
+    def test_terraform_keyword_any_case(self, platform):
+        rec = process_iac([_iac(platform=platform)])[0]
         assert "Terraform" in rec.title
 
 
 class TestProcessIacAWSCloudFormation:
-    def test_aws_keyword(self):
-        rec = process_iac([_iac(platform="aws")])[0]
-        assert "AWS/CloudFormation" in rec.title
-
-    def test_cloudformation_keyword(self):
-        rec = process_iac([_iac(platform="cloudformation")])[0]
+    @pytest.mark.parametrize("platform", ["aws", "cloudformation"])
+    def test_aws_or_cloudformation_keyword(self, platform):
+        rec = process_iac([_iac(platform=platform)])[0]
         assert "AWS/CloudFormation" in rec.title
 
 
@@ -86,64 +76,50 @@ class TestProcessIacHelm:
 
 
 class TestProcessIacBelowThreshold:
-    def test_single_low_no_recommendation(self):
-        result = process_iac([_iac(severity="LOW")])
-        assert result == []
-
-    def test_two_low_no_recommendation(self):
-        findings = [
-            _iac(severity="LOW", finding_id="i1"),
-            _iac(severity="LOW", finding_id="i2"),
-        ]
-        result = process_iac(findings)
-        assert result == []
-
-    def test_single_medium_no_recommendation(self):
-        result = process_iac([_iac(severity="MEDIUM")])
-        assert result == []
-
-    def test_two_medium_no_recommendation(self):
-        findings = [
-            _iac(severity="MEDIUM", finding_id="i1"),
-            _iac(severity="MEDIUM", finding_id="i2"),
-        ]
+    @pytest.mark.parametrize(
+        ("severity", "count"),
+        [
+            pytest.param("LOW", 1, id="single_low"),
+            pytest.param("LOW", 2, id="two_low"),
+            pytest.param("MEDIUM", 1, id="single_medium"),
+            pytest.param("MEDIUM", 2, id="two_medium"),
+        ],
+    )
+    def test_no_recommendation_below_threshold(self, severity, count):
+        findings = [_iac(severity=severity, finding_id=f"i{i}") for i in range(count)]
         result = process_iac(findings)
         assert result == []
 
 
 class TestProcessIacAboveThreshold:
-    def test_single_high_generates_recommendation(self):
-        result = process_iac([_iac(severity="HIGH")])
-        assert len(result) == 1
-
-    def test_single_critical_generates_recommendation(self):
-        result = process_iac([_iac(severity="CRITICAL")])
-        assert len(result) == 1
-
-    def test_three_low_generates_recommendation(self):
-        findings = [_iac(severity="LOW", finding_id=f"i{i}") for i in range(3)]
+    @pytest.mark.parametrize(
+        ("severity", "count"),
+        [
+            pytest.param("HIGH", 1, id="single_high"),
+            pytest.param("CRITICAL", 1, id="single_critical"),
+            pytest.param("LOW", 3, id="three_low"),
+        ],
+    )
+    def test_recommendation_generated_above_threshold(self, severity, count):
+        findings = [_iac(severity=severity, finding_id=f"i{i}") for i in range(count)]
         result = process_iac(findings)
         assert len(result) == 1
 
 
 class TestProcessIacPriority:
-    def test_critical_severity_gives_critical_priority(self):
-        rec = process_iac([_iac(severity="CRITICAL")])[0]
-        assert rec.priority == Priority.CRITICAL
-
-    def test_high_severity_gives_high_priority(self):
-        rec = process_iac([_iac(severity="HIGH")])[0]
-        assert rec.priority == Priority.HIGH
-
-    def test_three_medium_gives_medium_priority(self):
-        findings = [_iac(severity="MEDIUM", finding_id=f"i{i}") for i in range(3)]
+    @pytest.mark.parametrize(
+        ("severity", "count", "expected"),
+        [
+            pytest.param("CRITICAL", 1, Priority.CRITICAL, id="critical_severity"),
+            pytest.param("HIGH", 1, Priority.HIGH, id="high_severity"),
+            pytest.param("MEDIUM", 3, Priority.MEDIUM, id="three_medium"),
+            pytest.param("LOW", 3, Priority.LOW, id="three_low"),
+        ],
+    )
+    def test_priority_follows_highest_severity(self, severity, count, expected):
+        findings = [_iac(severity=severity, finding_id=f"i{i}") for i in range(count)]
         rec = process_iac(findings)[0]
-        assert rec.priority == Priority.MEDIUM
-
-    def test_three_low_gives_low_priority(self):
-        findings = [_iac(severity="LOW", finding_id=f"i{i}") for i in range(3)]
-        rec = process_iac(findings)[0]
-        assert rec.priority == Priority.LOW
+        assert rec.priority == expected
 
 
 class TestProcessIacCommonIssues:

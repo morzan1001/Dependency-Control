@@ -12,7 +12,7 @@ export function SecuritySettingsTab({
   handleSave,
   hasPermission,
   isPending,
-}: SettingsTabProps) {
+}: Readonly<SettingsTabProps>) {
   return (
     <div className="space-y-4">
       <Card>

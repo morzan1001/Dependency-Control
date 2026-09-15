@@ -107,15 +107,3 @@ class WaiverRepository:
             cursor = self.collection.find(query)
             docs = await cursor.to_list(None)
         return [Waiver(**doc) for doc in docs]
-
-    async def find_by_finding(self, project_id: str, finding_id: str) -> Waiver | None:
-        with track_db_operation(_COL, "find_one"):
-            data = await self.collection.find_one(
-                {
-                    "project_id": project_id,
-                    "finding_id": finding_id,
-                }
-            )
-        if data:
-            return Waiver(**data)
-        return None

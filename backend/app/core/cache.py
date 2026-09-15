@@ -450,13 +450,8 @@ class CacheService:
         max_wait_seconds: float = 5.0,
         reraise_fetch_errors: bool = False,
     ) -> Any | None:
-        """Cache-through with a distributed lock so only one pod fetches on miss while
-        peers wait, preventing cache-stampede on multi-pod deploys.
-
-        Set ``reraise_fetch_errors`` when a failed fetch must surface as an error rather
-        than as an empty result -- appropriate where the value is authoritative, not a
-        best-effort enrichment that callers can survive without.
-        """
+        """Only one pod fetches on a miss while peers wait on the distributed lock, so multi-pod
+        deploys cannot stampede the upstream."""
         cached = await self.get(key)
         if cached is not None:
             return cached

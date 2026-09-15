@@ -9,17 +9,15 @@ Wire format (big-endian for length fields):
         NONCE (12 bytes)     : random per chunk
         PAYLOAD (LEN bytes)  : ciphertext || 16-byte GCM tag
 
-Each chunk uses a fresh random 96-bit nonce. The 32-byte key is derived from
-settings.ARCHIVE_ENCRYPTION_KEY (hex-decoded if it's exactly 64 hex chars,
-otherwise SHA-256 of the UTF-8 bytes).
+The 32-byte key is derived from settings.ARCHIVE_ENCRYPTION_KEY (hex-decoded if it's
+exactly 64 hex chars, otherwise SHA-256 of the UTF-8 bytes).
 
-Security note: each chunk's GCM tag authenticates only that chunk's ciphertext.
-There is no sequence-number binding and no stream-level MAC. Chunk reordering,
-deletion, and cross-stream injection are not detected at the crypto layer.
-This is acceptable for the archive use case (storage is access-controlled and
-the threat model is confidentiality against passive readers, not active
-tampering by a party with both storage access and the key). Callers requiring
-active-adversary resistance must add an outer MAC or sequence-number binding.
+Security note: a chunk's GCM tag authenticates only that chunk's ciphertext, with no
+sequence-number binding and no stream-level MAC, so chunk reordering, deletion and
+cross-stream injection are not detected at the crypto layer. Acceptable for the archive use
+case because storage is access-controlled and the threat model is confidentiality against
+passive readers, not active tampering by a party holding both storage access and the key;
+callers requiring active-adversary resistance must add an outer MAC or sequence-number binding.
 """
 
 import hashlib

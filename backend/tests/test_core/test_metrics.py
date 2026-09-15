@@ -1,7 +1,9 @@
 """Tests for metrics path normalization and removed dead helpers."""
 
+import pytest
+
 from app.core import metrics
-from app.core.metrics import PrometheusMiddleware
+from app.core.metrics import PrometheusMiddleware, http_requests_in_progress
 
 
 def _normalize(path: str) -> str:
@@ -34,6 +36,52 @@ class TestNormalizePath:
 
     def test_non_id_path_unchanged(self) -> None:
         assert _normalize("/api/v1/health") == "/api/v1/health"
+
+
+class TestInProgressGauge:
+    """The gauge counts requests in flight, so every increment needs its matching decrement."""
+
+    @staticmethod
+    async def _drive(app, endpoint: str) -> None:
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        scope = {"type": "http", "path": endpoint, "method": "GET", "headers": []}
+        await PrometheusMiddleware(app)(scope, receive, send)
+
+    @pytest.mark.asyncio
+    async def test_gauge_returns_to_its_baseline_after_a_successful_request(self) -> None:
+        endpoint = "/api/v1/gauge-success"
+        gauge = http_requests_in_progress.labels(method="GET", endpoint=endpoint)
+        baseline = gauge._value.get()
+        in_flight: list[float] = []
+
+        async def app(_scope, _receive, send):
+            in_flight.append(gauge._value.get())
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        await self._drive(app, endpoint)
+
+        assert in_flight == [baseline + 1]
+        assert gauge._value.get() == baseline
+
+    @pytest.mark.asyncio
+    async def test_gauge_returns_to_its_baseline_when_the_app_raises(self) -> None:
+        endpoint = "/api/v1/gauge-crash"
+        gauge = http_requests_in_progress.labels(method="GET", endpoint=endpoint)
+        baseline = gauge._value.get()
+
+        async def app(_scope, _receive, _send):
+            raise RuntimeError("boom")
+
+        with pytest.raises(RuntimeError):
+            await self._drive(app, endpoint)
+
+        assert gauge._value.get() == baseline
 
 
 class TestDeadCodeRemoved:

@@ -12,7 +12,7 @@ import { DeltaHeader } from '@/components/scans/delta/DeltaHeader'
 import type { ScanDeltaResponse } from '@/types/scanDelta'
 
 type TabId = 'findings' | 'components' | 'crypto'
-const TAB_IDS: TabId[] = ['findings', 'components', 'crypto']
+const TAB_IDS = new Set<TabId>(['findings', 'components', 'crypto'])
 
 const changeCount = (delta: ScanDeltaResponse): number =>
   delta.totals.added + delta.totals.removed + delta.totals.changed
@@ -23,7 +23,7 @@ export default function ScanDelta() {
   const from = searchParams.get('from')
   const to = searchParams.get('to')
   const tabParam = searchParams.get('tab')
-  const tab: TabId = TAB_IDS.includes(tabParam as TabId) ? (tabParam as TabId) : 'findings'
+  const tab: TabId = TAB_IDS.has(tabParam as TabId) ? (tabParam as TabId) : 'findings'
 
   const [visited, setVisited] = useState<Set<TabId>>(new Set([tab]))
   const [counts, setCounts] = useState<Record<TabId, number | null>>({

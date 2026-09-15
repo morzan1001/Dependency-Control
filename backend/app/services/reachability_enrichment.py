@@ -139,9 +139,8 @@ def _callgraph_can_falsify(
     """True only when this callgraph's absence of a component is real evidence.
 
     Requires the producer to have listed the component in its coverage universe
-    (``analyzed_modules``) for a language that covers the component's ecosystem.
-    Anything weaker — wrong language, unknown ecosystem, empty or non-matching
-    coverage universe — means the package was never inspected.
+    (``analyzed_modules``) for a language that covers the component's ecosystem;
+    anything weaker means the package was never inspected.
     """
     langs = lookup_component(component_languages or {}, component) or frozenset()
     if prepared.language not in langs:
@@ -584,16 +583,7 @@ def _match_symbols(vulnerable_symbols: list[str], used_symbols: list[str]) -> li
 
 
 def _calculate_confidence(extraction_confidence: str, match_type: str) -> float:
-    """
-    Calculate overall confidence score.
-
-    Args:
-        extraction_confidence: How reliable is the symbol extraction (low/medium/high)
-        match_type: "matched" (direct match), "partial" (imported but not matched)
-
-    Returns:
-        Confidence score between 0.0 and 1.0
-    """
+    """Blend the symbol-extraction confidence with the match type into a 0.0-1.0 score."""
     extraction_score = REACHABILITY_EXTRACTION_CONFIDENCE.get(
         extraction_confidence, REACHABILITY_EXTRACTION_CONFIDENCE["low"]
     )

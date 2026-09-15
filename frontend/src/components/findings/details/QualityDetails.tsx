@@ -61,7 +61,7 @@ function normalizeRepoUrl(repo: string): string {
   return `https://github.com/${repo}`
 }
 
-export function QualityDetailsView({ details }: { details: FindingDetails }) {
+export function QualityDetailsView({ details }: Readonly<{ details: FindingDetails }>) {
   const overallScore = details.overall_score as number
   const failedChecks = (details.failed_checks as Array<{ name: string; score: number }>) || []
   const criticalIssues = (details.critical_issues as string[]) || []
@@ -178,7 +178,7 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
   )
 }
 
-export function MaintainerRiskDetailsView({ details }: { details: FindingDetails }) {
+export function MaintainerRiskDetailsView({ details }: Readonly<{ details: FindingDetails }>) {
   const risks = (details.risks as MaintainerRisk[]) || []
   const maintainerInfo = (details.maintainer_info as MaintainerInfo) || {}
 
@@ -343,7 +343,7 @@ interface QualityIssueEntry {
   details: Record<string, unknown>
 }
 
-export function AggregatedQualityView({ details }: { details: FindingDetails }) {
+export function AggregatedQualityView({ details }: Readonly<{ details: FindingDetails }>) {
   const qualityIssues = (details.quality_issues as QualityIssueEntry[]) || []
   const overallScore = details.overall_score as number | undefined
   const hasMaintenanceIssues = details.has_maintenance_issues as boolean

@@ -20,7 +20,7 @@ interface CryptoTableProps {
   branch?: string
 }
 
-export function CryptoTable({ projectId, projectName, branch }: CryptoTableProps) {
+export function CryptoTable({ projectId, projectName, branch }: Readonly<CryptoTableProps>) {
   const [page, setPage] = useState(1)
 
   const { data, isPending, isError, isPlaceholderData, refetch } = useInventoryCrypto(projectId, branch, {

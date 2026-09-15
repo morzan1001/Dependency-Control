@@ -1,5 +1,7 @@
 """Tests for app.services.recommendation.sast."""
 
+import pytest
+
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.sast import process_sast
 
@@ -29,22 +31,19 @@ def _sast(
     }
 
 
+def _sast_findings(severity, count):
+    return [_sast(severity=severity, finding_id=f"s{i}", category="sql-injection") for i in range(count)]
+
+
 class TestProcessSastEmpty:
     def test_empty_list_returns_empty(self):
         assert process_sast([]) == []
 
 
 class TestProcessSastInjection:
-    def test_sql_injection_normalized_to_injection(self):
-        rec = process_sast([_sast(category="sql-injection")])[0]
-        assert "Injection" in rec.title
-
-    def test_sqli_normalized_to_injection(self):
-        rec = process_sast([_sast(category="sqli")])[0]
-        assert "Injection" in rec.title
-
-    def test_command_injection_normalized(self):
-        rec = process_sast([_sast(category="command-inject")])[0]
+    @pytest.mark.parametrize("category", ["sql-injection", "sqli", "command-inject"])
+    def test_category_normalized_to_injection(self, category):
+        rec = process_sast([_sast(category=category)])[0]
         assert "Injection" in rec.title
 
     def test_type_is_fix_code_security(self):
@@ -53,22 +52,16 @@ class TestProcessSastInjection:
 
 
 class TestProcessSastXSS:
-    def test_xss_keyword(self):
-        rec = process_sast([_sast(category="xss-reflected")])[0]
-        assert "XSS" in rec.title
-
-    def test_cross_site_keyword(self):
-        rec = process_sast([_sast(category="cross-site-scripting")])[0]
+    @pytest.mark.parametrize("category", ["xss-reflected", "cross-site-scripting"])
+    def test_category_normalized_to_xss(self, category):
+        rec = process_sast([_sast(category=category)])[0]
         assert "XSS" in rec.title
 
 
 class TestProcessSastCryptography:
-    def test_crypto_keyword(self):
-        rec = process_sast([_sast(category="weak-crypto")])[0]
-        assert "Cryptography" in rec.title
-
-    def test_cipher_keyword(self):
-        rec = process_sast([_sast(category="insecure-cipher")])[0]
+    @pytest.mark.parametrize("category", ["weak-crypto", "insecure-cipher"])
+    def test_category_normalized_to_cryptography(self, category):
+        rec = process_sast([_sast(category=category)])[0]
         assert "Cryptography" in rec.title
 
 
@@ -79,88 +72,71 @@ class TestProcessSastAuthentication:
 
 
 class TestProcessSastPathTraversal:
-    def test_path_keyword(self):
-        rec = process_sast([_sast(category="path-traversal")])[0]
-        assert "Path Traversal" in rec.title
-
-    def test_traversal_keyword(self):
-        rec = process_sast([_sast(category="directory-traversal")])[0]
+    @pytest.mark.parametrize("category", ["path-traversal", "directory-traversal"])
+    def test_category_normalized_to_path_traversal(self, category):
+        rec = process_sast([_sast(category=category)])[0]
         assert "Path Traversal" in rec.title
 
 
 class TestProcessSastBelowThreshold:
-    def test_single_low_no_recommendation(self):
-        """One LOW finding: no critical/high AND <3 total -> skip."""
-        result = process_sast([_sast(severity="LOW")])
-        assert result == []
+    """No critical/high severity and fewer than three findings -> skip."""
 
-    def test_two_low_no_recommendation(self):
-        """Two LOW findings: still <3 total and no critical/high."""
-        findings = [
-            _sast(severity="LOW", finding_id="s1"),
-            _sast(severity="LOW", finding_id="s2"),
-        ]
-        result = process_sast(findings)
-        assert result == []
-
-    def test_single_medium_no_recommendation(self):
-        """One MEDIUM finding, no critical/high, <3 total -> skip."""
-        result = process_sast([_sast(severity="MEDIUM")])
-        assert result == []
-
-    def test_two_medium_no_recommendation(self):
-        findings = [
-            _sast(severity="MEDIUM", finding_id="s1"),
-            _sast(severity="MEDIUM", finding_id="s2"),
-        ]
-        result = process_sast(findings)
-        assert result == []
+    @pytest.mark.parametrize(
+        ("severity", "count"),
+        [
+            pytest.param("LOW", 1, id="one-low"),
+            pytest.param("LOW", 2, id="two-low"),
+            pytest.param("MEDIUM", 1, id="one-medium"),
+            pytest.param("MEDIUM", 2, id="two-medium"),
+        ],
+    )
+    def test_no_recommendation(self, severity, count):
+        assert process_sast(_sast_findings(severity, count)) == []
 
 
 class TestProcessSastAboveThreshold:
-    def test_three_low_findings_generates_recommendation(self):
-        findings = [_sast(severity="LOW", finding_id=f"s{i}", category="sql-injection") for i in range(3)]
-        result = process_sast(findings)
-        assert len(result) == 1
+    @pytest.mark.parametrize(
+        ("severity", "count"),
+        [
+            pytest.param("LOW", 3, id="three-low"),
+            pytest.param("HIGH", 1, id="single-high"),
+            pytest.param("CRITICAL", 1, id="single-critical"),
+        ],
+    )
+    def test_generates_recommendation(self, severity, count):
+        assert len(process_sast(_sast_findings(severity, count))) == 1
 
     def test_three_low_findings_priority_low(self):
-        findings = [_sast(severity="LOW", finding_id=f"s{i}", category="sql-injection") for i in range(3)]
-        rec = process_sast(findings)[0]
+        rec = process_sast(_sast_findings("LOW", 3))[0]
         assert rec.priority == Priority.LOW
-
-    def test_single_high_generates_recommendation(self):
-        result = process_sast([_sast(severity="HIGH")])
-        assert len(result) == 1
-
-    def test_single_critical_generates_recommendation(self):
-        result = process_sast([_sast(severity="CRITICAL")])
-        assert len(result) == 1
 
 
 class TestProcessSastPriority:
-    def test_critical_severity_gives_critical_priority(self):
-        rec = process_sast([_sast(severity="CRITICAL")])[0]
-        assert rec.priority == Priority.CRITICAL
-
-    def test_high_severity_gives_high_priority(self):
-        rec = process_sast([_sast(severity="HIGH")])[0]
-        assert rec.priority == Priority.HIGH
-
-    def test_medium_severity_only_gives_medium_priority(self):
-        """Three MEDIUM findings pass threshold; priority should be MEDIUM."""
-        findings = [_sast(severity="MEDIUM", finding_id=f"s{i}", category="sql-injection") for i in range(3)]
-        rec = process_sast(findings)[0]
-        assert rec.priority == Priority.MEDIUM
+    @pytest.mark.parametrize(
+        ("severity", "count", "expected"),
+        [
+            pytest.param("CRITICAL", 1, Priority.CRITICAL, id="critical"),
+            pytest.param("HIGH", 1, Priority.HIGH, id="high"),
+            pytest.param("MEDIUM", 3, Priority.MEDIUM, id="medium-needs-three-to-pass-threshold"),
+        ],
+    )
+    def test_priority_follows_severity(self, severity, count, expected):
+        rec = process_sast(_sast_findings(severity, count))[0]
+        assert rec.priority == expected
 
 
 class TestProcessSastMixedCategories:
-    def test_two_categories_produce_two_recommendations(self):
-        findings = [
-            _sast(category="sql-injection", finding_id="s1"),
-            _sast(category="xss-reflected", finding_id="s2"),
-        ]
+    @pytest.mark.parametrize(
+        "categories",
+        [
+            pytest.param(["sql-injection", "xss-reflected"], id="two-categories"),
+            pytest.param(["sql-injection", "xss-reflected", "broken-auth"], id="three-categories"),
+        ],
+    )
+    def test_one_recommendation_per_category(self, categories):
+        findings = [_sast(category=category, finding_id=f"s{i}") for i, category in enumerate(categories)]
         result = process_sast(findings)
-        assert len(result) == 2
+        assert len(result) == len(categories)
 
     def test_separate_categories_have_correct_titles(self):
         findings = [
@@ -172,33 +148,21 @@ class TestProcessSastMixedCategories:
         assert "Fix Injection Issues" in titles
         assert "Fix XSS Issues" in titles
 
-    def test_three_categories_produce_three_recommendations(self):
-        findings = [
-            _sast(category="sql-injection", finding_id="s1"),
-            _sast(category="xss-reflected", finding_id="s2"),
-            _sast(category="broken-auth", finding_id="s3"),
-        ]
-        result = process_sast(findings)
-        assert len(result) == 3
-
 
 class TestProcessSastEffort:
     """Effort is 'medium' for <10 findings, 'high' for >=10."""
 
-    def test_effort_medium_below_ten(self):
-        findings = [_sast(severity="HIGH", finding_id=f"s{i}", category="sql-injection") for i in range(5)]
-        rec = process_sast(findings)[0]
-        assert rec.effort == "medium"
-
-    def test_effort_high_at_ten(self):
-        findings = [_sast(severity="HIGH", finding_id=f"s{i}", category="sql-injection") for i in range(10)]
-        rec = process_sast(findings)[0]
-        assert rec.effort == "high"
-
-    def test_effort_high_above_ten(self):
-        findings = [_sast(severity="HIGH", finding_id=f"s{i}", category="sql-injection") for i in range(15)]
-        rec = process_sast(findings)[0]
-        assert rec.effort == "high"
+    @pytest.mark.parametrize(
+        ("count", "expected"),
+        [
+            pytest.param(5, "medium", id="below-ten"),
+            pytest.param(10, "high", id="at-ten"),
+            pytest.param(15, "high", id="above-ten"),
+        ],
+    )
+    def test_effort_scales_with_finding_count(self, count, expected):
+        rec = process_sast(_sast_findings("HIGH", count))[0]
+        assert rec.effort == expected
 
 
 class TestProcessSastImpactAndAction:
@@ -256,40 +220,34 @@ class TestProcessSastImpactAndAction:
 class TestProcessSastCategoryFallback:
     """Category falls back to the entry rule id, then to 'security'."""
 
-    def test_entry_id_fallback_when_no_category(self):
+    @pytest.mark.parametrize(
+        ("details", "expected_in_title"),
+        [
+            pytest.param(
+                {"sast_findings": [{"id": "custom-rule", "details": {}}]},
+                "custom-rule",
+                id="entry-id-when-no-category",
+            ),
+            pytest.param(
+                {
+                    "sast_findings": [
+                        {"id": "rule-a", "details": {}},
+                        {"id": "rule-b", "details": {"category": "sqli"}},
+                    ]
+                },
+                "Injection",
+                id="category-from-later-entry",
+            ),
+            pytest.param({}, "security", id="default-security"),
+        ],
+    )
+    def test_title_uses_category_fallback(self, details, expected_in_title):
         finding = {
             "type": "sast",
             "severity": "HIGH",
             "component": "app.py",
-            "details": {"sast_findings": [{"id": "custom-rule", "details": {}}]},
+            "details": details,
             "id": "s1",
         }
         rec = process_sast([finding])[0]
-        assert "custom-rule" in rec.title
-
-    def test_category_from_later_entry(self):
-        finding = {
-            "type": "sast",
-            "severity": "HIGH",
-            "component": "app.py",
-            "details": {
-                "sast_findings": [
-                    {"id": "rule-a", "details": {}},
-                    {"id": "rule-b", "details": {"category": "sqli"}},
-                ]
-            },
-            "id": "s1",
-        }
-        rec = process_sast([finding])[0]
-        assert "Injection" in rec.title
-
-    def test_default_security_category(self):
-        finding = {
-            "type": "sast",
-            "severity": "HIGH",
-            "component": "app.py",
-            "details": {},
-            "id": "s1",
-        }
-        rec = process_sast([finding])[0]
-        assert "security" in rec.title
+        assert expected_in_title in rec.title

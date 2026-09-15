@@ -169,9 +169,6 @@ class AnalysisWorkerManager:
         while self._active_scans:
             await asyncio.sleep(0.5)
 
-    def is_shutting_down(self) -> bool:
-        return self._shutting_down
-
     async def add_job(self, scan_id: str) -> bool:
         """Add a scan to the queue. Returns False when rejected during shutdown."""
         if self._shutting_down:
@@ -193,9 +190,7 @@ class AnalysisWorkerManager:
     async def _notify_analysis_failed(self, db: AsyncIOMotorDatabase, scan: dict[str, Any], error: str) -> None:
         """Fire the analysis_failed webhook + project notification for a failed scan.
 
-        Best-effort: any error here is logged and swallowed so it never masks the
-        original failure. Shared by the exception path and the retry-ceiling path so
-        every terminal 'failed' transition alerts owners who configured it.
+        Any error here is logged and swallowed so it never masks the original failure.
         """
         scan_id = str(scan.get("_id"))
         try:

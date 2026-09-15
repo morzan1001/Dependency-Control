@@ -13,7 +13,7 @@ interface Props {
   scanId?: string;
 }
 
-export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
+export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Readonly<Props>) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),

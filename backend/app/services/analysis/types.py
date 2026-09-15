@@ -180,16 +180,6 @@ class ScanDict(TypedDict, total=False):
     received_results: list[str]
 
 
-class LatestRunSummary(TypedDict):
-    """Summary of the latest analysis run."""
-
-    scan_id: str
-    status: str
-    findings_count: int
-    stats: dict[str, Any]
-    completed_at: datetime
-
-
 class SystemSettingsDict(TypedDict, total=False):
     """System settings as stored in the database."""
 

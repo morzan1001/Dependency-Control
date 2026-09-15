@@ -352,6 +352,19 @@ class TestDetectKnownExploitsImpactSeverityCounts:
         assert kev_rec.impact["medium"] == 1
         assert kev_rec.impact["total"] == 3
 
+    def test_high_epss_impact_counts_by_severity(self):
+        findings = [
+            _vuln("a", severity="CRITICAL", epss_score=0.9, cve_id="CVE-2024-001"),
+            _vuln("b", severity="HIGH", epss_score=0.9, cve_id="CVE-2024-002"),
+            _vuln("c", severity="MEDIUM", epss_score=0.9, cve_id="CVE-2024-003"),
+        ]
+        result = detect_known_exploits(findings)
+        epss_rec = next(r for r in result if r.type == RecommendationType.ACTIVELY_EXPLOITED)
+        assert epss_rec.impact["critical"] == 1
+        assert epss_rec.impact["high"] == 1
+        assert epss_rec.impact["medium"] == 1
+        assert epss_rec.impact["total"] == 3
+
 
 class TestDetectKnownExploitsEffort:
     def test_all_recommendations_low_effort(self):

@@ -392,6 +392,18 @@ class TestHeadIsTheDefaultBranch:
 
         assert result == {"p1": "rescan"}
 
+    def test_two_builds_stamped_in_the_same_millisecond_resolve_to_one_head(self):
+        """BSON dates are milliseconds, so the date alone cannot separate these two; the seeding
+        order is the one the server would hand back untied, and head must not be it."""
+        result, _ = asyncio.run(
+            _resolve(
+                [_scan("z-build", "p1", "main", 0), _scan("a-build", "p1", "main", 0)],
+                [_project("p1", default_branch="main")],
+            )
+        )
+
+        assert result == {"p1": "a-build"}
+
     def test_a_default_branch_the_vcs_deleted_falls_back_to_a_live_branch(self):
         result, _ = asyncio.run(
             _resolve(

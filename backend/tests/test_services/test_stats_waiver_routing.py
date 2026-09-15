@@ -374,3 +374,109 @@ async def test_stats_count_findings_that_carry_no_waived_field():
     stats = await calculate_comprehensive_stats(db, SCAN_ID)
 
     assert stats.critical == 1
+
+
+# ---------------------------------------------------------------------------
+# What a waiver's own fields are allowed to narrow the finding query down to.
+# ---------------------------------------------------------------------------
+
+
+async def _insert_finding(db, doc):
+    base = {
+        "scan_id": SCAN_ID,
+        "severity": "HIGH",
+        "details": {},
+        "waived": False,
+    }
+    base.update(doc)
+    base.setdefault("finding_id", base["_id"])
+    await db.findings.insert_one(base)
+
+
+class TestWhatAWaiverMatchesOn:
+    @pytest.mark.asyncio
+    async def test_an_unknown_package_version_is_a_placeholder_and_not_a_version_to_match(self, seeded_db):
+        """Scanners write "Unknown" where they have no version; matching on it literally would
+        leave the waiver suppressing nothing."""
+        await _insert_finding(
+            seeded_db,
+            {"_id": "f-ghost", "type": "vulnerability", "component": "ghost-pkg", "version": "2.0.0"},
+        )
+        await seeded_db.waivers.insert_one(
+            {
+                "_id": "w-unknown-version",
+                "project_id": PROJECT_ID,
+                "scope": "finding",
+                "finding_type": "vulnerability",
+                "package_name": "ghost-pkg",
+                "package_version": "Unknown",
+                "reason": "no version recorded by the scanner",
+                "created_by": "tester",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert (await seeded_db.findings.find_one({"_id": "f-ghost"}))["waived"] is True
+        assert (await seeded_db.findings.find_one({"_id": "f-high"}))["waived"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_rule_scope_waiver_reaches_the_same_rule_in_another_file(self, seeded_db):
+        """Rule scope means "this rule everywhere"; keeping the waiver's own file in the query
+        would silently degrade it to file scope."""
+        await _insert_finding(
+            seeded_db,
+            {"_id": "f-rule-a", "type": "sast", "finding_id": "BEARER-weak_rng-src/a.js-10", "component": "src/a.js"},
+        )
+        await _insert_finding(
+            seeded_db,
+            {"_id": "f-rule-b", "type": "sast", "finding_id": "BEARER-weak_rng-src/b.js-42", "component": "src/b.js"},
+        )
+        await seeded_db.waivers.insert_one(
+            {
+                "_id": "w-rule",
+                "project_id": PROJECT_ID,
+                "scope": "rule",
+                "finding_type": "sast",
+                "finding_id": "BEARER-weak_rng-src/a.js-10",
+                "package_name": "src/a.js",
+                "reason": "rule accepted project-wide",
+                "created_by": "tester",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert (await seeded_db.findings.find_one({"_id": "f-rule-a"}))["waived"] is True
+        assert (await seeded_db.findings.find_one({"_id": "f-rule-b"}))["waived"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_file_scope_waiver_on_an_id_that_carries_no_line_number_still_matches_it(self, seeded_db):
+        """Only a trailing line number is a line number: stripping the last segment of any
+        hyphenated id turns the waiver into a regex that matches nothing."""
+        await _insert_finding(
+            seeded_db,
+            {
+                "_id": "f-license",
+                "type": "license",
+                "finding_id": "LIC-GPL-2.0-only",
+                "component": "pkg-x",
+                "severity": "MEDIUM",
+            },
+        )
+        await seeded_db.waivers.insert_one(
+            {
+                "_id": "w-license-file",
+                "project_id": PROJECT_ID,
+                "scope": "file",
+                "finding_type": "license",
+                "finding_id": "LIC-GPL-2.0-only",
+                "package_name": "pkg-x",
+                "reason": "copyleft reviewed",
+                "created_by": "tester",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert (await seeded_db.findings.find_one({"_id": "f-license"}))["waived"] is True

@@ -36,12 +36,8 @@ def parse_cbom(raw: dict[str, Any]) -> ParsedCBOM:
 
 
 def _tool_from_metadata(tools: Any) -> tuple[str | None, str | None]:
-    """Extract (name, version) of the producing tool from metadata.tools.
-
-    CycloneDX allows metadata.tools to be either the modern object form
-    ({"components": [...]}) or the legacy list form ([{...}]). Both carry the
-    tool as a component dict with "name"/"version".
-    """
+    """CycloneDX allows metadata.tools to be either the modern object form ({"components": [...]}) or the
+    legacy list form ([{...}]). Both carry the tool as a component dict with "name"/"version"."""
     tool: dict[str, Any] | None = None
     if isinstance(tools, dict):
         comps = tools.get("components") or []
@@ -135,12 +131,9 @@ _KEY_SIZE_PROPERTY_NAMES = (
 
 
 def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: dict[str, Any]) -> int | None:
-    """Best-effort key-size extraction.
-
-    parameterSetIdentifier is a CycloneDX 1.6 string (e.g. "P-256", "1024"); treat it as a
-    key size only when it's a pure positive integer, else fall back to known custom properties.
-    Unparseable leaves key_size_bits None and the analyzer skips the asset.
-    """
+    """parameterSetIdentifier is a CycloneDX 1.6 string (e.g. "P-256", "1024"); treat it as a key size only
+    when it's a pure positive integer, else fall back to known custom properties. Unparseable leaves
+    key_size_bits None and the analyzer skips the asset."""
     asset_label = asset.bom_ref or asset.name or "<unknown>"
 
     coerced = _coerce_positive_int(props.get("parameterSetIdentifier"))

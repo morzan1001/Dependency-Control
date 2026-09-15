@@ -269,6 +269,12 @@ def test_the_partial_statement_names_the_verdicts_it_withholds():
     assert _WITHHELD_STATEMENT in statement
 
 
+def test_the_partial_statement_counts_the_unread_remainder_against_the_scope():
+    """A cut input has read exactly its cap, so a remainder measured against the cap is always zero."""
+    assert f"the remaining {_MISSING} were not read" in coverage_statement(_partial())
+    assert f"the remaining {_ASSETS_MISSING} were not read" in coverage_statement(_assets_partial())
+
+
 def test_the_complete_statement_says_the_scope_was_covered():
     statement = coverage_statement(_complete())
 

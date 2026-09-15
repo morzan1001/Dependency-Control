@@ -11,25 +11,9 @@ export interface LinkableEntity {
 
 const CVE_PATTERN = /\bCVE-\d{4}-\d{4,}\b/gi;
 
-function collectFromToolResult(
-  result: unknown,
-  out: Map<string, LinkableEntity>,
-): void {
-  if (!result || typeof result !== 'object') return;
-  if (Array.isArray(result)) {
-    for (const item of result) collectFromToolResult(item, out);
-    return;
-  }
-  const obj = result as Record<string, unknown>;
+type AddEntity = (key: string, text: string, markdown: string, priority: number) => void;
 
-  const add = (key: string, text: string, markdown: string, priority: number) => {
-    if (!text || !markdown) return;
-    const existing = out.get(key);
-    if (!existing || existing.priority < priority) {
-      out.set(key, { text, markdown, priority });
-    }
-  };
-
+function collectProjectEntity(obj: Record<string, unknown>, add: AddEntity): void {
   if (typeof obj.project_name === 'string' && typeof obj.project_id === 'string') {
     add(
       `project:${obj.project_id}`,
@@ -38,42 +22,59 @@ function collectFromToolResult(
       obj.project_name.length,
     );
   }
-  if (Array.isArray(obj.teams)) {
-    for (const owner of obj.teams) {
-      const ref = owner as Record<string, unknown>;
-      if (typeof ref?.id === 'string' && typeof ref.name === 'string') {
-        add(`team:${ref.id}`, ref.name, `[${ref.name}](/teams/${ref.id})`, ref.name.length);
-      }
+}
+
+function collectTeamEntities(obj: Record<string, unknown>, add: AddEntity): void {
+  if (!Array.isArray(obj.teams)) return;
+  for (const owner of obj.teams) {
+    const ref = owner as Record<string, unknown>;
+    if (typeof ref?.id === 'string' && typeof ref.name === 'string') {
+      add(`team:${ref.id}`, ref.name, `[${ref.name}](/teams/${ref.id})`, ref.name.length);
     }
   }
+}
+
+function collectFindingEntities(obj: Record<string, unknown>, add: AddEntity): void {
   // Finding deep-link: prefer the UUID `id`, fall back to `finding_id`.
   if (
-    typeof obj.project_id === 'string' &&
-    typeof obj.scan_id === 'string' &&
-    (typeof obj.id === 'string' || typeof obj.finding_id === 'string')
+    typeof obj.project_id !== 'string' ||
+    typeof obj.scan_id !== 'string' ||
+    (typeof obj.id !== 'string' && typeof obj.finding_id !== 'string')
   ) {
-    const fid = typeof obj.id === 'string' ? obj.id : (obj.finding_id as string);
-    const href = `/projects/${obj.project_id}/scans/${obj.scan_id}?finding=${encodeURIComponent(fid)}`;
-    // Prefer a CVE anchor, else component@version.
-    if (typeof obj.cve === 'string' && obj.cve) {
-      add(
-        `finding:${fid}:cve`,
-        obj.cve,
-        `[${obj.cve}](${href})`,
-        obj.cve.length + 2,
-      );
-    }
-    if (typeof obj.component === 'string' && obj.component) {
-      const version = typeof obj.version === 'string' ? obj.version : '';
-      const label = version ? `${obj.component}@${version}` : obj.component;
-      add(
-        `finding:${fid}:comp`,
-        label,
-        `[${label}](${href})`,
-        label.length,
-      );
-    }
+    return;
   }
+  const fid = typeof obj.id === 'string' ? obj.id : (obj.finding_id as string);
+  const href = `/projects/${obj.project_id}/scans/${obj.scan_id}?finding=${encodeURIComponent(fid)}`;
+  // Prefer a CVE anchor, else component@version.
+  if (typeof obj.cve === 'string' && obj.cve) {
+    add(`finding:${fid}:cve`, obj.cve, `[${obj.cve}](${href})`, obj.cve.length + 2);
+  }
+  if (typeof obj.component === 'string' && obj.component) {
+    const version = typeof obj.version === 'string' ? obj.version : '';
+    const label = version ? `${obj.component}@${version}` : obj.component;
+    add(`finding:${fid}:comp`, label, `[${label}](${href})`, label.length);
+  }
+}
+
+function collectFromToolResult(result: unknown, out: Map<string, LinkableEntity>): void {
+  if (!result || typeof result !== 'object') return;
+  if (Array.isArray(result)) {
+    for (const item of result) collectFromToolResult(item, out);
+    return;
+  }
+  const obj = result as Record<string, unknown>;
+
+  const add: AddEntity = (key, text, markdown, priority) => {
+    if (!text || !markdown) return;
+    const existing = out.get(key);
+    if (!existing || existing.priority < priority) {
+      out.set(key, { text, markdown, priority });
+    }
+  };
+
+  collectProjectEntity(obj, add);
+  collectTeamEntities(obj, add);
+  collectFindingEntities(obj, add);
   for (const value of Object.values(obj)) {
     collectFromToolResult(value, out);
   }
@@ -91,7 +92,7 @@ export function collectEntitiesFromToolCalls(
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 // Linkify known-entity mentions (whole-word, case-insensitive) plus any CVE ID,
@@ -122,7 +123,7 @@ export function linkifyAssistantMarkdown(
       const escaped = escapeRegExp(entity.text);
       // Whole-token match; boundaries exclude `/` and `.` to skip URLs and versions.
       const regex = new RegExp(
-        `(^|[^A-Za-z0-9_\\-./])(${escaped})(?=[^A-Za-z0-9_\\-./]|$)`,
+        String.raw`(^|[^A-Za-z0-9_\-./])(${escaped})(?=[^A-Za-z0-9_\-./]|$)`,
         'gi',
       );
       result = result.replace(regex, (_match, lead: string) => {

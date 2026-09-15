@@ -18,7 +18,7 @@ function defaultCutoffISO(): string {
   return d.toISOString().slice(0, 10);
 }
 
-export function PruneAuditDialog({ open, onClose, onConfirm, busy }: Props) {
+export function PruneAuditDialog({ open, onClose, onConfirm, busy }: Readonly<Props>) {
   const defaultDate = useMemo(() => defaultCutoffISO(), []);
   const [beforeDate, setBeforeDate] = useState<string>(defaultDate);
 

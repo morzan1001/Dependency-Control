@@ -238,3 +238,52 @@ class TestGetProjectMemberAddedTemplate:
     def test_contains_role(self):
         result = self._render(role="maintainer")
         assert "maintainer" in result
+
+
+_HTML_INJECTION = '<script>alert("xss")</script>'
+_ESCAPED_INJECTION = "&lt;script&gt;"
+
+
+class TestTemplateEscaping:
+    """Every interpolated value here is chosen by a user or read off a scanned repository."""
+
+    def test_an_inviters_display_name_is_escaped_into_the_invitation(self):
+        result = get_invitation_template(
+            invitation_link="https://example.com/invite?token=abc",
+            project_name="TestProject",
+            inviter_name=_HTML_INJECTION,
+            team_name="Security Team",
+        )
+
+        assert _HTML_INJECTION not in result
+        assert _ESCAPED_INJECTION in result
+
+    def test_a_scanned_repository_name_is_escaped_into_the_vulnerability_alert(self):
+        result = get_vulnerability_found_template(
+            report_link="https://example.com/report/123",
+            project_name="TestProject",
+            project_name_scanned=_HTML_INJECTION,
+            vulnerabilities=[{"id": "CVE-2024-001", "severity": "HIGH"}],
+            critical_count=1,
+        )
+
+        assert _HTML_INJECTION not in result
+        assert _ESCAPED_INJECTION in result
+
+    def test_a_finding_identifier_is_escaped_into_the_vulnerability_table(self):
+        result = get_vulnerability_found_template(
+            report_link="https://example.com/report/123",
+            project_name="TestProject",
+            project_name_scanned="my-app",
+            vulnerabilities=[{"id": _HTML_INJECTION, "severity": "HIGH"}],
+            critical_count=1,
+        )
+
+        assert _HTML_INJECTION not in result
+        assert _ESCAPED_INJECTION in result
+
+    def test_an_announcement_body_is_escaped(self):
+        result = get_announcement_template(message=_HTML_INJECTION)
+
+        assert _HTML_INJECTION not in result
+        assert _ESCAPED_INJECTION in result

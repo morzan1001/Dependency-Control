@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ResolvedScope
@@ -162,6 +163,75 @@ async def test_engine_marks_failed_on_exception():
     final_call = update_mock.call_args_list[-1]
     assert final_call.kwargs.get("status") == ReportStatus.FAILED
     assert "boom" in (final_call.kwargs.get("error_message") or "")
+
+
+def _reports_counted(status: str) -> float:
+    return compliance_reports_total.labels(framework=ReportFramework.NIST_SP_800_131A.value, status=status)._value.get()
+
+
+@pytest.mark.asyncio
+async def test_engine_counts_a_completed_report_under_the_success_status():
+    """A success rate reads success/(success+error), so both branches must use these two labels."""
+    before = _reports_counted("success")
+    engine = ComplianceReportEngine()
+    report = _report()
+    inputs = EvaluationInput(
+        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=[]),
+        scope_description="u",
+        crypto_assets=[],
+        findings=[],
+        policy_rules=[],
+        policy_version=1,
+        iana_catalog_version=2,
+        scan_ids=["s1"],
+    )
+    fw = MagicMock(spec=["evaluate"])
+    fw.evaluate = MagicMock(return_value=MagicMock(summary={"total": 0}))
+
+    with (
+        patch(
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=AsyncMock(), get=AsyncMock(return_value=report)),
+        ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=MagicMock(
+                resolve=AsyncMock(return_value=ResolvedScope(scope="user", scope_id=None, project_ids=[]))
+            ),
+        ),
+        patch.dict(
+            "app.services.compliance.engine.FRAMEWORK_REGISTRY",
+            {ReportFramework.NIST_SP_800_131A: fw},
+            clear=False,
+        ),
+        patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=inputs)),
+        patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")),
+        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
+    ):
+        await engine.generate(report=report, db=MagicMock(), user=MagicMock(id="u1", permissions=frozenset()))
+
+    assert _reports_counted("success") == before + 1
+
+
+@pytest.mark.asyncio
+async def test_engine_counts_a_crashed_report_under_the_error_status():
+    before = _reports_counted("error")
+    engine = ComplianceReportEngine()
+    report = _report()
+
+    with (
+        patch(
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=AsyncMock(), get=AsyncMock(return_value=report)),
+        ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=MagicMock(resolve=AsyncMock(side_effect=RuntimeError("boom"))),
+        ),
+    ):
+        await engine.generate(report=report, db=MagicMock(), user=MagicMock(id="u1", permissions=frozenset()))
+
+    assert _reports_counted("error") == before + 1
 
 
 @pytest.mark.asyncio

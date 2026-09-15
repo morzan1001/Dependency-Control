@@ -14,7 +14,7 @@ interface Props {
   topN?: number;
 }
 
-export function HotspotBarChart({ scope, scopeId, groupBy, scanId, topN = 20 }: Props) {
+export function HotspotBarChart({ scope, scopeId, groupBy, scanId, topN = 20 }: Readonly<Props>) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId, topN],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId, limit: topN }),

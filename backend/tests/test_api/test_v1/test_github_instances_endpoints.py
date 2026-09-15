@@ -62,6 +62,26 @@ class TestGitHubInstancePagination:
         assert result["pages"] == 3
 
 
+class TestTokenConfiguredFlag:
+    """The Settings UI reads has_access_token to tell a configured instance from an unconfigured one."""
+
+    def _get(self, admin_user, instance):
+        from app.api.v1.endpoints.github_instances import get_instance
+
+        mock_repo = _make_repo_mock(get_by_id=instance)
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo):
+            return asyncio.run(get_instance(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+    def test_an_instance_holding_a_token_reads_as_configured(self, admin_user):
+        result = self._get(admin_user, make_github_instance(access_token="ghp-secret"))
+
+        assert result.has_access_token is True
+        assert "ghp-secret" not in result.model_dump_json()
+
+    def test_an_instance_without_a_token_reads_as_unconfigured(self, admin_user):
+        assert self._get(admin_user, make_github_instance()).has_access_token is False
+
+
 class TestGitHubInstanceSyncTeams:
     def test_create_persists_and_returns_sync_teams(self, admin_user):
         from app.api.v1.endpoints.github_instances import create_instance

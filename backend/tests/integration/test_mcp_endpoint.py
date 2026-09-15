@@ -116,3 +116,48 @@ async def test_admitting_a_unified_key_stamps_its_last_use(client, db):
 
     assert resp.status_code == _OK, resp.text
     assert await _last_used(db, doc["_id"]) is not None
+
+
+@pytest.mark.asyncio
+async def test_the_catalogue_hides_a_tool_the_key_owner_may_not_call(client, db):
+    """tools/call refuses it anyway, so advertising it only tells an outside client about a
+    surface it cannot reach — and names the deployment's privileged tools while doing so."""
+    _doc, token = await _issue_unified_key(db)
+
+    resp = await client.post(_MCP, json=_TOOLS_LIST, headers=_bearer(token))
+
+    names = {tool["name"] for tool in resp.json()["result"]["tools"]}
+    # get_system_settings is gated on system:manage, which this owner does not hold.
+    assert "get_system_settings" not in names
+    assert "list_projects" in names
+
+
+@pytest.mark.asyncio
+async def test_an_advertised_tool_carries_the_arguments_it_requires(client, db):
+    """An MCP client builds its call from inputSchema alone; an empty schema leaves every
+    argument unguessable."""
+    _doc, token = await _issue_unified_key(db)
+
+    resp = await client.post(_MCP, json=_TOOLS_LIST, headers=_bearer(token))
+
+    schemas = {tool["name"]: tool["inputSchema"] for tool in resp.json()["result"]["tools"]}
+    assert "project_id" in schemas["get_project_details"]["properties"]
+    assert schemas["get_project_details"]["required"] == ["project_id"]
+
+
+@pytest.mark.asyncio
+async def test_results_and_errors_of_one_batch_share_the_json_rpc_version(client, db):
+    """The two envelopes are built by separate helpers, each carrying its own literal version,
+    and a client conforming to JSON-RPC 2.0 discards whichever one drifts."""
+    _doc, token = await _issue_unified_key(db)
+
+    resp = await client.post(
+        _MCP,
+        json=[_TOOLS_LIST, {"jsonrpc": "2.0", "id": 2, "method": "no/such/method"}],
+        headers=_bearer(token),
+    )
+
+    body = resp.json()
+    assert [item["id"] for item in body] == [_REQUEST_ID, 2]
+    assert "result" in body[0] and "error" in body[1]
+    assert {item["jsonrpc"] for item in body} == {"2.0"}

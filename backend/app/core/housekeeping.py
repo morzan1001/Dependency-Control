@@ -374,15 +374,8 @@ async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) ->
 
 
 async def _reap_orphan_s3_objects(db: Any) -> int:
-    """Delete S3 archive objects that have no matching ``archive_metadata`` record.
-
-    Runs in two passes:
-      1. Stale metadata: drop archive_metadata rows whose scan is already in db.scans
-         (post-restore leftovers).
-      2. S3 orphans: list bucket, skip objects with matching metadata, delete
-         the rest if older than ARCHIVE_ORPHAN_MIN_AGE_HOURS.
-
-    Best-effort: errors are logged and swallowed. Returns the number of S3 objects deleted.
+    """Delete S3 archive objects that have no matching ``archive_metadata`` record, returning how
+    many were deleted. Best-effort: errors are logged and swallowed.
     """
     if not is_archive_enabled():
         return 0
@@ -967,17 +960,8 @@ async def reconcile_update_frequency_ledger() -> None:
 async def housekeeping_loop(
     worker_manager: Optional["WorkerManager"] = None,
 ) -> None:
-    """
-    Runs the housekeeping tasks.
-    - Stuck scan recovery: On each loop iteration
-    - Scheduled re-scans: On each loop iteration
-    - Database stats update: On each loop iteration
-    - Cache stats update: On each loop iteration
-    - Data retention cleanup: Every 24 hours
-    - Branch status sync: Every 6 hours
-    - Update-frequency ledger reconcile: Once a night, behind its own flag
-
-    Note: Stale pending scan aggregation runs in a separate faster loop.
+    """Runs the housekeeping tasks on a loop; stale pending scan aggregation runs in its own,
+    faster loop.
     """
     last_retention_run = datetime.min.replace(tzinfo=timezone.utc)
     last_branch_sync = datetime.min.replace(tzinfo=timezone.utc)

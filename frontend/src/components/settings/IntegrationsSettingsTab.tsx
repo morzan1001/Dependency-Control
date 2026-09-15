@@ -11,7 +11,7 @@ export function IntegrationsSettingsTab({
   handleSave,
   hasPermission,
   isPending,
-}: SettingsTabProps) {
+}: Readonly<SettingsTabProps>) {
   return (
     <div className="space-y-4">
       <CICDInstancesManagement />

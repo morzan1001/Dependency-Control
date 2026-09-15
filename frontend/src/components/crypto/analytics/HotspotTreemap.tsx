@@ -26,7 +26,7 @@ function topSeverity(mix: Record<string, number>): string {
   return "UNKNOWN";
 }
 
-export function HotspotTreemap({ scope, scopeId, groupBy, scanId }: Props) {
+export function HotspotTreemap({ scope, scopeId, groupBy, scanId }: Readonly<Props>) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),

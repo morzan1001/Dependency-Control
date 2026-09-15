@@ -79,7 +79,7 @@ async def _resolve_side(
     return resolved
 
 
-@router.get("/scan-delta", response_model=ScanDeltaResponse, responses=RESP_400_403_404)
+@router.get("/scan-delta", responses=RESP_400_403_404)
 async def get_scan_delta(
     current_user: CurrentUserDep,
     db: DatabaseDep,

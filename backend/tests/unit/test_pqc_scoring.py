@@ -162,3 +162,32 @@ def test_exposure_constants_are_module_level():
     assert scoring.EXPOSURE_CERTIFICATE > scoring.EXPOSURE_RELATED_MATERIAL
     assert scoring.EXPOSURE_RELATED_MATERIAL > scoring.EXPOSURE_DEFAULT
     assert scoring.EXPOSURE_DEFAULT > scoring.EXPOSURE_BINARY
+
+
+def test_binary_detection_is_the_least_exposed_classification():
+    from app.services.pqc_migration.scoring import _score_exposure
+
+    binary = _score_exposure(_A(detection_context="binary"))
+    assert binary < _score_exposure(_A())
+    assert binary < _score_exposure(_A(detection_context="source"))
+    assert binary < _score_exposure(_A(asset_type="related-crypto-material"))
+
+
+def test_a_binary_detected_asset_is_prioritised_below_an_unclassified_one():
+    now = datetime.now(timezone.utc)
+    timelines = [Timeline(name="t", deadline=now + timedelta(days=365 * 5), applies_to=["RSA"])]
+    binary = priority_score(
+        asset=_A(detection_context="binary"),
+        source_family="RSA",
+        timelines=timelines,
+        now=now,
+        asset_count=1,
+    )
+    unclassified = priority_score(
+        asset=_A(),
+        source_family="RSA",
+        timelines=timelines,
+        now=now,
+        asset_count=1,
+    )
+    assert binary < unclassified

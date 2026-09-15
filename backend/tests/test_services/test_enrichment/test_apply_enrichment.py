@@ -102,3 +102,49 @@ async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
     assert merged["cvss_score"] == 7.7
     # Recomputed from the merged entry: the duplicate pair no longer forces 2.21.4 as covers-all fix.
     assert finding["details"]["fixed_version"] == "2.18.8"
+
+
+def test_enrichment_reaches_the_entry_the_cve_names_and_no_other():
+    """A finding holds one entry per vulnerability, and a scanner may have filed the CVE under a
+    GHSA id; EPSS and KEV belong on whichever entry carries the CVE, on that one alone."""
+    finding: dict = {
+        "details": {
+            "vulnerabilities": [
+                {"id": "CVE-1"},
+                {"id": "GHSA-aaaa-bbbb-cccc", "aliases": ["CVE-1"]},
+                {"id": "CVE-2"},
+            ]
+        }
+    }
+    enrichment = VulnerabilityEnrichment(
+        cve="CVE-1",
+        epss_score=0.42,
+        epss_percentile=97.0,
+        is_kev=True,
+        kev_due_date="2026-01-01",
+    )
+
+    _apply_enrichment_to_finding(finding, enrichment)
+
+    by_id = {vuln["id"]: vuln for vuln in finding["details"]["vulnerabilities"]}
+    assert by_id["CVE-1"]["epss_score"] == 0.42
+    assert by_id["CVE-1"]["in_kev"] is True
+    assert by_id["GHSA-aaaa-bbbb-cccc"]["epss_score"] == 0.42
+    assert by_id["GHSA-aaaa-bbbb-cccc"]["in_kev"] is True
+    assert "epss_score" not in by_id["CVE-2"]
+    assert "in_kev" not in by_id["CVE-2"]
+
+
+def test_the_highest_risk_score_of_a_multi_cve_finding_wins():
+    """The finding-level score is what ranking, hotspots and triage order read, so it has to be
+    the worst of the CVEs rather than whichever one was enriched last."""
+    descending: dict = {"details": {"vulnerabilities": []}}
+    _apply_enrichment_to_finding(descending, VulnerabilityEnrichment(cve="CVE-1", risk_score=91.0))
+    _apply_enrichment_to_finding(descending, VulnerabilityEnrichment(cve="CVE-2", risk_score=12.0))
+
+    ascending: dict = {"details": {"vulnerabilities": []}}
+    _apply_enrichment_to_finding(ascending, VulnerabilityEnrichment(cve="CVE-2", risk_score=12.0))
+    _apply_enrichment_to_finding(ascending, VulnerabilityEnrichment(cve="CVE-1", risk_score=91.0))
+
+    assert descending["details"]["risk_score"] == 91.0
+    assert ascending["details"]["risk_score"] == 91.0

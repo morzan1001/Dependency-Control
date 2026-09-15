@@ -46,7 +46,7 @@ function formatBytes(bytes: number): string {
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
 
-export function ProjectArchives({ projectId }: ProjectArchivesProps) {
+export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {
   const [page, setPage] = useState(1)
   const [restoreScanId, setRestoreScanId] = useState<string | null>(null)
   const [branchFilter, setBranchFilter] = useState<string>('')

@@ -159,3 +159,80 @@ async def test_w14_reingest_replaces_sbom_refs_and_deletes_superseded_files(clie
 
     stored_files = await db["fs.files"].count_documents({})
     assert stored_files == 1, f"the superseded GridFS upload must be deleted, got {stored_files} files"
+
+
+def _sbom_payload(**extra):
+    return {
+        "pipeline_id": 424243,
+        "commit_hash": "c" * 40,
+        "branch": "main",
+        "sboms": [_GOOD_SBOM],
+        **extra,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_payload_whose_sboms_did_not_all_fail_is_accepted(client, db, api_key_headers, monkeypatch):
+    """Refusing the mixed payload would throw away the good SBOM and the scan row the pipeline's
+    other analyzers attach their results to."""
+    from app.api.v1.endpoints import ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
+
+    resp = await client.post(
+        "/api/v1/ingest",
+        json=_sbom_payload(sboms=[_GOOD_SBOM, _MALFORMED_SBOM]),
+        headers=api_key_headers,
+    )
+
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert body["sboms_processed"] == 1
+    assert body["sboms_failed"] == 1
+    assert await db.scans.find_one({"_id": body["scan_id"]}) is not None
+
+
+@pytest.mark.asyncio
+async def test_a_payload_whose_sboms_all_failed_is_refused(client, db, api_key_headers, monkeypatch):
+    from app.api.v1.endpoints import ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
+
+    resp = await client.post(
+        "/api/v1/ingest",
+        json=_sbom_payload(sboms=[_MALFORMED_SBOM]),
+        headers=api_key_headers,
+    )
+
+    assert resp.status_code == 400, resp.text
+    assert await db.scans.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_freshly_ingested_scan_waits_in_the_status_the_worker_claims(client, db, api_key_headers, monkeypatch):
+    """The worker's atomic claim matches on 'pending' alone, so any other word parks the scan
+    forever: it is queued, never analysed, and nothing reports it as stuck."""
+    from app.api.v1.endpoints import ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
+
+    resp = await client.post("/api/v1/ingest", json=_sbom_payload(), headers=api_key_headers)
+    assert resp.status_code == 202, resp.text
+
+    scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})
+    assert scan["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_an_ingest_without_a_branch_name_is_filed_under_unknown(client, db, api_key_headers, monkeypatch):
+    """Every branch-scoped reader defaults the missing branch to 'unknown'; a scan stored under
+    any other sentinel is grouped with nothing."""
+    from app.api.v1.endpoints import ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
+
+    resp = await client.post("/api/v1/ingest", json=_sbom_payload(branch=""), headers=api_key_headers)
+    assert resp.status_code == 202, resp.text
+
+    scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})
+    assert scan["branch"] == "unknown"

@@ -20,7 +20,7 @@ const STATUS_LABEL: Record<MigrationItemStatus, string> = {
   monitor: "Monitor",
 };
 
-export function MigrationPlanTable({ items, onSelect }: Props) {
+export function MigrationPlanTable({ items, onSelect }: Readonly<Props>) {
   if (!items.length) {
     return <div className="p-4 text-sm text-muted-foreground">No quantum-vulnerable crypto assets detected.</div>;
   }

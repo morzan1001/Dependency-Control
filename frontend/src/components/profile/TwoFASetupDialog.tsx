@@ -23,7 +23,7 @@ interface TwoFASetupDialogProps {
   onClose: () => void;
 }
 
-export function TwoFASetupDialog({ setupData, isOpen, onClose }: TwoFASetupDialogProps) {
+export function TwoFASetupDialog({ setupData, isOpen, onClose }: Readonly<TwoFASetupDialogProps>) {
   const queryClient = useQueryClient();
   const [otpCode, setOtpCode] = useState('');
   const [password, setPassword] = useState('');

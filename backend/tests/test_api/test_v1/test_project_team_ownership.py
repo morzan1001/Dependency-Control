@@ -193,6 +193,19 @@ async def test_the_owner_cap_is_refused_before_anything_is_written():
 
 
 @pytest.mark.asyncio
+async def test_an_owner_set_exactly_at_the_cap_is_accepted():
+    """The cap is the largest set the message promises, so the boundary itself has to go through."""
+    picked = [f"t-{n}" for n in range(MAX_PROJECT_TEAMS)]
+    project = _project(team_ids=["t-0"], team_sources={"t-0": "manual"})
+    db = await _db_with(project, *[_team(team_id, _ACTOR) for team_id in picked])
+
+    updated = await _put(db, project, _superuser(), team_ids=picked)
+
+    assert sorted(updated.team_ids) == sorted(picked)
+    assert sorted((await _stored(db))["team_ids"]) == sorted(picked)
+
+
+@pytest.mark.asyncio
 async def test_a_capped_project_can_be_narrowed_to_one_of_its_own_owners():
     owners = [f"t-{n}" for n in range(MAX_PROJECT_TEAMS)]
     project = _project(team_ids=owners, team_sources=dict.fromkeys(owners, "manual"))

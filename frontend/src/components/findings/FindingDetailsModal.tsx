@@ -37,7 +37,7 @@ const REACHABILITY_STYLES: Record<ReachabilityVerdict, { className: string; icon
     unknown: { className: 'bg-muted text-muted-foreground', icon: HelpCircle },
 }
 
-function MatchedSymbolsList({ symbols }: { symbols: string[] }) {
+function MatchedSymbolsList({ symbols }: Readonly<{ symbols: string[] }>) {
     return (
         <div className="flex items-start gap-2 w-full">
             <span className="font-medium text-muted-foreground shrink-0">Affected Symbols:</span>
@@ -57,7 +57,7 @@ function MatchedSymbolsList({ symbols }: { symbols: string[] }) {
     )
 }
 
-function AliasLink({ alias }: { alias: string }) {
+function AliasLink({ alias }: Readonly<{ alias: string }>) {
     const link = advisoryUrl(alias);
 
     if (link) {
@@ -76,7 +76,7 @@ function AliasLink({ alias }: { alias: string }) {
     return <span className="font-mono text-xs">{alias}</span>;
 }
 
-function AliasList({ aliases }: { aliases: string[] }) {
+function AliasList({ aliases }: Readonly<{ aliases: string[] }>) {
     return (
         <div className="flex items-center gap-2 flex-wrap">
             <span className="font-medium text-muted-foreground">Aliases:</span>
@@ -100,7 +100,7 @@ interface FindingDetailsModalProps {
     onNavigate?: () => void
 }
 
-export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, scanContext, onSelectFinding, onNavigate }: FindingDetailsModalProps) {
+export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, scanContext, onSelectFinding, onNavigate }: Readonly<FindingDetailsModalProps>) {
     const [showWaiverForm, setShowWaiverForm] = useState(false)
     const [selectedVulnId, setSelectedVulnId] = useState<string | null>(null)
     const { hasPermission, permissions } = useAuth()
@@ -242,7 +242,8 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     badgeClass += "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100";
                                                 } else if (relatedId.startsWith("QUALITY:")) {
                                                     const parts = relatedId.split(":");
-                                                    label = `Quality: ${parts[1]}${parts[2] ? ` (${parts[2]})` : ""}`;
+                                                    const qualifier = parts[2] ? ` (${parts[2]})` : "";
+                                                    label = `Quality: ${parts[1]}${qualifier}`;
                                                     badgeClass += "border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100";
                                                 } else if (relatedId.startsWith("LIC-")) {
                                                     const license = relatedId.replace("LIC-", "");

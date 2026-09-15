@@ -11,7 +11,7 @@ interface Props {
   onConfirm: (comment: string) => Promise<void>;
 }
 
-export function RevertConfirmDialog({ open, targetVersion, onClose, onConfirm }: Props) {
+export function RevertConfirmDialog({ open, targetVersion, onClose, onConfirm }: Readonly<Props>) {
   const [comment, setComment] = useState("");
   const [busy, setBusy] = useState(false);
 

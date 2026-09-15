@@ -51,7 +51,9 @@ class TestProjectCacheKey:
         assert len(keys) == 4
 
     def test_key_stable_for_same_inputs(self):
-        assert _pkey(window_days=90, branch="main") == _pkey(window_days=90, branch="main")
+        first = _pkey(window_days=90, branch="main")
+        second = _pkey(window_days=90, branch="main")
+        assert first == second
 
 
 class TestScopeHash:
@@ -76,7 +78,9 @@ class TestComparisonCacheKey:
         assert _ckey(use_rollup=False) != _ckey(use_rollup=True)
 
     def test_key_stable_for_same_inputs(self):
-        assert _ckey() == _ckey()
+        first = _ckey()
+        second = _ckey()
+        assert first == second
 
 
 class TestComparisonLockTimings:

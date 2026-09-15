@@ -8,7 +8,7 @@ interface InventoryStatCardsProps {
   isLoading: boolean
 }
 
-export function InventoryStatCards({ stats, isLoading }: InventoryStatCardsProps) {
+export function InventoryStatCards({ stats, isLoading }: Readonly<InventoryStatCardsProps>) {
   if (isLoading) {
     return (
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">

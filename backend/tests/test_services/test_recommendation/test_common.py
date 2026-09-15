@@ -1,5 +1,6 @@
 """Tests for app.services.recommendation.common."""
 
+import pytest
 from pydantic import BaseModel
 
 from app.schemas.recommendation import (
@@ -17,6 +18,7 @@ from app.services.recommendation.common import (
     parse_version_tuple,
     sample_components,
     sort_key,
+    take_top,
 )
 
 
@@ -54,52 +56,43 @@ class _SampleModel(BaseModel):
 
 
 class TestGetAttr:
-    def test_dict_returns_value(self):
-        assert get_attr({"key": "val"}, "key") == "val"
+    @pytest.mark.parametrize(
+        ("source", "key", "expected"),
+        [
+            pytest.param({"key": "val"}, "key", "val", id="dict_value"),
+            pytest.param({"outer": {"inner": 42}}, "outer", {"inner": 42}, id="dict_nested_value"),
+            pytest.param(_SampleModel(name="test"), "name", "test", id="model_value"),
+            pytest.param(_SampleModel(), "name", "default", id="model_default_field_value"),
+        ],
+    )
+    def test_reads_the_key(self, source, key, expected):
+        assert get_attr(source, key) == expected
 
-    def test_dict_missing_key_returns_default(self):
-        assert get_attr({"a": 1}, "b") is None
+    @pytest.mark.parametrize(
+        ("source", "key"),
+        [
+            pytest.param({"a": 1}, "b", id="dict_missing_key"),
+            pytest.param({"key": None}, "key", id="dict_key_with_none_value"),
+            pytest.param(_SampleModel(), "nonexistent", id="model_missing_attr"),
+            pytest.param(42, "key", id="int"),
+        ],
+    )
+    def test_returns_none_without_a_given_default(self, source, key):
+        assert get_attr(source, key) is None
 
-    def test_dict_missing_key_returns_custom_default(self):
-        assert get_attr({"a": 1}, "b", "fallback") == "fallback"
-
-    def test_dict_key_with_none_value(self):
-        assert get_attr({"key": None}, "key") is None
-
-    def test_dict_nested_value(self):
-        d = {"outer": {"inner": 42}}
-        assert get_attr(d, "outer") == {"inner": 42}
-
-    def test_dict_empty(self):
-        assert get_attr({}, "anything", "default") == "default"
-
-    def test_model_returns_value(self):
-        m = _SampleModel(name="test")
-        assert get_attr(m, "name") == "test"
-
-    def test_model_missing_attr_returns_default(self):
-        m = _SampleModel()
-        assert get_attr(m, "nonexistent") is None
-
-    def test_model_missing_attr_returns_custom_default(self):
-        m = _SampleModel()
-        assert get_attr(m, "nonexistent", 99) == 99
-
-    def test_model_default_field_value(self):
-        m = _SampleModel()
-        assert get_attr(m, "name") == "default"
-
-    def test_string_returns_default(self):
-        assert get_attr("a string", "key", "fallback") == "fallback"
-
-    def test_int_returns_default(self):
-        assert get_attr(42, "key") is None
-
-    def test_none_returns_default(self):
-        assert get_attr(None, "key", "safe") == "safe"
-
-    def test_list_returns_default(self):
-        assert get_attr([1, 2, 3], "key", "nope") == "nope"
+    @pytest.mark.parametrize(
+        ("source", "key", "default"),
+        [
+            pytest.param({"a": 1}, "b", "fallback", id="dict_missing_key"),
+            pytest.param({}, "anything", "default", id="dict_empty"),
+            pytest.param(_SampleModel(), "nonexistent", 99, id="model_missing_attr"),
+            pytest.param("a string", "key", "fallback", id="string"),
+            pytest.param(None, "key", "safe", id="none"),
+            pytest.param([1, 2, 3], "key", "nope", id="list"),
+        ],
+    )
+    def test_returns_the_given_default(self, source, key, default):
+        assert get_attr(source, key, default) == default
 
 
 def _stored_vuln(entries):
@@ -117,42 +110,50 @@ def _stored_vuln(entries):
 
 
 class TestFindingCveIds:
-    def test_reads_the_advisory_list(self):
-        finding = _stored_vuln([{"id": "CVE-2021-44228"}])
-        assert finding_cve_ids(finding) == ["CVE-2021-44228"]
+    @pytest.mark.parametrize(
+        ("entries", "expected"),
+        [
+            pytest.param([{"id": "CVE-2021-44228"}], ["CVE-2021-44228"], id="reads_the_advisory_list"),
+            pytest.param(
+                [{"id": "CVE-2021-44228"}, {"id": "CVE-2021-45046"}],
+                ["CVE-2021-44228", "CVE-2021-45046"],
+                id="every_advisory_in_the_group_is_named",
+            ),
+            pytest.param(
+                [{"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]}],
+                ["CVE-2021-44228"],
+                id="ghsa_entry_collapses_to_its_cve_alias",
+            ),
+            pytest.param(
+                [{"id": "GHSA-jfh8-c2jp-5v3q", "resolved_cve": "CVE-2021-44228"}],
+                ["CVE-2021-44228"],
+                id="resolved_cve_wins_over_the_entry_id",
+            ),
+            pytest.param([{"id": "GHSA-only-1234"}], ["GHSA-only-1234"], id="ghsa_only_advisory_keeps_its_own_id"),
+            pytest.param(
+                [{"id": "CVE-2021-44228"}, {"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]}],
+                ["CVE-2021-44228"],
+                id="a_cve_named_by_two_entries_is_listed_once",
+            ),
+            pytest.param([], [], id="empty_advisory_list_names_nothing"),
+        ],
+    )
+    def test_the_advisory_list_decides_which_cves_are_named(self, entries, expected):
+        assert finding_cve_ids(_stored_vuln(entries)) == expected
 
     def test_component_version_document_id_is_never_returned(self):
         finding = _stored_vuln([{"id": "CVE-2021-44228"}])
         assert "log4j-core:2.14.1" not in finding_cve_ids(finding)
 
-    def test_every_advisory_in_the_group_is_named(self):
-        finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "CVE-2021-45046"}])
-        assert finding_cve_ids(finding) == ["CVE-2021-44228", "CVE-2021-45046"]
-
-    def test_ghsa_entry_collapses_to_its_cve_alias(self):
-        finding = _stored_vuln([{"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]}])
-        assert finding_cve_ids(finding) == ["CVE-2021-44228"]
-
-    def test_resolved_cve_wins_over_the_entry_id(self):
-        finding = _stored_vuln([{"id": "GHSA-jfh8-c2jp-5v3q", "resolved_cve": "CVE-2021-44228"}])
-        assert finding_cve_ids(finding) == ["CVE-2021-44228"]
-
-    def test_ghsa_only_advisory_keeps_its_own_id(self):
-        finding = _stored_vuln([{"id": "GHSA-only-1234"}])
-        assert finding_cve_ids(finding) == ["GHSA-only-1234"]
-
-    def test_a_cve_named_by_two_entries_is_listed_once(self):
-        finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]}])
-        assert finding_cve_ids(finding) == ["CVE-2021-44228"]
-
-    def test_empty_advisory_list_names_nothing(self):
-        assert finding_cve_ids(_stored_vuln([])) == []
-
-    def test_finding_without_details_names_nothing(self):
-        assert finding_cve_ids({"id": "log4j-core:2.14.1"}) == []
-
-    def test_details_not_dict_names_nothing(self):
-        assert finding_cve_ids({"id": "log4j-core:2.14.1", "details": "a string"}) == []
+    @pytest.mark.parametrize(
+        "finding",
+        [
+            pytest.param({"id": "log4j-core:2.14.1"}, id="without_details"),
+            pytest.param({"id": "log4j-core:2.14.1", "details": "a string"}, id="details_not_dict"),
+        ],
+    )
+    def test_a_finding_holding_no_advisories_names_nothing(self, finding):
+        assert finding_cve_ids(finding) == []
 
     def test_reads_a_pydantic_finding_too(self):
         class _Finding(BaseModel):
@@ -163,81 +164,53 @@ class TestFindingCveIds:
 
 
 class TestParseVersionTuple:
-    def test_simple_semver(self):
-        assert parse_version_tuple("1.2.3") == (1, 2, 3)
+    @pytest.mark.parametrize(
+        ("version", "expected"),
+        [
+            pytest.param("1.2.3", (1, 2, 3), id="simple_semver"),
+            pytest.param("1.2", (1, 2), id="two_part_version"),
+            pytest.param("1.2.3.4", (1, 2, 3, 4), id="four_part_version"),
+            pytest.param("42", (42,), id="single_number"),
+            pytest.param("1.2.0-beta.1", (1, 2, 0, 1), id="prerelease_beta"),
+            pytest.param("2.0.0-rc2", (2, 0, 0, 2), id="prerelease_rc"),
+            pytest.param("", (), id="empty_string"),
+            pytest.param("abc", (), id="no_numeric_parts"),
+        ],
+    )
+    def test_reads_the_numeric_parts(self, version, expected):
+        assert parse_version_tuple(version) == expected
 
-    def test_two_part_version(self):
-        assert parse_version_tuple("1.2") == (1, 2)
-
-    def test_four_part_version(self):
-        assert parse_version_tuple("1.2.3.4") == (1, 2, 3, 4)
-
-    def test_single_number(self):
-        assert parse_version_tuple("42") == (42,)
-
-    def test_prerelease_beta(self):
-        assert parse_version_tuple("1.2.0-beta.1") == (1, 2, 0, 1)
-
-    def test_prerelease_rc(self):
-        assert parse_version_tuple("2.0.0-rc2") == (2, 0, 0, 2)
-
-    def test_version_comparison_higher_wins(self):
-        assert parse_version_tuple("1.2.4") > parse_version_tuple("1.2.3")
-
-    def test_version_comparison_major(self):
-        assert parse_version_tuple("2.0.0") > parse_version_tuple("1.99.99")
-
-    def test_empty_string(self):
-        assert parse_version_tuple("") == ()
-
-    def test_no_numeric_parts(self):
-        assert parse_version_tuple("abc") == ()
+    @pytest.mark.parametrize(
+        ("higher", "lower"),
+        [
+            pytest.param("1.2.4", "1.2.3", id="patch"),
+            pytest.param("2.0.0", "1.99.99", id="major"),
+        ],
+    )
+    def test_the_tuples_compare_in_version_order(self, higher, lower):
+        assert parse_version_tuple(higher) > parse_version_tuple(lower)
 
 
 class TestCalculateBestFixVersion:
-    def test_empty_list_returns_unknown(self):
-        assert calculate_best_fix_version([]) == "unknown"
-
-    def test_single_version(self):
-        assert calculate_best_fix_version(["1.2.3"]) == "1.2.3"
-
-    def test_multiple_versions_returns_highest(self):
-        result = calculate_best_fix_version(["1.0.0", "2.0.0", "1.5.0"])
-        assert result == "2.0.0"
-
-    def test_comma_separated_versions(self):
-        result = calculate_best_fix_version(["1.0.0, 2.0.0"])
-        assert result == "1.0.0, 2.0.0"
-
-    def test_whitespace_only_filtered(self):
-        assert calculate_best_fix_version(["", " ", "  "]) == "unknown"
-
-    def test_mixed_whitespace_and_valid(self):
-        result = calculate_best_fix_version(["", "1.0.0", " "])
-        assert result == "1.0.0"
-
-    def test_versions_with_leading_whitespace(self):
-        result = calculate_best_fix_version(["  1.0.0  ", "2.0.0"])
-        assert result == "2.0.0"
-
-    def test_none_values_filtered(self):
-        result = calculate_best_fix_version([None, "1.0.0"])
-        assert result == "1.0.0"
-
-    def test_all_none_returns_unknown(self):
-        assert calculate_best_fix_version([None, None]) == "unknown"
-
-    def test_complex_versions(self):
-        result = calculate_best_fix_version(["1.2.3", "1.2.4", "1.3.0"])
-        assert result == "1.3.0"
-
-    def test_comma_separated_in_multiple_entries(self):
-        result = calculate_best_fix_version(["1.0.0, 1.5.0", "2.0.0"])
-        assert result == "2.0.0"
-
-    def test_single_comma_separated_entry_returned_as_is(self):
-        result = calculate_best_fix_version(["1.0.0, 3.0.0, 2.0.0"])
-        assert result == "1.0.0, 3.0.0, 2.0.0"
+    @pytest.mark.parametrize(
+        ("candidates", "expected"),
+        [
+            pytest.param([], "unknown", id="empty_list"),
+            pytest.param(["1.2.3"], "1.2.3", id="single_version"),
+            pytest.param(["1.0.0", "2.0.0", "1.5.0"], "2.0.0", id="multiple_versions_returns_highest"),
+            pytest.param(["1.0.0, 2.0.0"], "1.0.0, 2.0.0", id="comma_separated_versions"),
+            pytest.param(["", " ", "  "], "unknown", id="whitespace_only_filtered"),
+            pytest.param(["", "1.0.0", " "], "1.0.0", id="mixed_whitespace_and_valid"),
+            pytest.param(["  1.0.0  ", "2.0.0"], "2.0.0", id="versions_with_leading_whitespace"),
+            pytest.param([None, "1.0.0"], "1.0.0", id="none_values_filtered"),
+            pytest.param([None, None], "unknown", id="all_none"),
+            pytest.param(["1.2.3", "1.2.4", "1.3.0"], "1.3.0", id="complex_versions"),
+            pytest.param(["1.0.0, 1.5.0", "2.0.0"], "2.0.0", id="comma_separated_in_multiple_entries"),
+            pytest.param(["1.0.0, 3.0.0, 2.0.0"], "1.0.0, 3.0.0, 2.0.0", id="single_comma_separated_entry_as_is"),
+        ],
+    )
+    def test_calculate_best_fix_version(self, candidates, expected):
+        assert calculate_best_fix_version(candidates) == expected
 
 
 def _make_recommendation(
@@ -258,6 +231,10 @@ def _make_recommendation(
     )
 
 
+def _impact(**counts: int) -> dict[str, int]:
+    return {"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0, **counts}
+
+
 class TestCalculateScore:
     def test_basic_medium_priority(self):
         rec = _make_recommendation(priority=Priority.MEDIUM)
@@ -265,190 +242,147 @@ class TestCalculateScore:
         assert isinstance(score, int)
         assert score > 0
 
-    def test_critical_higher_than_high(self):
-        critical = _make_recommendation(priority=Priority.CRITICAL)
-        high = _make_recommendation(priority=Priority.HIGH)
-        assert calculate_score(critical) > calculate_score(high)
+    @pytest.mark.parametrize(
+        ("higher", "lower"),
+        [
+            pytest.param(Priority.CRITICAL, Priority.HIGH, id="critical_over_high"),
+            pytest.param(Priority.HIGH, Priority.MEDIUM, id="high_over_medium"),
+            pytest.param(Priority.MEDIUM, Priority.LOW, id="medium_over_low"),
+        ],
+    )
+    def test_a_higher_priority_scores_higher(self, higher, lower):
+        assert calculate_score(_make_recommendation(priority=higher)) > calculate_score(
+            _make_recommendation(priority=lower)
+        )
 
-    def test_high_higher_than_medium(self):
-        high = _make_recommendation(priority=Priority.HIGH)
-        medium = _make_recommendation(priority=Priority.MEDIUM)
-        assert calculate_score(high) > calculate_score(medium)
+    @pytest.mark.parametrize(
+        ("stronger", "weaker"),
+        [
+            pytest.param(_impact(critical=3, total=3), _impact(), id="critical_findings"),
+            pytest.param(_impact(high=5, total=5), _impact(), id="high_findings"),
+            pytest.param(
+                _impact(critical=1, total=1, kev_count=2),
+                _impact(critical=1, total=1, kev_count=0),
+                id="kev",
+            ),
+            pytest.param(
+                _impact(critical=1, total=1, kev_ransomware_count=1),
+                _impact(critical=1, total=1, kev_ransomware_count=0),
+                id="kev_ransomware",
+            ),
+            pytest.param(
+                _impact(high=1, total=1, high_epss_count=3),
+                _impact(high=1, total=1, high_epss_count=0),
+                id="high_epss",
+            ),
+            pytest.param(
+                _impact(medium=1, total=1, medium_epss_count=2),
+                _impact(medium=1, total=1, medium_epss_count=0),
+                id="medium_epss",
+            ),
+            pytest.param(
+                _impact(total=1, active_exploitation_count=1),
+                _impact(total=1, active_exploitation_count=0),
+                id="active_exploitation",
+            ),
+            pytest.param(
+                _impact(total=1, reachable_count=2, reachable_critical=1, reachable_high=1),
+                _impact(total=1, reachable_count=0),
+                id="reachability",
+            ),
+            pytest.param(
+                _impact(critical=1, total=1, actionable_count=3),
+                _impact(critical=1, total=1, actionable_count=0),
+                id="actionable",
+            ),
+            pytest.param(
+                _impact(critical=1, total=1, kev_count=1, high_epss_count=1, active_exploitation_count=1),
+                _impact(critical=1, total=1, kev_count=1),
+                id="combined_threat_intel",
+            ),
+        ],
+    )
+    def test_a_stronger_impact_scores_higher(self, stronger, weaker):
+        assert calculate_score(_make_recommendation(impact=stronger)) > calculate_score(
+            _make_recommendation(impact=weaker)
+        )
 
-    def test_medium_higher_than_low(self):
-        medium = _make_recommendation(priority=Priority.MEDIUM)
-        low = _make_recommendation(priority=Priority.LOW)
-        assert calculate_score(medium) > calculate_score(low)
+    @pytest.mark.parametrize(
+        ("unreachable", "comparable"),
+        [
+            # >80% unreachable reduces the score significantly.
+            pytest.param(_impact(high=5, total=5, unreachable_count=5), _impact(high=5, total=5), id="high_ratio"),
+            # >50% but <=80% unreachable reduces the score moderately.
+            pytest.param(
+                _impact(high=10, total=10, unreachable_count=6),
+                _impact(high=10, total=10),
+                id="medium_ratio",
+            ),
+        ],
+    )
+    def test_unreachable_findings_lower_the_score(self, unreachable, comparable):
+        penalised = _make_recommendation(priority=Priority.HIGH, impact=unreachable)
+        normal = _make_recommendation(priority=Priority.HIGH, impact=comparable)
 
-    def test_impact_critical_adds_score(self):
-        no_impact = _make_recommendation(impact={"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0})
-        with_impact = _make_recommendation(impact={"critical": 3, "high": 0, "medium": 0, "low": 0, "total": 3})
-        assert calculate_score(with_impact) > calculate_score(no_impact)
+        assert calculate_score(penalised) < calculate_score(normal)
 
-    def test_impact_high_adds_score(self):
-        no_impact = _make_recommendation(impact={"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 0})
-        with_impact = _make_recommendation(impact={"critical": 0, "high": 5, "medium": 0, "low": 0, "total": 5})
-        assert calculate_score(with_impact) > calculate_score(no_impact)
+    def test_a_ratio_exactly_at_the_high_threshold_takes_only_the_medium_penalty(self):
+        def _with_unreachable(count: int) -> Recommendation:
+            return _make_recommendation(
+                priority=Priority.HIGH,
+                impact={
+                    "critical": 0,
+                    "high": 10,
+                    "medium": 0,
+                    "low": 0,
+                    "total": 10,
+                    "unreachable_count": count,
+                },
+            )
 
-    def test_kev_bonus(self):
-        without_kev = _make_recommendation(
-            impact={"critical": 1, "high": 0, "medium": 0, "low": 0, "total": 1, "kev_count": 0}
-        )
-        with_kev = _make_recommendation(
-            impact={"critical": 1, "high": 0, "medium": 0, "low": 0, "total": 1, "kev_count": 2}
-        )
-        assert calculate_score(with_kev) > calculate_score(without_kev)
+        at_threshold = _with_unreachable(8)
+        above_threshold = _with_unreachable(9)
+        mid_range = _with_unreachable(6)
 
-    def test_kev_ransomware_bonus(self):
-        without = _make_recommendation(
-            impact={"critical": 1, "high": 0, "medium": 0, "low": 0, "total": 1, "kev_ransomware_count": 0}
-        )
-        with_rw = _make_recommendation(
-            impact={"critical": 1, "high": 0, "medium": 0, "low": 0, "total": 1, "kev_ransomware_count": 1}
-        )
-        assert calculate_score(with_rw) > calculate_score(without)
+        assert calculate_score(at_threshold) == calculate_score(mid_range)
+        assert calculate_score(at_threshold) > calculate_score(above_threshold)
 
-    def test_high_epss_bonus(self):
-        without = _make_recommendation(
-            impact={"critical": 0, "high": 1, "medium": 0, "low": 0, "total": 1, "high_epss_count": 0}
+    @pytest.mark.parametrize(
+        ("lighter", "heavier"),
+        [
+            pytest.param("low", "high", id="low_over_high"),
+            pytest.param("medium", "high", id="medium_over_high"),
+        ],
+    )
+    def test_a_lighter_effort_scores_higher(self, lighter, heavier):
+        assert calculate_score(_make_recommendation(effort=lighter)) > calculate_score(
+            _make_recommendation(effort=heavier)
         )
-        with_epss = _make_recommendation(
-            impact={"critical": 0, "high": 1, "medium": 0, "low": 0, "total": 1, "high_epss_count": 3}
-        )
-        assert calculate_score(with_epss) > calculate_score(without)
 
-    def test_medium_epss_bonus(self):
-        without = _make_recommendation(
-            impact={"critical": 0, "high": 0, "medium": 1, "low": 0, "total": 1, "medium_epss_count": 0}
+    @pytest.mark.parametrize(
+        ("stronger_type", "weaker_type"),
+        [
+            pytest.param(
+                RecommendationType.MALWARE_DETECTED,
+                RecommendationType.DIRECT_DEPENDENCY_UPDATE,
+                id="malware_over_direct_update",
+            ),
+            pytest.param(
+                RecommendationType.ROTATE_SECRETS,
+                RecommendationType.OUTDATED_DEPENDENCY,
+                id="rotate_secrets_over_outdated",
+            ),
+            pytest.param(
+                RecommendationType.KNOWN_EXPLOIT,
+                RecommendationType.DIRECT_DEPENDENCY_UPDATE,
+                id="known_exploit_over_direct_update",
+            ),
+        ],
+    )
+    def test_the_type_bonus_ranks_one_type_above_another(self, stronger_type, weaker_type):
+        assert calculate_score(_make_recommendation(rec_type=stronger_type)) > calculate_score(
+            _make_recommendation(rec_type=weaker_type)
         )
-        with_epss = _make_recommendation(
-            impact={"critical": 0, "high": 0, "medium": 1, "low": 0, "total": 1, "medium_epss_count": 2}
-        )
-        assert calculate_score(with_epss) > calculate_score(without)
-
-    def test_active_exploitation_bonus(self):
-        without = _make_recommendation(
-            impact={"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 1, "active_exploitation_count": 0}
-        )
-        with_exploit = _make_recommendation(
-            impact={"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 1, "active_exploitation_count": 1}
-        )
-        assert calculate_score(with_exploit) > calculate_score(without)
-
-    def test_reachability_boosts_score(self):
-        without = _make_recommendation(
-            impact={"critical": 0, "high": 0, "medium": 0, "low": 0, "total": 1, "reachable_count": 0}
-        )
-        with_reach = _make_recommendation(
-            impact={
-                "critical": 0,
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "total": 1,
-                "reachable_count": 2,
-                "reachable_critical": 1,
-                "reachable_high": 1,
-            }
-        )
-        assert calculate_score(with_reach) > calculate_score(without)
-
-    def test_unreachable_penalty_high_ratio(self):
-        # >80% unreachable reduces the score significantly.
-        normal = _make_recommendation(
-            priority=Priority.HIGH,
-            impact={"critical": 0, "high": 5, "medium": 0, "low": 0, "total": 5},
-        )
-        unreachable = _make_recommendation(
-            priority=Priority.HIGH,
-            impact={
-                "critical": 0,
-                "high": 5,
-                "medium": 0,
-                "low": 0,
-                "total": 5,
-                "unreachable_count": 5,
-            },
-        )
-        assert calculate_score(unreachable) < calculate_score(normal)
-
-    def test_unreachable_penalty_medium_ratio(self):
-        # >50% but <=80% unreachable reduces the score moderately.
-        normal = _make_recommendation(
-            priority=Priority.HIGH,
-            impact={"critical": 0, "high": 10, "medium": 0, "low": 0, "total": 10},
-        )
-        partial_unreach = _make_recommendation(
-            priority=Priority.HIGH,
-            impact={
-                "critical": 0,
-                "high": 10,
-                "medium": 0,
-                "low": 0,
-                "total": 10,
-                "unreachable_count": 6,
-            },
-        )
-        assert calculate_score(partial_unreach) < calculate_score(normal)
-
-    def test_effort_low_bonus(self):
-        low_effort = _make_recommendation(effort="low")
-        high_effort = _make_recommendation(effort="high")
-        assert calculate_score(low_effort) > calculate_score(high_effort)
-
-    def test_effort_medium_bonus(self):
-        medium_effort = _make_recommendation(effort="medium")
-        high_effort = _make_recommendation(effort="high")
-        assert calculate_score(medium_effort) > calculate_score(high_effort)
-
-    def test_type_bonus_malware_highest(self):
-        malware = _make_recommendation(rec_type=RecommendationType.MALWARE_DETECTED)
-        direct = _make_recommendation(rec_type=RecommendationType.DIRECT_DEPENDENCY_UPDATE)
-        assert calculate_score(malware) > calculate_score(direct)
-
-    def test_type_bonus_rotate_secrets(self):
-        secrets = _make_recommendation(rec_type=RecommendationType.ROTATE_SECRETS)
-        outdated = _make_recommendation(rec_type=RecommendationType.OUTDATED_DEPENDENCY)
-        assert calculate_score(secrets) > calculate_score(outdated)
-
-    def test_type_bonus_known_exploit(self):
-        exploit = _make_recommendation(rec_type=RecommendationType.KNOWN_EXPLOIT)
-        direct = _make_recommendation(rec_type=RecommendationType.DIRECT_DEPENDENCY_UPDATE)
-        assert calculate_score(exploit) > calculate_score(direct)
-
-    def test_actionable_bonus(self):
-        without = _make_recommendation(
-            impact={"critical": 1, "high": 0, "medium": 0, "low": 0, "total": 1, "actionable_count": 0}
-        )
-        with_actionable = _make_recommendation(
-            impact={"critical": 1, "high": 0, "medium": 0, "low": 0, "total": 1, "actionable_count": 3}
-        )
-        assert calculate_score(with_actionable) > calculate_score(without)
-
-    def test_combined_threat_intel(self):
-        single = _make_recommendation(
-            impact={
-                "critical": 1,
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "total": 1,
-                "kev_count": 1,
-            }
-        )
-        combined = _make_recommendation(
-            impact={
-                "critical": 1,
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "total": 1,
-                "kev_count": 1,
-                "high_epss_count": 1,
-                "active_exploitation_count": 1,
-            }
-        )
-        assert calculate_score(combined) > calculate_score(single)
 
     def test_zero_total_no_crash(self):
         # total=0 must not cause a division by zero.
@@ -476,8 +410,15 @@ class TestSampleComponents:
         assert len(shown) == AFFECTED_COMPONENTS_SHOWN
         assert total == covered
 
-    def test_duplicates_do_not_inflate_the_population(self):
-        shown, total = sample_components(["a", "b", "a", "b"])
+    @pytest.mark.parametrize(
+        "entries",
+        [
+            pytest.param(["a", "b", "a", "b"], id="duplicates"),
+            pytest.param(["a", "", "b"], id="blank_entries"),
+        ],
+    )
+    def test_only_distinct_named_components_are_listed_and_counted(self, entries):
+        shown, total = sample_components(entries)
 
         assert shown == ["a", "b"]
         assert total == 2
@@ -489,22 +430,44 @@ class TestSampleComponents:
 
         assert shown == ranked[:AFFECTED_COMPONENTS_SHOWN]
 
-    def test_blank_entries_are_neither_listed_nor_counted(self):
-        shown, total = sample_components(["a", "", "b"])
+    def test_a_card_names_twenty_components_before_it_cuts(self):
+        shown, total = sample_components(f"pkg{index:04d}" for index in range(30))
 
-        assert shown == ["a", "b"]
-        assert total == 2
+        assert len(shown) == 20
+        assert total == 30
+
+
+class TestTakeTop:
+    """Rank and population are how a card says "you are looking at a sample"."""
+
+    def test_a_population_that_exactly_fills_the_cap_is_not_advertised_as_a_sample(self):
+        taken = take_top(["a", "b", "c"], 3)
+
+        assert [candidate for _rank, candidate, _population in taken] == ["a", "b", "c"]
+        assert {(rank, population) for rank, _candidate, population in taken} == {(0, 0)}
+
+    def test_a_population_past_the_cap_ranks_what_it_emits_and_names_the_population(self):
+        taken = take_top(["a", "b", "c", "d"], 3)
+
+        assert taken == [(1, "a", 4), (2, "b", 4), (3, "c", 4)]
 
 
 class TestNameSome:
-    def test_a_list_longer_than_the_prose_allows_says_how_many_it_left_out(self):
+    @pytest.mark.parametrize(
+        ("values", "expected"),
+        [
+            pytest.param(
+                [f"v{index}" for index in range(10)],
+                "v0, v1, v2 and 7 more",
+                id="a_list_longer_than_the_prose_allows_says_how_many_it_left_out",
+            ),
+            pytest.param(["v0", "v1"], "v0, v1", id="a_list_the_prose_holds_whole_claims_nothing_more"),
+        ],
+    )
+    def test_the_prose_names_at_most_three(self, values, expected):
         named = 3
-        values = [f"v{index}" for index in range(10)]
 
-        assert name_some(values, named) == "v0, v1, v2 and 7 more"
-
-    def test_a_list_the_prose_holds_whole_claims_nothing_more(self):
-        assert name_some(["v0", "v1"], 3) == "v0, v1"
+        assert name_some(values, named) == expected
 
 
 class TestRecommendationTotal:

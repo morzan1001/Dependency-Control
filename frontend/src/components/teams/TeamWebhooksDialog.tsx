@@ -18,7 +18,7 @@ interface TeamWebhooksDialogProps {
   canDelete: boolean;
 }
 
-export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreate, canDelete }: TeamWebhooksDialogProps) {
+export function TeamWebhooksDialog({ teamId, teamName, isOpen, onClose, canCreate, canDelete }: Readonly<TeamWebhooksDialogProps>) {
   const { data: webhooks, isLoading } = useTeamWebhooks(teamId || '');
   const createMutation = useCreateTeamWebhook();
   const deleteMutation = useDeleteWebhook();

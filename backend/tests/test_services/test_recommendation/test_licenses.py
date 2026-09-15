@@ -293,3 +293,24 @@ class TestDetectLicenseDrift:
         curr = [_drift_finding("underscore", "1.0", "GPL-3.0", "strong_copyleft")]
 
         assert detect_license_drift(curr, prev) == []
+
+    def test_a_licence_change_inside_one_category_is_not_drift(self):
+        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
+        curr = [_drift_finding("a", "1.0", "Apache-2.0", "permissive")]
+
+        assert detect_license_drift(curr, prev) == []
+
+    def test_a_previous_vulnerability_finding_is_not_read_as_a_previous_licence(self):
+        prev = [
+            {
+                "type": "vulnerability",
+                "severity": "HIGH",
+                "component": "a",
+                "version": "1.0",
+                "details": {"fixed_version": "1.1"},
+                "id": "CVE-2024-0001",
+            }
+        ]
+        curr = [_drift_finding("a", "1.0", "MIT", "permissive")]
+
+        assert detect_license_drift(curr, prev) == []

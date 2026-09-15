@@ -26,7 +26,7 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(error)).toBe('Not found')
   })
 
-  it('returns joined validation errors', () => {
+  it('joins ALL validation errors and strips the "Value error, " prefix', () => {
     const error = {
       response: {
         data: {
@@ -40,8 +40,26 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(error)).toBe('Name is required\nEmail is invalid')
   })
 
+  it('serializes a validation entry that carries no msg', () => {
+    const error = { response: { data: { detail: [{ type: 'missing', loc: ['body', 'name'] }] } } }
+    expect(getErrorMessage(error)).toBe('{"type":"missing","loc":["body","name"]}')
+  })
+
+  it('serializes object details', () => {
+    const error = { response: { data: { detail: { code: 42 } } } }
+    expect(getErrorMessage(error)).toBe('{"code":42}')
+  })
+
   it('returns fallback for null', () => {
     expect(getErrorMessage(null)).toBe('An unknown error occurred')
+  })
+
+  it('returns fallback for a bare non-object', () => {
+    expect(getErrorMessage('boom')).toBe('An unknown error occurred')
+  })
+
+  it('returns fallback for an object carrying neither detail nor message', () => {
+    expect(getErrorMessage({})).toBe('An unknown error occurred')
   })
 })
 

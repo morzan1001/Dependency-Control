@@ -5,13 +5,6 @@ from pydantic import BaseModel, Field
 from app.schemas.ingest import BaseIngest
 
 
-class OpenGrepLocation(BaseModel):
-    path: str
-    start: dict[str, int]
-    end: dict[str, int]
-    lines: str | None = None
-
-
 class OpenGrepExtra(BaseModel):
     message: str | None = None
     severity: str | None = None

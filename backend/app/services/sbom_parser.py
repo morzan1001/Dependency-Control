@@ -739,12 +739,7 @@ class SBOMParser:
     def _classify_license_value(
         value: str, current_url: str | None, fallback_url: str | None = None
     ) -> tuple[str | None, str | None]:
-        """Classify a license value, returning (name_or_extracted, new_url_or_None).
-
-        Handles whether the value is a URL (try to extract SPDX id) or a plain name.
-        If a plain name has a separate fallback_url, returns that as the URL when no
-        current URL is set.
-        """
+        """Classify a license value, returning (name_or_extracted, new_url_or_None)."""
         if is_url(value):
             new_url = current_url or value
             extracted = extract_license_from_url(value)
@@ -1164,20 +1159,17 @@ class SBOMParser:
     def _build_spdx_dependency_graph(
         self, relationships: list[dict[str, Any]], doc_spdx_id: str
     ) -> tuple[set, dict[str, list], set]:
-        """
-        Build SPDX dependency-graph data used to classify direct vs transitive deps.
+        """Build SPDX dependency-graph data used to classify direct vs transitive deps.
 
-        In the canonical SPDX layout (e.g. a GitHub SBOM export) the document
-        DESCRIBES a root package (the application/repo); that root's DEPENDS_ON
-        children are the DIRECT dependencies and the root package itself is NOT a
-        dependency. Only when a DESCRIBES target has no DEPENDS_ON children (minimal
-        SBOMs) is the described package itself the direct dep. Packages the document
-        points at directly via CONTAINS/DEPENDS_ON are treated as direct.
+        In the canonical SPDX layout (e.g. a GitHub SBOM export) the document DESCRIBES a root
+        package (the application/repo); that root's DEPENDS_ON children are the DIRECT dependencies
+        and the root package itself is NOT a dependency. Only when a DESCRIBES target has no
+        DEPENDS_ON children (minimal SBOMs) is the described package itself the direct dep. Packages
+        the document points at directly via CONTAINS/DEPENDS_ON are treated as direct.
 
-        Returns:
-            Tuple of (direct_package_ids, reverse_deps_graph, app_root_ids) where
-            app_root_ids are DESCRIBES targets with DEPENDS_ON children — the scanned
-            application itself, which must not be ingested as a dependency.
+        Returns (direct_package_ids, reverse_deps_graph, app_root_ids); ``app_root_ids`` are the
+        DESCRIBES targets with DEPENDS_ON children — the scanned application itself, which must not
+        be ingested as a dependency.
         """
         described_roots: set = set()  # application roots (DOCUMENT DESCRIBES ...)
         doc_direct_targets: set = set()  # packages the DOCUMENT points at directly

@@ -50,7 +50,7 @@ interface Props {
 
 export function NewReportDialog({
   open, onClose, defaultFramework = "nist-sp-800-131a", defaultFormat = "pdf",
-}: Props) {
+}: Readonly<Props>) {
   const qc = useQueryClient();
   const { hasPermission } = useAuth();
   const canGlobal = hasPermission("system:manage") || hasPermission("analytics:global");

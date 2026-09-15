@@ -355,7 +355,7 @@ class StatsAccumulator:
     def __init__(self, component_languages: Mapping[str, frozenset[str]]) -> None:
         self._component_languages = component_languages
         self._counted = 0
-        self._severity: dict[str, int] = {sev: 0 for sev in (*_BUCKETED_SEVERITIES, _UNKNOWN_SEVERITY)}
+        self._severity: dict[str, int] = dict.fromkeys((*_BUCKETED_SEVERITIES, _UNKNOWN_SEVERITY), 0)
         self._adjusted_exposure = 0.0
         self._vuln_severity: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
         self._vuln_total = 0

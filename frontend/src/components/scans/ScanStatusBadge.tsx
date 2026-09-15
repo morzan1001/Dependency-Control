@@ -3,11 +3,12 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { AlertTriangle, Loader2 } from 'lucide-react'
 import { SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS } from '@/lib/scan-status'
 
-export function ScanStatusBadge({ status, failedAnalyzers }: { status: string; failedAnalyzers?: string[] }) {
+export function ScanStatusBadge({ status, failedAnalyzers }: Readonly<{ status: string; failedAnalyzers?: string[] }>) {
   if (status === SCAN_STATUS_COMPLETED_WITH_ERRORS) {
     const failed = failedAnalyzers?.filter(Boolean) ?? []
+    const plural = failed.length > 1 ? 's' : ''
     const detail = failed.length > 0
-      ? `Failed analyzer${failed.length > 1 ? 's' : ''}: ${failed.join(', ')}`
+      ? `Failed analyzer${plural}: ${failed.join(', ')}`
       : 'One or more analyzers returned partial results.'
     const badge = (
       <Badge

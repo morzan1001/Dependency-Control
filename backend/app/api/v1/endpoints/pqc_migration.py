@@ -23,7 +23,7 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 
 
-@router.get("/pqc-migration", response_model=MigrationPlanResponse, responses=RESP_403)
+@router.get("/pqc-migration", responses=RESP_403)
 async def get_pqc_migration_plan(
     background_tasks: BackgroundTasks,
     scope: Literal["project", "team", "global", "user"] = Query(..., pattern="^(project|team|global|user)$"),

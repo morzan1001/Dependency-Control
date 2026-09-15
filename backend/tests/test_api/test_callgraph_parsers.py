@@ -264,23 +264,32 @@ class TestWriteReadMeetingPoint:
         assert lookup_component(index, "HdrHistogram:HdrHistogram")
 
 
+NODE_EDGE_PAYLOAD = {"nodes": [{"id": "app.main"}], "edges": [{"from": "app.main", "to": "requests.get"}]}
+
+
 class TestFormatDetectionRegressions:
-    def test_empty_payload_is_unknown(self):
-        assert detect_format({}) == "unknown"
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param({}, id="empty_payload"),
+            pytest.param(NODE_EDGE_PAYLOAD, id="node_edge_payload"),
+            pytest.param({"nodes": [], "edges": []}, id="empty_node_edge_payload"),
+            pytest.param({"src/index.ts": []}, id="madge_without_dependencies_or_universe"),
+        ],
+    )
+    def test_payload_is_unknown(self, payload):
+        assert detect_format(payload) == "unknown"
 
-    def test_empty_payload_is_rejected_with_400(self):
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            pytest.param({}, id="empty_payload"),
+            pytest.param(NODE_EDGE_PAYLOAD, id="node_edge_payload"),
+        ],
+    )
+    def test_payload_is_rejected_with_400(self, payload):
         with pytest.raises(HTTPException) as exc:
-            _resolve_format("auto", {})
-        assert exc.value.status_code == 400
-
-    def test_node_edge_payload_is_unknown(self):
-        data = {"nodes": [{"id": "app.main"}], "edges": [{"from": "app.main", "to": "requests.get"}]}
-        assert detect_format(data) == "unknown"
-
-    def test_node_edge_payload_is_rejected_with_400(self):
-        data = {"nodes": [{"id": "app.main"}], "edges": [{"from": "app.main", "to": "requests.get"}]}
-        with pytest.raises(HTTPException) as exc:
-            _resolve_format("auto", data)
+            _resolve_format("auto", payload)
         assert exc.value.status_code == 400
 
     def test_pyan_format_is_no_longer_parseable(self):
@@ -288,12 +297,6 @@ class TestFormatDetectionRegressions:
             _parse_callgraph("pyan", {}, "python")
         assert exc.value.status_code == 400
         assert "pyan" in exc.value.detail
-
-    def test_empty_node_edge_payload_is_unknown(self):
-        assert detect_format({"nodes": [], "edges": []}) == "unknown"
-
-    def test_madge_without_dependencies_or_universe_is_unknown(self):
-        assert detect_format({"src/index.ts": []}) == "unknown"
 
     def test_madge_without_dependencies_is_valid_alongside_a_universe(self):
         data = {"src/index.ts": [], "__analyzed_modules__": ["lodash"]}

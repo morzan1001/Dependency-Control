@@ -158,10 +158,9 @@ def select_window(deltas: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
 
     SBOM-less scans and writer failures drop out: a missing measurement is
     not a measurement of zero, and keeping it would add a structural
-    zero-update bar. The chain is then cut back to the newest run of scans
-    that really do follow one another. ``window[0]`` is the anchor: its update
-    counts are dropped because they compare against a scan outside the window,
-    while its id, date and outdated count still enter the fold.
+    zero-update bar. ``window[0]`` is the anchor: its update counts are dropped
+    because they compare against a scan outside the window, while its id, date
+    and outdated count still enter the fold.
     """
     _reject_broken_contract(deltas)
     usable = [d for d in deltas if int(d.get("dep_count", 0)) > 0 and not d.get("error")]

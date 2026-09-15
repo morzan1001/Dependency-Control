@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.core.constants import MAX_CRYPTO_HOTSPOT_PAGE
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
@@ -76,6 +77,53 @@ async def test_hotspots_respects_limit(db):
         limit=5,
     )
     assert len(result.items) <= 5
+
+
+@pytest.mark.asyncio
+async def test_a_truncated_ranking_keeps_the_keys_carrying_the_most_assets(db):
+    """Hotspots rank by asset_count, so the cut drops the smallest keys rather than the biggest."""
+    await CryptoAssetRepository(db).bulk_upsert(
+        "pr",
+        "sr",
+        [
+            _asset("r1", "MD5", CryptoPrimitive.HASH, project_id="pr", scan_id="sr"),
+            _asset("r2", "MD5", CryptoPrimitive.HASH, project_id="pr", scan_id="sr"),
+            _asset("r3", "MD5", CryptoPrimitive.HASH, project_id="pr", scan_id="sr"),
+            _asset("r4", "SHA-1", CryptoPrimitive.HASH, project_id="pr", scan_id="sr"),
+            _asset("r5", "SHA-1", CryptoPrimitive.HASH, project_id="pr", scan_id="sr"),
+            _asset("r6", "AES", CryptoPrimitive.BLOCK_CIPHER, project_id="pr", scan_id="sr"),
+        ],
+    )
+    await db.projects.insert_one({"_id": "pr", "name": "pr", "latest_scan_id": "sr"})
+    await db.scans.insert_one(
+        {"_id": "sr", "project_id": "pr", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+
+    resolved = ResolvedScope(scope="project", scope_id="pr", project_ids=["pr"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=2)
+
+    assert [(e.key, e.asset_count) for e in result.items] == [("MD5", 3), ("SHA-1", 2)]
+
+
+@pytest.mark.asyncio
+async def test_a_limit_above_the_shared_page_ceiling_is_clamped_to_it(db):
+    await CryptoAssetRepository(db).bulk_upsert(
+        "pc",
+        "sc",
+        [
+            _asset(f"c{index}", f"algo-{index}", CryptoPrimitive.HASH, project_id="pc", scan_id="sc")
+            for index in range(MAX_CRYPTO_HOTSPOT_PAGE + 5)
+        ],
+    )
+    await db.projects.insert_one({"_id": "pc", "name": "pc", "latest_scan_id": "sc"})
+    await db.scans.insert_one(
+        {"_id": "sc", "project_id": "pc", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+
+    resolved = ResolvedScope(scope="project", scope_id="pc", project_ids=["pc"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=1_000_000)
+
+    assert len(result.items) == MAX_CRYPTO_HOTSPOT_PAGE
 
 
 @pytest.mark.asyncio

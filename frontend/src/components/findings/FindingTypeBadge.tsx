@@ -14,7 +14,7 @@ interface FindingTypeBadgeProps {
   className?: string
 }
 
-export function FindingTypeBadge({ type, className = '' }: FindingTypeBadgeProps) {
+export function FindingTypeBadge({ type, className = '' }: Readonly<FindingTypeBadgeProps>) {
   const getBadgeStyle = (type: string) => {
     switch (type?.toLowerCase()) {
       case 'vulnerability':

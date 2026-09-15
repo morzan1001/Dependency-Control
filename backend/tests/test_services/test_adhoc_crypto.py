@@ -18,6 +18,7 @@ _TYPE_WEAK_KEY = "crypto_weak_key"
 _TYPE_WEAK_ALGORITHM = "crypto_weak_algorithm"
 
 _RSA_REF = "crypto/rsa-1024"
+_SECOND_RSA_REF = "crypto/rsa-1024-signing"
 _AES_REF = "crypto/aes-256"
 _MD5_REF = "crypto/md5"
 
@@ -121,6 +122,25 @@ async def test_two_distinct_crypto_assets_keep_distinct_ids():
     crypto = _crypto_findings(await _run([_cbom(_RSA_1024, _MD5)]))
 
     assert len({finding["id"] for finding in crypto}) == len(crypto) == 2
+
+
+@pytest.mark.asyncio
+async def test_two_assets_sharing_a_name_keep_distinct_ids():
+    """A CBOM names the same algorithm once per use site, so only the bom-ref tells the two uses apart."""
+    second_rsa = dict(_RSA_1024, **{"bom-ref": _SECOND_RSA_REF})
+
+    crypto = _crypto_findings(await _run([_cbom(_RSA_1024, second_rsa)]))
+
+    assert {finding["details"]["bom_ref"] for finding in crypto} == {_RSA_REF, _SECOND_RSA_REF}
+    assert len({finding["id"] for finding in crypto}) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_crypto_rule_finding_names_the_rule_analyzer_as_its_source():
+    """scanners[0] is read positionally wherever a finding's origin is reported."""
+    crypto = _crypto_findings(await _run([_cbom(_RSA_1024)]))
+
+    assert [finding["scanners"] for finding in crypto] == [["crypto_rule_analyzer"]]
 
 
 @pytest.mark.asyncio

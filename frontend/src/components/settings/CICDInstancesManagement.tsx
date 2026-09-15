@@ -547,6 +547,10 @@ function InstanceForm({
   isEdit?: boolean;
   showTypeSelector?: boolean;
 }>) {
+  const syncTeamsDescription =
+    formData.type === "gitlab"
+      ? "Sync GitLab group members to local teams"
+      : "Create a team for each GitHub team holding a repository and sync its members. The token needs read:org and must belong to a member of the organisation.";
   return (
     <div className="space-y-4">
       {showTypeSelector && (
@@ -710,9 +714,7 @@ function InstanceForm({
             <p className="text-xs text-muted-foreground">
               {!formData.access_token && !isEdit
                 ? "Requires an access token"
-                : formData.type === "gitlab"
-                  ? "Sync GitLab group members to local teams"
-                  : "Create a team for each GitHub team holding a repository and sync its members. The token needs read:org and must belong to a member of the organisation."}
+                : syncTeamsDescription}
             </p>
           </div>
           <Switch

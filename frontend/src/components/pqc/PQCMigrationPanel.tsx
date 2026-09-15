@@ -50,7 +50,7 @@ export function PQCMigrationPanel() {
   );
 }
 
-function SummaryCard({ label, value, color }: { label: string; value: number; color: string }) {
+function SummaryCard({ label, value, color }: Readonly<{ label: string; value: number; color: string }>) {
   return (
     <Card className="p-4">
       <div className="text-xs text-muted-foreground">{label}</div>

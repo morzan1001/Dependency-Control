@@ -660,3 +660,33 @@ async def test_reap_orphan_callgraphs_deletes_only_orphans_past_the_age_window()
     survivors = sorted([cg["_id"] async for cg in db.callgraphs.find({})])
     assert deleted == 1
     assert survivors == ["cg-known-old", "cg-orphan-fresh"]
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_callgraphs_spares_a_fresh_upload_reusing_an_orphaned_scan_id():
+    """An abandoned scan_id is selected from its stale rows, but a retry uploading under the
+    same scan_id right now is still in flight and must survive the sweep."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+    from app.core.housekeeping import _reap_orphan_callgraphs
+    from tests.mocks.fake_mongo import FakeDatabase
+
+    now = datetime.now(timezone.utc)
+    db = FakeDatabase()
+    await db.callgraphs.insert_many(
+        [
+            {
+                "_id": "cg-stale",
+                "scan_id": "scan-retried",
+                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+            },
+            {"_id": "cg-retry", "scan_id": "scan-retried", "created_at": now - timedelta(minutes=1)},
+        ]
+    )
+
+    deleted = await _reap_orphan_callgraphs(db)
+
+    survivors = [cg["_id"] async for cg in db.callgraphs.find({})]
+    assert deleted == 1
+    assert survivors == ["cg-retry"]

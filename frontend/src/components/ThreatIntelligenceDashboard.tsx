@@ -263,7 +263,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
           </Card>
         )}
 
-        {reachability && reachability.analyzed_count === 0 && (
+        {reachability?.analyzed_count === 0 && (
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="flex items-center gap-2 text-base">

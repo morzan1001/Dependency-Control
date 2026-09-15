@@ -193,6 +193,26 @@ class TestExtractCvss:
         score, _ = extract_cvss(data)
         assert score == 6.5
 
+    def test_source_priority_redhat_over_ghsa(self):
+        """The order of the sources, not the order the scanner happened to emit them in, decides
+        which CVSS reaches the risk score."""
+        data = {
+            "ghsa": {"V3Score": 6.5, "V3Vector": "GHSA"},
+            "redhat": {"V3Score": 7.0, "V3Vector": "RH"},
+        }
+        score, vector = extract_cvss(data)
+        assert score == 7.0
+        assert vector == "RH"
+
+    def test_v2_fallback_follows_the_same_source_priority(self):
+        data = {
+            "ghsa": {"V2Score": 4.0, "V2Vector": "GHSA"},
+            "redhat": {"V2Score": 6.0, "V2Vector": "RH"},
+        }
+        score, vector = extract_cvss(data)
+        assert score == 6.0
+        assert vector == "RH"
+
     def test_v2_when_v3_score_is_none(self):
         data = {"nvd": {"V3Score": None, "V2Score": 5.0, "V2Vector": "V2"}}
         score, vector = extract_cvss(data)
@@ -250,6 +270,17 @@ class TestExtractGrypeCvss:
             f"Expected score 9.0 from version 3.10, got {score}. "
             "This is a bug: string comparison of version strings treats '3.10' < '3.2'"
         )
+
+    def test_a_tie_on_version_keeps_the_first_block(self):
+        """Grype emits one block per source at the same CVSS version; the pick has to be the one
+        it listed first rather than whichever vendor happens to come last."""
+        cvss_list = [
+            {"version": "3.1", "metrics": {"baseScore": 9.8}, "vector": "FIRST"},
+            {"version": "3.1", "metrics": {"baseScore": 4.0}, "vector": "LAST"},
+        ]
+        score, vector = extract_grype_cvss(cvss_list)
+        assert score == 9.8
+        assert vector == "FIRST"
 
     def test_missing_version_key_treated_as_zero(self):
         cvss_list = [

@@ -99,7 +99,7 @@ function ScanSide({ label, scanId, options, onSelect, side }: {
   )
 }
 
-export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }: DeltaHeaderProps) {
+export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }: Readonly<DeltaHeaderProps>) {
   const [pages, setPages] = useState(1)
   const { data: window } = useProjectScanWindow(projectId, pages)
   const options = (window?.scans ?? []).filter((s) => isScanUsable(s.status))

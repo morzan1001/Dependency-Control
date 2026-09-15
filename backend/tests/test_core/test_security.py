@@ -2,6 +2,8 @@
 
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from app.core.security import (
     create_access_token,
     create_email_verification_token,
@@ -18,13 +20,16 @@ _EXPIRY_TOLERANCE = timedelta(seconds=5)
 
 
 class TestPasswordHashing:
-    def test_hash_and_verify(self):
+    @pytest.mark.parametrize(
+        ("candidate", "matches"),
+        [
+            pytest.param("password123", True, id="correct-password"),
+            pytest.param("wrong_password", False, id="wrong-password"),
+        ],
+    )
+    def test_verify_accepts_only_the_hashed_password(self, candidate, matches):
         hashed = get_password_hash("password123")
-        assert verify_password("password123", hashed) is True
-
-    def test_verify_wrong_password(self):
-        hashed = get_password_hash("password123")
-        assert verify_password("wrong_password", hashed) is False
+        assert verify_password(candidate, hashed) is matches
 
     def test_verify_none_hash_returns_false(self):
         assert verify_password("password", None) is False
@@ -54,23 +59,22 @@ class TestAccessToken:
         expiry = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
         assert delta - _EXPIRY_TOLERANCE <= expiry - before <= delta + _EXPIRY_TOLERANCE
 
-    def test_decode_contains_subject(self):
+    @pytest.mark.parametrize(
+        ("token_kwargs", "claim", "expected"),
+        [
+            pytest.param({}, "sub", "user123", id="subject"),
+            pytest.param({}, "type", "access", id="type"),
+            pytest.param({"permissions": ["user:read"]}, "permissions", ["user:read"], id="permissions"),
+        ],
+    )
+    def test_the_decoded_payload_carries_the_claim(self, token_kwargs, claim, expected):
         from jose import jwt
 
         from app.core.config import settings
 
-        token = create_access_token("user123")
+        token = create_access_token("user123", **token_kwargs)
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        assert payload["sub"] == "user123"
-
-    def test_decode_contains_type(self):
-        from jose import jwt
-
-        from app.core.config import settings
-
-        token = create_access_token("user123")
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        assert payload["type"] == "access"
+        assert payload[claim] == expected
 
     def test_decode_contains_jti(self):
         from jose import jwt
@@ -80,15 +84,6 @@ class TestAccessToken:
         token = create_access_token("user123")
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         assert "jti" in payload
-
-    def test_decode_contains_permissions(self):
-        from jose import jwt
-
-        from app.core.config import settings
-
-        token = create_access_token("user123", permissions=["user:read"])
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        assert payload["permissions"] == ["user:read"]
 
 
 class TestRefreshToken:
@@ -108,19 +103,19 @@ class TestEmailVerificationToken:
         result = verify_email_verification_token(token)
         assert result == "test@example.com"
 
-    def test_wrong_type_token_rejected(self):
-        token = create_access_token("test@example.com")
-        result = verify_email_verification_token(token)
-        assert result is None
-
-    def test_refresh_token_rejected(self):
-        token = create_refresh_token("test@example.com")
-        result = verify_email_verification_token(token)
-        assert result is None
-
-    def test_expired_returns_none(self):
-        token = create_access_token("test@example.com", expires_delta=timedelta(seconds=-1))
-        result = verify_email_verification_token(token)
+    @pytest.mark.parametrize(
+        "make_token",
+        [
+            pytest.param(create_access_token, id="access-token"),
+            pytest.param(create_refresh_token, id="refresh-token"),
+            pytest.param(
+                lambda subject: create_access_token(subject, expires_delta=timedelta(seconds=-1)),
+                id="expired-token",
+            ),
+        ],
+    )
+    def test_a_token_that_is_not_a_live_verification_token_is_rejected(self, make_token):
+        result = verify_email_verification_token(make_token("test@example.com"))
         assert result is None
 
 
@@ -130,13 +125,13 @@ class TestPasswordResetToken:
         result = verify_password_reset_token(token)
         assert result == "test@example.com"
 
-    def test_wrong_type_token_rejected(self):
-        token = create_access_token("test@example.com")
-        result = verify_password_reset_token(token)
-        assert result is None
-
-    def test_tampered_token_returns_none(self):
-        token = create_password_reset_token("test@example.com")
-        tampered = token[:-5] + "XXXXX"
-        result = verify_password_reset_token(tampered)
+    @pytest.mark.parametrize(
+        "make_token",
+        [
+            pytest.param(create_access_token, id="access-token"),
+            pytest.param(lambda subject: create_password_reset_token(subject)[:-5] + "XXXXX", id="tampered-signature"),
+        ],
+    )
+    def test_a_token_that_is_not_an_intact_reset_token_is_rejected(self, make_token):
+        result = verify_password_reset_token(make_token("test@example.com"))
         assert result is None

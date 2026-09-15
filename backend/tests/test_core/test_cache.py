@@ -109,7 +109,9 @@ class TestCacheKeysOsv:
 
     def test_deterministic(self):
         purl = "pkg:npm/lodash@4.17.21"
-        assert CacheKeys.osv(purl) == CacheKeys.osv(purl)
+        first = CacheKeys.osv(purl)
+        second = CacheKeys.osv(purl)
+        assert first == second
 
     def test_different_purls_differ(self):
         assert CacheKeys.osv("pkg:pypi/flask@2.0") != CacheKeys.osv("pkg:pypi/django@4.0")
@@ -261,6 +263,43 @@ class TestStampedeHolderVanishes:
             await holder
 
         assert await waiter == {"value": 42}
+
+
+class TestStampedeNegativeCaching:
+    """A failed fetch is remembered only briefly; an empty-but-real answer is not a failure."""
+
+    @pytest.mark.asyncio
+    async def test_a_failed_fetch_expires_on_the_negative_ttl_not_the_callers(self, fake_cache):
+        key = "ghsa:GHSA-xxxx-yyyy-zzzz"
+        callers_ttl = CacheTTL.GHSA_DATA
+
+        async def fetch():
+            return None
+
+        assert await fake_cache.get_or_fetch_with_lock(key, fetch, ttl_seconds=callers_ttl) is None
+
+        stored_ttl = await fake_cache._client.ttl(fake_cache._make_key(key))
+        assert stored_ttl <= CacheTTL.NEGATIVE_RESULT
+        assert stored_ttl > CacheTTL.NEGATIVE_RESULT - 60
+        assert callers_ttl > CacheTTL.NEGATIVE_RESULT
+
+    @pytest.mark.asyncio
+    async def test_an_empty_list_is_cached_as_itself_at_the_callers_ttl(self, fake_cache):
+        key = "osv:pypi:acme:1.0.0"
+        callers_ttl = CacheTTL.OSV_VULNERABILITY
+        fetches = []
+
+        async def fetch():
+            fetches.append(key)
+            return []
+
+        assert await fake_cache.get_or_fetch_with_lock(key, fetch, ttl_seconds=callers_ttl) == []
+
+        # A package with no known vulnerabilities must read back as "no vulnerabilities",
+        # not as the {} marker that means "the fetch failed".
+        assert await fake_cache.get_or_fetch_with_lock(key, fetch, ttl_seconds=callers_ttl) == []
+        assert fetches == [key]
+        assert await fake_cache._client.ttl(fake_cache._make_key(key)) > CacheTTL.NEGATIVE_RESULT
 
 
 _SUPPRESSED_KEY = "deps:pypi:acme-private:1.0.0"

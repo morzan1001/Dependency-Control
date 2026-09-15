@@ -29,7 +29,7 @@ interface Props {
   rangeEnd: Date;
 }
 
-export function TrendsTimeSeriesChart(p: Props) {
+export function TrendsTimeSeriesChart(p: Readonly<Props>) {
   const { data, isLoading, isError } = useQuery({
     queryKey: [
       "crypto-trends",

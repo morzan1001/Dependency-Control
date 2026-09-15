@@ -34,7 +34,7 @@ interface ProjectWaiversProps {
   projectId: string
 }
 
-export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
+export function ProjectWaivers({ projectId }: Readonly<ProjectWaiversProps>) {
     const queryClient = useQueryClient()
     const { permissions } = useAuth()
     const { data: project } = useProject(projectId)

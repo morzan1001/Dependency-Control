@@ -6,7 +6,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
-from app.models.invitation import ProjectInvitation, SystemInvitation
+from app.models.invitation import SystemInvitation
 
 
 class InvitationRepository:
@@ -15,36 +15,9 @@ class InvitationRepository:
         self.project_invitations = db.invitations
         self.system_invitations = db.system_invitations
         # Strong reads on token/email lookups: fresh links work immediately, used ones stop immediately.
-        self._project_primary = self.project_invitations.with_options(
-            read_preference=ReadPreference.PRIMARY,  # type: ignore[arg-type]
-        )
         self._system_primary = self.system_invitations.with_options(
             read_preference=ReadPreference.PRIMARY,  # type: ignore[arg-type]
         )
-
-    # Project Invitations
-    async def get_project_invitation(self, invitation_id: str) -> dict[str, Any] | None:
-        return await self.project_invitations.find_one({"_id": invitation_id})
-
-    async def get_project_invitation_by_token(self, token: str) -> dict[str, Any] | None:
-        return await self._project_primary.find_one({"token": token})
-
-    async def create_project_invitation(self, invitation: ProjectInvitation) -> ProjectInvitation:
-        await self.project_invitations.insert_one(invitation.model_dump(by_alias=True))
-        return invitation
-
-    async def delete_project_invitation(self, invitation_id: str) -> bool:
-        result = await self.project_invitations.delete_one({"_id": invitation_id})
-        return result.deleted_count > 0
-
-    async def find_project_invitations(
-        self,
-        project_id: str,
-        skip: int = 0,
-        limit: int = 100,
-    ) -> list[dict[str, Any]]:
-        cursor = self.project_invitations.find({"project_id": project_id}).skip(skip).limit(limit)
-        return await cursor.to_list(limit)
 
     async def delete_project_invitations_by_project(self, project_id: str) -> int:
         result = await self.project_invitations.delete_many({"project_id": project_id})
@@ -75,9 +48,6 @@ class InvitationRepository:
     async def create_system_invitation(self, invitation: SystemInvitation) -> SystemInvitation:
         await self.system_invitations.insert_one(invitation.model_dump(by_alias=True))
         return invitation
-
-    async def update_system_invitation(self, invitation_id: str, update_data: dict[str, Any]) -> None:
-        await self.system_invitations.update_one({"_id": invitation_id}, {"$set": update_data})
 
     async def delete_system_invitation(self, invitation_id: str) -> bool:
         result = await self.system_invitations.delete_one({"_id": invitation_id})

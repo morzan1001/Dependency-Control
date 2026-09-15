@@ -84,3 +84,14 @@ class TestCreateUserPrivilegeEscalation:
         result, repo = _run_create(_helpdesk_user(), [])
         repo.create.assert_called_once()
         assert result.permissions == []
+
+
+class TestCreateUserPasswordStorage:
+    def test_the_account_is_persisted_with_a_verifiable_hash_and_not_the_password(self):
+        from app.core import security
+
+        _, repo = _run_create(_helpdesk_user(), [])
+
+        persisted = repo.create.call_args.args[0]
+        assert persisted.hashed_password != VALID_PASSWORD
+        assert security.verify_password(VALID_PASSWORD, persisted.hashed_password)

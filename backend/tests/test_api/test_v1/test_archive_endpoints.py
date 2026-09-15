@@ -178,6 +178,31 @@ class TestListArchives:
         find_kwargs = mock_repo.find_by_project.call_args
         assert "branch" in str(find_kwargs)
 
+    def test_page_number_skips_whole_pages_starting_at_zero(self, admin_user):
+        """A skip off by one page would hide the newest archives while total keeps counting them."""
+        from app.api.v1.endpoints.archives import list_archives
+
+        mock_repo = MagicMock()
+        mock_repo.count_by_project = AsyncMock(return_value=0)
+        mock_repo.find_by_project = AsyncMock(return_value=[])
+
+        with (
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            patch(f"{MODULE}.is_archive_enabled", return_value=True),
+            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
+        ):
+            for page, expected_skip in ((1, 0), (2, 5), (3, 10)):
+                asyncio.run(
+                    list_archives(
+                        project_id="proj-1",
+                        current_user=admin_user,
+                        db=MagicMock(),
+                        page=page,
+                        size=5,
+                    )
+                )
+                assert mock_repo.find_by_project.call_args.kwargs["skip"] == expected_skip
+
     def test_raises_403_without_archive_read_permission(self, no_perms_user):
         from app.api.v1.endpoints.archives import list_archives
 
@@ -732,6 +757,69 @@ class TestListAllArchives:
 
 
 class TestRestoreArchivePermissions:
+    def test_project_viewer_holding_archive_restore_is_still_denied(self):
+        """archive:restore is a global grant; writing the scan back still takes the project-admin role."""
+        from app.api.v1.endpoints.archives import restore_archive
+        from app.core.permissions import Permissions
+        from app.models.project import Project, ProjectMember
+        from app.models.user import User
+
+        viewer = User(
+            id="arch-viewer-1",
+            username="archviewer",
+            email="archviewer@test.com",
+            permissions=[Permissions.PROJECT_READ, Permissions.ARCHIVE_RESTORE],
+        )
+
+        async def _run():
+            db = FakeDatabase()
+            project = Project(
+                id="proj-1",
+                name="proj-1",
+                members=[ProjectMember(user_id="arch-viewer-1", role="viewer")],
+            )
+            await db.projects.insert_one(project.model_dump(by_alias=True))
+            return await restore_archive(
+                project_id="proj-1",
+                scan_id="scan-1",
+                current_user=viewer,
+                db=db,
+            )
+
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(_run())
+
+        assert exc_info.value.status_code == 403
+
+    def test_read_all_superuser_without_a_project_role_may_not_restore(self):
+        """project:read_all is read-only; it must not open the restore write path."""
+        from app.api.v1.endpoints.archives import restore_archive
+        from app.core.permissions import Permissions
+        from app.models.project import Project
+        from app.models.user import User
+
+        reader = User(
+            id="arch-readall-1",
+            username="archreadall",
+            email="archreadall@test.com",
+            permissions=[Permissions.PROJECT_READ_ALL, Permissions.ARCHIVE_RESTORE],
+        )
+
+        async def _run():
+            db = FakeDatabase()
+            await db.projects.insert_one(Project(id="proj-1", name="proj-1").model_dump(by_alias=True))
+            return await restore_archive(
+                project_id="proj-1",
+                scan_id="scan-1",
+                current_user=reader,
+                db=db,
+            )
+
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(_run())
+
+        assert exc_info.value.status_code == 403
+
     def test_raises_403_without_archive_restore_permission(self, no_perms_user):
         from app.api.v1.endpoints.archives import restore_archive
 

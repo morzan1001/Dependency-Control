@@ -34,9 +34,6 @@ class RelativeLocationMiddleware:
     slash redirect would hand the client an absolute URL naming the internal service --
     which discloses it and resolves for nobody outside the cluster. RFC 7231 section 7.1.2
     allows a relative reference, and the client resolves it against the host it used.
-
-    A redirect to a *different* origin (the OIDC provider, the frontend) is left absolute:
-    only a self-referential one can be expressed relatively.
     """
 
     def __init__(self, app: ASGIApp) -> None:

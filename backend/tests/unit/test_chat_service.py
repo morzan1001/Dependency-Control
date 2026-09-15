@@ -32,6 +32,12 @@ async def _async_gen(chunks: list[dict[str, Any]]) -> AsyncIterator[dict[str, An
         yield c
 
 
+async def _dying_gen(chunks: list[dict[str, Any]], error: Exception) -> AsyncIterator[dict[str, Any]]:
+    for c in chunks:
+        yield c
+    raise error
+
+
 def _make_service() -> ChatService:
     db = MagicMock()
     # Stub system_settings so the config.py default for chat_max_tool_rounds applies.
@@ -116,6 +122,101 @@ async def test_send_message_auto_titles_first_message():
     assert args.args[0] == "conv-1"
     assert args.args[1] == "user-1"
     assert "first question" in args.args[2]
+
+
+@pytest.mark.asyncio
+async def test_a_later_message_does_not_retitle_the_conversation():
+    service = _make_service()
+    user = _make_user()
+    service.repo.get_conversation = AsyncMock(
+        return_value={
+            "_id": "conv-1",
+            "user_id": "user-1",
+            "title": "Renamed by the user",
+            "message_count": 7,
+        }
+    )
+
+    service.ollama.chat_stream = MagicMock(
+        return_value=_async_gen(
+            [
+                {"type": "token", "content": "ok"},
+                {"type": "done", "total_tokens": 1, "eval_rate": 50.0},
+            ]
+        )
+    )
+
+    async for _ in service.send_message("conv-1", user, "a follow-up question"):
+        pass
+
+    service.repo.update_conversation_title.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_tool_rounds_exhausted_without_text_still_answers_the_user():
+    service = _make_service()
+    user = _make_user()
+    service.db["system_settings"].find_one = AsyncMock(return_value={"chat_max_tool_rounds": 2})
+
+    def tool_only_round(messages, tools=None):
+        return _async_gen(
+            [
+                {"type": "tool_call", "function": {"name": "list_projects", "arguments": {}}},
+                {"type": "done", "total_tokens": 3, "eval_rate": 10.0},
+            ]
+        )
+
+    service.ollama.chat_stream = MagicMock(side_effect=tool_only_round)
+
+    events = [c async for c in service.send_message("conv-1", user, "why is it slow?")]
+
+    assert "reasoning budget" in "".join(events)
+    assistant_call = service.repo.add_message.call_args_list[-1]
+    assert assistant_call.kwargs["role"] == "assistant"
+    assert "reasoning budget" in assistant_call.kwargs["content"]
+    assert len(assistant_call.kwargs["tool_calls"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_stream_dying_after_some_text_persists_the_partial_answer():
+    service = _make_service()
+    user = _make_user()
+    service.ollama.chat_stream = MagicMock(
+        return_value=_dying_gen(
+            [{"type": "token", "content": "Half an answer"}],
+            RuntimeError("connection reset by peer"),
+        )
+    )
+
+    with pytest.raises(RuntimeError):
+        async for _ in service.send_message("conv-1", user, "hi"):
+            pass
+
+    assistant_call = service.repo.add_message.call_args_list[-1]
+    assert assistant_call.kwargs["role"] == "assistant"
+    assert assistant_call.kwargs["content"].startswith("Half an answer")
+    assert "_[stream interrupted]_" in assistant_call.kwargs["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_stream_dying_after_a_tool_call_keeps_the_tool_result():
+    service = _make_service()
+    user = _make_user()
+    service.ollama.chat_stream = MagicMock(
+        return_value=_dying_gen(
+            [{"type": "tool_call", "function": {"name": "list_projects", "arguments": {}}}],
+            RuntimeError("connection reset by peer"),
+        )
+    )
+
+    with pytest.raises(RuntimeError):
+        async for _ in service.send_message("conv-1", user, "list projects"):
+            pass
+
+    assistant_call = service.repo.add_message.call_args_list[-1]
+    assert assistant_call.kwargs["role"] == "assistant"
+    assert [c["tool_name"] for c in assistant_call.kwargs["tool_calls"]] == ["list_projects"]
+    assert assistant_call.kwargs["content"] == "_[stream interrupted]_"
 
 
 @pytest.mark.asyncio

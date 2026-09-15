@@ -6,8 +6,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { deleteReport, downloadReport } from "@/api/compliance";
 import { useDialogState } from "@/hooks/use-dialog-state";
-import { extractErrorMessage } from "@/lib/errors";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, getErrorMessage } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
 import type { ComplianceReportMeta, ControlStatus, EvaluationCoverage, InputCoverage } from "@/types/compliance";
 
@@ -58,7 +57,7 @@ function SummaryRow({ label, value }: { readonly label: string; readonly value: 
   );
 }
 
-export function ReportDetailDrawer({ report, onClose }: Props) {
+export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
   const qc = useQueryClient();
   const confirm = useDialogState();
 
@@ -71,7 +70,7 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
       onClose();
     },
     onError: (e: unknown) => {
-      toast.error(`Failed to delete: ${extractErrorMessage(e)}`);
+      toast.error(`Failed to delete: ${getErrorMessage(e)}`);
     },
   });
 
@@ -79,7 +78,7 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
     mutationFn: (r: ComplianceReportMeta) =>
       downloadReport(r._id, r.artifact_filename ?? `compliance-report-${r._id}`),
     onError: (e: unknown) => {
-      toast.error(`Failed to download: ${extractErrorMessage(e)}`);
+      toast.error(`Failed to download: ${getErrorMessage(e)}`);
     },
   });
 
