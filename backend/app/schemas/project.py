@@ -90,14 +90,6 @@ class ProjectWithTeam(Project):
     model_config = ConfigDict(from_attributes=True)
 
 
-class ProjectList(BaseModel):
-    items: list[Project]
-    total: int
-    page: int
-    size: int
-    pages: int
-
-
 class ProjectListEnriched(BaseModel):
     """Project list with team names enriched."""
 

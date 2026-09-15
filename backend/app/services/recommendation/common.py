@@ -81,20 +81,6 @@ def scorecard_details(details: Any) -> dict[str, Any]:
     return {}
 
 
-def group_findings_by_field(
-    findings: list[ModelOrDict],
-    field: str = "component",
-) -> dict[str, list[ModelOrDict]]:
-    """Group findings by `field` value, returning {value: [findings]}."""
-    grouped: dict[str, list[ModelOrDict]] = {}
-    for finding in findings:
-        key = get_attr(finding, field, "unknown") or "unknown"
-        if key not in grouped:
-            grouped[key] = []
-        grouped[key].append(finding)
-    return grouped
-
-
 def finding_cve_ids(
     finding: ModelOrDict,
     advisory_filter: Callable[[dict[str, Any]], bool] | None = None,

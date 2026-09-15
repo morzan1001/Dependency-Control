@@ -120,13 +120,3 @@ class GitLabInstanceTestConnectionResponse(BaseModel):
     gitlab_version: str | None = Field(None, description="GitLab version if successful")
     instance_name: str = Field(..., description="Name of the tested instance")
     url: str = Field(..., description="URL of the tested instance")
-
-
-class GitLabInstanceStats(BaseModel):
-    """Statistics for a GitLab instance."""
-
-    instance_id: str
-    instance_name: str
-    project_count: int = Field(..., description="Number of projects linked to this instance")
-    active_project_count: int = Field(..., description="Number of active projects")
-    last_scan_at: datetime | None = Field(None, description="Timestamp of most recent scan")

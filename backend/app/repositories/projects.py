@@ -278,12 +278,6 @@ class ProjectRepository:
     async def get_raw_by_id(self, project_id: str) -> dict[str, Any] | None:
         return await self.collection.find_one({"_id": project_id})
 
-    async def get_by_gitlab_id(self, gitlab_project_id: int) -> Project | None:
-        data = await self.collection.find_one({"gitlab_project_id": gitlab_project_id})
-        if data:
-            return Project(**data)
-        return None
-
     async def get_by_gitlab_composite_key(self, gitlab_instance_id: str, gitlab_project_id: int) -> Project | None:
         data = await self.collection.find_one(
             {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id}
@@ -307,25 +301,12 @@ class ProjectRepository:
     async def count_by_instance(self, gitlab_instance_id: str) -> int:
         return await self.collection.count_documents({"gitlab_instance_id": gitlab_instance_id})
 
-    async def get_by_github_composite_key(self, github_instance_id: str, github_repository_id: str) -> Project | None:
-        data = await self.collection.find_one(
-            {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id}
-        )
-        if data:
-            return Project(**data)
-        return None
-
     async def get_raw_by_github_composite_key(
         self, github_instance_id: str, github_repository_id: str
     ) -> dict[str, Any] | None:
         return await self.collection.find_one(
             {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id}
         )
-
-    async def list_by_github_instance(self, github_instance_id: str, skip: int = 0, limit: int = 100) -> list[Project]:
-        cursor = self.collection.find({"github_instance_id": github_instance_id}).skip(skip).limit(limit)
-        docs = await cursor.to_list(length=limit)
-        return [Project(**doc) for doc in docs]
 
     async def count_by_github_instance(self, github_instance_id: str) -> int:
         return await self.collection.count_documents({"github_instance_id": github_instance_id})
@@ -502,7 +483,3 @@ class ProjectRepository:
     ) -> AsyncGenerator[Project, None]:
         async for doc in self.collection.find(query or {}, projection):
             yield Project(**doc)
-
-    async def iterate_all(self, query: dict[str, Any] | None = None) -> AsyncGenerator[dict[str, Any], None]:
-        async for doc in self.collection.find(query or {}):
-            yield doc

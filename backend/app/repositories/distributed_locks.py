@@ -56,8 +56,3 @@ class DistributedLocksRepository:
         now = datetime.now(timezone.utc)
         lock = await self._reads.find_one({"_id": lock_name, "expires_at": {"$gt": now}})
         return lock is not None
-
-    async def cleanup_expired_locks(self) -> int:
-        now = datetime.now(timezone.utc)
-        result = await self.collection.delete_many({"expires_at": {"$lt": now}})
-        return result.deleted_count

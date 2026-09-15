@@ -169,9 +169,6 @@ class AnalysisWorkerManager:
         while self._active_scans:
             await asyncio.sleep(0.5)
 
-    def is_shutting_down(self) -> bool:
-        return self._shutting_down
-
     async def add_job(self, scan_id: str) -> bool:
         """Add a scan to the queue. Returns False when rejected during shutdown."""
         if self._shutting_down:

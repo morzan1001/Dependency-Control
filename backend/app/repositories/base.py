@@ -103,14 +103,6 @@ class BaseRepository[T: BaseModel]:
         with track_db_operation(self.collection_name, "insert_one"):
             await self.collection.insert_one(data)
 
-    async def create_many(self, models: list[T]) -> int:
-        if not models:
-            return 0
-        docs = [m.model_dump(by_alias=True) for m in models]
-        with track_db_operation(self.collection_name, "insert_many"):
-            result = await self.collection.insert_many(docs)
-        return len(result.inserted_ids)
-
     async def create_many_raw(self, docs: list[dict[str, Any]]) -> int:
         """ordered=False so a duplicate-key error doesn't abort the batch."""
         if not docs:
