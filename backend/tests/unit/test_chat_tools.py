@@ -53,3 +53,9 @@ def test_tool_definitions_match_registry():
 
     for tool_name in all_tools:
         assert tool_name in definition_names, f"Tool {tool_name} missing from definitions"
+
+
+def test_dispatch_table_covers_exactly_the_declared_tools():
+    """A declared tool absent from the table answers "Unknown tool" instead of failing loudly."""
+    declared = {t["function"]["name"] for t in get_tool_definitions()}
+    assert set(ChatToolRegistry._HANDLERS) == declared
