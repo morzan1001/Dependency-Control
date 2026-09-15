@@ -188,17 +188,27 @@ def test_client():
 
 
 class TestHTTP422OnOutOfBoundsParams:
-    def test_read_projects_limit_too_large_returns_422(self, test_client):
-        r = test_client.get("/projects/", params={"limit": 10_000_000})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_projects_limit_zero_returns_422(self, test_client):
-        r = test_client.get("/projects/", params={"limit": 0})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_projects_skip_negative_returns_422(self, test_client):
-        r = test_client.get("/projects/", params={"skip": -1})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
+    @pytest.mark.parametrize(
+        ("path", "params"),
+        [
+            pytest.param("/projects/", {"limit": 10_000_000}, id="projects_limit_too_large"),
+            pytest.param("/projects/", {"limit": 0}, id="projects_limit_zero"),
+            pytest.param("/projects/", {"skip": -1}, id="projects_skip_negative"),
+            pytest.param("/projects/scans", {"limit": 10_000_000}, id="all_scans_limit_too_large"),
+            pytest.param("/projects/scans", {"limit": 0}, id="all_scans_limit_zero"),
+            pytest.param("/projects/scans", {"skip": -1}, id="all_scans_skip_negative"),
+            pytest.param("/projects/proj-1/scans", {"limit": 10_000_000}, id="project_scans_limit_too_large"),
+            pytest.param("/projects/proj-1/scans", {"limit": 0}, id="project_scans_limit_zero"),
+            pytest.param("/projects/proj-1/scans", {"skip": -1}, id="project_scans_skip_negative"),
+            pytest.param("/projects/scans/scan-1/findings", {"limit": 10_000_000}, id="findings_limit_too_large"),
+            pytest.param("/projects/scans/scan-1/findings", {"limit": 0}, id="findings_limit_zero"),
+            pytest.param("/projects/scans/scan-1/findings", {"skip": -1}, id="findings_skip_negative"),
+            pytest.param("/projects/scans/scan-1/findings", {"limit": 501}, id="findings_limit_just_over_cap"),
+        ],
+    )
+    def test_out_of_bounds_pagination_params_return_422(self, test_client, path, params):
+        r = test_client.get(path, params=params)
+        assert r.status_code == 422, f"Expected 422 for {params}, got {r.status_code}: {r.text}"
 
     def test_read_projects_valid_params_not_422(self, test_client):
         with (
@@ -219,42 +229,6 @@ class TestHTTP422OnOutOfBoundsParams:
             r = test_client.get("/projects/", params={"limit": 20, "skip": 0})
         assert r.status_code != 422, f"Valid params should not return 422, got {r.status_code}"
 
-    def test_read_all_scans_limit_too_large_returns_422(self, test_client):
-        r = test_client.get("/projects/scans", params={"limit": 10_000_000})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_all_scans_limit_zero_returns_422(self, test_client):
-        r = test_client.get("/projects/scans", params={"limit": 0})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_all_scans_skip_negative_returns_422(self, test_client):
-        r = test_client.get("/projects/scans", params={"skip": -1})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_project_scans_limit_too_large_returns_422(self, test_client):
-        r = test_client.get("/projects/proj-1/scans", params={"limit": 10_000_000})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_project_scans_limit_zero_returns_422(self, test_client):
-        r = test_client.get("/projects/proj-1/scans", params={"limit": 0})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_project_scans_skip_negative_returns_422(self, test_client):
-        r = test_client.get("/projects/proj-1/scans", params={"skip": -1})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_scan_findings_limit_too_large_returns_422(self, test_client):
-        r = test_client.get("/projects/scans/scan-1/findings", params={"limit": 10_000_000})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_scan_findings_limit_zero_returns_422(self, test_client):
-        r = test_client.get("/projects/scans/scan-1/findings", params={"limit": 0})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    def test_read_scan_findings_skip_negative_returns_422(self, test_client):
-        r = test_client.get("/projects/scans/scan-1/findings", params={"skip": -1})
-        assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
     def _patched_findings_call(self, test_client, limit):
         """Fire a findings request with handler internals stubbed so only Query validation decides 422."""
         with (
@@ -270,15 +244,8 @@ class TestHTTP422OnOutOfBoundsParams:
             mock_repo_cls.return_value = mock_repo
             return test_client.get("/projects/scans/scan-1/findings", params={"limit": limit})
 
-    def test_read_scan_findings_limit_200_accepted(self, test_client):
-        """FindingsTable.tsx sends limit=200; it must NOT 422."""
-        r = self._patched_findings_call(test_client, 200)
-        assert r.status_code != 422, f"limit=200 must be accepted, got {r.status_code}: {r.text}"
-
-    def test_read_scan_findings_limit_500_accepted(self, test_client):
-        r = self._patched_findings_call(test_client, 500)
-        assert r.status_code != 422, f"limit=500 must be accepted, got {r.status_code}: {r.text}"
-
-    def test_read_scan_findings_limit_501_returns_422(self, test_client):
-        r = test_client.get("/projects/scans/scan-1/findings", params={"limit": 501})
-        assert r.status_code == 422, f"Expected 422 for limit=501, got {r.status_code}: {r.text}"
+    # 200 is what FindingsTable.tsx sends, 500 is the agreed cap.
+    @pytest.mark.parametrize("limit", [200, 500])
+    def test_read_scan_findings_limit_accepted(self, test_client, limit):
+        r = self._patched_findings_call(test_client, limit)
+        assert r.status_code != 422, f"limit={limit} must be accepted, got {r.status_code}: {r.text}"

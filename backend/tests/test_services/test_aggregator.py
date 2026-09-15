@@ -1,5 +1,7 @@
 """Tests for the ResultAggregator."""
 
+import pytest
+
 from app.core.constants import MAX_CROSS_LINK_GROUP_SIZE
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
@@ -27,62 +29,49 @@ class TestParseVersionKey:
     def setup_method(self):
         self.agg = ResultAggregator()
 
-    def test_simple_semver(self):
-        assert parse_version_key("1.2.3") == ((0, 1), (0, 2), (0, 3))
-
-    def test_v_prefix_stripped(self):
-        assert parse_version_key("v1.2.3") == ((0, 1), (0, 2), (0, 3))
-
-    def test_uppercase_v_prefix(self):
-        assert parse_version_key("V1.2.3") == ((0, 1), (0, 2), (0, 3))
-
-    def test_prerelease_label(self):
-        result = parse_version_key("1.2.3-beta")
-        assert result == ((0, 1), (0, 2), (0, 3), (1, "beta"))
-
-    def test_prerelease_with_number(self):
-        result = parse_version_key("1.2.3-rc1")
-        # "rc1" splits into "rc" + "1" for safe comparison
-        assert result == ((0, 1), (0, 2), (0, 3), (1, "rc"), (0, 1))
+    @pytest.mark.parametrize(
+        ("version", "expected"),
+        [
+            pytest.param("1.2.3", ((0, 1), (0, 2), (0, 3)), id="simple-semver"),
+            pytest.param("v1.2.3", ((0, 1), (0, 2), (0, 3)), id="v-prefix-stripped"),
+            pytest.param("V1.2.3", ((0, 1), (0, 2), (0, 3)), id="uppercase-v-prefix"),
+            pytest.param("1.2.3-beta", ((0, 1), (0, 2), (0, 3), (1, "beta")), id="prerelease-label"),
+            # "rc1" splits into "rc" + "1" for safe comparison
+            pytest.param("1.2.3-rc1", ((0, 1), (0, 2), (0, 3), (1, "rc"), (0, 1)), id="prerelease-with-number"),
+            pytest.param("", (), id="empty-string"),
+            pytest.param("42", ((0, 42),), id="single-number"),
+        ],
+    )
+    def test_version_parses_to_expected_key(self, version, expected):
+        assert parse_version_key(version) == expected
 
     def test_numeric_parts_have_int_values(self):
         result = parse_version_key("10.20.30")
         assert all(flag == 0 and isinstance(val, int) for flag, val in result)
 
-    def test_comparison_works_correctly(self):
-        """Higher versions should compare as greater."""
-        v1 = parse_version_key("1.2.3")
-        v2 = parse_version_key("1.2.4")
-        assert v2 > v1
+    @pytest.mark.parametrize(
+        ("lower", "higher"),
+        [
+            pytest.param("1.2.3", "1.2.4", id="patch-bump"),
+            pytest.param("1.9.9", "2.0.0", id="major-bump"),
+            pytest.param("0.6.0+incompatible", "0.7.0", id="go-incompatible-suffix"),
+        ],
+    )
+    def test_higher_version_compares_as_greater(self, lower, higher):
+        assert parse_version_key(higher) > parse_version_key(lower)
 
-    def test_comparison_major_version(self):
-        v1 = parse_version_key("1.9.9")
-        v2 = parse_version_key("2.0.0")
-        assert v2 > v1
-
-    def test_empty_string(self):
-        assert parse_version_key("") == ()
-
-    def test_single_number(self):
-        assert parse_version_key("42") == ((0, 42),)
-
-    def test_mixed_alphanumeric_comparison_safe(self):
-        """Comparing '3.0.0a1' with '3.0.0' must not raise TypeError."""
-        v1 = parse_version_key("3.0.0")
-        v2 = parse_version_key("3.0.0a1")
-        assert (v2 > v1) or (v2 <= v1)
-
-    def test_prerelease_vs_release_comparison_safe(self):
-        """Comparing versions with and without pre-release tags must not crash."""
-        v1 = parse_version_key("1.2.3")
-        v2 = parse_version_key("1.2.3rc1")
-        assert (v1 > v2) or (v1 <= v2)
-
-    def test_go_incompatible_suffix_safe(self):
-        """Go versions like '0.6.0+incompatible' must compare safely."""
-        v1 = parse_version_key("0.6.0+incompatible")
-        v2 = parse_version_key("0.7.0")
-        assert v2 > v1
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [
+            pytest.param("3.0.0a1", "3.0.0", id="alphanumeric-vs-release"),
+            pytest.param("1.2.3", "1.2.3rc1", id="release-vs-prerelease"),
+        ],
+    )
+    def test_mixed_version_shapes_compare_without_raising(self, left, right):
+        """A TypeError, not an unexpected ordering, is what these guard against."""
+        parsed_left = parse_version_key(left)
+        parsed_right = parse_version_key(right)
+        assert (parsed_left > parsed_right) or (parsed_left <= parsed_right)
 
 
 class TestNormalizeVersion:
@@ -91,37 +80,23 @@ class TestNormalizeVersion:
     def setup_method(self):
         self.agg = ResultAggregator()
 
-    def test_go_prefix_stripped(self):
-        assert normalize_version("go1.25.4") == "1.25.4"
-
-    def test_v_prefix_stripped(self):
-        assert normalize_version("v1.25.4") == "1.25.4"
-
-    def test_plain_version_unchanged(self):
-        assert normalize_version("1.25.4") == "1.25.4"
-
-    def test_empty_returns_unknown(self):
-        assert normalize_version("") == "unknown"
-
-    def test_none_returns_unknown(self):
-        assert normalize_version(None) == "unknown"
-
-    def test_go_without_digit_not_stripped(self):
-        """'gomodule' should NOT be stripped - only 'go' followed by digit."""
-        result = normalize_version("gomodule")
-        assert result == "gomodule"
-
-    def test_v_without_digit_not_stripped(self):
-        """'version' should NOT be stripped - only 'v' followed by digit."""
-        result = normalize_version("version")
-        assert result == "version"
-
-    def test_uppercase_preserved_after_lowering(self):
-        """Version strings should be lowercased."""
-        assert normalize_version("V2.0.0") == "2.0.0"
-
-    def test_whitespace_stripped(self):
-        assert normalize_version("  1.0.0  ") == "1.0.0"
+    @pytest.mark.parametrize(
+        ("version", "expected"),
+        [
+            pytest.param("go1.25.4", "1.25.4", id="go-prefix-stripped"),
+            pytest.param("v1.25.4", "1.25.4", id="v-prefix-stripped"),
+            pytest.param("1.25.4", "1.25.4", id="plain-version-unchanged"),
+            pytest.param("", "unknown", id="empty-returns-unknown"),
+            pytest.param(None, "unknown", id="none-returns-unknown"),
+            # Only a prefix followed by a digit is a version prefix.
+            pytest.param("gomodule", "gomodule", id="go-without-digit-not-stripped"),
+            pytest.param("version", "version", id="v-without-digit-not-stripped"),
+            pytest.param("V2.0.0", "2.0.0", id="uppercase-lowered"),
+            pytest.param("  1.0.0  ", "1.0.0", id="whitespace-stripped"),
+        ],
+    )
+    def test_version_normalizes_to_expected_string(self, version, expected):
+        assert normalize_version(version) == expected
 
 
 class TestNormalizeComponent:
@@ -130,17 +105,17 @@ class TestNormalizeComponent:
     def setup_method(self):
         self.agg = ResultAggregator()
 
-    def test_lowercases(self):
-        assert normalize_component("Lodash") == "lodash"
-
-    def test_strips_whitespace(self):
-        assert normalize_component("  requests  ") == "requests"
-
-    def test_empty_returns_unknown(self):
-        assert normalize_component("") == "unknown"
-
-    def test_none_returns_unknown(self):
-        assert normalize_component(None) == "unknown"
+    @pytest.mark.parametrize(
+        ("component", "expected"),
+        [
+            pytest.param("Lodash", "lodash", id="lowercased"),
+            pytest.param("  requests  ", "requests", id="whitespace-stripped"),
+            pytest.param("", "unknown", id="empty-returns-unknown"),
+            pytest.param(None, "unknown", id="none-returns-unknown"),
+        ],
+    )
+    def test_component_normalizes_to_expected_string(self, component, expected):
+        assert normalize_component(component) == expected
 
 
 class TestExtractArtifactName:
@@ -149,30 +124,21 @@ class TestExtractArtifactName:
     def setup_method(self):
         self.agg = ResultAggregator()
 
-    def test_plain_name(self):
-        assert extract_artifact_name("lodash") == "lodash"
-
-    def test_maven_group_artifact(self):
-        assert extract_artifact_name("org.postgresql:postgresql") == "postgresql"
-
-    def test_npm_scoped(self):
-        assert extract_artifact_name("@angular/core") == "core"
-
-    def test_case_insensitive(self):
-        assert extract_artifact_name("Lodash") == "lodash"
-
-    def test_whitespace_stripped(self):
-        assert extract_artifact_name("  lodash  ") == "lodash"
-
-    def test_empty_returns_unknown(self):
-        assert extract_artifact_name("") == "unknown"
-
-    def test_none_returns_unknown(self):
-        assert extract_artifact_name(None) == "unknown"
-
-    def test_colon_only_takes_last(self):
-        """'com.google.guava:guava' -> 'guava'."""
-        assert extract_artifact_name("com.google.guava:guava") == "guava"
+    @pytest.mark.parametrize(
+        ("component", "expected"),
+        [
+            pytest.param("lodash", "lodash", id="plain-name"),
+            pytest.param("org.postgresql:postgresql", "postgresql", id="maven-group-artifact"),
+            pytest.param("com.google.guava:guava", "guava", id="maven-only-last-segment-after-colon"),
+            pytest.param("@angular/core", "core", id="npm-scoped"),
+            pytest.param("Lodash", "lodash", id="case-insensitive"),
+            pytest.param("  lodash  ", "lodash", id="whitespace-stripped"),
+            pytest.param("", "unknown", id="empty-returns-unknown"),
+            pytest.param(None, "unknown", id="none-returns-unknown"),
+        ],
+    )
+    def test_artifact_name_extracted_from_component(self, component, expected):
+        assert extract_artifact_name(component) == expected
 
 
 class TestCalculateAggregatedFixedVersion:
@@ -181,31 +147,31 @@ class TestCalculateAggregatedFixedVersion:
     def setup_method(self):
         self.agg = ResultAggregator()
 
-    def test_single_fix(self):
-        result = calculate_aggregated_fixed_version(["1.2.5"])
-        assert result == "1.2.5"
+    @pytest.mark.parametrize(
+        ("fixes", "expected"),
+        [
+            pytest.param(["1.2.5"], "1.2.5", id="single-fix"),
+            pytest.param(["1.2.3", "1.2.5"], "1.2.5", id="two-vulns-same-major-picks-highest"),
+        ],
+    )
+    def test_one_major_line_answers_with_one_version(self, fixes, expected):
+        assert calculate_aggregated_fixed_version(fixes) == expected
 
-    def test_two_vulns_same_major(self):
-        """Two vulns fixed in same major line - pick the highest."""
-        result = calculate_aggregated_fixed_version(["1.2.3", "1.2.5"])
-        assert result == "1.2.5"
-
-    def test_two_vulns_different_majors(self):
-        """Two vulns with fixes in two major lines - return both."""
-        result = calculate_aggregated_fixed_version(["1.2.5, 2.0.1", "1.2.6, 2.0.3"])
-        # For major 1: max(1.2.5, 1.2.6) = 1.2.6
-        # For major 2: max(2.0.1, 2.0.3) = 2.0.3
-        assert "1.2.6" in result
-        assert "2.0.3" in result
+    @pytest.mark.parametrize(
+        ("fixes", "first", "second"),
+        [
+            # Per major line the highest fix wins: max(1.2.5, 1.2.6) and max(2.0.1, 2.0.3).
+            pytest.param(["1.2.5, 2.0.1", "1.2.6, 2.0.3"], "1.2.6", "2.0.3", id="two-vulns-two-majors"),
+            pytest.param(["1.5.0, 2.1.0"], "1.5.0", "2.1.0", id="one-vuln-two-majors"),
+        ],
+    )
+    def test_every_major_line_that_covers_all_vulns_is_returned(self, fixes, first, second):
+        result = calculate_aggregated_fixed_version(fixes)
+        assert first in result
+        assert second in result
 
     def test_empty_list_returns_none(self):
         assert calculate_aggregated_fixed_version([]) is None
-
-    def test_single_vuln_multiple_major_fixes(self):
-        """One vuln with fixes in multiple majors."""
-        result = calculate_aggregated_fixed_version(["1.5.0, 2.1.0"])
-        assert "1.5.0" in result
-        assert "2.1.0" in result
 
     def test_major_must_cover_all_vulns(self):
         """If a major version only covers some vulns, it should be excluded."""
@@ -217,20 +183,16 @@ class TestCalculateAggregatedFixedVersion:
         # Major 1 should not be in result since it doesn't cover vuln 2
         assert "1.5.0" not in result
 
-    def test_v_prefix_handled(self):
-        """Version strings with v prefix should be parsed correctly."""
-        result = calculate_aggregated_fixed_version(["v1.2.3"])
-        assert result is not None
-
-    def test_mixed_prerelease_versions_no_crash(self):
-        """Versions with alphanumeric parts like '3.0.0a1' must not crash."""
-        result = calculate_aggregated_fixed_version(["3.0.0a1", "3.0.1"])
-        assert result is not None
-
-    def test_rc_versions_no_crash(self):
-        """RC versions compared with release versions must not crash."""
-        result = calculate_aggregated_fixed_version(["1.2.3rc1, 2.0.0", "1.2.4, 2.0.1"])
-        assert result is not None
+    @pytest.mark.parametrize(
+        "fixes",
+        [
+            pytest.param(["v1.2.3"], id="v-prefix"),
+            pytest.param(["3.0.0a1", "3.0.1"], id="alphanumeric-prerelease"),
+            pytest.param(["1.2.3rc1, 2.0.0", "1.2.4, 2.0.1"], id="rc-against-release"),
+        ],
+    )
+    def test_unusual_version_shapes_still_answer_a_fix(self, fixes):
+        assert calculate_aggregated_fixed_version(fixes) is not None
 
 
 class TestMergeVulnerabilityIntoList:
@@ -322,47 +284,19 @@ class TestMergeVulnerabilityIntoList:
         assert target[0]["cvss_score"] == 9.8
         assert target[0]["cvss_vector"] == "new"
 
-    def test_fixed_version_unions_both_entries(self):
-        target = [
-            {
-                "id": "CVE-1",
-                "aliases": [],
-                "scanners": [],
-                "fixed_version": "1.2.3",
-            }
-        ]
-        entry = {
-            "id": "CVE-1",
-            "aliases": [],
-            "scanners": [],
-            "fixed_version": "1.2.4",
-        }
+    @pytest.mark.parametrize(
+        ("target_fixed", "entry_fixed", "expected"),
+        [
+            pytest.param("1.2.3", "1.2.4", "1.2.3, 1.2.4", id="unions-both-entries"),
+            pytest.param("2.21.4, 2.18.8", "2.21.4, 2.2.0", "2.2.0, 2.18.8, 2.21.4", id="deduplicated-and-ordered"),
+            pytest.param(None, "1.2.3", "1.2.3", id="added-when-target-has-none"),
+        ],
+    )
+    def test_fixed_versions_of_both_entries_are_merged(self, target_fixed, entry_fixed, expected):
+        target = [{"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": target_fixed}]
+        entry = {"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": entry_fixed}
         merge_vulnerability_into_list(target, entry)
-        assert target[0]["fixed_version"] == "1.2.3, 1.2.4"
-
-    def test_fixed_version_union_deduplicates_and_orders_semantically(self):
-        target = [{"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": "2.21.4, 2.18.8"}]
-        entry = {"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": "2.21.4, 2.2.0"}
-        merge_vulnerability_into_list(target, entry)
-        assert target[0]["fixed_version"] == "2.2.0, 2.18.8, 2.21.4"
-
-    def test_fixed_version_added_if_missing(self):
-        target = [
-            {
-                "id": "CVE-1",
-                "aliases": [],
-                "scanners": [],
-                "fixed_version": None,
-            }
-        ]
-        entry = {
-            "id": "CVE-1",
-            "aliases": [],
-            "scanners": [],
-            "fixed_version": "1.2.3",
-        }
-        merge_vulnerability_into_list(target, entry)
-        assert target[0]["fixed_version"] == "1.2.3"
+        assert target[0]["fixed_version"] == expected
 
 
 def _grype_ghsa_entry():
@@ -505,10 +439,16 @@ class TestAddVulnerabilityFinding:
         assert agg.component == "lodash"
         assert len(agg.details["vulnerabilities"]) == 1
 
-    def test_same_component_version_aggregated(self):
-        """Two CVEs for same component+version should be in same aggregate."""
-        self.agg.add_finding(self._make_vuln("CVE-1", "lodash", "4.17.0"))
-        self.agg.add_finding(self._make_vuln("CVE-2", "lodash", "4.17.0"))
+    @pytest.mark.parametrize(
+        ("component", "first_version", "second_version"),
+        [
+            pytest.param("lodash", "4.17.0", "4.17.0", id="identical-version"),
+            pytest.param("golang.org/x/net", "go1.25.4", "1.25.4", id="go-prefixed-version"),
+        ],
+    )
+    def test_two_cves_on_one_component_version_share_an_aggregate(self, component, first_version, second_version):
+        self.agg.add_finding(self._make_vuln("CVE-1", component, first_version))
+        self.agg.add_finding(self._make_vuln("CVE-2", component, second_version))
         assert len(self.agg.findings) == 1
         agg = next(iter(self.agg.findings.values()))
         assert len(agg.details["vulnerabilities"]) == 2
@@ -524,14 +464,6 @@ class TestAddVulnerabilityFinding:
         self.agg.add_finding(self._make_vuln("CVE-2", "pkg", "1.0", severity="CRITICAL"))
         agg = next(iter(self.agg.findings.values()))
         assert agg.severity == "CRITICAL"
-
-    def test_go_version_normalization(self):
-        """go1.25.4 and 1.25.4 should be treated as same version."""
-        self.agg.add_finding(self._make_vuln("CVE-1", "golang.org/x/net", "go1.25.4"))
-        self.agg.add_finding(self._make_vuln("CVE-2", "golang.org/x/net", "1.25.4"))
-        assert len(self.agg.findings) == 1
-        agg = next(iter(self.agg.findings.values()))
-        assert len(agg.details["vulnerabilities"]) == 2
 
     def test_v_prefix_normalization(self):
         """v1.0.0 and 1.0.0 should be same version."""
@@ -910,17 +842,16 @@ class TestAggregateDispatch:
     def setup_method(self):
         self.agg = ResultAggregator()
 
-    def test_unknown_analyzer_ignored(self):
-        """Unknown analyzer name should not raise."""
-        self.agg.aggregate("nonexistent_scanner", {"some": "data"})
-        assert len(self.agg.findings) == 0
-
-    def test_empty_result_ignored(self):
-        self.agg.aggregate("trivy", {})
-        assert len(self.agg.findings) == 0
-
-    def test_none_result_ignored(self):
-        self.agg.aggregate("trivy", None)
+    @pytest.mark.parametrize(
+        ("analyzer", "result"),
+        [
+            pytest.param("nonexistent_scanner", {"some": "data"}, id="unknown-analyzer"),
+            pytest.param("trivy", {}, id="empty-result"),
+            pytest.param("trivy", None, id="none-result"),
+        ],
+    )
+    def test_nothing_to_dispatch_is_ignored(self, analyzer, result):
+        self.agg.aggregate(analyzer, result)
         assert len(self.agg.findings) == 0
 
     def test_error_result_creates_system_warning(self):

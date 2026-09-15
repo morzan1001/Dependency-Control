@@ -14,21 +14,19 @@ class TestParseCvssScore:
     def setup_method(self):
         self.analyzer = OSVAnalyzer()
 
-    def test_numeric_score_passthrough(self):
-        assert self.analyzer._parse_cvss_score("7.5") == 7.5
-
-    def test_zero_score(self):
-        assert self.analyzer._parse_cvss_score("0.0") == 0.0
-
-    def test_bare_v3_vector_is_scored(self):
-        # OSV rates with a vector and no number; returning None here discards the rating.
-        vector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
-        assert self.analyzer._parse_cvss_score(vector) == 9.8
-
-    def test_bare_v4_vector_is_scored(self):
-        # 9.3 as published by FIRST's own calculator for this vector.
-        v4 = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
-        assert self.analyzer._parse_cvss_score(v4) == 9.3
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            pytest.param("7.5", 7.5, id="numeric-passthrough"),
+            pytest.param("0.0", 0.0, id="zero"),
+            # OSV rates with a vector and no number; returning None here discards the rating.
+            pytest.param("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", 9.8, id="bare-v3-vector"),
+            # 9.3 as published by FIRST's own calculator for this vector.
+            pytest.param("CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", 9.3, id="bare-v4-vector"),
+        ],
+    )
+    def test_a_rated_input_yields_its_score(self, raw, expected):
+        assert self.analyzer._parse_cvss_score(raw) == expected
 
     def test_v2_vector_returns_none(self):
         # No source in the corpus carries v2; it stays unscored rather than mis-scored as v3.
@@ -60,15 +58,16 @@ class TestWithdrawnVulnerabilities:
         assert "GHSA-active" in ids
         assert "GHSA-withdrawn" not in ids
 
-    def test_no_withdrawn_field_means_active(self):
-        vulns = [{"id": "GHSA-x", "summary": "active"}]
-        normalized = self.analyzer._normalize_vulnerabilities(vulns)
-        assert len(normalized) == 1
-
-    def test_empty_withdrawn_field_treated_as_active(self):
-        # An empty string isn't a valid withdrawn timestamp; keep the vuln.
-        vulns = [{"id": "GHSA-x", "summary": "active", "withdrawn": ""}]
-        normalized = self.analyzer._normalize_vulnerabilities(vulns)
+    @pytest.mark.parametrize(
+        "vuln",
+        [
+            pytest.param({"id": "GHSA-x", "summary": "active"}, id="no-withdrawn-field"),
+            # An empty string isn't a valid withdrawn timestamp; keep the vuln.
+            pytest.param({"id": "GHSA-x", "summary": "active", "withdrawn": ""}, id="empty-withdrawn-field"),
+        ],
+    )
+    def test_a_vuln_without_a_withdrawn_timestamp_is_kept(self, vuln):
+        normalized = self.analyzer._normalize_vulnerabilities([vuln])
         assert len(normalized) == 1
 
 
@@ -98,53 +97,34 @@ class TestCvssVersionAwareSeverity:
     def setup_method(self):
         self.analyzer = OSVAnalyzer()
 
-    def test_cvss_v2_top_score_is_high_not_critical(self):
-        # v2 spec: 7.0-10.0 = HIGH; there is no CRITICAL bucket.
-        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V2", "score": "9.5"}])
-        assert result == "HIGH"
-
-    def test_cvss_v3_critical_score_is_critical(self):
-        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "9.5"}])
-        assert result == "CRITICAL"
-
-    def test_v3_preferred_over_v2_when_both_present(self):
-        # Both v2 and v3 present: prefer the newer standard.
-        result = self.analyzer._severity_from_cvss_array(
-            [
-                {"type": "CVSS_V2", "score": "9.5"},
-                {"type": "CVSS_V3", "score": "5.0"},
-            ]
-        )
-        # v3 wins -> 5.0 -> MEDIUM.
-        assert result == "MEDIUM"
-
-    def test_v4_preferred_over_v3(self):
-        # CVSS v4 supersedes v3 — pick the newest available standard.
-        result = self.analyzer._severity_from_cvss_array(
-            [
-                {"type": "CVSS_V3", "score": "9.5"},
-                {"type": "CVSS_V4", "score": "5.0"},
-            ]
-        )
-        assert result == "MEDIUM"
-
-    def test_score_above_10_is_clamped(self):
-        # CVSS scores are bounded at 10.0; a bogus 15.0 clamps into range.
-        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "15.0"}])
-        assert result == "CRITICAL"  # clamped to 10.0, still in CRITICAL bucket
-
-    def test_score_below_zero_is_clamped(self):
-        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "-1.0"}])
-        assert result == "LOW"
-
-    def test_v3_score_of_exactly_nine_is_critical(self):
-        # 9.0 is the inclusive floor of the CRITICAL band and a score NVD publishes often.
-        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "9.0"}])
-        assert result == "CRITICAL"
-
-    def test_v3_score_just_below_nine_is_high(self):
-        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "8.9"}])
-        assert result == "HIGH"
+    @pytest.mark.parametrize(
+        ("severity_array", "expected"),
+        [
+            # v2 spec: 7.0-10.0 = HIGH; there is no CRITICAL bucket.
+            pytest.param([{"type": "CVSS_V2", "score": "9.5"}], "HIGH", id="v2-top-score-is-high"),
+            pytest.param([{"type": "CVSS_V3", "score": "9.5"}], "CRITICAL", id="v3-critical-score"),
+            # Both v2 and v3 present: prefer the newer standard -> 5.0 -> MEDIUM.
+            pytest.param(
+                [{"type": "CVSS_V2", "score": "9.5"}, {"type": "CVSS_V3", "score": "5.0"}],
+                "MEDIUM",
+                id="v3-preferred-over-v2",
+            ),
+            # CVSS v4 supersedes v3 — pick the newest available standard.
+            pytest.param(
+                [{"type": "CVSS_V3", "score": "9.5"}, {"type": "CVSS_V4", "score": "5.0"}],
+                "MEDIUM",
+                id="v4-preferred-over-v3",
+            ),
+            # CVSS scores are bounded at 10.0; a bogus 15.0 clamps into range.
+            pytest.param([{"type": "CVSS_V3", "score": "15.0"}], "CRITICAL", id="score-above-10-clamped"),
+            pytest.param([{"type": "CVSS_V3", "score": "-1.0"}], "LOW", id="score-below-zero-clamped"),
+            # 9.0 is the inclusive floor of the CRITICAL band and a score NVD publishes often.
+            pytest.param([{"type": "CVSS_V3", "score": "9.0"}], "CRITICAL", id="v3-exactly-nine"),
+            pytest.param([{"type": "CVSS_V3", "score": "8.9"}], "HIGH", id="v3-just-below-nine"),
+        ],
+    )
+    def test_the_severity_comes_from_the_newest_rating_in_range(self, severity_array, expected):
+        assert self.analyzer._severity_from_cvss_array(severity_array) == expected
 
 
 class _Response:
@@ -286,37 +266,45 @@ class TestV4OnlyRecords:
     """A live census of 369 OSV records fetched for production findings found 28 rated only by
     a CVSS:4.0 vector with no database_specific.severity — 28 of the 44 that derived UNKNOWN."""
 
-    def test_a_v4_only_record_is_rated(self):
-        # CVE-2025-55163, exactly as OSV serves it.
-        record = {
-            "id": "CVE-2025-55163",
-            "severity": [
-                {"type": "CVSS_V4", "score": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N"}
-            ],
-        }
-        assert OSVAnalyzer()._extract_severity(record) == "HIGH"
-
-    def test_a_v4_record_alongside_v3_still_prefers_v4(self):
-        """_CVSS_TYPE_PREFERENCE puts v4 first; before the delegation it fell through to v3."""
-        record = {
-            "id": "CVE-2024-56326",
-            "severity": [
-                {"type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"},
-                {"type": "CVSS_V4", "score": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"},
-            ],
-        }
-        # v4 scores 5.4 (MEDIUM), the v3 vector 7.8 (HIGH).
-        assert OSVAnalyzer()._extract_severity(record) == "MEDIUM"
-
-    def test_an_unparseable_v4_vector_still_falls_through_to_v3(self):
-        record = {
-            "id": "CVE-2026-2",
-            "severity": [
-                {"type": "CVSS_V4", "score": "CVSS:4.0/AV:N/AC:L"},
-                {"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
-            ],
-        }
-        assert OSVAnalyzer()._extract_severity(record) == "CRITICAL"
-
-    def test_an_unrated_record_still_stays_unknown(self):
-        assert OSVAnalyzer()._extract_severity({"id": "CVE-2026-3", "severity": []}) == "UNKNOWN"
+    @pytest.mark.parametrize(
+        ("record", "expected"),
+        [
+            # CVE-2025-55163, exactly as OSV serves it.
+            pytest.param(
+                {
+                    "id": "CVE-2025-55163",
+                    "severity": [
+                        {"type": "CVSS_V4", "score": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N"}
+                    ],
+                },
+                "HIGH",
+                id="v4-only-record",
+            ),
+            # _CVSS_TYPE_PREFERENCE puts v4 first: v4 scores 5.4 (MEDIUM), the v3 vector 7.8 (HIGH).
+            pytest.param(
+                {
+                    "id": "CVE-2024-56326",
+                    "severity": [
+                        {"type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"},
+                        {"type": "CVSS_V4", "score": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"},
+                    ],
+                },
+                "MEDIUM",
+                id="v4-preferred-over-v3",
+            ),
+            pytest.param(
+                {
+                    "id": "CVE-2026-2",
+                    "severity": [
+                        {"type": "CVSS_V4", "score": "CVSS:4.0/AV:N/AC:L"},
+                        {"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+                    ],
+                },
+                "CRITICAL",
+                id="unparseable-v4-falls-through-to-v3",
+            ),
+            pytest.param({"id": "CVE-2026-3", "severity": []}, "UNKNOWN", id="unrated-record"),
+        ],
+    )
+    def test_the_record_is_rated_from_its_newest_usable_vector(self, record, expected):
+        assert OSVAnalyzer()._extract_severity(record) == expected

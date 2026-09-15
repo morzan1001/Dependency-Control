@@ -35,80 +35,59 @@ class TestNormalizeLicense:
     def setup_method(self):
         self.analyzer = LicenseAnalyzer()
 
-    def test_exact_match_returned_as_is(self):
-        assert normalize_license("MIT") == "MIT"
-
-    def test_exact_match_apache(self):
-        assert normalize_license("Apache-2.0") == "Apache-2.0"
-
-    def test_case_insensitive_match(self):
-        assert normalize_license("mit") == "MIT"
-
-    def test_case_insensitive_mixed(self):
-        assert normalize_license("apache-2.0") == "Apache-2.0"
-
-    def test_alias_resolution_apache(self):
-        assert normalize_license("Apache 2.0") == "Apache-2.0"
-
-    def test_alias_resolution_expat(self):
-        assert normalize_license("Expat") == "MIT"
-
-    def test_alias_resolution_mit_x11(self):
-        assert normalize_license("MIT/X11") == "MIT"
-
-    def test_alias_resolution_gplv3(self):
-        assert normalize_license("GPLv3") == "GPL-3.0"
-
-    def test_alias_resolution_agpl(self):
-        assert normalize_license("AGPL") == "AGPL-3.0"
-
-    def test_alias_case_insensitive(self):
-        assert normalize_license("apache 2.0") == "Apache-2.0"
-
-    def test_metadata_stripping_semicolon(self):
-        assert normalize_license('MIT;link="https://example.com"') == "MIT"
-
-    def test_metadata_stripping_complex(self):
-        result = normalize_license('Apache-2.0";link="https://spdx.org"')
-        assert result == "Apache-2.0"
-
-    def test_surrounding_quotes_stripped(self):
-        assert normalize_license('"MIT"') == "MIT"
-
-    def test_surrounding_spaces_stripped(self):
-        assert normalize_license("  MIT  ") == "MIT"
-
-    def test_empty_string_returns_empty(self):
-        assert normalize_license("") == ""
-
-    def test_only_semicolon_metadata_returns_empty(self):
-        assert normalize_license(';link="https://example.com"') == ""
-
-    def test_unknown_license_passthrough(self):
-        assert normalize_license("SomeCustomLicense-1.0") == "SomeCustomLicense-1.0"
-
-    def test_bsd_alias(self):
-        assert normalize_license("BSD") == "BSD-3-Clause"
-
-    def test_public_domain_alias(self):
-        assert normalize_license("Public Domain") == "Unlicense"
-
-    def test_psf_alias(self):
-        assert normalize_license("PSF") == "Python-2.0"
-
-    def test_boost_alias(self):
-        assert normalize_license("Boost") == "BSL-1.0"
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            pytest.param("MIT", "MIT", id="exact-mit"),
+            pytest.param("Apache-2.0", "Apache-2.0", id="exact-apache"),
+            pytest.param("mit", "MIT", id="lowercase-mit"),
+            pytest.param("apache-2.0", "Apache-2.0", id="lowercase-apache"),
+            pytest.param("Apache 2.0", "Apache-2.0", id="alias-apache-spaced"),
+            pytest.param("Expat", "MIT", id="alias-expat"),
+            pytest.param("MIT/X11", "MIT", id="alias-mit-x11"),
+            pytest.param("GPLv3", "GPL-3.0", id="alias-gplv3"),
+            pytest.param("AGPL", "AGPL-3.0", id="alias-agpl"),
+            pytest.param("apache 2.0", "Apache-2.0", id="alias-lowercase"),
+            pytest.param("BSD", "BSD-3-Clause", id="alias-bsd"),
+            pytest.param("Public Domain", "Unlicense", id="alias-public-domain"),
+            pytest.param("PSF", "Python-2.0", id="alias-psf"),
+            pytest.param("Boost", "BSL-1.0", id="alias-boost"),
+            pytest.param('MIT;link="https://example.com"', "MIT", id="metadata-semicolon"),
+            pytest.param('Apache-2.0";link="https://spdx.org"', "Apache-2.0", id="metadata-quote-and-semicolon"),
+            pytest.param('"MIT"', "MIT", id="surrounding-quotes"),
+            pytest.param("  MIT  ", "MIT", id="surrounding-spaces"),
+            pytest.param("", "", id="empty-string"),
+            pytest.param(';link="https://example.com"', "", id="metadata-only"),
+            pytest.param("SomeCustomLicense-1.0", "SomeCustomLicense-1.0", id="unknown-passthrough"),
+        ],
+    )
+    def test_normalizes_to_the_canonical_spdx_id(self, raw, expected):
+        assert normalize_license(raw) == expected
 
 
 class TestExtractLicenses:
     def setup_method(self):
         self.analyzer = LicenseAnalyzer()
 
-    def test_cyclonedx_license_id(self):
-        component = {"licenses": [{"license": {"id": "MIT", "url": "https://spdx.org/licenses/MIT"}}]}
+    @pytest.mark.parametrize(
+        ("component", "expected"),
+        [
+            pytest.param(
+                {"licenses": [{"license": {"id": "MIT", "url": "https://spdx.org/licenses/MIT"}}]},
+                ("MIT", "https://spdx.org/licenses/MIT"),
+                id="cyclonedx-license-id",
+            ),
+            pytest.param(
+                {"license": "MIT", "license_url": "https://example.com/MIT"},
+                ("MIT", "https://example.com/MIT"),
+                id="direct-license-field",
+            ),
+        ],
+    )
+    def test_a_lone_licence_is_extracted_with_its_url(self, component, expected):
         result = extract_licenses(component)
         assert len(result) == 1
-        assert result[0] == ("MIT", "https://spdx.org/licenses/MIT")
+        assert result[0] == expected
 
     def test_cyclonedx_license_name_fallback(self):
         component = {"licenses": [{"license": {"name": "Apache-2.0"}}]}
@@ -126,96 +105,49 @@ class TestExtractLicenses:
         result = extract_licenses(component)
         assert len(result) == 2
 
-    def test_spdx_expression_or(self):
-        component = {"licenses": [{"expression": "MIT OR Apache-2.0"}]}
-        result = extract_licenses(component)
-        ids = [r[0] for r in result]
-        assert "MIT" in ids
-        assert "Apache-2.0" in ids
+    @pytest.mark.parametrize(
+        ("component", "expected_ids"),
+        [
+            pytest.param(
+                {"licenses": [{"expression": "MIT OR Apache-2.0"}]}, ("MIT", "Apache-2.0"), id="expression-or"
+            ),
+            pytest.param(
+                {"licenses": [{"expression": "MIT AND BSD-3-Clause"}]}, ("MIT", "BSD-3-Clause"), id="expression-and"
+            ),
+            pytest.param(
+                {"licenses": [{"expression": "(MIT OR Apache-2.0)"}]},
+                ("MIT", "Apache-2.0"),
+                id="expression-parenthesised",
+            ),
+            pytest.param({"license": "MIT, Apache-2.0"}, ("MIT", "Apache-2.0"), id="direct-comma-separated"),
+            pytest.param({"license": "MIT OR Apache-2.0"}, ("MIT", "Apache-2.0"), id="direct-expression"),
+            pytest.param(
+                {"licenses": [{"license": {"id": "MIT"}}], "license": "Apache-2.0"},
+                ("MIT", "Apache-2.0"),
+                id="cyclonedx-and-direct-combined",
+            ),
+        ],
+    )
+    def test_every_licence_the_component_names_is_extracted(self, component, expected_ids):
+        ids = [r[0] for r in extract_licenses(component)]
+        for expected in expected_ids:
+            assert expected in ids
 
-    def test_spdx_expression_and(self):
-        component = {"licenses": [{"expression": "MIT AND BSD-3-Clause"}]}
-        result = extract_licenses(component)
-        ids = [r[0] for r in result]
-        assert "MIT" in ids
-        assert "BSD-3-Clause" in ids
-
-    def test_spdx_expression_with_parentheses(self):
-        component = {"licenses": [{"expression": "(MIT OR Apache-2.0)"}]}
-        result = extract_licenses(component)
-        ids = [r[0] for r in result]
-        assert "MIT" in ids
-        assert "Apache-2.0" in ids
-
-    def test_direct_license_field_simple(self):
-        component = {"license": "MIT", "license_url": "https://example.com/MIT"}
-        result = extract_licenses(component)
-        assert len(result) == 1
-        assert result[0] == ("MIT", "https://example.com/MIT")
-
-    def test_direct_license_comma_separated(self):
-        component = {"license": "MIT, Apache-2.0"}
-        result = extract_licenses(component)
-        ids = [r[0] for r in result]
-        assert "MIT" in ids
-        assert "Apache-2.0" in ids
-
-    def test_direct_license_spdx_expression(self):
-        component = {"license": "MIT OR Apache-2.0"}
-        result = extract_licenses(component)
-        ids = [r[0] for r in result]
-        assert "MIT" in ids
-        assert "Apache-2.0" in ids
-
-    def test_unknown_pattern_filtered_noassertion(self):
-        component = {"licenses": [{"license": {"id": "NOASSERTION"}}]}
-        result = extract_licenses(component)
-        assert len(result) == 0
-
-    def test_unknown_pattern_filtered_unknown(self):
-        component = {"licenses": [{"license": {"id": "UNKNOWN"}}]}
-        result = extract_licenses(component)
-        assert len(result) == 0
-
-    def test_unknown_pattern_expression_filtered(self):
-        component = {"licenses": [{"expression": "NOASSERTION"}]}
-        result = extract_licenses(component)
-        assert len(result) == 0
-
-    def test_unknown_pattern_direct_field_filtered(self):
-        component = {"license": "NOASSERTION"}
-        result = extract_licenses(component)
-        assert len(result) == 0
-
-    def test_empty_licenses_list(self):
-        component = {"licenses": []}
-        result = extract_licenses(component)
-        assert result == []
-
-    def test_no_licenses_key(self):
-        component = {"name": "some-package"}
-        result = extract_licenses(component)
-        assert result == []
-
-    def test_license_none_direct_field_ignored(self):
-        component = {"license": None}
-        result = extract_licenses(component)
-        assert result == []
-
-    def test_empty_string_direct_license_ignored(self):
-        component = {"license": "   "}
-        result = extract_licenses(component)
-        assert result == []
-
-    def test_cyclonedx_and_direct_combined(self):
-        component = {
-            "licenses": [{"license": {"id": "MIT"}}],
-            "license": "Apache-2.0",
-        }
-        result = extract_licenses(component)
-        ids = [r[0] for r in result]
-        assert "MIT" in ids
-        assert "Apache-2.0" in ids
+    @pytest.mark.parametrize(
+        "component",
+        [
+            pytest.param({"licenses": [{"license": {"id": "NOASSERTION"}}]}, id="cyclonedx-noassertion"),
+            pytest.param({"licenses": [{"license": {"id": "UNKNOWN"}}]}, id="cyclonedx-unknown"),
+            pytest.param({"licenses": [{"expression": "NOASSERTION"}]}, id="expression-noassertion"),
+            pytest.param({"license": "NOASSERTION"}, id="direct-noassertion"),
+            pytest.param({"licenses": []}, id="empty-licenses-list"),
+            pytest.param({"name": "some-package"}, id="no-licenses-key"),
+            pytest.param({"license": None}, id="direct-license-none"),
+            pytest.param({"license": "   "}, id="direct-license-blank"),
+        ],
+    )
+    def test_a_component_naming_no_licence_extracts_nothing(self, component):
+        assert extract_licenses(component) == []
 
 
 class TestEvaluateLicense:
@@ -240,100 +172,60 @@ class TestEvaluateLicense:
             policy=policy,
         )
 
-    def test_permissive_returns_none(self):
-        result = self._evaluate("MIT")
+    @pytest.mark.parametrize(
+        "spdx_id",
+        [
+            pytest.param("MIT", id="permissive-mit"),
+            pytest.param("Apache-2.0", id="permissive-apache"),
+            pytest.param("BSD-3-Clause", id="permissive-bsd"),
+            pytest.param("Unlicense", id="public-domain-unlicense"),
+            pytest.param("CC0-1.0", id="public-domain-cc0"),
+        ],
+    )
+    def test_a_licence_with_no_obligation_raises_no_issue(self, spdx_id):
+        result = self._evaluate(spdx_id)
         assert result is None
 
-    def test_permissive_apache_returns_none(self):
-        result = self._evaluate("Apache-2.0")
-        assert result is None
-
-    def test_permissive_bsd_returns_none(self):
-        result = self._evaluate("BSD-3-Clause")
-        assert result is None
-
-    def test_public_domain_returns_none(self):
-        result = self._evaluate("Unlicense")
-        assert result is None
-
-    def test_public_domain_cc0_returns_none(self):
-        result = self._evaluate("CC0-1.0")
-        assert result is None
-
-    def test_weak_copyleft_returns_info(self):
-        result = self._evaluate("LGPL-3.0")
+    @pytest.mark.parametrize(
+        ("spdx_id", "policy_kwargs", "expected_severity"),
+        [
+            pytest.param("LGPL-3.0", {}, Severity.INFO, id="weak-copyleft-lgpl"),
+            pytest.param("MPL-2.0", {}, Severity.INFO, id="weak-copyleft-mpl"),
+            pytest.param("GPL-3.0", {"allow_strong": False}, Severity.HIGH, id="strong-copyleft-disallowed"),
+            pytest.param("GPL-3.0", {"allow_strong": True}, Severity.INFO, id="strong-copyleft-allowed"),
+            pytest.param("GPL-2.0", {"allow_strong": False}, Severity.HIGH, id="strong-copyleft-gpl2-disallowed"),
+            pytest.param("AGPL-3.0", {"allow_network": False}, Severity.CRITICAL, id="network-copyleft-disallowed"),
+            pytest.param("AGPL-3.0", {"allow_network": True}, Severity.MEDIUM, id="network-copyleft-allowed"),
+            pytest.param(
+                "SSPL-1.0", {"allow_network": False}, Severity.CRITICAL, id="network-copyleft-sspl-disallowed"
+            ),
+            pytest.param("SSPL-1.0", {"allow_network": True}, Severity.MEDIUM, id="network-copyleft-sspl-allowed"),
+            pytest.param("CC-BY-NC-4.0", {}, Severity.HIGH, id="proprietary"),
+        ],
+    )
+    def test_the_severity_follows_the_category_and_the_policy(self, spdx_id, policy_kwargs, expected_severity):
+        result = self._evaluate(spdx_id, **policy_kwargs)
         assert result is not None
-        assert result["severity"] == Severity.INFO.value
+        assert result["severity"] == expected_severity.value
 
-    def test_weak_copyleft_mpl_returns_info(self):
-        result = self._evaluate("MPL-2.0")
-        assert result is not None
-        assert result["severity"] == Severity.INFO.value
-
-    def test_strong_copyleft_disallowed_returns_high(self):
-        result = self._evaluate("GPL-3.0", allow_strong=False)
-        assert result is not None
-        assert result["severity"] == Severity.HIGH.value
-
-    def test_strong_copyleft_allowed_returns_info(self):
-        result = self._evaluate("GPL-3.0", allow_strong=True)
-        assert result is not None
-        assert result["severity"] == Severity.INFO.value
-
-    def test_strong_copyleft_gpl2_disallowed(self):
-        result = self._evaluate("GPL-2.0", allow_strong=False)
-        assert result is not None
-        assert result["severity"] == Severity.HIGH.value
-
-    def test_network_copyleft_disallowed_returns_critical(self):
-        result = self._evaluate("AGPL-3.0", allow_network=False)
-        assert result is not None
-        assert result["severity"] == Severity.CRITICAL.value
-
-    def test_network_copyleft_allowed_returns_medium(self):
-        result = self._evaluate("AGPL-3.0", allow_network=True)
-        assert result is not None
-        assert result["severity"] == Severity.MEDIUM.value
-
-    def test_network_copyleft_sspl_disallowed(self):
-        result = self._evaluate("SSPL-1.0", allow_network=False)
-        assert result is not None
-        assert result["severity"] == Severity.CRITICAL.value
-
-    def test_network_copyleft_sspl_allowed(self):
-        result = self._evaluate("SSPL-1.0", allow_network=True)
-        assert result is not None
-        assert result["severity"] == Severity.MEDIUM.value
-
-    def test_proprietary_returns_high(self):
-        result = self._evaluate("CC-BY-NC-4.0")
-        assert result is not None
-        assert result["severity"] == Severity.HIGH.value
-
-    def test_issue_contains_component_name(self):
+    @pytest.mark.parametrize(
+        ("field", "expected"),
+        [
+            pytest.param("component", "test-pkg", id="component"),
+            pytest.param("version", "1.0.0", id="version"),
+            pytest.param("license", "GPL-3.0", id="license"),
+            pytest.param("category", LicenseCategory.STRONG_COPYLEFT.value, id="category"),
+            pytest.param("purl", "pkg:pypi/test-pkg@1.0.0", id="purl"),
+        ],
+    )
+    def test_the_issue_identifies_the_component_it_was_raised_for(self, field, expected):
         result = self._evaluate("GPL-3.0")
-        assert result["component"] == "test-pkg"
-
-    def test_issue_contains_version(self):
-        result = self._evaluate("GPL-3.0")
-        assert result["version"] == "1.0.0"
-
-    def test_issue_contains_license_id(self):
-        result = self._evaluate("GPL-3.0")
-        assert result["license"] == "GPL-3.0"
-
-    def test_issue_contains_category(self):
-        result = self._evaluate("GPL-3.0")
-        assert result["category"] == LicenseCategory.STRONG_COPYLEFT.value
+        assert result[field] == expected
 
     def test_issue_contains_obligations(self):
         result = self._evaluate("GPL-3.0")
         assert isinstance(result["obligations"], list)
         assert len(result["obligations"]) > 0
-
-    def test_issue_contains_purl(self):
-        result = self._evaluate("GPL-3.0")
-        assert result["purl"] == "pkg:pypi/test-pkg@1.0.0"
 
 
 class TestLicenseDatabase:
@@ -342,51 +234,34 @@ class TestLicenseDatabase:
     def setup_method(self):
         self.db = LicenseAnalyzer.LICENSE_DATABASE
 
-    def test_mit_is_permissive(self):
-        assert "MIT" in self.db
-        assert self.db["MIT"].category == LicenseCategory.PERMISSIVE
+    @pytest.mark.parametrize(
+        ("spdx_id", "category"),
+        [
+            pytest.param("MIT", LicenseCategory.PERMISSIVE, id="mit"),
+            pytest.param("Apache-2.0", LicenseCategory.PERMISSIVE, id="apache"),
+            pytest.param("ISC", LicenseCategory.PERMISSIVE, id="isc"),
+            pytest.param("LGPL-3.0", LicenseCategory.WEAK_COPYLEFT, id="lgpl"),
+            pytest.param("MPL-2.0", LicenseCategory.WEAK_COPYLEFT, id="mpl"),
+            pytest.param("GPL-3.0-only", LicenseCategory.STRONG_COPYLEFT, id="gpl3-only"),
+            pytest.param("AGPL-3.0-only", LicenseCategory.NETWORK_COPYLEFT, id="agpl3-only"),
+            pytest.param("SSPL-1.0", LicenseCategory.NETWORK_COPYLEFT, id="sspl"),
+            pytest.param("CC-BY-NC-4.0", LicenseCategory.PROPRIETARY, id="cc-by-nc"),
+            pytest.param("Unlicense", LicenseCategory.PUBLIC_DOMAIN, id="unlicense"),
+        ],
+    )
+    def test_the_licence_is_filed_under_its_category(self, spdx_id, category):
+        assert spdx_id in self.db
+        assert self.db[spdx_id].category == category
 
-    def test_apache_is_permissive(self):
-        assert "Apache-2.0" in self.db
-        assert self.db["Apache-2.0"].category == LicenseCategory.PERMISSIVE
-
-    def test_lgpl_is_weak_copyleft(self):
-        assert "LGPL-3.0" in self.db
-        assert self.db["LGPL-3.0"].category == LicenseCategory.WEAK_COPYLEFT
-
-    def test_gpl3_only_is_strong_copyleft(self):
-        assert "GPL-3.0-only" in self.db
-        assert self.db["GPL-3.0-only"].category == LicenseCategory.STRONG_COPYLEFT
-
-    def test_agpl_is_network_copyleft(self):
-        assert "AGPL-3.0-only" in self.db
-        assert self.db["AGPL-3.0-only"].category == LicenseCategory.NETWORK_COPYLEFT
-
-    def test_cc_by_nc_is_proprietary(self):
-        assert "CC-BY-NC-4.0" in self.db
-        assert self.db["CC-BY-NC-4.0"].category == LicenseCategory.PROPRIETARY
-
-    def test_unlicense_is_public_domain(self):
-        assert "Unlicense" in self.db
-        assert self.db["Unlicense"].category == LicenseCategory.PUBLIC_DOMAIN
-
-    def test_isc_is_permissive(self):
-        assert "ISC" in self.db
-        assert self.db["ISC"].category == LicenseCategory.PERMISSIVE
-
-    def test_sspl_is_network_copyleft(self):
-        assert "SSPL-1.0" in self.db
-        assert self.db["SSPL-1.0"].category == LicenseCategory.NETWORK_COPYLEFT
-
-    def test_mpl_is_weak_copyleft(self):
-        assert "MPL-2.0" in self.db
-        assert self.db["MPL-2.0"].category == LicenseCategory.WEAK_COPYLEFT
-
-    def test_mit_compatible_with_proprietary(self):
-        assert self.db["MIT"].compatible_with_proprietary is True
-
-    def test_gpl_not_compatible_with_proprietary(self):
-        assert self.db["GPL-3.0"].compatible_with_proprietary is False
+    @pytest.mark.parametrize(
+        ("spdx_id", "compatible"),
+        [
+            pytest.param("MIT", True, id="mit"),
+            pytest.param("GPL-3.0", False, id="gpl3"),
+        ],
+    )
+    def test_proprietary_compatibility_is_recorded(self, spdx_id, compatible):
+        assert self.db[spdx_id].compatible_with_proprietary is compatible
 
 
 class TestEvaluateLicenseWithContext:
@@ -412,12 +287,15 @@ class TestEvaluateLicenseWithContext:
 
     # --- Weak Copyleft + library_usage ---
 
-    def test_weak_copyleft_unmodified_returns_none(self):
-        result = self._evaluate_with_policy("LGPL-3.0", library_usage=LibraryUsage.UNMODIFIED)
-        assert result is None
-
-    def test_weak_copyleft_mpl_unmodified_returns_none(self):
-        result = self._evaluate_with_policy("MPL-2.0", library_usage=LibraryUsage.UNMODIFIED)
+    @pytest.mark.parametrize(
+        "spdx_id",
+        [
+            pytest.param("LGPL-3.0", id="lgpl"),
+            pytest.param("MPL-2.0", id="mpl"),
+        ],
+    )
+    def test_weak_copyleft_used_unmodified_returns_none(self, spdx_id):
+        result = self._evaluate_with_policy(spdx_id, library_usage=LibraryUsage.UNMODIFIED)
         assert result is None
 
     def test_weak_copyleft_modified_returns_info(self):
@@ -426,108 +304,109 @@ class TestEvaluateLicenseWithContext:
         assert result["severity"] == Severity.INFO.value
         assert result["context_reason"] is not None
 
-    def test_weak_copyleft_mixed_returns_info(self):
-        result = self._evaluate_with_policy("LGPL-3.0", library_usage=LibraryUsage.MIXED)
-        assert result is not None
-        assert result["severity"] == Severity.INFO.value
-
-    def test_weak_copyleft_default_returns_info(self):
-        result = self._evaluate_with_policy("LGPL-3.0")
+    @pytest.mark.parametrize(
+        "policy_kwargs",
+        [
+            pytest.param({"library_usage": LibraryUsage.MIXED}, id="mixed-usage"),
+            pytest.param({}, id="usage-unstated"),
+        ],
+    )
+    def test_weak_copyleft_otherwise_returns_info(self, policy_kwargs):
+        result = self._evaluate_with_policy("LGPL-3.0", **policy_kwargs)
         assert result is not None
         assert result["severity"] == Severity.INFO.value
 
     # --- Strong Copyleft + distribution_model ---
 
-    def test_strong_copyleft_internal_only_returns_info(self):
-        result = self._evaluate_with_policy("GPL-3.0", distribution_model=DistributionModel.INTERNAL_ONLY)
+    @pytest.mark.parametrize(
+        "distribution_model",
+        [
+            pytest.param(DistributionModel.INTERNAL_ONLY, id="internal-only"),
+            pytest.param(DistributionModel.OPEN_SOURCE, id="open-source"),
+        ],
+    )
+    def test_strong_copyleft_without_proprietary_distribution_is_softened_to_info(self, distribution_model):
+        result = self._evaluate_with_policy("GPL-3.0", distribution_model=distribution_model)
         assert result is not None
         assert result["severity"] == Severity.INFO.value
         assert result["context_reason"] is not None
         assert result["effective_severity"] == Severity.HIGH.value
 
-    def test_strong_copyleft_open_source_returns_info(self):
-        result = self._evaluate_with_policy("GPL-3.0", distribution_model=DistributionModel.OPEN_SOURCE)
-        assert result is not None
-        assert result["severity"] == Severity.INFO.value
-        assert result["context_reason"] is not None
-        assert result["effective_severity"] == Severity.HIGH.value
-
-    def test_strong_copyleft_distributed_not_allowed_returns_high(self):
+    @pytest.mark.parametrize(
+        ("allow_strong_copyleft", "expected_severity"),
+        [
+            pytest.param(False, Severity.HIGH, id="not-allowed"),
+            pytest.param(True, Severity.INFO, id="allowed"),
+        ],
+    )
+    def test_strong_copyleft_distributed_follows_the_policy(self, allow_strong_copyleft, expected_severity):
         result = self._evaluate_with_policy(
             "GPL-3.0",
             distribution_model=DistributionModel.DISTRIBUTED,
-            allow_strong_copyleft=False,
+            allow_strong_copyleft=allow_strong_copyleft,
         )
         assert result is not None
-        assert result["severity"] == Severity.HIGH.value
-
-    def test_strong_copyleft_distributed_allowed_returns_info(self):
-        result = self._evaluate_with_policy(
-            "GPL-3.0",
-            distribution_model=DistributionModel.DISTRIBUTED,
-            allow_strong_copyleft=True,
-        )
-        assert result is not None
-        assert result["severity"] == Severity.INFO.value
+        assert result["severity"] == expected_severity.value
 
     # --- Network Copyleft + deployment_model ---
 
-    def test_network_copyleft_cli_batch_returns_low(self):
-        result = self._evaluate_with_policy("AGPL-3.0", deployment_model=DeploymentModel.CLI_BATCH)
+    @pytest.mark.parametrize(
+        ("policy_kwargs", "expected_severity"),
+        [
+            pytest.param(
+                {"deployment_model": DeploymentModel.CLI_BATCH},
+                Severity.LOW,
+                id="cli-batch",
+            ),
+            pytest.param(
+                {
+                    "deployment_model": DeploymentModel.NETWORK_FACING,
+                    "distribution_model": DistributionModel.INTERNAL_ONLY,
+                },
+                Severity.MEDIUM,
+                id="network-facing-internal-only",
+            ),
+        ],
+    )
+    def test_network_copyleft_out_of_reach_of_users_is_softened(self, policy_kwargs, expected_severity):
+        result = self._evaluate_with_policy("AGPL-3.0", **policy_kwargs)
         assert result is not None
-        assert result["severity"] == Severity.LOW.value
+        assert result["severity"] == expected_severity.value
         assert result["context_reason"] is not None
         assert result["effective_severity"] == Severity.CRITICAL.value
 
-    def test_network_copyleft_desktop_returns_low(self):
-        result = self._evaluate_with_policy("AGPL-3.0", deployment_model=DeploymentModel.DESKTOP)
+    @pytest.mark.parametrize(
+        ("policy_kwargs", "expected_severity"),
+        [
+            pytest.param({"deployment_model": DeploymentModel.DESKTOP}, Severity.LOW, id="desktop"),
+            pytest.param({"deployment_model": DeploymentModel.EMBEDDED}, Severity.LOW, id="embedded"),
+            pytest.param(
+                {
+                    "deployment_model": DeploymentModel.NETWORK_FACING,
+                    "distribution_model": DistributionModel.DISTRIBUTED,
+                    "allow_network_copyleft": False,
+                },
+                Severity.CRITICAL,
+                id="network-facing-distributed-not-allowed",
+            ),
+            pytest.param(
+                {"deployment_model": DeploymentModel.NETWORK_FACING, "allow_network_copyleft": True},
+                Severity.MEDIUM,
+                id="network-facing-allowed",
+            ),
+        ],
+    )
+    def test_network_copyleft_severity_follows_the_deployment(self, policy_kwargs, expected_severity):
+        result = self._evaluate_with_policy("AGPL-3.0", **policy_kwargs)
         assert result is not None
-        assert result["severity"] == Severity.LOW.value
-
-    def test_network_copyleft_embedded_returns_low(self):
-        result = self._evaluate_with_policy("AGPL-3.0", deployment_model=DeploymentModel.EMBEDDED)
-        assert result is not None
-        assert result["severity"] == Severity.LOW.value
-
-    def test_network_copyleft_network_facing_internal_returns_medium(self):
-        result = self._evaluate_with_policy(
-            "AGPL-3.0",
-            deployment_model=DeploymentModel.NETWORK_FACING,
-            distribution_model=DistributionModel.INTERNAL_ONLY,
-        )
-        assert result is not None
-        assert result["severity"] == Severity.MEDIUM.value
-        assert result["context_reason"] is not None
-        assert result["effective_severity"] == Severity.CRITICAL.value
-
-    def test_network_copyleft_network_facing_distributed_not_allowed_returns_critical(self):
-        result = self._evaluate_with_policy(
-            "AGPL-3.0",
-            deployment_model=DeploymentModel.NETWORK_FACING,
-            distribution_model=DistributionModel.DISTRIBUTED,
-            allow_network_copyleft=False,
-        )
-        assert result is not None
-        assert result["severity"] == Severity.CRITICAL.value
-
-    def test_network_copyleft_network_facing_allowed_returns_medium(self):
-        result = self._evaluate_with_policy(
-            "AGPL-3.0",
-            deployment_model=DeploymentModel.NETWORK_FACING,
-            allow_network_copyleft=True,
-        )
-        assert result is not None
-        assert result["severity"] == Severity.MEDIUM.value
+        assert result["severity"] == expected_severity.value
 
     # --- context_reason and effective_severity fields ---
 
-    def test_context_reason_absent_when_not_adjusted(self):
+    @pytest.mark.parametrize("field", ["context_reason", "effective_severity"])
+    def test_the_context_fields_are_absent_when_not_adjusted(self, field):
         result = self._evaluate_with_policy("GPL-3.0")
-        assert "context_reason" not in result
-
-    def test_effective_severity_absent_when_not_adjusted(self):
-        result = self._evaluate_with_policy("GPL-3.0")
-        assert "effective_severity" not in result
+        assert field not in result
 
     def test_context_fields_present_when_adjusted(self):
         result = self._evaluate_with_policy("GPL-3.0", distribution_model=DistributionModel.INTERNAL_ONLY)
@@ -542,27 +421,23 @@ class TestSpdxExpressionEvaluation:
     def setup_method(self):
         self.analyzer = LicenseAnalyzer()
 
-    def test_parse_simple_or(self):
-        result = parse_spdx_expression("MIT OR Apache-2.0")
-        assert result == [["MIT"], ["Apache-2.0"]]
-
-    def test_parse_simple_and(self):
-        result = parse_spdx_expression("GPL-2.0 AND Classpath")
-        assert result == [["GPL-2.0", "Classpath"]]
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            pytest.param("MIT OR Apache-2.0", [["MIT"], ["Apache-2.0"]], id="or"),
+            pytest.param("GPL-2.0 AND Classpath", [["GPL-2.0", "Classpath"]], id="and"),
+            # WITH clauses are stripped: they modify but don't add licenses.
+            pytest.param("GPL-2.0 WITH Classpath-exception-2.0", [["GPL-2.0"]], id="with-exception"),
+            pytest.param("MIT", [["MIT"]], id="single-license"),
+        ],
+    )
+    def test_the_expression_parses_into_its_alternatives(self, expression, expected):
+        assert parse_spdx_expression(expression) == expected
 
     def test_parse_mixed_or_and(self):
         result = parse_spdx_expression("MIT OR GPL-2.0 AND Classpath")
         assert len(result) == 2
         assert ["MIT"] in result
-
-    def test_parse_with_exception(self):
-        """WITH clauses are stripped: they modify but don't add licenses."""
-        result = parse_spdx_expression("GPL-2.0 WITH Classpath-exception-2.0")
-        assert result == [["GPL-2.0"]]
-
-    def test_parse_single_license(self):
-        result = parse_spdx_expression("MIT")
-        assert result == [["MIT"]]
 
     def test_long_whitespace_run_between_tokens_still_splits(self):
         """Whitespace is not a separator budget: an operator stays an operator however far it sits."""
@@ -590,13 +465,19 @@ class TestSpdxExpressionEvaluation:
         assert time.perf_counter() - started < 1.0
         assert licenses == [("MIT" + " " * 50_000 + "Apache-2.0", None)]
 
-    def test_evaluate_or_picks_least_restrictive(self):
+    @pytest.mark.parametrize(
+        "or_groups",
+        [
+            # MIT is permissive -> no issue, the least restrictive alternative.
+            pytest.param([["MIT"], ["GPL-3.0"]], id="permissive-beside-strong-copyleft"),
+            pytest.param([["MIT"], ["Apache-2.0"]], id="all-permissive"),
+        ],
+    )
+    def test_an_or_offering_a_permissive_alternative_raises_no_issue(self, or_groups):
         policy = LicensePolicy()
-        or_groups = [["MIT"], ["GPL-3.0"]]
         _, result = self.analyzer._select_or_alternative(
             "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
         )
-        # MIT is permissive -> no issue, the least restrictive alternative.
         assert result is None
 
     def test_evaluate_or_gpl_or_lgpl_picks_lgpl(self):
@@ -609,32 +490,25 @@ class TestSpdxExpressionEvaluation:
         assert result["severity"] == Severity.INFO.value
         assert result["license"] == "LGPL-3.0"
 
-    def test_evaluate_and_picks_most_restrictive(self):
-        policy = LicensePolicy()
-        or_groups = [["MIT", "GPL-3.0"]]
+    @pytest.mark.parametrize(
+        ("policy", "or_groups", "expected_severity"),
+        [
+            pytest.param(LicensePolicy(), [["MIT", "GPL-3.0"]], Severity.HIGH, id="and-picks-most-restrictive"),
+            # Both become INFO with internal_only, but GPL is evaluated first.
+            pytest.param(
+                LicensePolicy(distribution_model=DistributionModel.INTERNAL_ONLY),
+                [["GPL-3.0"], ["AGPL-3.0"]],
+                Severity.INFO,
+                id="or-respects-policy",
+            ),
+        ],
+    )
+    def test_the_selected_alternative_carries_its_severity(self, policy, or_groups, expected_severity):
         _, result = self.analyzer._select_or_alternative(
             "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
         )
         assert result is not None
-        assert result["severity"] == Severity.HIGH.value
-
-    def test_evaluate_or_all_permissive(self):
-        policy = LicensePolicy()
-        or_groups = [["MIT"], ["Apache-2.0"]]
-        _, result = self.analyzer._select_or_alternative(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
-        assert result is None
-
-    def test_evaluate_or_respects_policy(self):
-        policy = LicensePolicy(distribution_model=DistributionModel.INTERNAL_ONLY)
-        or_groups = [["GPL-3.0"], ["AGPL-3.0"]]
-        _, result = self.analyzer._select_or_alternative(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
-        # Both become INFO with internal_only, but GPL is evaluated first.
-        assert result is not None
-        assert result["severity"] == Severity.INFO.value
+        assert result["severity"] == expected_severity.value
 
 
 class TestTransitiveDependencySeverity:
@@ -650,20 +524,18 @@ class TestTransitiveDependencySeverity:
         assert issue["is_transitive"] is True
         assert "context_reason" in issue
 
-    def test_transitive_high_downgraded_to_medium(self):
-        issue = {"severity": Severity.HIGH.value, "category": "strong_copyleft"}
+    @pytest.mark.parametrize(
+        ("severity", "category", "expected_severity"),
+        [
+            pytest.param(Severity.HIGH, "strong_copyleft", Severity.MEDIUM, id="high-to-medium"),
+            pytest.param(Severity.MEDIUM, "network_copyleft", Severity.LOW, id="medium-to-low"),
+            pytest.param(Severity.INFO, "weak_copyleft", Severity.INFO, id="info-stays-info"),
+        ],
+    )
+    def test_a_transitive_finding_is_downgraded_one_step_at_most(self, severity, category, expected_severity):
+        issue = {"severity": severity.value, "category": category}
         apply_transitive_adjustment(issue, is_transitive=True)
-        assert issue["severity"] == Severity.MEDIUM.value
-
-    def test_transitive_medium_downgraded_to_low(self):
-        issue = {"severity": Severity.MEDIUM.value, "category": "network_copyleft"}
-        apply_transitive_adjustment(issue, is_transitive=True)
-        assert issue["severity"] == Severity.LOW.value
-
-    def test_transitive_info_not_downgraded(self):
-        issue = {"severity": Severity.INFO.value, "category": "weak_copyleft"}
-        apply_transitive_adjustment(issue, is_transitive=True)
-        assert issue["severity"] == Severity.INFO.value
+        assert issue["severity"] == expected_severity.value
 
     def test_direct_not_affected(self):
         issue = {"severity": Severity.HIGH.value, "category": "strong_copyleft"}
@@ -676,21 +548,18 @@ class TestTransitiveDependencySeverity:
         apply_transitive_adjustment(issue, is_transitive=True)
         assert issue["effective_severity"] == Severity.HIGH.value
 
-    def test_transitive_info_filtered_out(self):
-        issue = {"severity": Severity.INFO.value}
-        assert should_include_finding(issue, is_transitive=True) is False
-
-    def test_transitive_low_filtered_out(self):
-        issue = {"severity": Severity.LOW.value}
-        assert should_include_finding(issue, is_transitive=True) is False
-
-    def test_transitive_medium_included(self):
-        issue = {"severity": Severity.MEDIUM.value}
-        assert should_include_finding(issue, is_transitive=True) is True
-
-    def test_direct_info_included(self):
-        issue = {"severity": Severity.INFO.value}
-        assert should_include_finding(issue, is_transitive=False) is True
+    @pytest.mark.parametrize(
+        ("severity", "is_transitive", "included"),
+        [
+            pytest.param(Severity.INFO, True, False, id="transitive-info-filtered-out"),
+            pytest.param(Severity.LOW, True, False, id="transitive-low-filtered-out"),
+            pytest.param(Severity.MEDIUM, True, True, id="transitive-medium-included"),
+            pytest.param(Severity.INFO, False, True, id="direct-info-included"),
+        ],
+    )
+    def test_only_a_transitive_finding_below_medium_is_filtered_out(self, severity, is_transitive, included):
+        issue = {"severity": severity.value}
+        assert should_include_finding(issue, is_transitive=is_transitive) is included
 
 
 class TestLicenseCompatibility:
@@ -708,11 +577,19 @@ class TestLicenseCompatibility:
             "purl": f"pkg:pypi/{name}@{version}",
         }
 
-    def test_no_conflict_permissive_only(self):
-        components = [
-            self._make_component("a", "1.0", "MIT"),
-            self._make_component("b", "1.0", "Apache-2.0"),
-        ]
+    @pytest.mark.parametrize(
+        "specs",
+        [
+            pytest.param([("a", "1.0", "MIT"), ("b", "1.0", "Apache-2.0")], id="permissive-only"),
+            pytest.param(
+                [("a", "1.0", "GPL-2.0-only"), ("b", "1.0", "GPL-3.0-only", "dev")],
+                id="incompatible-pair-in-dev-scope",
+            ),
+            pytest.param([("a", "1.0", "GPL-3.0"), ("b", "1.0", "GPL-3.0")], id="same-license-twice"),
+        ],
+    )
+    def test_components_that_can_ship_together_raise_no_conflict(self, specs):
+        components = [self._make_component(*spec) for spec in specs]
         issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 0
 
@@ -726,36 +603,18 @@ class TestLicenseCompatibility:
         assert issues[0]["severity"] == Severity.HIGH.value
         assert issues[0]["category"] == "license_incompatibility"
 
-    def test_cddl_vs_gpl_conflict(self):
-        components = [
-            self._make_component("a", "1.0", "CDDL-1.0"),
-            self._make_component("b", "1.0", "GPL-2.0"),
-        ]
-        issues = check_license_compatibility(components, ignore_dev=True)
-        assert len(issues) == 1
-
-    def test_dev_dependencies_skipped(self):
-        components = [
-            self._make_component("a", "1.0", "GPL-2.0-only"),
-            self._make_component("b", "1.0", "GPL-3.0-only", scope="dev"),
-        ]
-        issues = check_license_compatibility(components, ignore_dev=True)
-        assert len(issues) == 0
-
-    def test_same_license_no_conflict(self):
-        components = [
-            self._make_component("a", "1.0", "GPL-3.0"),
-            self._make_component("b", "1.0", "GPL-3.0"),
-        ]
-        issues = check_license_compatibility(components, ignore_dev=True)
-        assert len(issues) == 0
-
-    def test_duplicate_conflict_deduplicated(self):
-        components = [
-            self._make_component("a", "1.0", "GPL-2.0-only"),
-            self._make_component("b", "1.0", "GPL-3.0-only"),
-            self._make_component("c", "2.0", "GPL-2.0-only"),
-        ]
+    @pytest.mark.parametrize(
+        "specs",
+        [
+            pytest.param([("a", "1.0", "CDDL-1.0"), ("b", "1.0", "GPL-2.0")], id="cddl-vs-gpl"),
+            pytest.param(
+                [("a", "1.0", "GPL-2.0-only"), ("b", "1.0", "GPL-3.0-only"), ("c", "2.0", "GPL-2.0-only")],
+                id="repeated-pair-deduplicated",
+            ),
+        ],
+    )
+    def test_an_incompatible_licence_pair_is_reported_once(self, specs):
+        components = [self._make_component(*spec) for spec in specs]
         issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 1
 

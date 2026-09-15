@@ -20,57 +20,45 @@ from app.services.webhooks.validation import (
 
 
 class TestValidateWebhookUrl:
-    def test_https_url_passes(self):
-        result = validate_webhook_url("https://example.com/webhook")
-        assert result == "https://example.com/webhook"
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/webhook",
+            "http://localhost:8080/hook",
+            "http://127.0.0.1:8080/hook",
+            "http://[::1]:8080/hook",
+            "HTTPS://example.com/hook",
+        ],
+    )
+    def test_accepted_url_is_returned_unchanged(self, url):
+        assert validate_webhook_url(url) == url
 
-    def test_http_localhost_passes(self):
-        result = validate_webhook_url("http://localhost:8080/hook")
-        assert result == "http://localhost:8080/hook"
-
-    def test_http_127_passes(self):
-        result = validate_webhook_url("http://127.0.0.1:8080/hook")
-        assert result == "http://127.0.0.1:8080/hook"
-
-    def test_http_ipv6_loopback_passes(self):
-        result = validate_webhook_url("http://[::1]:8080/hook")
-        assert result == "http://[::1]:8080/hook"
-
-    def test_http_non_localhost_raises(self):
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "http://example.com/webhook",
+            # Userinfo and suffix look-alikes must not be read as the loopback host.
+            "http://localhost@evil.com/hook",
+            "http://127.0.0.1@evil.com/hook",
+            "http://localhost.evil.com/hook",
+            "http://127.0.0.1.evil.com/hook",
+        ],
+    )
+    def test_plain_http_to_a_non_loopback_host_raises(self, url):
         with pytest.raises(ValueError, match="Plain HTTP"):
-            validate_webhook_url("http://example.com/webhook")
+            validate_webhook_url(url)
 
-    def test_empty_string_raises(self):
-        with pytest.raises(ValueError, match="empty"):
-            validate_webhook_url("")
-
-    def test_ftp_url_raises(self):
-        with pytest.raises(ValueError, match="scheme"):
-            validate_webhook_url("ftp://example.com/webhook")
-
-    def test_no_protocol_raises(self):
-        with pytest.raises(ValueError, match="scheme"):
-            validate_webhook_url("example.com/webhook")
-
-    def test_userinfo_bypass_rejected(self):
-        with pytest.raises(ValueError, match="Plain HTTP"):
-            validate_webhook_url("http://localhost@evil.com/hook")
-
-    def test_userinfo_bypass_with_127_rejected(self):
-        with pytest.raises(ValueError, match="Plain HTTP"):
-            validate_webhook_url("http://127.0.0.1@evil.com/hook")
-
-    def test_suffix_bypass_rejected(self):
-        with pytest.raises(ValueError, match="Plain HTTP"):
-            validate_webhook_url("http://localhost.evil.com/hook")
-
-    def test_suffix_bypass_127_rejected(self):
-        with pytest.raises(ValueError, match="Plain HTTP"):
-            validate_webhook_url("http://127.0.0.1.evil.com/hook")
-
-    def test_uppercase_https_passes(self):
-        result = validate_webhook_url("HTTPS://example.com/hook")
-        assert result == "HTTPS://example.com/hook"
+    @pytest.mark.parametrize(
+        ("url", "message"),
+        [
+            pytest.param("", "empty", id="empty-string"),
+            pytest.param("ftp://example.com/webhook", "scheme", id="ftp"),
+            pytest.param("example.com/webhook", "scheme", id="no-protocol"),
+        ],
+    )
+    def test_unusable_url_raises(self, url, message):
+        with pytest.raises(ValueError, match=message):
+            validate_webhook_url(url)
 
     @pytest.mark.parametrize(
         "url",
@@ -148,34 +136,22 @@ class TestAssertSafeWebhookTarget:
             await assert_safe_webhook_target("https://192.168.1.1/hook")
 
     @pytest.mark.asyncio
-    async def test_resolved_to_private_ip_rejected(self):
+    @pytest.mark.parametrize(
+        ("sockaddr", "url"),
+        [
+            pytest.param(("10.0.0.5", 0), "https://attacker.example.com/hook", id="private-ipv4"),
+            pytest.param(("169.254.169.254", 0), "https://metadata-spoof.example.com/", id="metadata-ipv4"),
+            pytest.param(("4000::1", 0, 0, 0), "https://attacker.example.com/hook", id="reserved-ipv6"),
+        ],
+    )
+    async def test_resolved_to_blocked_ip_rejected(self, sockaddr, url):
         async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("10.0.0.5", 0))]
+            return [(0, 0, 0, "", sockaddr)]
 
         with patch("asyncio.get_event_loop") as gel:
             gel.return_value.getaddrinfo = fake_getaddrinfo
             with pytest.raises(ValueError, match="resolves to"):
-                await assert_safe_webhook_target("https://attacker.example.com/hook")
-
-    @pytest.mark.asyncio
-    async def test_resolved_to_metadata_ip_rejected(self):
-        async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("169.254.169.254", 0))]
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
-            with pytest.raises(ValueError, match="resolves to"):
-                await assert_safe_webhook_target("https://metadata-spoof.example.com/")
-
-    @pytest.mark.asyncio
-    async def test_resolved_to_reserved_ipv6_rejected(self):
-        async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("4000::1", 0, 0, 0))]
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
-            with pytest.raises(ValueError, match="resolves to"):
-                await assert_safe_webhook_target("https://attacker.example.com/hook")
+                await assert_safe_webhook_target(url)
 
     @pytest.mark.asyncio
     async def test_resolved_to_public_ip_passes(self):
@@ -204,25 +180,22 @@ class TestAssertSafeWebhookTarget:
         assert await assert_safe_webhook_target("http://localhost:8080/hook") is None
 
     @pytest.mark.asyncio
-    async def test_unparseable_resolution_fails_closed(self):
-        # No usable IP must fail closed; returning None would let an unpinned transport reopen the rebinding window.
+    @pytest.mark.parametrize(
+        ("resolved", "url"),
+        [
+            pytest.param([(0, 0, 0, "", ("not-an-ip", 0))], "https://weird.example.com/hook", id="unparseable"),
+            pytest.param([], "https://empty.example.com/hook", id="empty"),
+        ],
+    )
+    async def test_resolution_without_a_usable_ip_fails_closed(self, resolved, url):
+        # Returning None would let an unpinned transport reopen the rebinding window.
         async def fake_getaddrinfo(host, port, type=None):
-            return [(0, 0, 0, "", ("not-an-ip", 0))]
+            return resolved
 
         with patch("asyncio.get_event_loop") as gel:
             gel.return_value.getaddrinfo = fake_getaddrinfo
             with pytest.raises(ValueError, match="no usable IP"):
-                await assert_safe_webhook_target("https://weird.example.com/hook")
-
-    @pytest.mark.asyncio
-    async def test_empty_resolution_fails_closed(self):
-        async def fake_getaddrinfo(host, port, type=None):
-            return []
-
-        with patch("asyncio.get_event_loop") as gel:
-            gel.return_value.getaddrinfo = fake_getaddrinfo
-            with pytest.raises(ValueError, match="no usable IP"):
-                await assert_safe_webhook_target("https://empty.example.com/hook")
+                await assert_safe_webhook_target(url)
 
 
 class TestBuildPinnedTransport:
@@ -314,21 +287,27 @@ class TestBuildPinnedTransport:
 
 
 class TestValidateWebhookEvents:
-    def test_valid_single_event(self):
-        result = validate_webhook_events(["scan_completed"])
-        assert result == ["scan_completed"]
+    @pytest.mark.parametrize(
+        "events",
+        [
+            pytest.param(["scan_completed"], id="single"),
+            pytest.param(["scan_completed", "vulnerability_found"], id="multiple"),
+            pytest.param(WEBHOOK_VALID_EVENTS, id="every-valid-event"),
+        ],
+    )
+    def test_valid_events_returned_unchanged(self, events):
+        assert validate_webhook_events(events) == events
 
-    def test_all_valid_events(self):
-        result = validate_webhook_events(WEBHOOK_VALID_EVENTS)
-        assert result == WEBHOOK_VALID_EVENTS
-
-    def test_invalid_event_raises(self):
+    @pytest.mark.parametrize(
+        "events",
+        [
+            pytest.param(["invalid_event"], id="only-invalid"),
+            pytest.param(["scan_completed", "bogus_event"], id="mixed-with-valid"),
+        ],
+    )
+    def test_invalid_event_raises(self, events):
         with pytest.raises(ValueError, match="Invalid event"):
-            validate_webhook_events(["invalid_event"])
-
-    def test_mixed_valid_invalid_raises(self):
-        with pytest.raises(ValueError, match="Invalid event"):
-            validate_webhook_events(["scan_completed", "bogus_event"])
+            validate_webhook_events(events)
 
     def test_empty_list_raises_when_not_allowed(self):
         with pytest.raises(ValueError, match="At least one"):
@@ -337,11 +316,6 @@ class TestValidateWebhookEvents:
     def test_empty_list_passes_when_allowed(self):
         result = validate_webhook_events([], allow_empty=True)
         assert result == []
-
-    def test_multiple_valid_events(self):
-        events = ["scan_completed", "vulnerability_found"]
-        result = validate_webhook_events(events)
-        assert result == events
 
 
 class TestValidateWebhookEventsOptional:
@@ -368,49 +342,40 @@ class TestValidateWebhookEventType:
 
 
 class TestDetectWebhookType:
-    def test_classic_teams_incoming_webhook(self):
-        url = "https://contoso.webhook.office.com/webhookb2/abc123/IncomingWebhook/xyz"
-        assert detect_webhook_type(url) == "teams"
-
-    def test_teams_subdomain_variant(self):
-        url = "https://outlook.webhook.office.com/webhookb2/abc"
-        assert detect_webhook_type(url) == "teams"
-
-    def test_power_automate_workflows_url(self):
-        url = "https://prod-12.westeurope.logic.azure.com/workflows/abc123/triggers/manual/paths/invoke"
-        assert detect_webhook_type(url) == "teams"
-
-    def test_logic_azure_without_workflows_path(self):
-        url = "https://management.logic.azure.com/something-else"
-        assert detect_webhook_type(url) == "generic"
-
-    def test_github_webhook(self):
-        assert detect_webhook_type("https://smee.io/abc123") == "generic"
-
-    def test_slack_webhook(self):
-        assert detect_webhook_type("https://hooks.slack.com/services/T123/B456/xyz") == "generic"
-
-    def test_generic_https_url(self):
-        assert detect_webhook_type("https://my-server.example.com/webhook") == "generic"
-
-    def test_office_com_non_webhook_subdomain_is_generic(self):
-        # hostname ends with 'webhook.office.com' chars but has no separating dot
-        assert detect_webhook_type("https://evilwebhook.office.com/abc") == "generic"
-
-    def test_logic_azure_non_logic_subdomain_is_generic(self):
-        # hostname ends with 'logic.azure.com' chars but has no separating dot
-        assert detect_webhook_type("https://evil-logic.azure.com/workflows/abc") == "generic"
-
-    def test_power_platform_automate_url(self):
-        url = (
-            "https://default047b2e1fa2714bc197a4703bf7adf1.35.environment.api.powerplatform.com"
-            "/powerautomate/automations/direct/workflows/67fa2e06/triggers/manual/paths/invoke"
-        )
-        assert detect_webhook_type(url) == "teams"
-
-    def test_power_platform_without_workflows_path(self):
-        url = "https://api.powerplatform.com/other/path"
-        assert detect_webhook_type(url) == "generic"
-
-    def test_empty_string_returns_generic(self):
-        assert detect_webhook_type("") == "generic"
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            pytest.param(
+                "https://contoso.webhook.office.com/webhookb2/abc123/IncomingWebhook/xyz",
+                "teams",
+                id="classic-teams-incoming-webhook",
+            ),
+            pytest.param("https://outlook.webhook.office.com/webhookb2/abc", "teams", id="teams-subdomain-variant"),
+            pytest.param(
+                "https://prod-12.westeurope.logic.azure.com/workflows/abc123/triggers/manual/paths/invoke",
+                "teams",
+                id="power-automate-workflows-url",
+            ),
+            pytest.param(
+                "https://default047b2e1fa2714bc197a4703bf7adf1.35.environment.api.powerplatform.com"
+                "/powerautomate/automations/direct/workflows/67fa2e06/triggers/manual/paths/invoke",
+                "teams",
+                id="power-platform-automate-url",
+            ),
+            pytest.param(
+                "https://management.logic.azure.com/something-else", "generic", id="logic-azure-without-workflows-path"
+            ),
+            pytest.param(
+                "https://api.powerplatform.com/other/path", "generic", id="power-platform-without-workflows-path"
+            ),
+            # Hostnames ending in the marker's characters without the separating dot.
+            pytest.param("https://evilwebhook.office.com/abc", "generic", id="office-com-non-webhook-subdomain"),
+            pytest.param("https://evil-logic.azure.com/workflows/abc", "generic", id="logic-azure-non-logic-subdomain"),
+            pytest.param("https://smee.io/abc123", "generic", id="github-webhook"),
+            pytest.param("https://hooks.slack.com/services/T123/B456/xyz", "generic", id="slack-webhook"),
+            pytest.param("https://my-server.example.com/webhook", "generic", id="generic-https-url"),
+            pytest.param("", "generic", id="empty-string"),
+        ],
+    )
+    def test_webhook_type_detected_from_url(self, url, expected):
+        assert detect_webhook_type(url) == expected

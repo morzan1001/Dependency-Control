@@ -98,40 +98,32 @@ class TestAnalyzeOutdatedDependenciesTransitive:
 
 
 class TestAnalyzeOutdatedDependenciesNotFlagged:
-    def test_no_latest_version_not_flagged(self):
-        deps = [_dep(name="requests", version="2.28.0", latest_version=None)]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 0
-
-    def test_same_version_not_flagged(self):
-        deps = [_dep(name="requests", version="2.31.0", latest_version="2.31.0")]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 0
-
-    def test_empty_latest_version_not_flagged(self):
-        deps = [_dep(name="requests", version="2.28.0", latest_version="")]
+    @pytest.mark.parametrize(
+        ("version", "latest_version"),
+        [
+            pytest.param("2.28.0", None, id="no_latest_version"),
+            pytest.param("2.31.0", "2.31.0", id="same_version"),
+            pytest.param("2.28.0", "", id="empty_latest_version"),
+        ],
+    )
+    def test_dependency_without_a_newer_version_is_not_flagged(self, version, latest_version):
+        deps = [_dep(name="requests", version=version, latest_version=latest_version)]
         result = analyze_outdated_dependencies(deps)
         assert len(result) == 0
 
 
 class TestAnalyzeOutdatedDependenciesPythonSkipped:
-    def test_python3_prefix_skipped(self):
-        deps = [_dep(name="python3-yaml", version="5.0", latest_version="6.0", direct=True)]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 0
-
-    def test_python_prefix_skipped(self):
-        deps = [_dep(name="python-dateutil", version="2.0", latest_version="2.9", direct=True)]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 0
-
-    def test_python_suffix_skipped(self):
-        deps = [_dep(name="lib-python", version="1.0", latest_version="2.0", direct=True)]
-        result = analyze_outdated_dependencies(deps)
-        assert len(result) == 0
-
-    def test_python_case_insensitive_skipped(self):
-        deps = [_dep(name="Python3-Utils", version="1.0", latest_version="2.0", direct=True)]
+    @pytest.mark.parametrize(
+        ("name", "version", "latest_version"),
+        [
+            pytest.param("python3-yaml", "5.0", "6.0", id="python3_prefix"),
+            pytest.param("python-dateutil", "2.0", "2.9", id="python_prefix"),
+            pytest.param("lib-python", "1.0", "2.0", id="python_suffix"),
+            pytest.param("Python3-Utils", "1.0", "2.0", id="case_insensitive"),
+        ],
+    )
+    def test_a_python_named_dependency_is_skipped(self, name, version, latest_version):
+        deps = [_dep(name=name, version=version, latest_version=latest_version, direct=True)]
         result = analyze_outdated_dependencies(deps)
         assert len(result) == 0
 
@@ -264,13 +256,9 @@ class TestAnalyzeEndOfLifeCriticalSeverity:
 
 
 class TestAnalyzeEndOfLifeNonCritical:
-    def test_high_severity_priority_medium(self):
-        findings = [_eol_finding(severity="HIGH")]
-        rec = analyze_end_of_life(findings)[0]
-        assert rec.priority == Priority.MEDIUM
-
-    def test_medium_severity_priority_medium(self):
-        findings = [_eol_finding(severity="MEDIUM")]
+    @pytest.mark.parametrize("severity", ["HIGH", "MEDIUM"])
+    def test_non_critical_severity_gives_medium_priority(self, severity):
+        findings = [_eol_finding(severity=severity)]
         rec = analyze_end_of_life(findings)[0]
         assert rec.priority == Priority.MEDIUM
 
@@ -281,14 +269,15 @@ class TestAnalyzeEndOfLifeAffectedComponents:
         rec = analyze_end_of_life(findings)[0]
         assert "node@16.0.0 (EOL: 2023-09-11)" in rec.affected_components
 
-    def test_eol_without_date_just_name_version(self):
-        findings = [_eol_finding(component="node", version="16.0.0", eol_date=None)]
-        rec = analyze_end_of_life(findings)[0]
-        assert "node@16.0.0" in rec.affected_components
-        assert "(EOL:" not in rec.affected_components[0]
-
-    def test_eol_empty_date_just_name_version(self):
-        findings = [_eol_finding(component="node", version="16.0.0", eol_date="")]
+    @pytest.mark.parametrize(
+        "eol_date",
+        [
+            pytest.param(None, id="missing_date"),
+            pytest.param("", id="empty_date"),
+        ],
+    )
+    def test_eol_without_a_date_is_just_name_version(self, eol_date):
+        findings = [_eol_finding(component="node", version="16.0.0", eol_date=eol_date)]
         rec = analyze_end_of_life(findings)[0]
         assert "node@16.0.0" in rec.affected_components
         assert "(EOL:" not in rec.affected_components[0]
