@@ -73,7 +73,7 @@ interface TeamPickerProps {
   onToggle: (id: string) => void
 }
 
-function TeamPicker({ teams, selectedIds, onToggle }: TeamPickerProps) {
+function TeamPicker({ teams, selectedIds, onToggle }: Readonly<TeamPickerProps>) {
   const [open, setOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const close = useCallback(() => setOpen(false), [])
@@ -128,7 +128,7 @@ function TeamPicker({ teams, selectedIds, onToggle }: TeamPickerProps) {
   )
 }
 
-export function ProjectSettings({ project, projectId, user }: ProjectSettingsProps) {
+export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSettingsProps>) {
   const queryClient = useQueryClient()
   const { permissions } = useAuth()
   const navigate = useNavigate()
@@ -206,11 +206,10 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const { data: githubInstances } = useGitHubInstances({ active_only: true });
 
   // Show only the config for the platform the project was sourced from (by *_instance_id).
+  const gitlabSource: "gitlab" | "none" = project.gitlab_instance_id ? "gitlab" : "none";
   const projectSource: "gitlab" | "github" | "none" = project.github_instance_id
     ? "github"
-    : project.gitlab_instance_id
-      ? "gitlab"
-      : "none";
+    : gitlabSource;
   const linkedGithubInstance = project.github_instance_id
     ? githubInstances?.items.find((i) => i.id === project.github_instance_id)
     : undefined;

@@ -24,7 +24,7 @@ export function TeamCard({
   onDelete,
   onManageWebhooks,
   onManageBinding,
-}: TeamCardProps) {
+}: Readonly<TeamCardProps>) {
   const { permissions, hasPermission } = useAuth();
   const { data: currentUser } = useCurrentUser();
 

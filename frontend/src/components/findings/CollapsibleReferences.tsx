@@ -6,7 +6,7 @@ interface CollapsibleReferencesProps {
   title?: string
 }
 
-export function CollapsibleReferences({ references, title = 'References' }: CollapsibleReferencesProps) {
+export function CollapsibleReferences({ references, title = 'References' }: Readonly<CollapsibleReferencesProps>) {
   const [isOpen, setIsOpen] = useState(false)
 
   if (!references || references.length === 0) return null

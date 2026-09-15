@@ -27,7 +27,7 @@ interface AddMemberDialogProps {
   onClose: () => void;
 }
 
-export function AddMemberDialog({ teamId, isOpen, onClose }: AddMemberDialogProps) {
+export function AddMemberDialog({ teamId, isOpen, onClose }: Readonly<AddMemberDialogProps>) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('member');
   const addMemberMutation = useAddTeamMember();

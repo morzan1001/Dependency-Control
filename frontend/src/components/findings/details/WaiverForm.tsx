@@ -41,7 +41,7 @@ export function WaiverForm({
   initialStatus,
   initialExpiration,
   initialScope,
-}: {
+}: Readonly<{
   finding: Finding
   vulnId: string | null
   projectId: string
@@ -51,7 +51,7 @@ export function WaiverForm({
   initialStatus?: WaiverStatus
   initialExpiration?: string
   initialScope?: WaiverScope
-}) {
+}>) {
   const [reason, setReason] = useState(initialReason ?? '')
   const [date, setDate] = useState(isoToDateInput(initialExpiration))
   const [scope, setScope] = useState<WaiverScope>(initialScope ?? 'finding')

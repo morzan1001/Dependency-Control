@@ -54,7 +54,7 @@ function componentsHeading(recommendation: Recommendation): string {
     : `Affected Components (${total.toLocaleString()})`
 }
 
-export function RecommendationCard({ recommendation }: { recommendation: Recommendation }) {
+export function RecommendationCard({ recommendation }: Readonly<{ recommendation: Recommendation }>) {
   const [expanded, setExpanded] = useState(false)
 
   const typeInfo = typeConfig[recommendation.type] || typeConfig.direct_dependency_update

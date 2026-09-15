@@ -16,7 +16,7 @@ const LABEL: Record<AnalyticsView, string> = {
   bar: "Top-N",
 };
 
-export function AnalyticsViewSwitcher({ availableViews, defaultView = "table" }: Props) {
+export function AnalyticsViewSwitcher({ availableViews, defaultView = "table" }: Readonly<Props>) {
   const [params, setParams] = useSearchParams();
   const current = (params.get("analytics_view") as AnalyticsView) ?? defaultView;
   return (

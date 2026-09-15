@@ -34,7 +34,7 @@ interface AsyncListSectionProps {
   skeletonCount?: number;
 }
 
-function AsyncListSection({ isLoading, error, emptyMessage, errorMessage, children, isEmpty, skeletonCount = 3 }: AsyncListSectionProps) {
+function AsyncListSection({ isLoading, error, emptyMessage, errorMessage, children, isEmpty, skeletonCount = 3 }: Readonly<AsyncListSectionProps>) {
   if (isLoading) {
     return (
       <div className="space-y-2">
@@ -59,7 +59,7 @@ interface UserDetailsDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialogProps) {
+export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDetailsDialogProps>) {
   const { hasPermission } = useAuth();
 
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);

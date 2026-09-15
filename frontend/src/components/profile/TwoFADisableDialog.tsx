@@ -21,7 +21,7 @@ interface TwoFADisableDialogProps {
   onClose: () => void;
 }
 
-export function TwoFADisableDialog({ isOpen, onClose }: TwoFADisableDialogProps) {
+export function TwoFADisableDialog({ isOpen, onClose }: Readonly<TwoFADisableDialogProps>) {
   const queryClient = useQueryClient();
   const [password, setPassword] = useState('');
 

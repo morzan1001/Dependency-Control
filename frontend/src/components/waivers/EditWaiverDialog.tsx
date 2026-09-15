@@ -25,7 +25,7 @@ interface EditWaiverDialogProps {
     onOpenChange: (open: boolean) => void
 }
 
-function EditWaiverForm({ waiver, onClose }: { waiver: Waiver; onClose: () => void }) {
+function EditWaiverForm({ waiver, onClose }: Readonly<{ waiver: Waiver; onClose: () => void }>) {
     const [reason, setReason] = useState(waiver.reason)
     const [status, setStatus] = useState<WaiverStatus>(waiver.status || 'accepted_risk')
     const [date, setDate] = useState(waiver.expiration_date ? waiver.expiration_date.split('T')[0] : '')
@@ -104,7 +104,7 @@ function EditWaiverForm({ waiver, onClose }: { waiver: Waiver; onClose: () => vo
     )
 }
 
-export function EditWaiverDialog({ waiver, open, onOpenChange }: EditWaiverDialogProps) {
+export function EditWaiverDialog({ waiver, open, onOpenChange }: Readonly<EditWaiverDialogProps>) {
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent>

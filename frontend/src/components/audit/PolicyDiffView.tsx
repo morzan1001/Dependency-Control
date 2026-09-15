@@ -7,7 +7,7 @@ interface Props {
 
 type RuleSnap = { rule_id?: string; [k: string]: unknown };
 
-export function PolicyDiffView({ current, previous }: Props) {
+export function PolicyDiffView({ current, previous }: Readonly<Props>) {
   const currentRules = (current.snapshot?.rules as RuleSnap[] | undefined) ?? [];
   const previousRules = (previous?.snapshot?.rules as RuleSnap[] | undefined) ?? [];
 
@@ -33,7 +33,7 @@ export function PolicyDiffView({ current, previous }: Props) {
   );
 }
 
-function Section({ title, color, rules }: { title: string; color: string; rules: RuleSnap[] }) {
+function Section({ title, color, rules }: Readonly<{ title: string; color: string; rules: RuleSnap[] }>) {
   if (rules.length === 0) return null;
   return (
     <div>

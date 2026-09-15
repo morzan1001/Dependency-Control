@@ -4,7 +4,7 @@ interface Props {
   count: number | null; // null = not loaded yet
 }
 
-export function DeltaBadge({ count }: Props) {
+export function DeltaBadge({ count }: Readonly<Props>) {
   if (count === null) {
     return (
       <Badge variant="secondary" className="ml-2">

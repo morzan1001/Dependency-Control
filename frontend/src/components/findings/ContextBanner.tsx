@@ -24,7 +24,7 @@ const iconStyles: Record<BannerVariant, string> = {
   success: 'text-success',
 }
 
-export function ContextBanner({ icon: Icon, title, children, variant, action }: ContextBannerProps) {
+export function ContextBanner({ icon: Icon, title, children, variant, action }: Readonly<ContextBannerProps>) {
   return (
     <div className={`flex items-start gap-3 p-3 rounded-lg border ${variantStyles[variant]}`}>
       <Icon className={`h-4 w-4 mt-0.5 flex-shrink-0 ${iconStyles[variant]}`} />

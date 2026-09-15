@@ -14,7 +14,7 @@ const LABEL: Record<ReportStatus, string> = {
   failed: "Failed",
 };
 
-export function ReportStatusBadge({ status }: { status: ReportStatus }) {
+export function ReportStatusBadge({ status }: Readonly<{ status: ReportStatus }>) {
   return (
     <span className={`inline-block rounded px-2 py-0.5 text-xs ${COLOR[status]}`}>
       {LABEL[status]}

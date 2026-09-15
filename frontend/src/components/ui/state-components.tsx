@@ -1,7 +1,7 @@
 import { AlertCircle, FileX, Inbox, SearchX } from 'lucide-react'
 import { Button } from './button'
 
-export function InlineError({ message, className = '' }: { message: string; className?: string }) {
+export function InlineError({ message, className = '' }: Readonly<{ message: string; className?: string }>) {
   return (
     <div className={`flex items-center gap-2 text-destructive text-sm ${className}`}>
       <AlertCircle className="h-4 w-4" />
@@ -36,7 +36,7 @@ export function EmptyState({
   variant = 'default',
   action,
   className = '',
-}: EmptyStateProps) {
+}: Readonly<EmptyStateProps>) {
   const Icon = emptyStateIcons[variant]
   
   return (
@@ -57,11 +57,11 @@ export function EmptyState({
 
 export function NoData({
   entityName = 'items',
-  className = '' 
-}: { 
+  className = ''
+}: Readonly<{
   entityName?: string
-  className?: string 
-}) {
+  className?: string
+}>) {
   return (
     <EmptyState
       variant="data"

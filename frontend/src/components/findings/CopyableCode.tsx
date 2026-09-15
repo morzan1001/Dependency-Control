@@ -7,7 +7,7 @@ interface CopyableCodeProps {
   className?: string
 }
 
-export function CopyableCode({ value, className = '' }: CopyableCodeProps) {
+export function CopyableCode({ value, className = '' }: Readonly<CopyableCodeProps>) {
   const { copied, copy } = useCopyToClipboard()
 
   const handleCopy = (e: React.MouseEvent<HTMLButtonElement>) => {

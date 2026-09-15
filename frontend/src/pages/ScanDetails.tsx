@@ -33,7 +33,7 @@ interface ScanHistoryItem {
   created_at: string;
 }
 
-function ScmLink({ href, children }: { href: string | undefined | null; children: React.ReactNode }) {
+function ScmLink({ href, children }: Readonly<{ href: string | undefined | null; children: React.ReactNode }>) {
   if (href) {
     return (
       <a href={href} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-primary hover:underline">

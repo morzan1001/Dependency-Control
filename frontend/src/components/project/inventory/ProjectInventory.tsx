@@ -20,7 +20,7 @@ interface ProjectInventoryProps {
   defaultBranch?: string | null
 }
 
-export function ProjectInventory({ projectId, projectName, defaultBranch }: ProjectInventoryProps) {
+export function ProjectInventory({ projectId, projectName, defaultBranch }: Readonly<ProjectInventoryProps>) {
   const { data: branches } = useProjectBranches(projectId)
   const branchesLoaded = branches !== undefined
   const activeBranches = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])

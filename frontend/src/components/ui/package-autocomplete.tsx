@@ -20,7 +20,7 @@ export function PackageAutocomplete({
   onValueChange,
   placeholder = "Search packages...",
   className,
-}: PackageAutocompleteProps) {
+}: Readonly<PackageAutocompleteProps>) {
   const [open, setOpen] = useState(false)
   const [inputValue, setInputValue] = useState(value)
   const [lastSyncedValue, setLastSyncedValue] = useState(value)

@@ -26,7 +26,7 @@ export function useAnalyticsList<TResponse, TItem>(
   const query = useQuery<TResponse, Error, TResponse, QueryKey>({
     queryKey: args.queryKey,
     queryFn: args.queryFn,
-    ...(args.options ?? {}),
+    ...args.options,
   });
 
   const items = query.data ? args.selectItems(query.data) : [];

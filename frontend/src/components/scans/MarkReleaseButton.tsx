@@ -43,7 +43,7 @@ function rejectionFor(environment: string, held: readonly string[]): MarkRejecti
   return null
 }
 
-export function MarkReleaseButton({ projectId, scan }: MarkReleaseButtonProps) {
+export function MarkReleaseButton({ projectId, scan }: Readonly<MarkReleaseButtonProps>) {
   const [environment, setEnvironment] = useState(DEFAULT_RELEASE_ENVIRONMENT)
   const { open, setOpen, closeDialog } = useDialogState()
   const { mark, markPending } = useReleaseActions(projectId, scan)

@@ -6,7 +6,7 @@ interface Props {
   onChange: (page: number) => void;
 }
 
-export function DeltaPagination({ page, totalPages, onChange }: Props) {
+export function DeltaPagination({ page, totalPages, onChange }: Readonly<Props>) {
   if (totalPages <= 1) return null;
   return (
     <div className="flex items-center justify-end gap-2 pt-2 text-xs">

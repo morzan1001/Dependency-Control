@@ -11,7 +11,7 @@ import { Spinner } from '@/components/ui/spinner';
 import { cn } from '@/lib/utils';
 import type { ToolCall } from '@/types/chat';
 
-export function ToolCallBlock({ toolCall }: { toolCall: ToolCall }) {
+export function ToolCallBlock({ toolCall }: Readonly<{ toolCall: ToolCall }>) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -58,7 +58,7 @@ export function ToolCallBlock({ toolCall }: { toolCall: ToolCall }) {
   );
 }
 
-export function ToolCallLoading({ toolName }: { toolName: string }) {
+export function ToolCallLoading({ toolName }: Readonly<{ toolName: string }>) {
   return (
     <div className="my-2 flex items-center gap-2 rounded-md border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
       <Spinner className="h-3.5 w-3.5" />

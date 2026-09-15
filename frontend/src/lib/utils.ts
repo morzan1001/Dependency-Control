@@ -20,7 +20,7 @@ interface ErrorWithResponse {
   message?: string;
 }
 
-export function getErrorMessage(error: ErrorWithResponse | Error | unknown): string {
+export function getErrorMessage(error: unknown): string {
   if (typeof error !== 'object' || error === null) {
     return "An unknown error occurred";
   }

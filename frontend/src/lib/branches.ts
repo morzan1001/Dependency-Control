@@ -28,7 +28,7 @@ function isHigher(candidate: number[], current: number[]): boolean {
 export function highestRiskBranch(scansByBranch: Record<string, Scan>): string | null {
   let best: string | null = null
   let bestRank: number[] = []
-  for (const branch of Object.keys(scansByBranch).sort()) {
+  for (const branch of Object.keys(scansByBranch).sort((a, b) => a.localeCompare(b))) {
     const candidate = severityRank(scansByBranch[branch])
     if (best === null || isHigher(candidate, bestRank)) {
       best = branch

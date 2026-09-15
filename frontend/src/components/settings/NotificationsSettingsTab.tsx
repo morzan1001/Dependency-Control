@@ -40,7 +40,7 @@ export function NotificationsSettingsTab({
   isLoadingWebhooks,
   onCreateWebhook,
   onDeleteWebhook,
-}: NotificationsSettingsTabProps) {
+}: Readonly<NotificationsSettingsTabProps>) {
   return (
     <div className="space-y-4">
       <Card>

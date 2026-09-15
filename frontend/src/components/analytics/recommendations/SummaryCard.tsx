@@ -6,7 +6,7 @@ import {
   ShieldAlert,
 } from 'lucide-react'
 
-export function SummaryCard({ data }: { data: RecommendationsResponse }) {
+export function SummaryCard({ data }: Readonly<{ data: RecommendationsResponse }>) {
   const hasOtherFindings = (data.summary.secrets_to_rotate || 0) > 0 ||
     (data.summary.sast_issues || 0) > 0 ||
     (data.summary.iac_issues || 0) > 0 ||
@@ -22,17 +22,19 @@ export function SummaryCard({ data }: { data: RecommendationsResponse }) {
     (data.summary.trend_alerts || 0) +
     (data.summary.cross_project_issues || 0);
 
+  const insightsDescription =
+    totalInsights > 0 ? `${totalInsights} dependency insights found` : 'No significant issues found';
+  const summaryDescription =
+    totalSecurityFindings > 0
+      ? `${totalSecurityFindings} security findings • ${totalInsights} dependency insights`
+      : insightsDescription;
+
   return (
     <Card>
       <CardHeader className="pb-2">
         <CardTitle className="text-lg">Recommendations Summary</CardTitle>
         <CardDescription>
-          {totalSecurityFindings > 0
-            ? `${totalSecurityFindings} security findings • ${totalInsights} dependency insights`
-            : totalInsights > 0
-              ? `${totalInsights} dependency insights found`
-              : 'No significant issues found'
-          }
+          {summaryDescription}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">

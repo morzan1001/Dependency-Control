@@ -58,7 +58,7 @@ const queryClient = new QueryClient({
   },
 })
 
-function Force2FAGuard({ children }: { children: React.ReactNode }) {
+function Force2FAGuard({ children }: Readonly<{ children: React.ReactNode }>) {
   const { permissions } = useAuth();
   const location = useLocation();
 
@@ -76,7 +76,7 @@ function Force2FAGuard({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function ProtectedRoute({ children }: { children: React.ReactNode }) {
+function ProtectedRoute({ children }: Readonly<{ children: React.ReactNode }>) {
   const { isAuthenticated, isLoading } = useAuth();
   const location = useLocation();
 

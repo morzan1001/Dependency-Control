@@ -5,7 +5,7 @@ export interface SpinnerProps extends React.SVGAttributes<SVGElement> {
   size?: number
 }
 
-export function Spinner({ className, size = 24, ...props }: SpinnerProps) {
+export function Spinner({ className, size = 24, ...props }: Readonly<SpinnerProps>) {
   return (
     <Loader2 
       className={cn("animate-spin text-primary", className)} 

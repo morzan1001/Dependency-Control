@@ -35,7 +35,7 @@ interface CreateProjectDialogProps {
 export function CreateProjectDialog({
   open,
   onOpenChange,
-}: CreateProjectDialogProps) {
+}: Readonly<CreateProjectDialogProps>) {
   const [name, setName] = useState("");
   const [teamId, setTeamId] = useState<string | undefined>(undefined);
   const [retentionDays, setRetentionDays] = useState(90);

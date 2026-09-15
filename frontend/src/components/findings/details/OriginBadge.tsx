@@ -5,7 +5,7 @@ import type { Finding } from '@/types/scan'
 import { getSourceInfo } from '@/lib/finding-utils'
 import { ChevronDown, ChevronRight, Package } from 'lucide-react'
 
-export function OriginBadge({ finding }: { finding: Finding }) {
+export function OriginBadge({ finding }: Readonly<{ finding: Finding }>) {
   const [isExpanded, setIsExpanded] = useState(false)
   const sourceInfo = getSourceInfo(finding.source_type)
 

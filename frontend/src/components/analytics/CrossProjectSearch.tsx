@@ -32,7 +32,7 @@ interface CrossProjectSearchProps {
 
 const CROSS_PROJECT_SKELETON_IDS = ['cps1', 'cps2', 'cps3', 'cps4', 'cps5']
 
-export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) {
+export function CrossProjectSearch({ onSelectResult }: Readonly<CrossProjectSearchProps>) {
   const [query, setQuery] = useState('')
   const [version, setVersion] = useState('')
   const [selectedType, setSelectedType] = useState<string>('__all__')

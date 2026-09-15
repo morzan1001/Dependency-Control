@@ -27,11 +27,13 @@ export function CryptoPolicyPage() {
     return <div className="p-6 text-destructive">Failed to load system policy: {msg}</div>;
   }
 
+  const lastEditedBy = ` · last edited by ${data.updated_by}`;
+
   return (
     <div className="space-y-6 p-6">
       <CryptoPolicyEditor
         title="System Crypto Policy"
-        subtitle={`Version ${data.version}${data.updated_by ? ` · last edited by ${data.updated_by}` : ""}`}
+        subtitle={`Version ${data.version}${data.updated_by ? lastEditedBy : ""}`}
         initialRules={data.rules}
         onSave={async (rules) => { await save.mutateAsync(rules); }}
       />

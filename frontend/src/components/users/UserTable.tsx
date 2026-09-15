@@ -40,7 +40,7 @@ interface UserTableProps {
   onSort?: (column: string) => void;
 }
 
-export function UserTable({ users, page, limit, onPageChange, onSelectUser, sortBy, sortOrder, onSort }: UserTableProps) {
+export function UserTable({ users, page, limit, onPageChange, onSelectUser, sortBy, sortOrder, onSort }: Readonly<UserTableProps>) {
   const { hasPermission } = useAuth();
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [userToDelete, setUserToDelete] = useState<User | null>(null);

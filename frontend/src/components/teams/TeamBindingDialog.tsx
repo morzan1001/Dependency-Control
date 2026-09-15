@@ -64,7 +64,7 @@ function bindingDescription(teamName: string, providers: BindingProvider[]): str
   return `Repositories held by a bound team or group ${suffix}`;
 }
 
-function FieldRow({ label, htmlFor, children }: { label: string; htmlFor: string; children: React.ReactNode }) {
+function FieldRow({ label, htmlFor, children }: Readonly<{ label: string; htmlFor: string; children: React.ReactNode }>) {
   return (
     <div className="grid grid-cols-4 items-center gap-4">
       <Label htmlFor={htmlFor} className="text-right">{label}</Label>
@@ -79,13 +79,13 @@ function BoundInstance({
   note,
   onRemove,
   isRemoving,
-}: {
+}: Readonly<{
   binding: TeamBinding;
   instance?: ProviderInstance;
   note?: string;
   onRemove: () => void;
   isRemoving: boolean;
-}) {
+}>) {
   const instanceName = instance?.name ?? binding.instance_id;
   return (
     <div className="grid grid-cols-4 items-baseline gap-4">
@@ -132,11 +132,11 @@ function GitHubBindingForm({
   teamId,
   instanceId,
   onSaved,
-}: {
+}: Readonly<{
   teamId: string;
   instanceId: string;
   onSaved: () => void;
-}) {
+}>) {
   const [org, setOrg] = useState<string | null>(null);
   const [githubTeamId, setGithubTeamId] = useState<string | null>(null);
 
@@ -204,11 +204,11 @@ function GitLabBindingForm({
   teamId,
   instanceId,
   onSaved,
-}: {
+}: Readonly<{
   teamId: string;
   instanceId: string;
   onSaved: () => void;
-}) {
+}>) {
   const [groupId, setGroupId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
@@ -264,7 +264,7 @@ function GitLabBindingForm({
   );
 }
 
-export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogProps) {
+export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindingDialogProps>) {
   const [pickedInstanceId, setPickedInstanceId] = useState<string | null>(null);
 
   const { data: githubInstances, isLoading: githubLoading, error: githubError } = useGitHubInstances();

@@ -91,7 +91,7 @@ export function collectEntitiesFromToolCalls(
 }
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 // Linkify known-entity mentions (whole-word, case-insensitive) plus any CVE ID,
@@ -122,7 +122,7 @@ export function linkifyAssistantMarkdown(
       const escaped = escapeRegExp(entity.text);
       // Whole-token match; boundaries exclude `/` and `.` to skip URLs and versions.
       const regex = new RegExp(
-        `(^|[^A-Za-z0-9_\\-./])(${escaped})(?=[^A-Za-z0-9_\\-./]|$)`,
+        String.raw`(^|[^A-Za-z0-9_\-./])(${escaped})(?=[^A-Za-z0-9_\-./]|$)`,
         'gi',
       );
       result = result.replace(regex, (_match, lead: string) => {

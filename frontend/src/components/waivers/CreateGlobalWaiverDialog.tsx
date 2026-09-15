@@ -38,7 +38,7 @@ interface CreateGlobalWaiverDialogProps {
     onOpenChange: (open: boolean) => void
 }
 
-export function CreateGlobalWaiverDialog({ open, onOpenChange }: CreateGlobalWaiverDialogProps) {
+export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<CreateGlobalWaiverDialogProps>) {
     const [findingId, setFindingId] = useState('')
     const [packageName, setPackageName] = useState('')
     const [packageVersion, setPackageVersion] = useState('')

@@ -31,7 +31,7 @@ function getSeverityConfig(severity: string): SeverityConfig {
   return configs[severity?.toUpperCase()] || { color: 'bg-muted', icon: CircleAlert }
 }
 
-export function SeverityBadge({ severity, showIcon = true, className = '' }: SeverityBadgeProps) {
+export function SeverityBadge({ severity, showIcon = true, className = '' }: Readonly<SeverityBadgeProps>) {
   const config = getSeverityConfig(severity)
   const Icon = config.icon
 

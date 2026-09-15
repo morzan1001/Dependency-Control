@@ -26,7 +26,7 @@ interface Props {
   canRevert?: boolean;
 }
 
-export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false }: Props) {
+export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false }: Readonly<Props>) {
   const qc = useQueryClient();
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [revertTarget, setRevertTarget] = useState<number | null>(null);

@@ -33,7 +33,7 @@ function CategoryBadge({ category }: { readonly category?: string | null }) {
   )
 }
 
-export function LicensesTable({ projectId, projectName, branch }: LicensesTableProps) {
+export function LicensesTable({ projectId, projectName, branch }: Readonly<LicensesTableProps>) {
   const { data, isPending, isError, refetch } = useInventoryLicenses(projectId, branch)
 
   const handleDownload = () => downloadFile(

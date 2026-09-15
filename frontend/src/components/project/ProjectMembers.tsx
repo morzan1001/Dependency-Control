@@ -43,7 +43,7 @@ interface ProjectMembersProps {
   projectId: string
 }
 
-export function ProjectMembers({ project, projectId }: ProjectMembersProps) {
+export function ProjectMembers({ project, projectId }: Readonly<ProjectMembersProps>) {
   const queryClient = useQueryClient()
   const { permissions } = useAuth()
   const { data: currentUser } = useCurrentUser()

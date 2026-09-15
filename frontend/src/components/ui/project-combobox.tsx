@@ -22,7 +22,7 @@ export function ProjectCombobox({
   onValueChange,
   placeholder = "Search projects...",
   className,
-}: ProjectComboboxProps) {
+}: Readonly<ProjectComboboxProps>) {
   const [open, setOpen] = useState(false)
   const [search, setSearch] = useState('')
   const debouncedSearch = useDebounce(search, DEBOUNCE_DELAY_MS)

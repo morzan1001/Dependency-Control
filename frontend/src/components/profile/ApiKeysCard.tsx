@@ -73,7 +73,7 @@ const SURFACE_PERMISSIONS: Record<ApiKeySurface, string> = {
 
 // /analyze persists nothing about a call, so an ad-hoc-only key is never stamped: an absent
 // stamp says nothing about whether the key is in use.
-const STAMPING_SURFACES: readonly ApiKeySurface[] = ['mcp'];
+const STAMPING_SURFACES: ReadonlySet<ApiKeySurface> = new Set<ApiKeySurface>(['mcp']);
 
 function statusLabel(key: ApiKey): { text: string; tone: string } {
   if (key.revoked_at) return { text: 'Revoked', tone: MUTED_TONE };
@@ -113,7 +113,7 @@ function usageText(key: ApiKey): string {
   // a key naming any non-stamping surface may be in constant use through it.
   const everySurfaceStamps =
     key.surfaces.length > 0 &&
-    key.surfaces.every((surface) => STAMPING_SURFACES.includes(surface));
+    key.surfaces.every((surface) => STAMPING_SURFACES.has(surface));
   return everySurfaceStamps ? 'never used' : 'usage not recorded';
 }
 
@@ -193,6 +193,69 @@ export function ApiKeysCard() {
   const keys = data?.keys ?? [];
   const truncated = data?.truncated;
 
+  const keyListContent =
+    keys.length === 0 ? (
+      // keys is also empty when no listing ever arrived; only a real one proves there are none.
+      data && <p className="text-sm text-muted-foreground">No API keys yet.</p>
+    ) : (
+      <ul className="divide-y rounded-md border">
+        {keys.map((key) => {
+          const status = statusLabel(key);
+          return (
+            <li key={key.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
+              <div className="min-w-[12rem] flex-1">
+                <div className="font-medium">
+                  {key.name || <span className="italic text-muted-foreground">Unnamed key</span>}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-1">
+                  {key.surfaces.length === 0 ? (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
+                      no surfaces stored
+                    </span>
+                  ) : (
+                    key.surfaces.map((surface) => (
+                      <span
+                        key={surface}
+                        className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium"
+                      >
+                        {/* The listing filters surfaces to strings, not to the set this card knows. */}
+                        {SURFACE_LABELS[surface] ?? surface}
+                      </span>
+                    ))
+                  )}
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">
+                    {key.prefix ? `${key.prefix}…` : 'prefix not recorded'}
+                  </code>
+                  {' · '}
+                  <span>{createdText(key)}</span>
+                  {' · '}
+                  <span>{expiryText(key)}</span>
+                  {' · '}
+                  <span>{usageText(key)}</span>
+                </div>
+              </div>
+              <span className={`text-xs font-medium ${status.tone}`}>{status.text}</span>
+              {/* Expiry and stored damage stop a key authenticating but do not clear it away. */}
+              {!key.revoked_at && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                  aria-label={revokeLabel(key)}
+                  onClick={() => handleRevoke(key.id)}
+                  disabled={revokeMutation.isPending}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+    );
+
   return (
     <Card>
       <CardHeader>
@@ -217,69 +280,7 @@ export function ApiKeysCard() {
         </div>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
-          <Skeleton className="h-24 w-full" />
-        ) : keys.length === 0 ? (
-          // keys is also empty when no listing ever arrived; only a real one proves there are none.
-          data && <p className="text-sm text-muted-foreground">No API keys yet.</p>
-        ) : (
-          <ul className="divide-y rounded-md border">
-            {keys.map((key) => {
-              const status = statusLabel(key);
-              return (
-                <li key={key.id} className="flex flex-wrap items-center gap-3 px-3 py-2 text-sm">
-                  <div className="min-w-[12rem] flex-1">
-                    <div className="font-medium">
-                      {key.name || <span className="italic text-muted-foreground">Unnamed key</span>}
-                    </div>
-                    <div className="mt-1 flex flex-wrap items-center gap-1">
-                      {key.surfaces.length === 0 ? (
-                        <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-                          no surfaces stored
-                        </span>
-                      ) : (
-                        key.surfaces.map((surface) => (
-                          <span
-                            key={surface}
-                            className="rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium"
-                          >
-                            {/* The listing filters surfaces to strings, not to the set this card knows. */}
-                            {SURFACE_LABELS[surface] ?? surface}
-                          </span>
-                        ))
-                      )}
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      <code className="rounded bg-muted px-1 py-0.5 font-mono text-[10px]">
-                        {key.prefix ? `${key.prefix}…` : 'prefix not recorded'}
-                      </code>
-                      {' · '}
-                      <span>{createdText(key)}</span>
-                      {' · '}
-                      <span>{expiryText(key)}</span>
-                      {' · '}
-                      <span>{usageText(key)}</span>
-                    </div>
-                  </div>
-                  <span className={`text-xs font-medium ${status.tone}`}>{status.text}</span>
-                  {/* Expiry and stored damage stop a key authenticating but do not clear it away. */}
-                  {!key.revoked_at && (
-                    <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      aria-label={revokeLabel(key)}
-                      onClick={() => handleRevoke(key.id)}
-                      disabled={revokeMutation.isPending}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </Button>
-                  )}
-                </li>
-              );
-            })}
-          </ul>
-        )}
+        {isLoading ? <Skeleton className="h-24 w-full" /> : keyListContent}
         {truncated && (
           <p className="mt-2 text-xs text-muted-foreground">
             Showing the newest {truncated.returned} of {truncated.total} keys. Revoked keys keep

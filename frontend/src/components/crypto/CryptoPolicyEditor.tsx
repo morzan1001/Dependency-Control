@@ -96,7 +96,7 @@ function getRuleStatus(rule: CryptoRule, systemMap: Map<string, CryptoRule>): Ru
   return rulesEqual(rule, sys) ? "system" : "overridden";
 }
 
-function StatusBadge({ status }: { status: RuleStatus }) {
+function StatusBadge({ status }: Readonly<{ status: RuleStatus }>) {
   const styles: Record<RuleStatus, string> = {
     system: "bg-muted text-muted-foreground",
     overridden: "bg-amber-100 text-amber-900 dark:bg-amber-900/40 dark:text-amber-200",
@@ -116,7 +116,7 @@ function StatusBadge({ status }: { status: RuleStatus }) {
 
 export function CryptoPolicyEditor({
   initialRules, systemRules, onSave, onResetOverride, readOnly, title, subtitle,
-}: Props) {
+}: Readonly<Props>) {
   const [rules, setRules] = useState<CryptoRule[]>(initialRules);
   // Resync editor state when the parent supplies a new initialRules reference (useState only reads it once).
   const [syncedRules, setSyncedRules] = useState<CryptoRule[]>(initialRules);
@@ -345,11 +345,11 @@ export function CryptoPolicyEditor({
 
 function AddRuleDialog({
   existingIds, onClose, onAdd,
-}: {
+}: Readonly<{
   existingIds: Set<string>;
   onClose: () => void;
   onAdd: (r: CryptoRule) => void;
-}) {
+}>) {
   const [rule, setRule] = useState<CryptoRule>(emptyRule());
   const [error, setError] = useState<string | null>(null);
 

@@ -58,7 +58,7 @@ function SummaryRow({ label, value }: { readonly label: string; readonly value: 
   );
 }
 
-export function ReportDetailDrawer({ report, onClose }: Props) {
+export function ReportDetailDrawer({ report, onClose }: Readonly<Props>) {
   const qc = useQueryClient();
   const confirm = useDialogState();
 
