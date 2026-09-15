@@ -137,6 +137,15 @@ class TestCvssVersionAwareSeverity:
         result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "-1.0"}])
         assert result == "LOW"
 
+    def test_v3_score_of_exactly_nine_is_critical(self):
+        # 9.0 is the inclusive floor of the CRITICAL band and a score NVD publishes often.
+        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "9.0"}])
+        assert result == "CRITICAL"
+
+    def test_v3_score_just_below_nine_is_high(self):
+        result = self.analyzer._severity_from_cvss_array([{"type": "CVSS_V3", "score": "8.9"}])
+        assert result == "HIGH"
+
 
 class _Response:
     """Minimal stand-in for httpx.Response."""

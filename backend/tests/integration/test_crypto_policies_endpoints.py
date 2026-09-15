@@ -3,6 +3,7 @@ import pytest
 from app.models.crypto_policy import CryptoPolicy
 from app.models.finding import FindingType, Severity
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 
 
@@ -154,4 +155,84 @@ async def test_put_system_policy_still_allows_an_explicit_empty_rule_set(client,
     stored = await repo.get_system_policy()
     assert stored is not None
     assert stored.rules == []
+    assert stored.version == 2
+
+
+@pytest.mark.asyncio
+async def test_put_project_policy_is_refused_for_a_project_viewer(client, db, member_auth_headers):
+    resp = await client.put(
+        "/api/v1/projects/test-project-id/crypto-policy",
+        json={"rules": [_rule_dict("viewer-wrote-this")]},
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 403, resp.text
+    assert await CryptoPolicyRepository(db).get_project_policy("test-project-id") is None
+
+
+@pytest.mark.asyncio
+async def test_delete_project_policy_is_refused_for_a_project_viewer(client, db, member_auth_headers):
+    repo = CryptoPolicyRepository(db)
+    await repo.upsert_project_policy(
+        CryptoPolicy(
+            scope="project",
+            project_id="test-project-id",
+            version=1,
+            rules=[CryptoRule.model_validate(_rule_dict("keep-me"))],
+        )
+    )
+
+    resp = await client.delete(
+        "/api/v1/projects/test-project-id/crypto-policy",
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 403, resp.text
+    stored = await repo.get_project_policy("test-project-id")
+    assert stored is not None
+    assert [r.rule_id for r in stored.rules] == ["keep-me"]
+
+
+@pytest.mark.asyncio
+async def test_put_project_policy_is_locked_out_while_the_system_enforces_a_global_policy(
+    client,
+    db,
+    owner_auth_headers_proj,
+):
+    """The resolver discards project overrides in this mode, so accepting the write would store a
+    policy that never takes effect."""
+    await SystemSettingsRepository(db).update({"crypto_policy_mode": "global"})
+
+    resp = await client.put(
+        "/api/v1/projects/p/crypto-policy",
+        json={"rules": [_rule_dict("override-me")]},
+        headers=owner_auth_headers_proj,
+    )
+
+    assert resp.status_code == 403, resp.text
+    assert await CryptoPolicyRepository(db).get_project_policy("p") is None
+
+
+@pytest.mark.asyncio
+async def test_put_project_policy_bumps_the_stored_version(client, db, owner_auth_headers_proj):
+    """Policy audit entries and reverts address a revision by version, so two writes must not
+    collapse onto one number."""
+    first = await client.put(
+        "/api/v1/projects/p/crypto-policy",
+        json={"rules": [_rule_dict("r1")]},
+        headers=owner_auth_headers_proj,
+    )
+    assert first.status_code == 200, first.text
+    assert first.json()["version"] == 1
+
+    second = await client.put(
+        "/api/v1/projects/p/crypto-policy",
+        json={"rules": [_rule_dict("r2")]},
+        headers=owner_auth_headers_proj,
+    )
+    assert second.status_code == 200, second.text
+    assert second.json()["version"] == 2
+
+    stored = await CryptoPolicyRepository(db).get_project_policy("p")
+    assert stored is not None
     assert stored.version == 2

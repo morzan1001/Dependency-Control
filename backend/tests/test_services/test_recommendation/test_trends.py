@@ -363,6 +363,20 @@ class TestAnalyzeRecurringIssuesReporting:
         assert any("3 scans" in entry for entry in rec.affected_components)
 
     @pytest.mark.asyncio
+    async def test_the_most_persistent_recurrence_is_named_first(self):
+        findings = (
+            _across(5, cve_id="CVE-2024-0005", severity="CRITICAL", component="pkg-a")
+            + _across(4, cve_id="CVE-2024-0004", severity="CRITICAL", component="pkg-b")
+            + _across(4, cve_id="CVE-2024-0003", severity="LOW", component="pkg-c")
+            + _across(3, cve_id="CVE-2024-0002", severity="CRITICAL", component="pkg-d")
+        )
+
+        rec = analyze_recurring_issues(await _recurrence(findings), _WINDOW_SCANS)[0]
+
+        assert rec.action["cves"] == ["CVE-2024-0005", "CVE-2024-0004", "CVE-2024-0003", "CVE-2024-0002"]
+        assert [entry.split()[0] for entry in rec.affected_components] == rec.action["cves"]
+
+    @pytest.mark.asyncio
     async def test_description_names_the_window_the_count_was_taken_over(self):
         rec = analyze_recurring_issues(await _recurrence(_across(3)), _WINDOW_SCANS)[0]
         assert f"last {_WINDOW_SCANS} scans" in rec.description

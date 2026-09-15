@@ -55,6 +55,11 @@ def test_indirect_dependents_are_persisted():
     assert payload["deps_dev"]["dependents"] == {"total": 200000, "direct": 150000, "indirect": 50000}
 
 
+def test_scorecard_is_persisted_under_the_key_the_modal_reads():
+    payload = _payload(_metadata())
+    assert payload["deps_dev"]["scorecard"] == {"overall_score": 5.6, "date": "2026-08-01", "checks_count": 12}
+
+
 def test_links_homepage_wins_over_project_homepage():
     payload = _payload(_metadata())
     assert payload["homepage"] == "https://lodash.com/"

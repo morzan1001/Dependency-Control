@@ -90,6 +90,18 @@ class TestValidateWebhookUrl:
             validate_webhook_url(url)
 
     @pytest.mark.parametrize(
+        "url",
+        [
+            "https://[4000::1]/hook",
+            "https://[5f00::1]/hook",
+        ],
+    )
+    def test_ipv6_reserved_ip_literals_rejected(self, url):
+        # IANA-reserved IPv6 blocks are caught by is_reserved alone; no other predicate covers them.
+        with pytest.raises(ValueError, match="private|reserved|link-local"):
+            validate_webhook_url(url)
+
+    @pytest.mark.parametrize(
         "host",
         [
             "metadata.google.internal",
@@ -154,6 +166,16 @@ class TestAssertSafeWebhookTarget:
             gel.return_value.getaddrinfo = fake_getaddrinfo
             with pytest.raises(ValueError, match="resolves to"):
                 await assert_safe_webhook_target("https://metadata-spoof.example.com/")
+
+    @pytest.mark.asyncio
+    async def test_resolved_to_reserved_ipv6_rejected(self):
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("4000::1", 0, 0, 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            with pytest.raises(ValueError, match="resolves to"):
+                await assert_safe_webhook_target("https://attacker.example.com/hook")
 
     @pytest.mark.asyncio
     async def test_resolved_to_public_ip_passes(self):

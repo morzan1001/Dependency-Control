@@ -155,6 +155,16 @@ async def test_read_all_still_admits_a_reader_who_is_no_member():
 
 
 @pytest.mark.asyncio
+async def test_read_all_does_not_carry_a_non_member_into_a_write():
+    """read_all is the read-only superuser; uploading a graph over a project one is no member of stays refused."""
+    db = await _seed_gate_db(None, None)
+    reader = User(id="outsider", username="outsider", email="o@test.com", permissions=[Permissions.PROJECT_READ_ALL])
+
+    assert not await _allows(check_project_access("p1", reader, db, required_role=PROJECT_ROLE_EDITOR))
+    assert not await _allows(check_callgraph_access("p1", reader, db, require_write=True))
+
+
+@pytest.mark.asyncio
 async def test_read_all_stands_in_for_project_read_on_a_write():
     """read_all is no write permission, but it is a project-read one, and the members' check wants
     only that: an editor holding it and nothing else still writes. The write path is where the two

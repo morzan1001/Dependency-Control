@@ -759,6 +759,18 @@ class TestLicenseCompatibility:
         issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 1
 
+    def test_conflict_purl_points_at_the_component_named_first(self):
+        """The purl is the only machine-readable anchor on a pair finding; it must match Component A."""
+        components = [
+            self._make_component("alpha", "1.0", "CDDL-1.0"),
+            self._make_component("beta", "2.0", "GPL-2.0"),
+        ]
+        issues = check_license_compatibility(components, ignore_dev=True)
+        assert len(issues) == 1
+        purl_by_name = {c["name"]: c["purl"] for c in components}
+        component_a = issues[0]["component"].split(" + ")[0]
+        assert issues[0]["purl"] == purl_by_name[component_a]
+
 
 class TestTransitiveDirectness:
     """End-to-end analyze() directness detection via the top-level `direct` field."""
@@ -828,6 +840,37 @@ class TestTransitiveDirectness:
         assert len(issues) == 1
         assert issues[0]["severity"] == Severity.HIGH.value
         assert "is_transitive" not in issues[0]
+
+
+class TestIgnoredScopes:
+    """Which dependency scopes `ignore_dev_dependencies` takes out of the licence verdict."""
+
+    def setup_method(self):
+        self.analyzer = LicenseAnalyzer()
+
+    def _gpl_component(self, scope):
+        return {
+            "name": f"{scope}-gpl",
+            "version": "1.0.0",
+            "purl": f"pkg:pypi/{scope}-gpl@1.0.0",
+            "license": "GPL-3.0",
+            "scope": scope,
+            "direct": True,
+        }
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("scope", ["dev", "development", "test", "optional"])
+    async def test_non_shipped_scope_is_skipped(self, scope):
+        result = await self.analyzer.analyze(sbom={}, settings={}, parsed_components=[self._gpl_component(scope)])
+        assert result["license_issues"] == []
+        assert result["summary"]["skipped"] == 1
+        assert result["summary"]["strong_copyleft"] == 0
+
+    @pytest.mark.asyncio
+    async def test_runtime_scope_is_still_evaluated(self):
+        result = await self.analyzer.analyze(sbom={}, settings={}, parsed_components=[self._gpl_component("runtime")])
+        assert result["summary"]["skipped"] == 0
+        assert len(result["license_issues"]) == 1
 
 
 _UNREADABLE_ALTERNATIVE = "Acme-1.0"

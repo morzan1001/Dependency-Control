@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 from pymongo.errors import BulkWriteError
 
 from app.repositories.dependencies import DependencyRepository
+from tests.mocks.fake_mongo import FakeDatabase
 
 
 def _make_repo(collection):
@@ -60,3 +61,27 @@ class TestCreateManyRawWriteErrors:
 
         assert inserted == 2
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+class TestCreateManyRawIsUnordered:
+    """The bulk finding and dependency paths re-send chunks that overlap what is already stored, so
+    one collision must not cost every document behind it."""
+
+    def test_insert_many_is_called_unordered(self):
+        collection = MagicMock()
+        collection.insert_many = AsyncMock(return_value=MagicMock(inserted_ids=["1"]))
+        repo = _make_repo(collection)
+
+        asyncio.run(repo.create_many_raw([{"_id": "1"}]))
+
+        assert collection.insert_many.call_args.kwargs.get("ordered") is False
+
+    def test_a_duplicate_does_not_drop_the_documents_behind_it(self):
+        db = FakeDatabase()
+        repo = DependencyRepository(db)
+        asyncio.run(repo.create_many_raw([{"_id": "dep-b"}]))
+
+        inserted = asyncio.run(repo.create_many_raw([{"_id": "dep-a"}, {"_id": "dep-b"}, {"_id": "dep-c"}]))
+
+        assert inserted == 2
+        assert set(db.dependencies._docs) == {"dep-a", "dep-b", "dep-c"}

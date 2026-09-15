@@ -172,6 +172,52 @@ async def test_archive_scan_uploads_and_inserts_metadata(archive_env):
 
 
 @pytest.mark.asyncio
+async def test_archive_scan_stores_the_bundle_under_its_own_content_type(archive_env):
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+
+    with _patch_repos()() as (_, _):
+        assert await archive_scan(db, "scan-1") is not None
+
+    key = next(iter(archive_env.objects))
+    assert archive_env.objects[key][:2] == b"\x1f\x8b"
+    assert archive_env.content_types[key] == "application/gzip"
+
+
+@pytest.mark.asyncio
+async def test_archive_metadata_keeps_critical_and_high_counts_apart(archive_env):
+    """The metadata index is the only readable record once the scan documents are gone."""
+    findings = [
+        {"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"},
+        {"_id": "f2", "scan_id": "scan-1", "severity": "HIGH"},
+        {"_id": "f3", "scan_id": "scan-1", "severity": "HIGH"},
+        {"_id": "f4", "scan_id": "scan-1", "severity": "HIGH"},
+    ]
+    db = _make_mock_db(scan_doc=_make_scan_doc(), findings=findings)
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    assert result is not None
+    assert result.critical_findings_count == 1
+    assert result.high_findings_count == 3
+
+
+@pytest.mark.asyncio
+async def test_archive_key_carries_the_archive_time(archive_env):
+    """Two archives of one scan would otherwise collide on the same key."""
+    db = _make_mock_db(scan_doc=_make_scan_doc())
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    assert result is not None
+    key = next(iter(archive_env.objects))
+    assert result.s3_key == key
+    archived_at_unix = int(key.removeprefix("proj-1/scan-1-").removesuffix(".bundle"))
+    assert abs(archived_at_unix - int(datetime.now(timezone.utc).timestamp())) < 300
+
+
+@pytest.mark.asyncio
 async def test_archive_scan_includes_crypto_assets(archive_env):
     """crypto_assets must be streamed into the bundle alongside findings/deps."""
     scan_doc = _make_scan_doc()

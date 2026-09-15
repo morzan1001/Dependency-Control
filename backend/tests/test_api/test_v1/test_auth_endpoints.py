@@ -1,6 +1,7 @@
 """Auth endpoint security: refresh-token must not bypass the enforced-2FA setup gate, and email endpoints must gate on the DB system settings (system_config.smtp_host), not env SMTP_HOST."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,9 @@ from app.core.config import settings
 from app.models.system import SystemSettings
 
 MODULE = "app.api.v1.endpoints.auth"
+
+# The pad targets 200ms; the floor sits below it so scheduler jitter cannot flake the assertion.
+_TIMING_PAD_FLOOR_SECONDS = 0.15
 
 
 def _make_settings(**overrides):
@@ -95,6 +99,57 @@ class TestRefreshToken2FAGate:
 
         assert _decode_permissions(result["access_token"]) == ["scan:read"]
 
+    def test_a_user_document_without_the_totp_field_counts_as_2fa_unconfigured(self):
+        """Documents written before the 2FA columns existed carry no totp_enabled at all."""
+        user = {
+            "username": "erin",
+            "is_active": True,
+            "auth_provider": "local",
+            "permissions": ["admin:manage", "scan:read"],
+        }
+        system_config = _make_settings(enforce_2fa=True)
+
+        result = self._run_refresh(user, system_config)
+
+        assert _decode_permissions(result["access_token"]) == ["auth:setup_2fa"]
+
+
+class TestRefreshTokenType:
+    def test_an_access_token_is_not_accepted_in_place_of_a_refresh_token(self):
+        from app.api.v1.endpoints.auth import refresh_token
+
+        access_token = security.create_access_token("bob", permissions=["admin:manage"])
+        mock_repo = MagicMock()
+        mock_repo.get_raw_by_username = AsyncMock(
+            return_value={"username": "bob", "is_active": True, "permissions": ["admin:manage"]}
+        )
+
+        with (
+            patch(f"{MODULE}.UserRepository", return_value=mock_repo),
+            patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get,
+        ):
+            mock_get.return_value = _make_settings()
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(refresh_token(refresh_token=access_token, db=MagicMock()))
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "Invalid token type"
+        mock_repo.get_raw_by_username.assert_not_awaited()
+
+    def test_a_password_reset_token_is_not_accepted_in_place_of_a_refresh_token(self):
+        from app.api.v1.endpoints.auth import refresh_token
+
+        reset_token = security.create_password_reset_token("bob@test.com")
+        mock_repo = MagicMock()
+        mock_repo.get_raw_by_username = AsyncMock(return_value=None)
+
+        with patch(f"{MODULE}.UserRepository", return_value=mock_repo):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(refresh_token(refresh_token=reset_token, db=MagicMock()))
+
+        assert exc_info.value.status_code == 403
+        assert exc_info.value.detail == "Invalid token type"
+
 
 class TestForgotPasswordSmtpGate:
     def _run_forgot(self, system_config, send_mock, user=None):
@@ -176,6 +231,90 @@ class TestForgotPasswordSmtpGate:
 
         background_tasks.add_task.assert_called_once()
         assert background_tasks.add_task.call_args.kwargs["system_settings"] is system_config
+
+
+class _MemoryCache:
+    """Stand-in for the Redis-backed cache so the real rate limiter can actually count."""
+
+    def __init__(self):
+        self._data: dict = {}
+
+    async def get(self, key):
+        return self._data.get(key)
+
+    async def set(self, key, value, ttl_seconds=None):
+        self._data[key] = value
+        return True
+
+
+def _run_forgot_password(user=None, cache=None, host="1.2.3.4", send_mock=None):
+    from app.api.v1.endpoints.auth import forgot_password
+
+    request = MagicMock()
+    request.client.host = host
+    mock_repo = MagicMock()
+    mock_repo.get_raw_by_email = AsyncMock(return_value=user)
+
+    rate_limit_patch = (
+        patch(f"{MODULE}.cache_service", cache)
+        if cache
+        else patch(f"{MODULE}._check_rate_limit", new_callable=AsyncMock)
+    )
+
+    with (
+        rate_limit_patch,
+        patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get,
+        patch(f"{MODULE}.UserRepository", return_value=mock_repo),
+        patch(f"{MODULE}.send_password_reset_email", send_mock or AsyncMock()),
+    ):
+        mock_get.return_value = _make_settings(smtp_host="smtp.db.example.com")
+        return asyncio.run(
+            forgot_password(
+                request=request,
+                background_tasks=MagicMock(),
+                email="user@test.com",
+                db=MagicMock(),
+            )
+        )
+
+
+class TestForgotPasswordRateLimit:
+    """The budget on this unauthenticated endpoint is the only thing standing between a caller and
+    unlimited password-reset mail to an address they do not own."""
+
+    def test_a_client_gets_three_attempts_before_being_rejected(self):
+        cache = _MemoryCache()
+
+        for _ in range(3):
+            assert _run_forgot_password(cache=cache) is not None
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run_forgot_password(cache=cache)
+
+        assert exc_info.value.status_code == 429
+
+    def test_the_budget_is_counted_per_client_address(self):
+        cache = _MemoryCache()
+        for _ in range(3):
+            _run_forgot_password(cache=cache, host="1.2.3.4")
+
+        assert _run_forgot_password(cache=cache, host="5.6.7.8") is not None
+
+
+class TestForgotPasswordConstantTime:
+    def test_an_unknown_address_takes_as_long_to_answer_as_a_registered_one(self):
+        known = {"email": "user@test.com", "username": "user", "is_active": True, "auth_provider": "local"}
+
+        start = time.monotonic()
+        _run_forgot_password(user=known)
+        registered_duration = time.monotonic() - start
+
+        start = time.monotonic()
+        _run_forgot_password(user=None)
+        unknown_duration = time.monotonic() - start
+
+        assert registered_duration >= _TIMING_PAD_FLOOR_SECONDS
+        assert unknown_duration >= _TIMING_PAD_FLOOR_SECONDS
 
 
 class TestResendVerificationSmtpGate:

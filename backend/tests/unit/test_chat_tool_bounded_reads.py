@@ -31,6 +31,8 @@ _CVE = "CVE-2021-44228"
 _WELL_INSIDE_THE_WINDOW = 5
 _OVER_THE_CEILING = 7
 _INSIDE_THE_CEILING = 3
+_ESTATE_SIZE = 8
+_PROJECT_PAGE = 5
 
 
 @pytest.fixture
@@ -302,3 +304,22 @@ async def test_an_expiring_waiver_answer_names_every_waiver_in_the_window(seeded
     assert result["count"] == _EXPIRING_WAIVER_READ
     assert result["waivers_total"] == population
     assert result["_bounded_read"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_capped_project_listing_holds_the_most_recently_scanned(seeded, admin_user):
+    """An estate larger than the cap is answered with a page, so the page has to be the freshest
+    projects rather than whichever ones the collection happens to hand back first."""
+    oldest_first = _ESTATE_SIZE - 1
+    for index in range(_ESTATE_SIZE):
+        seeded.projects._docs[f"ps-{index:02d}"] = {
+            "_id": f"ps-{index:02d}",
+            "name": f"ps-{index:02d}",
+            "team_id": None,
+            "last_scan_at": _NOW - timedelta(days=oldest_first - index),
+        }
+
+    result = await ChatToolRegistry().execute_tool("list_projects", {"limit": _PROJECT_PAGE}, admin_user, seeded)
+
+    freshest = [f"ps-{index:02d}" for index in range(oldest_first, oldest_first - _PROJECT_PAGE, -1)]
+    assert [p["id"] for p in result["projects"]] == freshest

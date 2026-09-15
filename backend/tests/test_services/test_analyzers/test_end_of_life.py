@@ -321,3 +321,29 @@ class TestCheckVersionPreference:
     def test_returns_none_when_no_cycle_matches(self):
         cycles = [self._eol_cycle("4"), self._eol_cycle("5")]
         assert self.analyzer._check_version("3.8.0", cycles) is None
+
+
+class TestRecommendedUpgradeCycle:
+    """The upgrade offered as the remediation for an EOL component must itself still be supported."""
+
+    def setup_method(self):
+        self.analyzer = EndOfLifeAnalyzer()
+
+    def _cycles(self):
+        def offset(days):
+            return (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%d")
+
+        return [
+            {"cycle": "3", "latest": "3.9.0", "eol": offset(365)},
+            {"cycle": "2", "latest": "2.7.18", "eol": offset(-400)},
+            {"cycle": "1", "latest": "1.5.2", "eol": offset(-2000)},
+        ]
+
+    def test_recommended_cycle_is_not_itself_end_of_life(self):
+        cycles = self._cycles()
+        result = self.analyzer._check_version("1.5.2", cycles)
+        assert result is not None
+        recommended = next(c for c in cycles if c["cycle"] == result["recommended_cycle"])
+        eol_date = datetime.strptime(recommended["eol"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        assert eol_date > datetime.now(timezone.utc)
+        assert result["recommended_version"] == recommended["latest"]

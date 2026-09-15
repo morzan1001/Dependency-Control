@@ -22,6 +22,26 @@ def test_sarif_renderer_outputs_sarif_2_1_0():
     assert results[0]["ruleId"] == "NIST-131A-01"
 
 
+def test_sarif_failed_control_carries_its_severity_as_the_result_level():
+    out, _, _ = SarifRenderer().render(_evaluation(), _report())
+    result = json.loads(out)["runs"][0]["results"][0]
+    assert result["level"] == "error"
+    assert "kind" not in result
+
+
+def test_sarif_driver_properties_carry_the_framework_disclaimer():
+    disclaimer = "Algorithm-level conformance only."
+    out, _, _ = SarifRenderer().render(_evaluation(), _report(), disclaimer=disclaimer)
+    properties = json.loads(out)["runs"][0]["tool"]["driver"]["properties"]
+    assert properties["disclaimer"] == disclaimer
+
+
+def test_sarif_driver_properties_omit_the_disclaimer_when_the_framework_has_none():
+    out, _, _ = SarifRenderer().render(_evaluation(), _report())
+    properties = json.loads(out)["runs"][0]["tool"]["driver"]["properties"]
+    assert "disclaimer" not in properties
+
+
 def test_sarif_passed_control_emits_pass_result():
     from datetime import datetime, timezone
 

@@ -17,6 +17,7 @@ from app.services.recommendation.common import (
     parse_version_tuple,
     sample_components,
     sort_key,
+    take_top,
 )
 
 
@@ -391,6 +392,27 @@ class TestCalculateScore:
         )
         assert calculate_score(partial_unreach) < calculate_score(normal)
 
+    def test_a_ratio_exactly_at_the_high_threshold_takes_only_the_medium_penalty(self):
+        def _with_unreachable(count: int) -> Recommendation:
+            return _make_recommendation(
+                priority=Priority.HIGH,
+                impact={
+                    "critical": 0,
+                    "high": 10,
+                    "medium": 0,
+                    "low": 0,
+                    "total": 10,
+                    "unreachable_count": count,
+                },
+            )
+
+        at_threshold = _with_unreachable(8)
+        above_threshold = _with_unreachable(9)
+        mid_range = _with_unreachable(6)
+
+        assert calculate_score(at_threshold) == calculate_score(mid_range)
+        assert calculate_score(at_threshold) > calculate_score(above_threshold)
+
     def test_effort_low_bonus(self):
         low_effort = _make_recommendation(effort="low")
         high_effort = _make_recommendation(effort="high")
@@ -494,6 +516,27 @@ class TestSampleComponents:
 
         assert shown == ["a", "b"]
         assert total == 2
+
+    def test_a_card_names_twenty_components_before_it_cuts(self):
+        shown, total = sample_components(f"pkg{index:04d}" for index in range(30))
+
+        assert len(shown) == 20
+        assert total == 30
+
+
+class TestTakeTop:
+    """Rank and population are how a card says "you are looking at a sample"."""
+
+    def test_a_population_that_exactly_fills_the_cap_is_not_advertised_as_a_sample(self):
+        taken = take_top(["a", "b", "c"], 3)
+
+        assert [candidate for _rank, candidate, _population in taken] == ["a", "b", "c"]
+        assert {(rank, population) for rank, _candidate, population in taken} == {(0, 0)}
+
+    def test_a_population_past_the_cap_ranks_what_it_emits_and_names_the_population(self):
+        taken = take_top(["a", "b", "c", "d"], 3)
+
+        assert taken == [(1, "a", 4), (2, "b", 4), (3, "c", 4)]
 
 
 class TestNameSome:

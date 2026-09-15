@@ -5,6 +5,7 @@ from typing import Any, Self
 
 import pytest
 
+from app.core.constants import NPM_REGISTRY_URL
 from app.models.finding import Severity
 from app.services.analyzers import hash_verification
 from app.services.analyzers.hash_verification import HashVerificationAnalyzer
@@ -23,9 +24,29 @@ class _FakeClient:
     def __init__(self, payload: dict[str, Any], status_code: int = 200):
         self._payload = payload
         self._status_code = status_code
+        self.urls: list[str] = []
 
     async def get(self, url: str) -> _FakeResponse:
+        self.urls.append(url)
         return _FakeResponse(self._payload, self._status_code)
+
+
+class _HtmlErrorResponse:
+    """A registry error page is HTML, so decoding its body raises."""
+
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+
+    def json(self) -> dict[str, Any]:
+        raise ValueError("Expecting value: line 1 column 1 (char 0)")
+
+
+class _HtmlErrorClient:
+    def __init__(self, status_code: int):
+        self._status_code = status_code
+
+    async def get(self, _url: str) -> _HtmlErrorResponse:
+        return _HtmlErrorResponse(self._status_code)
 
 
 # sha256 digests for three released files of the same version.
@@ -89,6 +110,40 @@ async def test_genuinely_wrong_hash_still_flagged():
         _MANYLINUX_WHEEL_SHA256,
         _SDIST_SHA256,
     }
+
+
+@pytest.mark.asyncio
+async def test_uppercase_registry_digest_verifies_against_the_sbom_hash():
+    """The comparison folds the SBOM side to lower case, so the registry side must be folded too."""
+    analyzer = HashVerificationAnalyzer()
+    client = _FakeClient({"urls": [{"digests": {"sha256": _SDIST_SHA256.upper()}}]})
+
+    registry_hashes_flat = await analyzer._fetch_pypi_registry_hashes(client, "numpy", "1.26.4")
+
+    result = analyzer._evaluate_registry_hashes(
+        registry_hashes_flat, {"sha256": _SDIST_SHA256}, "numpy", "1.26.4", "pypi"
+    )
+    assert result == {"verified": True}
+
+
+@pytest.mark.asyncio
+async def test_a_404_from_pypi_is_a_negative_result_not_a_transient_error():
+    """{} and None are cached differently: the package is genuinely absent, not momentarily unreachable."""
+    analyzer = HashVerificationAnalyzer()
+
+    result = await analyzer._fetch_pypi_registry_hashes(_HtmlErrorClient(404), "nonexistent-pkg", "1.0.0")
+
+    assert result == {}
+
+
+@pytest.mark.asyncio
+async def test_a_scoped_npm_package_is_requested_with_an_escaped_slash():
+    analyzer = HashVerificationAnalyzer()
+    client = _FakeClient({"dist": {"shasum": "e" * 40}})
+
+    await analyzer._fetch_npm_registry_hashes(client, "@babel/core", "7.24.0")
+
+    assert client.urls == [f"{NPM_REGISTRY_URL}/@babel%2Fcore/7.24.0"]
 
 
 class _ConcurrencyProbe:

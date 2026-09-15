@@ -6,11 +6,12 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.api.v1.helpers.analytics import (
+    build_priority_reasons,
     calculate_impact_score,
     impact_pre_score,
     select_impact_candidates,
 )
-from app.core.constants import IMPACT_MAX_SCORE_BOOST
+from app.core.constants import BLAST_RADIUS_THRESHOLD, IMPACT_MAX_SCORE_BOOST
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
 from app.schemas.analytics import CVEEnrichmentResult
@@ -623,6 +624,45 @@ class TestSelectImpactCandidates:
         boundary = _impact_row("boundary", ap=1, low=boundary_low)
         cands = select_impact_candidates(top + [boundary], limit=5)
         assert any(r["component"] == "boundary" for r in cands)
+
+    def test_the_cut_is_taken_from_the_limit_th_row(self):
+        # P_limit = 100 -> threshold 12.03. Read one row further down (pre 20) the threshold
+        # falls to 2.4 and every enrichment budget goes to groups that cannot place.
+        top = [_impact_row(f"t{i}", ap=10, critical=1) for i in range(5)]  # pre 100 each
+        sixth = _impact_row("sixth", ap=2, critical=1)  # pre 20, the first row below the cut
+        unreachable = _impact_row("unreachable", ap=1, medium=1)  # pre 4: under 12.03, over 2.4
+        cands = select_impact_candidates(top + [sixth, unreachable], limit=5)
+        names = {r["component"] for r in cands}
+        assert "sixth" in names
+        assert "unreachable" not in names, "the cut must come from the limit-th pre-score"
+
+    def test_a_field_that_scores_zero_throughout_keeps_every_group(self):
+        """INFO and UNKNOWN carry no severity weight, so a whole page can pre-score zero; an
+        exclusive cut then drops the entire field and the endpoint answers with nothing."""
+        rows = [_impact_row(f"u{i}", ap=5) for i in range(8)]
+
+        assert len(select_impact_candidates(rows, limit=5)) == len(rows)
+
+
+class TestPriorityReasons:
+    def _reasons(self, affected_projects: int) -> list[str]:
+        return build_priority_reasons(
+            {"critical": 0, "high": 1, "medium": 0, "low": 0},
+            CVEEnrichmentResult(),
+            affected_projects,
+            has_fix=False,
+            days_known=None,
+        )
+
+    def test_a_fix_reaching_exactly_the_blast_radius_threshold_is_labelled(self):
+        reasons = self._reasons(BLAST_RADIUS_THRESHOLD)
+
+        assert any(r.startswith("blast_radius:") for r in reasons)
+
+    def test_a_fix_one_project_short_of_the_threshold_is_not_labelled(self):
+        reasons = self._reasons(BLAST_RADIUS_THRESHOLD - 1)
+
+        assert not any(r.startswith("blast_radius:") for r in reasons)
 
 
 class TestImpactEndpointRanksByScoreNotBlastRadius:

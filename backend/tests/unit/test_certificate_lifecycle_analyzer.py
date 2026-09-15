@@ -132,6 +132,41 @@ async def test_expiring_cert_severity_ladder(db, days_left, expected_severity):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "days_left,expected_severity",
+    [
+        (7, "CRITICAL"),
+        (30, "HIGH"),
+        (90, "MEDIUM"),
+        (180, "LOW"),
+    ],
+)
+async def test_a_cert_expiring_on_a_ladder_boundary_takes_that_rung(db, days_left, expected_severity):
+    """The minutes of slack keep the floor division on the boundary day itself, which is the rung's own day."""
+    now = datetime.now(timezone.utc)
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s",
+        [
+            _cert(not_after=now + timedelta(days=days_left, minutes=5)),
+        ],
+    )
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
+    )
+    result = await CertificateLifecycleAnalyzer().analyze(
+        sbom={},
+        project_id="p",
+        scan_id="s",
+        db=db,
+    )
+    expiring = [f for f in result["findings"] if f["type"] == "crypto_cert_expiring_soon"]
+    assert len(expiring) == 1
+    assert expiring[0]["details"]["days_until_expiry"] == days_left
+    assert expiring[0]["severity"] == expected_severity
+
+
+@pytest.mark.asyncio
 async def test_not_yet_valid_cert_emits_low(db):
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
@@ -294,6 +329,28 @@ async def test_weak_key_honors_policy_min_size(db):
 
 
 @pytest.mark.asyncio
+async def test_key_exactly_at_the_policy_minimum_is_compliant(db):
+    """A minimum is the smallest allowed size, so only a key below it is weak."""
+    now = datetime.now(timezone.utc)
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s",
+        [
+            _cert(bom_ref="c-at-minimum", not_after=now + timedelta(days=365), subject_key_ref="rsa3072"),
+            _cert(bom_ref="c-below-minimum", not_after=now + timedelta(days=365), subject_key_ref="rsa3071"),
+            _algo("rsa3072", "RSA", CryptoPrimitive.PKE, key_size=3072),
+            _algo("rsa3071", "RSA", CryptoPrimitive.PKE, key_size=3071),
+        ],
+    )
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), _weak_key_rule(min_bits=3072)])
+    )
+    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
+    assert [f["details"]["bom_ref"] for f in weak] == ["c-below-minimum"]
+
+
+@pytest.mark.asyncio
 async def test_weak_signature_honors_glob_and_rule_severity(db):
     """A glob hash rule must match via fnmatch and the finding must use the rule's severity."""
     now = datetime.now(timezone.utc)
@@ -397,6 +454,44 @@ async def test_validity_too_long(db):
     )
     too_long = [f for f in result["findings"] if f["type"] == "crypto_cert_validity_too_long"]
     assert len(too_long) == 1
+
+
+@pytest.mark.asyncio
+async def test_validity_exactly_at_the_policy_limit_is_allowed(db):
+    """398 days is the CA/Browser Forum maximum, so a cert issued at exactly that limit still complies."""
+    now = datetime.now(timezone.utc)
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s",
+        [
+            _cert(
+                bom_ref="c-at-limit",
+                not_before=now - timedelta(days=10),
+                not_after=now + timedelta(days=388),
+            ),
+            _cert(
+                bom_ref="c-over-limit",
+                not_before=now - timedelta(days=10),
+                not_after=now + timedelta(days=389),
+            ),
+        ],
+    )
+    rule = CryptoRule(
+        rule_id="validity-398",
+        name="validity",
+        description="",
+        finding_type=FindingType.CRYPTO_CERT_VALIDITY_TOO_LONG,
+        default_severity=Severity.LOW,
+        source=CryptoPolicySource.CUSTOM,
+        validity_too_long_days=398,
+    )
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), rule])
+    )
+    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    too_long = [f for f in result["findings"] if f["type"] == "crypto_cert_validity_too_long"]
+    assert [f["details"]["validity_days"] for f in too_long] == [399]
+    assert [f["details"]["bom_ref"] for f in too_long] == ["c-over-limit"]
 
 
 @pytest.mark.asyncio

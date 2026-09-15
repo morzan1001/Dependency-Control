@@ -74,3 +74,52 @@ async def test_pqc_endpoint_respects_scope_permission(
         headers=member_auth_headers,
     )
     assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_one_users_plan_is_not_served_to_the_next_caller(
+    client,
+    db,
+    owner_auth_headers_proj,
+    owner_auth_headers_proj_p2,
+):
+    """scope=user carries no scope_id, so the caller is the only thing that tells the two
+    requests apart in the process-wide analytics cache."""
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s1",
+        [
+            CryptoAsset(
+                project_id="p",
+                scan_id="s1",
+                bom_ref="rsa1",
+                name="RSA",
+                asset_type=CryptoAssetType.ALGORITHM,
+                primitive=CryptoPrimitive.PKE,
+                key_size_bits=1024,
+            )
+        ],
+    )
+    await db.scans.insert_one(
+        {
+            "_id": "s1",
+            "project_id": "p",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+
+    owner_of_p = await client.get(
+        "/api/v1/analytics/crypto/pqc-migration?scope=user",
+        headers=owner_auth_headers_proj,
+    )
+    assert owner_of_p.status_code == 200, owner_of_p.text
+    assert owner_of_p.json()["summary"]["total_items"] >= 1
+
+    owner_of_p2 = await client.get(
+        "/api/v1/analytics/crypto/pqc-migration?scope=user",
+        headers=owner_auth_headers_proj_p2,
+    )
+    assert owner_of_p2.status_code == 200, owner_of_p2.text
+    assert owner_of_p2.json()["summary"]["total_items"] == 0
+    assert owner_of_p2.json()["items"] == []

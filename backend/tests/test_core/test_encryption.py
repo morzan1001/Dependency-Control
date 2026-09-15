@@ -3,8 +3,10 @@ from unittest.mock import patch
 
 import pytest
 from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 from app.core.constants import ENCRYPTION_CHUNK_SIZE, ENCRYPTION_FORMAT_VERSION, ENCRYPTION_MAGIC
+from app.core.encryption import NONCE_SIZE
 
 
 @pytest.fixture
@@ -14,6 +16,36 @@ def encryption_key():
     with patch("app.core.encryption.settings") as mock_settings:
         mock_settings.ARCHIVE_ENCRYPTION_KEY = key
         yield key
+
+
+def _parse_chunks(blob: bytes) -> list[tuple[bytes, bytes]]:
+    """Walk the wire format and return (nonce, payload) per chunk."""
+    pos = 9
+    chunks: list[tuple[bytes, bytes]] = []
+    while True:
+        payload_len = int.from_bytes(blob[pos : pos + 4], "big")
+        pos += 4
+        if payload_len == 0:
+            return chunks
+        nonce = blob[pos : pos + NONCE_SIZE]
+        pos += NONCE_SIZE
+        chunks.append((nonce, blob[pos : pos + payload_len]))
+        pos += payload_len
+
+
+async def _encrypt(plaintext: bytes, chunk_size: int) -> bytes:
+    from app.core.encryption import EncryptionStreamWriter
+
+    collected: list[bytes] = []
+
+    async def sink(chunk: bytes) -> None:
+        collected.append(chunk)
+
+    writer = EncryptionStreamWriter(sink, chunk_size=chunk_size)
+    await writer.start()
+    await writer.write(plaintext)
+    await writer.aclose()
+    return b"".join(collected)
 
 
 @pytest.mark.asyncio
@@ -193,3 +225,47 @@ async def test_decrypt_wrong_key_raises(encryption_key):
         with pytest.raises(InvalidTag):
             async for _ in decrypt_stream(source()):
                 pass
+
+
+@pytest.mark.asyncio
+async def test_every_chunk_of_a_stream_carries_its_own_nonce(encryption_key):
+    encrypted = await _encrypt(b"A" * 64 * 6, chunk_size=64)
+
+    nonces = [nonce for nonce, _ in _parse_chunks(encrypted)]
+
+    assert len(nonces) == 6
+    assert len(set(nonces)) == len(nonces)
+
+
+@pytest.mark.asyncio
+async def test_identical_plaintext_chunks_do_not_produce_identical_ciphertext(encryption_key):
+    """A repeated nonce under one AES-GCM key leaks plaintext equality and destroys the tag's integrity guarantee."""
+    plaintext = b"B" * 64
+
+    first = _parse_chunks(await _encrypt(plaintext, chunk_size=64))
+    second = _parse_chunks(await _encrypt(plaintext, chunk_size=64))
+
+    assert first[0][1] != second[0][1]
+
+
+@pytest.mark.asyncio
+async def test_a_64_hex_character_key_is_decoded_as_hex_rather_than_hashed():
+    from app.core.encryption import EncryptionStreamWriter
+
+    key_hex = "0123456789abcdef" * 4
+    plaintext = b"archive bundle bytes"
+    collected: list[bytes] = []
+
+    async def sink(chunk: bytes) -> None:
+        collected.append(chunk)
+
+    with patch("app.core.encryption.settings") as mock_settings:
+        mock_settings.ARCHIVE_ENCRYPTION_KEY = key_hex
+        writer = EncryptionStreamWriter(sink, chunk_size=64)
+        await writer.start()
+        await writer.write(plaintext)
+        await writer.aclose()
+
+    nonce, payload = _parse_chunks(b"".join(collected))[0]
+
+    assert AESGCM(bytes.fromhex(key_hex)).decrypt(nonce, payload, None) == plaintext

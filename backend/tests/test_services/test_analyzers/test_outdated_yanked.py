@@ -262,6 +262,23 @@ class TestSingleFetchFeedsOutdatedAndYanked:
         assert result["yanked_versions"][0]["component"] == "retract-me"
 
     @pytest.mark.asyncio
+    async def test_v_prefixed_install_matches_the_canonical_withdrawn_entry(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """SBOMs carry tag-style versions such as v1.0.0 while deps.dev lists them without the prefix."""
+        cache = _FakeCache({_seed_key("npm", "retract-me"): {"default": "1.0.1", "withdrawn": ["1.0.0"]}})
+        monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
+        monkeypatch.setattr(
+            "app.services.analyzers.outdated.InstrumentedAsyncClient",
+            _AlwaysFailingClient,
+        )
+
+        analyzer = OutdatedAnalyzer()
+        result = await analyzer.analyze({}, parsed_components=[_component("retract-me", "v1.0.0", "npm")])
+
+        assert [y["current_version"] for y in result["yanked_versions"]] == ["v1.0.0"]
+
+    @pytest.mark.asyncio
     async def test_active_version_emits_no_yanked_finding(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cache = _FakeCache({_seed_key("pypi", "still-good"): {"default": "1.0.1", "withdrawn": ["0.9.0"]}})
         monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
@@ -291,6 +308,34 @@ class TestSingleFetchFeedsOutdatedAndYanked:
         assert result["yanked_versions"] == []
         assert result["outdated_dependencies"] == []
         assert result["ahead_of_default"] == []
+
+
+# --- The default version is the one deps.dev flags -----
+
+
+class TestDefaultVersionSelection:
+    @pytest.mark.asyncio
+    async def test_the_flagged_version_wins_over_the_first_one_listed(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """deps.dev spells out isDefault: false on every other version, so presence of the key decides nothing."""
+        cache = _FakeCache()
+        monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
+
+        client = _ScriptedClient(
+            {
+                "lodash": {
+                    "versions": [
+                        {"versionKey": {"version": "1.0.0"}, "isDefault": False},
+                        {"versionKey": {"version": "2.0.0"}, "isDefault": True},
+                    ]
+                }
+            }
+        )
+        monkeypatch.setattr("app.services.analyzers.outdated.InstrumentedAsyncClient", client)
+
+        analyzer = OutdatedAnalyzer()
+        result = await analyzer.analyze({}, parsed_components=[_component("lodash", "1.0.0", "npm")])
+
+        assert [o["latest_version"] for o in result["outdated_dependencies"]] == ["2.0.0"]
 
 
 # --- Distinct packages are fetched concurrently, not serially ----

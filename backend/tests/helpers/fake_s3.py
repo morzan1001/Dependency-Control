@@ -30,6 +30,7 @@ class FakeS3Client:
 
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}  # key -> body
+        self.content_types: dict[str, str] = {}  # key -> MIME type as sent to S3
         self.bucket_exists: bool = True
         self._multipart_uploads: dict[str, list[bytes]] = {}  # upload_id -> parts
         self._multipart_keys: dict[str, str] = {}  # upload_id -> key
@@ -50,6 +51,7 @@ class FakeS3Client:
     async def put_object(self, Bucket: str, Key: str, Body: bytes, ContentType: str = "") -> dict[str, Any]:
         self.put_calls.append({"Bucket": Bucket, "Key": Key, "ContentType": ContentType})
         self.objects[Key] = bytes(Body)
+        self.content_types[Key] = ContentType
         return {}
 
     async def get_object(self, Bucket: str, Key: str) -> dict[str, Any]:
@@ -70,6 +72,7 @@ class FakeS3Client:
         upload_id = f"upload-{len(self._multipart_uploads) + 1}"
         self._multipart_uploads[upload_id] = []
         self._multipart_keys[upload_id] = Key
+        self.content_types[Key] = ContentType
         return {"UploadId": upload_id}
 
     async def upload_part(self, Bucket: str, Key: str, UploadId: str, PartNumber: int, Body: bytes) -> dict[str, Any]:

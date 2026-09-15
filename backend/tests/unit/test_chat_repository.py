@@ -62,6 +62,18 @@ async def test_delete_conversation(repo):
 
 
 @pytest.mark.asyncio
+async def test_delete_conversation_wrong_user(repo):
+    conv = await repo.create_conversation(user_id="user-1", title="My Chat")
+    await repo.add_message(conv["_id"], role="user", content="Hello")
+
+    deleted = await repo.delete_conversation(conv["_id"], user_id="user-2")
+
+    assert deleted is False
+    assert await repo.get_conversation(conv["_id"], user_id="user-1") is not None
+    assert len(await repo.get_messages(conv["_id"])) == 1
+
+
+@pytest.mark.asyncio
 async def test_add_and_get_messages(repo):
     conv = await repo.create_conversation(user_id="user-1", title="My Chat")
 

@@ -148,6 +148,16 @@ def test_a_findings_table_cut_to_the_row_cap_says_so():
     assert f"Findings ({_FINDING_ROW_CAP} of {_OVER_THE_CAP})" in html
 
 
+def test_a_findings_table_cut_to_the_row_cap_renders_only_that_many_rows():
+    """The heading names a subset; a table rendering every row makes the heading a lie and the
+    document unbounded."""
+    result = _result(findings=[_finding(id=str(index)) for index in range(_OVER_THE_CAP)])
+
+    html = render_adhoc_html(result)
+
+    assert html.count('<tr class="sev-') == _FINDING_ROW_CAP
+
+
 def test_a_recommendation_table_cut_to_the_row_cap_says_so():
     result = _result(
         recommendations=[
@@ -161,6 +171,20 @@ def test_a_recommendation_table_cut_to_the_row_cap_says_so():
     assert f"Recommendations ({_RECOMMENDATION_ROW_CAP} of {_RECOMMENDATIONS_OVER_THE_CAP})" in html
 
 
+def test_a_recommendation_table_cut_to_the_row_cap_renders_only_that_many_rows():
+    result = _result(
+        recommendations=[
+            {"priority": "high", "title": f"fix {index}", "effort": "low"}
+            for index in range(_RECOMMENDATIONS_OVER_THE_CAP)
+        ]
+    )
+
+    html = render_adhoc_html(result)
+
+    table = html.split("<h2>Recommendations")[1]
+    assert table.count("<tr><td>high</td>") == _RECOMMENDATION_ROW_CAP
+
+
 def test_findings_are_ordered_most_severe_first():
     result = _result(
         findings=[
@@ -172,6 +196,27 @@ def test_findings_are_ordered_most_severe_first():
     html = render_adhoc_html(result)
 
     assert html.index("critical-component") < html.index("low-component")
+
+
+def test_a_waived_finding_is_marked_as_waived_in_its_row():
+    """The stylesheet strikes ``tr.waived`` through; without the class a suppressed finding reads
+    exactly like a live one."""
+    result = _result(findings=[_finding(waived=True), _finding(id="live", component="live-component")])
+
+    html = render_adhoc_html(result)
+
+    assert '<tr class="sev-CRITICAL waived">' in html
+    assert '<tr class="sev-CRITICAL">' in html
+
+
+def test_a_finding_without_a_severity_is_labelled_unknown():
+    """UNKNOWN is the label the rest of the app uses for an ungraded finding."""
+    result = _result(findings=[_finding(severity=None)])
+
+    html = render_adhoc_html(result)
+
+    assert '<td class="severity">UNKNOWN</td>' in html
+    assert '<tr class="sev-UNKNOWN">' in html
 
 
 def test_sbom_content_is_html_escaped():

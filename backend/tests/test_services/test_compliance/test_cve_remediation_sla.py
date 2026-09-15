@@ -8,6 +8,7 @@ from app.models.finding import FindingType, Severity
 from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.cve_remediation_sla import (
     CveRemediationSlaFramework,
+    _is_overdue,
 )
 
 
@@ -126,3 +127,65 @@ class TestEvaluationSemantics:
         high = next(c for c in result.controls if c.severity == Severity.HIGH)
         assert high.status == "waived"
         assert "compensating control" in high.waiver_reasons
+
+    @pytest.mark.asyncio
+    async def test_waiver_reasons_name_only_the_waived_findings(self):
+        framework = CveRemediationSlaFramework()
+        result = await framework.evaluate_async(
+            _eval_input(
+                [
+                    _vuln(
+                        Severity.HIGH,
+                        days_ago=60,
+                        _id="f-waived",
+                        waived=True,
+                        waiver_reason="compensating control",
+                    ),
+                    _vuln(Severity.HIGH, days_ago=61, _id="f-open"),
+                ]
+            )
+        )
+        high = next(c for c in result.controls if c.severity == Severity.HIGH)
+        assert high.status == "failed"
+        assert high.waiver_reasons == ["compensating control"]
+
+
+class TestOverdueBoundary:
+    _NOW = datetime(2026, 4, 20, 12, 0, tzinfo=timezone.utc)
+
+    def _finding(self, first_seen: datetime) -> dict:
+        return {
+            "_id": "f-boundary",
+            "type": FindingType.VULNERABILITY.value,
+            "severity": Severity.CRITICAL.value,
+            "first_seen_at": first_seen,
+            "status": "open",
+        }
+
+    def test_an_age_of_exactly_the_sla_window_is_overdue(self):
+        assert _is_overdue(self._finding(self._NOW - timedelta(days=7)), Severity.CRITICAL, 7, self._NOW) is True
+
+    def test_an_age_one_microsecond_short_of_the_window_is_not_overdue(self):
+        first_seen = self._NOW - timedelta(days=7) + timedelta(microseconds=1)
+        assert _is_overdue(self._finding(first_seen), Severity.CRITICAL, 7, self._NOW) is False
+
+    def test_a_naive_first_seen_at_is_read_as_utc(self):
+        """Motor is built without tz_aware, so Mongo hands the framework naive UTC datetimes."""
+        naive = (self._NOW - timedelta(days=30)).replace(tzinfo=None)
+        assert _is_overdue(self._finding(naive), Severity.CRITICAL, 7, self._NOW) is True
+
+    @pytest.mark.asyncio
+    async def test_a_naive_timestamp_inside_the_window_keeps_the_control_passing(self):
+        framework = CveRemediationSlaFramework()
+        naive = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=2)
+        result = await framework.evaluate_async(_eval_input([_vuln(Severity.CRITICAL, 2, first_seen_at=naive)]))
+        critical = next(c for c in result.controls if c.severity == Severity.CRITICAL)
+        assert critical.status == "passed"
+
+    @pytest.mark.asyncio
+    async def test_a_naive_timestamp_past_the_window_fails_the_control(self):
+        framework = CveRemediationSlaFramework()
+        naive = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=60)
+        result = await framework.evaluate_async(_eval_input([_vuln(Severity.HIGH, 60, first_seen_at=naive)]))
+        high = next(c for c in result.controls if c.severity == Severity.HIGH)
+        assert high.status == "failed"

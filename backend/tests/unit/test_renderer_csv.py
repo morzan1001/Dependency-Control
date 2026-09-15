@@ -1,7 +1,7 @@
 import csv
 import io
 
-from app.schemas.compliance import ReportFormat
+from app.schemas.compliance import ControlStatus, ReportFormat
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
 from tests.unit.test_renderer_json import _evaluation, _report
 
@@ -21,6 +21,20 @@ def test_csv_renderer_outputs_rows_per_control():
     assert rows[0]["severity"] == "HIGH"
     # evidence_count must sum finding_ids and asset_bom_refs, since some evaluators emit only the latter.
     assert rows[0]["evidence_count"] == "2"
+
+
+def test_csv_marks_a_waived_control_in_the_waived_column():
+    evaluation = _evaluation()
+    waived = evaluation.controls[0].model_copy(
+        update={"control_id": "NIST-131A-02", "status": ControlStatus.WAIVED, "waiver_reasons": ["accepted risk"]}
+    )
+    evaluation.controls = [*evaluation.controls, waived]
+    rep = _report()
+    rep.format = ReportFormat.CSV
+    out, _, _ = CsvRenderer().render(evaluation, rep)
+    rows = list(csv.DictReader(io.StringIO(out.decode("utf-8"))))
+    assert [r["status"] for r in rows] == ["failed", "waived"]
+    assert [r["waived"] for r in rows] == ["false", "true"]
 
 
 def test_csv_header_present():

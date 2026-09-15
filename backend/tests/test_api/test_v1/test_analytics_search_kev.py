@@ -21,3 +21,27 @@ def test_aggregate_kev_status_false_when_absent():
     in_kev, ransomware, _due = _aggregate_kev_status({}, [])
     assert in_kev is False
     assert ransomware is False
+
+
+def test_aggregate_kev_status_reports_the_earliest_nested_due_date():
+    nested = [
+        {"id": "CVE-1", "in_kev": True, "kev_due_date": "2026-11-30"},
+        {"id": "CVE-2", "in_kev": True, "kev_due_date": "2026-03-01"},
+    ]
+    _in_kev, _ransomware, due = _aggregate_kev_status({}, nested)
+    assert due == "2026-03-01"
+
+
+def test_aggregate_kev_status_earliest_due_date_does_not_depend_on_nesting_order():
+    nested = [
+        {"id": "CVE-2", "in_kev": True, "kev_due_date": "2026-03-01"},
+        {"id": "CVE-1", "in_kev": True, "kev_due_date": "2026-11-30"},
+    ]
+    _in_kev, _ransomware, due = _aggregate_kev_status({}, nested)
+    assert due == "2026-03-01"
+
+
+def test_aggregate_kev_status_nested_due_date_can_pull_the_finding_deadline_forward():
+    nested = [{"id": "CVE-1", "in_kev": True, "kev_due_date": "2026-03-01"}]
+    _in_kev, _ransomware, due = _aggregate_kev_status({"kev_due_date": "2026-11-30"}, nested)
+    assert due == "2026-03-01"

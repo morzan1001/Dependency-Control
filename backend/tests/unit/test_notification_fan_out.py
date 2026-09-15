@@ -69,3 +69,33 @@ async def test_no_holders_means_no_batch_at_all(db):
     )
 
     assert recorded == []
+
+
+def _deactivate(db, username: str) -> None:
+    db.users._docs[username]["is_active"] = False
+
+
+@pytest.mark.asyncio
+async def test_a_deactivated_holder_of_the_permission_is_not_reached(db):
+    _seed_admins(db, 2)
+    _deactivate(db, "u0")
+    recorded: list[list[str]] = []
+
+    await _recording_service(recorded).notify_users_with_permission(
+        db, permission=_PERMISSION, event_type=_EVENT, subject="s", message="m"
+    )
+
+    assert [user for batch in recorded for user in batch] == ["admin-1"]
+
+
+@pytest.mark.asyncio
+async def test_a_fan_out_to_only_deactivated_holders_sends_nothing(db):
+    _seed_admins(db, 1)
+    _deactivate(db, "u0")
+    recorded: list[list[str]] = []
+
+    await _recording_service(recorded).notify_users_with_permission(
+        db, permission=_PERMISSION, event_type=_EVENT, subject="s", message="m"
+    )
+
+    assert recorded == []

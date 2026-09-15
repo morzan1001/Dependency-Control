@@ -601,6 +601,19 @@ class TestUnreachableDowngrade:
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].priority == Priority.CRITICAL
 
+    def test_an_unreachable_critical_beside_one_of_unknown_reachability_stays_critical(self):
+        findings = [
+            _make_finding(finding_id="CVE-2024-0001", severity="CRITICAL", reachable=False),
+            _make_finding(finding_id="CVE-2024-0002", severity="CRITICAL", reachable=None),
+        ]
+        dep = _make_dependency()
+        dep_by_nv = _build_lookup_maps([dep])
+
+        result = process_vulnerabilities(findings, dep_by_nv, [dep], None)
+
+        direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        assert direct_recs[0].priority == Priority.CRITICAL
+
     def test_unreachable_transitive_also_downgraded(self):
         finding = _make_finding(
             severity="CRITICAL",
@@ -651,6 +664,19 @@ class TestEpssHandling:
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].impact["medium_epss_count"] >= 1
+
+    def test_a_score_exactly_at_the_high_threshold_counts_as_high(self):
+        finding = _make_finding(finding_id="CVE-2024-7777", severity="MEDIUM", epss_score=0.1)
+        dep = _make_dependency()
+        dep_by_nv = _build_lookup_maps([dep])
+
+        result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
+
+        direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        assert direct_recs[0].impact["high_epss_count"] == 1
+        assert direct_recs[0].impact["medium_epss_count"] == 0
+        assert direct_recs[0].priority == Priority.HIGH
+        assert "CVE-2024-7777" in direct_recs[0].action.get("high_epss_cves", [])
 
     def test_high_epss_cves_in_action(self):
         finding = _make_finding(finding_id="CVE-2024-5555", epss_score=0.5)

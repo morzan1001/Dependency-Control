@@ -309,6 +309,35 @@ class TestNormalizeBearer:
         f = next(iter(self.agg.findings.values()))
         assert f.component == "fallback.py"
 
+    def test_file_is_the_last_filename_fallback(self):
+        """The filename also enters the finding id, so two files would otherwise collapse."""
+        result = {
+            "findings": [
+                {"id": "rule", "title": "test", "severity": "high", "file": "src/app.py", "line_number": 7},
+                {"id": "rule", "title": "test", "severity": "high", "file": "src/db.py", "line_number": 7},
+            ]
+        }
+        self.agg.aggregate("bearer", result)
+        assert {f.component for f in self.agg.findings.values()} == {"src/app.py", "src/db.py"}
+
+    def test_end_line_falls_back_to_the_start_line(self):
+        """An item without an end position spans its own line; a zero would invert the span."""
+        result = {
+            "findings": [
+                {
+                    "id": "rule",
+                    "title": "test",
+                    "severity": "high",
+                    "full_filename": "file.py",
+                    "line_number": 42,
+                }
+            ]
+        }
+        self.agg.aggregate("bearer", result)
+        f = next(iter(self.agg.findings.values()))
+        assert f.details["start"]["line"] == 42
+        assert f.details["end"]["line"] == 42
+
     def test_source_line_numbers(self):
         result = {
             "findings": [

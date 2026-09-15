@@ -2,6 +2,7 @@
 
 import logging
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -185,6 +186,34 @@ class TestSeverityThresholds:
     def test_ratio_at_boundary_095_is_high(self):
         # 0.95 is not > 0.95, so it is HIGH.
         assert self._make_issue(0.95) == "HIGH"
+
+
+class TestCorpusMembershipDecidesWhoIsScanned:
+    """The corpus names the packages being imitated; a component in it is the real thing."""
+
+    _CORPUS: ClassVar[dict[str, set[str]]] = {"npm": {"express", "react", "lodash"}}
+
+    async def _issues(self, *names):
+        analyzer = TyposquattingAnalyzer()
+        components = [{"name": name, "version": "1.0.0", "purl": f"pkg:npm/{name}@1.0.0"} for name in names]
+        with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=self._CORPUS)):
+            result = await analyzer.analyze({}, parsed_components=components)
+        return result["typosquatting_issues"]
+
+    @pytest.mark.asyncio
+    async def test_the_imitation_is_flagged_and_the_package_it_imitates_is_not(self):
+        issues = await self._issues("express", "expresss")
+
+        assert [issue["component"] for issue in issues] == ["expresss"]
+        assert issues[0]["imitated_package"] == "express"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("name", ["lodashh", "lodashhh"])
+    async def test_a_name_within_two_characters_of_a_popular_one_is_still_compared(self, name):
+        """The length gate is a shortcut past hopeless pairs, not a filter on same-length names."""
+        issues = await self._issues(name)
+
+        assert [issue["imitated_package"] for issue in issues] == ["lodash"]
 
 
 class TestCorpusDepthIsDeclaredAndReported:

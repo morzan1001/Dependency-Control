@@ -2,6 +2,7 @@
 
 from app.services.notifications.mattermost_formatter import (
     build_advisory_props,
+    build_analysis_completed_props,
     build_vulnerability_found_props,
 )
 from app.services.notifications.slack_formatter import (
@@ -133,3 +134,25 @@ class TestMattermostAlerts:
         )
 
         assert f"({_AFFECTED_PROJECTS_SHOWN} of {_AFFECTED_PROJECTS})" in props["attachments"][0]["text"]
+
+
+def _completed_colour(**severity_counts: int) -> str:
+    props = build_analysis_completed_props(
+        project_name="demo",
+        scan_id="s1",
+        total_findings=sum(severity_counts.values()),
+        severity_counts=severity_counts,
+        results_summary=[],
+        scan_link=_SCAN_LINK,
+    )
+    return props["attachments"][0]["color"]
+
+
+class TestMattermostSeverityColour:
+    def test_a_scan_with_highs_is_not_coloured_like_a_clean_one(self):
+        assert _completed_colour(HIGH=3) != _completed_colour()
+
+    def test_each_severity_tier_is_coloured_apart_from_the_others(self):
+        tiers = {_completed_colour(CRITICAL=1, HIGH=3), _completed_colour(HIGH=3), _completed_colour()}
+
+        assert len(tiers) == 3

@@ -94,6 +94,57 @@ async def test_an_unowned_project_notifies_only_its_own_members(db):
     assert await _notified(db, []) == {"u-direct"}
 
 
+_PREFS_EVENT = "analysis_completed"
+_PROJECT_OVERRIDE = {_PREFS_EVENT: ["slack"]}
+_ACCOUNT_DEFAULT = {_PREFS_EVENT: ["email"]}
+
+
+async def _seed_member_of_alpha(db) -> None:
+    await db.teams.insert_one({"_id": "alpha", "name": "Alpha", "members": [{"user_id": "u-both"}]})
+    await db.users.insert_one(
+        {
+            "_id": "u-both",
+            "username": "u-both",
+            "email": "u-both@test.com",
+            "is_active": True,
+            "permissions": [],
+            "notification_preferences": _ACCOUNT_DEFAULT,
+        }
+    )
+
+
+def _prefs_recording_service(seen: dict[str, dict]) -> NotificationService:
+    service = NotificationService()
+
+    async def record(user, prefs, *_args, **_kwargs):
+        seen[user.username] = prefs
+
+    service._send_based_on_prefs = record  # type: ignore[method-assign]
+    return service
+
+
+@pytest.mark.asyncio
+async def test_a_project_channel_override_survives_the_same_users_team_membership(db):
+    await _seed_member_of_alpha(db)
+    seen: dict[str, dict] = {}
+
+    await _prefs_recording_service(seen).notify_project_members(
+        project=Project(
+            id=_PROJECT,
+            name="fanout",
+            team_ids=["alpha"],
+            team_id="alpha",
+            members=[ProjectMember(user_id="u-both", role="admin", notification_preferences=_PROJECT_OVERRIDE)],
+        ),
+        event_type=_PREFS_EVENT,
+        subject="s",
+        message="m",
+        db=db,
+    )
+
+    assert seen == {"u-both": _PROJECT_OVERRIDE}
+
+
 async def _seed_webhooks(db) -> None:
     for index, team_id in enumerate(("alpha", "bravo", "zulu", None)):
         await db.webhooks.insert_one(

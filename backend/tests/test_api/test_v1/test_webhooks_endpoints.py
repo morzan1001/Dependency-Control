@@ -42,6 +42,31 @@ class TestCreateWebhook:
         assert result.url == "https://example.com/hook"
         mock_repo.create.assert_called_once()
 
+    def test_explicit_webhook_type_wins_over_url_detection(self, regular_user):
+        """A Teams relay behind a vanity URL is only reachable if the caller's explicit type survives."""
+        from app.api.v1.endpoints.webhooks import create_webhook
+        from app.schemas.webhook import WebhookCreate
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock(side_effect=lambda webhook: webhook)
+
+        with patch(f"{MODULE}.check_webhook_create_permission", new_callable=AsyncMock):
+            with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
+                result = asyncio.run(
+                    create_webhook(
+                        project_id="proj-1",
+                        webhook_in=WebhookCreate(
+                            url="https://my-server.example.com/webhook",
+                            events=["scan_completed"],
+                            webhook_type="teams",
+                        ),
+                        current_user=regular_user,
+                        db=MagicMock(),
+                    )
+                )
+
+        assert result.webhook_type == "teams"
+
 
 class TestCreateGlobalWebhook:
     def test_success_creates_global_webhook(self, admin_user):
@@ -185,6 +210,39 @@ class TestGetWebhook:
                     )
 
         assert result.url == "https://example.com/hook"
+
+    def test_project_viewer_holding_only_webhook_read_may_read(self):
+        """Reading is gated on webhook:read; demanding webhook:update would push every read-only holder onto the project-admin branch."""
+        from app.api.v1.endpoints.webhooks import get_webhook
+        from app.core.permissions import Permissions
+        from app.models.project import Project, ProjectMember
+        from app.models.user import User
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        reader = User(
+            id="reader-1",
+            username="reader",
+            email="reader@test.com",
+            permissions=[Permissions.PROJECT_READ, Permissions.WEBHOOK_READ],
+        )
+        webhook = _make_webhook()
+
+        async def _run():
+            db = FakeDatabase()
+            project = Project(
+                id="proj-1",
+                name="proj-1",
+                members=[ProjectMember(user_id="reader-1", role="viewer")],
+            )
+            await db.projects.insert_one(project.model_dump(by_alias=True))
+
+            with (
+                patch(f"{MODULE}.WebhookRepository", return_value=MagicMock()),
+                patch(f"{MODULE}.get_webhook_or_404", new_callable=AsyncMock, return_value=webhook),
+            ):
+                return await get_webhook(webhook_id="wh-1", current_user=reader, db=db)
+
+        assert asyncio.run(_run()).id == "wh-1"
 
     def test_raises_404_when_not_found(self, regular_user):
         from app.api.v1.endpoints.webhooks import get_webhook

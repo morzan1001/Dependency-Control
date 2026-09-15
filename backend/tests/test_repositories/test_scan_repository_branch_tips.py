@@ -145,3 +145,15 @@ async def test_a_newer_unusable_build_does_not_displace_the_last_good_one(unusab
 
     assert (branch, count) == (_MAIN, 2)
     assert tip is not None and tip["_id"] == "good"
+
+
+@pytest.mark.asyncio
+async def test_two_builds_stamped_in_the_same_millisecond_resolve_to_one_tip():
+    """BSON dates are milliseconds, so the date alone cannot separate these two; the seeding order
+    is the one the server would hand back untied, and the tip must not be it."""
+    scans = [_scan("z-build", _MAIN, 0), _scan("a-build", _MAIN, 0)]
+    repo = ScanRepository(await _seeded(scans))
+
+    _branch, _count, tip = (await repo.branch_tips(_PROJECT))[0]
+
+    assert tip is not None and tip["_id"] == "a-build"

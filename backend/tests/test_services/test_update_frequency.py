@@ -18,7 +18,7 @@ from app.repositories.update_frequency import (
     ScanUpdateDeltaRepository,
     window_scans_by_branch,
 )
-from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
+from app.schemas.analytics import ProjectUpdateSummary, ScanTimelineEntry, UpdateFrequencyMetrics
 from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
@@ -32,6 +32,7 @@ from app.services.update_frequency import (
     compute_update_frequency,
     compute_update_frequency_comparison,
     load_outdated_entries,
+    rank_summaries,
     select_primary_branch,
     window_coverage_status,
     window_cutoff,
@@ -2053,3 +2054,38 @@ class TestOutdatedRowsPerScan:
         entries = await load_outdated_entries(FakeAnalysisRepo([]), "scan-1")
 
         assert entries is None
+
+
+class TestRankSummaries:
+    @staticmethod
+    def _summary(name: str, status: str, rate: float | None, coverage: float | None = None):
+        return ProjectUpdateSummary(
+            project_id=name.lower(),
+            project_name=name,
+            data_status=status,
+            window_days=90,
+            updates_per_month=rate,
+            update_coverage_pct=coverage,
+        )
+
+    def test_a_partial_project_stays_out_of_the_team_average(self):
+        """A partial row measures a shorter stretch, so its rate is not comparable."""
+        result = rank_summaries(
+            [
+                self._summary("Ready", "ready", 4.0, coverage=100.0),
+                self._summary("Partial", "partial", 10.0, coverage=100.0),
+            ]
+        )
+
+        assert result.team_avg_updates_per_month == 4.0
+        assert result.partial_projects == 1
+
+    def test_an_unavailable_rate_ranks_below_a_measured_zero(self):
+        result = rank_summaries(
+            [
+                self._summary("NoRate", "ready", None),
+                self._summary("Idle", "ready", 0.0),
+            ]
+        )
+
+        assert [p.project_name for p in result.projects] == ["Idle", "NoRate"]

@@ -803,6 +803,57 @@ class TestGetFindings:
         assert out_f.id in vuln_f.related_findings
         assert vuln_f.id in out_f.related_findings
 
+    def test_findings_are_returned_in_ascending_sort_key_order(self):
+        """adhoc's finding cap slices this list and documents the direction it relies on."""
+        self.agg.add_finding(
+            Finding(
+                id="SECRET-1",
+                type=FindingType.SECRET,
+                severity=Severity.CRITICAL,
+                component="zzz-config.yaml",
+                version="",
+                description="Secret found",
+                scanners=["trufflehog"],
+            )
+        )
+        for component in ("zlib", "alpha", "mbedtls"):
+            self.agg.add_finding(
+                Finding(
+                    id=f"CVE-{component}",
+                    type=FindingType.VULNERABILITY,
+                    severity=Severity.HIGH,
+                    component=component,
+                    version="1.0",
+                    description="vuln",
+                    scanners=["trivy"],
+                    details={"fixed_version": "2.0"},
+                )
+            )
+
+        findings = self.agg.get_findings()
+
+        assert [f.component for f in findings] == ["zzz-config.yaml", "alpha", "mbedtls", "zlib"]
+
+    def test_vulnerability_entries_are_ordered_by_id(self):
+        """The chat tool quotes the first five entries, so arrival order must not pick them."""
+        for cve in ("CVE-2026-9", "CVE-2026-1", "CVE-2026-5"):
+            self.agg.add_finding(
+                Finding(
+                    id=cve,
+                    type=FindingType.VULNERABILITY,
+                    severity=Severity.HIGH,
+                    component="openssl",
+                    version="3.0.0",
+                    description="vuln",
+                    scanners=["trivy"],
+                    details={"fixed_version": "3.0.1"},
+                )
+            )
+
+        entries = self.agg.get_findings()[0].details["vulnerabilities"]
+
+        assert [e["id"] for e in entries] == ["CVE-2026-1", "CVE-2026-5", "CVE-2026-9"]
+
     def _add_sast_findings_on_one_file(self, count):
         for index in range(count):
             self.agg.add_finding(

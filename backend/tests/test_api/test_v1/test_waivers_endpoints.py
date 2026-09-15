@@ -258,6 +258,38 @@ class TestCreateWaiverValidatesFindingMatch:
 
         mock_repo.create.assert_called_once()
 
+    def test_rule_scope_waiver_stores_the_rule_without_the_scanner_prefix(self, admin_user):
+        """The derived rule_id is the scanner's rule name; keeping the "BEARER-" stamp names a rule no scanner reports."""
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        db = self._db_with_head_scan()
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+        bg_tasks = BackgroundTasks()
+
+        with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
+            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+                with patch(f"{MODULE}.recalculate_project_stats"):
+                    created = asyncio.run(
+                        create_waiver(
+                            waiver_in=WaiverCreate(
+                                project_id="proj-1",
+                                finding_id="BEARER-ruby_lang_weak-hash-src/file.rb-12",
+                                finding_type="sast",
+                                package_name="src/file.rb",
+                                scope="rule",
+                                reason="future",
+                            ),
+                            background_tasks=bg_tasks,
+                            current_user=admin_user,
+                            db=db,
+                        )
+                    )
+
+        assert created.rule_id == "ruby_lang_weak-hash"
+
     def test_file_scope_waiver_skips_match_check(self, admin_user):
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate

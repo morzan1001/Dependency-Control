@@ -41,6 +41,31 @@ async def test_team_scope_expands_to_projects():
 
 
 @pytest.mark.asyncio
+async def test_team_scope_denied_for_a_user_the_team_does_not_list(db):
+    await db.teams.insert_one({"_id": "t1", "name": "Alpha", "members": [{"user_id": "someone-else"}]})
+    await db.projects.insert_one({"_id": "p1", "name": "P1", "team_ids": ["t1"]})
+    resolver = ScopeResolver(db, MagicMock(id="u1", permissions=frozenset()))
+    with pytest.raises(ScopeResolutionError):
+        await resolver.resolve(scope="team", scope_id="t1")
+
+
+@pytest.mark.asyncio
+async def test_team_scope_allowed_for_a_user_the_team_lists(db):
+    await db.teams.insert_one({"_id": "t1", "name": "Alpha", "members": [{"user_id": "u1"}]})
+    await db.projects.insert_one({"_id": "p1", "name": "P1", "team_ids": ["t1"]})
+    resolver = ScopeResolver(db, MagicMock(id="u1", permissions=frozenset()))
+    result = await resolver.resolve(scope="team", scope_id="t1")
+    assert result.project_ids == ["p1"]
+
+
+@pytest.mark.asyncio
+async def test_team_scope_denied_for_a_team_that_does_not_exist(db):
+    resolver = ScopeResolver(db, MagicMock(id="u1", permissions=frozenset()))
+    with pytest.raises(ScopeResolutionError):
+        await resolver.resolve(scope="team", scope_id="ghost")
+
+
+@pytest.mark.asyncio
 async def test_global_scope_requires_permission():
     db = MagicMock()
     user_admin = MagicMock(id="u1", permissions=frozenset({"analytics:global"}))
