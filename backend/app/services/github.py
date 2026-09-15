@@ -741,10 +741,9 @@ class GitHubService:
     ) -> dict[str, Any]:
         """The Dependency Control team for a GitHub team: the one bound to it, or a new one.
 
-        A group nobody bound gets a team of its own and never an existing team whose name happens
-        to match it. A binding hands every member of that team project-admin over everything the
-        group holds, which is system:manage's to grant, while a team's name is its own admin's to
-        set; binding by name let anyone who can name a team collect the group's repositories.
+        A binding hands every member of that team project-admin over everything the group holds,
+        which is system:manage's to grant, while a team's name is its own admin's to set; binding
+        by name let anyone who can name a team collect the group's repositories.
 
         Created even when GitHub names members none of whom resolve: logins here are personal
         handles while usernames are directory ids, so requiring a resolved member — as the GitLab

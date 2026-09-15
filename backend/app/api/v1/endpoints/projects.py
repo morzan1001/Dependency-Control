@@ -314,13 +314,7 @@ async def read_projects(
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> dict[str, Any]:
-    """
-    Retrieve projects.
-
-    - **Superusers** see all projects.
-    - **Regular users** see projects they own or are members of.
-    - **team_id** optional filter to show only projects of a specific team.
-    """
+    """Retrieve projects; superusers see all, everyone else those they are a member of or that a team of theirs owns."""
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 

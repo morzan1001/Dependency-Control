@@ -190,9 +190,7 @@ class AnalysisWorkerManager:
     async def _notify_analysis_failed(self, db: AsyncIOMotorDatabase, scan: dict[str, Any], error: str) -> None:
         """Fire the analysis_failed webhook + project notification for a failed scan.
 
-        Best-effort: any error here is logged and swallowed so it never masks the
-        original failure. Shared by the exception path and the retry-ceiling path so
-        every terminal 'failed' transition alerts owners who configured it.
+        Any error here is logged and swallowed so it never masks the original failure.
         """
         scan_id = str(scan.get("_id"))
         try:

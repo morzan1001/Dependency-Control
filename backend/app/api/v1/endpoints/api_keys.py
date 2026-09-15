@@ -49,13 +49,10 @@ def _to_response(doc: dict[str, Any]) -> ApiKeyResponse:
     """Render a stored key, standing in an empty string or a null for every field a document
     written outside ``ApiKeyRepository.create`` has lost or holds in the wrong type.
 
-    Damaged rows are rendered, not dropped. ``name``, ``prefix``, ``created_at`` and
+    Damaged rows are rendered, not dropped: ``name``, ``prefix``, ``created_at`` and
     ``last_used_at`` are read by nothing that authenticates, so a key damaged only there still
     opens every door it names and has to stay visible to stay revokable. Damage to anything auth
-    does read — the hash and the owner, ``surfaces``, and the null ``revoked_at`` and future
-    ``expires_at`` ``get_by_plaintext`` also requires — has already stopped the key, and its owner
-    is still the one who clears it away. Revoke takes back both stored id types this can render;
-    an id of any other type would be listed and not revokable, and nothing is known to write one.
+    does read has already stopped the key, and its owner is still the one who clears it away.
     """
     key_id = str(doc["_id"])
     damaged: list[str] = []

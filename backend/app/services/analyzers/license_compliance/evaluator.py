@@ -326,11 +326,9 @@ def create_undeterminable_issue(
     unrecognized: list[str],
     rejected_alternatives: list[str] | None = None,
 ) -> dict[str, Any]:
-    """A component whose licence the SBOM does not let us determine: none declared, or declared
-    under an identifier we do not know. Neither is auditable, which is what the audit control means.
-
-    Informational, because "we cannot tell" is not the same class as a disallowed licence; the
-    control keys on the finding's presence, not on its severity.
+    """Flag a component whose licence the SBOM does not let us determine, which is not auditable —
+    exactly what the audit control means. INFO is deliberate: "we cannot tell" is not the same class
+    as a disallowed licence, and the control keys on the finding's presence, not on its severity.
     """
     if unrecognized:
         explanation = (

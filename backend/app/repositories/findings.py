@@ -87,12 +87,8 @@ class FindingRepository(BaseRepository[FindingRecord]):
         return result.modified_count
 
     async def _rollup_vulnerability_waivers(self, query: dict[str, Any], waiver_reason: str | None) -> None:
-        """Sync the document-level waived flag and severity with the nested entries.
-
-        Every waiver consumer (severity buckets, ignored_count) reads the document level, so a
-        document counts as waived only once all its entries are, and its severity must reflect
-        what is still live.
-        """
+        """Every waiver consumer (severity buckets, ignored_count) reads the document level, so a document
+        counts as waived only once all its entries are, and its severity must reflect what is still live."""
         cursor = self.collection.find(query, {"_id": 1, "severity": 1, "waived": 1, "details.vulnerabilities": 1})
         updates: list[UpdateOne] = []
         for doc in await cursor.to_list(None):

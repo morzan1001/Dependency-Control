@@ -72,14 +72,10 @@ async def upload_stream(
     bucket: str | None = None,
     part_size: int = S3_MULTIPART_PART_SIZE,
 ) -> int:
-    """Multipart-upload a stream to S3.
+    """Multipart-upload a stream to S3, returning the total bytes uploaded.
 
-    Buffers each part to ``part_size`` bytes (default ~5.25 MiB) before sending,
-    except the last part which can be smaller. Returns the total bytes uploaded.
-
-    On any failure during the stream, calls ``AbortMultipartUpload`` and re-raises.
-    An empty stream is uploaded as a zero-byte object via ``PutObject`` (multipart
-    requires at least one part).
+    An empty stream is uploaded as a zero-byte object via ``PutObject``; multipart
+    requires at least one part.
     """
     b = _bucket(bucket)
     async with get_s3_client() as s3:
@@ -145,13 +141,10 @@ async def delete_object(key: str, *, bucket: str | None = None) -> None:
 
 
 async def list_objects(prefix: str = "", *, bucket: str | None = None) -> list[dict[str, Any]]:
-    """List all S3 objects under a prefix, following pagination.
+    """List all S3 objects under a prefix as raw Contents entries (Key, Size, LastModified, ...).
 
-    Returns the raw Contents entries (Key, Size, LastModified, ...) across every
-    page. ``list_objects_v2`` returns at most 1000 keys per call, so this loops on
-    ``NextContinuationToken`` until ``IsTruncated`` is false; otherwise objects
-    beyond the first lexicographic page would be invisible to callers such as the
-    orphan reaper.
+    ``list_objects_v2`` returns at most 1000 keys per call, so this loops on
+    ``NextContinuationToken`` until ``IsTruncated`` is false.
     """
     b = _bucket(bucket)
     objects: list[dict[str, Any]] = []

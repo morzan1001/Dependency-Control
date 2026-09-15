@@ -571,10 +571,7 @@ class GitLabService:
         """Resolve a GitLab member to an EXISTING local user: the public email, then the username.
 
         The email comes with the listing and costs no request, so it is tried first; the username
-        still has to be tried, or a member whose GitLab email differs from the one their account
-        was created with is dropped although their handle names them exactly.
-
-        Returns None when the member has no local account; sync never creates users.
+        must still be tried, or a member whose GitLab email differs from their account's is dropped.
         """
         if member.email:
             # Case-insensitive: OIDC-login email may differ in case, and an exact match

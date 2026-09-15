@@ -31,13 +31,8 @@ _WAIVER_FIELD_MAP = {
 
 
 def _strip_line_number(finding_id: str) -> str | None:
-    """Strip the trailing line number from a SAST finding ID to get the file-level prefix.
-
-    SAST finding IDs end with ``-<line_number>``.  Stripping that suffix
-    lets us match all findings for the same rule + file regardless of line.
-
-    Example:
-        ``BEARER-rule_id-src/file.js-102`` → ``BEARER-rule_id-src/file.js``
+    """Strip the trailing ``-<line_number>`` from a SAST finding ID, so file-scope matching covers
+    every line of the same rule + file.
     """
     parts = finding_id.rsplit("-", 1)
     if len(parts) == 2 and parts[1].isdigit():
@@ -46,19 +41,8 @@ def _strip_line_number(finding_id: str) -> str | None:
 
 
 def _extract_rule_prefix(finding_id: str, component: str) -> str | None:
-    """Extract the scanner+rule prefix from a SAST/IAC finding ID.
-
-    Given ``finding_id = {SCANNER}-{rule_id}-{file_path}-{line}``
-    and ``component = {file_path}``, returns ``{SCANNER}-{rule_id}``.
-
-    Used by "rule" scope waivers to match all findings for the same rule
-    across all files in a project.
-
-    Example:
-        ``_extract_rule_prefix(
-            "BEARER-javascript_lang_insufficiently_random_values-src/file.js-102",
-            "src/file.js",
-        )`` → ``"BEARER-javascript_lang_insufficiently_random_values"``
+    """Extract ``{SCANNER}-{rule_id}`` from a SAST/IAC ``{SCANNER}-{rule_id}-{file_path}-{line}``
+    ID, given ``component = {file_path}``, so rule-scope waivers match the rule across all files.
     """
     file_prefix = _strip_line_number(finding_id)
     if not file_prefix:
@@ -182,12 +166,11 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: list[Waiver],
 
 
 def _is_signature_waiver(waiver: Any) -> bool:
-    """True if a waiver should be applied via the signature orchestrator rather than the
-    legacy finding_id query. Only instance-precise (scope="finding") waivers qualify: file/rule
-    scope keep their broad semantics via the legacy _build_waiver_query path. Within finding
-    scope, a waiver qualifies if it already carries a MatchSignature, or it explicitly targets a
-    location-based finding type (so the back-fill can give it one). Untyped / non-location
-    finding-scope waivers stay on the legacy path so they are never silently dropped."""
+    """True if a waiver should be applied via the signature orchestrator rather than the legacy
+    finding_id query. File/rule scope keep their broad semantics on the legacy _build_waiver_query
+    path; within finding scope a location-typed waiver without a signature qualifies so the
+    back-fill can give it one, and untyped non-location ones stay legacy so they are never
+    silently dropped."""
     from app.repositories.findings import FindingRepository
 
     if getattr(waiver, "scope", "finding") != "finding":

@@ -1,9 +1,7 @@
-"""
-Orchestrator for the unified scan-delta endpoint.
+"""Orchestrator for the unified scan-delta endpoint.
 
-Validates the public query parameters, then dispatches to the per-category
-delta service. Service-layer functions trust pre-validated inputs; auth and
-cross-project scan checks live one layer above (REST handler / MCP wrapper).
+Service-layer functions trust pre-validated inputs; auth and cross-project scan
+checks live one layer above (REST handler / MCP wrapper).
 """
 
 from __future__ import annotations

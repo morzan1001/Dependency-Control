@@ -38,11 +38,8 @@ class ScanManager:
         return None
 
     async def find_or_create_scan(self, data: BaseIngest) -> ScanContext:
-        """Find or create the scan for this pipeline, returning a ScanContext.
-
-        Uses deterministic UUID5 scan_ids so all scanners for the same commit+pipeline
-        share one scan across pods.
-        """
+        """Find or create the scan for this pipeline, keyed by a deterministic UUID5 so all
+        scanners for the same commit+pipeline share one scan across pods."""
         pipeline_url = self.build_pipeline_url(data)
 
         if data.pipeline_id and data.commit_hash:
@@ -142,11 +139,7 @@ class ScanManager:
         return matched_any
 
     async def apply_waivers(self, findings: list[Finding]) -> tuple[list[Finding], int]:
-        """
-        Apply waivers to findings.
-
-        Returns (non_waived_findings, waived_count).
-        """
+        """Apply waivers to findings, returning (non_waived_findings, waived_count)."""
         waivers = await self._get_waivers()
 
         final_findings = []
