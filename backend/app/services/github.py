@@ -24,6 +24,7 @@ from app.core.constants import (
     team_source,
 )
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.log_utils import sanitize_for_log
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GitHubInstance
 from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of
@@ -346,7 +347,9 @@ class GitHubService:
                     )
 
                     if response.status_code != 200:
-                        logger.error(f"GitHub API GET {endpoint} page {page} failed: {response.status_code}")
+                        logger.error(
+                            f"GitHub API GET {sanitize_for_log(endpoint)} page {page} failed: {response.status_code}"
+                        )
                         return None
 
                     items = response.json()
@@ -363,7 +366,7 @@ class GitHubService:
                     page += 1
 
         except Exception as e:
-            logger.exception("GitHub API paginated GET %s failed: %s", endpoint, e)
+            logger.exception("GitHub API paginated GET %s failed: %s", sanitize_for_log(endpoint), e)
             return None
 
         return all_items
@@ -376,7 +379,7 @@ class GitHubService:
         logger.warning(
             "GitHub API GET %s hit the pagination cap of %d page(s) (%d items) but the Link header "
             'still offers rel="next". Result is TRUNCATED.',
-            endpoint,
+            sanitize_for_log(endpoint),
             max_pages,
             item_count,
         )

@@ -29,6 +29,8 @@ OSV_SEVERITY_MAP = {
     "LOW": Severity.LOW.value,
 }
 
+_OSV_SERVICE_LABEL = "OSV API"
+
 # Parallel /v1/vulns fetches; OSV throttles aggressively and a scan can carry thousands of ids.
 _HYDRATION_CONCURRENCY = 8
 # Wall-clock budget for the whole hydration phase. Without it a slow-at-timeout OSV would add
@@ -50,8 +52,7 @@ class _HydrationBudget:
         if self._tripped:
             return True
         if asyncio.get_running_loop().time() >= self._deadline:
-            if not self._tripped:
-                logger.error("OSV hydration budget exhausted; remaining records are left unresolved")
+            logger.error("OSV hydration budget exhausted; remaining records are left unresolved")
             self._tripped = True
         return self._tripped
 
@@ -139,7 +140,7 @@ class OSVAnalyzer(Analyzer):
         # (component, [{id, modified}, ...]) pairs; hydrated together so one id is fetched once.
         pending: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
 
-        async with InstrumentedAsyncClient("OSV API", timeout=timeout) as client:
+        async with InstrumentedAsyncClient(_OSV_SERVICE_LABEL, timeout=timeout) as client:
             for chunk_start in range(0, len(uncached_components), batch_size):
                 chunk = uncached_components[chunk_start : chunk_start + batch_size]
                 payload, valid_components = _build_batch_payload(chunk)
@@ -295,7 +296,7 @@ class OSVAnalyzer(Analyzer):
                 logger.warning(f"OSV vuln fetch for {vuln_id} returned {response.status_code}")
                 return None
 
-            external_api_rate_limit_hits_total.labels(service="OSV API").inc()
+            external_api_rate_limit_hits_total.labels(service=_OSV_SERVICE_LABEL).inc()
             if attempt < self.max_retries:
                 await asyncio.sleep(self.retry_base_delay * (2**attempt))
         logger.error(f"OSV vuln fetch for {vuln_id} rate limited after {1 + self.max_retries} attempts")
@@ -330,7 +331,7 @@ class OSVAnalyzer(Analyzer):
             skipped = self._handle_success(response, valid_components, pending)
             return False, skipped
         if response.status_code == 429:
-            external_api_rate_limit_hits_total.labels(service="OSV API").inc()
+            external_api_rate_limit_hits_total.labels(service=_OSV_SERVICE_LABEL).inc()
             return True, 0
         logger.warning(f"OSV Batch API error: {response.status_code}")
         return False, len(valid_components)

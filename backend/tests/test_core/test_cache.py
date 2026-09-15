@@ -109,7 +109,9 @@ class TestCacheKeysOsv:
 
     def test_deterministic(self):
         purl = "pkg:npm/lodash@4.17.21"
-        assert CacheKeys.osv(purl) == CacheKeys.osv(purl)
+        first = CacheKeys.osv(purl)
+        second = CacheKeys.osv(purl)
+        assert first == second
 
     def test_different_purls_differ(self):
         assert CacheKeys.osv("pkg:pypi/flask@2.0") != CacheKeys.osv("pkg:pypi/django@4.0")

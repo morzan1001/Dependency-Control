@@ -24,6 +24,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
 )
 from app.core.constants import TEAM_ROLE_ADMIN
+from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
 from app.models.user import User
@@ -161,8 +162,7 @@ async def delete_team(
     if not has_permission(current_user.permissions, "team:delete"):
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
-    # Sanitize for logs to prevent CRLF log injection.
-    safe_team_id = team_id.replace("\n", "_").replace("\r", "_")
+    safe_team_id = sanitize_for_log(team_id)
 
     project_repo = ProjectRepository(db)
     updated_count = await project_repo.update_many_raw({"team_ids": team_id}, remove_team_pipeline(team_id))

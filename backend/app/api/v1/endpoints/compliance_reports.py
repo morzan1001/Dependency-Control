@@ -53,7 +53,6 @@ def _status_str(value: Any) -> str:
 
 @router.post(
     "/reports",
-    response_model=ReportAck,
     status_code=202,
     responses={
         403: {"description": "Forbidden"},

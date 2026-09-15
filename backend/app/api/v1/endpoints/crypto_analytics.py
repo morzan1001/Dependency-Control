@@ -21,7 +21,7 @@ router = CustomAPIRouter(prefix="/analytics/crypto", tags=["crypto-analytics"])
 _SCOPE_PATTERN = "^(project|team|global|user)$"
 
 
-@router.get("/hotspots", response_model=HotspotResponse, responses=RESP_403)
+@router.get("/hotspots", responses=RESP_403)
 async def get_hotspots(
     current_user: CurrentUserDep,
     db: DatabaseDep,
@@ -67,7 +67,7 @@ async def get_hotspot_locations(
     return matches[0]
 
 
-@router.get("/trends", response_model=TrendSeries, responses=RESP_400_403)
+@router.get("/trends", responses=RESP_400_403)
 async def get_trends(
     current_user: CurrentUserDep,
     db: DatabaseDep,

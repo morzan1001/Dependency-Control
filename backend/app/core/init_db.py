@@ -194,7 +194,7 @@ async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         # Named "response" rather than "details": the Finding.details contract test reads any
         # local of that name as a finding-details access.
         response = exc.details or {}
-        logger.error(
+        logger.exception(
             "Skipping unique teams %s index, build failed with %s; the key stays unenforced "
             "until it is built. Server response: %s",
             TEAM_BINDING_KEY_FIELD,

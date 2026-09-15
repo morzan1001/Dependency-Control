@@ -24,6 +24,7 @@ from app.core.constants import (
     SCAN_SCOPED_COLLECTIONS,
 )
 from app.core.encryption import EncryptionStreamWriter, decrypt_stream, is_encryption_enabled
+from app.core.log_utils import sanitize_for_log
 from app.core.metrics import (
     ArchiveFailureReason,
     archive_bundle_compressed_bytes,
@@ -57,15 +58,6 @@ _RESTORABLE_COLLECTIONS = frozenset({*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FR
 class _ArchiveSourceReadError(Exception):
     """A source document could not be read intact; raised to abort the S3 upload so
     housekeeping (which only deletes successfully-archived scans) can't lose data."""
-
-
-def _sanitize_for_log(value: Any, max_len: int = 200) -> str:
-    """Strip CR/LF and bound length so a hostile value can't forge log lines or balloon volume."""
-    s = str(value)
-    s = s.replace("\r", " ").replace("\n", " ").replace("\t", " ")
-    if len(s) > max_len:
-        s = s[:max_len] + "...<truncated>"
-    return s
 
 
 def _holder_id(prefix: str) -> str:
@@ -112,7 +104,7 @@ async def _stream_gridfs_sboms(db: Any, scan_doc: dict[str, Any]) -> AsyncIterat
             # missing data, then housekeeping would delete the source and lose it forever.
             logger.error(
                 "Failed to load GridFS file; aborting archive to avoid data loss",
-                extra={"gridfs_id": _sanitize_for_log(gid), "error": _sanitize_for_log(e)},
+                extra={"gridfs_id": sanitize_for_log(gid), "error": sanitize_for_log(e)},
             )
             raise _ArchiveSourceReadError(str(e)) from e
 
@@ -238,7 +230,7 @@ async def _save_archive_metadata(
         # Another worker won the metadata insert; its upload is authoritative, clean up ours.
         logger.info(
             "Lost archive race, cleaning up our S3 orphan",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
         try:
             await delete_object(s3_key)
@@ -250,7 +242,7 @@ async def _save_archive_metadata(
     except Exception as e:
         logger.warning(
             "Metadata create failed, cleaning up S3 object",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
         try:
             await delete_object(s3_key)
@@ -274,7 +266,7 @@ async def _load_scan_for_archive(
     if existing:
         logger.info(
             "Scan already archived, returning existing metadata",
-            extra={"scan_id": _sanitize_for_log(scan_id)},
+            extra={"scan_id": sanitize_for_log(scan_id)},
         )
         return existing, None
 
@@ -282,7 +274,7 @@ async def _load_scan_for_archive(
     if not scan_doc:
         logger.error(
             "Scan not found for archiving",
-            extra={"scan_id": _sanitize_for_log(scan_id)},
+            extra={"scan_id": sanitize_for_log(scan_id)},
         )
         archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.NOT_FOUND).inc()
         archive_operations_total.labels(operation="archive", status="failure").inc()
@@ -306,7 +298,7 @@ async def _upload_archive_bundle(
     except _ArchiveSourceReadError as e:
         logger.error(
             "Aborting archive: source data could not be read intact",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
         archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.INTEGRITY).inc()
         archive_operations_total.labels(operation="archive", status="failure").inc()
@@ -314,7 +306,7 @@ async def _upload_archive_bundle(
     except Exception as e:
         logger.exception(
             "Failed to upload archive",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
         archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.S3_ERROR).inc()
         archive_operations_total.labels(operation="archive", status="failure").inc()
@@ -343,7 +335,7 @@ async def archive_scan(
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
         logger.info(
             "Archive of scan skipped, lock held by another worker",
-            extra={"scan_id": _sanitize_for_log(scan_id)},
+            extra={"scan_id": sanitize_for_log(scan_id)},
         )
         archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.LOCK_HELD).inc()
         archive_operations_total.labels(operation="archive", status="failure").inc()
@@ -360,7 +352,7 @@ async def archive_scan(
         if await release_protected_scan_ids(db, [scan_id]):
             logger.info(
                 "Archive of release scan refused",
-                extra={"scan_id": _sanitize_for_log(scan_id)},
+                extra={"scan_id": sanitize_for_log(scan_id)},
             )
             archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.RELEASE_PROTECTED).inc()
             archive_operations_total.labels(operation="archive", status="failure").inc()
@@ -482,7 +474,7 @@ async def _handle_doc_event(
     if coll not in _RESTORABLE_COLLECTIONS:
         # Marker names come from unauthenticated bundle content (footer is a plain sha256,
         # not an HMAC); refuse unknown names so a crafted marker can't write into arbitrary collections.
-        raise ValueError(f"Unexpected collection in bundle: {_sanitize_for_log(coll)}")
+        raise ValueError(f"Unexpected collection in bundle: {sanitize_for_log(coll)}")
     if coll == ARCHIVE_GRIDFS_FRAME:
         gridfs_entries.append(event["data"])
         return
@@ -518,25 +510,25 @@ async def _replay_bundle(
     except ValueError as e:
         logger.exception(
             "Restore parse error",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
         return _parse_error_reason(e), collections_restored, gridfs_entries
     except PyMongoError as e:
         logger.exception(
             "Restore MongoDB error",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
         return ArchiveFailureReason.UNKNOWN, collections_restored, gridfs_entries
     except InvalidTag as e:
         logger.exception(
             "Restore decryption error",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
         return ArchiveFailureReason.ENCRYPTION, collections_restored, gridfs_entries
     except Exception as e:
         logger.exception(
             "Restore stream error",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
         return ArchiveFailureReason.S3_ERROR, collections_restored, gridfs_entries
 
@@ -561,7 +553,7 @@ async def _restore_gridfs(
             except Exception:
                 logger.debug(
                     "GridFS pre-delete found nothing to remove",
-                    extra={"gridfs_id": _sanitize_for_log(entry.get("gridfs_id"))},
+                    extra={"gridfs_id": sanitize_for_log(entry.get("gridfs_id"))},
                 )
             await fs.upload_from_stream_with_id(
                 grid_id,
@@ -572,15 +564,15 @@ async def _restore_gridfs(
             logger.exception(
                 "GridFS restore failed",
                 extra={
-                    "gridfs_id": _sanitize_for_log(entry.get("gridfs_id")),
-                    "error": _sanitize_for_log(e),
+                    "gridfs_id": sanitize_for_log(entry.get("gridfs_id")),
+                    "error": sanitize_for_log(e),
                 },
             )
             failures.append(entry.get("gridfs_id", "?"))
     if failures:
         logger.error(
             "Restore incomplete, GridFS files failed",
-            extra={"scan_id": _sanitize_for_log(scan_id), "failed_count": len(failures)},
+            extra={"scan_id": sanitize_for_log(scan_id), "failed_count": len(failures)},
         )
         return False
     return True
@@ -606,7 +598,7 @@ async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
     except Exception as e:
         logger.warning(
             "Partial-restore rollback failed",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
 
 
@@ -620,7 +612,7 @@ async def _load_restore_metadata(
     if not metadata:
         logger.error(
             "No archive metadata for scan",
-            extra={"scan_id": _sanitize_for_log(scan_id)},
+            extra={"scan_id": sanitize_for_log(scan_id)},
         )
         archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.NOT_FOUND).inc()
         archive_operations_total.labels(operation="restore", status="failure").inc()
@@ -630,7 +622,7 @@ async def _load_restore_metadata(
     if existing:
         logger.warning(
             "Scan already exists in MongoDB, aborting restore",
-            extra={"scan_id": _sanitize_for_log(scan_id)},
+            extra={"scan_id": sanitize_for_log(scan_id)},
         )
         archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.ALREADY_EXISTS).inc()
         archive_operations_total.labels(operation="restore", status="failure").inc()
@@ -656,9 +648,9 @@ async def _finalize_restore_cleanup(
         logger.warning(
             "S3 delete failed after restore; orphan reaper will retry",
             extra={
-                "scan_id": _sanitize_for_log(scan_id),
-                "s3_key": _sanitize_for_log(metadata.s3_key),
-                "error": _sanitize_for_log(e),
+                "scan_id": sanitize_for_log(scan_id),
+                "s3_key": sanitize_for_log(metadata.s3_key),
+                "error": sanitize_for_log(e),
             },
         )
     try:
@@ -666,7 +658,7 @@ async def _finalize_restore_cleanup(
     except Exception as e:
         logger.warning(
             "Metadata delete failed after restore; orphan reaper will retry",
-            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
         )
 
 
@@ -738,7 +730,7 @@ async def restore_scan(
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
         logger.info(
             "Restore of scan blocked, lock held",
-            extra={"scan_id": _sanitize_for_log(scan_id)},
+            extra={"scan_id": sanitize_for_log(scan_id)},
         )
         archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.LOCK_HELD).inc()
         archive_operations_total.labels(operation="restore", status="failure").inc()

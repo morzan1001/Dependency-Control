@@ -60,13 +60,12 @@ def _reject_unusable_license_settings(value: dict[str, dict[str, Any]] | None) -
     """The license analyzer coerces these three keys into enums on every scan, so a value it will
     refuse must not be stored: the write returns 200 and each later scan of the project raises."""
     settings = (value or {}).get("license_compliance")
-    if not isinstance(settings, dict):
-        return value
-    nested = settings.get("license_policy")
-    for scope in (settings, nested if isinstance(nested, dict) else {}):
-        for key, enum in _LICENSE_POLICY_ENUMS.items():
-            if key in scope:
-                enum(scope[key])
+    if isinstance(settings, dict):
+        nested = settings.get("license_policy")
+        for scope in (settings, nested if isinstance(nested, dict) else {}):
+            for key, enum in _LICENSE_POLICY_ENUMS.items():
+                if key in scope:
+                    enum(scope[key])
     return value
 
 

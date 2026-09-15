@@ -48,6 +48,7 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_SOURCE_MANUAL,
 )
+from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
 from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
@@ -664,7 +665,9 @@ async def _audit_license_policy_change(
             comment=None,
         )
     except Exception:  # pragma: no cover - defensive
-        logging.getLogger(__name__).exception("License-policy audit for project %s failed (non-blocking)", project_id)
+        logging.getLogger(__name__).exception(
+            "License-policy audit for project %s failed (non-blocking)", sanitize_for_log(project_id)
+        )
 
 
 @router.put("/{project_id}", summary="Update project details", responses=RESP_AUTH_404)

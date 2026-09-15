@@ -1,7 +1,7 @@
 """Ingest CycloneDX 1.6 CBOM payloads; creates a scan and persists CryptoAssets."""
 
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -99,7 +99,6 @@ class CBOMIngestResponse(BaseModel):
 
 @router.post(
     "/ingest/cbom",
-    response_model=CBOMIngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest CBOM",
     dependencies=[Depends(_enforce_body_size_limit)],
@@ -107,7 +106,7 @@ class CBOMIngestResponse(BaseModel):
 async def ingest_cbom(
     payload: CBOMIngest,
     db: DatabaseDep,
-    project: Project = Depends(ProjectIngestDep),
+    project: Annotated[Project, Depends(ProjectIngestDep)],
 ) -> CBOMIngestResponse:
     """Upload a CBOM for a project; parsed and persisted synchronously so nothing is lost after the response."""
     parsed = parse_cbom(payload.cbom)

@@ -99,7 +99,6 @@ def _to_response(doc: dict[str, Any]) -> ApiKeyResponse:
 
 @router.post(
     "/",
-    response_model=ApiKeyCreateResponse,
     status_code=status.HTTP_201_CREATED,
     responses=RESP_AUTH,
     summary="Create an API key",
@@ -123,7 +122,6 @@ async def create_api_key(
 
 @router.get(
     "/",
-    response_model=ApiKeyListResponse,
     responses=RESP_401,
     summary="List the current user's API keys",
 )
