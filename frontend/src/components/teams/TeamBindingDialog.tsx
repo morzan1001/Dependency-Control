@@ -18,7 +18,7 @@ import {
   ProviderInstance,
   PROVIDER_LABEL,
 } from '@/lib/team-binding';
-import { extractErrorMessage } from '@/lib/errors';
+import { getErrorMessage } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -122,7 +122,7 @@ function useBindingWrite(teamId: string, onSaved: () => void) {
           onSaved();
           toast.success("Binding saved");
         },
-        onError: (error) => toast.error(extractErrorMessage(error)),
+        onError: (error) => toast.error(getErrorMessage(error)),
       },
     );
   return { write, isPending: setBinding.isPending };
@@ -172,7 +172,7 @@ function GitHubBindingForm({
               ))}
             </SelectContent>
           </Select>
-          {orgsError && <p className="mt-1 text-xs text-destructive">{extractErrorMessage(orgsError)}</p>}
+          {orgsError && <p className="mt-1 text-xs text-destructive">{getErrorMessage(orgsError)}</p>}
         </FieldRow>
 
         <FieldRow label="GitHub team" htmlFor="binding-team">
@@ -188,7 +188,7 @@ function GitHubBindingForm({
               ))}
             </SelectContent>
           </Select>
-          {teamsError && <p className="mt-1 text-xs text-destructive">{extractErrorMessage(teamsError)}</p>}
+          {teamsError && <p className="mt-1 text-xs text-destructive">{getErrorMessage(teamsError)}</p>}
         </FieldRow>
       </div>
       <DialogFooter>
@@ -252,7 +252,7 @@ function GitLabBindingForm({
               ))}
             </SelectContent>
           </Select>
-          {groupsError && <p className="mt-1 text-xs text-destructive">{extractErrorMessage(groupsError)}</p>}
+          {groupsError && <p className="mt-1 text-xs text-destructive">{getErrorMessage(groupsError)}</p>}
         </FieldRow>
       </div>
       <DialogFooter>
@@ -310,7 +310,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindin
       { teamId: team.id, instanceId },
       {
         onSuccess: () => toast.success("Binding removed"),
-        onError: (error) => toast.error(extractErrorMessage(error)),
+        onError: (error) => toast.error(getErrorMessage(error)),
       },
     );
   };
@@ -347,7 +347,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: Readonly<TeamBindin
         {instancesError && (
           <p className="text-sm text-destructive">
             {'The instance list could not be loaded, so an instance may be missing here and a binding ' +
-              `above that names one is not orphaned. ${extractErrorMessage(instancesError)}`}
+              `above that names one is not orphaned. ${getErrorMessage(instancesError)}`}
           </p>
         )}
 

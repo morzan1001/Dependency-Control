@@ -37,7 +37,7 @@ import {
   useCreateApiKey,
   useRevokeApiKey,
 } from '@/hooks/queries/use-api-keys';
-import { extractErrorMessage } from '@/lib/errors';
+import { getErrorMessage } from '@/lib/utils';
 import { Permissions } from '@/lib/permissions';
 import type { ApiKey, ApiKeySurface } from '@/types/apiKey';
 
@@ -156,7 +156,7 @@ export function ApiKeysCard() {
       setCreateOpen(false);
     } catch (err) {
       // The refusal names the surface the caller cannot reach; a generic message would hide it.
-      toast.error(extractErrorMessage(err));
+      toast.error(getErrorMessage(err));
     }
   };
 
@@ -168,7 +168,7 @@ export function ApiKeysCard() {
       await revokeMutation.mutateAsync(keyId);
       toast.success('Key revoked.');
     } catch (err) {
-      toast.error(extractErrorMessage(err));
+      toast.error(getErrorMessage(err));
     }
   };
 

@@ -6,8 +6,7 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useDialogState } from "@/hooks/use-dialog-state";
-import { extractErrorMessage } from "@/lib/errors";
-import { formatDateTime } from "@/lib/utils";
+import { formatDateTime, getErrorMessage } from "@/lib/utils";
 import {
   listSystemAudit, listProjectAudit,
   revertSystemPolicy, revertProjectPolicy,
@@ -66,7 +65,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
       qc.invalidateQueries({ queryKey: ["policy-audit"] });
       pruneDialog.closeDialog();
     },
-    onError: (e: unknown) => toast.error(`Prune failed: ${extractErrorMessage(e)}`),
+    onError: (e: unknown) => toast.error(`Prune failed: ${getErrorMessage(e)}`),
   });
 
   return (

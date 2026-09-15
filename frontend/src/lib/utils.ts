@@ -6,7 +6,7 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 interface ValidationError {
-  msg: string;
+  msg?: string;
   type?: string;
   loc?: (string | number)[];
 }
@@ -14,7 +14,7 @@ interface ValidationError {
 interface ErrorWithResponse {
   response?: {
     data?: {
-      detail?: string | ValidationError[];
+      detail?: string | ValidationError[] | Record<string, unknown>;
     };
   };
   message?: string;
@@ -22,22 +22,24 @@ interface ErrorWithResponse {
 
 export function getErrorMessage(error: unknown): string {
   if (typeof error !== 'object' || error === null) {
-    return "An unknown error occurred";
+    return 'An unknown error occurred';
   }
 
   const err = error as ErrorWithResponse;
-  if (err.response?.data?.detail) {
-    const detail = err.response.data.detail;
+  const detail = err.response?.data?.detail;
+  if (detail) {
     if (Array.isArray(detail)) {
-      return detail.map((validationErr: ValidationError) => {
-        return validationErr.msg.replace('Value error, ', '');
-      }).join('\n');
+      // A validation entry can reach us without msg; show the raw entry instead of throwing.
+      return detail
+        .map((validationErr: ValidationError) => (validationErr.msg ?? JSON.stringify(validationErr)).replace('Value error, ', ''))
+        .join('\n');
     }
     if (typeof detail === 'string') {
       return detail;
     }
+    return JSON.stringify(detail);
   }
-  return (error as Error).message || "An unknown error occurred";
+  return err.message || 'An unknown error occurred';
 }
 
 const DEFAULT_DATE_FORMAT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' }
