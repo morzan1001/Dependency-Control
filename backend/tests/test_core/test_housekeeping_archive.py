@@ -529,6 +529,24 @@ async def test_reap_stale_metadata_keeps_the_metadata_of_an_archive_in_flight():
 
 
 @pytest.mark.asyncio
+async def test_reap_stale_metadata_keeps_the_metadata_of_a_model_inserted_scan_in_flight():
+    """A scan inserted through the model stores an explicit restored_at of null, which is no restore evidence."""
+    from app.core.housekeeping import _reap_stale_metadata
+    from app.models.project import Scan
+    from tests.mocks.fake_mongo import FakeDatabase
+
+    db = FakeDatabase()
+    scan = Scan(project_id="proj-1", branch="main")
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    await _seed_metadata(db, scan.id)
+
+    reaped = await _reap_stale_metadata(db)
+
+    assert reaped == 0
+    assert await _surviving_metadata(db) == [scan.id]
+
+
+@pytest.mark.asyncio
 async def test_reap_stale_metadata_drops_the_metadata_of_a_scan_restored_after_archiving():
     from app.core.housekeeping import _reap_stale_metadata
     from app.services.archive import _handle_header_event

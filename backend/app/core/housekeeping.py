@@ -345,7 +345,7 @@ async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) ->
         restored_at_by_scan = {
             scan["_id"]: scan["restored_at"]
             async for scan in db.scans.find(
-                {"_id": {"$in": [meta["scan_id"] for meta in metas]}, "restored_at": {"$exists": True}},
+                {"_id": {"$in": [meta["scan_id"] for meta in metas]}, "restored_at": {"$ne": None}},
                 {"restored_at": 1},
             )
         }
