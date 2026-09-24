@@ -408,7 +408,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       {
         id: Permissions.WEBHOOK_CREATE,
         label: "Create Webhooks",
-        description: "Create webhooks for any project",
+        description: "Create webhooks for projects and teams you belong to",
       },
       {
         id: Permissions.WEBHOOK_READ,
@@ -423,7 +423,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
       {
         id: Permissions.WEBHOOK_DELETE,
         label: "Delete Webhooks",
-        description: "Delete any webhook",
+        description: "Delete webhooks of projects and teams you belong to",
       },
     ],
   },
