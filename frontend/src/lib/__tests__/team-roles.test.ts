@@ -71,3 +71,32 @@ describe('team roles', () => {
     expect(hasTeamRole(team, STRANGER, 'member', [])).toBe(false)
   })
 })
+
+describe('canManageTeamWebhooks — webhook:create needs membership or team:update', () => {
+  const team = makeTeam([
+    { user_id: 'admin-1', role: 'admin' },
+    { user_id: 'member-1', role: 'member' },
+  ])
+
+  it('read_all plus webhook:create offers no webhook writes on a foreign team', () => {
+    expect(canManageTeamWebhooks(team, AUDITOR, ['team:read_all', 'webhook:create'])).toBe(false)
+  })
+
+  it('webhook:create alone offers no webhook writes to a non-member', () => {
+    expect(canManageTeamWebhooks(team, STRANGER, ['webhook:create'])).toBe(false)
+  })
+
+  it('a plain member writes with webhook:create but not without it', () => {
+    expect(canManageTeamWebhooks(team, 'member-1', ['webhook:create'])).toBe(true)
+    expect(canManageTeamWebhooks(team, 'member-1', [])).toBe(false)
+  })
+
+  it('team:update writes without membership only together with webhook:create', () => {
+    expect(canManageTeamWebhooks(team, STRANGER, ['team:update', 'webhook:create'])).toBe(true)
+    expect(canManageTeamWebhooks(team, STRANGER, ['team:update'])).toBe(false)
+  })
+
+  it('a team admin writes without a webhook permission', () => {
+    expect(canManageTeamWebhooks(team, 'admin-1', [])).toBe(true)
+  })
+})

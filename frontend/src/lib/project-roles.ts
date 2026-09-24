@@ -113,24 +113,34 @@ export function canEnforceNotifications(
     || globalPermissions.includes('project:update');
 }
 
-/** Create project webhook: project admin OR global webhook:create */
+// The project admin gate already opens for the global write grant, so a webhook permission only
+// has to add membership in any role.
+function canWriteProjectWebhook(
+  project: Project,
+  userId: string,
+  globalPermissions: string[],
+  webhookPermission: string
+): boolean {
+  return isProjectAdmin(project, userId, globalPermissions)
+    || (globalPermissions.includes(webhookPermission) && getUserProjectRole(project, userId) !== null);
+}
+
+/** Create project webhook: project admin OR webhook:create plus membership */
 export function canCreateProjectWebhook(
   project: Project,
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isProjectAdmin(project, userId, globalPermissions)
-    || globalPermissions.includes('webhook:create');
+  return canWriteProjectWebhook(project, userId, globalPermissions, 'webhook:create');
 }
 
-/** Delete project webhook: project admin OR global webhook:delete */
+/** Delete project webhook: project admin OR webhook:delete plus membership */
 export function canDeleteProjectWebhook(
   project: Project,
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isProjectAdmin(project, userId, globalPermissions)
-    || globalPermissions.includes('webhook:delete');
+  return canWriteProjectWebhook(project, userId, globalPermissions, 'webhook:delete');
 }
 
 /** Create waiver (project-scoped): project editor or higher OR global waiver:manage */

@@ -1,4 +1,5 @@
-// Mirrors the backend's check_team_access() so the UI gates match the API. Roles: member, admin.
+// Mirrors the backend's team gates (check_team_access, get_team_with_access and the team webhook
+// gates) so the UI offers only what the API allows. Roles: member, admin.
 
 import { Team } from '@/types/team';
 
@@ -66,12 +67,13 @@ export function canManageTeamMembers(
     || globalPermissions.includes('team:update');
 }
 
-/** Manage team webhooks: team admin OR global webhook:create */
+/** Manage team webhooks: team admin OR webhook:create plus (membership OR global team:update) */
 export function canManageTeamWebhooks(
   team: Team,
   userId: string,
   globalPermissions: string[]
 ): boolean {
   return isTeamAdmin(team, userId, globalPermissions)
-    || globalPermissions.includes('webhook:create');
+    || (globalPermissions.includes('webhook:create')
+      && (getUserTeamRole(team, userId) !== null || globalPermissions.includes('team:update')));
 }

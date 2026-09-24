@@ -10,6 +10,8 @@ import {
   canRotateApiKey,
   canManageProjectMembers,
   canCreateProjectWaiver,
+  canCreateProjectWebhook,
+  canDeleteProjectWebhook,
 } from '../project-roles'
 import type { Project } from '@/types/project'
 
@@ -107,5 +109,44 @@ describe('getUserProjectRole / role hierarchy', () => {
     ])
     expect(getUserProjectRole(project, 'team-admin')).toBe('admin')
     expect(canManageProjectMembers(project, 'team-admin', [])).toBe(true)
+  })
+})
+
+describe('project webhook writes need membership or the global write grant', () => {
+  const project = makeProject([
+    { user_id: 'viewer-1', role: 'viewer' },
+    { user_id: 'team-viewer', role: 'viewer', inherited_from: 'Team: DevOps' },
+  ])
+  const webhookWrite = ['webhook:create', 'webhook:delete']
+
+  it('read_all plus the webhook permissions offers no webhook writes on a foreign project', () => {
+    const perms = ['project:read_all', ...webhookWrite]
+    expect(canCreateProjectWebhook(project, AUDITOR, perms)).toBe(false)
+    expect(canDeleteProjectWebhook(project, AUDITOR, perms)).toBe(false)
+  })
+
+  it('the webhook permissions alone offer no webhook writes to a non-member', () => {
+    expect(canCreateProjectWebhook(project, STRANGER, webhookWrite)).toBe(false)
+    expect(canDeleteProjectWebhook(project, STRANGER, webhookWrite)).toBe(false)
+  })
+
+  it('a viewer member, direct or through a team, writes with the matching webhook permission', () => {
+    for (const member of ['viewer-1', 'team-viewer']) {
+      expect(canCreateProjectWebhook(project, member, ['webhook:create'])).toBe(true)
+      expect(canDeleteProjectWebhook(project, member, ['webhook:create'])).toBe(false)
+      expect(canDeleteProjectWebhook(project, member, ['webhook:delete'])).toBe(true)
+    }
+  })
+
+  it('a viewer member without a webhook permission gets no webhook writes', () => {
+    expect(canCreateProjectWebhook(project, 'viewer-1', [])).toBe(false)
+    expect(canDeleteProjectWebhook(project, 'viewer-1', [])).toBe(false)
+  })
+
+  it('the global write grant writes without membership', () => {
+    for (const grant of ['project:update', 'project:delete']) {
+      expect(canCreateProjectWebhook(project, STRANGER, [grant])).toBe(true)
+      expect(canDeleteProjectWebhook(project, STRANGER, [grant])).toBe(true)
+    }
   })
 })
