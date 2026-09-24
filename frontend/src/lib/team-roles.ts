@@ -21,7 +21,7 @@ export function hasTeamRole(
   requiredRole: 'member' | 'admin',
   globalPermissions?: string[]
 ): boolean {
-  if (globalPermissions?.includes('team:read_all')) return true;
+  if (requiredRole === TEAM_ROLE_MEMBER && globalPermissions?.includes('team:read_all')) return true;
 
   const role = getUserTeamRole(team, userId);
   if (role === null) return false;
