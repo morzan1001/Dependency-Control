@@ -1,6 +1,6 @@
 # Upgrade notes
 
-These notes cover the upgrade to 1.9.41. It needs one index build before the rollout and two data migrations after it, and it changes several behaviours that users and operators will notice.
+These notes cover the upgrade to 1.9.41. It needs one index build before the rollout, two data migrations and a retention review after it, and one index drop once 1.9.41 is confirmed stable. Two optional checks look for abuse of the fixed permission gaps from before the upgrade. It also changes several behaviours that users and operators will notice.
 
 ## Before the rollout: build the findings index
 
@@ -66,13 +66,7 @@ Archive bundles already in S3 keep `Raw` until retention deletes them, and no Mo
 
 The CVE remediation SLA now measures a finding's age from `first_seen_at`, which is stored when a scan's findings are persisted and carried forward from the project's earlier findings, so retention no longer resets it. Existing findings do not have the field and keep passing the SLA until this backfill has run.
 
-First drop the old findings index. Its key is a prefix of the new one, so it only costs writes now.
-
-```js
-db.findings.dropIndex("project_id_1_component_1_type_1")
-```
-
-Then run the backfill, off-peak, because step 2 groups the whole findings collection. It sets `first_seen_at` to the earliest `scan_created_at` of each `(project_id, type, component, version, finding_id)`, using `first_seen_at` where a copy already has one, which matches the application's rule. It only touches documents whose field is missing or later than that minimum, so it is idempotent and safe to re-run. Step 3's filter is served by the new index. In-pod mongosh against the application database:
+Run the backfill off-peak, because step 2 groups the whole findings collection. It sets `first_seen_at` to the earliest `scan_created_at` of each `(project_id, type, component, version, finding_id)`, using `first_seen_at` where a copy already has one, which matches the application's rule. It only touches documents whose field is missing or later than that minimum, so it is idempotent and safe to re-run. Step 3's filter is served by the new index. In-pod mongosh against the application database:
 
 ```js
 // 1. Dry run: how many findings lack the field
@@ -88,7 +82,7 @@ db.findings.aggregate([
   { $out: "tmp_first_seen_backfill" }
 ], { allowDiskUse: true })
 
-// 3. Stamp every copy of each identity (served by the (project_id, component, type) index)
+// 3. Stamp every copy of each identity (served by the new 7-field findings index)
 let ops = [], modified = 0;
 const flush = () => { if (ops.length) { modified += db.findings.bulkWrite(ops, { ordered: false }).modifiedCount; ops = []; } };
 db.tmp_first_seen_backfill.find().forEach(r => {
@@ -113,13 +107,65 @@ db.tmp_first_seen_backfill.drop()
 
 Scans restored from archives written before this release come back without `first_seen_at`. Re-running steps 2 to 4 after such a restore stamps them.
 
+## After the rollout: review the retention of projects created in the dialog
+
+Since 1.4.61 (2026-03-03) the create-project dialog has offered Archive and None as the retention action, but until 1.9.41 every project it created was stored with `retention_action: "delete"`. The upgrade does not correct these projects. While the system retention mode is `project`, housekeeping keeps deleting their expired scans until someone corrects the setting. The choice was never stored, so no migration can restore it.
+
+List the candidates read-only with in-pod mongosh, then ask each owner to confirm the Retention setting in the project's Settings tab. Do not bulk-rewrite them: the list also holds projects whose owners did choose Delete, and the stored documents cannot tell them apart.
+
+```js
+db.projects.find(
+  { retention_action: "delete", retention_days: { $gt: 0 },
+    created_at: { $gte: ISODate("2026-03-03T00:00:00Z"), $lt: ISODate("<time the 1.9.41 rollout finished>") } },
+  { _id: 1, name: 1, team_ids: 1, retention_days: 1, created_at: 1 }
+).sort({ created_at: -1 })
+```
+
+## Once 1.9.41 is confirmed stable: drop the old findings index
+
+The new findings index starts with the old `(project_id, component, type)` key, so the old index only costs writes now. Drop it only once a rollback is no longer expected: 1.9.40 recreates it at startup, in-line on the large findings collection, and pods do not start until that build finishes.
+
+```js
+db.findings.dropIndex("project_id_1_component_1_type_1")
+```
+
+## Optional after the rollout: look for abuse from before the fix
+
+The permission fixes stop two abuses but do not undo what happened before the upgrade. Both queries are read-only. Run them with in-pod mongosh.
+
+Before 1.9.41 a `team:read_all` holder could add team members and make themselves team admin. This lists team admins who hold `team:read_all` but neither `team:update` nor `system:manage`. Team membership does not record who added a member, so the rows are candidates to review with the team, not proof.
+
+```js
+const ids = db.users.find({ permissions: { $in: ["team:read_all"], $nin: ["team:update", "system:manage"] } }, { _id: 1 })
+  .toArray().map(u => String(u._id));
+db.teams.find(
+  { members: { $elemMatch: { role: "admin", user_id: { $in: ids } } } },
+  { name: 1, admins: { $filter: { input: "$members",
+      cond: { $and: [{ $eq: ["$$this.role", "admin"] }, { $in: ["$$this.user_id", ids] }] } } } }
+)
+```
+
+Before 1.9.41 a callgraph upload could name a `scan_id` of another project and overwrite that scan's reachability verdicts. This lists callgraphs stored under a scan of a different project:
+
+```js
+db.callgraphs.aggregate([
+  { $match: { scan_id: { $type: "string" } } },
+  { $lookup: { from: "scans", localField: "scan_id", foreignField: "_id", as: "scan" } },
+  { $unwind: "$scan" },
+  { $match: { $expr: { $ne: ["$scan.project_id", "$project_id"] } } },
+  { $project: { project_id: 1, scan_id: 1, language: 1, created_at: 1, updated_at: 1, scan_project_id: "$scan.project_id" } }
+])
+```
+
+If it returns rows, review them, then delete them with `db.callgraphs.deleteMany({ _id: { $in: [<ids from the query>] } })`. The affected scans keep the injected verdicts until their project's next legitimate callgraph upload or a rescan, because every upload recomputes all findings. To correct them sooner, call `POST /api/v1/projects/<scan_project_id>/scans/<scan_id>/rescan` for each affected scan.
+
 ## Behaviour changes
 
 - Bearer authentication accepts only access tokens. A refresh token, or a token without a `type` claim, sent as `Authorization: Bearer` now gets 401. `/login/refresh-token` answers every invalid, wrongly typed or revoked refresh token with 403 "Could not validate credentials".
 - `team:read_all` is read-only. It still reads every team, but adding or changing members, deleting a team and writing team webhooks now need membership with the role the action requires, or the global permission for it such as `team:update` or `team:delete`. The frontend no longer offers team admin actions to users whose only team grant is `team:read_all`.
 - Callgraph uploads ignore a `scan_id` in the request body. The scan is always derived from the project in the path together with `pipeline_id` and the commit. Clients that still send `scan_id` keep working, and the field is dropped.
 - The `endpoint` label of `http_requests_total`, `http_request_duration_seconds`, `http_request_size_bytes` and `http_response_size_bytes` now carries the matched route template, for example `/api/v1/projects/{project_id}`, instead of the raw path with ids masked as `{id}`. Unmatched requests share the label `<unmatched>`, and `http_requests_in_progress` is labelled by `method` only. Dashboards and alerts that filter on raw paths need updating. The bundled Grafana dashboard only groups by `endpoint` and needs no change.
-- New projects keep the retention action and analyzer settings chosen at creation. They used to be stored with `retention_action: "delete"` and no analyzer settings. When the system retention mode is `global`, the global retention settings still apply.
+- New projects keep the retention action and analyzer settings chosen at creation. They used to be stored with `retention_action: "delete"` and no analyzer settings. When the system retention mode is `global`, the global retention settings still apply. Projects created before 1.9.41 with Archive or None are still stored as Delete, and housekeeping keeps deleting their scans until an owner corrects the setting. See "review the retention of projects created in the dialog" above.
 
 
 
