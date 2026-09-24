@@ -204,7 +204,8 @@ async def _notify_relevant_users(
             return
         from app.repositories.projects import ProjectRepository
 
-        project = await ProjectRepository(db).get_by_id(entry.project_id)
+        # Primary read: a policy set at project creation is audited right after the insert.
+        project = await ProjectRepository(db).get_by_id_strong(entry.project_id)
         if project is None:
             return
         await notification_service.notify_project_members(
