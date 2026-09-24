@@ -770,3 +770,28 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
     (restored,) = db.analysis_results.insert_many.await_args.args[0]
     assert secret not in json.dumps(restored)
     assert restored["result"]["findings"][0]["RawHash"] == hashlib.md5(secret.encode()).hexdigest()
+
+
+@pytest.mark.asyncio
+async def test_replay_stamps_the_restored_scan_with_its_restore_time():
+    """The stale-metadata reaper only drops archive metadata on this evidence."""
+    from app.services.archive import _replay_bundle
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    async def bundle():
+        async for chunk in BundleFrames.write(
+            scan_doc={"_id": "scan-1", "project_id": "p"},
+            collections={},
+            stats=BundleStats(),
+        ):
+            yield chunk
+
+    db = _make_mock_db()
+    before = datetime.now(timezone.utc)
+
+    reason, _, _ = await _replay_bundle(db, "scan-1", bundle())
+
+    assert reason is None
+    restored_at = db.scans.insert_one.await_args.args[0]["restored_at"]
+    assert restored_at.tzinfo == timezone.utc
+    assert before <= restored_at <= datetime.now(timezone.utc)

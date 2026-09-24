@@ -216,6 +216,7 @@ def _saturated_scan_doc() -> dict[str, Any]:
         "reachability_pending": True,
         "reachability_pending_since": _NOW - _AN_HOUR,
         "pinned": True,
+        "restored_at": _NOW - _AN_HOUR,
         "is_release": True,
         "is_rescan": False,
         "original_scan_id": None,

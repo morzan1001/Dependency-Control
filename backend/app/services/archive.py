@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.constants import (
     ARCHIVE_GRIDFS_FRAME,
     ARCHIVE_PATH_TEMPLATE,
+    ARCHIVE_RESTORE_LOCK_TEMPLATE,
     ENCRYPTION_MAGIC,
     RESTORE_INSERT_BATCH_SIZE,
     SCAN_SCOPED_COLLECTIONS,
@@ -460,6 +461,7 @@ async def _handle_header_event(
     scan_data = data.get("scan")
     if scan_data:
         scan_data["pinned"] = True
+        scan_data["restored_at"] = datetime.now(timezone.utc)
         await db.scans.insert_one(scan_data)
         collections_restored.append("scans")
 
@@ -735,7 +737,7 @@ async def restore_scan(
 
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
-    lock_name = f"restore:{scan_id}"
+    lock_name = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
     holder = _holder_id("restore")
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):

@@ -1103,6 +1103,7 @@ RETENTION_ACTIONS: list[str] = list(get_args(RetentionAction))
 # Archive bundle wire format
 ARCHIVE_BUNDLE_VERSION = 2
 ARCHIVE_PATH_TEMPLATE = "{project_id}/{scan_id}-{archived_at_unix}.bundle"
+ARCHIVE_RESTORE_LOCK_TEMPLATE = "restore:{scan_id}"
 
 # Encryption wire format (chunked AES-GCM)
 ENCRYPTION_MAGIC = b"DCEN"
