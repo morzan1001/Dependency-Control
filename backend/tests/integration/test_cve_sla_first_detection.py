@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core import ensure_utc
+from app.core.init_db import create_indexes
 from app.models.finding import Finding, FindingType, Severity
 from app.repositories.findings import FindingRepository
 from app.schemas.compliance import ControlStatus
@@ -64,8 +65,29 @@ async def _persist(db, scan_id: str, scan_created_at: datetime, *findings: Findi
     return await db.findings.find({"scan_id": scan_id}).to_list(None)
 
 
+async def _store_legacy_copy(db, scan_created_at: datetime) -> None:
+    legacy, _ = _prepare_finding_records([_critical_cve()], "legacy-scan", _PROJECT, scan_created_at)
+    for record in legacy:
+        record.pop("first_seen_at", None)
+    await db.findings.insert_many(legacy)
+
+
 def _first_seen(docs: list[dict]) -> list[datetime | None]:
     return [ensure_utc(doc.get("first_seen_at")) for doc in docs]
+
+
+def _explain_values(node, key: str) -> list:
+    """Every value of ``key`` in the plan that ran; the planner's rejected candidates may fetch."""
+    if isinstance(node, dict):
+        return [
+            v
+            for k, child in node.items()
+            if k != "rejectedPlans"
+            for v in ([child] if k == key else _explain_values(child, key))
+        ]
+    if isinstance(node, list):
+        return [v for child in node for v in _explain_values(child, key)]
+    return []
 
 
 @pytest.mark.parametrize("database", _DATABASES)
@@ -113,10 +135,7 @@ async def test_reanalysing_a_scan_keeps_the_date_it_had_inherited(db, database):
 @pytest.mark.parametrize("database", _DATABASES)
 @pytest.mark.asyncio
 async def test_a_stored_finding_without_first_seen_at_counts_from_its_scan(db, database):
-    legacy, _ = _prepare_finding_records([_critical_cve()], "legacy-scan", _PROJECT, _days_ago(150))
-    for record in legacy:
-        record.pop("first_seen_at", None)
-    await db.findings.insert_many(legacy)
+    await _store_legacy_copy(db, _days_ago(150))
 
     docs = await _persist(db, "scan-1", _NOW, _critical_cve())
 
@@ -178,3 +197,48 @@ async def test_a_critical_cve_first_seen_200_days_ago_fails_its_sla(db, database
     critical = next(c for c in evaluation.controls if c.control_id == "CVE-SLA-CRITICAL")
     assert critical.status == ControlStatus.FAILED.value
     assert critical.evidence_finding_ids == [current[0]["_id"]]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_first_detection_lookup_reads_index_entries_only(db, monkeypatch):
+    await create_indexes(db)
+    await _store_legacy_copy(db, _days_ago(150))
+    unrelated = [
+        Finding(
+            id=f"lib-{n}:1.0",
+            type=FindingType.VULNERABILITY,
+            severity=Severity.LOW,
+            component=f"lib-{n}",
+            version="1.0",
+            description="noise",
+            scanners=["trivy"],
+        )
+        for n in range(40)
+    ]
+    for scan in range(3):
+        await _persist(db, f"scan-{scan}", _days_ago(30 - scan), _critical_cve(), _versionless_sast(), *unrelated)
+    issued: list[list[dict]] = []
+    aggregate = FindingRepository.aggregate
+
+    async def _record(self, pipeline, *args, **kwargs):
+        issued.append(pipeline)
+        return await aggregate(self, pipeline, *args, **kwargs)
+
+    monkeypatch.setattr(FindingRepository, "aggregate", _record)
+
+    docs = await _persist(db, "scan-3", _NOW, _critical_cve(), _versionless_sast())
+    explain = await db.command(
+        {"explain": {"aggregate": "findings", "pipeline": issued[0], "cursor": {}}, "verbosity": "executionStats"}
+    )
+
+    stages = _explain_values(explain, "stage")
+    docs_examined = _explain_values(explain, "totalDocsExamined")
+    assert "IXSCAN" in stages
+    assert "FETCH" not in stages
+    assert docs_examined and not any(docs_examined)
+    assert max(_explain_values(explain, "totalKeysExamined")) < len(unrelated)
+    assert {doc["component"]: ensure_utc(doc["first_seen_at"]) for doc in docs} == {
+        "log4j-core": _days_ago(150),
+        "src/app.py": _days_ago(30),
+    }

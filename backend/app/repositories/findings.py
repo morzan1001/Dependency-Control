@@ -167,7 +167,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         self, project_id: str, records: Sequence[Mapping[str, Any]]
     ) -> dict[FindingIdentity, datetime]:
         """Earliest detection per identity among the project's stored copies; a copy predating first_seen_at
-        counts from its scan. Matching on component lets the (project_id, component, type) index bound the read."""
+        counts from its scan. Runs on every persist, so it reads only fields the covering index in init_db holds."""
         if not records:
             return {}
         pipeline: list[dict[str, Any]] = [
@@ -175,6 +175,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
                 "$match": {
                     "project_id": project_id,
                     "component": {"$in": list({r["component"] for r in records})},
+                    "type": {"$in": list({r["type"] for r in records})},
                     "finding_id": {"$in": list({r["finding_id"] for r in records})},
                 }
             },
