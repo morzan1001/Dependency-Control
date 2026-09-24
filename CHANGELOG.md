@@ -1,6 +1,6 @@
 # Upgrade notes
 
-These notes cover the upgrade to 1.9.41. It needs one index build before the rollout, two data migrations and a retention review after it, and one index drop once 1.9.41 is confirmed stable. Two optional checks look for abuse of the fixed permission gaps from before the upgrade. It also changes several behaviours that users and operators will notice.
+These notes cover the upgrade to 1.9.41. It needs one index build before the rollout, two data migrations and a retention review after it, and one index drop once 1.9.41 is confirmed stable. Three optional checks look for abuse of the fixed permission gaps from before the upgrade. It also changes several behaviours that users and operators will notice.
 
 ## Before the rollout: build the findings index
 
@@ -16,7 +16,7 @@ TruffleHog findings no longer store or serve the plaintext secret (`Raw`). They 
 
 Run this migration **after the rollout has finished**, meaning every backend and worker pod is on the new image. Old pods read only `Raw`. If an old pod aggregates a row after pass 2, it gets `SECRET-<detector>-nohash`, which orphans the waivers. Run it in a backend pod with `kubectl exec ... -- python`, from the working directory where `app` is importable.
 
-The rollout itself has the same window: a TruffleHog upload ingested on a new pod stores only `RawHash`, and if an old pod aggregates that scan, its secrets get `SECRET-<detector>-nohash` ids. Finish the rollout before new TruffleHog uploads are aggregated, or afterwards rescan the scans ingested during the rollout with `POST /api/v1/projects/<project_id>/scans/<scan_id>/rescan`, which aggregates their results again.
+The rollout itself has the same window: a TruffleHog upload ingested on a new pod stores only `RawHash`, and if an old pod aggregates that scan, its secrets get `SECRET-<detector>-nohash` ids. Finish the rollout before new TruffleHog uploads are aggregated, or afterwards rescan the scans ingested during the rollout with `POST /api/v1/projects/<project_id>/scans/<scan_id>/rescan`, which aggregates their results again. A scan without SBOMs, such as one from a secrets-only pipeline, refuses the rescan with 400; retry its CI job instead, which uploads to the same scan id and aggregates it again.
 
 Pass 1 writes the digest prefix next to `Raw`. Pass 2 removes `Raw` only from documents in which every finding already has `RawHash`. Carry-over copies made between the deploy and the migration are ordinary `analysis_results` rows, so the same passes clean them. Start with the count line as a dry run.
 
@@ -133,7 +133,7 @@ db.findings.dropIndex("project_id_1_component_1_type_1")
 
 ## Optional after the rollout: look for abuse from before the fix
 
-The permission fixes stop two abuses but do not undo what happened before the upgrade. Both queries are read-only. Run them with in-pod mongosh.
+The permission fixes stop three abuses but do not undo what happened before the upgrade. The queries are read-only. Run them with in-pod mongosh.
 
 Before 1.9.41 a `team:read_all` holder could add team members and make themselves team admin. This lists team admins who hold `team:read_all` but neither `team:update` nor `system:manage`. Team membership does not record who added a member, so the rows are candidates to review with the team, not proof.
 
@@ -148,6 +148,12 @@ db.teams.find(
 ```
 
 The query finds only holders who promoted themselves to team admin. Before 1.9.41 a `team:read_all` holder could also add or re-role other members, delete teams and write team webhooks, and nothing records who did that. Review each team's members and webhooks with the team; `db.webhooks.find({ team_id: { $ne: null } }, { team_id: 1, url: 1, events: 1, created_at: 1 })` lists the team webhooks. A self-made team admin was also admin of the team's projects, so check those projects' policy audit for crypto and license policy changes by the listed users.
+
+Before 1.9.41 a `project:read_all` holder with `webhook:create`, `webhook:update` or `webhook:delete` could create, change, delete and test-fire the webhooks of any project, for example to send its events to an outside URL. Webhooks do not record who created them, so review the listed URLs with each project's owners:
+
+```js
+db.webhooks.find({ project_id: { $ne: null } }, { project_id: 1, url: 1, events: 1, created_at: 1 }).sort({ created_at: -1 })
+```
 
 Before 1.9.41 a callgraph upload could name a `scan_id` of another project and overwrite that scan's reachability verdicts. This lists callgraphs stored under a scan of a different project:
 
@@ -168,6 +174,7 @@ If it returns rows, review them, then delete them with `db.callgraphs.deleteMany
 - Bearer authentication accepts only access tokens. A refresh token, or a token without a `type` claim, sent as `Authorization: Bearer` now gets 401. A bearer token blacklisted at logout still gets 401, now with the detail "Could not validate credentials" instead of "Token has been revoked".
 - `/login/refresh-token` answers every refused token with 403 "Could not validate credentials". A wrongly typed, subject-less or logout-revoked token used to get the detail "Invalid token type", "Invalid token" or "Token revoked".
 - `team:read_all` is read-only. It still reads every team, but adding or changing members, deleting a team and writing team webhooks now need membership with the role the action requires, or the global permission for it such as `team:update` or `team:delete`. The frontend no longer offers team admin actions to users whose only team grant is `team:read_all`.
+- `project:read_all` no longer writes project webhooks. Creating, updating, deleting and test-firing a project's webhooks with `webhook:create`, `webhook:update` or `webhook:delete` now also needs membership of the project, direct or through an owning team, or `project:update` or `project:delete`. Accounts that combine `project:read_all` with a webhook permission, such as automation or auditor accounts, now get 403 on projects they are not a member of, and the frontend no longer offers them the webhook controls there. `project:read_all` with `webhook:read` still lists and reads every project's webhooks.
 - `GET /api/v1/analytics/projects/{project_id}/dependency-tree` answers 404 "No scan found for this project" for a `scan_id` of another project, which it used to serve, and 404 "Project not found" instead of 403 for an unknown project.
 - Callgraph uploads ignore a `scan_id` in the request body. The scan is always derived from the project in the path together with `pipeline_id` and the commit. Clients that still send `scan_id` keep working, and the field is dropped.
 - The `endpoint` label of `http_requests_total`, `http_request_duration_seconds`, `http_request_size_bytes` and `http_response_size_bytes` now carries the matched route template, for example `/api/v1/projects/{project_id}`, instead of the raw path with ids masked as `{id}`. Unmatched requests share the label `<unmatched>`, and `http_requests_in_progress` is labelled by `method` only. Dashboards and alerts that filter on raw paths need updating. The bundled Grafana dashboard only groups by `endpoint` and needs no change.
