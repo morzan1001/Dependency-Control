@@ -109,33 +109,27 @@ async def check_team_access(
     db: AsyncIOMotorDatabase,
     required_role: str | None = None,
 ) -> Team:
-    """Check a user's access to a team and return it, raising 404/403 on failure."""
+    """Check a user's access to a team and return it, raising 404/403 on failure.
+
+    team:read_all grants reads (no ``required_role``) only; a required role needs real membership.
+    """
     team_repo = TeamRepository(db)
     team = await team_repo.get_by_id(team_id)
     if not team:
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
-    # team:read_all is a superuser grant over all teams; team:update does not bypass membership.
-    if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
-        member_role = None
-        is_member = False
-        for member in team.members:
-            if member.user_id == str(user.id):
-                is_member = True
-                member_role = member.role
-                break
+    if required_role is None and has_permission(user.permissions, Permissions.TEAM_READ_ALL):
+        return team
 
-        if not is_member:
-            raise HTTPException(status_code=403, detail="Not a member of this team")
+    member_role = get_member_role(team, str(user.id))
+    if member_role is None:
+        raise HTTPException(status_code=403, detail="Not a member of this team")
 
-        if Permissions.TEAM_READ not in user.permissions and Permissions.TEAM_READ_ALL not in user.permissions:
-            raise HTTPException(status_code=403, detail="Not enough permissions")
+    if not has_permission(user.permissions, [Permissions.TEAM_READ, Permissions.TEAM_READ_ALL]):
+        raise HTTPException(status_code=403, detail="Not enough permissions")
 
-        if required_role:
-            if member_role is None:
-                raise HTTPException(status_code=403, detail="Not enough permissions in this team")
-            if TEAM_ROLES.index(member_role) < TEAM_ROLES.index(required_role):
-                raise HTTPException(status_code=403, detail="Not enough permissions in this team")
+    if required_role and TEAM_ROLES.index(member_role) < TEAM_ROLES.index(required_role):
+        raise HTTPException(status_code=403, detail="Not enough permissions in this team")
 
     return team
 

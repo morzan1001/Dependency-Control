@@ -427,6 +427,34 @@ class TestCheckTeamAccess:
             )
         assert result.id == "team-1"
 
+    @pytest.mark.parametrize("required_role", [TEAM_ROLE_MEMBER, TEAM_ROLE_ADMIN])
+    def test_read_all_does_not_satisfy_a_required_role(self, regular_user, required_role):
+        from app.api.v1.helpers.teams import check_team_access
+        from app.core.permissions import Permissions
+
+        regular_user.permissions = [Permissions.TEAM_READ_ALL]
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=self._make_team(members=[]))
+
+        with patch(f"{HELPERS_TEAMS}.TeamRepository", return_value=mock_repo):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(check_team_access("team-1", regular_user, MagicMock(), required_role=required_role))
+        assert exc_info.value.status_code == 403
+
+    def test_read_all_admin_member_without_team_read_passes_the_role_check(self, regular_user):
+        from app.api.v1.helpers.teams import check_team_access
+        from app.core.permissions import Permissions
+
+        regular_user.permissions = [Permissions.TEAM_READ_ALL]
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(
+            return_value=self._make_team(members=[TeamMember(user_id=str(regular_user.id), role=TEAM_ROLE_ADMIN)])
+        )
+
+        with patch(f"{HELPERS_TEAMS}.TeamRepository", return_value=mock_repo):
+            result = asyncio.run(check_team_access("team-1", regular_user, MagicMock(), required_role=TEAM_ROLE_ADMIN))
+        assert result.id == "team-1"
+
     def test_user_without_team_read_denied(self, no_perms_user):
         from app.api.v1.helpers.teams import check_team_access
 

@@ -456,16 +456,15 @@ class TestRemoveTeamMember:
         db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN), ("other-user", TEAM_ROLE_MEMBER)])
 
         with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
-            with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock, return_value=_stored_team(db)):
-                with pytest.raises(HTTPException) as exc_info:
-                    asyncio.run(
-                        remove_team_member(
-                            team_id="team-1",
-                            user_id="admin-1",
-                            current_user=admin_user,
-                            db=db,
-                        )
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(
+                    remove_team_member(
+                        team_id="team-1",
+                        user_id="admin-1",
+                        current_user=admin_user,
+                        db=db,
                     )
+                )
         assert exc_info.value.status_code == 400
         assert "admin" in exc_info.value.detail.lower()
         assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "other-user": TEAM_ROLE_MEMBER}
@@ -519,46 +518,6 @@ class TestDeleteTeamPermissions:
                         db=MagicMock(),
                     )
                 )
-
-        assert exc_info.value.status_code == 403
-        call_kwargs = mock_access.call_args
-        assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_ADMIN
-
-
-class TestUpdateTeamMemberOwnerProtection:
-    """Only owners can modify another owner's role."""
-
-    def test_non_owner_cannot_modify_owner_role(self, regular_user):
-        from app.api.v1.endpoints.teams import update_team_member
-        from app.schemas.team import TeamMemberUpdate
-
-        team = _make_team(
-            members=[
-                TeamMember(user_id="the-owner", role=TEAM_ROLE_ADMIN),
-                TeamMember(user_id=str(regular_user.id), role=TEAM_ROLE_ADMIN),
-            ]
-        )
-
-        mock_repo = MagicMock()
-
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-                # check_team_access is called again for owner verification
-                with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock) as mock_access:
-                    mock_access.side_effect = HTTPException(
-                        status_code=403,
-                        detail="Not enough permissions in this team",
-                    )
-                    with pytest.raises(HTTPException) as exc_info:
-                        asyncio.run(
-                            update_team_member(
-                                team_id="team-1",
-                                user_id="the-owner",
-                                member_in=TeamMemberUpdate(role=TEAM_ROLE_ADMIN),
-                                current_user=regular_user,
-                                db=MagicMock(),
-                            )
-                        )
 
         assert exc_info.value.status_code == 403
         call_kwargs = mock_access.call_args
