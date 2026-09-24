@@ -1,3 +1,128 @@
+# Upgrade notes
+
+These notes cover the upgrade to 1.9.41. It needs one index build before the rollout and two data migrations after it, and it changes several behaviours that users and operators will notice.
+
+## Before the rollout: build the findings index
+
+The `(project_id, component, type)` findings index grows into a covering index for the first-detection lookup. Startup's `create_index` would build it in-line on the large findings collection and block pod start until the build finishes. Build it in-pod with mongosh before rolling out the new image, with the exact key, so startup finds it and does nothing. The old image does not read it, so building it early is harmless.
+
+```js
+db.findings.createIndex({ project_id: 1, component: 1, type: 1, finding_id: 1, version: 1, first_seen_at: 1, scan_created_at: 1 })
+```
+
+## After the rollout: remove TruffleHog plaintext secrets
+
+TruffleHog findings no longer store or serve the plaintext secret (`Raw`). They keep its md5 digest (`RawHash`), from which the finding id is built. Existing `analysis_results` rows still carry `Raw`.
+
+Run this migration **after the rollout has finished**, meaning every backend and worker pod is on the new image. Old pods read only `Raw`. If an old pod aggregates a row after pass 2, it gets `SECRET-<detector>-nohash`, which orphans the waivers. Run it in a backend pod with `kubectl exec ... -- python`, from the working directory where `app` is importable.
+
+Pass 1 writes the digest next to `Raw`. Pass 2 removes `Raw` only from documents in which every finding already has `RawHash`. Carry-over copies made between the deploy and the migration are ordinary `analysis_results` rows, so the same passes clean them. Start with the count line as a dry run.
+
+```python
+import hashlib
+from pymongo import MongoClient, UpdateOne
+from app.core.config import settings
+from app.services.aggregation import ResultAggregator
+
+coll = MongoClient(settings.MONGODB_URL)[settings.DATABASE_NAME].analysis_results
+q = {"analyzer_name": "trufflehog", "result.findings.Raw": {"$exists": True}}
+print("docs with Raw:", coll.count_documents(q))
+
+def ids(doc):
+    agg = ResultAggregator()
+    agg.aggregate("trufflehog", doc["result"])
+    return sorted(f.id for f in agg.get_findings())
+
+sample = {d["_id"]: ids(d) for d in coll.find(q, {"result": 1}).limit(50)}
+
+# Pass 1: persist the digest the finding_id is built from.
+ops = []
+for doc in coll.find(q, {"result.findings": 1}):
+    sets = {}
+    for i, f in enumerate(doc["result"].get("findings") or []):
+        if "Raw" in f and "RawHash" not in f:
+            raw = f["Raw"]
+            sets[f"result.findings.{i}.RawHash"] = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest() if raw else None
+    if sets:
+        ops.append(UpdateOne({"_id": doc["_id"]}, {"$set": sets}))
+    if len(ops) >= 500:
+        coll.bulk_write(ops, ordered=False)
+        ops = []
+if ops:
+    coll.bulk_write(ops, ordered=False)
+
+# Pass 2: drop Raw only where every finding carries its digest.
+unset_q = {**q, "result.findings": {"$not": {"$elemMatch": {"RawHash": {"$exists": False}}}}}
+print("pass 2 modified:", coll.update_many(unset_q, {"$unset": {"result.findings.$[].Raw": ""}}).modified_count)
+print("remaining docs with Raw:", coll.count_documents(q))  # expect 0
+print("sampled ids changed:", [i for i, before in sample.items() if ids(coll.find_one({"_id": i}, {"result": 1})) != before])  # expect []
+```
+
+The last line recomputes the ids of up to 50 sampled documents with the deployed normalizer and compares them with the ids from before pass 1. An empty list shows that pass 1 hashed exactly the way the model does.
+
+Archive bundles already in S3 keep `Raw` until retention deletes them, and no Mongo migration can reach them. A restore passes TruffleHog results through the same model, so a restored scan gets `RawHash` without `Raw` and identical finding ids, and nothing needs re-running after a restore.
+
+## After the rollout: backfill `first_seen_at`
+
+The CVE remediation SLA now measures a finding's age from `first_seen_at`, which is stored when a scan's findings are persisted and carried forward from the project's earlier findings, so retention no longer resets it. Existing findings do not have the field and keep passing the SLA until this backfill has run.
+
+First drop the old findings index. Its key is a prefix of the new one, so it only costs writes now.
+
+```js
+db.findings.dropIndex("project_id_1_component_1_type_1")
+```
+
+Then run the backfill, off-peak, because step 2 groups the whole findings collection. It sets `first_seen_at` to the earliest `scan_created_at` of each `(project_id, type, component, version, finding_id)`, using `first_seen_at` where a copy already has one, which matches the application's rule. It only touches documents whose field is missing or later than that minimum, so it is idempotent and safe to re-run. Step 3's filter is served by the new index. In-pod mongosh against the application database:
+
+```js
+// 1. Dry run: how many findings lack the field
+db.findings.countDocuments({ first_seen_at: { $exists: false } })
+
+// 2. Earliest detection per identity into a scratch collection
+db.findings.aggregate([
+  { $group: {
+      _id: { project_id: "$project_id", type: "$type", component: "$component",
+             version: "$version", finding_id: "$finding_id" },
+      first_seen_at: { $min: { $ifNull: ["$first_seen_at", "$scan_created_at"] } } } },
+  { $match: { first_seen_at: { $ne: null } } },
+  { $out: "tmp_first_seen_backfill" }
+], { allowDiskUse: true })
+
+// 3. Stamp every copy of each identity (served by the (project_id, component, type) index)
+let ops = [], modified = 0;
+const flush = () => { if (ops.length) { modified += db.findings.bulkWrite(ops, { ordered: false }).modifiedCount; ops = []; } };
+db.tmp_first_seen_backfill.find().forEach(r => {
+  const k = r._id;
+  ops.push({ updateMany: {
+    filter: { project_id: k.project_id ?? null, type: k.type ?? null, component: k.component ?? null,
+              version: k.version ?? null, finding_id: k.finding_id ?? null,
+              $or: [{ first_seen_at: { $exists: false } }, { first_seen_at: null },
+                    { first_seen_at: { $gt: r.first_seen_at } }] },
+    update: { $set: { first_seen_at: r.first_seen_at } } } });
+  if (ops.length === 1000) flush();
+});
+flush();
+print(`modified ${modified}`);
+
+// 4. Verify (0 expected, except findings that also lack scan_created_at), then clean up
+db.findings.countDocuments({ first_seen_at: { $exists: false } })
+db.tmp_first_seen_backfill.drop()
+```
+
+`?? null` is deliberate. `$group` omits a missing key from `_id`, and `{version: null}` matches both a null and a missing `version`.
+
+Scans restored from archives written before this release come back without `first_seen_at`. Re-running steps 2 to 4 after such a restore stamps them.
+
+## Behaviour changes
+
+- Bearer authentication accepts only access tokens. A refresh token, or a token without a `type` claim, sent as `Authorization: Bearer` now gets 401. `/login/refresh-token` answers every invalid, wrongly typed or revoked refresh token with 403 "Could not validate credentials".
+- `team:read_all` is read-only. It still reads every team, but adding or changing members, deleting a team and writing team webhooks now need membership with the role the action requires, or the global permission for it such as `team:update` or `team:delete`. The frontend no longer offers team admin actions to users whose only team grant is `team:read_all`.
+- Callgraph uploads ignore a `scan_id` in the request body. The scan is always derived from the project in the path together with `pipeline_id` and the commit. Clients that still send `scan_id` keep working, and the field is dropped.
+- The `endpoint` label of `http_requests_total`, `http_request_duration_seconds`, `http_request_size_bytes` and `http_response_size_bytes` now carries the matched route template, for example `/api/v1/projects/{project_id}`, instead of the raw path with ids masked as `{id}`. Unmatched requests share the label `<unmatched>`, and `http_requests_in_progress` is labelled by `method` only. Dashboards and alerts that filter on raw paths need updating. The bundled Grafana dashboard only groups by `endpoint` and needs no change.
+- New projects keep the retention action and analyzer settings chosen at creation. They used to be stored with `retention_action: "delete"` and no analyzer settings. When the system retention mode is `global`, the global retention settings still apply.
+
+
+
 # Release 1.9.40
 
 ## 📦 Build & CI
