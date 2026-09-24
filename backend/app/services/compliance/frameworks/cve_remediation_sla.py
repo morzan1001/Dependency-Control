@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar
 
+from app.core import ensure_utc
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
     ControlDefinition,
@@ -19,13 +20,11 @@ from app.services.compliance.frameworks.base import (
     build_summary,
 )
 
-DEFAULT_SLA_DAYS: dict[Severity, int] = {
+SLA_DAYS: dict[Severity, int] = {
     Severity.CRITICAL: 7,
     Severity.HIGH: 30,
     Severity.MEDIUM: 90,
 }
-
-_SLA_SEVERITY_ORDER: list[Severity] = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM]
 
 
 def _control_title(severity: Severity, sla_days: int) -> str:
@@ -38,23 +37,8 @@ class CveRemediationSlaFramework:
     name: str = "CVE Remediation SLA"
     version: str = "1"
     source_url: str = "https://www.first.org/cvss/"
-    disclaimer: str | None = (
-        "SLA windows default to 7 / 30 / 90 days for CRITICAL / HIGH / MEDIUM but can be overridden per project."
-    )
+    disclaimer: str | None = None
     controls: ClassVar[list[ControlDefinition]] = []
-
-    def __init__(
-        self,
-        sla_days_by_severity: dict[Severity, int] | None = None,
-    ) -> None:
-        """sla_days_by_severity overrides a subset of DEFAULT_SLA_DAYS; values must be > 0."""
-        merged: dict[Severity, int] = dict(DEFAULT_SLA_DAYS)
-        if sla_days_by_severity:
-            for sev, days in sla_days_by_severity.items():
-                if days <= 0:
-                    raise ValueError(f"SLA window for {sev.value} must be > 0 days, got {days}")
-                merged[sev] = days
-        self._sla_days = merged
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
         raise RuntimeError("CveRemediationSlaFramework is async-only; callers must dispatch via evaluate_async()")
@@ -66,8 +50,7 @@ class CveRemediationSlaFramework:
         now = datetime.now(timezone.utc)
 
         controls: list[ControlResult] = []
-        for severity in _SLA_SEVERITY_ORDER:
-            sla_days = self._sla_days[severity]
+        for severity, sla_days in SLA_DAYS.items():
             title = _control_title(severity, sla_days)
             overdue = [f for f in findings if _is_overdue(f, severity, sla_days, now)]
             status, evidence, status_reason = _classify(overdue, data.coverage)
@@ -116,19 +99,5 @@ def _is_overdue(
     fsev = finding.get("severity")
     if fsev != severity.value and fsev != severity:
         return False
-    first_seen = finding.get("first_seen_at") or finding.get("created_at")
-    if first_seen is None:
-        return False
-    if isinstance(first_seen, str):
-        try:
-            first_seen = datetime.fromisoformat(first_seen.replace("Z", "+00:00"))
-        except ValueError:
-            return False
-    if not isinstance(first_seen, datetime):
-        return False
-    if first_seen.tzinfo is None:
-        first_seen = first_seen.replace(tzinfo=timezone.utc)
-    age = now - first_seen
-    if age < timedelta(days=sla_days):
-        return False
-    return finding.get("status") != "fixed"
+    first_seen = ensure_utc(finding.get("first_seen_at"))
+    return first_seen is not None and now - first_seen >= timedelta(days=sla_days)

@@ -52,6 +52,7 @@ from app.repositories import (
     ProjectRepository,
     ScanRepository,
 )
+from app.repositories.findings import finding_identity
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
 from app.schemas.sbom import ParsedDependency
@@ -897,6 +898,17 @@ async def _run_vuln_enrichments(
         )
 
 
+async def _stamp_first_seen(
+    records: list[dict[str, Any]], project_id: str | None, finding_repo: FindingRepository
+) -> None:
+    """Carry each finding's earliest detection in the project forward, since retention deletes the
+    scans that first saw it and the SLA age has to survive them."""
+    earliest = await finding_repo.earliest_detections(project_id, records) if project_id else {}
+    for record in records:
+        detections = (earliest.get(finding_identity(record)), _as_utc(record["scan_created_at"]))
+        record["first_seen_at"] = min(d for d in detections if d is not None)
+
+
 async def _persist_findings_and_waivers(
     findings_to_insert: list[dict[str, Any]],
     scan_id: str,
@@ -905,6 +917,8 @@ async def _persist_findings_and_waivers(
     db: Database,
 ) -> tuple[int, int, list[Waiver]]:
     """Insert findings, apply waivers, return (persisted_count, ignored_count, active_waivers)."""
+    # Before the delete, so re-analysing a scan still sees the dates its own copies inherited.
+    await _stamp_first_seen(findings_to_insert, project_id, finding_repo)
     await finding_repo.delete_many({"scan_id": scan_id})
     persisted_count = 0
     for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
