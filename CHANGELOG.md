@@ -12,11 +12,13 @@ db.findings.createIndex({ project_id: 1, component: 1, type: 1, finding_id: 1, v
 
 ## After the rollout: remove TruffleHog plaintext secrets
 
-TruffleHog findings no longer store or serve the plaintext secret (`Raw`). They keep its md5 digest (`RawHash`), from which the finding id is built. Existing `analysis_results` rows still carry `Raw`.
+TruffleHog findings no longer store or serve the plaintext secret (`Raw`). They keep only the first 8 hex characters of its md5 digest (`RawHash`), the part the finding id is built from. Existing `analysis_results` rows still carry `Raw`.
 
 Run this migration **after the rollout has finished**, meaning every backend and worker pod is on the new image. Old pods read only `Raw`. If an old pod aggregates a row after pass 2, it gets `SECRET-<detector>-nohash`, which orphans the waivers. Run it in a backend pod with `kubectl exec ... -- python`, from the working directory where `app` is importable.
 
-Pass 1 writes the digest next to `Raw`. Pass 2 removes `Raw` only from documents in which every finding already has `RawHash`. Carry-over copies made between the deploy and the migration are ordinary `analysis_results` rows, so the same passes clean them. Start with the count line as a dry run.
+The rollout itself has the same window: a TruffleHog upload ingested on a new pod stores only `RawHash`, and if an old pod aggregates that scan, its secrets get `SECRET-<detector>-nohash` ids. Finish the rollout before new TruffleHog uploads are aggregated, or afterwards rescan the scans ingested during the rollout with `POST /api/v1/projects/<project_id>/scans/<scan_id>/rescan`, which aggregates their results again.
+
+Pass 1 writes the digest prefix next to `Raw`. Pass 2 removes `Raw` only from documents in which every finding already has `RawHash`. Carry-over copies made between the deploy and the migration are ordinary `analysis_results` rows, so the same passes clean them. Start with the count line as a dry run.
 
 ```python
 import hashlib
@@ -35,14 +37,14 @@ def ids(doc):
 
 sample = {d["_id"]: ids(d) for d in coll.find(q, {"result": 1}).limit(50)}
 
-# Pass 1: persist the digest the finding_id is built from.
+# Pass 1: persist the digest prefix the finding_id is built from.
 ops = []
 for doc in coll.find(q, {"result.findings": 1}):
     sets = {}
     for i, f in enumerate(doc["result"].get("findings") or []):
         if "Raw" in f and "RawHash" not in f:
             raw = f["Raw"]
-            sets[f"result.findings.{i}.RawHash"] = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest() if raw else None
+            sets[f"result.findings.{i}.RawHash"] = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()[:8] if raw else None
     if sets:
         ops.append(UpdateOne({"_id": doc["_id"]}, {"$set": sets}))
     if len(ops) >= 500:
@@ -51,7 +53,7 @@ for doc in coll.find(q, {"result.findings": 1}):
 if ops:
     coll.bulk_write(ops, ordered=False)
 
-# Pass 2: drop Raw only where every finding carries its digest.
+# Pass 2: drop Raw only where every finding carries its digest prefix.
 unset_q = {**q, "result.findings": {"$not": {"$elemMatch": {"RawHash": {"$exists": False}}}}}
 print("pass 2 modified:", coll.update_many(unset_q, {"$unset": {"result.findings.$[].Raw": ""}}).modified_count)
 print("remaining docs with Raw:", coll.count_documents(q))  # expect 0

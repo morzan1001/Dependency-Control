@@ -467,7 +467,7 @@ async def _handle_header_event(
 
 
 def _hash_plaintext_secrets(analysis_result: dict[str, Any]) -> None:
-    """A bundle can hold TruffleHog's plaintext Raw; only its digest may be written back to Mongo."""
+    """A bundle can hold TruffleHog's plaintext Raw; only its digest prefix may be written back to Mongo."""
     findings = (analysis_result.get("result") or {}).get("findings")
     if findings:
         analysis_result["result"]["findings"] = [TruffleHogFinding.model_validate(f).model_dump() for f in findings]

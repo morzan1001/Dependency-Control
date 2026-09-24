@@ -769,7 +769,7 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
     assert reason is None
     (restored,) = db.analysis_results.insert_many.await_args.args[0]
     assert secret not in json.dumps(restored)
-    assert restored["result"]["findings"][0]["RawHash"] == hashlib.md5(secret.encode()).hexdigest()
+    assert restored["result"]["findings"][0]["RawHash"] == hashlib.md5(secret.encode()).hexdigest()[:8]
 
 
 @pytest.mark.asyncio

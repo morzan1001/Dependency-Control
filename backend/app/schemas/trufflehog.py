@@ -35,14 +35,14 @@ class TruffleHogFinding(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def _hash_raw_secret(cls, data: Any) -> Any:
-        """Stored results reach every project member, so keep only the digest that finding_id is built from."""
+        """Stored results reach every project member, so keep only the digest prefix that finding_id is built from."""
         if not isinstance(data, dict) or "Raw" not in data:
             return data
         data = dict(data)
         raw = data.pop("Raw")
         if raw is not None and not isinstance(raw, str):
             raise ValueError("Raw must be a string")
-        data["RawHash"] = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest() if raw else None
+        data["RawHash"] = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()[:8] if raw else None
         return data
 
 
