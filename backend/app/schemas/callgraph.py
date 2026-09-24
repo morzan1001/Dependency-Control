@@ -23,8 +23,6 @@ class CallgraphUploadRequest(BaseModel):
 
     data: dict[str, Any]  # shape depends on the 'format' field
 
-    scan_id: str | None = None
-
     source_files_count: int | None = None
     analysis_duration_ms: int | None = None
 

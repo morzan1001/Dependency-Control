@@ -63,12 +63,8 @@ def _resolve_language(request_language: str | None, format_type: str) -> str:
     return language
 
 
-def _resolve_scan_id(
-    request_scan_id: str | None, project_id: str, pipeline_id: int | None, commit_hash: str | None
-) -> str | None:
-    """Resolve the scan_id from request context."""
-    if request_scan_id:
-        return request_scan_id
+def _resolve_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
+    """The scan the CI run produced, derived from the authorized project so it cannot name another's."""
     if not pipeline_id:
         return None
     if commit_hash:
@@ -129,10 +125,10 @@ async def upload_callgraph(
             detail=f"Callgraph too large: {entry_count} entries exceeds the limit of {CALLGRAPH_MAX_ENTRIES}",
         )
 
-    scan_id = _resolve_scan_id(request.scan_id, project_id, request.pipeline_id, request.commit_hash)
+    scan_id = _resolve_scan_id(project_id, request.pipeline_id, request.commit_hash)
     if not scan_id:
-        warnings.append("No pipeline_id or scan_id provided - callgraph may not match scans correctly")
-    elif not request.scan_id:
+        warnings.append("No pipeline_id provided - callgraph may not match scans correctly")
+    else:
         logger.debug(f"Generated deterministic scan_id {scan_id} from pipeline_id {request.pipeline_id}")
 
     callgraph = Callgraph(
