@@ -238,12 +238,10 @@ async def refresh_token(
     db: DatabaseDep,
 ) -> Any:
     """Get a new access token using a valid refresh token."""
-    _, user = await deps.decode_token(
-        refresh_token,
-        "refresh",
-        db,
-        HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate credentials"),
-    )
+    try:
+        _, user = await deps.decode_token(refresh_token, "refresh", db)
+    except deps.TokenRejected as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate credentials") from exc
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

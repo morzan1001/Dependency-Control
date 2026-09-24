@@ -92,3 +92,18 @@ async def test_an_access_token_issued_before_the_last_logout_is_refused():
 
     assert exc_info.value.status_code == _UNAUTHORIZED
     assert _validations("revoked") == revoked_before + 1
+
+
+@pytest.mark.asyncio
+async def test_a_blacklisted_access_token_is_refused_and_counted_blacklisted():
+    db = await _db_with_user()
+    token = security.create_access_token(_USERNAME)
+    await db.token_blacklist.insert_one({"_id": jwt.get_unverified_claims(token)["jti"]})
+    blacklisted_before = _validations("blacklisted")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(db=db, token=token)
+
+    assert exc_info.value.status_code == _UNAUTHORIZED
+    assert exc_info.value.detail == _MSG_CREDENTIALS
+    assert _validations("blacklisted") == blacklisted_before + 1

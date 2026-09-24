@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 from jose import jwt
+from prometheus_client import REGISTRY
 
 from app.core import security
 from app.core.config import settings
@@ -38,13 +39,25 @@ def _decode_permissions(access_token: str) -> list:
     return payload.get("permissions", [])
 
 
-def _refresh(token: str, *users: dict, system_config: SystemSettings | None = None):
+def _token_validations() -> float:
+    return sum(
+        sample.value
+        for metric in REGISTRY.collect()
+        if metric.name == "auth_token_validations"
+        for sample in metric.samples
+        if sample.name == "auth_token_validations_total"
+    )
+
+
+def _refresh(token: str, *users: dict, system_config: SystemSettings | None = None, blacklisted: bool = False):
     from app.api.v1.endpoints.auth import refresh_token
 
     async def run():
         db = FakeDatabase()
         for user in users:
             await db.users.insert_one(dict(user))
+        if blacklisted:
+            await db.token_blacklist.insert_one({"_id": jwt.get_unverified_claims(token)["jti"]})
         with patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = system_config or _make_settings()
             return await refresh_token(refresh_token=token, db=db)
@@ -178,6 +191,35 @@ class TestRefreshTokenRejections:
             _refresh(security.create_refresh_token("bob"), user)
 
         assert exc_info.value.status_code == _FORBIDDEN
+
+
+class TestRefreshTokenMetrics:
+    """auth_token_validations_total counts bearer validations, so a refused refresh token stays out of it."""
+
+    @pytest.mark.parametrize(
+        ("mint", "user_fields", "blacklisted"),
+        [
+            pytest.param(lambda: "not-a-jwt", {}, False, id="undecodable"),
+            pytest.param(lambda: security.create_access_token("bob"), {}, False, id="access-token"),
+            pytest.param(
+                lambda: security.create_refresh_token("bob"),
+                {"last_logout_at": datetime.now(timezone.utc) + _LOGOUT_AFTER_ISSUE},
+                False,
+                id="issued-before-logout",
+            ),
+            pytest.param(lambda: security.create_refresh_token("bob"), {}, True, id="blacklisted"),
+        ],
+    )
+    def test_a_refused_refresh_token_is_not_counted(self, mint, user_fields, blacklisted):
+        user = {"username": "bob", "is_active": True, "permissions": [], **user_fields}
+        before = _token_validations()
+
+        with pytest.raises(HTTPException) as exc_info:
+            _refresh(mint(), user, blacklisted=blacklisted)
+
+        assert exc_info.value.status_code == _FORBIDDEN
+        assert exc_info.value.detail == _MSG_CREDENTIALS
+        assert _token_validations() == before
 
 
 class TestForgotPasswordSmtpGate:
