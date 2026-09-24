@@ -1391,7 +1391,7 @@ class TestStreamingOrchestrator:
     async def test_release_fetcher_populates_upstream_metrics(self):
         # Two scans, one update event (pkg-a 1.0.0 -> 1.0.1).
         # Upstream history: 1.0.0 published 100d before scan 0, 1.0.1 20d before scan 1.
-        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        scans = [_scan_days_ago("s1", 30), _scan_days_ago("s2", 0)]
         deps = {
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
@@ -1428,14 +1428,10 @@ class TestStreamingOrchestrator:
         # Older 1.0.0 was already in scan 0 (we don't observe its first appearance).
         assert m.adoption_latency_days_median == 20.0
 
-        # Two releases for pkg-a, both within the last 365d -> median count = 2
+        # The window is measured against the real clock, so the scans end at now: both releases (130d, 20d old) count.
         assert m.upstream_releases_last_12m_median == 2.0
 
-        # Days since latest release: ref is "now" but our latest is ~20d before scan 1
-        # which is well in the past of "now". The exact number depends on test runtime,
-        # so just sanity-check the field is populated and positive.
-        assert m.upstream_days_since_latest_release_median is not None
-        assert m.upstream_days_since_latest_release_median > 0
+        assert m.upstream_days_since_latest_release_median == 20.0
 
         # Fetcher must have been called once with the unique packages from the scans.
         assert len(fetcher.calls) == 1
