@@ -10,6 +10,7 @@ from fastapi import Depends
 from httpx import ASGITransport, AsyncClient
 
 from app.models.project import Project
+from tests.helpers.auth import bearer_headers
 from tests.mocks.fake_mongo import FakeDatabase
 
 _SET_ON_INSERT = "$setOnInsert"
@@ -170,9 +171,6 @@ def api_key_headers():
 
 @pytest_asyncio.fixture
 async def member_auth_headers(_project, db):
-    from jose import jwt
-
-    from app.core.config import settings
     from app.core.permissions import Permissions
     from app.models.project import ProjectMember
     from app.models.user import User
@@ -200,12 +198,7 @@ async def member_auth_headers(_project, db):
         upsert=True,
     )
 
-    payload = {
-        "sub": user.username,
-        "permissions": user.permissions,
-    }
-    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return {"Authorization": f"Bearer {token}"}
+    return bearer_headers(user.username, user.permissions)
 
 
 @pytest.fixture
@@ -224,25 +217,14 @@ def regular_user_no_access():
 
 @pytest.fixture
 def admin_auth_headers():
-    from jose import jwt
-
-    from app.core.config import settings
     from tests.helpers.permission_presets import PRESET_ADMIN
 
-    payload = {
-        "sub": "admin-user",
-        "permissions": list(PRESET_ADMIN),
-    }
-    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return {"Authorization": f"Bearer {token}"}
+    return bearer_headers("admin-user", PRESET_ADMIN)
 
 
 @pytest_asyncio.fixture
 async def owner_auth_headers_proj(client, db):
     """The username doubles as the user id because _fake_get_current_user sets id=username."""
-    from jose import jwt
-
-    from app.core.config import settings
     from app.core.permissions import Permissions
     from app.models.project import Project, ProjectMember
     from tests.helpers.permission_presets import PRESET_USER
@@ -261,19 +243,11 @@ async def owner_auth_headers_proj(client, db):
         upsert=True,
     )
 
-    payload = {
-        "sub": username,
-        "permissions": permissions,
-    }
-    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return {"Authorization": f"Bearer {token}"}
+    return bearer_headers(username, permissions)
 
 
 @pytest_asyncio.fixture
 async def owner_auth_headers_proj_p2(client, db):
-    from jose import jwt
-
-    from app.core.config import settings
     from app.core.permissions import Permissions
     from app.models.project import Project, ProjectMember
     from tests.helpers.permission_presets import PRESET_USER
@@ -292,9 +266,4 @@ async def owner_auth_headers_proj_p2(client, db):
         upsert=True,
     )
 
-    payload = {
-        "sub": username,
-        "permissions": permissions,
-    }
-    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return {"Authorization": f"Bearer {token}"}
+    return bearer_headers(username, permissions)

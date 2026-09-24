@@ -10,6 +10,7 @@ import pytest
 import pytest_asyncio
 
 from app.models.project import Scan
+from tests.helpers.auth import bearer_headers
 
 _NOW = datetime(2026, 9, 1, tzinfo=timezone.utc)
 _AN_HOUR = timedelta(hours=1)
@@ -88,9 +89,6 @@ _WORKER_MANAGER = "app.api.v1.endpoints.projects.worker_manager"
 @pytest_asyncio.fixture
 async def editor_headers(client, db):
     """trigger_rescan needs role=editor; member_auth_headers only grants viewer."""
-    from jose import jwt
-
-    from app.core.config import settings
     from app.core.permissions import Permissions
     from app.models.project import ProjectMember
 
@@ -103,9 +101,7 @@ async def editor_headers(client, db):
         upsert=True,
     )
 
-    payload = {"sub": _EDITOR_USERNAME, "permissions": [Permissions.PROJECT_READ]}
-    token = jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
-    return {"Authorization": f"Bearer {token}"}
+    return bearer_headers(_EDITOR_USERNAME, [Permissions.PROJECT_READ])
 
 
 async def _seed(db) -> None:

@@ -66,23 +66,9 @@ async def get_system_settings(
     return await repo.get(auto_init=auto_init)
 
 
-def _decode_user_token(token: str, credentials_exception: HTTPException) -> tuple[dict, TokenPayload]:
-    """Decode JWT and return (payload, token_data). Raises credentials_exception on failure."""
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username = payload.get("sub")
-        permissions: list[str] = payload.get("permissions", [])
-        if username is None:
-            raise credentials_exception
-        token_data = TokenPayload(sub=username, permissions=permissions)
-    except (JWTError, ValidationError) as exc:
-        if auth_token_validations_total:
-            auth_token_validations_total.labels(result="invalid").inc()
-        raise credentials_exception from exc
-    return payload, token_data
-
-
-async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabase) -> None:
+async def _ensure_token_not_blacklisted(
+    jti: str | None, db: AsyncIOMotorDatabase, credentials_exception: HTTPException
+) -> None:
     if not jti:
         return
     from app.repositories import TokenBlacklistRepository
@@ -91,11 +77,7 @@ async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabas
     if await blacklist_repo.is_blacklisted(jti):
         if auth_token_validations_total:
             auth_token_validations_total.labels(result="blacklisted").inc()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise credentials_exception
 
 
 def _check_logout_invalidation(user: dict, payload: dict, credentials_exception: HTTPException) -> None:
@@ -112,6 +94,34 @@ def _check_logout_invalidation(user: dict, payload: dict, credentials_exception:
         raise credentials_exception
 
 
+async def decode_token(
+    token: str,
+    expected_type: str,
+    db: AsyncIOMotorDatabase,
+    credentials_exception: HTTPException,
+) -> tuple[TokenPayload, dict | None]:
+    """Validate a JWT of ``expected_type`` and return its claims with the raw user it names (None if
+    no such user). Every rejected token raises ``credentials_exception``."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        token_data = TokenPayload(**payload)
+    except (JWTError, ValidationError) as exc:
+        if auth_token_validations_total:
+            auth_token_validations_total.labels(result="invalid").inc()
+        raise credentials_exception from exc
+    if token_data.type != expected_type or not token_data.sub:
+        if auth_token_validations_total:
+            auth_token_validations_total.labels(result="invalid").inc()
+        raise credentials_exception
+
+    await _ensure_token_not_blacklisted(payload.get("jti"), db, credentials_exception)
+
+    user = await UserRepository(db).get_raw_by_username(token_data.sub)
+    if user is not None:
+        _check_logout_invalidation(user, payload, credentials_exception)
+    return token_data, user
+
+
 async def get_current_user(
     db: AsyncIOMotorDatabase = Depends(get_database),
     token: str = Depends(oauth2_scheme),
@@ -122,20 +132,11 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    payload, token_data = _decode_user_token(token, credentials_exception)
-
-    await _ensure_token_not_blacklisted(payload.get("jti"), db)
-
-    user_repo = UserRepository(db)
-    if not token_data.sub:
-        raise credentials_exception
-    user = await user_repo.get_raw_by_username(token_data.sub)
+    token_data, user = await decode_token(token, "access", db, credentials_exception)
     if user is None:
         if auth_token_validations_total:
             auth_token_validations_total.labels(result="user_not_found").inc()
         raise credentials_exception
-
-    _check_logout_invalidation(user, payload, credentials_exception)
 
     if auth_token_validations_total:
         auth_token_validations_total.labels(result="valid").inc()

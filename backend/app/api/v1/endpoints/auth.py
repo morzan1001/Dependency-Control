@@ -18,9 +18,8 @@ from fastapi import (
 )
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from jose import JWTError, jwt
+from jose import jwt
 from prometheus_client import Counter
-from pydantic import ValidationError
 
 from app.api import deps
 from app.api.deps import DatabaseDep
@@ -55,7 +54,7 @@ from app.schemas.auth import (
     PasswordResetResponse,
     VerificationEmailResponse,
 )
-from app.schemas.token import Token, TokenPayload
+from app.schemas.token import Token
 from app.schemas.user import User as UserSchema
 from app.schemas.user import UserPasswordReset, UserSignup
 
@@ -239,25 +238,12 @@ async def refresh_token(
     db: DatabaseDep,
 ) -> Any:
     """Get a new access token using a valid refresh token."""
-    try:
-        payload = jwt.decode(refresh_token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        token_data = TokenPayload(**payload)
-    except (JWTError, ValidationError) as exc:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Could not validate credentials",
-        ) from exc
-
-    if token_data.type != "refresh":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Invalid token type",
-        )
-
-    user_repo = UserRepository(db)
-    if not token_data.sub:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid token")
-    user = await user_repo.get_raw_by_username(token_data.sub)
+    _, user = await deps.decode_token(
+        refresh_token,
+        "refresh",
+        db,
+        HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate credentials"),
+    )
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -269,16 +255,6 @@ async def refresh_token(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user",
         )
-
-    if user.get("last_logout_at"):
-        iat = payload.get("iat")
-        if iat:
-            last_logout_ts = user["last_logout_at"].timestamp()
-            if iat < last_logout_ts:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Token revoked",
-                )
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 

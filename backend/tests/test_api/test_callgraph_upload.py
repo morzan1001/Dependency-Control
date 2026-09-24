@@ -11,12 +11,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from jose import jwt
 
-from app.core.config import settings
 from app.core.constants import CALLGRAPH_MAX_ENTRIES
 from app.core.permissions import Permissions
 from app.models.project import Project
+from tests.helpers.auth import bearer_headers
 from tests.helpers.permission_presets import PRESET_ADMIN
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -192,8 +191,7 @@ async def _seed_user(db, username: str, permissions: list[str]) -> dict[str, str
             "is_active": True,
         }
     )
-    token = jwt.encode({"sub": username, "permissions": list(permissions)}, settings.SECRET_KEY, settings.ALGORITHM)
-    return {"Authorization": f"Bearer {token}"}
+    return bearer_headers(username, permissions)
 
 
 async def _add_member(db, user_id: str, role: str) -> None:

@@ -9,9 +9,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
-from jose import jwt
 
-from app.core.config import settings
 from app.core.constants import (
     DEFAULT_RELEASE_ENVIRONMENT,
     PROJECT_ROLE_EDITOR,
@@ -27,6 +25,7 @@ from app.models.release import Release
 from app.models.user import User
 from app.repositories.releases import ReleaseRepository
 from app.services.releases import latest_release_scan
+from tests.helpers.auth import bearer_headers
 
 _NOW = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
 _PROJECT = "test-project-id"
@@ -96,10 +95,7 @@ async def _role_headers(db, role: str) -> dict[str, str]:
     await db.users.update_one({"_id": username}, {"$setOnInsert": user.model_dump(by_alias=True)}, upsert=True)
     member = ProjectMember(user_id=username, role=role)
     await db.projects.update_one({"_id": _PROJECT}, {"$set": {"members": [member.model_dump(by_alias=True)]}})
-    token = jwt.encode(
-        {"sub": username, "permissions": user.permissions}, settings.SECRET_KEY, algorithm=settings.ALGORITHM
-    )
-    return {"Authorization": f"Bearer {token}"}
+    return bearer_headers(username, user.permissions)
 
 
 @pytest_asyncio.fixture
