@@ -1,14 +1,14 @@
 """Prometheus metrics for monitoring the backend across a multi-pod Kubernetes deployment."""
 
 import logging
-import re
 import time
-from collections.abc import Generator
+from collections.abc import Generator, Iterable
 from contextlib import AbstractContextManager, contextmanager
 from importlib.metadata import version as get_version
 from typing import Any
 
 from fastapi import Request, Response
+from fastapi.concurrency import run_in_threadpool
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
@@ -22,7 +22,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = logging.getLogger(__name__)
 
-_ID_PLACEHOLDER = "/{id}"
+_UNMATCHED_ENDPOINT = "<unmatched>"
 
 
 class ArchiveFailureReason:
@@ -69,7 +69,7 @@ http_request_duration_seconds = Histogram(
 http_requests_in_progress = Gauge(
     "http_requests_in_progress",
     "Number of HTTP requests currently being processed",
-    ["method", "endpoint"],
+    ["method"],
 )
 
 http_request_size_bytes = Histogram(
@@ -561,7 +561,7 @@ def update_uptime() -> None:
 async def metrics_endpoint(_request: Request) -> Response:
     """Prometheus metrics endpoint; expose internally to the cluster only, never via Ingress."""
     update_uptime()
-    metrics_output = generate_latest(REGISTRY)
+    metrics_output = await run_in_threadpool(generate_latest, REGISTRY)
     return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
 
 
@@ -590,33 +590,19 @@ class PrometheusMiddleware:
             return
 
         method: str = scope.get("method", "")
-        endpoint = self._normalize_path(path)
+        request_size = _content_length(scope.get("headers", []))
 
-        # Track request size from Content-Length header
-        for name, value in scope.get("headers", []):
-            if name == b"content-length":
-                try:
-                    http_request_size_bytes.labels(method=method, endpoint=endpoint).observe(int(value))
-                except ValueError:
-                    pass
-                break
-
-        http_requests_in_progress.labels(method=method, endpoint=endpoint).inc()
+        http_requests_in_progress.labels(method=method).inc()
         start_time = time.time()
         status_code = 500  # default if the app crashes before sending a response
+        response_size: int | None = None
 
         async def wrapped_send(message: Message) -> None:
-            nonlocal status_code
+            nonlocal status_code, response_size
             if message["type"] == "http.response.start":
                 status_code = message.get("status", 500)
                 # Record response size if Content-Length is present (skipped on streaming responses)
-                for name, value in message.get("headers", []):
-                    if name == b"content-length":
-                        try:
-                            http_response_size_bytes.labels(method=method, endpoint=endpoint).observe(int(value))
-                        except ValueError:
-                            pass
-                        break
+                response_size = _content_length(message.get("headers", []))
             await send(message)
 
         try:
@@ -626,30 +612,36 @@ class PrometheusMiddleware:
             raise
         finally:
             duration = time.time() - start_time
+            endpoint = _route_template(scope)
+            if request_size is not None:
+                http_request_size_bytes.labels(method=method, endpoint=endpoint).observe(request_size)
+            if response_size is not None:
+                http_response_size_bytes.labels(method=method, endpoint=endpoint).observe(response_size)
             http_request_duration_seconds.labels(method=method, endpoint=endpoint).observe(duration)
             http_requests_total.labels(method=method, endpoint=endpoint, status=status_code).inc()
-            http_requests_in_progress.labels(method=method, endpoint=endpoint).dec()
+            http_requests_in_progress.labels(method=method).dec()
 
-    def _normalize_path(self, path: str) -> str:
-        """Replace UUIDs, ObjectIds, and numeric IDs with {id} to prevent metric-label cardinality explosion."""
-        # Patterns are anchored to whole segments with a trailing (?=/|$): otherwise /\d+
-        # would replace only the leading digit run of a mixed-alphanumeric segment,
-        # producing a unique never-repeated label and defeating cardinality protection.
 
-        path = re.sub(
-            r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=/|$)",
-            _ID_PLACEHOLDER,
-            path,
-            flags=re.IGNORECASE,
-        )
+def _content_length(headers: Iterable[tuple[bytes, bytes]]) -> int | None:
+    for name, value in headers:
+        if name == b"content-length":
+            try:
+                return int(value)
+            except ValueError:
+                return None
+    return None
 
-        # Replace MongoDB ObjectIds (24 hex chars) BEFORE numeric IDs so a hex
-        # id starting with a digit isn't partially consumed by the numeric rule.
-        path = re.sub(r"/[0-9a-f]{24}(?=/|$)", _ID_PLACEHOLDER, path, flags=re.IGNORECASE)
 
-        path = re.sub(r"/\d+(?=/|$)", _ID_PLACEHOLDER, path)
-
-        return path
+def _route_template(scope: Scope) -> str:
+    """Full template of the matched route, so raw path segments never become label values."""
+    route = scope.get("route")
+    if route is None:
+        return _UNMATCHED_ENDPOINT
+    path: str = scope["path"]
+    path_format: str = route.path_format
+    # path_format omits the include_router prefix, which is static and ends where the matched tail begins
+    tail_slashes = path_format.count("/") + sum(str(v).count("/") for v in scope["path_params"].values())
+    return path.rsplit("/", tail_slashes)[0] + path_format
 
 
 def track_db_operation(collection: str, operation: str) -> AbstractContextManager[None]:
