@@ -147,6 +147,8 @@ db.teams.find(
 )
 ```
 
+The query finds only holders who promoted themselves to team admin. Before 1.9.41 a `team:read_all` holder could also add or re-role other members, delete teams and write team webhooks, and nothing records who did that. Review each team's members and webhooks with the team; `db.webhooks.find({ team_id: { $ne: null } }, { team_id: 1, url: 1, events: 1, created_at: 1 })` lists the team webhooks. A self-made team admin was also admin of the team's projects, so check those projects' policy audit for crypto and license policy changes by the listed users.
+
 Before 1.9.41 a callgraph upload could name a `scan_id` of another project and overwrite that scan's reachability verdicts. This lists callgraphs stored under a scan of a different project:
 
 ```js
@@ -159,12 +161,14 @@ db.callgraphs.aggregate([
 ])
 ```
 
-If it returns rows, review them, then delete them with `db.callgraphs.deleteMany({ _id: { $in: [<ids from the query>] } })`. The affected scans keep the injected verdicts until their project's next legitimate callgraph upload or a rescan, because every upload recomputes all findings. To correct them sooner, call `POST /api/v1/projects/<scan_project_id>/scans/<scan_id>/rescan` for each affected scan.
+If it returns rows, review them, then delete them with `db.callgraphs.deleteMany({ _id: { $in: [<ids from the query>] } })`. The affected scans keep the injected verdicts until a callgraph is uploaded again for the same pipeline; a rescan replaces the run with one whose reachability stays pending until its callgraph arrives. To replace each affected run now, call `POST /api/v1/projects/<scan_project_id>/scans/<scan_id>/rescan`.
 
 ## Behaviour changes
 
-- Bearer authentication accepts only access tokens. A refresh token, or a token without a `type` claim, sent as `Authorization: Bearer` now gets 401. `/login/refresh-token` answers every invalid, wrongly typed or revoked refresh token with 403 "Could not validate credentials".
+- Bearer authentication accepts only access tokens. A refresh token, or a token without a `type` claim, sent as `Authorization: Bearer` now gets 401. A bearer token blacklisted at logout still gets 401, now with the detail "Could not validate credentials" instead of "Token has been revoked".
+- `/login/refresh-token` answers every refused token with 403 "Could not validate credentials". A wrongly typed, subject-less or logout-revoked token used to get the detail "Invalid token type", "Invalid token" or "Token revoked".
 - `team:read_all` is read-only. It still reads every team, but adding or changing members, deleting a team and writing team webhooks now need membership with the role the action requires, or the global permission for it such as `team:update` or `team:delete`. The frontend no longer offers team admin actions to users whose only team grant is `team:read_all`.
+- `GET /api/v1/analytics/projects/{project_id}/dependency-tree` answers 404 "No scan found for this project" for a `scan_id` of another project, which it used to serve, and 404 "Project not found" instead of 403 for an unknown project.
 - Callgraph uploads ignore a `scan_id` in the request body. The scan is always derived from the project in the path together with `pipeline_id` and the commit. Clients that still send `scan_id` keep working, and the field is dropped.
 - The `endpoint` label of `http_requests_total`, `http_request_duration_seconds`, `http_request_size_bytes` and `http_response_size_bytes` now carries the matched route template, for example `/api/v1/projects/{project_id}`, instead of the raw path with ids masked as `{id}`. Unmatched requests share the label `<unmatched>`, and `http_requests_in_progress` is labelled by `method` only. Dashboards and alerts that filter on raw paths need updating. The bundled Grafana dashboard only groups by `endpoint` and needs no change.
 - New projects keep the retention action and analyzer settings chosen at creation. They used to be stored with `retention_action: "delete"` and no analyzer settings. When the system retention mode is `global`, the global retention settings still apply. Projects created before 1.9.41 with Archive or None are still stored as Delete, and housekeeping keeps deleting their scans until an owner corrects the setting. See "review the retention of projects created in the dialog" above.
