@@ -365,7 +365,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("version", pymongo.ASCENDING),
         ]
     )
-    # Covering index for earliest_detections (every scan persist): each field it reads must stay in this key.
+    # Covering index for earliest_detections: each field it reads must stay in this key.
     await database["findings"].create_index(
         [
             ("project_id", pymongo.ASCENDING),

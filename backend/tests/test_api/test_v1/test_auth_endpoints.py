@@ -142,16 +142,16 @@ class TestRefreshToken2FAGate:
 
 class TestRefreshTokenType:
     @pytest.mark.parametrize(
-        "token",
+        "mint",
         [
-            pytest.param(security.create_access_token("bob", permissions=["admin:manage"]), id="access"),
-            pytest.param(security.create_password_reset_token("bob@test.com"), id="password-reset"),
+            pytest.param(lambda: security.create_access_token("bob", permissions=["admin:manage"]), id="access"),
+            pytest.param(lambda: security.create_password_reset_token("bob@test.com"), id="password-reset"),
         ],
     )
-    def test_a_token_of_another_type_is_not_accepted_in_place_of_a_refresh_token(self, token):
+    def test_a_token_of_another_type_is_not_accepted_in_place_of_a_refresh_token(self, mint):
         with patch(_USER_LOOKUP, new_callable=AsyncMock) as lookup:
             with pytest.raises(HTTPException) as exc_info:
-                _refresh(token)
+                _refresh(mint())
 
         assert exc_info.value.status_code == _FORBIDDEN
         assert exc_info.value.detail == _MSG_CREDENTIALS

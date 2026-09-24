@@ -774,7 +774,7 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
 
 @pytest.mark.asyncio
 async def test_replay_stamps_the_restored_scan_with_its_restore_time():
-    """The stale-metadata reaper only drops archive metadata on this evidence."""
+    """Only this stamp shows that archive metadata written before the restore is stale."""
     from app.services.archive import _replay_bundle
     from app.services.archive_bundle import BundleFrames, BundleStats
 

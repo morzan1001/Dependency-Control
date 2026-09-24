@@ -204,7 +204,7 @@ async def _notify_relevant_users(
             return
         from app.repositories.projects import ProjectRepository
 
-        # Primary read: a policy set at project creation is audited right after the insert.
+        # Primary read: the project can have been inserted just before this entry.
         project = await ProjectRepository(db).get_by_id_strong(entry.project_id)
         if project is None:
             return

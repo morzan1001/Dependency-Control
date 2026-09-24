@@ -67,8 +67,6 @@ async def _persist(db, scan_id: str, scan_created_at: datetime, *findings: Findi
 
 async def _store_legacy_copy(db, scan_created_at: datetime) -> None:
     legacy, _ = _prepare_finding_records([_critical_cve()], "legacy-scan", _PROJECT, scan_created_at)
-    for record in legacy:
-        record.pop("first_seen_at", None)
     await db.findings.insert_many(legacy)
 
 

@@ -109,10 +109,7 @@ async def check_team_access(
     db: AsyncIOMotorDatabase,
     required_role: str | None = None,
 ) -> Team:
-    """Check a user's access to a team and return it, raising 404/403 on failure.
-
-    team:read_all grants reads (no ``required_role``) only; a required role needs real membership.
-    """
+    """Return the team or raise 404/403; team:read_all opens reads only, a ``required_role`` needs membership."""
     team_repo = TeamRepository(db)
     team = await team_repo.get_by_id(team_id)
     if not team:

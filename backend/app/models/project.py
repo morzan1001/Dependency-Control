@@ -149,7 +149,7 @@ class Scan(MongoDocument, CreatedAtModel):
 
     # Pinned scans are exempt from retention cleanup (housekeeping filters "pinned": {"$ne": True}).
     pinned: bool = False
-    # Stamped by restore; the archive-metadata reaper drops only metadata archived before it.
+    # Archive metadata written before this restore is stale: the scan is live again.
     restored_at: datetime | None = None
 
     # Monotone: ingest only ever promotes it. Where the artefact runs lives in the releases collection.
