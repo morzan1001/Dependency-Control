@@ -129,7 +129,9 @@ async def get_project_recommendations(
     findings = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
     await _apply_live_threat_intel(findings)
 
-    dependencies, dependencies_total = await dep_repo.find_by_scan(scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT)
+    dependencies, dependencies_total = await dep_repo.find_by_scan(
+        project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
+    )
 
     for dep in dependencies:
         if dep.source_target:
