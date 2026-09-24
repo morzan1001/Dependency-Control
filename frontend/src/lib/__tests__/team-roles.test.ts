@@ -6,7 +6,8 @@ import {
   canUpdateTeam,
   canDeleteTeam,
   canManageTeamMembers,
-  canManageTeamWebhooks,
+  canCreateTeamWebhooks,
+  canDeleteTeamWebhooks,
 } from '../team-roles'
 import type { Team } from '@/types/team'
 
@@ -30,11 +31,12 @@ describe('hasTeamRole — team:read_all is READ-ONLY', () => {
     expect(isTeamAdmin(team, AUDITOR, readAll)).toBe(false)
   })
 
-  it('an auditor with only read_all cannot update, delete, manage members or manage webhooks', () => {
+  it('an auditor with only read_all cannot update, delete, manage members or write webhooks', () => {
     expect(canUpdateTeam(team, AUDITOR, readAll)).toBe(false)
     expect(canDeleteTeam(team, AUDITOR, readAll)).toBe(false)
     expect(canManageTeamMembers(team, AUDITOR, readAll)).toBe(false)
-    expect(canManageTeamWebhooks(team, AUDITOR, readAll)).toBe(false)
+    expect(canCreateTeamWebhooks(team, AUDITOR, readAll)).toBe(false)
+    expect(canDeleteTeamWebhooks(team, AUDITOR, readAll)).toBe(false)
   })
 })
 
@@ -72,31 +74,64 @@ describe('team roles', () => {
   })
 })
 
-describe('canManageTeamWebhooks — webhook:create needs membership or team:update', () => {
+describe('canCreateTeamWebhooks — webhook:create needs membership or team:update', () => {
   const team = makeTeam([
     { user_id: 'admin-1', role: 'admin' },
     { user_id: 'member-1', role: 'member' },
   ])
 
   it('read_all plus webhook:create offers no webhook writes on a foreign team', () => {
-    expect(canManageTeamWebhooks(team, AUDITOR, ['team:read_all', 'webhook:create'])).toBe(false)
+    expect(canCreateTeamWebhooks(team, AUDITOR, ['team:read_all', 'webhook:create'])).toBe(false)
   })
 
   it('webhook:create alone offers no webhook writes to a non-member', () => {
-    expect(canManageTeamWebhooks(team, STRANGER, ['webhook:create'])).toBe(false)
+    expect(canCreateTeamWebhooks(team, STRANGER, ['webhook:create'])).toBe(false)
   })
 
   it('a plain member writes with webhook:create but not without it', () => {
-    expect(canManageTeamWebhooks(team, 'member-1', ['webhook:create'])).toBe(true)
-    expect(canManageTeamWebhooks(team, 'member-1', [])).toBe(false)
+    expect(canCreateTeamWebhooks(team, 'member-1', ['webhook:create'])).toBe(true)
+    expect(canCreateTeamWebhooks(team, 'member-1', [])).toBe(false)
   })
 
   it('team:update writes without membership only together with webhook:create', () => {
-    expect(canManageTeamWebhooks(team, STRANGER, ['team:update', 'webhook:create'])).toBe(true)
-    expect(canManageTeamWebhooks(team, STRANGER, ['team:update'])).toBe(false)
+    expect(canCreateTeamWebhooks(team, STRANGER, ['team:update', 'webhook:create'])).toBe(true)
+    expect(canCreateTeamWebhooks(team, STRANGER, ['team:update'])).toBe(false)
   })
 
   it('a team admin writes without a webhook permission', () => {
-    expect(canManageTeamWebhooks(team, 'admin-1', [])).toBe(true)
+    expect(canCreateTeamWebhooks(team, 'admin-1', [])).toBe(true)
+  })
+})
+
+describe('canDeleteTeamWebhooks — webhook:delete needs membership or team:update', () => {
+  const team = makeTeam([
+    { user_id: 'admin-1', role: 'admin' },
+    { user_id: 'member-1', role: 'member' },
+  ])
+
+  it('a member with webhook:create but not webhook:delete cannot delete', () => {
+    expect(canDeleteTeamWebhooks(team, 'member-1', ['webhook:create'])).toBe(false)
+  })
+
+  it('a member with webhook:delete but not webhook:create deletes and does not create', () => {
+    expect(canDeleteTeamWebhooks(team, 'member-1', ['webhook:delete'])).toBe(true)
+    expect(canCreateTeamWebhooks(team, 'member-1', ['webhook:delete'])).toBe(false)
+  })
+
+  it('read_all plus webhook:delete offers no delete on a foreign team', () => {
+    expect(canDeleteTeamWebhooks(team, AUDITOR, ['team:read_all', 'webhook:delete'])).toBe(false)
+  })
+
+  it('webhook:delete alone offers no delete to a non-member', () => {
+    expect(canDeleteTeamWebhooks(team, STRANGER, ['webhook:delete'])).toBe(false)
+  })
+
+  it('team:update deletes without membership only together with webhook:delete', () => {
+    expect(canDeleteTeamWebhooks(team, STRANGER, ['team:update', 'webhook:delete'])).toBe(true)
+    expect(canDeleteTeamWebhooks(team, STRANGER, ['team:update', 'webhook:create'])).toBe(false)
+  })
+
+  it('a team admin deletes without a webhook permission', () => {
+    expect(canDeleteTeamWebhooks(team, 'admin-1', [])).toBe(true)
   })
 })

@@ -67,13 +67,31 @@ export function canManageTeamMembers(
     || globalPermissions.includes('team:update');
 }
 
-/** Manage team webhooks: team admin OR webhook:create plus (membership OR global team:update) */
-export function canManageTeamWebhooks(
+function canWriteTeamWebhook(
+  team: Team,
+  userId: string,
+  globalPermissions: string[],
+  webhookPermission: string
+): boolean {
+  return isTeamAdmin(team, userId, globalPermissions)
+    || (globalPermissions.includes(webhookPermission)
+      && (getUserTeamRole(team, userId) !== null || globalPermissions.includes('team:update')));
+}
+
+/** Create team webhook: team admin OR webhook:create plus (membership OR global team:update) */
+export function canCreateTeamWebhooks(
   team: Team,
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isTeamAdmin(team, userId, globalPermissions)
-    || (globalPermissions.includes('webhook:create')
-      && (getUserTeamRole(team, userId) !== null || globalPermissions.includes('team:update')));
+  return canWriteTeamWebhook(team, userId, globalPermissions, 'webhook:create');
+}
+
+/** Delete team webhook: team admin OR webhook:delete plus (membership OR global team:update) */
+export function canDeleteTeamWebhooks(
+  team: Team,
+  userId: string,
+  globalPermissions: string[]
+): boolean {
+  return canWriteTeamWebhook(team, userId, globalPermissions, 'webhook:delete');
 }
