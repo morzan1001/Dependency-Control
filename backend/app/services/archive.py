@@ -42,6 +42,7 @@ from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.archive import ArchiveRestoreResponse
+from app.schemas.trufflehog import TruffleHogFinding
 from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
 from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -463,6 +464,13 @@ async def _handle_header_event(
         collections_restored.append("scans")
 
 
+def _hash_plaintext_secrets(analysis_result: dict[str, Any]) -> None:
+    """A bundle can hold TruffleHog's plaintext Raw; only its digest may be written back to Mongo."""
+    findings = (analysis_result.get("result") or {}).get("findings")
+    if findings:
+        analysis_result["result"]["findings"] = [TruffleHogFinding.model_validate(f).model_dump() for f in findings]
+
+
 async def _handle_doc_event(
     db: Any,
     event: dict[str, Any],
@@ -478,7 +486,10 @@ async def _handle_doc_event(
     if coll == ARCHIVE_GRIDFS_FRAME:
         gridfs_entries.append(event["data"])
         return
-    batch_by_collection.setdefault(coll, []).append(event["data"])
+    doc = event["data"]
+    if coll == "analysis_results" and doc.get("analyzer_name") == "trufflehog":
+        _hash_plaintext_secrets(doc)
+    batch_by_collection.setdefault(coll, []).append(doc)
     if len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
         await _flush_batch(db, coll, batch_by_collection, collections_restored)
 
