@@ -295,6 +295,68 @@ class TestProjectLimitCountsOnlyProjectsTheUserAdmins:
         assert len(db.projects._docs) == len([1, 2, 3]) + 1
 
 
+class TestCreateProjectStoresWhatTheDialogChose:
+    """A dropped retention_action is stored as "delete", and housekeeping then purges scans the user chose to keep."""
+
+    def _create(self, project_in, settings=None):
+        from app.api.v1.endpoints.projects import create_project
+        from app.models.system import SystemSettings
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+        response = asyncio.run(
+            create_project(
+                project_in=project_in,
+                current_user=User(
+                    id="creator", username="creator", email="creator@test.com", permissions=["project:create"]
+                ),
+                db=db,
+                settings=settings or SystemSettings(),
+            )
+        )
+        return db, db.projects._docs[response.project_id]
+
+    @pytest.mark.parametrize("action", ["archive", "none"])
+    def test_the_chosen_retention_is_stored(self, action):
+        from app.schemas.project import ProjectCreate
+
+        _, stored = self._create(ProjectCreate(name="New", retention_days=30, retention_action=action))
+
+        assert (stored["retention_days"], stored["retention_action"]) == (30, action)
+
+    def test_global_retention_mode_overrides_the_request(self):
+        from app.models.system import SystemSettings
+        from app.schemas.project import ProjectCreate
+
+        _, stored = self._create(
+            ProjectCreate(name="New", retention_days=30, retention_action="archive"),
+            SystemSettings(retention_mode="global"),
+        )
+
+        assert (stored["retention_days"], stored["retention_action"]) == (90, "delete")
+
+    def test_explicit_nulls_fall_back_to_the_defaults(self):
+        from app.schemas.project import ProjectCreate
+
+        _, stored = self._create(ProjectCreate(name="New", retention_days=None, retention_action=None))
+
+        assert (stored["retention_days"], stored["retention_action"]) == (90, "delete")
+
+    def test_analyzer_settings_are_stored_and_the_license_policy_audited(self):
+        from app.schemas.project import ProjectCreate
+
+        analyzer_settings = {"license_compliance": {"deployment_model": "cli_batch"}, "trivy": {"x": 1}}
+        db, stored = self._create(ProjectCreate(name="New", analyzer_settings=analyzer_settings))
+
+        assert stored["analyzer_settings"] == analyzer_settings
+        [entry] = db.crypto_policy_history._docs.values()
+        assert (entry["policy_type"], entry["action"], entry["snapshot"]) == (
+            "license",
+            "create",
+            {"deployment_model": "cli_batch"},
+        )
+
+
 class TestHideHistoricalSecretsNarrowsTheResult:
     """The $nor has to run for real: a filter the fake ignored would leave the buried secret visible."""
 
