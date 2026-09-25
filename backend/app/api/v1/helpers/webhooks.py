@@ -4,8 +4,8 @@ from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.projects import check_project_access
-from app.api.v1.helpers.teams import check_team_access
-from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_ROLE_ADMIN
+from app.api.v1.helpers.teams import check_team_access, get_team_with_access
+from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.models.webhook import Webhook
@@ -31,20 +31,25 @@ async def check_webhook_permission(
 ) -> None:
     """Authorize access to a webhook: the specific permission plus resource access, or admin role.
 
-    Global (unscoped) webhooks require system:manage. Raises 403 on failure.
+    Writes need membership or the resource's global write grant, never read_all alone. Global
+    (unscoped) webhooks require system:manage. Raises 403 on failure.
     """
     if webhook.project_id:
         has_perm = has_permission(current_user.permissions, required_permission)
-        if has_perm:
+        if not has_perm:
+            await check_project_access(webhook.project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
+        elif required_permission == Permissions.WEBHOOK_READ:
             await check_project_access(webhook.project_id, current_user, db)
         else:
-            await check_project_access(webhook.project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
+            await check_project_access(webhook.project_id, current_user, db, write=True)
     elif webhook.team_id:
         has_perm = has_permission(current_user.permissions, required_permission)
-        if has_perm:
+        if not has_perm:
+            await check_team_access(webhook.team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
+        elif required_permission == Permissions.WEBHOOK_READ:
             await check_team_access(webhook.team_id, current_user, db)
         else:
-            await check_team_access(webhook.team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
+            await get_team_with_access(webhook.team_id, current_user, db, required_role=TEAM_ROLE_MEMBER)
     else:
         if not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
             raise HTTPException(status_code=403, detail="Not enough permissions")
@@ -68,10 +73,10 @@ async def check_webhook_create_permission(
     current_user: User,
     db: AsyncIOMotorDatabase,
 ) -> None:
-    """Authorize creating a project's webhooks: webhook:create plus access, or project admin."""
+    """Authorize creating a project's webhooks: webhook:create plus membership or write grant, or project admin."""
     has_create_perm = has_permission(current_user.permissions, Permissions.WEBHOOK_CREATE)
     if has_create_perm:
-        await check_project_access(project_id, current_user, db)
+        await check_project_access(project_id, current_user, db, write=True)
     else:
         await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
@@ -94,9 +99,9 @@ async def check_team_webhook_create_permission(
     current_user: User,
     db: AsyncIOMotorDatabase,
 ) -> None:
-    """Authorize creating a team's webhooks: webhook:create plus membership, or team admin."""
+    """Authorize creating a team's webhooks: webhook:create plus membership or team:update, or team admin."""
     has_create_perm = has_permission(current_user.permissions, Permissions.WEBHOOK_CREATE)
     if has_create_perm:
-        await check_team_access(team_id, current_user, db)
+        await get_team_with_access(team_id, current_user, db, required_role=TEAM_ROLE_MEMBER)
     else:
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)

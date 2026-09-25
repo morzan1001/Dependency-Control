@@ -6,15 +6,13 @@ from pydantic import ValidationError
 
 from app.models.license import DeploymentModel
 from app.schemas.adhoc import AdhocAnalyzeRequest
-from app.schemas.project import LicensePolicySchema, ProjectCreate, ProjectUpdate
+from app.schemas.project import LicensePolicySchema, ProjectUpdate
 
 
 @pytest.mark.parametrize("typo", ["deployment_moddel", "deployment_modl", "allow_network_copyleftt"])
 def test_a_misspelled_policy_key_is_rejected_not_discarded(typo):
     with pytest.raises(ValidationError):
         LicensePolicySchema(**{typo: "cli_batch"})
-    with pytest.raises(ValidationError):
-        ProjectCreate(name="p", license_policy={typo: "cli_batch"})
     with pytest.raises(ValidationError):
         ProjectUpdate(license_policy={typo: "cli_batch"})
 
@@ -24,14 +22,14 @@ def test_the_persisted_and_the_one_shot_path_agree():
     payload = {"deployment_moddel": "cli_batch", "allow_network_copyleft": True}
 
     with pytest.raises(ValidationError):
-        ProjectCreate(name="p", license_policy=payload)
+        ProjectUpdate(license_policy=payload)
     with pytest.raises(ValidationError):
         AdhocAnalyzeRequest(sboms=[{"bomFormat": "CycloneDX"}], license_policy=payload)
 
 
 def test_a_correct_policy_still_round_trips():
-    policy = ProjectCreate(
-        name="p", license_policy={"deployment_model": "cli_batch", "allow_network_copyleft": True}
+    policy = ProjectUpdate(
+        license_policy={"deployment_model": "cli_batch", "allow_network_copyleft": True}
     ).license_policy
     assert policy is not None
     assert policy.deployment_model == DeploymentModel.CLI_BATCH.value

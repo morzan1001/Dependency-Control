@@ -1,5 +1,7 @@
 """Tests for Project, Scan, and AnalysisResult models."""
 
+from datetime import datetime, timezone
+
 from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 
@@ -70,6 +72,11 @@ class TestScanModel:
         scan = Scan(**doc)
         assert scan.pinned is True
         assert scan.model_dump(by_alias=True)["pinned"] is True
+
+    def test_restored_at_survives_hydration_and_serialization(self):
+        restored_at = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+        doc = {"_id": "scan-1", "project_id": "proj-1", "branch": "main", "restored_at": restored_at}
+        assert Scan(**doc).model_dump(by_alias=True)["restored_at"] == restored_at
 
 
 class TestAnalysisResultModel:

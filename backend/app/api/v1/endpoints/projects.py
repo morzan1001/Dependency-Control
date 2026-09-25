@@ -260,6 +260,12 @@ async def create_project(
     project_id = str(uuid.uuid4())
     api_key, api_key_hash = generate_project_api_key(project_id)
 
+    # A None here would fail Project validation instead of falling back to the model default.
+    retention = apply_system_settings_enforcement(
+        project_in.model_dump(include={"retention_days", "retention_action"}, exclude_none=True),
+        settings.retention_mode,
+        settings.rescan_mode,
+    )
     project = Project(
         id=project_id,
         name=project_in.name,
@@ -267,7 +273,8 @@ async def create_project(
         **ownership_fields([project_in.team_id] if project_in.team_id else [], TEAM_SOURCE_MANUAL),
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
-        retention_days=(project_in.retention_days if project_in.retention_days is not None else 90),
+        analyzer_settings=project_in.analyzer_settings,
+        **retention,
         members=[ProjectMember(user_id=str(current_user.id), role="admin")],
     )
 
@@ -276,6 +283,7 @@ async def create_project(
     project_data["api_key_hash"] = api_key_hash
 
     await project_repo.create_raw(project_data)
+    await _audit_license_policy_change(db, project_id, None, project, current_user)
 
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 

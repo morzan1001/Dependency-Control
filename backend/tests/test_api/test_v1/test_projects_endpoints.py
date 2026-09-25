@@ -295,6 +295,131 @@ class TestProjectLimitCountsOnlyProjectsTheUserAdmins:
         assert len(db.projects._docs) == len([1, 2, 3]) + 1
 
 
+class _StaleSecondary:
+    """A lagging replica-set secondary: default reads miss the just-inserted doc, primary reads see it."""
+
+    def __init__(self, primary):
+        self._primary = primary
+
+    def __getattr__(self, name):
+        return getattr(self._primary, name)
+
+    async def find_one(self, *_args, **_kwargs):
+        return None
+
+    def with_options(self, read_preference=None, **_kwargs):
+        from pymongo import ReadPreference
+
+        return self._primary if read_preference == ReadPreference.PRIMARY else self
+
+
+class TestCreateProjectStoresWhatTheDialogChose:
+    """A dropped retention_action is stored as "delete", and housekeeping then purges scans the user chose to keep."""
+
+    def _create(self, project_in, settings=None, db=None):
+        from app.api.v1.endpoints.projects import create_project
+        from app.models.system import SystemSettings
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = db or FakeDatabase()
+        response = asyncio.run(
+            create_project(
+                project_in=project_in,
+                current_user=User(
+                    id="creator", username="creator", email="creator@test.com", permissions=["project:create"]
+                ),
+                db=db,
+                settings=settings or SystemSettings(),
+            )
+        )
+        return db, db.projects._docs[response.project_id]
+
+    @pytest.mark.parametrize("action", ["archive", "none"])
+    def test_the_chosen_retention_is_stored(self, action):
+        from app.schemas.project import ProjectCreate
+
+        _, stored = self._create(ProjectCreate(name="New", retention_days=30, retention_action=action))
+
+        assert (stored["retention_days"], stored["retention_action"]) == (30, action)
+
+    def test_global_retention_mode_overrides_the_request(self):
+        from app.models.system import SystemSettings
+        from app.schemas.project import ProjectCreate
+
+        _, stored = self._create(
+            ProjectCreate(name="New", retention_days=30, retention_action="archive"),
+            SystemSettings(retention_mode="global"),
+        )
+
+        assert (stored["retention_days"], stored["retention_action"]) == (90, "delete")
+
+    def test_explicit_nulls_fall_back_to_the_defaults(self):
+        from app.schemas.project import ProjectCreate
+
+        _, stored = self._create(ProjectCreate(name="New", retention_days=None, retention_action=None))
+
+        assert (stored["retention_days"], stored["retention_action"]) == (90, "delete")
+
+    def test_analyzer_settings_are_stored_and_the_license_policy_audited(self):
+        from app.schemas.project import ProjectCreate
+
+        analyzer_settings = {"license_compliance": {"deployment_model": "cli_batch"}, "trivy": {"x": 1}}
+        db, stored = self._create(ProjectCreate(name="New", analyzer_settings=analyzer_settings))
+
+        assert stored["analyzer_settings"] == analyzer_settings
+        [entry] = db.crypto_policy_history._docs.values()
+        assert (entry["policy_type"], entry["action"], entry["snapshot"]) == (
+            "license",
+            "create",
+            {"deployment_model": "cli_batch"},
+        )
+
+    def test_the_license_policy_change_reaches_the_team_before_secondaries_catch_up(self):
+        from app.schemas.project import ProjectCreate
+        from app.services.notifications.service import notification_service
+        from app.services.webhooks import webhook_service
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+        for user_id in ("creator", "teammate"):
+            db.users._docs[user_id] = {
+                "_id": user_id,
+                "username": user_id,
+                "email": f"{user_id}@test.com",
+                "is_active": True,
+                "notification_preferences": {"license_policy_changed": ["email"]},
+            }
+        db.teams._docs["team-1"] = {
+            "_id": "team-1",
+            "name": "Team",
+            "members": [{"user_id": "creator", "role": "admin"}, {"user_id": "teammate", "role": "member"}],
+        }
+        db.webhooks._docs["team-hook"] = {
+            "_id": "team-hook",
+            "team_id": "team-1",
+            "url": "https://example.com/hook",
+            "events": ["license_policy.changed"],
+            "is_active": True,
+        }
+        db.projects = _StaleSecondary(db.projects)
+
+        with (
+            patch.object(webhook_service, "_send_webhook", AsyncMock(return_value=True)) as sent,
+            patch.object(notification_service, "_send_based_on_prefs", AsyncMock()) as notified,
+        ):
+            self._create(
+                ProjectCreate(
+                    name="New",
+                    team_id="team-1",
+                    analyzer_settings={"license_compliance": {"deployment_model": "cli_batch"}},
+                ),
+                db=db,
+            )
+
+        assert [call.args[1].id for call in sent.call_args_list] == ["team-hook"]
+        assert sorted(call.args[0].username for call in notified.call_args_list) == ["creator", "teammate"]
+
+
 class TestHideHistoricalSecretsNarrowsTheResult:
     """The $nor has to run for real: a filter the fake ignored would leave the buried secret visible."""
 

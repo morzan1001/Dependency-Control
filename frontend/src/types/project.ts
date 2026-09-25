@@ -61,7 +61,6 @@ export interface ProjectCreate {
   active_analyzers?: string[];
   retention_days?: number;
   retention_action?: RetentionAction;
-  license_policy?: LicensePolicy;
 }
 
 export interface ProjectUpdate {

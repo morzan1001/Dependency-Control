@@ -214,6 +214,8 @@ async def test_posted_scanner_payload_becomes_a_finding():
     secrets = _findings_of_type(response, _TYPE_SECRET)
     assert len(secrets) == _EXPECTED_SECRET_FINDINGS
     assert secrets[0]["component"] == _SECRET_FILE
+    # Ad-hoc waivers match on finding_id, so the posted Raw must hash to the scan pipeline's id.
+    assert secrets[0]["finding_id"] == "SECRET-8-317e5726"
     assert response.analyzers.ran == [_TRUFFLEHOG_NAME, _ENRICHMENT]
 
 

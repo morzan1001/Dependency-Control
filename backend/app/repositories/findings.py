@@ -1,10 +1,12 @@
 """Repository for finding database operations."""
 
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from datetime import datetime
 from typing import Any
 
 from pymongo import UpdateOne
 
+from app.core import ensure_utc
 from app.core.constants import get_severity_value
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
@@ -22,6 +24,13 @@ _VULNERABILITY_IDENTITY_PROJECTION = {
     "details.vulnerabilities.resolved_cve": 1,
     "details.vulnerabilities.aliases": 1,
 }
+
+FindingIdentity = tuple[Any, Any, Any, Any]
+
+
+def finding_identity(doc: Mapping[str, Any]) -> FindingIdentity:
+    """What makes the findings of two scans of one project the same finding."""
+    return doc.get("type"), doc.get("component"), doc.get("version"), doc.get("finding_id")
 
 
 class FindingRepository(BaseRepository[FindingRecord]):
@@ -153,6 +162,41 @@ class FindingRepository(BaseRepository[FindingRecord]):
         query = {"scan_id": {"$in": list(scan_ids)}, "type": "vulnerability"}
         async for doc in self.collection.find(query, _VULNERABILITY_IDENTITY_PROJECTION):
             yield doc
+
+    async def earliest_detections(
+        self, project_id: str, records: Sequence[Mapping[str, Any]]
+    ) -> dict[FindingIdentity, datetime]:
+        """Earliest detection per identity among the project's stored copies; a copy predating first_seen_at
+        counts from its scan. Runs on every persist, so it reads only fields the covering index in init_db holds."""
+        if not records:
+            return {}
+        pipeline: list[dict[str, Any]] = [
+            {
+                "$match": {
+                    "project_id": project_id,
+                    "component": {"$in": list({r["component"] for r in records})},
+                    "type": {"$in": list({r["type"] for r in records})},
+                    "finding_id": {"$in": list({r["finding_id"] for r in records})},
+                }
+            },
+            {
+                "$group": {
+                    "_id": {
+                        "type": "$type",
+                        "component": "$component",
+                        "version": "$version",
+                        "finding_id": "$finding_id",
+                    },
+                    "first_seen_at": {"$min": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}},
+                }
+            },
+        ]
+        rows = await self.aggregate(pipeline, allow_disk_use=True)
+        return {
+            finding_identity(row["_id"]): first_seen
+            for row in rows
+            if (first_seen := ensure_utc(row["first_seen_at"])) is not None
+        }
 
     async def delete_by_scan(self, scan_id: str) -> int:
         return await self.delete_many({"scan_id": scan_id})

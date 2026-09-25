@@ -4,6 +4,7 @@ Payload shapes are transcribed from ``dependency-control-pipeline-templates/call
 (the shared upload anchor plus the js/python/go/java producers).
 """
 
+import copy
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
@@ -11,12 +12,11 @@ from unittest.mock import AsyncMock, patch
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from jose import jwt
 
-from app.core.config import settings
 from app.core.constants import CALLGRAPH_MAX_ENTRIES
 from app.core.permissions import Permissions
 from app.models.project import Project
+from tests.helpers.auth import bearer_headers
 from tests.helpers.permission_presets import PRESET_ADMIN
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -192,8 +192,7 @@ async def _seed_user(db, username: str, permissions: list[str]) -> dict[str, str
             "is_active": True,
         }
     )
-    token = jwt.encode({"sub": username, "permissions": list(permissions)}, settings.SECRET_KEY, settings.ALGORITHM)
-    return {"Authorization": f"Bearer {token}"}
+    return bearer_headers(username, permissions)
 
 
 async def _add_member(db, user_id: str, role: str) -> None:
@@ -364,13 +363,13 @@ class TestModuleUsageEndpoint:
 # --- reachability ------------------------------------------------------------
 
 
-def _finding(finding_id: str, component: str) -> dict:
+def _finding(finding_id: str, component: str, *, scan_id: str = _SCAN_ID, project_id: str = _PROJECT_ID) -> dict:
     return {
         "_id": f"f-{finding_id}",
         "id": finding_id,
         "finding_id": finding_id,
-        "scan_id": _SCAN_ID,
-        "project_id": _PROJECT_ID,
+        "scan_id": scan_id,
+        "project_id": project_id,
         "type": "vulnerability",
         "severity": "HIGH",
         "component": component,
@@ -459,3 +458,69 @@ class TestReachabilityVerdicts:
         py_finding = await db.findings.find_one({"_id": "f-CVE-PY"})
         assert py_finding["reachable"] is None
         assert py_finding["details"]["adjusted_risk_score"] == 40.0
+
+
+_FOREIGN_PROJECT_ID = "proj-foreign"
+_FOREIGN_SCAN_ID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{_FOREIGN_PROJECT_ID}-{_PIPELINE_ID}-{_COMMIT}"))
+
+
+async def _seed_foreign_project(db) -> None:
+    await db.projects.insert_one(
+        {
+            "_id": _FOREIGN_PROJECT_ID,
+            "name": "foreign-project",
+            "latest_scan_id": _FOREIGN_SCAN_ID,
+            "stats": {"high": 1},
+        }
+    )
+    await db.scans.insert_one(
+        {
+            "_id": _FOREIGN_SCAN_ID,
+            "project_id": _FOREIGN_PROJECT_ID,
+            "branch": _BRANCH,
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+            "reachability_pending": True,
+            "stats": {"high": 1},
+        }
+    )
+    await db.findings.insert_one(
+        _finding("CVE-FOREIGN", "requests", scan_id=_FOREIGN_SCAN_ID, project_id=_FOREIGN_PROJECT_ID)
+    )
+    await db.dependencies.insert_one(
+        {
+            "_id": "dep-foreign-requests",
+            "scan_id": _FOREIGN_SCAN_ID,
+            "project_id": _FOREIGN_PROJECT_ID,
+            "name": "requests",
+            "version": "1.0.0",
+            "type": "pypi",
+            "purl": "pkg:pypi/requests@1.0.0",
+        }
+    )
+
+
+class TestForeignScanId:
+    @pytest.mark.asyncio
+    async def test_a_scan_id_in_the_body_cannot_reach_another_projects_scan(self, client, db):
+        await _seed_foreign_project(db)
+        # The fake hands out its live documents, so a snapshot has to be a copy.
+        project_before = copy.deepcopy(await db.projects.find_one({"_id": _FOREIGN_PROJECT_ID}))
+        scan_before = copy.deepcopy(await db.scans.find_one({"_id": _FOREIGN_SCAN_ID}))
+        finding_before = copy.deepcopy(await db.findings.find_one({"_id": "f-CVE-FOREIGN"}))
+        # Analysed but never imported: exactly the payload that would turn the finding unreachable.
+        payload = {
+            **_envelope("generic", "python", {"imports": [], "analyzed_modules": ["requests"]}),
+            "scan_id": _FOREIGN_SCAN_ID,
+        }
+
+        response = await _upload(client, payload)
+
+        assert response.status_code == 200, response.text
+        assert await db.findings.find_one({"_id": "f-CVE-FOREIGN"}) == finding_before
+        assert await db.scans.find_one({"_id": _FOREIGN_SCAN_ID}) == scan_before
+        assert await db.projects.find_one({"_id": _FOREIGN_PROJECT_ID}) == project_before
+        assert await db.analysis_results.count_documents({"scan_id": _FOREIGN_SCAN_ID}) == 0
+        assert await db.callgraphs.count_documents({"scan_id": _FOREIGN_SCAN_ID}) == 0
+        stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        assert stored["scan_id"] == _SCAN_ID

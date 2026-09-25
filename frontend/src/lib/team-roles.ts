@@ -1,4 +1,5 @@
-// Mirrors the backend's check_team_access() so the UI gates match the API. Roles: member, admin.
+// Mirrors the backend's team gates (check_team_access, get_team_with_access and the team webhook
+// gates) so the UI offers only what the API allows. Roles: member, admin.
 
 import { Team } from '@/types/team';
 
@@ -21,7 +22,7 @@ export function hasTeamRole(
   requiredRole: 'member' | 'admin',
   globalPermissions?: string[]
 ): boolean {
-  if (globalPermissions?.includes('team:read_all')) return true;
+  if (requiredRole === TEAM_ROLE_MEMBER && globalPermissions?.includes('team:read_all')) return true;
 
   const role = getUserTeamRole(team, userId);
   if (role === null) return false;
@@ -66,12 +67,31 @@ export function canManageTeamMembers(
     || globalPermissions.includes('team:update');
 }
 
-/** Manage team webhooks: team admin OR global webhook:create */
-export function canManageTeamWebhooks(
+function canWriteTeamWebhook(
+  team: Team,
+  userId: string,
+  globalPermissions: string[],
+  webhookPermission: string
+): boolean {
+  return isTeamAdmin(team, userId, globalPermissions)
+    || (globalPermissions.includes(webhookPermission)
+      && (getUserTeamRole(team, userId) !== null || globalPermissions.includes('team:update')));
+}
+
+/** Create team webhook: team admin OR webhook:create plus (membership OR global team:update) */
+export function canCreateTeamWebhooks(
   team: Team,
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isTeamAdmin(team, userId, globalPermissions)
-    || globalPermissions.includes('webhook:create');
+  return canWriteTeamWebhook(team, userId, globalPermissions, 'webhook:create');
+}
+
+/** Delete team webhook: team admin OR webhook:delete plus (membership OR global team:update) */
+export function canDeleteTeamWebhooks(
+  team: Team,
+  userId: string,
+  globalPermissions: string[]
+): boolean {
+  return canWriteTeamWebhook(team, userId, globalPermissions, 'webhook:delete');
 }

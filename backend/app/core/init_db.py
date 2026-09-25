@@ -365,11 +365,16 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("version", pymongo.ASCENDING),
         ]
     )
+    # Covering index for earliest_detections: each field it reads must stay in this key.
     await database["findings"].create_index(
         [
             ("project_id", pymongo.ASCENDING),
             ("component", pymongo.ASCENDING),
             ("type", pymongo.ASCENDING),
+            ("finding_id", pymongo.ASCENDING),
+            ("version", pymongo.ASCENDING),
+            ("first_seen_at", pymongo.ASCENDING),
+            ("scan_created_at", pymongo.ASCENDING),
         ]
     )
 

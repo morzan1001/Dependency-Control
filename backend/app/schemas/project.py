@@ -115,9 +115,6 @@ class ProjectCreate(BaseModel):
         RETENTION_ACTION_DELETE,
         description="Action when retention period expires: delete, archive, or none",
     )
-    license_policy: LicensePolicySchema | None = Field(
-        None, description="License compliance policy controlling copyleft finding severity"
-    )
     analyzer_settings: AnalyzerSettings | None = Field(
         None, description="Per-analyzer configuration overrides keyed by analyzer ID"
     )

@@ -164,6 +164,8 @@ async def check_project_access(
     user: User,
     db: AsyncIOMotorDatabase,
     required_role: str | None = None,
+    *,
+    write: bool = False,
 ) -> Project:
     """Resolve project access and return the project, or raise 403/404.
 
@@ -171,7 +173,8 @@ async def check_project_access(
     None/viewer required_role is READ, editor/admin is WRITE; project:read_all is a
     READ-ONLY superuser (does not satisfy WRITE); project:update/project:delete is the
     WRITE superuser bypassing membership; effective role = MAX(direct, team-derived);
-    members must also hold project:read (or read_all).
+    members must also hold project:read (or read_all). ``write`` makes the request WRITE
+    without demanding a role, so membership in any role suffices.
     """
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -180,7 +183,7 @@ async def check_project_access(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    write_request = _is_write_request(required_role)
+    write_request = write or _is_write_request(required_role)
 
     if is_write_superuser(user):
         return project

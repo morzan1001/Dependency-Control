@@ -56,3 +56,8 @@ class DistributedLocksRepository:
         now = datetime.now(timezone.utc)
         lock = await self._reads.find_one({"_id": lock_name, "expires_at": {"$gt": now}})
         return lock is not None
+
+    async def held_locks(self, lock_names: list[str]) -> set[str]:
+        now = datetime.now(timezone.utc)
+        cursor = self._reads.find({"_id": {"$in": lock_names}, "expires_at": {"$gt": now}}, {"_id": 1})
+        return {lock["_id"] async for lock in cursor}

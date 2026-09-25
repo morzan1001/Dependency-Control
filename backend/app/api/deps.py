@@ -66,20 +66,12 @@ async def get_system_settings(
     return await repo.get(auto_init=auto_init)
 
 
-def _decode_user_token(token: str, credentials_exception: HTTPException) -> tuple[dict, TokenPayload]:
-    """Decode JWT and return (payload, token_data). Raises credentials_exception on failure."""
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        username = payload.get("sub")
-        permissions: list[str] = payload.get("permissions", [])
-        if username is None:
-            raise credentials_exception
-        token_data = TokenPayload(sub=username, permissions=permissions)
-    except (JWTError, ValidationError) as exc:
-        if auth_token_validations_total:
-            auth_token_validations_total.labels(result="invalid").inc()
-        raise credentials_exception from exc
-    return payload, token_data
+class TokenRejected(Exception):
+    """``result`` is the auth_token_validations_total label a bearer rejection is counted under."""
+
+    def __init__(self, result: str) -> None:
+        super().__init__(result)
+        self.result = result
 
 
 async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabase) -> None:
@@ -89,17 +81,11 @@ async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabas
 
     blacklist_repo = TokenBlacklistRepository(db)
     if await blacklist_repo.is_blacklisted(jti):
-        if auth_token_validations_total:
-            auth_token_validations_total.labels(result="blacklisted").inc()
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token has been revoked",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise TokenRejected("blacklisted")
 
 
-def _check_logout_invalidation(user: dict, payload: dict, credentials_exception: HTTPException) -> None:
-    """Raise credentials_exception if the token was issued before the user's last logout."""
+def _check_logout_invalidation(user: dict, payload: dict) -> None:
+    """Raise TokenRejected if the token was issued before the user's last logout."""
     last_logout_at = user.get("last_logout_at")
     if not last_logout_at:
         return
@@ -107,9 +93,30 @@ def _check_logout_invalidation(user: dict, payload: dict, credentials_exception:
     if not iat:
         return
     if iat < last_logout_at.timestamp():
-        if auth_token_validations_total:
-            auth_token_validations_total.labels(result="revoked").inc()
-        raise credentials_exception
+        raise TokenRejected("revoked")
+
+
+async def decode_token(token: str, expected_type: str, db: AsyncIOMotorDatabase) -> tuple[TokenPayload, dict | None]:
+    """A valid ``expected_type`` JWT's claims and the raw user they name (None if absent); raises TokenRejected."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        token_data = TokenPayload(**payload)
+    except (JWTError, ValidationError) as exc:
+        raise TokenRejected("invalid") from exc
+    if token_data.type != expected_type or not token_data.sub:
+        raise TokenRejected("invalid")
+
+    await _ensure_token_not_blacklisted(payload.get("jti"), db)
+
+    user = await UserRepository(db).get_raw_by_username(token_data.sub)
+    if user is not None:
+        _check_logout_invalidation(user, payload)
+    return token_data, user
+
+
+def _count_validation(result: str) -> None:
+    if auth_token_validations_total:
+        auth_token_validations_total.labels(result=result).inc()
 
 
 async def get_current_user(
@@ -122,23 +129,16 @@ async def get_current_user(
         headers={"WWW-Authenticate": "Bearer"},
     )
 
-    payload, token_data = _decode_user_token(token, credentials_exception)
-
-    await _ensure_token_not_blacklisted(payload.get("jti"), db)
-
-    user_repo = UserRepository(db)
-    if not token_data.sub:
-        raise credentials_exception
-    user = await user_repo.get_raw_by_username(token_data.sub)
+    try:
+        token_data, user = await decode_token(token, "access", db)
+    except TokenRejected as exc:
+        _count_validation(exc.result)
+        raise credentials_exception from exc
     if user is None:
-        if auth_token_validations_total:
-            auth_token_validations_total.labels(result="user_not_found").inc()
+        _count_validation("user_not_found")
         raise credentials_exception
 
-    _check_logout_invalidation(user, payload, credentials_exception)
-
-    if auth_token_validations_total:
-        auth_token_validations_total.labels(result="valid").inc()
+    _count_validation("valid")
 
     user_obj = User(**user)
 

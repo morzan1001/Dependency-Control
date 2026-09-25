@@ -1,5 +1,6 @@
 """Tests for archive service (archive_scan, restore_scan)."""
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from typing import Any
@@ -737,3 +738,60 @@ async def test_replay_maps_bad_version_to_version_mismatch():
 
     reason, _, _ = await _replay_bundle(db, "x", src())
     assert reason == "version_mismatch"
+
+
+@pytest.mark.asyncio
+async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result():
+    """A bundle archived with a plaintext Raw must not put it back into Mongo on restore."""
+    from app.services.archive import _replay_bundle
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    legacy_result = {
+        "_id": "r1",
+        "scan_id": "scan-1",
+        "analyzer_name": "trufflehog",
+        "result": {"findings": [{"DetectorType": "2", "Raw": secret}]},
+    }
+
+    async def bundle():
+        async for chunk in BundleFrames.write(
+            scan_doc={"_id": "scan-1", "project_id": "p"},
+            collections={"analysis_results": _aiter([legacy_result])},
+            stats=BundleStats(),
+        ):
+            yield chunk
+
+    db = _make_mock_db()
+
+    reason, _, _ = await _replay_bundle(db, "scan-1", bundle())
+
+    assert reason is None
+    (restored,) = db.analysis_results.insert_many.await_args.args[0]
+    assert secret not in json.dumps(restored)
+    assert restored["result"]["findings"][0]["RawHash"] == hashlib.md5(secret.encode()).hexdigest()[:8]
+
+
+@pytest.mark.asyncio
+async def test_replay_stamps_the_restored_scan_with_its_restore_time():
+    """Only this stamp shows that archive metadata written before the restore is stale."""
+    from app.services.archive import _replay_bundle
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    async def bundle():
+        async for chunk in BundleFrames.write(
+            scan_doc={"_id": "scan-1", "project_id": "p"},
+            collections={},
+            stats=BundleStats(),
+        ):
+            yield chunk
+
+    db = _make_mock_db()
+    before = datetime.now(timezone.utc)
+
+    reason, _, _ = await _replay_bundle(db, "scan-1", bundle())
+
+    assert reason is None
+    restored_at = db.scans.insert_one.await_args.args[0]["restored_at"]
+    assert restored_at.tzinfo == timezone.utc
+    assert before <= restored_at <= datetime.now(timezone.utc)

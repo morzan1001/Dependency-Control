@@ -11,6 +11,7 @@ from app.core.config import settings
 from app.core.constants import (
     ARCHIVE_BATCH_SIZE,
     ARCHIVE_ORPHAN_MIN_AGE_HOURS,
+    ARCHIVE_RESTORE_LOCK_TEMPLATE,
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
     HOUSEKEEPING_MAX_SCAN_RETRIES,
@@ -38,6 +39,7 @@ from app.core.metrics import (
 from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan
+from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.audit.retention import prune_old_audit_entries
@@ -334,37 +336,51 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
 
 
 async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
-    """Delete archive_metadata entries whose scan_id is back in db.scans (restore leftovers),
-    reclassifying their S3 object as an orphan for the next sweep. Batched to avoid N+1 lookups.
+    """Delete archive_metadata rows of scans restored after they were archived, reclassifying their
+    S3 object as an orphan for the next sweep. Batched to avoid N+1 lookups.
     """
+    lock_repo = DistributedLocksRepository(db)
 
-    async def _reap_batch(scan_ids: list[str]) -> int:
-        if not scan_ids:
-            return 0
-        restored: list[str] = []
-        async for scan in db.scans.find({"_id": {"$in": scan_ids}}, {"_id": 1}):
-            sid = scan.get("_id")
-            if sid is not None:
-                restored.append(sid)
+    async def _reap_batch(metas: list[dict[str, Any]]) -> int:
+        restored_at_by_scan = {
+            scan["_id"]: scan["restored_at"]
+            async for scan in db.scans.find(
+                {"_id": {"$in": [meta["scan_id"] for meta in metas]}, "restored_at": {"$ne": None}},
+                {"restored_at": 1},
+            )
+        }
+        restored = [
+            meta
+            for meta in metas
+            if meta["scan_id"] in restored_at_by_scan and restored_at_by_scan[meta["scan_id"]] > meta["archived_at"]
+        ]
         if not restored:
             return 0
+        # Scans first: a restore holds its lock from before it inserts the scan until after a rollback removes it.
+        lock_names = {
+            meta["scan_id"]: ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=meta["scan_id"]) for meta in restored
+        }
+        held = await lock_repo.held_locks(list(lock_names.values()))
+        stale = [meta for meta in restored if lock_names[meta["scan_id"]] not in held]
+        if not stale:
+            return 0
+        stale_scan_ids = [meta["scan_id"] for meta in stale]
         try:
-            result = await db.archive_metadata.delete_many({"scan_id": {"$in": restored}})
+            result = await db.archive_metadata.delete_many({"_id": {"$in": [meta["_id"] for meta in stale]}})
             count: int = result.deleted_count
             if count:
-                logger.info(f"Reaped {count} stale archive_metadata entries for restored scans {restored}")
+                logger.info(f"Reaped {count} stale archive_metadata entries for restored scans {stale_scan_ids}")
             return count
         except Exception as e:
-            logger.warning(f"Failed to delete stale metadata for scans {restored}: {e}")
+            logger.warning(f"Failed to delete stale metadata for scans {stale_scan_ids}: {e}")
             return 0
 
     deleted = 0
-    batch: list[str] = []
-    async for meta in db.archive_metadata.find({}, {"_id": 1, "scan_id": 1}):
-        scan_id = meta.get("scan_id")
-        if not scan_id:
+    batch: list[dict[str, Any]] = []
+    async for meta in db.archive_metadata.find({}, {"_id": 1, "scan_id": 1, "archived_at": 1}):
+        if not meta.get("scan_id"):
             continue
-        batch.append(scan_id)
+        batch.append(meta)
         if len(batch) >= batch_size:
             deleted += await _reap_batch(batch)
             batch = []

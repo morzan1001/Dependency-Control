@@ -2,20 +2,32 @@
 
 import asyncio
 import time
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 from jose import jwt
+from prometheus_client import REGISTRY
 
 from app.core import security
 from app.core.config import settings
 from app.models.system import SystemSettings
+from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.auth"
+_USER_LOOKUP = "app.repositories.users.UserRepository.get_raw_by_username"
 
 # The pad targets 200ms; the floor sits below it so scheduler jitter cannot flake the assertion.
 _TIMING_PAD_FLOOR_SECONDS = 0.15
+
+_BAD_REQUEST = 400
+_FORBIDDEN = 403
+_NOT_FOUND = 404
+_MSG_CREDENTIALS = "Could not validate credentials"
+# Stored datetimes come back naive and .timestamp() reads them in the process timezone, so the
+# logout lies far enough ahead to stay ahead of any offset.
+_LOGOUT_AFTER_ISSUE = timedelta(days=1)
 
 
 def _make_settings(**overrides):
@@ -27,21 +39,35 @@ def _decode_permissions(access_token: str) -> list:
     return payload.get("permissions", [])
 
 
+def _token_validations() -> float:
+    return sum(
+        sample.value
+        for metric in REGISTRY.collect()
+        if metric.name == "auth_token_validations"
+        for sample in metric.samples
+        if sample.name == "auth_token_validations_total"
+    )
+
+
+def _refresh(token: str, *users: dict, system_config: SystemSettings | None = None, blacklisted: bool = False):
+    from app.api.v1.endpoints.auth import refresh_token
+
+    async def run():
+        db = FakeDatabase()
+        for user in users:
+            await db.users.insert_one(dict(user))
+        if blacklisted:
+            await db.token_blacklist.insert_one({"_id": jwt.get_unverified_claims(token)["jti"]})
+        with patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = system_config or _make_settings()
+            return await refresh_token(refresh_token=token, db=db)
+
+    return asyncio.run(run())
+
+
 class TestRefreshToken2FAGate:
     def _run_refresh(self, user: dict, system_config: SystemSettings):
-        from app.api.v1.endpoints.auth import refresh_token
-
-        token = security.create_refresh_token(user["username"])
-
-        mock_repo = MagicMock()
-        mock_repo.get_raw_by_username = AsyncMock(return_value=user)
-
-        with (
-            patch(f"{MODULE}.UserRepository", return_value=mock_repo),
-            patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get,
-        ):
-            mock_get.return_value = system_config
-            return asyncio.run(refresh_token(refresh_token=token, db=MagicMock()))
+        return _refresh(security.create_refresh_token(user["username"]), user, system_config=system_config)
 
     def test_no_2fa_enforced_local_user_gets_only_setup_scope(self):
         user = {
@@ -115,40 +141,85 @@ class TestRefreshToken2FAGate:
 
 
 class TestRefreshTokenType:
-    def test_an_access_token_is_not_accepted_in_place_of_a_refresh_token(self):
-        from app.api.v1.endpoints.auth import refresh_token
-
-        access_token = security.create_access_token("bob", permissions=["admin:manage"])
-        mock_repo = MagicMock()
-        mock_repo.get_raw_by_username = AsyncMock(
-            return_value={"username": "bob", "is_active": True, "permissions": ["admin:manage"]}
-        )
-
-        with (
-            patch(f"{MODULE}.UserRepository", return_value=mock_repo),
-            patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get,
-        ):
-            mock_get.return_value = _make_settings()
+    @pytest.mark.parametrize(
+        "mint",
+        [
+            pytest.param(lambda: security.create_access_token("bob", permissions=["admin:manage"]), id="access"),
+            pytest.param(lambda: security.create_password_reset_token("bob@test.com"), id="password-reset"),
+        ],
+    )
+    def test_a_token_of_another_type_is_not_accepted_in_place_of_a_refresh_token(self, mint):
+        with patch(_USER_LOOKUP, new_callable=AsyncMock) as lookup:
             with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(refresh_token(refresh_token=access_token, db=MagicMock()))
+                _refresh(mint())
 
-        assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "Invalid token type"
-        mock_repo.get_raw_by_username.assert_not_awaited()
+        assert exc_info.value.status_code == _FORBIDDEN
+        assert exc_info.value.detail == _MSG_CREDENTIALS
+        lookup.assert_not_awaited()
 
-    def test_a_password_reset_token_is_not_accepted_in_place_of_a_refresh_token(self):
-        from app.api.v1.endpoints.auth import refresh_token
 
-        reset_token = security.create_password_reset_token("bob@test.com")
-        mock_repo = MagicMock()
-        mock_repo.get_raw_by_username = AsyncMock(return_value=None)
+class TestRefreshTokenRejections:
+    def test_a_token_that_does_not_decode_is_403(self):
+        with pytest.raises(HTTPException) as exc_info:
+            _refresh("not-a-jwt")
 
-        with patch(f"{MODULE}.UserRepository", return_value=mock_repo):
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(refresh_token(refresh_token=reset_token, db=MagicMock()))
+        assert exc_info.value.status_code == _FORBIDDEN
 
-        assert exc_info.value.status_code == 403
-        assert exc_info.value.detail == "Invalid token type"
+    def test_an_unknown_user_is_404(self):
+        with pytest.raises(HTTPException) as exc_info:
+            _refresh(security.create_refresh_token("ghost"))
+
+        assert exc_info.value.status_code == _NOT_FOUND
+
+    def test_an_inactive_user_is_400(self):
+        user = {"username": "bob", "is_active": False, "permissions": []}
+
+        with pytest.raises(HTTPException) as exc_info:
+            _refresh(security.create_refresh_token("bob"), user)
+
+        assert exc_info.value.status_code == _BAD_REQUEST
+
+    def test_a_token_issued_before_the_last_logout_is_403(self):
+        user = {
+            "username": "bob",
+            "is_active": True,
+            "permissions": [],
+            "last_logout_at": datetime.now(timezone.utc) + _LOGOUT_AFTER_ISSUE,
+        }
+
+        with pytest.raises(HTTPException) as exc_info:
+            _refresh(security.create_refresh_token("bob"), user)
+
+        assert exc_info.value.status_code == _FORBIDDEN
+
+
+class TestRefreshTokenMetrics:
+    """auth_token_validations_total counts bearer validations, so a refused refresh token stays out of it."""
+
+    @pytest.mark.parametrize(
+        ("mint", "user_fields", "blacklisted"),
+        [
+            pytest.param(lambda: "not-a-jwt", {}, False, id="undecodable"),
+            pytest.param(lambda: security.create_access_token("bob"), {}, False, id="access-token"),
+            pytest.param(
+                lambda: security.create_refresh_token("bob"),
+                {"last_logout_at": datetime.now(timezone.utc) + _LOGOUT_AFTER_ISSUE},
+                False,
+                id="issued-before-logout",
+            ),
+            pytest.param(lambda: security.create_refresh_token("bob"), {}, True, id="blacklisted"),
+        ],
+    )
+    def test_a_refused_refresh_token_is_not_counted(self, mint, user_fields, blacklisted):
+        user = {"username": "bob", "is_active": True, "permissions": [], **user_fields}
+        before = _token_validations()
+
+        with pytest.raises(HTTPException) as exc_info:
+            _refresh(mint(), user, blacklisted=blacklisted)
+
+        assert exc_info.value.status_code == _FORBIDDEN
+        assert exc_info.value.detail == _MSG_CREDENTIALS
+        assert _token_validations() == before
 
 
 class TestForgotPasswordSmtpGate:

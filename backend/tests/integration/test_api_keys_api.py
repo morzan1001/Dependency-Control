@@ -4,13 +4,12 @@ import logging
 from datetime import datetime, timedelta
 
 import pytest
-from jose import jwt
 
 from app.api.deps import SURFACE_PERMISSIONS
-from app.core.config import settings
 from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP, API_KEY_SURFACES
 from app.core.permissions import Permissions
 from app.repositories.api_keys import LIST_LIMIT, ApiKeyRepository
+from tests.helpers.auth import bearer_headers
 
 _BASE = "/api/v1/api-keys"
 _COLLECTION = "api_keys"
@@ -46,12 +45,7 @@ _PLACEHOLDERS = {"name": "", "prefix": "", "surfaces": [], "created_at": None, "
 
 
 def _headers(permissions, subject=_OWNER):
-    token = jwt.encode(
-        {"sub": subject, "permissions": list(permissions)},
-        settings.SECRET_KEY,
-        algorithm=settings.ALGORITHM,
-    )
-    return {"Authorization": f"Bearer {token}"}
+    return bearer_headers(subject, permissions)
 
 
 async def _key_count(db):

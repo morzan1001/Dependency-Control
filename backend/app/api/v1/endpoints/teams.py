@@ -368,13 +368,8 @@ async def update_team_member(
 
     team = await get_team_with_access(team_id, current_user, db)
 
-    target_role = get_member_role(team, user_id)
-    if target_role is None:
+    if get_member_role(team, user_id) is None:
         raise HTTPException(status_code=404, detail="User not in team")
-
-    # Modifying an admin member requires admin access.
-    if target_role == TEAM_ROLE_ADMIN:
-        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
     await team_repo.update_member_role(team_id, user_id, member_in.role, datetime.now(timezone.utc))
 
@@ -392,12 +387,8 @@ async def remove_team_member(
     team_repo = TeamRepository(db)
     team = await get_team_with_access(team_id, current_user, db)
 
-    target_role = get_member_role(team, user_id)
-    if target_role is None:
+    if get_member_role(team, user_id) is None:
         raise HTTPException(status_code=404, detail="User not in team")
-
-    if target_role == TEAM_ROLE_ADMIN:
-        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
     if not await team_repo.remove_member(team_id, user_id, datetime.now(timezone.utc)):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN)

@@ -1,6 +1,7 @@
 """Tests for the archive branch of retention housekeeping."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -491,103 +492,141 @@ async def test_reap_orphan_tolerates_list_failure(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+_ARCHIVED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+
+
+async def _seed_metadata(db, scan_id: str) -> None:
+    metadata = _make_archive_metadata(scan_id).model_copy(update={"archived_at": _ARCHIVED_AT})
+    await db.archive_metadata.insert_one(metadata.model_dump(by_alias=True))
+
+
+async def _seed_archive(db, scan_id: str, *, restored_at=None) -> None:
+    scan: dict = {"_id": scan_id, "project_id": "proj-1", "branch": "main"}
+    if restored_at is not None:
+        scan["restored_at"] = restored_at
+    await db.scans.insert_one(scan)
+    await _seed_metadata(db, scan_id)
+
+
+async def _surviving_metadata(db) -> list[str]:
+    return sorted([meta["scan_id"] async for meta in db.archive_metadata.find({})])
+
+
 @pytest.mark.asyncio
-async def test_reap_stale_metadata_drops_entries_for_restored_scans(monkeypatch):
-    """archive_metadata entries whose scan_id still exists in db.scans are stale and reaped in batches."""
+async def test_reap_stale_metadata_keeps_the_metadata_of_an_archive_in_flight():
+    """Archival writes the metadata before it deletes the scan, so a scan that is still present
+    without restore evidence is mid-archive and its metadata is the only index of the bundle."""
     from app.core.housekeeping import _reap_stale_metadata
+    from tests.mocks.fake_mongo import FakeDatabase
 
-    db = MagicMock()
+    db = FakeDatabase()
+    await _seed_archive(db, "scan-archiving")
 
-    # Two metadata entries: one whose scan exists (stale), one whose scan doesn't (still valid)
-    stale_meta = {"_id": "meta-stale", "scan_id": "scan-restored"}
-    valid_meta = {"_id": "meta-valid", "scan_id": "scan-archived"}
+    reaped = await _reap_stale_metadata(db)
 
-    async def metadata_cursor(*_args, **_kwargs):
-        yield stale_meta
-        yield valid_meta
+    assert reaped == 0
+    assert await _surviving_metadata(db) == ["scan-archiving"]
 
-    db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
 
-    scans_find_queries: list[dict] = []
+@pytest.mark.asyncio
+async def test_reap_stale_metadata_keeps_the_metadata_of_a_model_inserted_scan_in_flight():
+    """A scan inserted through the model stores an explicit restored_at of null, which is no restore evidence."""
+    from app.core.housekeeping import _reap_stale_metadata
+    from app.models.project import Scan
+    from tests.mocks.fake_mongo import FakeDatabase
 
-    async def scans_find(query, *_args, **_kwargs):
-        scans_find_queries.append(query)
-        # Only the restored scan exists in db.scans
-        for sid in query["_id"]["$in"]:
-            if sid == "scan-restored":
-                yield {"_id": "scan-restored"}
+    db = FakeDatabase()
+    scan = Scan(project_id="proj-1", branch="main")
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    await _seed_metadata(db, scan.id)
 
-    # find_one must not be used: reap stays batched, not N+1.
-    db.scans.find_one = AsyncMock(side_effect=AssertionError("find_one must not be called: reap is batched"))
-    db.scans.find = lambda *a, **kw: scans_find(*a, **kw)
+    reaped = await _reap_stale_metadata(db)
 
-    delete_many_calls: list[dict] = []
+    assert reaped == 0
+    assert await _surviving_metadata(db) == [scan.id]
 
-    async def fake_delete_many(query):
-        delete_many_calls.append(query)
-        result = MagicMock()
-        result.deleted_count = len(query["scan_id"]["$in"])
-        return result
 
-    db.archive_metadata.delete_many = fake_delete_many
+@pytest.mark.asyncio
+async def test_reap_stale_metadata_drops_the_metadata_of_a_scan_restored_after_archiving():
+    from app.core.housekeeping import _reap_stale_metadata
+    from app.services.archive import _handle_header_event
+    from tests.mocks.fake_mongo import FakeDatabase
+
+    db = FakeDatabase()
+    await _seed_metadata(db, "scan-restored")
+    await _handle_header_event(db, {"scan": {"_id": "scan-restored", "project_id": "proj-1"}}, [])
 
     reaped = await _reap_stale_metadata(db)
 
     assert reaped == 1
-    # Exactly one batched scan lookup with both scan_ids
-    assert len(scans_find_queries) == 1
-    assert set(scans_find_queries[0]["_id"]["$in"]) == {"scan-restored", "scan-archived"}
-    # A single delete_many targeting only the restored scan_id
-    assert delete_many_calls == [{"scan_id": {"$in": ["scan-restored"]}}]
+    assert await _surviving_metadata(db) == []
 
 
 @pytest.mark.asyncio
-async def test_reap_stale_metadata_batches_one_find_per_batch(monkeypatch):
-    """Reap runs one db.scans.find + one delete_many per batch, not per row."""
+async def test_reap_stale_metadata_keeps_the_metadata_while_the_restore_lock_is_held():
+    """A running restore can still fail and roll the scan back out, leaving the bundle as the only copy."""
     from app.core.housekeeping import _reap_stale_metadata
+    from app.repositories.distributed_locks import DistributedLocksRepository
+    from tests.mocks.fake_mongo import FakeDatabase
 
-    db = MagicMock()
+    db = FakeDatabase()
+    await _seed_archive(db, "scan-restoring", restored_at=_ARCHIVED_AT + timedelta(hours=1))
+    assert await DistributedLocksRepository(db).acquire_lock("restore:scan-restoring", "restore-pod", ttl_seconds=600)
 
-    # 5 metadata rows; scan-1 and scan-4 are restored (exist in db.scans), rest are not.
-    metas = [{"_id": f"meta-{i}", "scan_id": f"scan-{i}"} for i in range(5)]
-    restored_scan_ids = {"scan-1", "scan-4"}
+    reaped = await _reap_stale_metadata(db)
 
-    async def metadata_cursor(*_args, **_kwargs):
-        for m in metas:
-            yield m
+    assert reaped == 0
+    assert await _surviving_metadata(db) == ["scan-restoring"]
 
-    db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
 
-    scans_find_calls: list[list[str]] = []
+@pytest.mark.asyncio
+async def test_reap_stale_metadata_keeps_the_metadata_of_a_scan_re_archived_after_its_restore():
+    from app.core.housekeeping import _reap_stale_metadata
+    from tests.mocks.fake_mongo import FakeDatabase
 
-    async def scans_find(query, *_args, **_kwargs):
-        ids = query["_id"]["$in"]
-        scans_find_calls.append(list(ids))
-        for sid in ids:
-            if sid in restored_scan_ids:
-                yield {"_id": sid}
+    db = FakeDatabase()
+    await _seed_archive(db, "scan-rearchiving", restored_at=_ARCHIVED_AT - timedelta(days=3))
 
-    db.scans.find_one = AsyncMock(side_effect=AssertionError("find_one must not be called: reap is batched"))
-    db.scans.find = lambda *a, **kw: scans_find(*a, **kw)
+    reaped = await _reap_stale_metadata(db)
 
-    delete_many_calls: list[list[str]] = []
+    assert reaped == 0
+    assert await _surviving_metadata(db) == ["scan-rearchiving"]
 
-    async def fake_delete_many(query):
-        ids = query["scan_id"]["$in"]
-        delete_many_calls.append(list(ids))
-        result = MagicMock()
-        result.deleted_count = len(ids)
-        return result
 
-    db.archive_metadata.delete_many = fake_delete_many
+@pytest.mark.asyncio
+async def test_reap_stale_metadata_reads_scans_and_locks_once_per_batch():
+    from app.core.housekeeping import _reap_stale_metadata
+    from tests.mocks.fake_mongo import FakeDatabase
+
+    db = FakeDatabase()
+    for i in range(5):
+        await _seed_archive(db, f"scan-{i}", restored_at=_ARCHIVED_AT + timedelta(hours=1))
+
+    def spy(collection, calls: list):
+        find = collection.find
+
+        def recording_find(query, *args, **kwargs):
+            calls.append(query["_id"]["$in"])
+            return find(query, *args, **kwargs)
+
+        collection.find = recording_find
+        collection.find_one = AsyncMock(side_effect=AssertionError("find_one would make the reap N+1"))
+
+    scan_batches: list = []
+    lock_batches: list = []
+    spy(db.scans, scan_batches)
+    spy(db.distributed_locks, lock_batches)
 
     reaped = await _reap_stale_metadata(db, batch_size=2)
 
-    # 5 rows / batch_size 2 → batches [scan-0,scan-1], [scan-2,scan-3], [scan-4]
-    assert reaped == 2
-    assert scans_find_calls == [["scan-0", "scan-1"], ["scan-2", "scan-3"], ["scan-4"]]
-    # delete_many only for batches that had a restored scan
-    assert delete_many_calls == [["scan-1"], ["scan-4"]]
+    assert reaped == 5
+    assert scan_batches == [["scan-0", "scan-1"], ["scan-2", "scan-3"], ["scan-4"]]
+    assert lock_batches == [
+        ["restore:scan-0", "restore:scan-1"],
+        ["restore:scan-2", "restore:scan-3"],
+        ["restore:scan-4"],
+    ]
+    assert await _surviving_metadata(db) == []
 
 
 @pytest.mark.asyncio

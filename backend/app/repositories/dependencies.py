@@ -13,14 +13,14 @@ class DependencyRepository(BaseRepository[Dependency]):
     async def get_by_name(self, name: str) -> Dependency | None:
         return await self.find_one({"name": name})
 
-    async def find_by_scan(self, scan_id: str, limit: int) -> tuple[list[Dependency], int]:
+    async def find_by_scan(self, project_id: str, scan_id: str, limit: int) -> tuple[list[Dependency], int]:
         """The scan's dependencies up to ``limit``, and how many it holds. The count costs a
         round trip only once the read has saturated, and a caller that reports the pair can tell
         a small scan from a windowed one."""
-        rows = await self.find_many({"scan_id": scan_id}, limit=limit)
+        rows = await self.find_many({"project_id": project_id, "scan_id": scan_id}, limit=limit)
         if len(rows) < limit:
             return rows, len(rows)
-        return rows, await self.count_by_scan(scan_id)
+        return rows, await self.count_by_scan(project_id, scan_id)
 
     async def find_all(
         self,
@@ -34,8 +34,8 @@ class DependencyRepository(BaseRepository[Dependency]):
     async def delete_by_scan(self, scan_id: str) -> int:
         return await self.delete_many({"scan_id": scan_id})
 
-    async def count_by_scan(self, scan_id: str) -> int:
-        return await self.count({"scan_id": scan_id})
+    async def count_by_scan(self, project_id: str, scan_id: str) -> int:
+        return await self.count({"project_id": project_id, "scan_id": scan_id})
 
     async def get_unique_packages(self, scan_ids: list[str]) -> int:
         pipeline: list[dict[str, Any]] = [

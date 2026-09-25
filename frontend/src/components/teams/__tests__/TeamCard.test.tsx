@@ -86,3 +86,23 @@ describe("TeamCard binding", () => {
     expect(icon).toHaveClass("text-muted-foreground");
   });
 });
+
+describe("TeamCard webhooks", () => {
+  const MEMBER_TEAM: Team = { ...TEAM, members: [{ user_id: "u-1", role: "member" }] };
+
+  it("opens for a member who may only delete webhooks", () => {
+    granted.current = ["webhook:delete"];
+
+    renderCard(vi.fn(), MEMBER_TEAM);
+
+    expect(screen.getByRole("button", { name: "Team webhooks" })).toBeInTheDocument();
+  });
+
+  it("is withheld from a member without any webhook write permission", () => {
+    granted.current = ["webhook:read"];
+
+    renderCard(vi.fn(), MEMBER_TEAM);
+
+    expect(screen.queryByRole("button", { name: "Team webhooks" })).not.toBeInTheDocument();
+  });
+});

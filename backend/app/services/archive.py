@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.core.constants import (
     ARCHIVE_GRIDFS_FRAME,
     ARCHIVE_PATH_TEMPLATE,
+    ARCHIVE_RESTORE_LOCK_TEMPLATE,
     ENCRYPTION_MAGIC,
     RESTORE_INSERT_BATCH_SIZE,
     SCAN_SCOPED_COLLECTIONS,
@@ -42,6 +43,7 @@ from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.archive import ArchiveRestoreResponse
+from app.schemas.trufflehog import TruffleHogFinding
 from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
 from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -459,8 +461,16 @@ async def _handle_header_event(
     scan_data = data.get("scan")
     if scan_data:
         scan_data["pinned"] = True
+        scan_data["restored_at"] = datetime.now(timezone.utc)
         await db.scans.insert_one(scan_data)
         collections_restored.append("scans")
+
+
+def _hash_plaintext_secrets(analysis_result: dict[str, Any]) -> None:
+    """A bundle can hold TruffleHog's plaintext Raw; only its digest prefix may be written back to Mongo."""
+    findings = (analysis_result.get("result") or {}).get("findings")
+    if findings:
+        analysis_result["result"]["findings"] = [TruffleHogFinding.model_validate(f).model_dump() for f in findings]
 
 
 async def _handle_doc_event(
@@ -478,7 +488,10 @@ async def _handle_doc_event(
     if coll == ARCHIVE_GRIDFS_FRAME:
         gridfs_entries.append(event["data"])
         return
-    batch_by_collection.setdefault(coll, []).append(event["data"])
+    doc = event["data"]
+    if coll == "analysis_results" and doc.get("analyzer_name") == "trufflehog":
+        _hash_plaintext_secrets(doc)
+    batch_by_collection.setdefault(coll, []).append(doc)
     if len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
         await _flush_batch(db, coll, batch_by_collection, collections_restored)
 
@@ -724,7 +737,7 @@ async def restore_scan(
 
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
-    lock_name = f"restore:{scan_id}"
+    lock_name = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
     holder = _holder_id("restore")
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):

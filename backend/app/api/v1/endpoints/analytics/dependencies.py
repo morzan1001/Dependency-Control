@@ -14,14 +14,16 @@ from app.api.v1.helpers.analytics import (
     get_user_project_ids,
     require_analytics_permission,
 )
-from app.api.v1.helpers.responses import RESP_AUTH
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SCAN_DEPENDENCY_READ_LIMIT
+from app.api.v1.helpers.projects import check_project_access
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PROJECT_ROLE_VIEWER, SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
 from app.repositories import (
     DependencyEnrichmentRepository,
     DependencyRepository,
     FindingRepository,
     ProjectRepository,
+    ScanRepository,
 )
 from app.schemas.analytics import (
     DependencyGraph,
@@ -37,7 +39,7 @@ from app.services.aggregation.components import (
 )
 from app.services.recommendation.common import get_attr
 
-from ._shared import _MSG_ACCESS_DENIED, _get_enrichment_info, _resolve_scan_id
+from ._shared import _get_enrichment_info, _resolve_scan_id
 
 router = CustomAPIRouter()
 
@@ -181,7 +183,7 @@ def _build_dependency_graph(
     )
 
 
-@router.get("/projects/{project_id}/dependency-tree", responses=RESP_AUTH)
+@router.get("/projects/{project_id}/dependency-tree", responses=RESP_AUTH_404)
 async def get_dependency_tree(
     project_id: str,
     current_user: CurrentUserDep,
@@ -190,27 +192,29 @@ async def get_dependency_tree(
 ) -> DependencyGraph:
     """Get the dependency graph for a project as flat nodes + roots (client nests lazily)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_TREE)
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
 
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
 
-    project_ids = await get_user_project_ids(current_user, db)
-    if project_id not in project_ids:
-        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
-
-    if not scan_id:
+    if scan_id:
+        if not await ScanRepository(db).count({"_id": scan_id, "project_id": project_id}, limit=1):
+            raise HTTPException(status_code=404, detail="No scan found for this project")
+    else:
         scan_id = await _resolve_scan_id(project_id, db)
 
     if not scan_id:
         return DependencyGraph()
 
-    dependencies, dependencies_total = await dep_repo.find_by_scan(scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT)
+    dependencies, dependencies_total = await dep_repo.find_by_scan(
+        project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
+    )
 
     if not dependencies:
         return DependencyGraph()
 
     findings = await finding_repo.find_many(
-        {"scan_id": scan_id, "type": "vulnerability", "waived": {"$ne": True}},
+        {"project_id": project_id, "scan_id": scan_id, "type": "vulnerability", "waived": {"$ne": True}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
     )
     findings_map = build_findings_severity_map(findings)

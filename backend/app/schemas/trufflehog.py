@@ -1,6 +1,7 @@
+import hashlib
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.ingest import BaseIngest
 
@@ -26,10 +27,23 @@ class TruffleHogFinding(BaseModel):
 
     DecoderName: str | None = None
     Verified: bool | None = None
-    Raw: str | None = None
+    RawHash: str | None = None
     Redacted: str | None = None
     ExtraData: dict[str, Any] | None = None
     StructuredData: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _hash_raw_secret(cls, data: Any) -> Any:
+        """Stored results reach every project member, so keep only the digest prefix that finding_id is built from."""
+        if not isinstance(data, dict) or "Raw" not in data:
+            return data
+        data = dict(data)
+        raw = data.pop("Raw")
+        if raw is not None and not isinstance(raw, str):
+            raise ValueError("Raw must be a string")
+        data["RawHash"] = hashlib.md5(raw.encode(), usedforsecurity=False).hexdigest()[:8] if raw else None
+        return data
 
 
 class TruffleHogIngest(BaseIngest):
