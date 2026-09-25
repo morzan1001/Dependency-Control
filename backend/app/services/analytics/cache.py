@@ -4,6 +4,7 @@ Process-local (not shared across pods). Callers that mutate underlying state mus
 call ``get_analytics_cache().clear()`` to avoid serving stale aggregations.
 """
 
+import functools
 import time
 from collections import OrderedDict
 from collections.abc import Hashable
@@ -54,18 +55,12 @@ class TTLCache:
         return len(self._store)
 
 
-_default_cache: TTLCache | None = None
-
-
+@functools.cache
 def get_analytics_cache() -> TTLCache:
     """Return the shared process-level analytics cache singleton."""
-    global _default_cache
-    if _default_cache is None:
-        _default_cache = TTLCache(maxsize=512, ttl_seconds=300)
-    return _default_cache
+    return TTLCache(maxsize=512, ttl_seconds=300)
 
 
 def reset_analytics_cache_for_tests() -> None:
     """Drop the cache singleton so tests see a fresh instance."""
-    global _default_cache
-    _default_cache = None
+    get_analytics_cache.cache_clear()

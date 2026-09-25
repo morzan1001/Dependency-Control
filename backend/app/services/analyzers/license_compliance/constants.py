@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 
 from app.core.constants import LICENSE_ALIASES
@@ -583,15 +584,7 @@ CATEGORY_RESTRICTIVENESS: dict[LicenseCategory, int] = {
 }
 
 
-_license_db_lower: dict[str, str] | None = None
-_alias_lower: dict[str, str] | None = None
-
-
+@functools.cache
 def get_lowercase_mappings() -> tuple[dict[str, str], dict[str, str]]:
     """Return cached (db_lower, alias_lower) lookup tables for case-insensitive matching."""
-    global _license_db_lower, _alias_lower
-    if _license_db_lower is None:
-        _license_db_lower = {k.lower(): k for k in LICENSE_DATABASE}
-    if _alias_lower is None:
-        _alias_lower = {k.lower(): v for k, v in LICENSE_ALIASES.items()}
-    return _license_db_lower, _alias_lower
+    return {k.lower(): k for k in LICENSE_DATABASE}, {k.lower(): v for k, v in LICENSE_ALIASES.items()}

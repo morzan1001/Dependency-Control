@@ -387,7 +387,7 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
             "project_ids": ["proj-1"],
         }
 
-    db.projects.aggregate = lambda pipeline: _agg_iter(pipeline)
+    db.projects.aggregate = _agg_iter
 
     class _SystemSettings:
         retention_mode = "project"

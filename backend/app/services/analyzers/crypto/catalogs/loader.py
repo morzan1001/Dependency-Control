@@ -50,47 +50,46 @@ class CipherSuiteEntry:
     weaknesses: list[str] = field(default_factory=list)
 
 
-_IN_PROCESS_CACHE: dict[str, CipherSuiteEntry] | None = None
+@dataclass
+class _CatalogMemo:
+    catalog: dict[str, CipherSuiteEntry] | None = None
+
+
+_IN_PROCESS = _CatalogMemo()
 _IN_PROCESS_LOCK = asyncio.Lock()
 
 
 async def load_iana_catalog() -> dict[str, CipherSuiteEntry]:
     """Return the IANA TLS cipher-suite catalog: in-process, then Redis, then live fetch, then bundled YAML."""
-    global _IN_PROCESS_CACHE
-    if _IN_PROCESS_CACHE is not None:
-        return _IN_PROCESS_CACHE
+    if _IN_PROCESS.catalog is not None:
+        return _IN_PROCESS.catalog
 
     async with _IN_PROCESS_LOCK:
-        if _IN_PROCESS_CACHE is not None:
-            return _IN_PROCESS_CACHE
+        if _IN_PROCESS.catalog is None:
+            _IN_PROCESS.catalog = await _load_shared_catalog()
+        return _IN_PROCESS.catalog
 
-        cached_raw = await _read_from_redis()
-        if cached_raw is not None:
-            catalog = _materialize(cached_raw)
-            _IN_PROCESS_CACHE = catalog
-            return catalog
 
-        fetched_raw = await _fetch_from_iana()
-        if fetched_raw is not None:
-            await _write_to_redis(fetched_raw)
-            catalog = _materialize(fetched_raw)
-            _IN_PROCESS_CACHE = catalog
-            return catalog
+async def _load_shared_catalog() -> dict[str, CipherSuiteEntry]:
+    cached_raw = await _read_from_redis()
+    if cached_raw is not None:
+        return _materialize(cached_raw)
 
-        logger.warning(
-            "IANA catalog: live fetch + Redis lookup both failed, falling back to bundled snapshot at %s",
-            _CATALOG_FALLBACK_PATH,
-        )
-        fallback_raw = _load_fallback_yaml()
-        catalog = _materialize(fallback_raw)
-        _IN_PROCESS_CACHE = catalog
-        return catalog
+    fetched_raw = await _fetch_from_iana()
+    if fetched_raw is not None:
+        await _write_to_redis(fetched_raw)
+        return _materialize(fetched_raw)
+
+    logger.warning(
+        "IANA catalog: live fetch + Redis lookup both failed, falling back to bundled snapshot at %s",
+        _CATALOG_FALLBACK_PATH,
+    )
+    return _materialize(_load_fallback_yaml())
 
 
 def reset_iana_cache_for_tests() -> None:
     """Clear the in-process memoized catalog."""
-    global _IN_PROCESS_CACHE
-    _IN_PROCESS_CACHE = None
+    _IN_PROCESS.catalog = None
 
 
 async def _read_from_redis() -> list[dict[str, Any]] | None:

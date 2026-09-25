@@ -136,8 +136,8 @@ def calculate_best_fix_version(versions: list[str]) -> str:
 
     parsed = []
     for v in valid_versions:
-        for part in v.split(","):
-            part = part.strip()
+        for raw_part in v.split(","):
+            part = raw_part.strip()
             if part:
                 parsed.append(part)
 
