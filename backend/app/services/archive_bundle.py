@@ -180,3 +180,25 @@ async def read_bundle_frames(source: AsyncIterator[bytes]) -> AsyncIterator[dict
         raise ValueError("Empty bundle (no header)")
     # Reaching here means the source was exhausted before the footer line.
     raise ValueError("Bundle truncated — no footer line found")
+
+
+async def rewrite_bundle_frames(events: AsyncIterator[dict[str, Any]]) -> AsyncIterator[bytes]:
+    """Re-serialize ``read_bundle_frames`` events, with a footer digest over the re-emitted lines."""
+    sha = hashlib.sha256()
+
+    def emit(obj: Any) -> bytes:
+        line = _json_line(obj)
+        sha.update(line)
+        return line
+
+    current_collection: str | None = None
+    async for event in events:
+        if event["type"] == "header":
+            yield emit(event["data"])
+        elif event["type"] == "doc":
+            if event["collection"] != current_collection:
+                current_collection = event["collection"]
+                yield emit({"collection": current_collection})
+            yield emit(event["data"])
+        else:
+            yield _json_line({**event["data"], "sha256": sha.hexdigest()})

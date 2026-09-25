@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import zlib
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -501,7 +502,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
         AsyncMock(return_value=("integrity", ["scans"], [])),
     )
     # Bypass the S3 stream construction
-    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
     with (
         patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
@@ -583,7 +584,7 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
     )
     # GridFS restore returns False (failure)
     monkeypatch.setattr(f"{MODULE}._restore_gridfs", AsyncMock(return_value=False))
-    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
     with (
         patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
@@ -614,7 +615,7 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
         f"{MODULE}._replay_bundle",
         AsyncMock(return_value=(None, ["scans"], [])),
     )
-    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
     # delete_object succeeds, but delete_by_scan_id raises
     monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
@@ -779,6 +780,31 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
 
 
 @pytest.mark.asyncio
+async def test_archive_hashes_the_plaintext_secret_of_a_legacy_trufflehog_row(archive_env):
+    """A Mongo row from before ingest hashed Raw must not carry the plaintext into a new bundle."""
+    from app.services.archive_bundle import read_bundle_frames
+
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    legacy_row = {
+        "_id": "r1",
+        "scan_id": "scan-1",
+        "analyzer_name": "trufflehog",
+        "result": {"findings": [{"DetectorType": "2", "Raw": secret}]},
+    }
+    db = _make_mock_db(scan_doc=_make_scan_doc(), analysis_results=[legacy_row])
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    assert result is not None
+    bundle = zlib.decompress(archive_env.objects[result.s3_key], wbits=31)
+    assert secret.encode() not in bundle
+    events = [event async for event in read_bundle_frames(_aiter([bundle]))]
+    (archived,) = [e["data"] for e in events if e.get("collection") == "analysis_results"]
+    assert archived["result"]["findings"][0]["RawHash"] == hashlib.md5(secret.encode()).hexdigest()[:8]
+
+
+@pytest.mark.asyncio
 async def test_replay_inserts_the_scan_as_a_restore_in_progress():
     """restored_at tells the reaper the restore finished, so the header must not carry one, not even the bundle's own."""
     from app.services.archive import _replay_bundle
@@ -820,7 +846,7 @@ async def test_restore_stamps_completion_only_after_the_gridfs_restore(archive_e
         f"{MODULE}._replay_bundle",
         AsyncMock(return_value=(None, ["scans"], [{"gridfs_id": "abc", "filename": "x.json", "data": {}}])),
     )
-    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
     monkeypatch.setattr(f"{MODULE}._restore_gridfs", restore_gridfs)
     monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
 

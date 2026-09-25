@@ -15,7 +15,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
 from app.core.constants import PROJECT_ROLE_ADMIN
-from app.core.encryption import decrypt_stream, is_encryption_enabled
+from app.core.encryption import is_encryption_enabled
 from app.core.metrics import (
     ArchiveFailureReason,
     archive_failures_total,
@@ -23,7 +23,7 @@ from app.core.metrics import (
     archive_operations_total,
 )
 from app.core.permissions import Permissions, has_permission
-from app.core.s3 import download_stream, is_archive_enabled
+from app.core.s3 import is_archive_enabled
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.schemas.archive import (
     AdminArchiveListItem,
@@ -33,7 +33,7 @@ from app.schemas.archive import (
     ArchiveRestoreResponse,
     ScanPinResponse,
 )
-from app.services.archive import restore_scan
+from app.services.archive import restore_scan, stream_bundle_for_download
 
 logger = logging.getLogger(__name__)
 
@@ -190,7 +190,7 @@ async def download_archive(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> StreamingResponse:
-    """Download the raw bundle as a stream. Requires archive:download permission."""
+    """Stream the bundle with TruffleHog plaintext hashed. Requires archive:download permission."""
     _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_DOWNLOAD)
     await check_project_access(project_id, current_user, db)
     _require_archive_enabled()
@@ -214,10 +214,7 @@ async def download_archive(
 
     async def _stream() -> AsyncIterator[bytes]:
         try:
-            chunks = download_stream(metadata.s3_key, bucket=metadata.s3_bucket)
-            if is_encryption_enabled():
-                chunks = decrypt_stream(chunks)
-            async for chunk in chunks:
+            async for chunk in stream_bundle_for_download(metadata):
                 yield chunk
             logger.info(
                 "archive.download.completed",

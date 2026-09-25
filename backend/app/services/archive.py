@@ -46,7 +46,7 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.archive import ArchiveRestoreResponse
 from app.schemas.trufflehog import TruffleHogFinding
-from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
+from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames, rewrite_bundle_frames
 from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_rollup import record_scan_update_delta
 
@@ -79,6 +79,23 @@ def _extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
             if gid:
                 ids.append(str(gid))
     return ids
+
+
+def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
+    """Legacy rows and bundles can hold TruffleHog's plaintext Raw; only its digest prefix may leave them."""
+    if collection != "analysis_results" or doc.get("analyzer_name") != "trufflehog":
+        return
+    findings = (doc.get("result") or {}).get("findings")
+    if findings:
+        doc["result"]["findings"] = [TruffleHogFinding.model_validate(f).model_dump() for f in findings]
+
+
+async def _hash_plaintext_secrets_in(
+    collection: str, docs: AsyncIterator[dict[str, Any]]
+) -> AsyncIterator[dict[str, Any]]:
+    async for doc in docs:
+        _hash_plaintext_secrets(collection, doc)
+        yield doc
 
 
 async def _stream_collection(collection: Any, scan_id: str) -> AsyncIterator[dict[str, Any]]:
@@ -189,7 +206,10 @@ def _build_archive_payload(
     frames = BundleFrames.write(
         scan_doc=scan_doc,
         collections={
-            **{name: _stream_collection(getattr(db, name), scan_id) for name in SCAN_SCOPED_COLLECTIONS},
+            **{
+                name: _hash_plaintext_secrets_in(name, _stream_collection(getattr(db, name), scan_id))
+                for name in SCAN_SCOPED_COLLECTIONS
+            },
             ARCHIVE_GRIDFS_FRAME: _stream_gridfs_sboms(db, scan_doc),
         },
         stats=stats,
@@ -397,12 +417,7 @@ async def archive_scan(
         await lock_repo.release_lock(lock_name, holder)
 
 
-# ---------------------------------------------------------------------------
-# restore_scan helpers
-# ---------------------------------------------------------------------------
-
-
-async def _open_restore_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
+async def _open_bundle_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
     """Yield a decompressed (and, if encrypted, decrypted) byte stream for the bundle.
 
     Encryption is detected by sniffing the ENCRYPTION_MAGIC prefix, not the live
@@ -431,6 +446,24 @@ async def _open_restore_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes
     decrypted = decrypt_stream(source) if prefix.startswith(ENCRYPTION_MAGIC) else source
     async for out in _gzip_decompress_stream(decrypted):
         yield out
+
+
+async def _hash_plaintext_secrets_in_events(events: AsyncIterator[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
+    async for event in events:
+        if event["type"] == "doc":
+            _hash_plaintext_secrets(event["collection"], event["data"])
+        yield event
+
+
+def stream_bundle_for_download(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
+    """Stream the bundle as unencrypted gzip NDJSON, TruffleHog plaintext hashed and the footer digest recomputed."""
+    events = _hash_plaintext_secrets_in_events(read_bundle_frames(_open_bundle_stream(metadata)))
+    return _gzip_compress_stream(rewrite_bundle_frames(events))
+
+
+# ---------------------------------------------------------------------------
+# restore_scan helpers
+# ---------------------------------------------------------------------------
 
 
 def _parse_error_reason(exc: ValueError) -> str:
@@ -472,13 +505,6 @@ async def _handle_header_event(
         collections_restored.append("scans")
 
 
-def _hash_plaintext_secrets(analysis_result: dict[str, Any]) -> None:
-    """A bundle can hold TruffleHog's plaintext Raw; only its digest prefix may be written back to Mongo."""
-    findings = (analysis_result.get("result") or {}).get("findings")
-    if findings:
-        analysis_result["result"]["findings"] = [TruffleHogFinding.model_validate(f).model_dump() for f in findings]
-
-
 async def _handle_doc_event(
     db: Any,
     event: dict[str, Any],
@@ -495,8 +521,7 @@ async def _handle_doc_event(
         gridfs_entries.append(event["data"])
         return
     doc = event["data"]
-    if coll == "analysis_results" and doc.get("analyzer_name") == "trufflehog":
-        _hash_plaintext_secrets(doc)
+    _hash_plaintext_secrets(coll, doc)
     batch_by_collection.setdefault(coll, []).append(doc)
     if len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
         await _flush_batch(db, coll, batch_by_collection, collections_restored)
@@ -723,7 +748,7 @@ async def _run_restore_pipeline(
 ) -> ArchiveRestoreResponse | None:
     """Drive the replay+GridFS+cleanup pipeline after preconditions are met."""
     start_time = time.monotonic()
-    decompressed = _open_restore_stream(metadata)
+    decompressed = _open_bundle_stream(metadata)
     failure_reason, collections_restored, gridfs_entries = await _replay_bundle(db, scan_id, decompressed)
 
     if failure_reason is not None:
