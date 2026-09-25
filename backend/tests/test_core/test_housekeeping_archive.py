@@ -547,19 +547,35 @@ async def test_reap_stale_metadata_keeps_the_metadata_of_a_model_inserted_scan_i
 
 
 @pytest.mark.asyncio
-async def test_reap_stale_metadata_drops_the_metadata_of_a_scan_restored_after_archiving():
+async def test_reap_stale_metadata_keeps_the_metadata_of_a_restore_that_stopped_after_its_header():
+    """A pod that dies mid-restore never rolls back and its lock expires; the bundle is the only complete copy."""
     from app.core.housekeeping import _reap_stale_metadata
     from app.services.archive import _handle_header_event
     from tests.mocks.fake_mongo import FakeDatabase
 
     db = FakeDatabase()
-    await _seed_metadata(db, "scan-restored")
-    await _handle_header_event(db, {"scan": {"_id": "scan-restored", "project_id": "proj-1"}}, [])
+    await _seed_metadata(db, "scan-partial")
+    await _handle_header_event(db, {"scan": {"_id": "scan-partial", "project_id": "proj-1"}}, [])
 
     reaped = await _reap_stale_metadata(db)
 
-    assert reaped == 1
-    assert await _surviving_metadata(db) == []
+    assert reaped == 0
+    assert await _surviving_metadata(db) == ["scan-partial"]
+
+
+@pytest.mark.asyncio
+async def test_reap_stale_metadata_keeps_the_metadata_of_a_scan_still_marked_restore_in_progress():
+    from app.core.housekeeping import _reap_stale_metadata
+    from tests.mocks.fake_mongo import FakeDatabase
+
+    db = FakeDatabase()
+    await _seed_archive(db, "scan-partial", restored_at=_ARCHIVED_AT + timedelta(hours=1))
+    await db.scans.update_one({"_id": "scan-partial"}, {"$set": {"restore_in_progress": True}})
+
+    reaped = await _reap_stale_metadata(db)
+
+    assert reaped == 0
+    assert await _surviving_metadata(db) == ["scan-partial"]
 
 
 @pytest.mark.asyncio

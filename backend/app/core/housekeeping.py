@@ -336,8 +336,8 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
 
 
 async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
-    """Delete archive_metadata rows of scans restored after they were archived, reclassifying their
-    S3 object as an orphan for the next sweep. Batched to avoid N+1 lookups.
+    """Delete archive_metadata rows of scans whose restore completed after they were archived, reclassifying
+    their S3 object as an orphan for the next sweep. Batched to avoid N+1 lookups.
     """
     lock_repo = DistributedLocksRepository(db)
 
@@ -345,7 +345,11 @@ async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) ->
         restored_at_by_scan = {
             scan["_id"]: scan["restored_at"]
             async for scan in db.scans.find(
-                {"_id": {"$in": [meta["scan_id"] for meta in metas]}, "restored_at": {"$ne": None}},
+                {
+                    "_id": {"$in": [meta["scan_id"] for meta in metas]},
+                    "restored_at": {"$ne": None},
+                    "restore_in_progress": {"$ne": True},
+                },
                 {"restored_at": 1},
             )
         }

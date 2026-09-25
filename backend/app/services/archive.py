@@ -453,7 +453,7 @@ async def _handle_header_event(
     data: dict[str, Any],
     collections_restored: list[str],
 ) -> None:
-    """Insert the scan doc from a header event.
+    """Insert the scan doc from a header event, marked as a restore still in progress.
 
     Version validation lives in ``read_bundle_frames``, which raises before yielding a
     header with a mismatched version, so no version check is needed here.
@@ -461,7 +461,9 @@ async def _handle_header_event(
     scan_data = data.get("scan")
     if scan_data:
         scan_data["pinned"] = True
-        scan_data["restored_at"] = datetime.now(timezone.utc)
+        # restored_at is the reaper's evidence of a finished restore; a re-archived scan's bundle carries its old one.
+        scan_data.pop("restored_at", None)
+        scan_data["restore_in_progress"] = True
         await db.scans.insert_one(scan_data)
         collections_restored.append("scans")
 
@@ -592,10 +594,9 @@ async def _restore_gridfs(
 
 
 async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
-    """Best-effort cleanup of partial MongoDB state after a restore failure.
+    """Best-effort cleanup of the MongoDB state a failed or abandoned restore left behind.
 
-    _replay_bundle inserts the scan doc before collections, so a mid-stream failure can
-    leave partial state that makes a retry hit the ALREADY_EXISTS guard and never recover.
+    A failure here leaves the scan marked restore_in_progress, so the next restore of it retries the cleanup.
     """
     try:
         await db.scans.delete_one({"_id": scan_id})
@@ -631,8 +632,15 @@ async def _load_restore_metadata(
         archive_operations_total.labels(operation="restore", status="failure").inc()
         return None
 
-    existing = await db.scans.find_one({"_id": scan_id})
-    if existing:
+    existing = await db.scans.find_one({"_id": scan_id}, {"restore_in_progress": 1})
+    if existing and existing.get("restore_in_progress"):
+        # The caller holds the restore lock, so no live restore owns this leftover.
+        logger.warning(
+            "Rolling back an unfinished restore before restoring again",
+            extra={"scan_id": sanitize_for_log(scan_id)},
+        )
+        await _rollback_partial_restore(db, scan_id)
+    elif existing:
         logger.warning(
             "Scan already exists in MongoDB, aborting restore",
             extra={"scan_id": sanitize_for_log(scan_id)},
@@ -699,6 +707,11 @@ async def _run_restore_pipeline(
         return None
     if gridfs_entries:
         collections_restored.append(ARCHIVE_GRIDFS_FRAME)
+
+    await db.scans.update_one(
+        {"_id": scan_id},
+        {"$set": {"restored_at": datetime.now(timezone.utc)}, "$unset": {"restore_in_progress": ""}},
+    )
 
     # The restored scan re-enters its branch timeline, so the rollup also re-points the successor.
     await record_scan_update_delta(db, scan_id)
