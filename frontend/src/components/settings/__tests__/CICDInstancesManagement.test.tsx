@@ -151,10 +151,10 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     renderManagement()
 
     const gitlabDialog = openEditDialog(/Internal GitLab/)
-    expect(within(gitlabDialog).queryByText(/Enterprise Server/)).toBeNull()
+    expect(within(gitlabDialog).queryByText(/Enterprise Server has no IdP team sync/)).toBeNull()
     fireEvent.click(within(gitlabDialog).getByRole('button', { name: 'Cancel' }))
 
-    expect(within(openEditDialog(/GitHub\.com/)).getByText(/Enterprise Server/)).toBeInTheDocument()
+    expect(within(openEditDialog(/GitHub\.com/)).getByText(/Enterprise Server has no IdP team sync/)).toBeInTheDocument()
   })
 
   it('keeps the depth select GitLab-only', () => {

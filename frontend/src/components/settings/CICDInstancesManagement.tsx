@@ -635,15 +635,17 @@ function InstanceForm({
 
       {formData.type === "github" && (
         <div className="grid gap-2">
-          <Label htmlFor="ci-github-url">GitHub Web URL</Label>
+          <Label htmlFor="ci-github-url">GitHub Base URL</Label>
           <Input
             id="ci-github-url"
-            placeholder="https://github.com"
+            placeholder="https://github.example.com"
             value={formData.github_url}
             onChange={(e) => setFormData((prev) => ({ ...prev, github_url: e.target.value }))}
           />
           <p className="text-sm text-muted-foreground">
-            Optional. The GitHub web interface URL (for links in the UI).
+            Required for GitHub Enterprise Server: API calls and the access token go to{" "}
+            <code className="text-xs">&lt;base URL&gt;/api/v3</code>, and without it the instance makes no API calls.
+            For GitHub.com leave it empty or enter <code className="text-xs">https://github.com</code>.
           </p>
         </div>
       )}
