@@ -2,22 +2,14 @@ import asyncio
 import logging
 from typing import Any
 
-from prometheus_client import Counter
 
 from app.core.config import settings
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.metrics import notifications_failed_total, notifications_sent_total
 from app.models.system import SystemSettings
 from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
-
-notifications_sent_total: Counter | None = None
-notifications_failed_total: Counter | None = None
-
-try:
-    from app.core.metrics import notifications_failed_total, notifications_sent_total
-except ImportError:
-    pass
 
 
 class MattermostProvider(NotificationProvider):

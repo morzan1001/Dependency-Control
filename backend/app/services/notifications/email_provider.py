@@ -7,21 +7,14 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from pathlib import Path
 
-from prometheus_client import Counter
 
 from app.core.constants import SMTP_TIMEOUT_SECONDS
+from app.core.metrics import notifications_failed_total, notifications_sent_total
 from app.models.system import SystemSettings
 from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
-notifications_sent_total: Counter | None = None
-notifications_failed_total: Counter | None = None
-
-try:
-    from app.core.metrics import notifications_failed_total, notifications_sent_total
-except ImportError:
-    pass
 
 try:
     import aiosmtplib

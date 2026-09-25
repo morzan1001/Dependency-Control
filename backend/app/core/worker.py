@@ -10,6 +10,12 @@ from pymongo import ReadPreference
 
 from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
+from app.core.metrics import (
+    worker_active_count,
+    worker_job_duration_seconds,
+    worker_jobs_processed_total,
+    worker_queue_size,
+)
 from app.db.mongodb import get_database
 from app.services.analysis import run_analysis
 from app.services.notifications.service import safe_notify_project_event
@@ -17,18 +23,6 @@ from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
 
-try:
-    from app.core.metrics import (
-        worker_active_count,
-        worker_job_duration_seconds,
-        worker_jobs_processed_total,
-        worker_queue_size,
-    )
-except ImportError:
-    worker_queue_size = None  # type: ignore[assignment]
-    worker_active_count = None  # type: ignore[assignment]
-    worker_jobs_processed_total = None  # type: ignore[assignment]
-    worker_job_duration_seconds = None  # type: ignore[assignment]
 
 # Default graceful shutdown timeout (should be less than K8s terminationGracePeriodSeconds)
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25

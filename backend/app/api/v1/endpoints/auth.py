@@ -19,7 +19,6 @@ from fastapi import (
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import jwt
-from prometheus_client import Counter
 
 from app.api import deps
 from app.api.deps import DatabaseDep
@@ -44,6 +43,13 @@ from app.core.constants import (
     TOTP_VALID_WINDOW,
 )
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.metrics import (
+    auth_2fa_verifications_total,
+    auth_login_attempts_total,
+    auth_oidc_logins_total,
+    auth_password_resets_total,
+    auth_signups_total,
+)
 from app.models.system import SystemSettings
 from app.models.user import User
 from app.repositories import UserRepository
@@ -60,22 +66,6 @@ from app.schemas.user import UserPasswordReset, UserSignup
 
 logger = logging.getLogger(__name__)
 
-auth_login_attempts_total: Counter | None = None
-auth_2fa_verifications_total: Counter | None = None
-auth_oidc_logins_total: Counter | None = None
-auth_signups_total: Counter | None = None
-auth_password_resets_total: Counter | None = None
-
-try:
-    from app.core.metrics import (
-        auth_2fa_verifications_total,
-        auth_login_attempts_total,
-        auth_oidc_logins_total,
-        auth_password_resets_total,
-        auth_signups_total,
-    )
-except ImportError:
-    pass
 
 router = CustomAPIRouter()
 

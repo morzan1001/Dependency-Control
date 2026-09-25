@@ -16,10 +16,18 @@ from contextvars import ContextVar
 from typing import Any, TypeVar, cast
 
 import redis.asyncio as redis
-from prometheus_client import Counter, Gauge, Histogram
 from redis.asyncio.connection import ConnectionPool
 
 from app.core.config import settings
+from app.core.metrics import (
+    cache_connected_clients,
+    cache_hits_total,
+    cache_keys_total,
+    cache_misses_total,
+    cache_operation_duration_seconds,
+    cache_operations_total,
+    cache_size_bytes,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,28 +65,6 @@ class _FetchFailed(Exception):
     def __init__(self, cause: BaseException):
         super().__init__(cause)
         self.cause = cause
-
-
-cache_hits_total: Counter | None = None
-cache_misses_total: Counter | None = None
-cache_operations_total: Counter | None = None
-cache_operation_duration_seconds: Histogram | None = None
-cache_keys_total: Gauge | None = None
-cache_connected_clients: Gauge | None = None
-cache_size_bytes: Gauge | None = None
-
-try:
-    from app.core.metrics import (
-        cache_connected_clients,
-        cache_hits_total,
-        cache_keys_total,
-        cache_misses_total,
-        cache_operation_duration_seconds,
-        cache_operations_total,
-        cache_size_bytes,
-    )
-except ImportError:
-    pass
 
 
 class CacheTTL:

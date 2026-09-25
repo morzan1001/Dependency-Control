@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from prometheus_client import Counter
 from pymongo import ReadPreference
 
 from app.core.config import settings
@@ -39,6 +38,7 @@ from app.core.constants import (
     WEBHOOK_USER_AGENT_VALUE,
 )
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
 from app.services.webhooks.teams_formatter import TeamsFormatter
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
@@ -70,14 +70,6 @@ def _event_match_set(event_type: str) -> list[str]:
 
 
 logger = logging.getLogger(__name__)
-
-webhooks_triggered_total: Counter | None = None
-webhooks_failed_total: Counter | None = None
-
-try:
-    from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
-except ImportError:
-    pass
 
 
 class WebhookService:
