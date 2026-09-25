@@ -219,6 +219,54 @@ class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
         assert any("max depth" in t.lower() or "deep" in t.lower() for t in titles)
 
 
+class TestAnalyzeDeepDependencyChainsDepthResolution:
+    def test_siblings_under_one_parent_each_get_their_depth(self):
+        deps = [
+            _dep("root", direct=True),
+            _dep("left", parent_components=["pkg:npm/root@1.0"]),
+            _dep("right", parent_components=["pkg:npm/root@1.0"]),
+        ]
+        result = analyze_deep_dependency_chains(deps, max_dependency_depth=1)
+        assert len(result) == 1
+        assert sorted(result[0].affected_components) == ["left@1.0 (depth: 2)", "right@1.0 (depth: 2)"]
+
+    def test_a_dependency_without_purl_is_keyed_by_name_and_version(self):
+        root = {"name": "root", "version": "1.0", "direct": True, "parent_components": []}
+        child = {"name": "child", "version": "2.0", "direct": False, "parent_components": ["root@1.0"]}
+        result = analyze_deep_dependency_chains([root, child], max_dependency_depth=1)
+        assert result[0].affected_components == ["child@2.0 (depth: 2)"]
+
+    def test_depth_resolution_stops_after_ten_passes(self):
+        # Listed deepest-first, each pass resolves one more level of the chain.
+        chain = [_dep("pkg-0", direct=True)] + [
+            _dep(f"pkg-{i}", parent_components=[f"pkg:npm/pkg-{i - 1}@1.0"]) for i in range(1, 13)
+        ]
+        result = analyze_deep_dependency_chains(list(reversed(chain)), max_dependency_depth=8)
+        assert len(result) == 1
+        assert result[0].affected_components == [
+            "pkg-10@1.0 (depth: 11)",
+            "pkg-9@1.0 (depth: 10)",
+            "pkg-8@1.0 (depth: 9)",
+        ]
+
+    def test_deep_recommendation_splits_impact_at_depth_seven_and_previews_parents(self):
+        chain = [_dep("pkg-0", direct=True)] + [
+            _dep(f"pkg-{i}", parent_components=[f"pkg:npm/pkg-{i - 1}@1.0", "pkg:npm/pkg-0@1.0"]) for i in range(1, 9)
+        ]
+        result = analyze_deep_dependency_chains(chain, max_dependency_depth=6)
+        assert len(result) == 1
+        rec = result[0]
+        assert rec.title == "Deep dependency chains detected (max depth: 9)"
+        assert rec.impact == {"critical": 0, "high": 0, "medium": 2, "low": 1, "total": 3}
+        assert rec.action["deepest_chains"][0] == {
+            "package": "pkg-8",
+            "depth": 9,
+            "chain_preview": "pkg:npm/pkg-7@1.0 → pkg:npm/pkg-0@1.0",
+            "parents_total": 2,
+        }
+        assert rec.action["deepest_chains_total"] == 3
+
+
 class TestAnalyzeDuplicatePackagesEmpty:
     def test_empty_returns_empty(self):
         assert analyze_duplicate_packages([]) == []

@@ -1,3 +1,5 @@
+from typing import Any
+
 from app.core.constants import SIMILAR_PACKAGE_GROUPS
 from app.schemas.recommendation import (
     Priority,
@@ -20,63 +22,76 @@ def analyze_deep_dependency_chains(
         return []
 
     recommendations = []
+    in_cycle = _find_cycle_members(dependencies, _children_by_parent(dependencies))
+    depth_map = _resolve_depths(dependencies, in_cycle)
 
-    depth_map: dict[str, int] = {}
-    in_cycle: set = set()
+    if in_cycle:
+        recommendations.append(_circular_dependency_recommendation(dependencies, in_cycle))
 
+    deep_deps = _deep_dependencies(dependencies, depth_map, max_dependency_depth)
+    if deep_deps:
+        recommendations.append(_deep_chain_recommendation(deep_deps, max_dependency_depth))
+
+    return recommendations
+
+
+def _dep_key(dep: ModelOrDict) -> str:
+    return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+
+
+def _children_by_parent(dependencies: list[ModelOrDict]) -> dict[str, list[str]]:
     children_map: dict[str, list[str]] = {}
     for dep in dependencies:
-        key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
-        parents = get_attr(dep, "parent_components", [])
-        for parent in parents:
-            if parent not in children_map:
-                children_map[parent] = []
-            children_map[parent].append(key)
+        key = _dep_key(dep)
+        for parent in get_attr(dep, "parent_components", []):
+            children_map.setdefault(parent, []).append(key)
+    return children_map
 
+
+def _find_cycle_members(dependencies: list[ModelOrDict], children_map: dict[str, list[str]]) -> set[str]:
+    in_cycle: set[str] = set()
     # DFS coloring: 0=unseen, 1=on stack, 2=done.
     color: dict[str, int] = {}
 
-    def has_cycle(node: str, path: list[str], on_path: set) -> bool:
+    def visit(node: str, path: list[str], on_path: set[str]) -> None:
         if node in on_path:
             # Only nodes from the first occurrence of node onward are in the cycle.
             start = path.index(node)
             in_cycle.update(path[start:])
-            return True
+            return
         if color.get(node, 0) == 2:
-            return False
+            return
 
         color[node] = 1
         path.append(node)
         on_path.add(node)
 
         for child in children_map.get(node, []):
-            has_cycle(child, path, on_path)
+            visit(child, path, on_path)
 
         path.pop()
         on_path.discard(node)
         color[node] = 2
-        return False
 
     for dep in dependencies:
-        key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+        key = _dep_key(dep)
         if get_attr(dep, "direct", False) and color.get(key, 0) == 0:
-            has_cycle(key, [], set())
+            visit(key, [], set())
+    return in_cycle
 
-    for dep in dependencies:
-        key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
-        if get_attr(dep, "direct", False):
-            depth_map[key] = 1
+
+def _resolve_depths(dependencies: list[ModelOrDict], in_cycle: set[str]) -> dict[str, int]:
+    depth_map = {_dep_key(dep): 1 for dep in dependencies if get_attr(dep, "direct", False)}
 
     # Skip nodes in cycles to avoid infinite loops.
     for _ in range(10):
         changed = False
         for dep in dependencies:
-            key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
-            parents = get_attr(dep, "parent_components", [])
-
+            key = _dep_key(dep)
             if key in depth_map or key in in_cycle:
                 continue
 
+            parents = get_attr(dep, "parent_components", [])
             parent_depths = [depth_map[parent] for parent in parents if parent in depth_map and parent not in in_cycle]
 
             if parent_depths:
@@ -85,51 +100,51 @@ def analyze_deep_dependency_chains(
 
         if not changed:
             break
+    return depth_map
 
-    if in_cycle:
-        cycle_packages = []
-        for dep in dependencies:
-            key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
-            if key in in_cycle:
-                cycle_packages.append({"name": get_attr(dep, "name"), "version": get_attr(dep, "version")})
 
-        if cycle_packages:
-            cycle_shown, cycle_total = sample_components(f"{p['name']}@{p['version']}" for p in cycle_packages)
-            recommendations.append(
-                Recommendation(
-                    type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
-                    priority=Priority.MEDIUM,
-                    title=f"Circular dependencies detected ({len(cycle_packages)} packages)",
-                    description=(
-                        "Circular dependencies were detected in your dependency graph. "
-                        "This can cause issues with builds, updates, and increases complexity."
-                    ),
-                    impact={
-                        "critical": 0,
-                        "high": 0,
-                        "medium": len(cycle_packages),
-                        "low": 0,
-                        "total": len(cycle_packages),
-                    },
-                    affected_components=cycle_shown,
-                    affected_components_total=cycle_total,
-                    action={
-                        "type": "resolve_circular_deps",
-                        "suggestions": [
-                            "Review the dependency graph to identify the cycle",
-                            "Consider restructuring to break the circular dependency",
-                            "Check if updated versions resolve the cycle",
-                        ],
-                    },
-                    effort="high",
-                )
-            )
+def _circular_dependency_recommendation(dependencies: list[ModelOrDict], in_cycle: set[str]) -> Recommendation:
+    cycle_packages = [
+        {"name": get_attr(dep, "name"), "version": get_attr(dep, "version")}
+        for dep in dependencies
+        if _dep_key(dep) in in_cycle
+    ]
+    cycle_shown, cycle_total = sample_components(f"{p['name']}@{p['version']}" for p in cycle_packages)
+    return Recommendation(
+        type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
+        priority=Priority.MEDIUM,
+        title=f"Circular dependencies detected ({len(cycle_packages)} packages)",
+        description=(
+            "Circular dependencies were detected in your dependency graph. "
+            "This can cause issues with builds, updates, and increases complexity."
+        ),
+        impact={
+            "critical": 0,
+            "high": 0,
+            "medium": len(cycle_packages),
+            "low": 0,
+            "total": len(cycle_packages),
+        },
+        affected_components=cycle_shown,
+        affected_components_total=cycle_total,
+        action={
+            "type": "resolve_circular_deps",
+            "suggestions": [
+                "Review the dependency graph to identify the cycle",
+                "Consider restructuring to break the circular dependency",
+                "Check if updated versions resolve the cycle",
+            ],
+        },
+        effort="high",
+    )
 
+
+def _deep_dependencies(
+    dependencies: list[ModelOrDict], depth_map: dict[str, int], max_dependency_depth: int
+) -> list[dict[str, Any]]:
     deep_deps = []
     for dep in dependencies:
-        key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
-        depth = depth_map.get(key, 0)
-
+        depth = depth_map.get(_dep_key(dep), 0)
         if depth > max_dependency_depth:
             deep_deps.append(
                 {
@@ -139,57 +154,51 @@ def analyze_deep_dependency_chains(
                     "parents": get_attr(dep, "parent_components", []) or [],
                 }
             )
+    deep_deps.sort(key=lambda x: x["depth"], reverse=True)
+    return deep_deps
 
-    if deep_deps:
-        deep_deps.sort(key=lambda x: x["depth"], reverse=True)
-        max_depth = deep_deps[0]["depth"] if deep_deps else 0
-        deep_shown, deep_total = sample_components(
-            f"{d['name']}@{d['version']} (depth: {d['depth']})" for d in deep_deps
-        )
 
-        recommendations.append(
-            Recommendation(
-                type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
-                priority=Priority.LOW,
-                title=f"Deep dependency chains detected (max depth: {max_depth})",
-                description=(
-                    f"{len(deep_deps)} dependencies are nested more than "
-                    f"{max_dependency_depth} levels deep. Deep chains increase "
-                    "supply chain attack surface and make dependency updates "
-                    "more complex."
-                ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": len([d for d in deep_deps if d["depth"] > 7]),
-                    "low": len([d for d in deep_deps if d["depth"] <= 7]),
-                    "total": len(deep_deps),
-                },
-                affected_components=deep_shown,
-                affected_components_total=deep_total,
-                action={
-                    "type": "reduce_chain_depth",
-                    "suggestions": [
-                        "Consider using packages with fewer transitive dependencies",
-                        "Evaluate if some functionality can be implemented directly",
-                        "Look for alternative packages with shallower dependency trees",
-                    ],
-                    "deepest_chains": [
-                        {
-                            "package": d["name"],
-                            "depth": d["depth"],
-                            "chain_preview": " → ".join(d["parents"][:_PARENTS_SAMPLED]),
-                            "parents_total": len(d["parents"]),
-                        }
-                        for d in deep_deps[:_DEEPEST_CHAINS_SAMPLED]
-                    ],
-                    "deepest_chains_total": len(deep_deps),
-                },
-                effort="high",
-            )
-        )
-
-    return recommendations
+def _deep_chain_recommendation(deep_deps: list[dict[str, Any]], max_dependency_depth: int) -> Recommendation:
+    deep_shown, deep_total = sample_components(f"{d['name']}@{d['version']} (depth: {d['depth']})" for d in deep_deps)
+    return Recommendation(
+        type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
+        priority=Priority.LOW,
+        title=f"Deep dependency chains detected (max depth: {deep_deps[0]['depth']})",
+        description=(
+            f"{len(deep_deps)} dependencies are nested more than "
+            f"{max_dependency_depth} levels deep. Deep chains increase "
+            "supply chain attack surface and make dependency updates "
+            "more complex."
+        ),
+        impact={
+            "critical": 0,
+            "high": 0,
+            "medium": len([d for d in deep_deps if d["depth"] > 7]),
+            "low": len([d for d in deep_deps if d["depth"] <= 7]),
+            "total": len(deep_deps),
+        },
+        affected_components=deep_shown,
+        affected_components_total=deep_total,
+        action={
+            "type": "reduce_chain_depth",
+            "suggestions": [
+                "Consider using packages with fewer transitive dependencies",
+                "Evaluate if some functionality can be implemented directly",
+                "Look for alternative packages with shallower dependency trees",
+            ],
+            "deepest_chains": [
+                {
+                    "package": d["name"],
+                    "depth": d["depth"],
+                    "chain_preview": " → ".join(d["parents"][:_PARENTS_SAMPLED]),
+                    "parents_total": len(d["parents"]),
+                }
+                for d in deep_deps[:_DEEPEST_CHAINS_SAMPLED]
+            ],
+            "deepest_chains_total": len(deep_deps),
+        },
+        effort="high",
+    )
 
 
 def analyze_duplicate_packages(
