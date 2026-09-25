@@ -18,6 +18,7 @@ from app.core.constants import (
     TEAM_SOURCE_GITLAB,
     team_source,
 )
+from app.core.log_utils import sanitize_for_log
 from app.core.metrics import auth_token_validations_total
 from app.core.permissions import Permissions, has_permission
 from app.db.mongodb import get_database
@@ -332,6 +333,18 @@ async def _handle_gitlab_oidc(
     gitlab_project_path = payload.project_path
     instance_id = str(gitlab_instance.id)
 
+    if not gitlab_instance.accepts_project_path(gitlab_project_path):
+        logger.warning(
+            "Refused GitLab OIDC token from %s: outside the namespaces allowed on instance '%s'",
+            sanitize_for_log(gitlab_project_path),
+            gitlab_instance.name,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"Project '{gitlab_project_path}' is outside the namespaces allowed on GitLab instance "
+            f"'{gitlab_instance.name}'",
+        )
+
     project_data = await project_repo.get_raw_by_gitlab_composite_key(instance_id, gitlab_project_id)
 
     if project_data:
@@ -355,6 +368,12 @@ async def _handle_gitlab_oidc(
         raise HTTPException(
             status_code=404,
             detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled",
+        )
+    if gitlab_instance.is_shared_issuer and not gitlab_instance.allowed_namespaces:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Project not found on instance '{gitlab_instance.name}': auto-creation on gitlab.com needs "
+            "an allowed namespace list",
         )
 
     initial_member_id = await _resolve_initial_member_id(user_repo, email=payload.user_email)
@@ -413,6 +432,19 @@ async def _handle_github_oidc(
     repo_id = gh_payload.repository_id
     repo_path = gh_payload.repository
 
+    if not github_instance.accepts_owner(gh_payload.repository_owner_id):
+        logger.warning(
+            "Refused GitHub OIDC token from %s (owner id %s): owner not allowed on instance '%s'",
+            sanitize_for_log(repo_path),
+            sanitize_for_log(gh_payload.repository_owner_id),
+            github_instance.name,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"Repository owner '{gh_payload.repository_owner}' (id {gh_payload.repository_owner_id}) "
+            f"is not allowed on GitHub instance '{github_instance.name}'",
+        )
+
     project_data = await project_repo.get_raw_by_github_composite_key(instance_id, repo_id)
     if project_data:
         project = Project(**project_data)
@@ -435,6 +467,12 @@ async def _handle_github_oidc(
         raise HTTPException(
             status_code=404,
             detail=f"Project not found on GitHub instance '{github_instance.name}' and auto-creation is disabled",
+        )
+    if github_instance.is_shared_issuer and not github_instance.allowed_owner_ids:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Project not found on GitHub instance '{github_instance.name}': auto-creation on the shared "
+            "github.com issuer needs an allowed owner list",
         )
 
     initial_member_id = await _resolve_initial_member_id(user_repo, username=gh_payload.actor)

@@ -5,6 +5,13 @@ from pydantic import ConfigDict, Field
 from app.models.base import CreatedAtModel, VcsInstanceModel
 from app.models.types import MongoDocument
 
+GITLAB_SHARED_OIDC_ISSUER = "https://gitlab.com"
+
+
+def is_shared_gitlab_issuer(url: str) -> bool:
+    """Whether ``url`` is gitlab.com, whose tokens every project hosted there can mint."""
+    return url.rstrip("/") == GITLAB_SHARED_OIDC_ISSUER
+
 
 class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     """A configured GitLab instance."""
@@ -25,6 +32,11 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     # oidc_audience is effectively required (enforced by API schemas and fail-closed
     # OIDC validation); stored Optional only so legacy documents still hydrate.
     oidc_audience: str | None = Field(None, description="Expected 'aud' claim for OIDC tokens from this instance")
+    allowed_namespaces: list[str] = Field(
+        default_factory=list,
+        description="Top-level groups whose projects' tokens are accepted (case-insensitive); empty accepts every "
+        "project",
+    )
 
     # Features
     auto_create_projects: bool = Field(
@@ -44,3 +56,13 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     last_modified_at: datetime | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @property
+    def is_shared_issuer(self) -> bool:
+        return is_shared_gitlab_issuer(self.url)
+
+    def accepts_project_path(self, project_path: str) -> bool:
+        if not self.allowed_namespaces:
+            return True
+        top_level, separator, _ = project_path.partition("/")
+        return bool(separator) and top_level.lower() in {namespace.lower() for namespace in self.allowed_namespaces}

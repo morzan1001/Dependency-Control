@@ -5,6 +5,13 @@ from pydantic import ConfigDict, Field
 from app.models.base import CreatedAtModel, VcsInstanceModel
 from app.models.types import MongoDocument
 
+GITHUB_SHARED_OIDC_ISSUER = "https://token.actions.githubusercontent.com"
+
+
+def is_shared_github_issuer(url: str) -> bool:
+    """Whether ``url`` is the issuer every github.com repository's tokens carry, not an enterprise-scoped one."""
+    return url.rstrip("/") == GITHUB_SHARED_OIDC_ISSUER
+
 
 class GitHubInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     """A configured GitHub instance (github.com or GitHub Enterprise Server)."""
@@ -30,6 +37,10 @@ class GitHubInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
         "'read:org' when sync_teams is on. The token's identity must be a member of the "
         "organisation, or it sees only a subset of teams and members.",
     )
+    allowed_owner_ids: list[str] = Field(
+        default_factory=list,
+        description="Numeric repository_owner_id claims whose tokens are accepted; empty accepts every owner",
+    )
 
     # Features
     auto_create_projects: bool = Field(
@@ -42,3 +53,10 @@ class GitHubInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     last_modified_at: datetime | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    @property
+    def is_shared_issuer(self) -> bool:
+        return is_shared_github_issuer(self.url)
+
+    def accepts_owner(self, owner_id: str | None) -> bool:
+        return not self.allowed_owner_ids or owner_id in self.allowed_owner_ids

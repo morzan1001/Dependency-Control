@@ -681,6 +681,7 @@ class TestIngestGitHubOidcProjectLookup:
             "is_active": True,
             "created_by": "admin",
             "auto_create_projects": True,
+            "allowed_owner_ids": ["111"],
         }
         admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
 
@@ -713,6 +714,7 @@ class TestIngestGitHubOidcProjectLookup:
                     return_value=make_github_oidc_payload(
                         repository_id="789",
                         repository="org/new-repo",
+                        repository_owner_id="111",
                         actor="developer",
                     )
                 )
@@ -836,6 +838,7 @@ _TEAM_SYNC_INSTANCE = {
     "is_active": True,
     "created_by": "admin",
     "access_token": "ghp-secret",
+    "allowed_owner_ids": ["111"],
 }
 _TEAM_SYNC_PROJECT = {
     "_id": "proj-gh-1",
@@ -868,7 +871,12 @@ class TestIngestGitHubTeamSync:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
             with patch("app.services.github.GitHubService") as MockService:
                 mock_svc = MagicMock()
-                payload = {"repository_id": "123456", "repository": "acme/widgets", "repository_owner": "acme"}
+                payload = {
+                    "repository_id": "123456",
+                    "repository": "acme/widgets",
+                    "repository_owner": "acme",
+                    "repository_owner_id": "111",
+                }
                 payload.update(payload_overrides)
                 mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
                 mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(sync_result))
@@ -959,6 +967,7 @@ _GITLAB_TEAM_SYNC_INSTANCE = {
     "access_token": "glpat-secret",
     "is_active": True,
     "created_by": "admin",
+    "allowed_namespaces": ["group"],
 }
 
 
@@ -1010,3 +1019,285 @@ class TestIngestGitLabTeamSync:
         assert inserted["team_sources"] == {"t-gl-1": expected_source}
         assert inserted["team_id"] == "t-gl-1"
         assert inserted["team_source"] == expected_source
+
+
+_GITHUB_COM_ISSUER = "https://token.actions.githubusercontent.com"
+_GHES_ISSUER = "https://github.corp.example.com/_services/token"
+_GITHUB_COM_INSTANCE = {
+    "_id": "gh-inst-a",
+    "name": "GitHub.com",
+    "url": _GITHUB_COM_ISSUER,
+    "is_active": True,
+    "created_by": "admin",
+    "sync_teams": True,
+    "access_token": "ghp-secret",
+}
+_GITHUB_BOUND_PROJECT = {
+    "_id": "proj-gh-1",
+    "name": "acme/widgets",
+    "github_instance_id": "gh-inst-a",
+    "github_repository_id": "123456",
+    "github_repository_path": "acme/widgets",
+}
+
+
+def _ingest_via_github(instance_doc, project_doc=None, issuer=_GITHUB_COM_ISSUER, **payload_overrides):
+    """Run a GitHub OIDC ingest; returns the outcome (project or HTTPException), projects and service mocks."""
+    from app.api.deps import get_project_for_ingest
+    from app.services.github import GitHubTeamSyncResult
+
+    projects_coll = create_mock_collection(find_one=project_doc)
+    projects_coll.find_one_and_update = AsyncMock(side_effect=lambda _q, update, **_kw: update["$setOnInsert"])
+    db = create_mock_db(
+        {
+            "gitlab_instances": create_mock_collection(find_one=None),
+            "github_instances": create_mock_collection(find_one=instance_doc),
+            "projects": projects_coll,
+            "users": create_mock_collection(find_one=None),
+        }
+    )
+    payload = {
+        "repository_id": "123456",
+        "repository": "acme/widgets",
+        "repository_owner": "acme",
+        "repository_owner_id": "111",
+        **payload_overrides,
+    }
+    with patch("jose.jwt.get_unverified_claims", return_value={"iss": issuer}):
+        with patch("app.services.github.GitHubService") as MockService:
+            mock_svc = MagicMock()
+            mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
+            mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult([]))
+            MockService.return_value = mock_svc
+            try:
+                outcome = asyncio.run(
+                    get_project_for_ingest(x_api_key=None, oidc_token="a.b.c", db=db, settings=_make_system_settings())
+                )
+            except HTTPException as exc:
+                outcome = exc
+    return outcome, projects_coll, mock_svc
+
+
+class TestIngestGitHubOwnerAllowlist:
+    """A github.com token is signed for every repository in the world, so the owner decides admission."""
+
+    def test_a_foreign_owner_is_refused_before_the_project_lookup(self):
+        instance = {**_GITHUB_COM_INSTANCE, "allowed_owner_ids": ["111"], "auto_create_projects": True}
+
+        outcome, projects_coll, mock_svc = _ingest_via_github(
+            instance, _GITHUB_BOUND_PROJECT, repository_owner="evil", repository_owner_id="999"
+        )
+
+        assert isinstance(outcome, HTTPException)
+        assert outcome.status_code == 403
+        assert "999" in outcome.detail
+        projects_coll.find_one.assert_not_called()
+        projects_coll.find_one_and_update.assert_not_called()
+        mock_svc.sync_team_from_github.assert_not_called()
+
+    def test_a_token_without_the_owner_id_claim_is_refused_when_a_list_is_set(self):
+        instance = {**_GITHUB_COM_INSTANCE, "allowed_owner_ids": ["111"]}
+
+        outcome, projects_coll, _ = _ingest_via_github(instance, _GITHUB_BOUND_PROJECT, repository_owner_id=None)
+
+        assert isinstance(outcome, HTTPException)
+        assert outcome.status_code == 403
+        projects_coll.find_one.assert_not_called()
+
+    def test_the_owner_login_alone_does_not_admit_a_token(self):
+        """The login is renamable and re-registrable; only the numeric id is on the list."""
+        instance = {**_GITHUB_COM_INSTANCE, "allowed_owner_ids": ["111"]}
+
+        outcome, _, _ = _ingest_via_github(
+            instance, _GITHUB_BOUND_PROJECT, repository_owner="acme", repository_owner_id="222"
+        )
+
+        assert isinstance(outcome, HTTPException)
+        assert outcome.status_code == 403
+
+    def test_an_allowed_owner_reaches_its_bound_project(self):
+        instance = {**_GITHUB_COM_INSTANCE, "allowed_owner_ids": ["42", "111"]}
+
+        outcome, _, mock_svc = _ingest_via_github(instance, _GITHUB_BOUND_PROJECT)
+
+        assert not isinstance(outcome, HTTPException)
+        assert outcome.id == "proj-gh-1"
+        mock_svc.sync_team_from_github.assert_awaited_once()
+
+    def test_an_allowed_owner_auto_creates_on_the_shared_issuer(self):
+        instance = {**_GITHUB_COM_INSTANCE, "allowed_owner_ids": ["111"], "auto_create_projects": True}
+
+        outcome, projects_coll, _ = _ingest_via_github(instance, None)
+
+        assert not isinstance(outcome, HTTPException)
+        assert outcome.github_repository_path == "acme/widgets"
+        projects_coll.find_one_and_update.assert_called_once()
+
+    def test_the_shared_issuer_refuses_auto_create_without_a_list(self):
+        instance = {**_GITHUB_COM_INSTANCE, "allowed_owner_ids": [], "auto_create_projects": True}
+
+        outcome, projects_coll, mock_svc = _ingest_via_github(instance, None)
+
+        assert isinstance(outcome, HTTPException)
+        assert outcome.status_code == 403
+        assert "allow" in outcome.detail.lower()
+        projects_coll.find_one_and_update.assert_not_called()
+        mock_svc.sync_team_from_github.assert_not_called()
+
+    def test_a_stored_instance_without_the_field_refuses_auto_create_on_the_shared_issuer(self):
+        instance = {**_GITHUB_COM_INSTANCE, "auto_create_projects": True}
+
+        outcome, projects_coll, _ = _ingest_via_github(instance, None)
+
+        assert isinstance(outcome, HTTPException)
+        assert outcome.status_code == 403
+        projects_coll.find_one_and_update.assert_not_called()
+
+    def test_the_shared_issuer_without_a_list_still_ingests_into_a_bound_project(self):
+        instance = {**_GITHUB_COM_INSTANCE, "auto_create_projects": True}
+
+        outcome, _, _ = _ingest_via_github(instance, _GITHUB_BOUND_PROJECT, repository_owner_id="999")
+
+        assert not isinstance(outcome, HTTPException)
+        assert outcome.id == "proj-gh-1"
+
+    def test_ghes_auto_creates_without_a_list(self):
+        instance = {**_GITHUB_COM_INSTANCE, "url": _GHES_ISSUER, "auto_create_projects": True}
+
+        outcome, projects_coll, _ = _ingest_via_github(instance, None, issuer=_GHES_ISSUER, repository_owner_id=None)
+
+        assert not isinstance(outcome, HTTPException)
+        projects_coll.find_one_and_update.assert_called_once()
+
+    def test_an_enterprise_scoped_issuer_is_not_the_shared_one(self):
+        enterprise_issuer = f"{_GITHUB_COM_ISSUER}/acme-enterprise"
+        instance = {**_GITHUB_COM_INSTANCE, "url": enterprise_issuer, "auto_create_projects": True}
+
+        outcome, projects_coll, _ = _ingest_via_github(instance, None, issuer=enterprise_issuer)
+
+        assert not isinstance(outcome, HTTPException)
+        projects_coll.find_one_and_update.assert_called_once()
+
+    def test_a_ghes_list_is_enforced_too(self):
+        instance = {**_GITHUB_COM_INSTANCE, "url": _GHES_ISSUER, "allowed_owner_ids": ["111"]}
+
+        outcome, projects_coll, _ = _ingest_via_github(
+            instance, _GITHUB_BOUND_PROJECT, issuer=_GHES_ISSUER, repository_owner_id="7"
+        )
+
+        assert isinstance(outcome, HTTPException)
+        assert outcome.status_code == 403
+        projects_coll.find_one.assert_not_called()
+
+
+_GITLAB_COM_INSTANCE = {
+    "_id": "gl-inst-a",
+    "name": "GitLab.com",
+    "url": "https://gitlab.com",
+    "is_active": True,
+    "created_by": "admin",
+    "sync_teams": False,
+}
+_GITLAB_BOUND_PROJECT = {
+    "_id": "proj-gl-1",
+    "name": "acme/widgets",
+    "gitlab_instance_id": "gl-inst-a",
+    "gitlab_project_id": 42,
+    "gitlab_project_path": "acme/widgets",
+}
+
+
+def _ingest_via_gitlab(instance_doc, project_doc=None, project_path="acme/widgets"):
+    """Run a GitLab OIDC ingest; returns the outcome (project or HTTPException) and the projects mock."""
+    from app.api.deps import get_project_for_ingest
+
+    projects_coll = create_mock_collection(find_one=project_doc)
+    projects_coll.find_one_and_update = AsyncMock(side_effect=lambda _q, update, **_kw: update["$setOnInsert"])
+    db = create_mock_db(
+        {
+            "gitlab_instances": create_mock_collection(find_one=instance_doc),
+            "github_instances": create_mock_collection(find_one=None),
+            "projects": projects_coll,
+            "users": create_mock_collection(find_one=None),
+        }
+    )
+    with patch("jose.jwt.get_unverified_claims", return_value={"iss": instance_doc["url"]}):
+        with patch("app.api.deps.GitLabService") as MockService:
+            mock_svc = MagicMock()
+            mock_svc.validate_oidc_token = AsyncMock(
+                return_value=make_oidc_payload(project_id="42", project_path=project_path)
+            )
+            MockService.return_value = mock_svc
+            try:
+                outcome = asyncio.run(
+                    get_project_for_ingest(x_api_key=None, oidc_token="a.b.c", db=db, settings=_make_system_settings())
+                )
+            except HTTPException as exc:
+                outcome = exc
+    return outcome, projects_coll
+
+
+class TestIngestGitLabNamespaceAllowlist:
+    """Any gitlab.com project can mint a token for any audience, so its top-level group decides admission."""
+
+    def test_a_foreign_namespace_is_refused_before_the_project_lookup(self):
+        instance = {**_GITLAB_COM_INSTANCE, "allowed_namespaces": ["acme"], "auto_create_projects": True}
+
+        outcome, projects_coll = _ingest_via_gitlab(instance, _GITLAB_BOUND_PROJECT, project_path="evil/widgets")
+
+        assert isinstance(outcome, HTTPException)
+        assert outcome.status_code == 403
+        projects_coll.find_one.assert_not_called()
+        projects_coll.find_one_and_update.assert_not_called()
+
+    def test_a_namespace_sharing_only_a_prefix_is_refused(self):
+        instance = {**_GITLAB_COM_INSTANCE, "allowed_namespaces": ["acme"]}
+
+        outcome, projects_coll = _ingest_via_gitlab(instance, _GITLAB_BOUND_PROJECT, project_path="acme-evil/widgets")
+
+        assert isinstance(outcome, HTTPException)
+        assert outcome.status_code == 403
+        projects_coll.find_one.assert_not_called()
+
+    def test_an_allowed_namespace_matches_case_insensitively_at_any_depth(self):
+        instance = {**_GITLAB_COM_INSTANCE, "allowed_namespaces": ["Acme"]}
+
+        outcome, _ = _ingest_via_gitlab(instance, _GITLAB_BOUND_PROJECT, project_path="acme/platform/widgets")
+
+        assert not isinstance(outcome, HTTPException)
+        assert outcome.id == "proj-gl-1"
+
+    def test_an_allowed_namespace_auto_creates_on_gitlab_com(self):
+        instance = {**_GITLAB_COM_INSTANCE, "allowed_namespaces": ["acme"], "auto_create_projects": True}
+
+        outcome, projects_coll = _ingest_via_gitlab(instance, None)
+
+        assert not isinstance(outcome, HTTPException)
+        assert outcome.gitlab_project_path == "acme/widgets"
+        projects_coll.find_one_and_update.assert_called_once()
+
+    def test_gitlab_com_refuses_auto_create_without_a_list(self):
+        instance = {**_GITLAB_COM_INSTANCE, "auto_create_projects": True}
+
+        outcome, projects_coll = _ingest_via_gitlab(instance, None)
+
+        assert isinstance(outcome, HTTPException)
+        assert outcome.status_code == 403
+        assert "allow" in outcome.detail.lower()
+        projects_coll.find_one_and_update.assert_not_called()
+
+    def test_gitlab_com_without_a_list_still_ingests_into_a_bound_project(self):
+        instance = {**_GITLAB_COM_INSTANCE, "auto_create_projects": True}
+
+        outcome, _ = _ingest_via_gitlab(instance, _GITLAB_BOUND_PROJECT, project_path="anyone/widgets")
+
+        assert not isinstance(outcome, HTTPException)
+        assert outcome.id == "proj-gl-1"
+
+    def test_a_self_managed_instance_auto_creates_without_a_list(self):
+        instance = {**_GITLAB_COM_INSTANCE, "url": "https://gitlab.example.com", "auto_create_projects": True}
+
+        outcome, projects_coll = _ingest_via_gitlab(instance, None, project_path="anyone/widgets")
+
+        assert not isinstance(outcome, HTTPException)
+        projects_coll.find_one_and_update.assert_called_once()

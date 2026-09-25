@@ -602,6 +602,7 @@ class TestAutoCreateUsesSystemAnalyzers:
             "is_active": True,
             "created_by": "admin",
             "auto_create_projects": True,
+            "allowed_owner_ids": ["111"],
         }
         admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
 
@@ -642,6 +643,7 @@ class TestAutoCreateUsesSystemAnalyzers:
                     return_value=make_github_oidc_payload(
                         repository_id="789",
                         repository="org/repo",
+                        repository_owner_id="111",
                         actor="dev",
                     )
                 )

@@ -23,12 +23,14 @@ from app.models.user import User
 from app.repositories import ProjectRepository
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.schemas.github_instance import (
+    AUTO_CREATE_NEEDS_OWNERS,
     GitHubInstanceCreate,
     GitHubInstanceList,
     GitHubInstanceResponse,
     GitHubInstanceTestConnectionResponse,
     GitHubInstanceUpdate,
     GitHubOrgTeam,
+    lacks_required_owners,
 )
 from app.services.github import GitHubService, build_org_team_options
 
@@ -47,6 +49,7 @@ def _to_response(instance: GitHubInstance) -> GitHubInstanceResponse:
         oidc_audience=instance.oidc_audience,
         auto_create_projects=instance.auto_create_projects,
         sync_teams=instance.sync_teams,
+        allowed_owner_ids=instance.allowed_owner_ids,
         has_access_token=bool(instance.access_token),
         created_at=instance.created_at,
         created_by=instance.created_by,
@@ -128,6 +131,7 @@ async def create_instance(
         auto_create_projects=instance_data.auto_create_projects,
         sync_teams=instance_data.sync_teams,
         access_token=instance_data.access_token,
+        allowed_owner_ids=instance_data.allowed_owner_ids,
         created_by=str(current_user.id),
         created_at=datetime.now(timezone.utc),
     )
@@ -201,6 +205,13 @@ async def update_instance(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An access token is required to enable team syncing",
         )
+
+    if lacks_required_owners(
+        update_dict.get("url", instance.url),
+        update_dict.get("auto_create_projects", instance.auto_create_projects),
+        update_dict.get("allowed_owner_ids", instance.allowed_owner_ids),
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=AUTO_CREATE_NEEDS_OWNERS)
 
     update_dict["last_modified_at"] = datetime.now(timezone.utc)
 
