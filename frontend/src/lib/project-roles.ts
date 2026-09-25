@@ -74,6 +74,11 @@ export function canUpdateProject(
     || globalPermissions.includes('project:update');
 }
 
+/** Set or change the GitLab binding: system:manage OR a global project write grant */
+export function canBindGitLabProject(globalPermissions: string[]): boolean {
+  return ['system:manage', 'project:update', 'project:delete'].some(p => globalPermissions.includes(p));
+}
+
 /** Rotate API key: project admin OR global project:update */
 export function canRotateApiKey(
   project: Project,
