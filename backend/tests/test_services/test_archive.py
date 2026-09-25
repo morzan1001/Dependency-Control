@@ -918,3 +918,97 @@ async def test_restore_stamps_completion_only_after_the_gridfs_restore(archive_e
     restored_at = update["$set"]["restored_at"]
     assert restored_at.tzinfo == timezone.utc
     assert before <= restored_at <= datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_download_hashes_trufflehog_secrets_and_passes_sbom_lines_through_undecoded(archive_env, monkeypatch):
+    from bson import json_util
+
+    from app.services.archive import _gzip_compress_stream, stream_bundle_for_download
+    from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
+
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    original = b"".join(
+        [
+            chunk
+            async for chunk in BundleFrames.write(
+                scan_doc={"_id": "scan-1", "project_id": "proj-1"},
+                collections={
+                    "analysis_results": _aiter(
+                        [
+                            {"_id": "r0", "scan_id": "scan-1", "analyzer_name": "grype", "result": {}},
+                            {
+                                "_id": "r1",
+                                "scan_id": "scan-1",
+                                "analyzer_name": "trufflehog",
+                                "result": {"findings": [{"DetectorType": "2", "Raw": secret}]},
+                            },
+                        ]
+                    ),
+                    "gridfs_sboms": _aiter(
+                        [
+                            {
+                                "gridfs_id": "507f1f77bcf86cd799439011",
+                                "filename": "sbom.json",
+                                "data": {"components": [{"name": f"sbom-component-{i}"} for i in range(5000)]},
+                            }
+                        ]
+                    ),
+                },
+                stats=BundleStats(),
+            )
+        ]
+    )
+    archive_env.objects["proj-1/scan-1.bundle"] = b"".join(
+        [chunk async for chunk in _gzip_compress_stream(_aiter([original]))]
+    )
+    decoded: list[str | bytes] = []
+    loads = json_util.loads
+
+    def recording_loads(s, *args, **kwargs):
+        decoded.append(s)
+        return loads(s, *args, **kwargs)
+
+    monkeypatch.setattr(json_util, "loads", recording_loads)
+    metadata = _make_archive_metadata(s3_key="proj-1/scan-1.bundle", s3_bucket="test-bucket")
+
+    downloaded = zlib.decompress(
+        b"".join([chunk async for chunk in stream_bundle_for_download(metadata)]),
+        wbits=31,
+    )
+
+    assert decoded, "the header, markers and the trufflehog result still need decoding"
+    assert not any("sbom-component" in (s.decode() if isinstance(s, bytes) else s) for s in decoded)
+    (sbom_line,) = [line for line in original.splitlines(keepends=True) if b"sbom-component" in line]
+    assert sbom_line in downloaded
+    assert secret.encode() not in downloaded
+    events = [event async for event in read_bundle_frames(_aiter([downloaded]))]
+    results = {e["data"]["_id"]: e["data"] for e in events if e.get("collection") == "analysis_results"}
+    assert results["r0"] == {"_id": "r0", "scan_id": "scan-1", "analyzer_name": "grype", "result": {}}
+    assert results["r1"]["result"]["findings"][0]["RawHash"] == hashlib.md5(secret.encode()).hexdigest()[:8]
+    assert events[-1]["type"] == "footer"
+
+
+@pytest.mark.asyncio
+async def test_gzip_compression_of_a_large_chunk_leaves_the_event_loop_running():
+    import asyncio
+
+    from app.services.archive import _gzip_compress_stream
+
+    chunk = b"sbom-component " * (1 << 17)
+    ticks = 0
+
+    async def tick():
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    ticker = asyncio.create_task(tick())
+    try:
+        compressed = b"".join([out async for out in _gzip_compress_stream(_aiter([chunk]))])
+    finally:
+        ticker.cancel()
+
+    assert ticks > 0
+    assert zlib.decompress(compressed, wbits=31) == chunk

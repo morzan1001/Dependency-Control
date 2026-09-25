@@ -12,7 +12,7 @@ from datetime import datetime, timezone
 from functools import partial
 from typing import Any
 
-from bson import ObjectId
+from bson import ObjectId, json_util
 from cryptography.exceptions import InvalidTag
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pymongo.errors import DuplicateKeyError, PyMongoError
@@ -46,7 +46,13 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.archive import ArchiveRestoreResponse
 from app.schemas.trufflehog import TruffleHogFinding
-from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames, rewrite_bundle_frames
+from app.services.archive_bundle import (
+    BundleFrames,
+    BundleStats,
+    json_line,
+    read_bundle_frames,
+    rewrite_bundle_frames,
+)
 from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_rollup import record_scan_update_delta
 
@@ -54,6 +60,8 @@ logger = logging.getLogger(__name__)
 
 _ARCHIVE_LOCK_TTL_SECONDS = 600
 _RESTORE_LOCK_RENEWALS_PER_TTL = 3
+# zlib releases the GIL, so a chunk this large (a whole SBOM line) compresses in a thread instead of stalling the loop.
+_COMPRESS_IN_THREAD_MIN_BYTES = 1 << 20
 
 # Collections a bundle may restore into. Marker names are attacker-influenceable (footer
 # is a plain sha256, not an HMAC), so any name outside this set must abort the restore.
@@ -138,7 +146,10 @@ async def _gzip_compress_stream(source: AsyncIterator[bytes]) -> AsyncIterator[b
     async for chunk in source:
         if not chunk:
             continue
-        out = compressor.compress(chunk)
+        if len(chunk) >= _COMPRESS_IN_THREAD_MIN_BYTES:
+            out = await asyncio.to_thread(compressor.compress, chunk)
+        else:
+            out = compressor.compress(chunk)
         if out:
             yield out
     tail = compressor.flush(zlib.Z_FINISH)
@@ -448,17 +459,18 @@ async def _open_bundle_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes]
         yield out
 
 
-async def _hash_plaintext_secrets_in_events(events: AsyncIterator[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
-    async for event in events:
-        if event["type"] == "doc":
-            _hash_plaintext_secrets(event["collection"], event["data"])
-        yield event
+def _hash_plaintext_secrets_in_line(collection: str, line: bytes) -> bytes:
+    # json_util never escapes ASCII, so every serialized trufflehog result spells out its analyzer name.
+    if collection != "analysis_results" or b"trufflehog" not in line:
+        return line
+    doc = json_util.loads(line)
+    _hash_plaintext_secrets(collection, doc)
+    return json_line(doc)
 
 
 def stream_bundle_for_download(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
     """Stream the bundle as unencrypted gzip NDJSON, TruffleHog plaintext hashed and the footer digest recomputed."""
-    events = _hash_plaintext_secrets_in_events(read_bundle_frames(_open_bundle_stream(metadata)))
-    return _gzip_compress_stream(rewrite_bundle_frames(events))
+    return _gzip_compress_stream(rewrite_bundle_frames(_open_bundle_stream(metadata), _hash_plaintext_secrets_in_line))
 
 
 # ---------------------------------------------------------------------------
