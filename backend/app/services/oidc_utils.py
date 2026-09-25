@@ -20,6 +20,11 @@ logger = logging.getLogger(__name__)
 JWKS_FORCED_REFRESH_COOLDOWN_SECONDS = 60
 
 
+def _key_with_kid(jwks: dict[str, Any] | None, kid: str) -> dict[str, Any] | None:
+    keys: list[dict[str, Any]] = (jwks or {}).get("keys", [])
+    return next((key for key in keys if key.get("kid") == kid), None)
+
+
 async def find_jwks_key(
     kid: str,
     get_jwks: Callable[[], Awaitable[dict[str, Any] | None]],
@@ -27,13 +32,9 @@ async def find_jwks_key(
     provider_name: str = "OIDC",
 ) -> dict[str, Any] | None:
     """Find a signing key in the JWKS by key ID, refreshing the cache once on a miss."""
-    jwks = await get_jwks()
-
-    if jwks:
-        for k in jwks.get("keys", []):
-            if k.get("kid") == kid:
-                matching_key: dict[str, Any] = k
-                return matching_key
+    matching_key = _key_with_kid(await get_jwks(), kid)
+    if matching_key is not None:
+        return matching_key
 
     # Unknown kid: may be a legitimate rotation, but the kid is unauthenticated, so
     # rate-limit forced refreshes via a shared Redis cooldown; kids inside the window fail fast.
@@ -58,16 +59,10 @@ async def find_jwks_key(
 
     logger.info(f"{provider_name} key {kid} not in cache, refreshing JWKS...")
     await invalidate_cache()
-    jwks = await get_jwks()
-
-    if jwks:
-        for k in jwks.get("keys", []):
-            if k.get("kid") == kid:
-                matching_key = k
-                return matching_key
-
-    logger.error(f"No matching {provider_name} key found for kid: {kid} after refresh")
-    return None
+    matching_key = _key_with_kid(await get_jwks(), kid)
+    if matching_key is None:
+        logger.error(f"No matching {provider_name} key found for kid: {kid} after refresh")
+    return matching_key
 
 
 async def validate_oidc_token(

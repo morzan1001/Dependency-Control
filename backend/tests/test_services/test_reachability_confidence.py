@@ -6,6 +6,7 @@ from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABIL
 from app.schemas.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
+    _calculate_confidence,
     _check_package_in_imports,
     _enrich_finding_from_callgraphs,
     _enrich_single_finding,
@@ -500,3 +501,17 @@ class TestRunPendingBulkPersist:
         assert result["findings_dropped"] == 0
         doc = await db.findings.find_one({"_id": "f0"})
         assert doc["reachable"] is True
+
+
+@pytest.mark.parametrize(
+    ("extraction", "match_type", "expected"),
+    [
+        ("high", "matched", 1.0),
+        ("medium", "matched", 0.8),
+        ("high", "partial", 0.63),
+        ("unknown", "partial", 0.35),
+        ("medium", "none", 0.35),
+    ],
+)
+def test_confidence_blends_extraction_quality_with_match_type(extraction, match_type, expected):
+    assert _calculate_confidence(extraction, match_type) == pytest.approx(expected)

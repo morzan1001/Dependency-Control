@@ -324,11 +324,10 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         if not prev_scan_ids:
             return []
         with track_db_operation(self.collection_name, "find"):
-            docs = await self.collection.find(
+            return await self.collection.find(
                 {"project_id": project_id, "branch": branch, "prev_scan_id": {"$in": list(prev_scan_ids)}},
                 _NEIGHBOUR_PROJECTION,
             ).to_list(None)
-        return docs
 
     async def find_project_window(
         self, project_id: str, branch: str, since: datetime, limit: int

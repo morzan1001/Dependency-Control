@@ -93,8 +93,7 @@ async def readiness() -> dict[str, Any] | JSONResponse:
 async def cache_health() -> dict[str, Any]:
     """Cache health status and statistics."""
     try:
-        health = await cache_service.health_check()
-        return health
+        return await cache_service.health_check()
     except Exception as e:
         return {
             "status": "error",

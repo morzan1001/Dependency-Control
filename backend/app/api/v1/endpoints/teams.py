@@ -104,8 +104,7 @@ async def read_teams(
     sort_direction = 1 if sort_order == "asc" else -1
 
     pipeline = build_team_enrichment_pipeline(final_query, sort_by, sort_direction)
-    teams = await team_repo.aggregate(pipeline, limit=1000)
-    return teams
+    return await team_repo.aggregate(pipeline, limit=1000)
 
 
 @router.get("/{team_id}", response_model=TeamResponse, responses=RESP_AUTH_404)

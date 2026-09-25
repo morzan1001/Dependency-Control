@@ -591,11 +591,10 @@ def _calculate_confidence(extraction_confidence: str, match_type: str) -> float:
     if match_type == "matched":
         # Direct match - high confidence
         return min(extraction_score + 0.1, 1.0)
-    elif match_type == "partial":
+    if match_type == "partial":
         # Partial - lower confidence
         return extraction_score * 0.7
-    else:
-        return extraction_score * 0.5
+    return extraction_score * 0.5
 
 
 async def persist_reachability_result(result_repo: Any, scan_id: str, summary: Mapping[str, Any]) -> None:

@@ -120,8 +120,7 @@ async def read_users(
     sort_direction = 1 if sort_order == "asc" else -1
 
     user_repo = UserRepository(db)
-    users = await user_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
-    return users
+    return await user_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
 
 
 @router.get("/me", response_model=UserSchema, responses=RESP_AUTH)
@@ -231,11 +230,10 @@ async def update_user(
                     "'Reset Password' feature to send a reset link."
                 ),
             )
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="Use the /me/password endpoint to change your password.",
-            )
+        raise HTTPException(
+            status_code=400,
+            detail="Use the /me/password endpoint to change your password.",
+        )
 
     if update_data:
         await user_repo.update(user_id, update_data)

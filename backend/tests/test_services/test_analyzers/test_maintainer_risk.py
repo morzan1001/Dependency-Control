@@ -2,7 +2,9 @@
 
 from typing import Any
 
-from app.services.analyzers.maintainer_risk import correlate_maintainer_risks
+import pytest
+
+from app.services.analyzers.maintainer_risk import MaintainerRiskAnalyzer, correlate_maintainer_risks
 
 
 def _stale() -> dict[str, Any]:
@@ -117,3 +119,13 @@ class TestCorrelateMaintainerRisks:
         risks = [_free_email()]
         result = correlate_maintainer_risks(risks, github_active=None, maintainer_count=1)
         assert "free_email_maintainer" in _types(result)
+
+
+class TestOverallSeverity:
+    @pytest.mark.parametrize(
+        ("scores", "expected"),
+        [([], "LOW"), ([1], "LOW"), ([2, 1], "MEDIUM"), ([3], "HIGH"), ([1, 4], "CRITICAL"), ([5], "CRITICAL")],
+    )
+    def test_the_worst_signal_sets_the_package_severity(self, scores, expected):
+        risks = [{"severity_score": score} for score in scores]
+        assert MaintainerRiskAnalyzer()._calculate_overall_severity(risks) == expected

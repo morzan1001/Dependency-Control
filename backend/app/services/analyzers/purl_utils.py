@@ -163,8 +163,7 @@ def get_purl_type(purl: str | None) -> str | None:
         return None
 
     try:
-        type_part = purl[4:].split("/")[0].lower()
-        return type_part
+        return purl[4:].split("/")[0].lower()
     except (IndexError, AttributeError):
         return None
 

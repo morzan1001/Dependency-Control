@@ -216,11 +216,10 @@ class SlackProvider(NotificationProvider):
                     if notifications_sent_total:
                         notifications_sent_total.labels(type="slack").inc()
                     return True
-                else:
-                    logger.error(f"Failed to send Slack message: {response.text}")
-                    if notifications_failed_total:
-                        notifications_failed_total.labels(type="slack").inc()
-                    return False
+                logger.error(f"Failed to send Slack message: {response.text}")
+                if notifications_failed_total:
+                    notifications_failed_total.labels(type="slack").inc()
+                return False
         except Exception as e:
             logger.exception("Error sending Slack message: %s", e)
             if notifications_failed_total:

@@ -63,7 +63,7 @@ def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
     """Standard model-or-dict accessor used by all recommendation modules."""
     if isinstance(obj, BaseModel):
         return getattr(obj, key, default)
-    elif isinstance(obj, dict):
+    if isinstance(obj, dict):
         return obj.get(key, default)
     return default
 

@@ -370,12 +370,11 @@ class WebhookService:
                             retry_count=retry_count,
                         )
                         return True
-                    else:
-                        logger.warning(
-                            f"Webhook {webhook.id} returned non-success status {response.status_code} "
-                            f"for {event_type}: {response.text[:200]}"
-                        )
-                        last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                    logger.warning(
+                        f"Webhook {webhook.id} returned non-success status {response.status_code} "
+                        f"for {event_type}: {response.text[:200]}"
+                    )
+                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
 
             except ValueError as e:
                 # SSRF policy violation — don't retry.
@@ -672,13 +671,12 @@ class WebhookService:
                         "error": None,
                         "response_time_ms": round(response_time_ms, 2),
                     }
-                else:
-                    return {
-                        "success": False,
-                        "status_code": response.status_code,
-                        "error": f"HTTP {response.status_code}: {response.text[:200]}",
-                        "response_time_ms": round(response_time_ms, 2),
-                    }
+                return {
+                    "success": False,
+                    "status_code": response.status_code,
+                    "error": f"HTTP {response.status_code}: {response.text[:200]}",
+                    "response_time_ms": round(response_time_ms, 2),
+                }
 
         except ValueError as e:
             return {

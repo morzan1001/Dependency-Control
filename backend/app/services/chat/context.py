@@ -153,8 +153,7 @@ def build_messages(
         new_entry["images"] = new_images
     messages.append(new_entry)
 
-    messages = trim_to_token_budget(messages, settings.CHAT_MAX_TOKEN_BUDGET)
-    return messages
+    return trim_to_token_budget(messages, settings.CHAT_MAX_TOKEN_BUDGET)
 
 
 def build_tool_result_message(result: dict[str, Any]) -> dict[str, Any]:
