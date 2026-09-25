@@ -82,7 +82,7 @@ def _make_mock_db(
     db.scans.find_one = AsyncMock(return_value=scan_doc)
     db.scans.find = MagicMock(return_value=_AsyncCursorMock([scan_doc] if scan_doc else []))
     db.scans.insert_one = AsyncMock()
-    db.scans.update_one = AsyncMock()
+    db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
     # Nothing in these fixtures is released, so the release-chain guard finds no protection.
     db.scans.distinct = AsyncMock(return_value=_NO_IDS)
     db.releases.distinct = AsyncMock(return_value=_NO_IDS)
@@ -329,6 +329,7 @@ async def test_restore_scan_roundtrip(archive_env):
         RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -473,6 +474,7 @@ async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
         RepoCls.return_value.delete_by_scan_id = delete_metadata
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -625,6 +627,7 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
         RepoCls.return_value.delete_by_scan_id = AsyncMock(side_effect=RuntimeError("Mongo hiccup"))
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -695,6 +698,7 @@ async def test_restore_succeeds_when_encryption_flag_toggled_after_plaintext_arc
         RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -819,7 +823,12 @@ async def test_restore_stamps_completion_only_after_the_gridfs_restore(archive_e
     monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
     monkeypatch.setattr(f"{MODULE}._restore_gridfs", restore_gridfs)
     monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
-    db.scans.update_one = AsyncMock(side_effect=lambda *_args: calls.append("complete"))
+
+    async def complete(*_args):
+        calls.append("complete")
+        return MagicMock(matched_count=1)
+
+    db.scans.update_one = AsyncMock(side_effect=complete)
     before = datetime.now(timezone.utc)
 
     with (
@@ -830,13 +839,14 @@ async def test_restore_stamps_completion_only_after_the_gridfs_restore(archive_e
         RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
     assert result is not None
     assert calls == ["gridfs", "complete"]
     query, update = db.scans.update_one.await_args.args
-    assert query == {"_id": "scan-1"}
+    assert query == {"_id": "scan-1", "restore_in_progress": True}
     assert update["$unset"] == {"restore_in_progress": ""}
     restored_at = update["$set"]["restored_at"]
     assert restored_at.tzinfo == timezone.utc

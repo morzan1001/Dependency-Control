@@ -100,6 +100,7 @@ async def test_restore_rebuilds_the_delta_and_repoints_the_successor(archive_env
         RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
         result = await restore_scan(db, "scan-1")
 
     assert result is not None

@@ -5,9 +5,11 @@ import json
 import logging
 import os
 import time
+import uuid
 import zlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any
 
 from bson import ObjectId
@@ -51,6 +53,7 @@ from app.services.update_frequency_rollup import record_scan_update_delta
 logger = logging.getLogger(__name__)
 
 _ARCHIVE_LOCK_TTL_SECONDS = 600
+_RESTORE_LOCK_RENEWALS_PER_TTL = 3
 
 # Collections a bundle may restore into. Marker names are attacker-influenceable (footer
 # is a plain sha256, not an HMAC), so any name outside this set must abort the restore.
@@ -63,7 +66,8 @@ class _ArchiveSourceReadError(Exception):
 
 
 def _holder_id(prefix: str) -> str:
-    return f"{prefix}-{os.getenv('HOSTNAME', 'unknown')}"
+    # Unique per call, so a holder can tell its own lock apart from one a second call on the same pod took over.
+    return f"{prefix}-{os.getenv('HOSTNAME', 'unknown')}-{uuid.uuid4().hex}"
 
 
 def _extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
@@ -634,7 +638,7 @@ async def _load_restore_metadata(
 
     existing = await db.scans.find_one({"_id": scan_id}, {"restore_in_progress": 1})
     if existing and existing.get("restore_in_progress"):
-        # The caller holds the restore lock, so no live restore owns this leftover.
+        # A running restore keeps renewing its lock, so while we hold it nobody still writes this leftover.
         logger.warning(
             "Rolling back an unfinished restore before restoring again",
             extra={"scan_id": sanitize_for_log(scan_id)},
@@ -683,11 +687,39 @@ async def _finalize_restore_cleanup(
         )
 
 
+async def _mark_restore_complete(
+    db: Any,
+    scan_id: str,
+    renew_lock: Callable[[], Awaitable[bool]],
+) -> str | None:
+    """Stamp the scan restored if this restore still owns it; otherwise return the failure reason."""
+    # The heartbeat checks the lock only every TTL/3, so a takeover in between must still be caught before finalize.
+    if not await renew_lock():
+        logger.error(
+            "Restore lost its lock to another restore, leaving the scan to it",
+            extra={"scan_id": sanitize_for_log(scan_id)},
+        )
+        return ArchiveFailureReason.LOCK_HELD
+    completed = await db.scans.update_one(
+        {"_id": scan_id, "restore_in_progress": True},
+        {"$set": {"restored_at": datetime.now(timezone.utc)}, "$unset": {"restore_in_progress": ""}},
+    )
+    if completed.matched_count == 0:
+        logger.error(
+            "Restored scan disappeared before the restore completed",
+            extra={"scan_id": sanitize_for_log(scan_id)},
+        )
+        await _rollback_partial_restore(db, scan_id)
+        return ArchiveFailureReason.UNKNOWN
+    return None
+
+
 async def _run_restore_pipeline(
     db: Any,
     repo: ArchiveMetadataRepository,
     metadata: ArchiveMetadata,
     scan_id: str,
+    renew_lock: Callable[[], Awaitable[bool]],
 ) -> ArchiveRestoreResponse | None:
     """Drive the replay+GridFS+cleanup pipeline after preconditions are met."""
     start_time = time.monotonic()
@@ -708,10 +740,11 @@ async def _run_restore_pipeline(
     if gridfs_entries:
         collections_restored.append(ARCHIVE_GRIDFS_FRAME)
 
-    await db.scans.update_one(
-        {"_id": scan_id},
-        {"$set": {"restored_at": datetime.now(timezone.utc)}, "$unset": {"restore_in_progress": ""}},
-    )
+    failure_reason = await _mark_restore_complete(db, scan_id, renew_lock)
+    if failure_reason is not None:
+        archive_failures_total.labels(operation="restore", reason=failure_reason).inc()
+        archive_operations_total.labels(operation="restore", status="failure").inc()
+        return None
 
     # The restored scan re-enters its branch timeline, so the rollup also re-points the successor.
     await record_scan_update_delta(db, scan_id)
@@ -736,6 +769,55 @@ async def _run_restore_pipeline(
     )
 
 
+async def _renew_restore_lock_until_lost(
+    renew_lock: Callable[[], Awaitable[bool]],
+    pipeline: asyncio.Task[ArchiveRestoreResponse | None],
+    scan_id: str,
+) -> None:
+    """Keep the restore lock alive while the pipeline runs; cancel the pipeline once another restore took it over."""
+    while True:
+        await asyncio.sleep(_ARCHIVE_LOCK_TTL_SECONDS / _RESTORE_LOCK_RENEWALS_PER_TTL)
+        try:
+            still_held = await renew_lock()
+        except PyMongoError as e:
+            logger.warning(
+                "Restore lock renewal failed, retrying",
+                extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+            )
+            continue
+        if not still_held:
+            logger.error(
+                "Restore lost its lock to another restore, aborting",
+                extra={"scan_id": sanitize_for_log(scan_id)},
+            )
+            pipeline.cancel()
+            return
+
+
+async def _run_restore_pipeline_holding_lock(
+    db: Any,
+    repo: ArchiveMetadataRepository,
+    metadata: ArchiveMetadata,
+    scan_id: str,
+    renew_lock: Callable[[], Awaitable[bool]],
+) -> ArchiveRestoreResponse | None:
+    pipeline = asyncio.create_task(_run_restore_pipeline(db, repo, metadata, scan_id, renew_lock))
+    heartbeat = asyncio.create_task(_renew_restore_lock_until_lost(renew_lock, pipeline, scan_id))
+    try:
+        return await pipeline
+    except asyncio.CancelledError:
+        # Only the heartbeat cancels the pipeline without cancelling us; our own cancellation must propagate.
+        this_task = asyncio.current_task()
+        if this_task is None or this_task.cancelling():
+            raise
+        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.LOCK_HELD).inc()
+        archive_operations_total.labels(operation="restore", status="failure").inc()
+        return None
+    finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+
+
 async def restore_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
@@ -752,6 +834,7 @@ async def restore_scan(
     lock_repo = DistributedLocksRepository(db)
     lock_name = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
     holder = _holder_id("restore")
+    renew_lock = partial(lock_repo.renew_lock, lock_name, holder, _ARCHIVE_LOCK_TTL_SECONDS)
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
         logger.info(
@@ -766,6 +849,6 @@ async def restore_scan(
         metadata = await _load_restore_metadata(db, repo, scan_id)
         if metadata is None:
             return None
-        return await _run_restore_pipeline(db, repo, metadata, scan_id)
+        return await _run_restore_pipeline_holding_lock(db, repo, metadata, scan_id, renew_lock)
     finally:
         await lock_repo.release_lock(lock_name, holder)

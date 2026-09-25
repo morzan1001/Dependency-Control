@@ -1,5 +1,6 @@
-"""A restore counts as finished only once every write landed; the reaper must never take a partial one for done."""
+"""A restore counts as finished only once every write landed while it still owned the scan's restore lock."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 
@@ -9,11 +10,13 @@ from pymongo.errors import AutoReconnect
 from app.core.constants import SCAN_SCOPED_COLLECTIONS
 from app.core.housekeeping import _reap_stale_metadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
-from app.services.archive import archive_scan, restore_scan
+from app.repositories.distributed_locks import DistributedLocksRepository
+from app.services.archive import _holder_id, archive_scan, restore_scan
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.services.archive"
 SCAN_ID = "scan-1"
+LOCK_NAME = f"restore:{SCAN_ID}"
 _ARCHIVED_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
@@ -121,3 +124,136 @@ async def test_a_retry_after_a_crashed_restore_restores_the_scan(archive_env):
     assert [doc["_id"] async for doc in db.dependencies.find({"scan_id": SCAN_ID})] == [f"{SCAN_ID}:requests"]
     assert await _surviving_metadata(db) == []
     assert archive_env.objects == {}
+
+
+class _FirstDependenciesBatchStall:
+    """Holds the first dependencies batch until released, the way a slow write keeps a big restore busy."""
+
+    def __init__(self, db: FakeDatabase):
+        self._insert_many = db.dependencies.insert_many
+        self._calls = 0
+        self.reached = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def __call__(self, docs, **kwargs):
+        self._calls += 1
+        if self._calls == 1:
+            self.reached.set()
+            await self.release.wait()
+        return await self._insert_many(docs, **kwargs)
+
+
+async def _take_over_the_restore_lock(db: FakeDatabase) -> str:
+    """Another restore on this pod takes the lock over, as it can once missed renewals let the lock expire."""
+    expired = datetime.now(timezone.utc) - timedelta(seconds=1)
+    await db.distributed_locks.update_one({"_id": LOCK_NAME}, {"$set": {"expires_at": expired}})
+    taker = _holder_id("restore")
+    assert await DistributedLocksRepository(db).acquire_lock(LOCK_NAME, taker, ttl_seconds=600)
+    return taker
+
+
+async def _assert_the_archive_survived(db: FakeDatabase, s3) -> None:
+    assert await _surviving_metadata(db) == [SCAN_ID]
+    assert len(s3.objects) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_restore_outliving_the_lock_ttl_keeps_a_retry_out(archive_env, monkeypatch):
+    monkeypatch.setattr(f"{MODULE}._ARCHIVE_LOCK_TTL_SECONDS", 0.3)
+    db = FakeDatabase()
+    await _archived_scan(db)
+    stall = _FirstDependenciesBatchStall(db)
+
+    with patch.object(db.dependencies, "insert_many", stall):
+        first = asyncio.create_task(restore_scan(db, SCAN_ID))
+        await stall.reached.wait()
+        await asyncio.sleep(0.9)
+        retry = await restore_scan(db, SCAN_ID)
+        stall.release.set()
+        result = await first
+
+    assert retry is None
+    assert result is not None
+    scan = await db.scans.find_one({"_id": SCAN_ID})
+    assert scan["restored_at"] is not None
+    assert "restore_in_progress" not in scan
+    assert [doc["_id"] async for doc in db.dependencies.find({"scan_id": SCAN_ID})] == [f"{SCAN_ID}:requests"]
+    assert await _surviving_metadata(db) == []
+
+
+@pytest.mark.asyncio
+async def test_a_restore_stops_writing_once_another_restore_took_its_lock_over(archive_env, monkeypatch):
+    monkeypatch.setattr(f"{MODULE}._ARCHIVE_LOCK_TTL_SECONDS", 0.3)
+    db = FakeDatabase()
+    await _archived_scan(db)
+    stall = _FirstDependenciesBatchStall(db)
+
+    with patch.object(db.dependencies, "insert_many", stall):
+        first = asyncio.create_task(restore_scan(db, SCAN_ID))
+        await stall.reached.wait()
+        taker = await _take_over_the_restore_lock(db)
+        await asyncio.sleep(1.0)
+        stall.release.set()
+        result = await first
+
+    assert result is None
+    assert await db.dependencies.find_one({"scan_id": SCAN_ID}) is None
+    assert (await db.scans.find_one({"_id": SCAN_ID}))["restore_in_progress"] is True
+    await _assert_the_archive_survived(db, archive_env)
+    assert (await db.distributed_locks.find_one({"_id": LOCK_NAME}))["holder"] == taker
+
+
+@pytest.mark.asyncio
+async def test_a_restore_that_lost_its_lock_before_completing_keeps_the_archive(archive_env):
+    db = FakeDatabase()
+    await _archived_scan(db)
+    stall = _FirstDependenciesBatchStall(db)
+
+    with patch.object(db.dependencies, "insert_many", stall):
+        first = asyncio.create_task(restore_scan(db, SCAN_ID))
+        await stall.reached.wait()
+        await _take_over_the_restore_lock(db)
+        stall.release.set()
+        result = await first
+
+    assert result is None
+    scan = await db.scans.find_one({"_id": SCAN_ID})
+    assert scan["restore_in_progress"] is True
+    assert "restored_at" not in scan
+    await _assert_the_archive_survived(db, archive_env)
+
+
+@pytest.mark.asyncio
+async def test_a_restore_whose_scan_vanished_keeps_the_archive(archive_env):
+    db = FakeDatabase()
+    await _archived_scan(db)
+    stall = _FirstDependenciesBatchStall(db)
+
+    with patch.object(db.dependencies, "insert_many", stall):
+        first = asyncio.create_task(restore_scan(db, SCAN_ID))
+        await stall.reached.wait()
+        await db.scans.delete_one({"_id": SCAN_ID})
+        stall.release.set()
+        result = await first
+
+    assert result is None
+    assert await db.scans.find_one({"_id": SCAN_ID}) is None
+    assert await db.dependencies.find_one({"scan_id": SCAN_ID}) is None
+    assert await db.analysis_results.find_one({"scan_id": SCAN_ID}) is None
+    await _assert_the_archive_survived(db, archive_env)
+
+
+@pytest.mark.asyncio
+async def test_cancelling_a_restore_propagates_and_frees_its_lock(archive_env):
+    db = FakeDatabase()
+    await _archived_scan(db)
+    stall = _FirstDependenciesBatchStall(db)
+
+    with patch.object(db.dependencies, "insert_many", stall):
+        first = asyncio.create_task(restore_scan(db, SCAN_ID))
+        await stall.reached.wait()
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+
+    assert await db.distributed_locks.find_one({"_id": LOCK_NAME}) is None
