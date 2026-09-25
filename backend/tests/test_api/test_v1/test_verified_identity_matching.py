@@ -295,3 +295,18 @@ class TestGitLabTeamSyncWithoutListedEmails:
         assert refused.determined is False
         assert answered.email == cached.email == "ada@corp.com"
         assert read.await_count == len(answers)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("public_email", ["ada@corp.com", None], ids=["public-email", "none"])
+    async def test_a_profile_answer_outlives_answering_a_large_group_at_gitlabs_default_rate_limit(
+        self, gitlab_cache, public_email
+    ):
+        # GitLab answers a non-admin token's GET /users/:id at most 300 times per 10 minutes by default.
+        members, answers_per_window, window_seconds = 10_000, 300, 600
+        service = GitLabService(make_gitlab_instance(id="inst-1"))
+        answer = _answer(200, {"id": 7, "public_email": public_email})
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=answer)):
+            await service.get_user_public_email(7)
+
+        key = gitlab_cache._make_key(service._get_cache_key("user_email:7"))
+        assert await gitlab_cache._client.ttl(key) >= members / answers_per_window * window_seconds
