@@ -141,7 +141,7 @@ async def window_scans_by_branch(
     scoped = _usable_scan_match(since)
 
     activity: dict[tuple[str, str], BranchWindowActivity] = {}
-    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH):
+    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
         pipeline = [
             {"$match": {"project_id": {"$in": list(batch)}, **scoped}},
             {"$addFields": {"_commit": _COMMIT_TOKEN}},
@@ -188,7 +188,7 @@ async def window_scan_ids_by_branch(
     timeline either.
     """
     scans: dict[tuple[str, str], list[tuple[str, datetime]]] = {}
-    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH):
+    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
         pipeline = [
             {"$match": {"project_id": {"$in": list(batch)}, **_usable_scan_match(since)}},
             {
@@ -264,7 +264,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         ceiling, transfers the same bytes, and leaves every metric in the pure fold.
         """
         buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH):
+        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
             query = {
                 "project_id": {"$in": list(batch)},
                 "scan_created_at": {"$gte": since},
@@ -293,7 +293,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         census as heavy as the comparison endpoint's fold.
         """
         chains: dict[tuple[str, str], dict[str, LedgerEntry]] = {}
-        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH):
+        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
             pipeline = [
                 {"$match": {"project_id": {"$in": list(batch)}, "scan_created_at": {"$gte": since}}},
                 {

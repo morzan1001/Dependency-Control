@@ -69,6 +69,8 @@ module = "app.schemas.system"
 disable_error_code = ["prop-decorator"]
 
 [tool.ruff]
+# Ruff does not read poetry's python constraint and would otherwise lint for 3.10.
+target-version = "py313"
 line-length = 120
 exclude = [".git", "__pycache__", "docs/source/conf.py", "old", "build", "dist"]
 
