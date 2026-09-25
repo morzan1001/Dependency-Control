@@ -7,7 +7,7 @@ import pytest
 from app.core.constants import TEAM_SOURCE_GITHUB, team_source
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubService, GitHubTeamSyncResult
+from app.services.github import GitHubEmailLookup, GitHubService, GitHubTeamSyncResult
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 
@@ -22,7 +22,9 @@ _THEIRS = team_source(TEAM_SOURCE_GITHUB, "gh-2")
 
 
 def _service():
-    return GitHubService(make_github_instance(id="gh-1", access_token="ghp-secret", sync_teams=True))
+    service = GitHubService(make_github_instance(id="gh-1", access_token="ghp-secret", sync_teams=True))
+    service.get_user_public_email = AsyncMock(return_value=GitHubEmailLookup("ada@corp.com"))
+    return service
 
 
 def _stubbed_reads(service, holders=("payments",), repo_map=None, org_teams=None):
@@ -56,7 +58,7 @@ def _binding_keys(team: dict) -> list[str]:
 
 
 async def _assert_the_maintainer_lands_in_the_bound_team(db) -> None:
-    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     await repo.create(_bound_team(_github(slug="pay-old")))
     service = _service()
@@ -76,7 +78,7 @@ _HELD_BY_PLATFORM = {"acme/widgets": [9000]}
 
 
 async def _assert_an_unbound_github_group_becomes_a_team(db) -> None:
-    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     service = _service()
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service, holders=(), repo_map=_HELD_BY_PLATFORM)
@@ -95,7 +97,7 @@ async def _assert_an_unbound_github_group_becomes_a_team(db) -> None:
 async def _assert_the_group_is_not_created_twice(db) -> None:
     """Once created the team is bound, so the next scan resolves it through the direct check and
     the map only confirms that nothing else has been granted access since."""
-    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     service = _service()
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(
@@ -114,7 +116,7 @@ async def _assert_a_team_of_the_same_name_is_left_alone(db) -> None:
     """The escalation: a team named to match an unbound group collected project-admin over every
     repository that group holds, for anyone who could create or rename a team. Only the
     system:manage binding endpoint grants a team a group's projects."""
-    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     await repo.create(Team(id="t-llama", name="Shangri Llama", members=[TeamMember(user_id="u-squatter")]))
     service = _service()
@@ -139,7 +141,7 @@ async def _assert_a_team_of_the_same_name_is_left_alone(db) -> None:
 async def _assert_a_cleared_binding_stays_cleared(db) -> None:
     """An unbound group is what the organisation walk goes looking for, so an ingest that bound the
     team back left its members without access in between and handed the group to them again."""
-    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     await repo.create(Team(id="t-platform", name="Platform", bindings=[_github(external_id=9000, slug="platform")]))
     service = _service()
@@ -229,7 +231,7 @@ async def _assert_a_team_synced_from_gitlab_gains_no_github_binding(db) -> None:
 
 
 async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
-    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     await repo.create(
         _bound_team(
@@ -271,7 +273,7 @@ async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
 
 async def _assert_the_organisation_case_does_not_decide(db) -> None:
     """The OIDC claim is lower-case; a binding stored in GitHub's own spelling must still match."""
-    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     repo = TeamRepository(db)
     await repo.create(_bound_team(_github(org="Acme")))
     service = _service()

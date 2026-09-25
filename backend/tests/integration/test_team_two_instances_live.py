@@ -16,7 +16,7 @@ from app.models.project import Project
 from app.models.team import GitHubTeamBinding, Team
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubService
+from app.services.github import GitHubEmailLookup, GitHubService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 
@@ -30,7 +30,9 @@ _TEAMS_B = [{"id": 8150, "slug": "zahlungen", "name": "Zahlungen", "parent": Non
 
 
 def _service(instance_id: str) -> GitHubService:
-    return GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret", sync_teams=True))
+    service = GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret", sync_teams=True))
+    service.get_user_public_email = AsyncMock(return_value=GitHubEmailLookup("ada@corp.com"))
+    return service
 
 
 def _reads(service: GitHubService, org_teams: list[dict]):
@@ -60,7 +62,7 @@ async def _ingest(db, instance_id: str, org_teams: list[dict], project_id: str, 
 
 async def _seed(db) -> None:
     await create_team_indexes(db)
-    await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com"})
+    await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     await TeamRepository(db).create(
         Team(
             id="t-shared",
@@ -135,7 +137,7 @@ async def _assert_one_instance_resolves_only_through_its_own_binding(db) -> None
     """The team is bound on B only. A's ingest must find nothing rather than read B's binding as
     its own and hand A's repository to a team no group of A's holds."""
     await create_team_indexes(db)
-    await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com"})
+    await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     await TeamRepository(db).create(
         Team(
             id="t-b-only",

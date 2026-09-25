@@ -606,6 +606,7 @@ class TestAutoCreateUsesSystemAnalyzers:
         }
         admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
 
+        from app.services.github import _MemberResolution
         from tests.mocks.github import make_github_oidc_payload
         from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
@@ -647,6 +648,7 @@ class TestAutoCreateUsesSystemAnalyzers:
                         actor="dev",
                     )
                 )
+                mock_svc.resolve_login = AsyncMock(return_value=_MemberResolution(None))
                 MockService.return_value = mock_svc
 
                 result = asyncio.run(

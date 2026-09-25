@@ -37,12 +37,15 @@ def _service(instance_id: str = _INSTANCE) -> GitHubService:
     return GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret", sync_teams=True))
 
 
-def _user_repo(*, by_username=None, by_email=None) -> MagicMock:
+def _user_repo(user=None) -> MagicMock:
     repo = MagicMock()
-    repo.get_raw_by_username = AsyncMock(return_value=by_username)
-    repo.get_raw_by_email = AsyncMock(return_value=by_email)
+    repo.get_raw_by_verified_email = AsyncMock(return_value=user)
     repo.create = AsyncMock()
     return repo
+
+
+def _public_email(service: GitHubService, email: str | None = "ada@corp.com"):
+    return patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(email)))
 
 
 def _bound(
@@ -109,45 +112,33 @@ def _sync_stubs(
         patch.object(service, "get_team_members", new=stubs.members),
         patch.object(service, "get_org_repository_map", new=stubs.repo_map),
         patch("app.services.github.TeamRepository", return_value=team_repo),
-        patch("app.services.github.UserRepository", return_value=user_repo or _user_repo(by_username={"_id": "u-1"})),
+        patch("app.services.github.UserRepository", return_value=user_repo or _user_repo({"_id": "u-1"})),
+        _public_email(service),
     ):
         yield stubs
 
 
 class TestMemberResolution:
     @pytest.mark.asyncio
-    async def test_the_login_is_matched_against_the_username_first(self):
+    async def test_the_login_resolves_through_its_public_profile_email_alone(self):
         service = _service()
-        repo = _user_repo(by_username={"_id": "u-1", "username": "ada"})
+        repo = _user_repo({"_id": "u-2", "email": "ada@corp.com"})
 
-        with patch.object(service, "get_user_public_email", new=AsyncMock()) as public_email:
-            members, _, _ = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
-
-        assert [m.user_id for m in members] == ["u-1"]
-        public_email.assert_not_awaited()
-
-    @pytest.mark.asyncio
-    async def test_the_public_profile_email_is_the_fallback_and_is_case_insensitive(self):
-        service = _service()
-        repo = _user_repo(by_username=None, by_email={"_id": "u-2", "email": "ada@corp.com"})
-
-        with patch.object(
-            service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup("Ada@Corp.com"))
-        ):
+        with _public_email(service, "Ada@Corp.com"):
             members, _, _ = await service._build_team_members([{"login": "ada-l", "role": "member"}], repo)
 
         assert [m.user_id for m in members] == ["u-2"]
-        repo.get_raw_by_email.assert_awaited_once_with("Ada@Corp.com")
+        repo.get_raw_by_verified_email.assert_awaited_once_with("Ada@Corp.com")
 
     @pytest.mark.asyncio
     async def test_a_hidden_profile_email_is_never_looked_up(self):
         service = _service()
         repo = _user_repo()
 
-        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
+        with _public_email(service, None):
             assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == ([], 1, 0)
 
-        repo.get_raw_by_email.assert_not_awaited()
+        repo.get_raw_by_verified_email.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_a_member_with_no_local_account_is_skipped_and_not_created(self, caplog):
@@ -173,13 +164,14 @@ class TestMemberResolution:
         with patch.object(service, "get_user_public_email", new=throttled):
             assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == ([], 0, 1)
 
-        repo.get_raw_by_email.assert_not_awaited()
+        repo.get_raw_by_verified_email.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_every_resolved_member_is_tagged_with_the_instance_that_resolved_them(self):
         service = _service()
-        repo = _user_repo(by_username={"_id": "u-1"})
-        members, _, _ = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
+        repo = _user_repo({"_id": "u-1"})
+        with _public_email(service):
+            members, _, _ = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
         assert members[0].source == _OWN
 
     def test_two_instances_of_one_provider_claim_different_subsets(self):
@@ -188,33 +180,36 @@ class TestMemberResolution:
     @pytest.mark.asyncio
     async def test_two_logins_resolving_to_one_user_yield_a_single_member(self):
         service = _service()
-        repo = _user_repo(by_username={"_id": "u-1"})
+        repo = _user_repo({"_id": "u-1"})
 
-        members, _, _ = await service._build_team_members(
-            [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
-        )
+        with _public_email(service):
+            members, _, _ = await service._build_team_members(
+                [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
+            )
 
         assert members == [TeamMember(user_id="u-1", role="admin", source=_OWN)]
 
     @pytest.mark.asyncio
     async def test_the_stronger_role_wins_whichever_login_comes_first(self):
         service = _service()
-        repo = _user_repo(by_username={"_id": "u-1"})
+        repo = _user_repo({"_id": "u-1"})
 
-        members, _, _ = await service._build_team_members(
-            [{"login": "ada-work", "role": "member"}, {"login": "ada", "role": "maintainer"}], repo
-        )
+        with _public_email(service):
+            members, _, _ = await service._build_team_members(
+                [{"login": "ada-work", "role": "member"}, {"login": "ada", "role": "maintainer"}], repo
+            )
 
         assert members == [TeamMember(user_id="u-1", role="admin", source=_OWN)]
 
     @pytest.mark.asyncio
     async def test_a_deduplicated_login_does_not_count_as_unresolved(self):
         service = _service()
-        repo = _user_repo(by_username={"_id": "u-1"})
+        repo = _user_repo({"_id": "u-1"})
 
-        _, unresolved, _ = await service._build_team_members(
-            [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
-        )
+        with _public_email(service):
+            _, unresolved, _ = await service._build_team_members(
+                [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
+            )
 
         assert unresolved == 0
 
@@ -230,16 +225,15 @@ class TestMemberResolution:
     @pytest.mark.asyncio
     async def test_the_bots_every_organisation_has_count_without_costing_the_real_members(self):
         service = _service()
-        repo = MagicMock()
-        repo.get_raw_by_username = AsyncMock(side_effect=[None, None, {"_id": "u-1"}])
-        repo.get_raw_by_email = AsyncMock(return_value=None)
+        repo = _user_repo({"_id": "u-1"})
         github_members = [
             {"login": "dependabot", "role": "member"},
             {"login": "renovate", "role": "member"},
             {"login": "ada", "role": "member"},
         ]
+        public_emails = [GitHubEmailLookup(None), GitHubEmailLookup(None), GitHubEmailLookup("ada@corp.com")]
 
-        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
+        with patch.object(service, "get_user_public_email", new=AsyncMock(side_effect=public_emails)):
             members, unresolved, _ = await service._build_team_members(github_members, repo)
 
         assert [m.user_id for m in members] == ["u-1"]
@@ -251,8 +245,9 @@ class TestRoleMapping:
     @pytest.mark.parametrize(("github_role", "expected"), [("maintainer", "admin"), ("member", "member")])
     async def test_maintainer_becomes_admin(self, github_role, expected):
         service = _service()
-        repo = _user_repo(by_username={"_id": "u-1"})
-        members, _, _ = await service._build_team_members([{"login": "ada", "role": github_role}], repo)
+        repo = _user_repo({"_id": "u-1"})
+        with _public_email(service):
+            members, _, _ = await service._build_team_members([{"login": "ada", "role": github_role}], repo)
         assert members[0].role == expected
 
 
@@ -607,11 +602,11 @@ class TestSyncTeamFromGithub:
         happens precisely when the token is under pressure."""
         service = _service()
         team_repo = _team_repo(_bound("t-pay", 4711, members=[{"user_id": "u-1", "role": "admin", "source": _OWN}]))
-        user_repo = MagicMock()
-        user_repo.get_raw_by_username = AsyncMock(side_effect=[None, {"_id": "u-2"}])
-        user_repo.get_raw_by_email = AsyncMock(return_value=None)
+        user_repo = _user_repo({"_id": "u-2"})
         members = [{"login": "ada", "role": "maintainer"}, {"login": "bob", "role": "member"}]
-        throttled = AsyncMock(return_value=GitHubEmailLookup(None, determined=False))
+        throttled = AsyncMock(
+            side_effect=[GitHubEmailLookup(None, determined=False), GitHubEmailLookup("bob@corp.com")]
+        )
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=members, user_repo=user_repo):
             with patch.object(service, "get_user_public_email", new=throttled):
@@ -628,13 +623,12 @@ class TestSyncTeamFromGithub:
         """The routine case: a bot resolves to nobody while a real member does."""
         service = _service()
         team_repo = _team_repo(_bound("t-pay", 4711))
-        user_repo = MagicMock()
-        user_repo.get_raw_by_username = AsyncMock(side_effect=[None, {"_id": "u-1"}])
-        user_repo.get_raw_by_email = AsyncMock(return_value=None)
+        user_repo = _user_repo({"_id": "u-1"})
         members = [{"login": "dependabot", "role": "member"}, {"login": "ada", "role": "maintainer"}]
+        public_emails = AsyncMock(side_effect=[GitHubEmailLookup(None), GitHubEmailLookup("ada@corp.com")])
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=members, user_repo=user_repo):
-            with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
+            with patch.object(service, "get_user_public_email", new=public_emails):
                 result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
         assert result == GitHubTeamSyncResult(["t-pay"])

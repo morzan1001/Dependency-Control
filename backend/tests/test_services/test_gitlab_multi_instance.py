@@ -81,8 +81,7 @@ class TestTeamMemberSyncResolveOnly:
         service = GitLabService(make_gitlab_instance())
         existing = {"_id": "u-1", "email": "real@example.com", "username": "real"}
         user_repo = MagicMock()
-        user_repo.get_raw_by_email = AsyncMock(return_value=existing)
-        user_repo.get_raw_by_username = AsyncMock(return_value=None)
+        user_repo.get_raw_by_verified_email = AsyncMock(return_value=existing)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="real", email="real@example.com", access_level=40)]
         result, _ = asyncio.run(service._build_team_members(members, user_repo))
@@ -90,26 +89,11 @@ class TestTeamMemberSyncResolveOnly:
         assert result[0].user_id == "u-1"
         user_repo.create.assert_not_called()
 
-    def test_resolves_existing_user_case_insensitive_email(self):
-        # GitLab returns the email in different case than the address stored at login.
-        service = GitLabService(make_gitlab_instance())
-        existing = {"_id": "u-1", "email": "alice@corp.com", "username": "alice"}
-        user_repo = MagicMock()
-        user_repo.get_raw_by_email = AsyncMock(return_value=existing)
-        user_repo.get_raw_by_username = AsyncMock(return_value=None)
-        user_repo.create = AsyncMock()
-        members = [GitLabMember(username="alice", email="Alice@Corp.com", access_level=40)]
-        result, _ = asyncio.run(service._build_team_members(members, user_repo))
-        assert len(result) == 1
-        assert result[0].user_id == "u-1"
-        user_repo.get_raw_by_email.assert_awaited_once_with("Alice@Corp.com")
-
     def test_skips_bot_member_without_local_account_no_create(self):
         # GitLab service-account / bot: no matching local user -> skipped, NOT created.
         service = GitLabService(make_gitlab_instance())
         user_repo = MagicMock()
-        user_repo.get_raw_by_email = AsyncMock(return_value=None)
-        user_repo.get_raw_by_username = AsyncMock(return_value=None)
+        user_repo.get_raw_by_verified_email = AsyncMock(return_value=None)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="group_875_bot_f4597604b42b729d0de22d01e5126164", access_level=40)]
         result, unresolved = asyncio.run(service._build_team_members(members, user_repo))
@@ -797,7 +781,9 @@ class TestTeamSyncInstanceScoping:
     @staticmethod
     def _db():
         db = FakeDatabase()
-        asyncio.run(db.users.insert_one({"_id": "uid", "username": "dev", "email": "dev@test.com"}))
+        asyncio.run(
+            db.users.insert_one({"_id": "uid", "username": "dev", "email": "dev@test.com", "is_verified": True})
+        )
         return db
 
     @staticmethod
@@ -873,7 +859,7 @@ class TestTeamSyncInstanceScoping:
 
 
 class TestMemberResolution:
-    """A member is looked for under both keys GitLab offers: the email it reports, and the handle."""
+    """A member is looked for by the email GitLab reports, among the accounts that verified it."""
 
     @staticmethod
     def _resolved(gitlab_instance_a, member, **user_lookups):
@@ -895,27 +881,15 @@ class TestMemberResolution:
             )
         return team_repo, user_repo
 
-    def test_a_member_whose_email_matches_nobody_is_still_found_by_their_handle(self, gitlab_instance_a):
-        """GitLab reports the address on the account, which need not be the one the local user was
-        created with; dropping the member costs them every project the team owns."""
-        member = GitLabMember(username="ada", email="ada@personal.example", access_level=30)
-
-        team_repo, user_repo = self._resolved(gitlab_instance_a, member, by_username={"_id": "u-ada"})
-
-        user_repo.get_raw_by_username.assert_awaited_once_with("ada")
-        created = team_repo.create.await_args.args[0]
-        assert [m.user_id for m in created.members] == ["u-ada"]
-
-    def test_a_member_the_email_names_is_not_looked_up_twice(self, gitlab_instance_a):
-        """The email comes with the listing, so it costs no request and is tried first."""
+    def test_a_member_is_looked_up_by_their_email_alone(self, gitlab_instance_a):
         member = GitLabMember(username="ada", email="ada@corp.com", access_level=30)
 
-        team_repo, user_repo = self._resolved(gitlab_instance_a, member, by_email={"_id": "u-ada"})
+        team_repo, user_repo = self._resolved(gitlab_instance_a, member, user_doc={"_id": "u-ada"})
 
-        user_repo.get_raw_by_username.assert_not_awaited()
+        user_repo.get_raw_by_verified_email.assert_awaited_once_with("ada@corp.com")
         assert [m.user_id for m in team_repo.create.await_args.args[0].members] == ["u-ada"]
 
-    def test_a_member_neither_key_names_is_skipped(self, gitlab_instance_a):
+    def test_a_member_no_verified_account_holds_is_skipped(self, gitlab_instance_a):
         member = GitLabMember(username="ghost", email="ghost@corp.com", access_level=30)
 
         team_repo, _ = self._resolved(gitlab_instance_a, member)

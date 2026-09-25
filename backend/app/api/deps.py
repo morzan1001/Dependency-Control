@@ -102,7 +102,7 @@ async def decode_token(token: str, expected_type: str, db: AsyncIOMotorDatabase)
 
     await _ensure_token_not_blacklisted(payload.get("jti"), db)
 
-    user = await UserRepository(db).get_raw_by_username(token_data.sub)
+    user = await UserRepository(db).get_raw_by_id(token_data.sub)
     if user is not None:
         _check_logout_invalidation(user, payload)
     return token_data, user
@@ -171,19 +171,12 @@ class PermissionChecker:
         )
 
 
-async def _resolve_initial_member_id(
-    user_repo: UserRepository, email: str | None = None, username: str | None = None
-) -> str | None:
-    """Resolve a user ID to add as initial project admin member. Returns None if no match."""
-    if email:
-        user = await user_repo.get_raw_by_email(email)
-        if user:
-            return str(user["_id"])
-    if username:
-        user = await user_repo.get_raw_by_username(username)
-        if user:
-            return str(user["_id"])
-    return None
+async def _resolve_initial_member_id(user_repo: UserRepository, email: str | None) -> str | None:
+    """The account that verified the CI job's email, to add as initial project admin; None if none did."""
+    if not email:
+        return None
+    user = await user_repo.get_raw_by_verified_email(email)
+    return str(user["_id"]) if user else None
 
 
 def _within_cap(source: str, would_own: set[str], repository_path: str) -> bool:
@@ -376,7 +369,7 @@ async def _handle_gitlab_oidc(
             "an allowed namespace list",
         )
 
-    initial_member_id = await _resolve_initial_member_id(user_repo, email=payload.user_email)
+    initial_member_id = await _resolve_initial_member_id(user_repo, payload.user_email)
     members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
 
     owners: list[str] = []
@@ -475,8 +468,8 @@ async def _handle_github_oidc(
             "github.com issuer needs an allowed owner list",
         )
 
-    initial_member_id = await _resolve_initial_member_id(user_repo, username=gh_payload.actor)
-    members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
+    actor = (await github_service.resolve_login(gh_payload.actor, user_repo)).user
+    members = [ProjectMember(user_id=str(actor["_id"]), role="admin")] if actor else []
 
     owners: list[str] = []
     github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)

@@ -8,9 +8,13 @@ from fastapi import HTTPException
 
 from app.core.constants import MAX_PROJECT_TEAMS, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.system import SystemSettings
+from app.services.github import _MemberResolution
 from tests.mocks.github import make_github_oidc_payload
 from tests.mocks.gitlab import make_oidc_payload
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
+
+
+_ACTOR_RESOLVES_TO_NOBODY = _MemberResolution(None)
 
 
 def _make_system_settings(**kwargs):
@@ -718,6 +722,7 @@ class TestIngestGitHubOidcProjectLookup:
                         actor="developer",
                     )
                 )
+                mock_svc.resolve_login = AsyncMock(return_value=_ACTOR_RESOLVES_TO_NOBODY)
                 MockService.return_value = mock_svc
 
                 result = asyncio.run(
@@ -880,6 +885,7 @@ class TestIngestGitHubTeamSync:
                 payload.update(payload_overrides)
                 mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
                 mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(sync_result))
+                mock_svc.resolve_login = AsyncMock(return_value=_ACTOR_RESOLVES_TO_NOBODY)
                 MockService.return_value = mock_svc
 
                 asyncio.run(
@@ -1041,8 +1047,19 @@ _GITHUB_BOUND_PROJECT = {
 }
 
 
-def _ingest_via_github(instance_doc, project_doc=None, issuer=_GITHUB_COM_ISSUER, **payload_overrides):
-    """Run a GitHub OIDC ingest; returns the outcome (project or HTTPException), projects and service mocks."""
+def _ingest_via_github(
+    instance_doc,
+    project_doc=None,
+    issuer=_GITHUB_COM_ISSUER,
+    *,
+    any_user=None,
+    actor_resolution=_ACTOR_RESOLVES_TO_NOBODY,
+    **payload_overrides,
+):
+    """Run a GitHub OIDC ingest; returns the outcome (project or HTTPException), projects and service mocks.
+
+    ``any_user`` answers every users query, so a lookup by the actor's login would find it.
+    """
     from app.api.deps import get_project_for_ingest
     from app.services.github import GitHubTeamSyncResult
 
@@ -1053,7 +1070,7 @@ def _ingest_via_github(instance_doc, project_doc=None, issuer=_GITHUB_COM_ISSUER
             "gitlab_instances": create_mock_collection(find_one=None),
             "github_instances": create_mock_collection(find_one=instance_doc),
             "projects": projects_coll,
-            "users": create_mock_collection(find_one=None),
+            "users": create_mock_collection(find_one=any_user),
         }
     )
     payload = {
@@ -1068,6 +1085,7 @@ def _ingest_via_github(instance_doc, project_doc=None, issuer=_GITHUB_COM_ISSUER
             mock_svc = MagicMock()
             mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
             mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult([]))
+            mock_svc.resolve_login = AsyncMock(return_value=actor_resolution)
             MockService.return_value = mock_svc
             try:
                 outcome = asyncio.run(
@@ -1188,6 +1206,35 @@ class TestIngestGitHubOwnerAllowlist:
         assert isinstance(outcome, HTTPException)
         assert outcome.status_code == 403
         projects_coll.find_one.assert_not_called()
+
+
+_GITHUB_AUTO_CREATE_INSTANCE = {
+    **_GITHUB_COM_INSTANCE,
+    "sync_teams": False,
+    "auto_create_projects": True,
+    "allowed_owner_ids": ["111"],
+}
+
+
+class TestIngestGitHubInitialAdmin:
+    """The actor claim is a GitHub login: only the account GitHub vouches for becomes the new project's admin."""
+
+    def test_an_account_named_like_the_actor_is_not_made_admin(self):
+        outcome, _, _ = _ingest_via_github(
+            _GITHUB_AUTO_CREATE_INSTANCE,
+            any_user={"_id": "u-named-like-actor", "username": "developer"},
+            actor="developer",
+        )
+
+        assert outcome.members == []
+
+    def test_the_account_the_actor_login_resolves_to_is_made_admin(self):
+        outcome, _, mock_svc = _ingest_via_github(
+            _GITHUB_AUTO_CREATE_INSTANCE, actor_resolution=_MemberResolution({"_id": "u-ada"}), actor="ada-gh"
+        )
+
+        assert [(member.user_id, member.role) for member in outcome.members] == [("u-ada", "admin")]
+        assert mock_svc.resolve_login.await_args.args[0] == "ada-gh"
 
 
 _GITLAB_COM_INSTANCE = {

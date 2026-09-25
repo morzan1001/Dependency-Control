@@ -626,16 +626,13 @@ class GitHubService:
         await cache_service.set(cache_key, email, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
         return GitHubEmailLookup(email or None)
 
-    async def _find_user_for_github_member(self, login: str, user_repo: UserRepository) -> _MemberResolution:
-        """Resolve a GitHub login to an EXISTING local user: username first, then the public email."""
-        user = await user_repo.get_raw_by_username(login)
-        if user:
-            return _MemberResolution(user)
+    async def resolve_login(self, login: str, user_repo: UserRepository) -> _MemberResolution:
+        """The EXISTING local user that verified the login's public email; a matching username proves nothing."""
         lookup = await self.get_user_public_email(login)
         if not lookup.determined:
             return _MemberResolution(None, undetermined=True)
         if lookup.email:
-            return _MemberResolution(await user_repo.get_raw_by_email(lookup.email))
+            return _MemberResolution(await user_repo.get_raw_by_verified_email(lookup.email))
         return _MemberResolution(None)
 
     @property
@@ -655,7 +652,7 @@ class GitHubService:
         undetermined = 0
         for member in members:
             login = member["login"]
-            resolution = await self._find_user_for_github_member(login, user_repo)
+            resolution = await self.resolve_login(login, user_repo)
             if resolution.undetermined:
                 undetermined += 1
                 continue

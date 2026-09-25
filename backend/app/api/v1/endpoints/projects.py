@@ -120,6 +120,7 @@ _MSG_ALREADY_A_MEMBER = "User already a member"
 _MSG_LAST_ADMIN_REMOVE = "Cannot remove the last admin. Add another admin first."
 _MSG_LAST_ADMIN_DEMOTE = "Cannot demote the last admin. Add another admin first."
 _MSG_LAST_ADMIN_OWNER = "This would leave the project without an admin; add one first"
+_MSG_NO_VERIFIED_USER = "No user has verified this email address"
 
 _SCAN_HISTORY_PAGE_SIZE = 100
 
@@ -1154,15 +1155,15 @@ async def invite_user(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    """Add an existing user to the project by email (404 if no account exists; use system invitations for new users)."""
+    """Add the existing user that verified this email (404 if none did; use system invitations for new users)."""
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     user_repo = UserRepository(db)
     project_repo = ProjectRepository(db)
 
-    user_to_add = await user_repo.get_raw_by_email(invite_in.email)
+    user_to_add = await user_repo.get_raw_by_verified_email(invite_in.email)
     if not user_to_add:
-        raise HTTPException(status_code=404, detail="User with this email not found")
+        raise HTTPException(status_code=404, detail=_MSG_NO_VERIFIED_USER)
 
     member = ProjectMember(user_id=str(user_to_add["_id"]), role=invite_in.role)
 

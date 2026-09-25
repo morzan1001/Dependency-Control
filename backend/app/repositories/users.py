@@ -23,6 +23,10 @@ class UserRepository(BaseRepository[User]):
     async def get_raw_by_email(self, email: str) -> dict[str, Any] | None:
         return await self.find_one_raw(_email_query(email))
 
+    async def get_raw_by_verified_email(self, email: str) -> dict[str, Any] | None:
+        """The lookup identity matching must use: an unverified address names whoever typed it."""
+        return await self.find_one_raw({**_email_query(email), "is_verified": True})
+
     async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find({"_id": {"$in": user_ids}})

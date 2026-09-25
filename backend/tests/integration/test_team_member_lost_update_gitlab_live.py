@@ -36,8 +36,10 @@ _MID_SYNC = 0.05
 
 
 async def _seed(db, *, members: list[TeamMember] | None = None) -> TeamRepository:
-    await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com"})
-    await db["users"].insert_one({"_id": "u-added", "username": "added", "email": "added@corp.com"})
+    await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com", "is_verified": True})
+    await db["users"].insert_one(
+        {"_id": "u-added", "username": "added", "email": "added@corp.com", "is_verified": True}
+    )
     repo = TeamRepository(db)
     await repo.create(
         Team(
@@ -59,14 +61,14 @@ async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
     team_repo = TeamRepository(db)
     user_repo = UserRepository(db)
     service = GitLabService(make_gitlab_instance(id=_INSTANCE, access_token="glpat-secret"))
-    resolve = user_repo.get_raw_by_email
+    resolve = user_repo.get_raw_by_verified_email
 
     async def _resolve_while_the_admin_adds_one(email: str):
         await asyncio.sleep(_MID_SYNC)
         assert await team_repo.add_member(_TEAM_ID, added.model_dump(), datetime.now(timezone.utc))
         return await resolve(email)
 
-    user_repo.get_raw_by_email = _resolve_while_the_admin_adds_one
+    user_repo.get_raw_by_verified_email = _resolve_while_the_admin_adds_one
 
     with (
         patch("app.services.gitlab.UserRepository", return_value=user_repo),

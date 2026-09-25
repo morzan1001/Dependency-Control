@@ -27,7 +27,7 @@ def _resolve(token: str):
         "permissions": list(_STORED_PERMISSIONS),
     }
     user_repo = MagicMock()
-    user_repo.get_raw_by_username = AsyncMock(return_value=user_doc)
+    user_repo.get_raw_by_id = AsyncMock(return_value=user_doc)
     blacklist_repo = MagicMock()
     blacklist_repo.is_blacklisted = AsyncMock(return_value=False)
 
@@ -39,13 +39,13 @@ def _resolve(token: str):
 
 
 def test_a_setup_2fa_only_token_drops_the_permissions_stored_on_the_account():
-    user = _resolve(security.create_access_token("bob", permissions=[_SETUP_SCOPE]))
+    user = _resolve(security.create_access_token("u-1", permissions=[_SETUP_SCOPE]))
 
     assert user.permissions == [_SETUP_SCOPE]
 
 
 def test_a_setup_2fa_only_token_is_refused_by_a_permission_guarded_route():
-    user = _resolve(security.create_access_token("bob", permissions=[_SETUP_SCOPE]))
+    user = _resolve(security.create_access_token("u-1", permissions=[_SETUP_SCOPE]))
 
     with pytest.raises(HTTPException) as exc_info:
         PermissionChecker(Permissions.SYSTEM_MANAGE)(current_user=user)
@@ -55,7 +55,7 @@ def test_a_setup_2fa_only_token_is_refused_by_a_permission_guarded_route():
 
 def test_a_token_carrying_setup_2fa_alongside_other_scopes_keeps_the_stored_permissions():
     """Only the single-scope enrolment token narrows; a wider token must not silently gain the narrowing."""
-    token = security.create_access_token("bob", permissions=[_SETUP_SCOPE, Permissions.PROJECT_CREATE])
+    token = security.create_access_token("u-1", permissions=[_SETUP_SCOPE, Permissions.PROJECT_CREATE])
 
     user = _resolve(token)
 
@@ -63,6 +63,6 @@ def test_a_token_carrying_setup_2fa_alongside_other_scopes_keeps_the_stored_perm
 
 
 def test_an_ordinary_token_keeps_the_permissions_stored_on_the_account():
-    user = _resolve(security.create_access_token("bob", permissions=[Permissions.PROJECT_CREATE]))
+    user = _resolve(security.create_access_token("u-1", permissions=[Permissions.PROJECT_CREATE]))
 
     assert user.permissions == _STORED_PERMISSIONS

@@ -202,10 +202,10 @@ async def login_access_token(
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     access_token = security.create_access_token(
-        user["username"], permissions=permissions, expires_delta=access_token_expires
+        str(user["_id"]), permissions=permissions, expires_delta=access_token_expires
     )
 
-    refresh_token = security.create_refresh_token(user["username"])
+    refresh_token = security.create_refresh_token(str(user["_id"]))
 
     if auth_login_attempts_total:
         auth_login_attempts_total.labels(status="success").inc()
@@ -252,10 +252,10 @@ async def refresh_token(
     permissions = restricted if restricted is not None else user.get("permissions", [])
 
     access_token = security.create_access_token(
-        user["username"], permissions=permissions, expires_delta=access_token_expires
+        str(user["_id"]), permissions=permissions, expires_delta=access_token_expires
     )
 
-    new_refresh_token = security.create_refresh_token(user["username"])
+    new_refresh_token = security.create_refresh_token(str(user["_id"]))
 
     return {
         "access_token": access_token,
@@ -733,6 +733,15 @@ async def login_oidc_callback(
             detail="Email not provided by OIDC provider",
         )
 
+    # Some providers send the claim as a string.
+    if user_info.get("email_verified") in (False, "false"):
+        if auth_oidc_logins_total:
+            auth_oidc_logins_total.labels(status="email_unverified").inc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The identity provider has not verified this email address",
+        )
+
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
     if not user:
@@ -745,9 +754,9 @@ async def login_oidc_callback(
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
-        user["username"], permissions=permissions, expires_delta=access_token_expires
+        str(user["_id"]), permissions=permissions, expires_delta=access_token_expires
     )
-    refresh_token = security.create_refresh_token(user["username"])
+    refresh_token = security.create_refresh_token(str(user["_id"]))
 
     if auth_oidc_logins_total:
         auth_oidc_logins_total.labels(status="success").inc()

@@ -102,13 +102,10 @@ def make_project_details(namespace_kind="group", namespace_id=42, namespace_path
 
 
 @contextmanager
-def make_repositories(
-    existing_team=None, user_doc=None, by_email=None, by_username=None
-) -> Iterator[tuple[MagicMock, MagicMock]]:
+def make_repositories(existing_team=None, user_doc=None) -> Iterator[tuple[MagicMock, MagicMock]]:
     """The two repositories a GitLab sync works through, recording what it hands them.
 
-    ``user_doc`` answers both user lookups; ``by_email`` and ``by_username`` answer one each, which
-    is what tells a member resolved through their email from one resolved through their handle.
+    ``user_doc`` answers the verified-email lookup every member is resolved through.
 
     ``add_binding_if_absent`` is left recording rather than working: it is the one door an existing
     team can be bound through, and a sync must never reach it.
@@ -120,8 +117,7 @@ def make_repositories(
     team_repo.add_binding_if_absent = AsyncMock()
 
     user_repo = MagicMock()
-    user_repo.get_raw_by_email = AsyncMock(return_value=by_email or user_doc)
-    user_repo.get_raw_by_username = AsyncMock(return_value=by_username or user_doc)
+    user_repo.get_raw_by_verified_email = AsyncMock(return_value=user_doc)
 
     with (
         patch("app.services.gitlab.TeamRepository", return_value=team_repo),

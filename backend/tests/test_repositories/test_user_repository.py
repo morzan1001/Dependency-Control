@@ -55,3 +55,12 @@ async def test_email_lookups_ignore_case(repo):
 async def test_email_lookups_match_the_whole_address_literally(repo):
     assert await repo.get_raw_by_email("a.ice@corp.com") is None
     assert await repo.exists_by_email("lice@corp.com") is False
+
+
+@pytest.mark.asyncio
+async def test_the_verified_email_lookup_skips_an_account_that_has_not_proven_the_address(repo):
+    assert await repo.get_raw_by_verified_email("alice@corp.com") is None
+
+    await repo.update("u1", {"is_verified": True})
+
+    assert (await repo.get_raw_by_verified_email("ALICE@corp.com"))["_id"] == "u1"

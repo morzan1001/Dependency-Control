@@ -536,19 +536,19 @@ class GitLabService:
         """Resolve each GitLab member to an EXISTING local user, plus the unresolved count.
 
         Tagged with this instance so the merge in ``_upsert_team_with_members`` refreshes only the
-        subset this instance established. Members without a local account are skipped — sync never
-        creates users (see ``_find_user``).
+        subset this instance established. Members without a verified local account are skipped —
+        sync never creates users (see ``_find_user``).
         """
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
         for member in gitlab_members:
             user = await self._find_user(member, user_repo)
             if not user:
-                # No local account yet, or a GitLab service account/bot. Sync never creates
-                # users; a real member is added on their next sync after logging in via OIDC.
+                # No verified local account yet, or a GitLab service account/bot. Sync never
+                # creates users; a real member is added on their next sync after logging in via OIDC.
                 unresolved += 1
                 logger.debug(
-                    "Skipping GitLab member with no local account (username=%s, access_level=%s).",
+                    "Skipping GitLab member with no verified local account (username=%s, access_level=%s).",
                     member.username,
                     member.access_level,
                 )
@@ -568,18 +568,10 @@ class GitLabService:
         member: GitLabMember,
         user_repo: UserRepository,
     ) -> dict[str, Any] | None:
-        """Resolve a GitLab member to an EXISTING local user: the public email, then the username.
-
-        The email comes with the listing and costs no request, so it is tried first; the username
-        must still be tried, or a member whose GitLab email differs from their account's is dropped.
-        """
-        if member.email:
-            user = await user_repo.get_raw_by_email(member.email)
-            if user:
-                return user
-        if member.username:
-            return await user_repo.get_raw_by_username(member.username)
-        return None
+        """The EXISTING local user that verified the member's email; a self-chosen username proves nothing."""
+        if not member.email:
+            return None
+        return await user_repo.get_raw_by_verified_email(member.email)
 
     async def _resolve_group_members(
         self,
