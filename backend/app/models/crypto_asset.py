@@ -58,7 +58,7 @@ class CryptoAsset(MongoDocument):
         default_factory=list, description="Source locations (file paths, binary offsets) where this asset was detected"
     )
     detection_context: str | None = Field(None, description="Where detection happened (e.g. source, binary, config)")
-    confidence: float | None = Field(None, description="Detection confidence 0.0–1.0 as reported by the scanner")
+    confidence: float | None = Field(None, description="Detection confidence 0.0-1.0 as reported by the scanner")
     related_dependency_purls: list[str] = Field(
         default_factory=list, description="PURLs of software components linked to this crypto asset"
     )

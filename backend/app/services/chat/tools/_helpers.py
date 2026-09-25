@@ -188,7 +188,7 @@ def _clip_value(value: Any) -> Any:
     if isinstance(value, str) and len(value) > 400:
         return value[:400] + "…"
     if isinstance(value, list) and len(value) > 5:
-        return value[:5] + ["…"]
+        return [*value[:5], "…"]
     return value
 
 

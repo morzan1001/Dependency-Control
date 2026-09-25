@@ -1,7 +1,7 @@
 """Update-frequency analytics: compare dependency versions across scans.
 
 Streaming model — one scan pair at a time so peak memory stays at
-~2×deps/scan regardless of project size.
+~2 x deps/scan regardless of project size.
 """
 
 import asyncio

@@ -230,7 +230,7 @@ async def owner_auth_headers_proj(client, db):
     from tests.helpers.permission_presets import PRESET_USER
 
     username = "ownerp"
-    permissions = list(PRESET_USER) + [Permissions.PROJECT_READ]
+    permissions = [*PRESET_USER, Permissions.PROJECT_READ]
 
     project_p = Project(id="p", name="project-p")
     member = ProjectMember(user_id=username, role="admin")
@@ -253,7 +253,7 @@ async def owner_auth_headers_proj_p2(client, db):
     from tests.helpers.permission_presets import PRESET_USER
 
     username = "ownerp2"
-    permissions = list(PRESET_USER) + [Permissions.PROJECT_READ]
+    permissions = [*PRESET_USER, Permissions.PROJECT_READ]
 
     project_p2 = Project(id="p2", name="project-p2")
     member = ProjectMember(user_id=username, role="admin")

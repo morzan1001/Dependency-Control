@@ -33,7 +33,7 @@ def test_admin_tools_require_admin_permission():
 
 def test_user_with_chat_access_gets_basic_tools():
     registry = ChatToolRegistry()
-    permissions = PRESET_USER + [Permissions.CHAT_ACCESS]
+    permissions = [*PRESET_USER, Permissions.CHAT_ACCESS]
     available = registry.get_available_tool_names(permissions)
 
     assert "list_projects" in available

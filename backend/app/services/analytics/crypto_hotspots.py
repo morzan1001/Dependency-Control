@@ -187,7 +187,8 @@ class CryptoHotspotService:
             )
 
         group_field = "$severity" if group_by == "severity" else "$details.weakness_tags"
-        pipeline: list[dict[str, Any]] = pre_stages + [
+        pipeline: list[dict[str, Any]] = [
+            *pre_stages,
             {
                 "$group": {
                     "_id": {"key": group_field, "severity": "$severity"},

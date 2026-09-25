@@ -74,7 +74,7 @@ class TestValidateWebhookUrl:
         ],
     )
     def test_private_and_reserved_ip_literals_rejected(self, url):
-        with pytest.raises(ValueError, match="private|reserved|link-local"):
+        with pytest.raises(ValueError, match=r"private|reserved|link-local"):
             validate_webhook_url(url)
 
     @pytest.mark.parametrize(
@@ -86,7 +86,7 @@ class TestValidateWebhookUrl:
     )
     def test_ipv6_reserved_ip_literals_rejected(self, url):
         # IANA-reserved IPv6 blocks are caught by is_reserved alone; no other predicate covers them.
-        with pytest.raises(ValueError, match="private|reserved|link-local"):
+        with pytest.raises(ValueError, match=r"private|reserved|link-local"):
             validate_webhook_url(url)
 
     @pytest.mark.parametrize(

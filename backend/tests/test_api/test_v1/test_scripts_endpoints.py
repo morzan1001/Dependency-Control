@@ -64,7 +64,7 @@ class TestVersionRegex:
             "",
             "1.0.x",
             "v1.0.0",
-            "٠.٠.٠",  # Arabic-Indic digits — must NOT match under re.ASCII
+            "\u0660.\u0660.\u0660",  # Arabic-Indic digits — must NOT match under re.ASCII
         ],
     )
     def test_rejects_non_semver(self, bad):
@@ -170,7 +170,7 @@ class TestHandlers:
 
     def test_get_script_hash_invalid_version_raises_400(self, scripts_layout):
         with pytest.raises(HTTPException) as exc:
-            asyncio.run(scripts_module.get_script_hash("scanner.sh", v="٠.٠.٠"))
+            asyncio.run(scripts_module.get_script_hash("scanner.sh", v="\u0660.\u0660.\u0660"))
         assert exc.value.status_code == 400
 
     def test_get_script_unknown_version_raises_404(self, scripts_layout):
