@@ -85,6 +85,7 @@ from app.api.v1.helpers.teams import (
 )
 from app.api.v1.helpers.users import (
     check_admin_or_self,
+    ensure_can_manage_target,
     fetch_updated_user,
     get_user_or_404,
     is_2fa_setup_mode,
@@ -148,6 +149,7 @@ __all__ = [
     # Storage helpers
     "detect_format",
     "enrich_team_with_usernames",
+    "ensure_can_manage_target",
     "exchange_slack_code_for_token",
     "extract_fix_versions",
     "extract_slack_tokens",

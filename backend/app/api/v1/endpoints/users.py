@@ -13,12 +13,20 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
     check_admin_or_self,
+    ensure_can_manage_target,
     fetch_updated_user,
     get_logo_path,
     get_user_or_404,
     is_2fa_setup_mode,
+    send_password_reset_email,
 )
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404, RESP_AUTH_404
+from app.api.v1.helpers.responses import (
+    RESP_AUTH,
+    RESP_AUTH_400,
+    RESP_AUTH_400_404,
+    RESP_AUTH_400_404_501,
+    RESP_AUTH_404,
+)
 from app.core import security
 from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
@@ -37,9 +45,7 @@ from app.schemas.user import (
     UserUpdateMe,
 )
 from app.services.notifications import templates
-from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.service import notification_service
-from app.services.notifications.templates import get_password_reset_template
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -169,6 +175,28 @@ async def read_user_by_id(
     return await get_user_or_404(user_id, db)
 
 
+def _ensure_can_change_permissions(caller: User, existing: set[str], requested: set[str]) -> None:
+    """Require user:manage_permissions and refuse to grant or revoke any permission the caller lacks."""
+    if not has_permission(caller.permissions, [Permissions.USER_MANAGE_PERMISSIONS]):
+        raise HTTPException(
+            status_code=403,
+            detail="Changing 'permissions' requires user:manage_permissions",
+        )
+    caller_perms = set(caller.permissions or [])
+    unauthorised_grants = requested - existing - caller_perms
+    if unauthorised_grants:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot grant permissions you don't hold: {sorted(unauthorised_grants)}",
+        )
+    unauthorised_revokes = existing - requested - caller_perms
+    if unauthorised_revokes:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot revoke permissions you don't hold: {sorted(unauthorised_revokes)}",
+        )
+
+
 @router.put("/{user_id}", response_model=UserSchema, responses=RESP_AUTH_400_404)
 async def update_user(
     user_id: str,
@@ -176,29 +204,22 @@ async def update_user(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    """Update user; setting permissions requires user:manage_permissions and callers can't grant permissions they lack."""
+    """Update self, or as an admin a user whose permissions the caller holds (or any user with system:manage)."""
     has_admin_perm = check_admin_or_self(current_user, user_id, [Permissions.USER_UPDATE])
 
     existing_user = await get_user_or_404(user_id, db)
+    if str(current_user.id) != user_id:
+        ensure_can_manage_target(current_user, existing_user)
 
     user_repo = UserRepository(db)
     update_data = user_in.model_dump(exclude_unset=True)
 
-    # Permission changes need user:manage_permissions; callers can't grant permissions they lack.
     if "permissions" in update_data:
-        if not has_permission(current_user.permissions, [Permissions.USER_MANAGE_PERMISSIONS]):
-            raise HTTPException(
-                status_code=403,
-                detail="Changing 'permissions' requires user:manage_permissions",
-            )
-        caller_perms = set(current_user.permissions or [])
-        requested = set(update_data["permissions"] or [])
-        unauthorised = requested - caller_perms
-        if unauthorised:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Cannot grant permissions you don't hold: {sorted(unauthorised)}",
-            )
+        _ensure_can_change_permissions(
+            current_user,
+            existing=set(existing_user.get("permissions") or []),
+            requested=set(update_data["permissions"] or []),
+        )
 
     # Forbid self-change of is_active so a user can't lock themselves or every admin out.
     if "is_active" in update_data and str(current_user.id) == user_id:
@@ -271,6 +292,7 @@ async def migrate_user_to_local(
 ) -> dict[str, Any]:
     """Admin only: switch a user's auth_provider to 'local' without setting a password (follow with a reset)."""
     user = await get_user_or_404(user_id, db)
+    ensure_can_manage_target(current_user, user)
 
     if user.get("auth_provider") == AUTH_PROVIDER_LOCAL:
         raise HTTPException(status_code=400, detail="User is already a local account")
@@ -281,15 +303,16 @@ async def migrate_user_to_local(
     return await fetch_updated_user(user_id, db)
 
 
-@router.post("/{user_id}/reset-password", responses=RESP_AUTH_400_404)
+@router.post("/{user_id}/reset-password", responses=RESP_AUTH_400_404_501)
 async def reset_user_password(
     user_id: str,
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-) -> dict[str, Any]:
-    """Admin only: trigger a password reset; emails the link if SMTP is configured and always returns it."""
+) -> dict[str, str]:
+    """Admin only: email the user a password reset link; the link is never returned to the caller."""
     user = await get_user_or_404(user_id, db)
+    ensure_can_manage_target(current_user, user)
 
     if user.get("auth_provider", AUTH_PROVIDER_LOCAL) != AUTH_PROVIDER_LOCAL:
         raise HTTPException(
@@ -297,39 +320,12 @@ async def reset_user_password(
             detail="Cannot reset password for non-local users. Please migrate user first.",
         )
 
-    token = security.create_password_reset_token(user["email"])
-    link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={token}"
+    system_settings = await deps.get_system_settings(db)
+    if not system_settings.smtp_host:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Email server not configured")
 
-    email_sent = False
-    if settings.SMTP_HOST:
-        try:
-            logo_path = get_logo_path()
-            system_settings = await deps.get_system_settings(db)
-
-            html_content = get_password_reset_template(
-                username=user["username"], link=link, project_name=settings.PROJECT_NAME
-            )
-
-            email_provider = EmailProvider()
-            background_tasks.add_task(
-                email_provider.send,
-                destination=user["email"],
-                subject=f"Password Reset for {settings.PROJECT_NAME}",
-                message=f"Please reset your password by clicking this link: {link}",
-                html_message=html_content,
-                logo_path=logo_path,
-                system_settings=system_settings,
-            )
-            email_sent = True
-        except Exception as e:
-            logger.exception("Failed to send password reset email: %s", e)
-
-    response = {"message": "Password reset initiated", "email_sent": email_sent}
-
-    if not email_sent:
-        response["reset_link"] = link
-
-    return response
+    await send_password_reset_email(background_tasks, user["email"], user["username"], system_settings=system_settings)
+    return {"message": "Password reset email sent"}
 
 
 @router.post("/me/password", response_model=UserSchema, responses=RESP_AUTH_400)
@@ -512,6 +508,7 @@ async def admin_disable_2fa(
 ) -> dict[str, Any]:
     """Admin only: disable 2FA for a user (e.g. lost device)."""
     user = await get_user_or_404(user_id, db)
+    ensure_can_manage_target(current_user, user)
 
     if not user.get("totp_enabled"):
         raise HTTPException(status_code=400, detail="2FA is not enabled for this user")
@@ -558,6 +555,7 @@ async def delete_user(
 
     user = await user_repo.get_raw_by_id(user_id)
     if user:
+        ensure_can_manage_target(current_user, user)
         await user_repo.delete(user_id)
         return
 
