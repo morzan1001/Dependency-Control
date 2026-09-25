@@ -1,6 +1,8 @@
 """HTTP client helpers for shared error handling and retry logic."""
 
 import time
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from types import TracebackType
 from typing import Any
 
@@ -66,6 +68,21 @@ class InstrumentedAsyncClient:
             response = await self._client.request(method, url, **kwargs)
             self._record_success(time.time() - start_time)
             return response
+        except Exception:
+            self._record_error()
+            raise
+
+    @asynccontextmanager
+    async def stream(self, method: str, url: str, **kwargs: Any) -> AsyncIterator[httpx.Response]:
+        if self._client is None:
+            raise RuntimeError(self._NOT_STARTED_MSG)
+
+        start_time = time.time()
+        self._record_request()
+        try:
+            async with self._client.stream(method, url, **kwargs) as response:
+                self._record_success(time.time() - start_time)
+                yield response
         except Exception:
             self._record_error()
             raise

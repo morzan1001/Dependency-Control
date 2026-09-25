@@ -1,6 +1,7 @@
 """The real webhook delivery path must connect through the DNS-rebinding-safe pinned transport."""
 
 import importlib
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,11 +12,6 @@ from app.services.webhooks.validation import _PinnedIPTransport
 # The package binds ``webhook_service`` to a singleton instance, shadowing the submodule;
 # import the real module via importlib so the WebhookService and patch target resolve.
 ws_module = importlib.import_module("app.services.webhooks.webhook_service")
-
-
-class _FakeResponse:
-    status_code = 200
-    text = ""
 
 
 def _capturing_client(captured: dict):
@@ -30,8 +26,9 @@ def _capturing_client(captured: dict):
         async def __aexit__(self, *exc):
             return False
 
-        async def post(self, *args, **kwargs):
-            return _FakeResponse()
+        @asynccontextmanager
+        async def stream(self, *args, **kwargs):
+            yield SimpleNamespace(status_code=200)
 
     return _FakeClient
 
