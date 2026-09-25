@@ -4,14 +4,21 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { CICDInstancesManagement } from '../CICDInstancesManagement'
 import type { GitHubInstance } from '@/types/github'
+import type { GitLabInstance } from '@/types/gitlab'
 
 const mockGitHubCreate = vi.fn().mockResolvedValue({})
 const mockGitHubUpdate = vi.fn().mockResolvedValue({})
+const mockGitLabUpdate = vi.fn().mockResolvedValue({})
 const mockUseGitHubInstances = vi.fn()
 const mockUseGitLabInstances = vi.fn()
 
 vi.mock('@/api/gitlab-instances', () => ({
-  gitlabInstancesApi: { create: vi.fn(), update: vi.fn(), delete: vi.fn(), testConnection: vi.fn() },
+  gitlabInstancesApi: {
+    create: vi.fn(),
+    update: (...args: unknown[]) => mockGitLabUpdate(...args),
+    delete: vi.fn(),
+    testConnection: vi.fn(),
+  },
 }))
 vi.mock('@/api/github-instances', () => ({
   githubInstancesApi: {
@@ -42,6 +49,7 @@ function githubInstance(overrides: Partial<GitHubInstance> = {}) {
           oidc_audience: 'dependency-control',
           auto_create_projects: false,
           sync_teams: false,
+          allowed_owner_ids: [],
           has_access_token: true,
           created_at: '2026-09-01T00:00:00Z',
           created_by: 'admin',
@@ -53,7 +61,7 @@ function githubInstance(overrides: Partial<GitHubInstance> = {}) {
   }
 }
 
-function gitlabInstance() {
+function gitlabInstance(overrides: Partial<GitLabInstance> = {}) {
   return {
     data: {
       items: [
@@ -66,9 +74,11 @@ function gitlabInstance() {
           auto_create_projects: false,
           sync_teams: true,
           team_sync_depth: 1,
+          allowed_namespaces: [],
           token_configured: true,
           created_at: '2026-09-01T00:00:00Z',
           created_by: 'admin',
+          ...overrides,
         },
       ],
     },
@@ -198,5 +208,120 @@ describe('CICDInstancesManagement GitHub team sync', () => {
 
     expect(within(dialog).getByLabelText('Sync Teams')).toBeChecked()
     expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeDisabled()
+  })
+})
+
+describe('CICDInstancesManagement owner and namespace allowlists', () => {
+  beforeEach(() => {
+    mockGitHubCreate.mockClear()
+    mockGitHubUpdate.mockClear()
+    mockGitLabUpdate.mockClear()
+    mockUseGitLabInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+    mockUseGitHubInstances.mockReturnValue(githubInstance())
+  })
+
+  function openGitHubCreateDialog(url = 'https://token.actions.githubusercontent.com') {
+    fireEvent.click(screen.getByRole('button', { name: 'Add Instance' }))
+
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('combobox'))
+    fireEvent.click(screen.getByRole('option', { name: 'GitHub' }))
+
+    fireEvent.change(within(dialog).getByLabelText('Name *'), { target: { value: 'GitHub.com' } })
+    fireEvent.change(within(dialog).getByLabelText('OIDC Issuer URL *'), { target: { value: url } })
+    return dialog
+  }
+
+  it('explains why github.com needs the owner list', () => {
+    renderManagement()
+
+    const dialog = openEditDialog(/GitHub\.com/)
+    expect(within(dialog).getByLabelText('Allowed Owner IDs')).toBeInTheDocument()
+    expect(within(dialog).getByText(/every repository on github\.com/i)).toBeInTheDocument()
+    expect(within(dialog).queryByLabelText('Allowed Namespaces')).toBeNull()
+  })
+
+  it('sends the parsed owner ids with the GitHub create payload', async () => {
+    renderManagement()
+
+    const dialog = openGitHubCreateDialog()
+    fireEvent.change(within(dialog).getByLabelText('Allowed Owner IDs'), { target: { value: '111, 222' } })
+    fireEvent.click(within(dialog).getByLabelText('Auto-Create Projects'))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create Instance' }))
+
+    await waitFor(() => expect(mockGitHubCreate).toHaveBeenCalled())
+    expect(mockGitHubCreate.mock.calls[0][0]).toMatchObject({
+      auto_create_projects: true,
+      allowed_owner_ids: ['111', '222'],
+    })
+  })
+
+  // Without the guard the backend answers a raw 422 envelope instead of a sentence.
+  it('refuses to create a github.com instance that auto-creates for every owner', () => {
+    renderManagement()
+
+    const dialog = openGitHubCreateDialog()
+    fireEvent.click(within(dialog).getByLabelText('Auto-Create Projects'))
+
+    expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeDisabled()
+    expect(within(dialog).getByText(/needs at least one owner id/i)).toBeInTheDocument()
+
+    fireEvent.change(within(dialog).getByLabelText('Allowed Owner IDs'), { target: { value: '111' } })
+    expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeEnabled()
+  })
+
+  it('lets a GHES instance auto-create without an owner list', () => {
+    renderManagement()
+
+    const dialog = openGitHubCreateDialog('https://github.corp.example.com/_services/token')
+    fireEvent.click(within(dialog).getByLabelText('Auto-Create Projects'))
+
+    expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeEnabled()
+  })
+
+  it('round-trips the stored owner list through the edit dialog', async () => {
+    mockUseGitHubInstances.mockReturnValue(githubInstance({ allowed_owner_ids: ['111', '222'] }))
+
+    renderManagement()
+
+    const dialog = openEditDialog(/GitHub\.com/)
+    expect(within(dialog).getByLabelText('Allowed Owner IDs')).toHaveValue('111, 222')
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Instance' }))
+
+    await waitFor(() => expect(mockGitHubUpdate).toHaveBeenCalled())
+    expect(mockGitHubUpdate.mock.calls[0][1]).toMatchObject({ allowed_owner_ids: ['111', '222'] })
+  })
+
+  it('clears the owner list when the field is emptied', async () => {
+    mockUseGitHubInstances.mockReturnValue(githubInstance({ allowed_owner_ids: ['111'] }))
+
+    renderManagement()
+
+    const dialog = openEditDialog(/GitHub\.com/)
+    fireEvent.change(within(dialog).getByLabelText('Allowed Owner IDs'), { target: { value: '' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Instance' }))
+
+    await waitFor(() => expect(mockGitHubUpdate).toHaveBeenCalled())
+    expect(mockGitHubUpdate.mock.calls[0][1]).toMatchObject({ allowed_owner_ids: [] })
+  })
+
+  it('edits the namespace list of a GitLab instance and explains gitlab.com', async () => {
+    mockUseGitLabInstances.mockReturnValue(
+      gitlabInstance({ name: 'GitLab.com', url: 'https://gitlab.com', allowed_namespaces: ['acme'] }),
+    )
+    mockUseGitHubInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    renderManagement()
+
+    const dialog = openEditDialog(/GitLab\.com/)
+    expect(within(dialog).getByText(/every project on gitlab\.com/i)).toBeInTheDocument()
+    expect(within(dialog).queryByLabelText('Allowed Owner IDs')).toBeNull()
+    const field = within(dialog).getByLabelText('Allowed Namespaces')
+    expect(field).toHaveValue('acme')
+    fireEvent.change(field, { target: { value: 'acme acme-labs' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Instance' }))
+
+    await waitFor(() => expect(mockGitLabUpdate).toHaveBeenCalled())
+    expect(mockGitLabUpdate.mock.calls[0][1]).toMatchObject({ allowed_namespaces: ['acme', 'acme-labs'] })
   })
 })
