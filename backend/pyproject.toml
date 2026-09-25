@@ -75,11 +75,16 @@ line-length = 120
 exclude = [".git", "__pycache__", "docs/source/conf.py", "old", "build", "dist"]
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "B", "PERF", "SIM", "RET", "ASYNC", "RUF", "PLW"]
+select = ["E4", "E7", "E9", "F", "B", "PERF", "SIM", "RET", "ASYNC", "RUF", "PLW", "C901"]
 
 [tool.ruff.lint.per-file-ignores]
 # Stacked `with patch(...)` blocks in tests stay nested for readability.
 "tests/**" = ["SIM117"]
+# The fake server's query, expression and $group evaluators each dispatch over Mongo's whole operator set.
+"tests/mocks/fake_mongo.py" = ["C901"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 20
 
 [tool.ruff.lint.flake8-bugbear]
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query", "fastapi.Header", "fastapi.Path", "fastapi.Body"]
