@@ -3,13 +3,16 @@ import logging
 import os
 import re
 from collections import Counter
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.services.analysis.stats import calculate_comprehensive_stats
+
+if TYPE_CHECKING:
+    from app.services.waivers.matching import MatchFinding, WaiverApplication
 
 logger = logging.getLogger(__name__)
 
@@ -203,51 +206,12 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
     Persists re-anchored waiver signatures and marks lapsed findings. Vulnerability-id waivers
     are handled separately by the caller via apply_vulnerability_waiver.
     """
-    from app.services.waivers.matching import MatchFinding, apply_waivers_to_findings
+    from app.services.waivers.matching import apply_waivers_to_findings
 
     docs = await finding_repo.find_location_findings(scan_id)
-
-    # Lazy back-fill: legacy finding-scope waivers without a stored signature inherit the
-    # signature of the finding they currently match by exact finding_id.
-    docs_by_legacy_id = {d.get("finding_id") or d["_id"]: d for d in docs}
-    for w in waivers:
-        if getattr(w, "match", None) is None:
-            legacy_doc = docs_by_legacy_id.get(getattr(w, "finding_id", None))
-            if legacy_doc and legacy_doc.get("match"):
-                sig = _safe_match_signature(legacy_doc["match"], f"back-fill waiver {getattr(w, 'id', '?')}")
-                if sig is not None:
-                    w.match = sig
-                    await waiver_repo.update(w.id, {"match": legacy_doc["match"]})
-
-    from app.services.waivers.signature import compute_match_signature_from_doc
-
-    findings = []
-    recomputed = 0  # count of self-healed signatures; surfaced by the outcome logging below
-    for d in docs:
-        sig = None
-        stored = d.get("match")
-        if stored:
-            sig = _safe_match_signature(stored, f"finding {d['_id']}")
-            if sig is None:
-                continue  # malformed stored signature — skip rather than abort the batch
-        else:
-            # Self-heal: a missing stored signature would otherwise silently drop this finding
-            # from the matchable set and orphan any waiver in its (rule_key,file_key) group.
-            sig = compute_match_signature_from_doc(d)
-            if sig is not None:
-                recomputed += 1
-        findings.append(MatchFinding(id=d["_id"], sig=sig))
-
-    # Hydrate waiver .match into MatchSignature objects (waivers may arrive as Waiver models already).
-    enriched = []
-    for w in waivers:
-        m = getattr(w, "match", None)
-        if isinstance(m, dict):
-            sig = _safe_match_signature(m, f"waiver {getattr(w, 'id', '?')}")
-            if sig is None:
-                continue  # malformed stored waiver signature — skip; others still applied
-            w.match = sig
-        enriched.append(w)
+    await _backfill_legacy_waiver_signatures(waiver_repo, waivers, docs)
+    findings, recomputed = _signed_match_findings(docs)
+    enriched = _hydrate_waiver_signatures(waivers)
 
     app = apply_waivers_to_findings(findings, enriched)
 
@@ -262,28 +226,89 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
         recomputed,
     )
     if app.dormant:
-        group_sizes: dict[str, int] = {}
-        for f in findings:
-            if f.sig is not None:
-                # \x00 delimiter: rule_key/file_key are scanner IDs and file paths; neither contains NUL (so no key collision).
-                key = f"{f.sig.rule_key}\x00{f.sig.file_key}"
-                group_sizes[key] = group_sizes.get(key, 0) + 1
-        match_by_waiver = {w.id: getattr(w, "match", None) for w in enriched}
-        for wid, dormant_reason in app.dormant.items():
-            m = match_by_waiver.get(wid)
-            rk = getattr(m, "rule_key", None)
-            fk = getattr(m, "file_key", None)
-            logger.warning(
-                "waiver dormant: waiver=%s scan=%s reason=%s rule_key=%s file_key=%s last_line=%s group_findings=%d",
-                wid,
-                scan_id,
-                dormant_reason,
-                rk,
-                fk,
-                getattr(m, "last_line", None),
-                group_sizes.get(f"{rk}\x00{fk}", 0),
-            )
+        _log_dormant_waivers(scan_id, app.dormant, findings, enriched)
 
+    await _persist_signature_application(finding_repo, waiver_repo, scan_id, app, enriched)
+
+
+async def _backfill_legacy_waiver_signatures(waiver_repo: Any, waivers: list, docs: list[dict]) -> None:
+    """Legacy waivers without a stored signature inherit the one of the finding they name by exact finding_id."""
+    docs_by_legacy_id = {d.get("finding_id") or d["_id"]: d for d in docs}
+    for w in waivers:
+        if getattr(w, "match", None) is not None:
+            continue
+        legacy_doc = docs_by_legacy_id.get(getattr(w, "finding_id", None))
+        if legacy_doc and legacy_doc.get("match"):
+            sig = _safe_match_signature(legacy_doc["match"], f"back-fill waiver {getattr(w, 'id', '?')}")
+            if sig is not None:
+                w.match = sig
+                await waiver_repo.update(w.id, {"match": legacy_doc["match"]})
+
+
+def _signed_match_findings(docs: list[dict]) -> tuple[list["MatchFinding"], int]:
+    """MatchFindings for the scan's docs, plus how many signatures were self-healed."""
+    from app.services.waivers.matching import MatchFinding
+    from app.services.waivers.signature import compute_match_signature_from_doc
+
+    findings = []
+    recomputed = 0
+    for d in docs:
+        stored = d.get("match")
+        if stored:
+            sig = _safe_match_signature(stored, f"finding {d['_id']}")
+            if sig is None:
+                continue  # malformed stored signature — skip rather than abort the batch
+        else:
+            # Self-heal: a missing stored signature would otherwise silently drop this finding
+            # from the matchable set and orphan any waiver in its (rule_key,file_key) group.
+            sig = compute_match_signature_from_doc(d)
+            if sig is not None:
+                recomputed += 1
+        findings.append(MatchFinding(id=d["_id"], sig=sig))
+    return findings, recomputed
+
+
+def _hydrate_waiver_signatures(waivers: list) -> list:
+    """Hydrate dict .match values into MatchSignatures and drop malformed ones; Waiver models pass through."""
+    enriched = []
+    for w in waivers:
+        m = getattr(w, "match", None)
+        if isinstance(m, dict):
+            sig = _safe_match_signature(m, f"waiver {getattr(w, 'id', '?')}")
+            if sig is None:
+                continue  # malformed stored waiver signature — skip; others still applied
+            w.match = sig
+        enriched.append(w)
+    return enriched
+
+
+def _log_dormant_waivers(scan_id: str, dormant: dict[str, str], findings: list["MatchFinding"], enriched: list) -> None:
+    group_sizes: dict[str, int] = {}
+    for f in findings:
+        if f.sig is not None:
+            # \x00 delimiter: rule_key/file_key are scanner IDs and file paths; neither contains NUL (so no key collision).
+            key = f"{f.sig.rule_key}\x00{f.sig.file_key}"
+            group_sizes[key] = group_sizes.get(key, 0) + 1
+    match_by_waiver = {w.id: getattr(w, "match", None) for w in enriched}
+    for wid, dormant_reason in dormant.items():
+        m = match_by_waiver.get(wid)
+        rk = getattr(m, "rule_key", None)
+        fk = getattr(m, "file_key", None)
+        logger.warning(
+            "waiver dormant: waiver=%s scan=%s reason=%s rule_key=%s file_key=%s last_line=%s group_findings=%d",
+            wid,
+            scan_id,
+            dormant_reason,
+            rk,
+            fk,
+            getattr(m, "last_line", None),
+            group_sizes.get(f"{rk}\x00{fk}", 0),
+        )
+
+
+async def _persist_signature_application(
+    finding_repo: Any, waiver_repo: Any, scan_id: str, app: "WaiverApplication", enriched: list
+) -> None:
     # Record per-waiver outcome so orphaned waivers (suppressing 0 findings in the latest scan)
     # are visible in the UI. Covers dormant AND match=None waivers (both yield count 0).
     match_counts = Counter(app.waived.values())  # waiver_id -> #findings waived
