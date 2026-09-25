@@ -75,7 +75,7 @@ line-length = 120
 exclude = [".git", "__pycache__", "docs/source/conf.py", "old", "build", "dist"]
 
 [tool.ruff.lint]
-select = ["E4", "E7", "E9", "F", "B"]
+select = ["E4", "E7", "E9", "F", "B", "PERF"]
 
 [tool.ruff.lint.per-file-ignores]
 # Stacked `with patch(...)` blocks in tests stay nested for readability.

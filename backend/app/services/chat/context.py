@@ -140,8 +140,7 @@ def build_messages(
             }
             messages.append(assistant_entry)
 
-            for tc in stored_tool_calls:
-                messages.append(build_tool_result_message(tc.get("result", {})))
+            messages.extend(build_tool_result_message(tc.get("result", {})) for tc in stored_tool_calls)
             continue
 
         entry: dict[str, Any] = {"role": role, "content": msg.get("content", "")}

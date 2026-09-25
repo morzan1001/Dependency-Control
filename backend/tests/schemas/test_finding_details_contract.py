@@ -293,8 +293,7 @@ def test_every_consumed_details_key_is_declared():
         lines.append("next to their writer, or add a reasoned ALLOWED_UNDECLARED entry):\n")
         for key in sorted(bad):
             lines.append(f"  {key}")
-            for loc in sorted(set(bad[key])):
-                lines.append(f"    - {loc}")
+            lines.extend(f"    - {loc}" for loc in sorted(set(bad[key])))
         raise AssertionError("\n".join(lines))
 
 
@@ -359,7 +358,9 @@ def test_writer_construction_kwargs_are_declared_fields():
             if model_name is None:
                 continue
             fields = _model_fields(model_name)
-            for kw in node.keywords:
-                if kw.arg is not None and kw.arg not in fields:
-                    bad.append(f"{rel}:{node.lineno} — {model_name}({kw.arg}=...) is not a declared field")
+            bad.extend(
+                f"{rel}:{node.lineno} — {model_name}({kw.arg}=...) is not a declared field"
+                for kw in node.keywords
+                if kw.arg is not None and kw.arg not in fields
+            )
     assert not bad, "writers pass kwargs that are not schema fields:\n" + "\n".join(bad)

@@ -531,9 +531,7 @@ async def gather_cross_project_data(
 
     resolved_scans = await scan_repo.get_latest_active_scan_ids(other_projects)
 
-    scan_id_to_project: dict[str, str] = {}
-    for proj_id, scan_id in resolved_scans.items():
-        scan_id_to_project[scan_id] = proj_id
+    scan_id_to_project = {scan_id: proj_id for proj_id, scan_id in resolved_scans.items()}
 
     other_scan_ids = list(scan_id_to_project.keys())
 

@@ -89,9 +89,7 @@ async def test_encrypt_then_decrypt_roundtrip(encryption_key):
     async def source():
         yield encrypted
 
-    out: list[bytes] = []
-    async for chunk in decrypt_stream(source()):
-        out.append(chunk)
+    out = [chunk async for chunk in decrypt_stream(source())]
     assert b"".join(out) == plaintext
 
 
@@ -123,9 +121,7 @@ async def test_encrypt_multi_chunk_roundtrip(encryption_key):
         for i in range(0, len(encrypted), 4096):
             yield encrypted[i : i + 4096]
 
-    out: list[bytes] = []
-    async for chunk in decrypt_stream(source()):
-        out.append(chunk)
+    out = [chunk async for chunk in decrypt_stream(source())]
     assert b"".join(out) == plaintext
 
 

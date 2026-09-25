@@ -86,9 +86,7 @@ async def test_send_message_streams_tokens_and_persists():
         )
     )
 
-    events = []
-    async for chunk in service.send_message("conv-1", user, "hi"):
-        events.append(chunk)
+    events = [chunk async for chunk in service.send_message("conv-1", user, "hi")]
 
     types = [c.split('"type":')[1].split(",")[0].split('"')[1] if '"type":' in c else "" for c in events]
     assert "token" in types

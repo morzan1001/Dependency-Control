@@ -80,26 +80,12 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
                     if entry is None or not entry.weaknesses:
                         continue
                     severity = _severity_from_weaknesses(entry.weaknesses)
-                    findings.append(
-                        _build_finding(
-                            proto,
-                            suite_name,
-                            entry,
-                            severity,
-                            rule=None,
-                        )
+                    findings.append(_build_finding(proto, suite_name, entry, severity, rule=None))
+                    findings.extend(
+                        _build_finding(proto, suite_name, entry, _rule_severity(rule), rule=rule)
+                        for rule in amp_rules
+                        if any(w in rule.match_cipher_weaknesses for w in entry.weaknesses)
                     )
-                    for rule in amp_rules:
-                        if any(w in rule.match_cipher_weaknesses for w in entry.weaknesses):
-                            findings.append(
-                                _build_finding(
-                                    proto,
-                                    suite_name,
-                                    entry,
-                                    _rule_severity(rule),
-                                    rule=rule,
-                                )
-                            )
             return {"findings": findings}
         except Exception as e:
             logger.exception("protocol_cipher analyzer failed: %s", e)

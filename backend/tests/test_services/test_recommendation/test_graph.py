@@ -41,19 +41,13 @@ class TestAnalyzeDeepDependencyChainsShallow:
 
 class TestAnalyzeDeepDependencyChainsDeep:
     def _build_chain(self, length):
-        deps = []
-        deps.append(_dep("pkg-0", version="1.0", direct=True))
-
-        for i in range(1, length):
-            deps.append(
-                _dep(
-                    f"pkg-{i}",
-                    version="1.0",
-                    direct=False,
-                    parent_components=[f"pkg:npm/pkg-{i - 1}@1.0"],
-                )
-            )
-        return deps
+        return [
+            _dep("pkg-0", version="1.0", direct=True),
+            *(
+                _dep(f"pkg-{i}", version="1.0", direct=False, parent_components=[f"pkg:npm/pkg-{i - 1}@1.0"])
+                for i in range(1, length)
+            ),
+        ]
 
     def test_chain_exceeding_max_depth_produces_recommendation(self):
         deps = self._build_chain(5)
@@ -206,16 +200,16 @@ class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
         # Deep chain: root -> d1 -> d2 -> d3 -> d4 (depth 5, max_dependency_depth=2)
         deep_chain = [
             _dep("root", version="1.0", direct=True),
-        ]
-        for i in range(1, 5):
-            deep_chain.append(
+            *(
                 _dep(
                     f"deep-{i}",
                     version="1.0",
                     direct=False,
                     parent_components=[f"pkg:npm/{'root' if i == 1 else f'deep-{i - 1}'}@1.0"],
                 )
-            )
+                for i in range(1, 5)
+            ),
+        ]
 
         all_deps = circular_deps + deep_chain
         result = analyze_deep_dependency_chains(all_deps, max_dependency_depth=2)

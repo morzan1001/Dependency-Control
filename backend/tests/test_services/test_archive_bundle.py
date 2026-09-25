@@ -9,10 +9,7 @@ async def _async_iter(items):
 
 
 async def _collect(stream):
-    out: list[bytes] = []
-    async for chunk in stream:
-        out.append(chunk)
-    return b"".join(out)
+    return b"".join([chunk async for chunk in stream])
 
 
 @pytest.mark.asyncio

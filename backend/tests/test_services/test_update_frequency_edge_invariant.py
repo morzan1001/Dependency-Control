@@ -804,17 +804,17 @@ def _generate_history(seed: int) -> list[_GeneratedScan]:
             )
 
     # A quieter second branch: the primary-branch pick must not drift to it.
-    for index in range(2):
-        scans.append(
-            _GeneratedScan(
-                scan_id=f"f{index}",
-                created_at=_days_ago(day - 0.5 - index),
-                commit=f"fc{index}",
-                packages={"requests": f"9.{index}.0"},
-                outdated=(),
-                branch="feature",
-            )
+    scans.extend(
+        _GeneratedScan(
+            scan_id=f"f{index}",
+            created_at=_days_ago(day - 0.5 - index),
+            commit=f"fc{index}",
+            packages={"requests": f"9.{index}.0"},
+            outdated=(),
+            branch="feature",
         )
+        for index in range(2)
+    )
     return scans
 
 

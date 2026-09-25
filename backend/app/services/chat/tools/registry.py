@@ -860,20 +860,18 @@ class ChatToolRegistry:
             confidence = _direct_confidence(dep_meta)
             current = g["current_version"] or dep_meta.get("version")
 
-            resolved = []
+            resolved: list[dict[str, Any]] = []
             for f in g["findings"]:
-                entries = (f.get("details") or {}).get("vulnerabilities") or []
-                if not entries:
-                    # Non-vulnerability findings carry no CVE list; label with the finding id.
-                    entries = [{}]
-                for v in entries:
-                    resolved.append(
-                        {
-                            "finding_id": f.get("finding_id"),
-                            "cve_id": v.get("resolved_cve") or v.get("id") or f.get("finding_id"),
-                            "severity": v.get("severity") or f.get("severity"),
-                        }
-                    )
+                # Non-vulnerability findings carry no CVE list; label with the finding id.
+                entries = (f.get("details") or {}).get("vulnerabilities") or [{}]
+                resolved.extend(
+                    {
+                        "finding_id": f.get("finding_id"),
+                        "cve_id": v.get("resolved_cve") or v.get("id") or f.get("finding_id"),
+                        "severity": v.get("severity") or f.get("severity"),
+                    }
+                    for v in entries
+                )
             max_sev = max(
                 (_SEVERITY_RANK.get(f.get("severity") or "", 0) for f in g["findings"]),
                 default=0,
@@ -1119,20 +1117,19 @@ class ChatToolRegistry:
             },
         )
         names = await self._project_names(ctx.db, list({_row_project_id(r) for r in rows}))
-        matches = []
-        for r in rows:
-            matches.append(
-                {
-                    "project_id": r.get("project_id"),
-                    "project_name": names.get(_row_project_id(r), ""),
-                    "component": r.get("name"),
-                    "version": r.get("version"),
-                    "direct_dependency": bool(r.get("direct")),
-                    "direct_confidence": _direct_confidence(r),
-                    "purl": r.get("purl"),
-                    "license": r.get("license"),
-                }
-            )
+        matches = [
+            {
+                "project_id": r.get("project_id"),
+                "project_name": names.get(_row_project_id(r), ""),
+                "component": r.get("name"),
+                "version": r.get("version"),
+                "direct_dependency": bool(r.get("direct")),
+                "direct_confidence": _direct_confidence(r),
+                "purl": r.get("purl"),
+                "license": r.get("license"),
+            }
+            for r in rows
+        ]
         return {"matches": matches, "count": len(matches), "matches_total": rows_total}
 
     async def _tool_get_findings_by_cve(self, ctx: _ToolContext) -> dict[str, Any]:

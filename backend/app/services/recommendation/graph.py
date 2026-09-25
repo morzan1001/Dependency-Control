@@ -77,10 +77,7 @@ def analyze_deep_dependency_chains(
             if key in depth_map or key in in_cycle:
                 continue
 
-            parent_depths = []
-            for parent in parents:
-                if parent in depth_map and parent not in in_cycle:
-                    parent_depths.append(depth_map[parent])
+            parent_depths = [depth_map[parent] for parent in parents if parent in depth_map and parent not in in_cycle]
 
             if parent_depths:
                 depth_map[key] = max(parent_depths) + 1

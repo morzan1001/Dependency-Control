@@ -13,13 +13,12 @@ def _resolve_sort_values(doc, path: str) -> list:
     """Resolve a dotted Mongo sort path with array fan-out, as the server's sort key extraction does."""
     values = [doc]
     for part in path.split("."):
-        fanned = []
-        for value in values:
-            items = value if isinstance(value, list) else [value]
-            for item in items:
-                if isinstance(item, dict) and part in item:
-                    fanned.append(item[part])
-        values = fanned
+        values = [
+            item[part]
+            for value in values
+            for item in (value if isinstance(value, list) else [value])
+            if isinstance(item, dict) and part in item
+        ]
     flat = []
     for value in values:
         flat.extend(value if isinstance(value, list) else [value])
