@@ -139,15 +139,15 @@ async def create_instance(
                 response = await client.get(
                     f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers()
                 )
-                if response.status_code != 200:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Failed to connect to GitLab instance: HTTP {response.status_code}",
-                    )
         except Exception as e:
             logger.exception("Connection test failed for %s: %s", instance_data.url, e)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {e!s}"
+            ) from e
+        if response.status_code != 200:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Failed to connect to GitLab instance: HTTP {response.status_code}",
             )
 
     created_instance = await instance_repo.create(new_instance)
