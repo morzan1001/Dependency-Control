@@ -126,9 +126,7 @@ async def test_verify_reports_success_only_on_a_migrated_database():
 async def test_two_syncing_instances_of_one_provider_abort_the_run():
     """Either instance could have added the member, and the wrong one hands them to its next sync
     to drop."""
-    db = await _with_instances(
-        await _seeded({"_id": "t", "members": [{"user_id": "u", "source": "gitlab"}]}), gitlab=2
-    )
+    db = await _with_instances(await _seeded({"_id": "t", "members": [{"user_id": "u", "source": "gitlab"}]}), gitlab=2)
 
     with pytest.raises(InstanceNotResolvable):
         await resolve_instances(db)

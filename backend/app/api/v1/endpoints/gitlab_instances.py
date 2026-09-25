@@ -284,8 +284,7 @@ async def list_instance_groups(
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=(
-                f"Could not list the groups of instance '{instance.name}'. "
-                f"It needs an access token that can read them."
+                f"Could not list the groups of instance '{instance.name}'. It needs an access token that can read them."
             ),
         )
     return [GitLabGroupOption(**option) for option in build_group_options(groups)]

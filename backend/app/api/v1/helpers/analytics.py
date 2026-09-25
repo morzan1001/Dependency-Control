@@ -138,9 +138,7 @@ def scope_resolution_counts(project_ids: Sequence[str], scan_ids: Sequence[str])
     return resolved, len(project_ids) - resolved
 
 
-async def historical_first_seen(
-    finding_repo: Any, components: list[str]
-) -> dict[tuple[str, str], datetime]:
+async def historical_first_seen(finding_repo: Any, components: list[str]) -> dict[tuple[str, str], datetime]:
     """Earliest scan_created_at per (component, version) across ALL scans — a vulnerability's true
     first detection, not the current scan's age (which is all the active-scan pipelines can see).
 
@@ -162,10 +160,7 @@ async def historical_first_seen(
         },
     ]
     rows = await finding_repo.aggregate(pipeline, allow_disk_use=True)
-    return {
-        (r["_id"].get("component"), r["_id"].get("version") or "unknown"): r.get("first_seen")
-        for r in rows
-    }
+    return {(r["_id"].get("component"), r["_id"].get("version") or "unknown"): r.get("first_seen") for r in rows}
 
 
 def calculate_days_until_due(kev_due_date: str | None) -> int | None:
@@ -526,9 +521,7 @@ async def gather_cross_project_data(
         "projects_compared": 0,
     }
 
-    other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][
-        :_CROSS_PROJECT_COMPARISON_LIMIT
-    ]
+    other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][:_CROSS_PROJECT_COMPARISON_LIMIT]
 
     other_projects = await project_repo.find_many_with_scan_id(
         {"_id": {"$in": other_project_ids}},

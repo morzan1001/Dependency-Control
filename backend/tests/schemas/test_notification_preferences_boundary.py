@@ -26,7 +26,9 @@ _SANE = {"vulnerability_found": ["email"]}
             id="UserSignup",
         ),
         pytest.param(lambda p: ProjectMemberUpdate(notification_preferences=p), id="ProjectMemberUpdate"),
-        pytest.param(lambda p: ProjectNotificationSettings(notification_preferences=p), id="ProjectNotificationSettings"),
+        pytest.param(
+            lambda p: ProjectNotificationSettings(notification_preferences=p), id="ProjectNotificationSettings"
+        ),
     ],
 )
 def test_request_schemas_drop_what_the_reader_would_drop(build):

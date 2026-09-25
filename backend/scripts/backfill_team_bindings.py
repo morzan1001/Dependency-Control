@@ -248,10 +248,7 @@ def main() -> int:
     mode.add_argument(
         "--verify",
         action="store_true",
-        help=(
-            "Count teams still carrying a scalar binding field; "
-            f"exit {EXIT_SCALAR_BINDINGS_FOUND} if any remain."
-        ),
+        help=(f"Count teams still carrying a scalar binding field; exit {EXIT_SCALAR_BINDINGS_FOUND} if any remain."),
     )
     parser.set_defaults(execute=False)
     parser.add_argument(

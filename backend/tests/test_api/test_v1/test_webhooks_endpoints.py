@@ -180,7 +180,9 @@ class TestListRoutesWithholdSecret:
 
         mock_repo = MagicMock()
         mock_repo.count_by_team = AsyncMock(return_value=1)
-        mock_repo.find_by_team = AsyncMock(return_value=[_make_webhook(project_id=None, team_id="team-1", secret=self.SECRET)])
+        mock_repo.find_by_team = AsyncMock(
+            return_value=[_make_webhook(project_id=None, team_id="team-1", secret=self.SECRET)]
+        )
 
         with patch(f"{MODULE}.check_team_webhook_list_permission", new_callable=AsyncMock):
             with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):

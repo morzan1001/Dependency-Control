@@ -110,9 +110,7 @@ def _chain_to_a_leaf_with(parent_count):
     previous = "pkg:npm/root@1.0.0"
     for step in range(_DEEP_DEPTH):
         purl = f"pkg:npm/step-{step}@1.0.0"
-        chain.append(
-            {"name": f"step-{step}", "version": "1.0.0", "purl": purl, "parent_components": [previous]}
-        )
+        chain.append({"name": f"step-{step}", "version": "1.0.0", "purl": purl, "parent_components": [previous]})
         previous = purl
     leaf = {
         "name": "leaf",

@@ -303,9 +303,27 @@ class TestHotspotsPipelineBounded:
 _LODASH_DETAILS = {
     "fixed_version": "4.17.21",
     "vulnerabilities": [
-        {"id": "CVE-2021-1", "resolved_cve": "CVE-2021-1", "aliases": [], "severity": "CRITICAL", "fixed_version": "4.17.21"},
-        {"id": "CVE-2021-2", "resolved_cve": "CVE-2021-2", "aliases": [], "severity": "HIGH", "fixed_version": "4.17.21"},
-        {"id": "CVE-2021-3", "resolved_cve": "CVE-2021-3", "aliases": [], "severity": "HIGH", "fixed_version": "4.17.21"},
+        {
+            "id": "CVE-2021-1",
+            "resolved_cve": "CVE-2021-1",
+            "aliases": [],
+            "severity": "CRITICAL",
+            "fixed_version": "4.17.21",
+        },
+        {
+            "id": "CVE-2021-2",
+            "resolved_cve": "CVE-2021-2",
+            "aliases": [],
+            "severity": "HIGH",
+            "fixed_version": "4.17.21",
+        },
+        {
+            "id": "CVE-2021-3",
+            "resolved_cve": "CVE-2021-3",
+            "aliases": [],
+            "severity": "HIGH",
+            "fixed_version": "4.17.21",
+        },
     ],
 }
 
@@ -560,7 +578,9 @@ def _details_from_counts(component: str, critical: int, high: int, medium: int, 
     for sev, n in (("critical", critical), ("high", high), ("medium", medium), ("low", low)):
         for i in range(n):
             cid = f"CVE-{component}-{sev}-{i}"
-            vulns.append({"id": cid, "resolved_cve": cid, "aliases": [], "severity": sev.upper(), "fixed_version": None})
+            vulns.append(
+                {"id": cid, "resolved_cve": cid, "aliases": [], "severity": sev.upper(), "fixed_version": None}
+            )
     return {"fixed_version": None, "vulnerabilities": vulns}
 
 
@@ -766,9 +786,7 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
     ):
         for sb in sort_bys:
             asyncio.run(
-                get_vulnerability_hotspots(
-                    current_user=user, db=db, skip=0, limit=20, sort_by=sb, sort_order="desc"
-                )
+                get_vulnerability_hotspots(current_user=user, db=db, skip=0, limit=20, sort_by=sb, sort_order="desc")
             )
     return calls["n"]
 
@@ -914,7 +932,13 @@ class TestHistoricalFirstSeen:
         findings = [
             {"_id": "a", "component": "curl", "version": "8.0", "type": "vulnerability", "scan_created_at": mid},
             {"_id": "b", "component": "curl", "version": "8.0", "type": "vulnerability", "scan_created_at": old},
-            {"_id": "c", "component": "curl", "version": "8.0", "type": "vulnerability", "scan_created_at": datetime(2025, 9, 1, tzinfo=timezone.utc)},
+            {
+                "_id": "c",
+                "component": "curl",
+                "version": "8.0",
+                "type": "vulnerability",
+                "scan_created_at": datetime(2025, 9, 1, tzinfo=timezone.utc),
+            },
         ]
         col = FakeCollection()
         col._docs = {d["_id"]: d for d in findings}
@@ -970,7 +994,9 @@ class TestHistoricalFirstSeen:
             resp = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=20))
 
         item = resp[0]
-        assert item.days_known is not None and item.days_known >= 199, "days_known must follow the historical first-seen (200d), not the active scan (2d)"
+        assert item.days_known is not None and item.days_known >= 199, (
+            "days_known must follow the historical first-seen (200d), not the active scan (2d)"
+        )
         assert any(r.startswith("overdue:") for r in item.priority_reasons)
 
     def test_hotspots_days_known_uses_historical_not_active_scan(self):
@@ -1014,4 +1040,6 @@ class TestHistoricalFirstSeen:
             )
 
         item = resp[0]
-        assert item.days_known is not None and item.days_known >= 199, "days_known must follow the historical first-seen (200d), not the active scan (2d)"
+        assert item.days_known is not None and item.days_known >= 199, (
+            "days_known must follow the historical first-seen (200d), not the active scan (2d)"
+        )

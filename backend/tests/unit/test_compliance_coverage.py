@@ -120,9 +120,7 @@ def _evaluation_with(coverage: EvaluationCoverage | None):
 def _render_report(evaluation, disclaimer: str | None = None) -> str:
     """The page the PDF renderer renders, built through its own context so the two cannot diverge."""
     env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=select_autoescape(["html"]))
-    return env.get_template("base_report.html").render(
-        **build_template_context(evaluation, _report(), disclaimer)
-    )
+    return env.get_template("base_report.html").render(**build_template_context(evaluation, _report(), disclaimer))
 
 
 @pytest.mark.asyncio

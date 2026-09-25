@@ -104,7 +104,12 @@ async def test_the_chat_and_mcp_tools_refuse_a_member_holding_no_project_read_pe
 
     assert listed == {"projects": [], "count": 0}
     assert "error" in named
-    assert await registry.execute_tool("get_project_details", {"project_id": "direct"}, _user(Permissions.PROJECT_READ), db) != named
+    assert (
+        await registry.execute_tool(
+            "get_project_details", {"project_id": "direct"}, _user(Permissions.PROJECT_READ), db
+        )
+        != named
+    )
 
 
 @pytest.mark.asyncio

@@ -59,6 +59,7 @@ def _is_fresher(doc: dict[str, Any], incumbent: dict[str, Any]) -> bool:
         return doc_at > incumbent_at
     return str(doc["_id"]) < str(incumbent["_id"])
 
+
 _MINIMAL_PROJECTION = {
     "_id": 1,
     "pipeline_id": 1,
@@ -376,8 +377,7 @@ class ScanRepository:
         if frontier:
             bounded = set(frontier.values())
             logger.warning(
-                "Rescan lineage still had links at the %d-hop bound for %d scan(s); "
-                "the resolved analysis may be stale",
+                "Rescan lineage still had links at the %d-hop bound for %d scan(s); the resolved analysis may be stale",
                 MAX_RESCAN_HOPS,
                 len(bounded),
             )
@@ -412,9 +412,7 @@ class ScanRepository:
                 doc["_id"]: doc
                 async for doc in self.collection.find({"_id": {"$in": sorted({a.scan_id for a in resolved.values()})}})
             }
-        return {
-            scan_id: docs[analysis.scan_id] for scan_id, analysis in resolved.items() if analysis.scan_id in docs
-        }
+        return {scan_id: docs[analysis.scan_id] for scan_id, analysis in resolved.items() if analysis.scan_id in docs}
 
     async def _newest_head_per_project(self, or_conditions: list[dict[str, Any]]) -> dict[str, str]:
         if not or_conditions:
@@ -496,9 +494,7 @@ class ScanRepository:
         analysis of it. A tip whose analysis vanished between the two reads drops out, which is
         what "projects resolving to no scan are omitted" already means."""
         lineage = await self.freshest_in_lineage(tips.values())
-        return {
-            project_id: lineage[scan_id].scan_id for project_id, scan_id in tips.items() if scan_id in lineage
-        }
+        return {project_id: lineage[scan_id].scan_id for project_id, scan_id in tips.items() if scan_id in lineage}
 
     async def iterate(
         self, query: dict[str, Any], projection: dict[str, int] | None = None

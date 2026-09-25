@@ -301,9 +301,7 @@ class TestUpdateProjectTeamAssignment:
         from app.repositories.projects import set_owners_pipeline
         from app.schemas.project import ProjectUpdate
 
-        mock_update = self._run_update(
-            self._project_owned_by_gitlab(), ProjectUpdate(team_ids=[]), _update_user()
-        )
+        mock_update = self._run_update(self._project_owned_by_gitlab(), ProjectUpdate(team_ids=[]), _update_user())
 
         mock_update.assert_awaited_once()
         assert mock_update.call_args[0][1] == set_owners_pipeline([])

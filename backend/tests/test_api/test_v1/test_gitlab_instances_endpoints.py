@@ -845,9 +845,7 @@ class TestBindingPickerListing:
             patch(f"{MODULE}.GitLabService", return_value=service),
         ):
             result = asyncio.run(
-                list_instance_groups(
-                    instance_id="gl-1", db=MagicMock(), current_user=admin_user, search=search
-                )
+                list_instance_groups(instance_id="gl-1", db=MagicMock(), current_user=admin_user, search=search)
             )
         return result, service
 
@@ -885,9 +883,7 @@ class TestBindingPickerListing:
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=_make_repo_mock(get_by_id=None)):
             with pytest.raises(HTTPException) as excinfo:
                 asyncio.run(
-                    list_instance_groups(
-                        instance_id="gl-absent", db=MagicMock(), current_user=admin_user, search=None
-                    )
+                    list_instance_groups(instance_id="gl-absent", db=MagicMock(), current_user=admin_user, search=None)
                 )
 
         assert excinfo.value.status_code == 404

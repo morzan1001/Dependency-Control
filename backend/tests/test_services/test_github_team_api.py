@@ -426,9 +426,7 @@ class TestOrgRepositoryMap:
         """Neither flag says anything about who owns the repository, and a scan arriving for one is
         a repository somebody works on."""
         service = _service()
-        listings = self._listings(
-            {"payments": [("acme/widgets", "push", {"archived": True, "fork": True})], "sre": []}
-        )
+        listings = self._listings({"payments": [("acme/widgets", "push", {"archived": True, "fork": True})], "sre": []})
 
         with patch.object(service, "_api_get_paginated", new=listings):
             assert await service.get_org_repository_map("acme", _ORG_TEAMS) == {"acme/widgets": [4711]}
@@ -842,13 +840,21 @@ def _rate_limit_response(core_remaining: int, rate_remaining: int = 4321) -> Mag
     response.json = MagicMock(
         return_value={
             "resources": {
-                "core": {"limit": 5000, "used": 5000 - core_remaining, "remaining": core_remaining,
-                         "reset": _RESET_EPOCH},
+                "core": {
+                    "limit": 5000,
+                    "used": 5000 - core_remaining,
+                    "remaining": core_remaining,
+                    "reset": _RESET_EPOCH,
+                },
                 "graphql": {"limit": 5000, "used": 0, "remaining": 5000, "reset": _RESET_EPOCH + 60},
                 "search": {"limit": 30, "used": 0, "remaining": 30, "reset": _RESET_EPOCH + 120},
             },
-            "rate": {"limit": 5000, "used": 5000 - rate_remaining, "remaining": rate_remaining,
-                     "reset": _RESET_EPOCH + 180},
+            "rate": {
+                "limit": 5000,
+                "used": 5000 - rate_remaining,
+                "remaining": rate_remaining,
+                "reset": _RESET_EPOCH + 180,
+            },
         }
     )
     return response

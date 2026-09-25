@@ -59,9 +59,7 @@ def _user(permissions: list[str] | None = None) -> User:
     )
 
 
-async def _seed_scan(
-    db: FakeDatabase, scan_id: str, project_id: str, created_at: datetime = _RELEASED_AT
-) -> None:
+async def _seed_scan(db: FakeDatabase, scan_id: str, project_id: str, created_at: datetime = _RELEASED_AT) -> None:
     await db.scans.insert_one(
         {
             "_id": scan_id,

@@ -1236,9 +1236,7 @@ class ChatToolRegistry:
             ctx.db,
             {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
             limit,
-            keep=lambda f: any(
-                (_row_project_id(f), identity) in old_keys for identity in staleness_identities(f)
-            ),
+            keep=lambda f: any((_row_project_id(f), identity) in old_keys for identity in staleness_identities(f)),
         )
         names = await self._project_names(ctx.db, list({_row_project_id(f) for f in stale}))
         out = []
@@ -1348,9 +1346,7 @@ class ChatToolRegistry:
                 )
             )
         risky.sort(reverse=True)
-        top3 = [
-            {"project_id": pid, "project_name": name, "critical": c, "high": h} for c, h, pid, name in risky[:3]
-        ]
+        top3 = [{"project_id": pid, "project_name": name, "critical": c, "high": h} for c, h, pid, name in risky[:3]]
         return {
             "team_id": ctx.args["team_id"],
             "team_name": getattr(team, "name", ""),

@@ -49,5 +49,3 @@ def test_pdf_includes_disclaimer_when_provided():
     rep.format = ReportFormat.PDF
     out, _, _ = r.render(_evaluation(), rep, disclaimer="Module-level CMVP out of scope")
     assert out[:4] == b"%PDF"
-
-

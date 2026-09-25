@@ -678,7 +678,9 @@ BARE_SOURCE_DOCS = [
 ]
 
 TEAM_SOURCE_INSTANCE_CASES = [
-    FindCase("projects carrying a provenance value with no instance", BARE_SOURCE_DOCS, bare_source_filter(), [4, 5, 6, 7])
+    FindCase(
+        "projects carrying a provenance value with no instance", BARE_SOURCE_DOCS, bare_source_filter(), [4, 5, 6, 7]
+    )
 ]
 
 # The same before and after, for a member's provenance. A member carrying no ``source`` at all
@@ -698,7 +700,12 @@ BARE_MEMBER_TEAMS = [
 ]
 
 TEAM_MEMBER_SOURCE_CASES = [
-    FindCase("teams holding a member whose provenance names no instance", BARE_MEMBER_TEAMS, bare_member_filter(), [4, 5, 6, 7]),
+    FindCase(
+        "teams holding a member whose provenance names no instance",
+        BARE_MEMBER_TEAMS,
+        bare_member_filter(),
+        [4, 5, 6, 7],
+    ),
 ]
 
 MEMBER_SOURCE_UPDATE_CASES = [

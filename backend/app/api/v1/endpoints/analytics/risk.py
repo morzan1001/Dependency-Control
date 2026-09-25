@@ -59,6 +59,7 @@ def _scope_digest(project_ids: list[str], scan_ids: list[str]) -> str:
     h.update(",".join(sorted(scan_ids)).encode())
     return h.hexdigest()[:16]
 
+
 _SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
 _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
@@ -135,9 +136,7 @@ async def get_impact_analysis(
     if not project_ids:
         return []
 
-    project_name_map, scan_ids = await get_projects_with_scans(
-        project_ids, db, release_environment=release_environment
-    )
+    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
     if not scan_ids:
         return []
 
@@ -313,8 +312,7 @@ def _build_hotspot(
         finding_count=sum(severity_counts.values()),
         severity_breakdown=SeverityBreakdown(**severity_counts),
         affected_projects=[
-            project_name_map.get(pid, "Unknown")
-            for pid in accessible_affected_projects[:_HOTSPOT_PROJECTS_SHOWN]
+            project_name_map.get(pid, "Unknown") for pid in accessible_affected_projects[:_HOTSPOT_PROJECTS_SHOWN]
         ],
         affected_project_count=len(accessible_affected_projects),
         first_seen=first_seen_str,
@@ -360,9 +358,7 @@ async def get_vulnerability_hotspots(
     if not project_ids:
         return []
 
-    project_name_map, scan_ids = await get_projects_with_scans(
-        project_ids, db, release_environment=release_environment
-    )
+    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
     if not scan_ids:
         return []
 

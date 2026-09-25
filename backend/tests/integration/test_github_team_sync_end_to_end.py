@@ -20,6 +20,7 @@ _ORG_TEAMS = [
 _OWN = team_source(TEAM_SOURCE_GITHUB, "gh-1")
 _THEIRS = team_source(TEAM_SOURCE_GITHUB, "gh-2")
 
+
 def _service():
     return GitHubService(make_github_instance(id="gh-1", access_token="ghp-secret", sync_teams=True))
 

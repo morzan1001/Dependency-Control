@@ -297,8 +297,7 @@ async def _refused_listing(github_service: GitHubService, subject: str, scope_hi
     cause, reset = await _why_refused(github_service)
     if cause is _Refusal.BUDGET:
         detail = (
-            f"Could not list {subject}: the token's GitHub API rate limit is exhausted. "
-            f"The limit resets at {reset}."
+            f"Could not list {subject}: the token's GitHub API rate limit is exhausted. The limit resets at {reset}."
         )
     elif cause is _Refusal.SCOPE:
         detail = f"Could not list {subject}. {scope_hint}"

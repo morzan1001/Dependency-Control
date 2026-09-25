@@ -100,9 +100,7 @@ def _run_with_service(project, scan_doc, mock_svc, instance_doc=_USABLE_INSTANCE
 
     db = create_mock_db({"github_instances": create_mock_collection(find_one=instance_doc)})
     with patch("app.services.analysis.integrations.GitHubService", return_value=mock_svc) as MockService:
-        asyncio.run(
-            decorate_github_pr(scan_id="s1", stats=stats or Stats(), scan_doc=scan_doc, project=project, db=db)
-        )
+        asyncio.run(decorate_github_pr(scan_id="s1", stats=stats or Stats(), scan_doc=scan_doc, project=project, db=db))
     return MockService
 
 

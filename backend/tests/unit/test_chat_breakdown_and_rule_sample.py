@@ -73,9 +73,7 @@ async def test_the_type_breakdown_holds_every_type_the_scan_carries():
     _seed_project(db)
     _seed_one_finding_per_type(db)
 
-    result = await ChatToolRegistry().execute_tool(
-        "get_findings_by_type", {"project_id": _PROJECT}, _caller(), db
-    )
+    result = await ChatToolRegistry().execute_tool("get_findings_by_type", {"project_id": _PROJECT}, _caller(), db)
 
     assert len(result["breakdown"]) == len(FindingType)
 
@@ -93,9 +91,7 @@ async def test_the_severity_breakdown_holds_every_severity_the_scan_carries():
             "severity": severity.value,
         }
 
-    result = await ChatToolRegistry().execute_tool(
-        "get_findings_by_severity", {"project_id": _PROJECT}, _caller(), db
-    )
+    result = await ChatToolRegistry().execute_tool("get_findings_by_severity", {"project_id": _PROJECT}, _caller(), db)
 
     assert len(result["breakdown"]) == len(Severity)
 

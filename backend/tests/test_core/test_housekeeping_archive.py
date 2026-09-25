@@ -153,7 +153,7 @@ class TestHandleRetentionAction:
         mock_delete.assert_not_called()
 
     def test_none_action_stays_silent(self):
-        """"none" is a deliberate no-op, so it must not be reported as a misconfiguration."""
+        """ "none" is a deliberate no-op, so it must not be reported as a misconfiguration."""
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock),
             patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock),
