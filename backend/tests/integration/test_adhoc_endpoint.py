@@ -1,6 +1,7 @@
 """HTTP behaviour of POST /api/v1/analyze."""
 
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -237,6 +238,29 @@ async def test_an_input_shape_the_pipeline_cannot_afford_is_413(client, db, monk
 
     assert resp.status_code == 413, resp.text
     assert "2 components" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_an_oversized_callgraph_is_413_before_it_is_parsed(client, db, monkeypatch):
+    _, token = await _issue_key(db)
+    monkeypatch.setattr(adhoc, "ADHOC_MAX_CALLGRAPH_ENTRIES", 1)
+    prepare = MagicMock()
+    monkeypatch.setattr(adhoc, "_prepare_posted_callgraph", prepare)
+
+    resp = await client.post(
+        _ANALYZE,
+        json={
+            "sboms": [_SBOM],
+            "callgraph": {"src/index.js": ["lodash", "express"]},
+            "analyzers": [],
+            "apply_global_waivers": False,
+        },
+        headers=_bearer(token),
+    )
+
+    assert resp.status_code == 413, resp.text
+    assert "2 callgraph entries" in resp.json()["detail"]
+    assert prepare.call_count == 0
 
 
 @pytest.mark.asyncio

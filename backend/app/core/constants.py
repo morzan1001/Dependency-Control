@@ -997,7 +997,8 @@ REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED = "language_not_analyzed"
 REACHABILITY_REASON_NO_COVERAGE_UNIVERSE = "no_coverage_universe"
 REACHABILITY_REASON_OUTSIDE_COVERAGE = "outside_coverage"
 
-# Upper bound on parsed imports + calls accepted from a single callgraph upload
+# Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
+# calls, the symbols each import names, madge dependencies and the analyzed-modules list.
 CALLGRAPH_MAX_ENTRIES = 200_000
 
 GITLAB_ACCESS_GUEST = 10
@@ -1158,14 +1159,20 @@ ADHOC_DEADLINE_SECONDS: float = 180.0
 ADHOC_RATE_LIMIT_PER_MINUTE: int = 5
 ADHOC_RATE_LIMIT_PER_HOUR: int = 60
 
-# The parse and the aggregation are synchronous and superlinear in these three counts, so a
-# deadline cannot interrupt them and the body ceiling is 25 MB above where they hurt. Each
-# limit is the shape that drives one measured blow-up, counted in linear time before it runs.
+# Each limit bounds one shape a synchronous stage walks, counted in linear time before it runs:
+# a deadline cannot interrupt those stages, and the 25 MB body ceiling sits far above where
+# they hurt.
 ADHOC_MAX_SBOM_COMPONENTS: int = 10_000
-# ``properties``, ``evidence.occurrences`` and ``cpes``: the parser dedupes each into a list
-# with a linear membership test, so cost is quadratic in whatever one component carries.
+# ``properties``, ``cpes``, ``locations``, ``evidence.occurrences`` and SPDX ``externalRefs``.
 ADHOC_MAX_SBOM_EVIDENCE_ENTRIES: int = 20_000
+# CycloneDX ``dependencies`` with their ``dependsOn`` refs, SPDX ``relationships`` and Syft
+# ``artifactRelationships``: 25 per component at the component limit, and 240 000 over
+# 10 000 components parse in 0.1 s.
+ADHOC_MAX_SBOM_GRAPH_ENTRIES: int = 250_000
 ADHOC_MAX_SCANNER_FINDINGS: int = 5_000
+# Counted as for CALLGRAPH_MAX_ENTRIES. Each vulnerability the usage index misses scans every
+# import pair: 5 000 such findings over 50 000 pairs take about 20 s.
+ADHOC_MAX_CALLGRAPH_ENTRIES: int = 50_000
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
 POLICY_AUDIT_DEFAULT_MIN_PRUNE_DAYS: int = 90
 CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500

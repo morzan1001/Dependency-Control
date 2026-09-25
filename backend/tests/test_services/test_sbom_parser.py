@@ -4,13 +4,15 @@ import re
 
 import pytest
 
-from app.schemas.sbom import SBOMFormat
+from app.schemas.sbom import ParsedDependency, SBOMFormat
 from app.services.sbom_parser import (
     SBOMParser,
     extract_license_from_url,
     is_url,
+    merge_duplicate_dependencies,
     parse_sbom,
 )
+from tests.helpers.comparisons import counted_str_type
 
 
 class TestIsUrl:
@@ -2017,3 +2019,185 @@ class TestDetectFormatMalformed:
         result = parse_sbom({"components": [123], "source": "x"})
         assert result is not None
         assert result.format == SBOMFormat.UNKNOWN
+
+
+# Large enough that a list-membership dedupe makes about a million comparisons.
+_DISTINCT = 1000
+_LODASH_PURL = "pkg:npm/lodash@4.17.21"
+
+
+def _lodash(**lists: list[str]) -> ParsedDependency:
+    """Assigned after construction, because validation would turn the counted values into plain str."""
+    dependency = ParsedDependency(name="lodash", version="4.17.21", purl=_LODASH_PURL)
+    for attr, values in lists.items():
+        setattr(dependency, attr, values)
+    return dependency
+
+
+class TestDuplicateMergeIsLinear:
+    @pytest.mark.parametrize("attr", ["locations", "parent_components", "cpes"])
+    def test_long_lists_merge_without_pairwise_comparison(self, attr):
+        counted = counted_str_type()
+        kept = _lodash(**{attr: [counted(f"a{i}") for i in range(_DISTINCT)]})
+        duplicate = _lodash(**{attr: [*(counted(f"b{i}") for i in range(_DISTINCT)), counted("a0")]})
+
+        merged, merged_count = merge_duplicate_dependencies([kept, duplicate])
+
+        # The one value both lists carry is the only hash match.
+        assert counted.comparisons == 1
+        assert merged_count == 1
+        expected = [f"a{i}" for i in range(_DISTINCT)] + [f"b{i}" for i in range(_DISTINCT)]
+        assert getattr(merged[0], attr) == expected
+
+    def test_many_duplicates_of_one_package_hash_its_list_once(self):
+        counted = counted_str_type()
+        kept = _lodash(parent_components=[counted(f"p{i}") for i in range(_DISTINCT)])
+        duplicates = [_lodash(parent_components=[counted(f"q{i}")]) for i in range(_DISTINCT)]
+
+        merged, merged_count = merge_duplicate_dependencies([kept, *duplicates])
+
+        assert counted.comparisons == 0
+        assert counted.hashes <= 4 * _DISTINCT
+        assert merged_count == _DISTINCT
+        expected = [f"p{i}" for i in range(_DISTINCT)] + [f"q{i}" for i in range(_DISTINCT)]
+        assert merged[0].parent_components == expected
+
+    def test_two_components_sharing_a_huge_fan_in_merge_linearly(self, monkeypatch):
+        """Two copies of one package under different bom-refs, each depended on by every entry."""
+        counted = counted_str_type()
+        original = SBOMParser._parse_cyclonedx_component
+
+        def _counted_parents(self, *args, **kwargs):
+            parsed = original(self, *args, **kwargs)
+            parsed.parent_components = [counted(ref) for ref in parsed.parent_components]
+            return parsed
+
+        monkeypatch.setattr(SBOMParser, "_parse_cyclonedx_component", _counted_parents)
+        component = {"type": "library", "name": "lodash", "version": "4.17.21", "purl": _LODASH_PURL}
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "components": [{**component, "bom-ref": "A"}, {**component, "bom-ref": "B"}],
+            "dependencies": [{"ref": f"p{i}", "dependsOn": ["A", "B"]} for i in range(_DISTINCT)],
+        }
+
+        result = parse_sbom(sbom)
+
+        # Each of B's parents matches its twin in A's list once.
+        assert counted.comparisons == _DISTINCT
+        assert result.merged_components == 1
+        assert result.dependencies[0].parent_components == [f"p{i}" for i in range(_DISTINCT)]
+
+
+class TestParserDedupeIsLinear:
+    """Each per-component dedupe compares a value only on a hash match."""
+
+    def test_cyclonedx_cpes(self):
+        counted = counted_str_type()
+        component = {
+            "type": "library",
+            "name": "lodash",
+            "version": "4.17.21",
+            "purl": _LODASH_PURL,
+            "cpes": [counted(f"cpe:2.3:a:lodash:{i}") for i in range(_DISTINCT)],
+        }
+
+        result = parse_sbom({"bomFormat": "CycloneDX", "specVersion": "1.5", "components": [component]})
+
+        assert counted.comparisons == 0
+        assert result.dependencies[0].cpes == [f"cpe:2.3:a:lodash:{i}" for i in range(_DISTINCT)]
+
+    def test_cyclonedx_property_cpes_locations_and_occurrences(self):
+        counted = counted_str_type()
+        component = {
+            "type": "library",
+            "name": "lodash",
+            "version": "4.17.21",
+            "purl": _LODASH_PURL,
+            "properties": [
+                *({"name": "syft:cpe23", "value": counted(f"cpe:{i}")} for i in range(_DISTINCT)),
+                *({"name": f"syft:location:{i}:path", "value": counted(f"/prop/{i}")} for i in range(_DISTINCT)),
+            ],
+            "evidence": {"occurrences": [{"location": counted(f"/occ/{i}")} for i in range(_DISTINCT)]},
+        }
+
+        result = parse_sbom({"bomFormat": "CycloneDX", "specVersion": "1.5", "components": [component]})
+
+        dependency = result.dependencies[0]
+        assert counted.comparisons == 0
+        assert dependency.cpes == [f"cpe:{i}" for i in range(_DISTINCT)]
+        assert dependency.locations == [f"/prop/{i}" for i in range(_DISTINCT)] + [
+            f"/occ/{i}" for i in range(_DISTINCT)
+        ]
+
+    def test_syft_locations(self):
+        counted = counted_str_type()
+        artifact = {
+            "id": "lodash",
+            "name": "lodash",
+            "version": "4.17.21",
+            "type": "npm",
+            "purl": _LODASH_PURL,
+            "locations": [{"path": counted(f"/loc/{i}")} for i in range(_DISTINCT)],
+        }
+
+        result = parse_sbom({"descriptor": {"name": "syft"}, "source": {}, "artifacts": [artifact]})
+
+        assert counted.comparisons == 0
+        assert result.dependencies[0].locations == [f"/loc/{i}" for i in range(_DISTINCT)]
+
+    def test_spdx_parent_refs(self, monkeypatch):
+        counted = counted_str_type()
+        original = SBOMParser._parse_spdx_package
+
+        def _counted_purl(self, *args, **kwargs):
+            parsed = original(self, *args, **kwargs)
+            parsed.purl = counted(parsed.purl)
+            return parsed
+
+        monkeypatch.setattr(SBOMParser, "_parse_spdx_package", _counted_purl)
+        packages = [_spdx_package("child"), *(_spdx_package(f"p{i}") for i in range(_DISTINCT))]
+        relationships = [
+            {"spdxElementId": f"SPDXRef-p{i}", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-child"}
+            for i in range(_DISTINCT)
+        ]
+        sbom = {"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": packages}
+
+        result = parse_sbom({**sbom, "relationships": relationships})
+
+        child = next(dep for dep in result.dependencies if dep.name == "child")
+        assert counted.comparisons == 0
+        assert child.parent_components == [f"pkg:npm/p{i}@1.0.0" for i in range(_DISTINCT)]
+
+    def test_syft_parent_refs(self, monkeypatch):
+        counted = counted_str_type()
+        original = SBOMParser._parse_syft_artifact
+
+        def _counted_purl(self, *args, **kwargs):
+            parsed = original(self, *args, **kwargs)
+            parsed.purl = counted(parsed.purl)
+            return parsed
+
+        monkeypatch.setattr(SBOMParser, "_parse_syft_artifact", _counted_purl)
+        artifacts = [_syft_artifact("child"), *(_syft_artifact(f"p{i}") for i in range(_DISTINCT))]
+        relationships = [{"parent": f"p{i}", "child": "child", "type": "depends-on"} for i in range(_DISTINCT)]
+        sbom = {"descriptor": {"name": "syft"}, "source": {"id": "src"}, "artifacts": artifacts}
+
+        result = parse_sbom({**sbom, "artifactRelationships": relationships})
+
+        child = next(dep for dep in result.dependencies if dep.name == "child")
+        assert counted.comparisons == 0
+        assert child.parent_components == [f"pkg:npm/p{i}@1.0.0" for i in range(_DISTINCT)]
+
+
+def _spdx_package(name: str) -> dict:
+    return {
+        "SPDXID": f"SPDXRef-{name}",
+        "name": name,
+        "versionInfo": "1.0.0",
+        "externalRefs": [{"referenceType": "purl", "referenceLocator": f"pkg:npm/{name}@1.0.0"}],
+    }
+
+
+def _syft_artifact(name: str) -> dict:
+    return {"id": name, "name": name, "version": "1.0.0", "type": "npm", "purl": f"pkg:npm/{name}@1.0.0"}
