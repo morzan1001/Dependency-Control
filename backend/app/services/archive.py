@@ -739,6 +739,34 @@ async def _mark_restore_complete(
     return None
 
 
+async def _abandon_restore(
+    db: Any,
+    scan_id: str,
+    renew_lock: Callable[[], Awaitable[bool]],
+    reason: str,
+) -> None:
+    """Count a failed restore and roll back its writes, but only while it still owns the scan's restore lock."""
+    try:
+        still_held = await renew_lock()
+    except PyMongoError as e:
+        # The leftover keeps its restore_in_progress flag, so the next restore rolls it back.
+        logger.warning(
+            "Restore could not confirm it still holds its lock, leaving the rollback to the next restore",
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+        )
+    else:
+        if still_held:
+            await _rollback_partial_restore(db, scan_id)
+        else:
+            logger.error(
+                "Restore lost its lock to another restore, leaving the scan to it",
+                extra={"scan_id": sanitize_for_log(scan_id)},
+            )
+            reason = ArchiveFailureReason.LOCK_HELD
+    archive_failures_total.labels(operation="restore", reason=reason).inc()
+    archive_operations_total.labels(operation="restore", status="failure").inc()
+
+
 async def _run_restore_pipeline(
     db: Any,
     repo: ArchiveMetadataRepository,
@@ -752,15 +780,11 @@ async def _run_restore_pipeline(
     failure_reason, collections_restored, gridfs_entries = await _replay_bundle(db, scan_id, decompressed)
 
     if failure_reason is not None:
-        await _rollback_partial_restore(db, scan_id)
-        archive_failures_total.labels(operation="restore", reason=failure_reason).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
+        await _abandon_restore(db, scan_id, renew_lock, failure_reason)
         return None
 
     if gridfs_entries and not await _restore_gridfs(db, scan_id, gridfs_entries):
-        await _rollback_partial_restore(db, scan_id)
-        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.INTEGRITY).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
+        await _abandon_restore(db, scan_id, renew_lock, ArchiveFailureReason.INTEGRITY)
         return None
     if gridfs_entries:
         collections_restored.append(ARCHIVE_GRIDFS_FRAME)

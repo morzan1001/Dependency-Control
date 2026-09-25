@@ -8,6 +8,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pymongo.errors import AutoReconnect
 
 from app.models.archive import ArchiveMetadata
 from app.services.archive import archive_scan, restore_scan
@@ -511,6 +512,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -593,6 +595,7 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -602,6 +605,42 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
     db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
     db.findings.delete_many.assert_awaited()
     db.dependencies.delete_many.assert_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "renewal",
+    [{"return_value": False}, {"side_effect": AutoReconnect("primary stepped down")}],
+    ids=["lock-taken-over", "renewal-failed"],
+)
+async def test_a_failed_gridfs_restore_rolls_back_only_while_holding_its_lock(archive_env, monkeypatch, renewal):
+    renew_lock = AsyncMock(**renewal)
+    db = _make_mock_db()
+    db.scans.find_one = AsyncMock(return_value=None)
+    db.scans.delete_one = AsyncMock()
+    db.dependencies.delete_many = AsyncMock()
+    monkeypatch.setattr(
+        f"{MODULE}._replay_bundle",
+        AsyncMock(return_value=(None, ["scans"], [{"gridfs_id": "abc", "filename": "x.json", "data": {}}])),
+    )
+    monkeypatch.setattr(f"{MODULE}._restore_gridfs", AsyncMock(return_value=False))
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
+
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=_make_archive_metadata())
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = renew_lock
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is None
+    renew_lock.assert_awaited()
+    db.scans.delete_one.assert_not_awaited()
+    db.dependencies.delete_many.assert_not_awaited()
 
 
 @pytest.mark.asyncio

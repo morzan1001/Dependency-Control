@@ -129,8 +129,9 @@ async def test_a_retry_after_a_crashed_restore_restores_the_scan(archive_env):
 class _FirstDependenciesBatchStall:
     """Holds the first dependencies batch until released, the way a slow write keeps a big restore busy."""
 
-    def __init__(self, db: FakeDatabase):
+    def __init__(self, db: FakeDatabase, fails_with: Exception | None = None):
         self._insert_many = db.dependencies.insert_many
+        self._fails_with = fails_with
         self._calls = 0
         self.reached = asyncio.Event()
         self.release = asyncio.Event()
@@ -140,6 +141,8 @@ class _FirstDependenciesBatchStall:
         if self._calls == 1:
             self.reached.set()
             await self.release.wait()
+            if self._fails_with is not None:
+                raise self._fails_with
         return await self._insert_many(docs, **kwargs)
 
 
@@ -257,3 +260,27 @@ async def test_cancelling_a_restore_propagates_and_frees_its_lock(archive_env):
             await first
 
     assert await db.distributed_locks.find_one({"_id": LOCK_NAME}) is None
+
+
+@pytest.mark.asyncio
+async def test_a_restore_failing_after_another_restore_completed_leaves_its_scan_alone(archive_env):
+    db = FakeDatabase()
+    await _archived_scan(db)
+    stall = _FirstDependenciesBatchStall(db, fails_with=AutoReconnect("connection reset once the partition healed"))
+
+    with patch.object(db.dependencies, "insert_many", stall):
+        first = asyncio.create_task(restore_scan(db, SCAN_ID))
+        await stall.reached.wait()
+        expired = datetime.now(timezone.utc) - timedelta(seconds=1)
+        await db.distributed_locks.update_one({"_id": LOCK_NAME}, {"$set": {"expires_at": expired}})
+        second = await restore_scan(db, SCAN_ID)
+        stall.release.set()
+        result = await first
+
+    assert second is not None
+    assert result is None
+    scan = await db.scans.find_one({"_id": SCAN_ID})
+    assert scan["restored_at"] is not None
+    assert "restore_in_progress" not in scan
+    assert [doc["_id"] async for doc in db.dependencies.find({"scan_id": SCAN_ID})] == [f"{SCAN_ID}:requests"]
+    assert [doc["_id"] async for doc in db.analysis_results.find({"scan_id": SCAN_ID})] == [f"{SCAN_ID}:outdated"]
