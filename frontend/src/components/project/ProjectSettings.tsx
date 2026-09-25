@@ -563,9 +563,9 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                 <Label htmlFor="gitlab-instance">GitLab Instance</Label>
                                 <Select
                                     value={gitlabInstanceId || "none"}
-                                    onValueChange={(value) => setGitlabInstanceId(value === "none" ? undefined : value)}
+                                    onValueChange={(value) => (value === "none" ? clearGitlabBinding() : setGitlabInstanceId(value))}
                                 >
-                                    <SelectTrigger>
+                                    <SelectTrigger id="gitlab-instance">
                                         <SelectValue placeholder="Select GitLab instance" />
                                     </SelectTrigger>
                                     <SelectContent>

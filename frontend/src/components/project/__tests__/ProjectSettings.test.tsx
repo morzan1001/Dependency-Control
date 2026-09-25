@@ -334,4 +334,22 @@ describe('ProjectSettings GitLab binding', () => {
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
     expect(mockUpdate.mock.calls[0][1]).toMatchObject({ gitlab_instance_id: 'gl-1', gitlab_project_id: 5151 })
   })
+
+  it('clears the whole binding when a system manager picks no instance', async () => {
+    mockUseAuth.mockReturnValue({ permissions: ['system:manage'] })
+    mockUseGitLabInstances.mockReturnValue(GITLAB_INSTANCES)
+
+    renderSettings(gitlabProject())
+
+    fireEvent.click(screen.getByLabelText('GitLab Instance'))
+    fireEvent.click(screen.getByRole('option', { name: 'None (Auto-detect from OIDC)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({
+      gitlab_instance_id: null,
+      gitlab_project_id: null,
+      gitlab_project_path: null,
+    })
+  })
 })
