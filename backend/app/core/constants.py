@@ -1049,6 +1049,10 @@ SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
 GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour
 GITLAB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
 
+# Read per member inside the ingest's bounded GitLab reads; an hour lets a large group's first sync
+# finish over several ingests instead of timing out on every one.
+GITLAB_USER_EMAIL_CACHE_TTL = 3600  # 1 hour
+
 # GitHub JWKS cache TTLs (in seconds)
 GITHUB_JWKS_CACHE_TTL = 3600  # 1 hour
 GITHUB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)

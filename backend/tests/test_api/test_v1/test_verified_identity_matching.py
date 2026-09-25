@@ -3,19 +3,25 @@ names whoever typed it, not the person the external identity belongs to."""
 
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import fakeredis.aioredis
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 
 from app.api.deps import _resolve_initial_member_id
+from app.core.cache import CacheService
+from app.core.constants import TEAM_SOURCE_GITLAB, team_source
 from app.models.gitlab_api import GitLabMember
+from app.models.team import GitLabGroupBinding, Team, TeamMember
+from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.services.github import GitHubEmailLookup, GitHubService
 from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
-from tests.mocks.gitlab import make_gitlab_instance
+from tests.mocks.gitlab import make_gitlab_instance, make_project_details
 
 _NOT_FOUND = 404
 _TIMESTAMP = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -184,3 +190,108 @@ class TestGitHubTeamSync:
     @pytest.mark.asyncio
     async def test_a_public_email_the_account_verified_is_resolved_whatever_the_case(self):
         assert await self._resolved("ada-gh", "Ada@Corp.com", _VERIFIED) == ["u-ada"]
+
+
+def _answer(status_code: int, payload: dict | None = None) -> MagicMock:
+    response = MagicMock(status_code=status_code)
+    response.json = MagicMock(return_value=payload)
+    return response
+
+
+@pytest.fixture
+def gitlab_cache(monkeypatch):
+    cache = CacheService()
+    cache._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    cache._pool = object()
+    cache._available = True
+    monkeypatch.setattr("app.services.gitlab.cache_service", cache)
+    return cache
+
+
+@pytest.mark.usefixtures("gitlab_cache")
+class TestGitLabTeamSyncWithoutListedEmails:
+    """Only an administrator's token sees members' emails in the listing; any other token must fall
+    back to the public profile email, which GitLab accepts only from the user's confirmed addresses."""
+
+    @staticmethod
+    async def _bound_team(db: FakeDatabase) -> None:
+        member = TeamMember(user_id="u-old", role="member", source=team_source(TEAM_SOURCE_GITLAB, "inst-1"))
+        binding = GitLabGroupBinding(instance_id="inst-1", external_id=42, path="corp")
+        await TeamRepository(db).create(Team(id="team-gl", name="Corp", bindings=[binding], members=[member]))
+
+    @staticmethod
+    async def _sync(db: FakeDatabase, listing: list[GitLabMember], profiles: dict[str, MagicMock]):
+        service = GitLabService(make_gitlab_instance(id="inst-1"))
+        profile_read = AsyncMock(side_effect=lambda endpoint, *_a, **_k: profiles[endpoint])
+        with (
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=listing)),
+            patch.object(service, "_api_get", new=profile_read),
+        ):
+            result = await service.sync_team_from_gitlab(
+                db=db,
+                gitlab_project_id=100,
+                gitlab_project_path="corp/proj",
+                gitlab_project_data=make_project_details(namespace_id=42, namespace_path="corp"),
+            )
+        return result, profile_read
+
+    @staticmethod
+    async def _member_ids(db: FakeDatabase) -> list[str]:
+        teams = await db.teams.find({}).to_list(None)
+        return sorted(member["user_id"] for team in teams for member in team["members"])
+
+    @pytest.mark.asyncio
+    async def test_a_member_listed_without_email_resolves_through_the_public_email_the_account_verified(self):
+        db = await _db(_VERIFIED)
+        listing = [GitLabMember(id=7, username="ada-gl", access_level=30)]
+
+        await self._sync(db, listing, {"/users/7": _answer(200, {"id": 7, "public_email": "Ada@Corp.com"})})
+
+        assert await self._member_ids(db) == ["u-ada"]
+
+    @pytest.mark.asyncio
+    async def test_a_public_email_the_account_has_not_verified_is_not_resolved(self):
+        db = await _db(_VERIFIED, _UNVERIFIED)
+        await self._bound_team(db)
+        listing = [GitLabMember(id=7, username="ada-gl", email="ada@corp.com", access_level=30)]
+        listing.append(GitLabMember(id=8, username="grace-gl", access_level=30))
+
+        await self._sync(db, listing, {"/users/8": _answer(200, {"id": 8, "public_email": "grace@corp.com"})})
+
+        assert await self._member_ids(db) == ["u-ada"]
+
+    @pytest.mark.asyncio
+    async def test_a_listed_email_needs_no_profile_read(self):
+        db = await _db(_VERIFIED)
+        listing = [GitLabMember(id=7, username="ada-gl", email="ada@corp.com", access_level=30)]
+
+        _, profile_read = await self._sync(db, listing, {})
+
+        assert await self._member_ids(db) == ["u-ada"]
+        profile_read.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("refusal", [None, _answer(429), _answer(403)], ids=["unreachable", "429", "403"])
+    async def test_a_member_gitlab_would_not_describe_leaves_the_stored_members_alone(self, refusal):
+        db = await _db(_VERIFIED)
+        await self._bound_team(db)
+        listing = [GitLabMember(id=7, username="ada-gl", email="ada@corp.com", access_level=30)]
+        listing.append(GitLabMember(id=9, username="new-gl", access_level=30))
+
+        result, _ = await self._sync(db, listing, {"/users/9": refusal})
+
+        assert result.team_ids == ["team-gl"]
+        assert await self._member_ids(db) == ["u-old"]
+
+    @pytest.mark.asyncio
+    async def test_a_profile_answer_is_cached_and_a_refusal_is_not(self):
+        service = GitLabService(make_gitlab_instance(id="inst-1"))
+        answers = [_answer(429), _answer(200, {"id": 7, "public_email": "ada@corp.com"})]
+        with patch.object(service, "_api_get", new=AsyncMock(side_effect=answers)) as read:
+            refused = await service.get_user_public_email(7)
+            answered = await service.get_user_public_email(7)
+            cached = await service.get_user_public_email(7)
+
+        assert refused.determined is False
+        assert answered.email == cached.email == "ada@corp.com"
+        assert read.await_count == len(answers)

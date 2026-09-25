@@ -58,6 +58,8 @@ class GitLabMember(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    id: int | None = None
     username: str | None = None
+    # Present only for a token of an instance administrator.
     email: str | None = None
     access_level: int = 0

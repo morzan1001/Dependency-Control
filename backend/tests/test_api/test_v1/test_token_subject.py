@@ -1,6 +1,8 @@
 """Tokens name the account by its immutable id: a username can pass to someone else, so a token
 naming one would outlive a rename and open whichever account takes the name next."""
 
+import time
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import parse_qs, urlsplit
@@ -16,6 +18,7 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.auth"
 _BAD_REQUEST = 400
+_FORBIDDEN = 403
 _NOT_FOUND = 404
 _PASSWORD = "Correct-Horse-1"
 _BOB = {"_id": "u-bob", "username": "bob", "email": "bob@test.com", "is_active": True, "permissions": ["scan:read"]}
@@ -81,6 +84,36 @@ async def test_a_refresh_token_naming_a_username_is_refused():
         await _refresh(security.create_refresh_token("bob"), db)
 
     assert exc_info.value.status_code == _NOT_FOUND
+
+
+@pytest.fixture
+def local_zone_ahead_of_utc(monkeypatch):
+    # Mongo hands last_logout_at back naive; the pod's zone must not shift the comparison.
+    monkeypatch.setenv("TZ", "Etc/GMT-2")
+    time.tzset()
+    yield
+    monkeypatch.undo()
+    time.tzset()
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("local_zone_ahead_of_utc")
+async def test_ending_every_session_refuses_a_token_minted_for_a_username_equal_to_an_account_id():
+    # A user renamed to bob's id before the switch got a refresh token naming "u-bob"; the rollout
+    # ends every session at once because by-id lookup cannot tell that token from bob's own.
+    db = await _db_with(_BOB, {"_id": "u-eve", "username": "eve", "email": "eve@test.com", "is_active": True})
+    minted_before = datetime.now(timezone.utc) - timedelta(hours=1)
+    token = jwt.encode(
+        {"sub": "u-bob", "type": "refresh", "iat": minted_before, "exp": minted_before + timedelta(days=7)},
+        settings.SECRET_KEY,
+        algorithm=settings.ALGORITHM,
+    )
+    await db.users.update_many({}, {"$set": {"last_logout_at": datetime.now(timezone.utc)}})
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _refresh(token, db)
+
+    assert exc_info.value.status_code == _FORBIDDEN
 
 
 async def _oidc_callback(user_info: dict, db: FakeDatabase):
