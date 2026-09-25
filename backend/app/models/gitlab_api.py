@@ -30,6 +30,7 @@ class GitLabProjectDetails(BaseModel):
 
     namespace: GitLabNamespace | None = None
     default_branch: str | None = None
+    path_with_namespace: str | None = None
 
 
 class GitLabMergeRequest(BaseModel):
