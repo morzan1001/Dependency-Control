@@ -77,6 +77,21 @@ async def _surviving_metadata(db: FakeDatabase) -> list[str]:
 
 
 @pytest.mark.asyncio
+async def test_a_rollback_failing_midway_leaves_the_scan_marked_for_the_next_restore(archive_env):
+    db = FakeDatabase()
+    await _archived_scan(db)
+    outage = AutoReconnect("primary stepped down")
+    with (
+        patch.object(db.dependencies, "insert_many", AsyncMock(side_effect=outage)),
+        patch.object(db.dependencies, "delete_many", AsyncMock(side_effect=outage)),
+    ):
+        assert await restore_scan(db, SCAN_ID) is None
+
+    assert (await db.scans.find_one({"_id": SCAN_ID}))["restore_in_progress"] is True
+    assert await restore_scan(db, SCAN_ID) is not None
+
+
+@pytest.mark.asyncio
 async def test_reaper_keeps_the_metadata_of_a_restore_that_died_after_its_header(archive_env):
     db = FakeDatabase()
     await _archived_scan(db)

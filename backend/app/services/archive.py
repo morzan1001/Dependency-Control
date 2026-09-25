@@ -625,19 +625,12 @@ async def _restore_gridfs(
 async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
     """Best-effort cleanup of the MongoDB state a failed or abandoned restore left behind.
 
-    A failure here leaves the scan marked restore_in_progress, so the next restore of it retries the cleanup.
+    The scan doc goes last, so a failed cleanup leaves it marked restore_in_progress for the next restore to retry.
     """
     try:
-        await db.scans.delete_one({"_id": scan_id})
-        for coll in (
-            "findings",
-            "finding_records",
-            "dependencies",
-            "analysis_results",
-            "callgraphs",
-            "crypto_assets",
-        ):
+        for coll in SCAN_SCOPED_COLLECTIONS:
             await getattr(db, coll).delete_many({"scan_id": scan_id})
+        await db.scans.delete_one({"_id": scan_id})
     except Exception as e:
         logger.warning(
             "Partial-restore rollback failed",
@@ -650,7 +643,10 @@ async def _load_restore_metadata(
     repo: ArchiveMetadataRepository,
     scan_id: str,
 ) -> ArchiveMetadata | None:
-    """Return restore metadata, or None (metrics recorded) if it's missing or the scan already exists."""
+    """Return restore metadata once an unfinished restore's leftovers are rolled back.
+
+    Returns None (metrics recorded) if the metadata is missing or the scan exists without restore_in_progress.
+    """
     metadata = await repo.find_by_scan_id(scan_id)
     if not metadata:
         logger.error(
@@ -873,8 +869,9 @@ async def restore_scan(
 ) -> ArchiveRestoreResponse | None:
     """Restore an archived scan back to MongoDB under a distributed lock on restore:{scan_id}.
 
-    Aborts if the scan already exists. On success, deletes the S3 archive and metadata;
-    either deletion failing is logged but the orphan reaper sweeps remnants.
+    An unfinished restore's leftovers (restore_in_progress) are rolled back and replayed; any other
+    existing scan aborts the restore. On success, deletes the S3 archive and metadata; either
+    deletion failing is logged but the orphan reaper sweeps remnants.
     """
     if not is_archive_enabled():
         return None

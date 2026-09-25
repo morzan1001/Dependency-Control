@@ -496,6 +496,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
     db.dependencies.delete_many = AsyncMock()
     db.analysis_results.delete_many = AsyncMock()
     db.callgraphs.delete_many = AsyncMock()
+    db.crypto_assets.delete_many = AsyncMock()
 
     # Force _replay_bundle to return a failure reason
     monkeypatch.setattr(
@@ -572,6 +573,7 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
     db.dependencies.delete_many = AsyncMock()
     db.analysis_results.delete_many = AsyncMock()
     db.callgraphs.delete_many = AsyncMock()
+    db.crypto_assets.delete_many = AsyncMock()
 
     # Replay succeeds and returns gridfs entries
     monkeypatch.setattr(
