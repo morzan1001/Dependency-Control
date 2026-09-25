@@ -8,10 +8,13 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar
 
+from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BaseModel
 
 from app.api.v1.helpers.projects import build_user_project_query
 from app.api.v1.helpers.teams import resolve_team_names, team_refs
+from app.api.v1.helpers.webhooks import check_webhook_list_permission
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CRYPTO_ASSET_PAGE,
@@ -22,9 +25,12 @@ from app.core.constants import (
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.finding import FindingType, Severity
+from app.models.project import Project
 from app.models.user import User
 from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
+from app.schemas.system import SystemSettingsResponse
+from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
@@ -78,10 +84,25 @@ _ERR_SCAN_NOT_FOUND_IN_PROJECT = "Scan not found in this project"
 _ERR_FINDING_NOT_FOUND = "Finding not found"
 _ERR_TEAM_NOT_FOUND = "Team not found"
 _ERR_ACCESS_DENIED = "Access denied"
+_ERR_WEBHOOK_NOT_FOUND = "Webhook not found or access denied"
 _ERR_NO_SCAN_DATA = "No scan data available"
 _ERR_NEED_TWO_SCANS = "Need at least two builds on the head branch to compare"
 _FIELD_VULN_ID = "details.vulnerabilities.id"
 _FIELD_EPSS_SCORE = "details.epss_score"
+
+
+def _rendered_fields(model: type[BaseModel], *, withheld: frozenset[str] = frozenset()) -> list[str]:
+    """Keys a REST response model renders, read off its fields since a validation error quotes the secrets."""
+    return [
+        "_id" if name == "id" else name
+        for name, field in model.model_fields.items()
+        if not field.exclude and name not in withheld
+    ]
+
+
+_PROJECT_FIELDS = _rendered_fields(Project)
+# Custom headers hold receiver credentials, and a tool answer leaves the process for the LLM provider.
+_WEBHOOK_FIELDS = _rendered_fields(WebhookResponse, withheld=frozenset({"headers"}))
 
 # Everything an answer needs to name the build it describes.
 _BUILD_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1, "status": 1}
@@ -348,7 +369,7 @@ class ChatToolRegistry:
         project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
         if not project:
             return {"error": _ERR_PROJECT_NOT_FOUND}
-        return {"project": _serialize_doc(project)}
+        return {"project": _serialize_doc(project, _PROJECT_FIELDS)}
 
     async def _tool_get_project_members(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
@@ -1447,25 +1468,33 @@ class ChatToolRegistry:
                 return {"error": "Archive not found or access denied"}
         return {"archive": _serialize_doc(archive)}
 
+    async def _may_read_webhooks(self, project_id: str, ctx: _ToolContext) -> bool:
+        """In the handler because TOOL_PERMISSIONS is any-of and would refuse the project admins REST admits."""
+        try:
+            await check_webhook_list_permission(project_id, ctx.user, ctx.db)
+        except HTTPException:
+            return False
+        return True
+
     async def _tool_list_project_webhooks(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
+        if not project or not await self._may_read_webhooks(project["_id"], ctx):
             return {"error": _ERR_PROJECT_NOT_FOUND}
         webhooks, webhooks_total = await bounded_read(
             ctx.db["webhooks"], {"project_id": project["_id"]}, subject="webhooks", limit=_WEBHOOK_READ
         )
         return {
-            "webhooks": [_serialize_doc(w) for w in webhooks],
+            "webhooks": [_serialize_doc(w, _WEBHOOK_FIELDS) for w in webhooks],
             "webhooks_total": webhooks_total,
         }
 
     async def _tool_get_webhook_deliveries(self, ctx: _ToolContext) -> dict[str, Any]:
         webhook = await ctx.db["webhooks"].find_one({"_id": ctx.args["webhook_id"]})
         if not webhook:
-            return {"error": "Webhook not found"}
+            return {"error": _ERR_WEBHOOK_NOT_FOUND}
         project = await self._get_authorized_project(webhook.get("project_id", ""), ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_ACCESS_DENIED}
+        if not project or not await self._may_read_webhooks(project["_id"], ctx):
+            return {"error": _ERR_WEBHOOK_NOT_FOUND}
         deliveries, deliveries_total = await bounded_read(
             ctx.db["webhook_deliveries"],
             {"webhook_id": webhook["_id"]},
@@ -1480,7 +1509,7 @@ class ChatToolRegistry:
 
     async def _tool_get_system_settings(self, ctx: _ToolContext) -> dict[str, Any]:
         doc = await ctx.db["system_settings"].find_one({"_id": "current"})
-        return {"settings": _serialize_doc(doc) if doc else {}}
+        return {"settings": SystemSettingsResponse.model_validate(doc).model_dump(mode="json") if doc else {}}
 
     async def _tool_get_system_health(self, ctx: _ToolContext) -> dict[str, Any]:
         from app.core.cache import cache_service
