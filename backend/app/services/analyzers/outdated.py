@@ -172,7 +172,7 @@ class OutdatedAnalyzer(Analyzer):
                 tasks = [self._fetch_package_info(client, cache_key, *key_targets[cache_key]) for cache_key in batch]
                 results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
 
-                for cache_key, result in zip(batch, results):
+                for cache_key, result in zip(batch, results, strict=True):
                     if isinstance(result, Exception) or result is None:
                         # Transient failure this scan: treat as "no signal".
                         infos[cache_key] = {}

@@ -148,7 +148,7 @@ async def create_instance(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to reach OIDC endpoint: {e!s}",
-        )
+        ) from e
 
     created_instance = await instance_repo.create(new_instance)
 

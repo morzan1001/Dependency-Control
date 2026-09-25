@@ -284,12 +284,12 @@ async def set_team_binding(
 
     try:
         await team_repo.replace_binding_for_instance(team_id, binding.model_dump())
-    except DuplicateKeyError:
+    except DuplicateKeyError as exc:
         # The unique index caught a binding written between the check above and this write.
         raise HTTPException(
             status_code=409,
             detail=f"Another team was just bound to {_binding_conflict(binding)}.",
-        )
+        ) from exc
 
     logger.info(
         "Team %s bound to %s on instance %s by %s",

@@ -495,7 +495,7 @@ def _extract_oidc_issuer(oidc_token: str) -> str:
         issuer = unverified_payload.get("iss")
     except Exception as e:
         logger.exception("Failed to decode OIDC token: %s", e)
-        raise HTTPException(status_code=403, detail="Invalid OIDC token format")
+        raise HTTPException(status_code=403, detail="Invalid OIDC token format") from e
 
     if not issuer:
         raise HTTPException(status_code=403, detail="OIDC token missing issuer (iss) claim")

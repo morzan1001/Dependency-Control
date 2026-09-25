@@ -533,12 +533,12 @@ async def _oidc_exchange_code_for_token(
     assert system_config.oidc_token_endpoint  # validated upstream; assert for the type checker
     try:
         response = await client.post(system_config.oidc_token_endpoint, data=token_data)
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         logger.exception("Timeout while requesting OIDC token from %s", system_config.oidc_token_endpoint)
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="OIDC provider request timed out. Please try again.",
-        )
+        ) from exc
     except httpx.RequestError as exc:
         logger.exception("An error occurred while requesting %r: %s", exc.request.url, exc)
         raise HTTPException(
@@ -547,7 +547,7 @@ async def _oidc_exchange_code_for_token(
                 f"Failed to connect to OIDC provider at {system_config.oidc_token_endpoint}. "
                 "Please check your system configuration."
             ),
-        )
+        ) from exc
 
     if response.status_code != 200:
         logger.error(f"OIDC Token Error: {response.text}")
@@ -571,12 +571,12 @@ async def _oidc_fetch_user_info(
             system_config.oidc_userinfo_endpoint,
             headers={"Authorization": f"Bearer {access_token}"},
         )
-    except httpx.TimeoutException:
+    except httpx.TimeoutException as exc:
         logger.exception("Timeout while requesting user info from %s", system_config.oidc_userinfo_endpoint)
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail="OIDC provider request timed out. Please try again.",
-        )
+        ) from exc
     except httpx.RequestError as exc:
         logger.exception("An error occurred while requesting user info %r: %s", exc.request.url, exc)
         raise HTTPException(
@@ -584,7 +584,7 @@ async def _oidc_fetch_user_info(
             detail=(
                 f"Failed to connect to OIDC provider user info endpoint at {system_config.oidc_userinfo_endpoint}."
             ),
-        )
+        ) from exc
 
     if user_info_response.status_code != 200:
         logger.error(f"OIDC User Info Error: {user_info_response.text}")

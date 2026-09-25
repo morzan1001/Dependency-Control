@@ -389,7 +389,7 @@ class CacheService:
             )
 
             result = {}
-            for key, value in zip(keys, values):
+            for key, value in zip(keys, values, strict=True):
                 if value:
                     try:
                         result[key] = json.loads(value)

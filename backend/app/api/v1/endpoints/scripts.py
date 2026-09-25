@@ -159,11 +159,11 @@ async def get_script_hash(
 
     try:
         return build_script_info(script_name, version=v)
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         raise HTTPException(
             status_code=404,
             detail=f"Script '{script_name}' (version={v or 'latest'}) not found on server",
-        )
+        ) from exc
     except HTTPException:
         raise
     except Exception as e:
@@ -171,7 +171,7 @@ async def get_script_hash(
         raise HTTPException(
             status_code=500,
             detail="Error reading script file",
-        )
+        ) from e
 
 
 @router.get(
@@ -211,12 +211,12 @@ async def get_script(
                 "Cache-Control": "no-cache",
             },
         )
-    except FileNotFoundError:
+    except FileNotFoundError as exc:
         logger.exception("Script file not found: %s (version=%s)", script_name, v or "latest")
         raise HTTPException(
             status_code=404,
             detail=f"Script '{script_name}' (version={v or 'latest'}) not found on server",
-        )
+        ) from exc
     except HTTPException:
         # Propagate _resolve_script_path's 400 without converting to 500.
         raise
@@ -225,7 +225,7 @@ async def get_script(
         raise HTTPException(
             status_code=500,
             detail="Error reading script file",
-        )
+        ) from e
 
 
 @router.get(

@@ -41,7 +41,7 @@ async def slack_callback(
         raise HTTPException(
             status_code=400,
             detail=f"Slack OAuth failed: {e.message}",
-        )
+        ) from e
 
     update_data = extract_slack_tokens(oauth_response)
     await repo.update(update_data)

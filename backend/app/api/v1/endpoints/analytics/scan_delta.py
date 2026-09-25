@@ -137,4 +137,4 @@ async def get_scan_delta(
             allow_same_scan=(from_ref is not None or to_ref is not None),
         )
     except InvalidDeltaQuery as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e

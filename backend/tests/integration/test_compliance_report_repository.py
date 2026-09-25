@@ -56,7 +56,7 @@ async def test_update_status(db):
 @pytest.mark.asyncio
 async def test_list_by_scope_and_status(db):
     repo = ComplianceReportRepository(db)
-    for i in range(3):
+    for _ in range(3):
         await repo.insert(
             ComplianceReport(
                 scope="user",

@@ -32,7 +32,7 @@ def _is_shadowed(bare: str, schema_paths: set[str]) -> bool:
             continue
         segments = candidate.strip("/").split("/")
         if len(segments) == len(wanted) and all(
-            seg.startswith("{") or seg == want for seg, want in zip(segments, wanted)
+            seg.startswith("{") or seg == want for seg, want in zip(segments, wanted, strict=True)
         ):
             return True
     return False

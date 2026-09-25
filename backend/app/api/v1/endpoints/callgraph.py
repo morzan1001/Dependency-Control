@@ -116,7 +116,7 @@ async def upload_callgraph(
         raise
     except Exception as e:
         logger.exception("Failed to parse callgraph: %s", e)
-        raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}") from e
 
     entry_count = len(imports) + len(calls)
     if entry_count > CALLGRAPH_MAX_ENTRIES:

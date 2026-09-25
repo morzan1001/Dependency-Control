@@ -252,7 +252,7 @@ def _compare_versions(a: str, b: str) -> int:
         return out
 
     pa, pb = parts(a), parts(b)
-    for x, y in zip(pa, pb):
+    for x, y in zip(pa, pb, strict=False):
         if x < y:
             return -1
         if x > y:
