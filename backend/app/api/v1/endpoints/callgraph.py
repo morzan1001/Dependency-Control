@@ -67,10 +67,7 @@ def _resolve_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str 
     """The scan the CI run produced, derived from the authorized project so it cannot name another's."""
     if not pipeline_id:
         return None
-    if commit_hash:
-        scan_id_seed = f"{project_id}-{pipeline_id}-{commit_hash}"
-    else:
-        scan_id_seed = f"{project_id}-{pipeline_id}"
+    scan_id_seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
 
 

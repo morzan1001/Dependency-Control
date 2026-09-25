@@ -88,7 +88,4 @@ def _protocol_version_matches(asset: CryptoAsset, match_list: list[str]) -> bool
         f"{proto}{ver}".strip(),
         ver,
     }
-    for m in match_list:
-        if m.lower() in combined_variants:
-            return True
-    return False
+    return any(m.lower() in combined_variants for m in match_list)

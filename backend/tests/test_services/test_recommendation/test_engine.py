@@ -562,7 +562,7 @@ class TestGenerateRecommendationsTyposquatting:
 
         typo_recs = [r for r in result if r.type == RecommendationType.TYPOSQUAT_DETECTED]
         assert len(typo_recs) == 1
-        assert any("reqeusts (looks like: requests)" == c for c in typo_recs[0].affected_components)
+        assert "reqeusts (looks like: requests)" in typo_recs[0].affected_components
 
     @pytest.mark.asyncio
     async def test_plain_malware_does_not_generate_typosquat_rec(self):

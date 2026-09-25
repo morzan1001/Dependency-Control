@@ -36,10 +36,7 @@ class EmailProvider(NotificationProvider):
         """Build the MIME message, attaching logo if available."""
         has_logo = bool(logo_path and os.path.exists(logo_path))
 
-        if has_logo:
-            msg = MIMEMultipart("related")
-        else:
-            msg = MIMEMultipart("alternative")
+        msg = MIMEMultipart("related" if has_logo else "alternative")
 
         msg["From"] = emails_from
         msg["To"] = destination

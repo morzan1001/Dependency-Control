@@ -143,7 +143,7 @@ def test_the_archive_bundle_carries_exactly_what_the_cascade_removes() -> None:
     from app.models.archive import ArchiveMetadata
     from app.services.archive import _RESTORABLE_COLLECTIONS
 
-    assert _RESTORABLE_COLLECTIONS == {*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME}
+    assert {*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME} == _RESTORABLE_COLLECTIONS
     assert set(ArchiveMetadata(project_id="p", scan_id="s", s3_key="k", s3_bucket="b").collections_included) == {
         "scans",
         *SCAN_SCOPED_COLLECTIONS,

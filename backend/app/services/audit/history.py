@@ -73,11 +73,7 @@ def compute_change_summary(old: CryptoPolicy | None, new: CryptoPolicy) -> str:
     if modified:
         parts.append(f"modified {len(modified)}")
 
-    if not parts:
-        summary = _NO_CHANGES_SUMMARY
-    else:
-        summary = ", ".join(parts).capitalize()
-
+    summary = ", ".join(parts).capitalize() if parts else _NO_CHANGES_SUMMARY
     return summary[:200]
 
 

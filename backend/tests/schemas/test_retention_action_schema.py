@@ -40,4 +40,4 @@ def test_the_constant_and_the_type_cannot_drift():
 
     from app.core.constants import RetentionAction
 
-    assert RETENTION_ACTIONS == list(get_args(RetentionAction))
+    assert list(get_args(RetentionAction)) == RETENTION_ACTIONS

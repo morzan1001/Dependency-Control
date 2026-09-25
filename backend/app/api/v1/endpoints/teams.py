@@ -97,10 +97,7 @@ async def read_teams(
     elif has_permission(current_user.permissions, "team:read"):
         permission_query = {"members.user_id": str(current_user.id)}
 
-        if query:
-            final_query = {"$and": [query, permission_query]}
-        else:
-            final_query = permission_query
+        final_query = {"$and": [query, permission_query]} if query else permission_query
     else:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 

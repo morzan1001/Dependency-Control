@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -626,10 +627,8 @@ async def _run_epss_kev_enrichment(
             details = vf.get("details", {})
             epss_score = details.get("epss_score")
             if epss_score is not None and analysis_epss_scores:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     analysis_epss_scores.observe(float(epss_score))
-                except (ValueError, TypeError):
-                    pass
             if details.get(DETAILS_KEY_IN_KEV) and analysis_kev_vulnerabilities_total:
                 analysis_kev_vulnerabilities_total.inc()
 

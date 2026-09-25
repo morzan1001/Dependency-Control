@@ -574,7 +574,7 @@ def _stats_projection() -> dict[str, int]:
 
 # Tautological today; it fires the moment someone hand-edits the projection, which is the one
 # failure class a differential test cannot see — a typo zeroes a counter on both sides.
-assert StatsAccumulator.REQUIRED_PATHS <= _stats_projection().keys(), "stats projection drops a required path"
+assert _stats_projection().keys() >= StatsAccumulator.REQUIRED_PATHS, "stats projection drops a required path"
 
 # scan_id + type is the only index pair immutable after insert; severity and waived are rewritten by
 # _rollup_vulnerability_waivers and _apply_waivers, so hinting either opens a skip window mid-cursor.
