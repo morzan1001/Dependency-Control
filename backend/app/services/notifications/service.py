@@ -207,13 +207,20 @@ class NotificationService:
         if not user_ids:
             return
 
-        users_cursor = db.users.find({"_id": {"$in": user_ids}})
+        users_cursor = db.users.find({"_id": {"$in": user_ids}, "is_active": True})
         users_list = await users_cursor.to_list(length=len(user_ids))
         users_map = {str(u["_id"]): User(**u) for u in users_list}
 
         enforced_prefs = None
         if project.enforce_notification_settings and project.members:
-            admin_member = next((m for m in project.members if m.role == "admin" and m.notification_preferences), None)
+            admin_member = next(
+                (
+                    m
+                    for m in project.members
+                    if m.role == "admin" and m.notification_preferences and m.user_id in users_map
+                ),
+                None,
+            )
             if admin_member:
                 enforced_prefs = admin_member.notification_preferences
 
