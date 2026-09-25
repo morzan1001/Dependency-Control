@@ -120,7 +120,7 @@ commands = [["poetry", "run", "pytest", "--cov=app", "--cov-branch", "--cov-repo
 
 [tool.tox.env.lint]
 description = "Run linting with ruff"
-commands = [["poetry", "run", "ruff", "check", "."]]
+commands = [["poetry", "run", "ruff", "check", "."], ["poetry", "run", "ruff", "format", "--check", "."]]
 
 [tool.tox.env.typecheck]
 description = "Run type checking with mypy"
