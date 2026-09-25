@@ -128,7 +128,11 @@ async def _oidc_callback(user_info: dict, db: FakeDatabase):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("claim", [False, "false"], ids=["boolean", "string"])
+@pytest.mark.parametrize(
+    "claim",
+    [False, "false", "False", "FALSE", " false ", "0", 0],
+    ids=["boolean", "string", "capitalised", "upper", "padded", "zero-string", "zero"],
+)
 async def test_an_oidc_login_whose_email_the_provider_has_not_verified_is_refused(claim):
     db = await _db_with()
 
@@ -140,7 +144,11 @@ async def test_an_oidc_login_whose_email_the_provider_has_not_verified_is_refuse
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("claims", [{}, {"email_verified": True}], ids=["claim-absent", "claim-true"])
+@pytest.mark.parametrize(
+    "claims",
+    [{}, {"email_verified": True}, {"email_verified": "True"}, {"email_verified": None}],
+    ids=["claim-absent", "claim-true", "claim-true-string", "claim-null"],
+)
 async def test_an_oidc_login_names_the_account_by_id(claims):
     db = await _db_with()
 

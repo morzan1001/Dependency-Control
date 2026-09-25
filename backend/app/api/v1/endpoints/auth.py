@@ -696,6 +696,11 @@ async def _fetch_oidc_user_info(system_config: SystemSettings, code: str, redire
         return await _oidc_fetch_user_info(client, system_config, access_token)
 
 
+def _email_unverified(user_info: dict[str, Any]) -> bool:
+    # Providers send the claim as a bool, a string in any case, or 0/1; absent means unasserted.
+    return str(user_info.get("email_verified")).strip().lower() in {"false", "0"}
+
+
 @router.get(
     "/login/oidc/callback",
     summary="OIDC callback",
@@ -733,8 +738,7 @@ async def login_oidc_callback(
             detail="Email not provided by OIDC provider",
         )
 
-    # Some providers send the claim as a string.
-    if user_info.get("email_verified") in (False, "false"):
+    if _email_unverified(user_info):
         if auth_oidc_logins_total:
             auth_oidc_logins_total.labels(status="email_unverified").inc()
         raise HTTPException(
