@@ -9,6 +9,7 @@ from app.core.config import settings
 from app.models.system import SystemSettings
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.templates import (
+    get_email_change_template,
     get_password_reset_template,
     get_project_member_added_template,
     get_system_invitation_template,
@@ -43,6 +44,28 @@ async def send_verification_email(
         subject=f"Verify your email for {settings.PROJECT_NAME}",
         message=f"Please verify your email by clicking this link: {link}",
         html_message=html_content,
+        logo_path=get_logo_path(),
+        system_settings=system_settings,
+    )
+
+
+def send_email_change_email(
+    background_tasks: BackgroundTasks,
+    user_id: str,
+    new_email: str,
+    system_settings: SystemSettings,
+) -> None:
+    """Mail new_email a link that confirms the switch; callers check that SMTP is configured."""
+    token = security.create_email_change_token(user_id, new_email)
+    link = f"{settings.FRONTEND_BASE_URL}/confirm-email?token={token}"
+
+    email_provider = EmailProvider()
+    background_tasks.add_task(
+        email_provider.send,
+        destination=new_email,
+        subject=f"Confirm your new email for {settings.PROJECT_NAME}",
+        message=f"Confirm your new email address by clicking this link: {link}",
+        html_message=get_email_change_template(link, settings.PROJECT_NAME),
         logo_path=get_logo_path(),
         system_settings=system_settings,
     )

@@ -40,7 +40,7 @@ def _service(instance_id: str = _INSTANCE) -> GitHubService:
 def _user_repo(*, by_username=None, by_email=None) -> MagicMock:
     repo = MagicMock()
     repo.get_raw_by_username = AsyncMock(return_value=by_username)
-    repo.get_raw_by_email_ci = AsyncMock(return_value=by_email)
+    repo.get_raw_by_email = AsyncMock(return_value=by_email)
     repo.create = AsyncMock()
     return repo
 
@@ -137,7 +137,7 @@ class TestMemberResolution:
             members, _, _ = await service._build_team_members([{"login": "ada-l", "role": "member"}], repo)
 
         assert [m.user_id for m in members] == ["u-2"]
-        repo.get_raw_by_email_ci.assert_awaited_once_with("Ada@Corp.com")
+        repo.get_raw_by_email.assert_awaited_once_with("Ada@Corp.com")
 
     @pytest.mark.asyncio
     async def test_a_hidden_profile_email_is_never_looked_up(self):
@@ -147,7 +147,7 @@ class TestMemberResolution:
         with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
             assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == ([], 1, 0)
 
-        repo.get_raw_by_email_ci.assert_not_awaited()
+        repo.get_raw_by_email.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_a_member_with_no_local_account_is_skipped_and_not_created(self, caplog):
@@ -173,7 +173,7 @@ class TestMemberResolution:
         with patch.object(service, "get_user_public_email", new=throttled):
             assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == ([], 0, 1)
 
-        repo.get_raw_by_email_ci.assert_not_awaited()
+        repo.get_raw_by_email.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_every_resolved_member_is_tagged_with_the_instance_that_resolved_them(self):
@@ -232,7 +232,7 @@ class TestMemberResolution:
         service = _service()
         repo = MagicMock()
         repo.get_raw_by_username = AsyncMock(side_effect=[None, None, {"_id": "u-1"}])
-        repo.get_raw_by_email_ci = AsyncMock(return_value=None)
+        repo.get_raw_by_email = AsyncMock(return_value=None)
         github_members = [
             {"login": "dependabot", "role": "member"},
             {"login": "renovate", "role": "member"},
@@ -609,7 +609,7 @@ class TestSyncTeamFromGithub:
         team_repo = _team_repo(_bound("t-pay", 4711, members=[{"user_id": "u-1", "role": "admin", "source": _OWN}]))
         user_repo = MagicMock()
         user_repo.get_raw_by_username = AsyncMock(side_effect=[None, {"_id": "u-2"}])
-        user_repo.get_raw_by_email_ci = AsyncMock(return_value=None)
+        user_repo.get_raw_by_email = AsyncMock(return_value=None)
         members = [{"login": "ada", "role": "maintainer"}, {"login": "bob", "role": "member"}]
         throttled = AsyncMock(return_value=GitHubEmailLookup(None, determined=False))
 
@@ -630,7 +630,7 @@ class TestSyncTeamFromGithub:
         team_repo = _team_repo(_bound("t-pay", 4711))
         user_repo = MagicMock()
         user_repo.get_raw_by_username = AsyncMock(side_effect=[None, {"_id": "u-1"}])
-        user_repo.get_raw_by_email_ci = AsyncMock(return_value=None)
+        user_repo.get_raw_by_email = AsyncMock(return_value=None)
         members = [{"login": "dependabot", "role": "member"}, {"login": "ada", "role": "maintainer"}]
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=members, user_repo=user_repo):

@@ -1,6 +1,7 @@
 import re
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator
 
 from app.core.notification_prefs import NotificationPreferences
 from app.models.types import PyObjectId
@@ -21,6 +22,10 @@ def validate_password_strength(password: str) -> str:
     return password
 
 
+LowercaseEmail = Annotated[EmailStr, AfterValidator(str.lower)]
+Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
 class UserBase(BaseModel):
     email: EmailStr
     username: str
@@ -33,6 +38,7 @@ class UserBase(BaseModel):
 
 
 class UserCreate(UserBase):
+    email: LowercaseEmail
     password: str | None = None
 
     @field_validator("password")
@@ -44,7 +50,7 @@ class UserCreate(UserBase):
 
 
 class UserSignup(BaseModel):
-    email: EmailStr
+    email: LowercaseEmail
     username: str
     password: str
     slack_username: str | None = None
@@ -58,8 +64,8 @@ class UserSignup(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    email: EmailStr | None = None
-    username: str | None = None
+    email: LowercaseEmail | None = None
+    username: Username | None = None
     is_active: bool | None = None
     permissions: list[str] | None = None
     slack_username: str | None = None
@@ -67,13 +73,26 @@ class UserUpdate(BaseModel):
     notification_preferences: NotificationPreferences = None
     password: str | None = None
 
+    @field_validator("email", "username")
+    @classmethod
+    def reject_null(cls, v: str | None) -> str:
+        if v is None:
+            raise ValueError("may be omitted but not null")
+        return v
+
 
 class UserUpdateMe(BaseModel):
-    email: EmailStr | None = None
-    username: str | None = None
+    model_config = ConfigDict(extra="forbid")
+
     slack_username: str | None = None
     mattermost_username: str | None = None
     notification_preferences: NotificationPreferences = None
+
+
+class UserEmailChange(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    email: LowercaseEmail
 
 
 class UserPasswordUpdate(BaseModel):
@@ -99,6 +118,7 @@ class UserInDBBase(UserBase):
     id: PyObjectId = Field(validation_alias="_id")
     totp_enabled: bool = False
     is_verified: bool = False
+    pending_email: str | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

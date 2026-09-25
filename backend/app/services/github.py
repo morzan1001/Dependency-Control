@@ -635,8 +635,7 @@ class GitHubService:
         if not lookup.determined:
             return _MemberResolution(None, undetermined=True)
         if lookup.email:
-            # Case-insensitive: the OIDC-login email may differ in case from the profile one.
-            return _MemberResolution(await user_repo.get_raw_by_email_ci(lookup.email))
+            return _MemberResolution(await user_repo.get_raw_by_email(lookup.email))
         return _MemberResolution(None)
 
     @property

@@ -29,6 +29,11 @@ export const userApi = {
     return response.data;
   },
 
+  requestEmailChange: async (email: string): Promise<User> => {
+    const response = await api.post<User>('/users/me/email', { email });
+    return response.data;
+  },
+
   updatePassword: async (currentPassword: string, newPassword: string): Promise<User> => {
     const response = await api.post<User>('/users/me/password', {
       current_password: currentPassword,

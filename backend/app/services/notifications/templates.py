@@ -19,6 +19,10 @@ def get_verification_email_template(verification_link: str, project_name: str = 
     return render_template("verification.html", {"link": verification_link, "project_name": project_name})
 
 
+def get_email_change_template(confirmation_link: str, project_name: str = APP_NAME) -> str:
+    return render_template("email_change.html", {"link": confirmation_link, "project_name": project_name})
+
+
 def get_password_reset_template(username: str, link: str, project_name: str, valid_hours: int = 1) -> str:
     return render_template(
         "password_reset.html",

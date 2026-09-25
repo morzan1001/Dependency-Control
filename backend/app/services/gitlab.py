@@ -574,9 +574,7 @@ class GitLabService:
         must still be tried, or a member whose GitLab email differs from their account's is dropped.
         """
         if member.email:
-            # Case-insensitive: OIDC-login email may differ in case, and an exact match
-            # would silently drop a real member.
-            user = await user_repo.get_raw_by_email_ci(member.email)
+            user = await user_repo.get_raw_by_email(member.email)
             if user:
                 return user
         if member.username:

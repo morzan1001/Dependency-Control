@@ -24,6 +24,11 @@ export const authApi = {
     return response.data;
   },
 
+  confirmEmailChange: async (token: string): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>('/confirm-email-change', { token });
+    return response.data;
+  },
+
   resendVerificationEmail: async (email: string): Promise<{ message: string }> => {
     const response = await api.post<{ message: string }>('/resend-verification', { email });
     return response.data;

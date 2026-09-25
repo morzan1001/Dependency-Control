@@ -18,6 +18,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.auth import (
     get_logo_path,
+    send_email_change_email,
     send_password_reset_email,
     send_system_invitation_email,
     send_verification_email,
@@ -185,6 +186,7 @@ __all__ = [
     "require_analytics_permission",
     "resolve_sbom_refs",
     "resolve_team_names",
+    "send_email_change_email",
     "send_password_reset_email",
     "send_system_invitation_email",
     "send_verification_email",

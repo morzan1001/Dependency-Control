@@ -43,3 +43,15 @@ async def test_get_raw_by_email(repo):
     assert doc["_id"] == "u1"
     assert doc["username"] == "alice"
     assert await repo.get_raw_by_email("nobody@corp.com") is None
+
+
+@pytest.mark.asyncio
+async def test_email_lookups_ignore_case(repo):
+    assert (await repo.get_raw_by_email("Alice@CORP.com"))["_id"] == "u1"
+    assert await repo.exists_by_email("ALICE@corp.com") is True
+
+
+@pytest.mark.asyncio
+async def test_email_lookups_match_the_whole_address_literally(repo):
+    assert await repo.get_raw_by_email("a.ice@corp.com") is None
+    assert await repo.exists_by_email("lice@corp.com") is False

@@ -81,7 +81,7 @@ class TestTeamMemberSyncResolveOnly:
         service = GitLabService(make_gitlab_instance())
         existing = {"_id": "u-1", "email": "real@example.com", "username": "real"}
         user_repo = MagicMock()
-        user_repo.get_raw_by_email_ci = AsyncMock(return_value=existing)
+        user_repo.get_raw_by_email = AsyncMock(return_value=existing)
         user_repo.get_raw_by_username = AsyncMock(return_value=None)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="real", email="real@example.com", access_level=40)]
@@ -95,14 +95,14 @@ class TestTeamMemberSyncResolveOnly:
         service = GitLabService(make_gitlab_instance())
         existing = {"_id": "u-1", "email": "alice@corp.com", "username": "alice"}
         user_repo = MagicMock()
-        user_repo.get_raw_by_email_ci = AsyncMock(return_value=existing)
+        user_repo.get_raw_by_email = AsyncMock(return_value=existing)
         user_repo.get_raw_by_username = AsyncMock(return_value=None)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="alice", email="Alice@Corp.com", access_level=40)]
         result, _ = asyncio.run(service._build_team_members(members, user_repo))
         assert len(result) == 1
         assert result[0].user_id == "u-1"
-        user_repo.get_raw_by_email_ci.assert_awaited_once_with("Alice@Corp.com")
+        user_repo.get_raw_by_email.assert_awaited_once_with("Alice@Corp.com")
 
     def test_skips_bot_member_without_local_account_no_create(self):
         # GitLab service-account / bot: no matching local user -> skipped, NOT created.

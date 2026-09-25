@@ -18,6 +18,7 @@ from app.api.v1.helpers import (
     get_logo_path,
     get_user_or_404,
     is_2fa_setup_mode,
+    send_email_change_email,
     send_password_reset_email,
 )
 from app.api.v1.helpers.responses import (
@@ -25,6 +26,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400,
     RESP_AUTH_400_404,
     RESP_AUTH_400_404_501,
+    RESP_AUTH_400_501,
     RESP_AUTH_404,
 )
 from app.core import security
@@ -39,6 +41,7 @@ from app.schemas.user import (
     User2FASetup,
     User2FAVerify,
     UserCreate,
+    UserEmailChange,
     UserMigrateToLocal,
     UserPasswordUpdate,
     UserUpdate,
@@ -144,22 +147,38 @@ async def update_user_me(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Update own profile."""
-    user_repo = UserRepository(db)
-
-    if user_in.email and user_in.email != current_user.email and await user_repo.exists_by_email(user_in.email):
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-    if (
-        user_in.username
-        and user_in.username != current_user.username
-        and await user_repo.exists_by_username(user_in.username)
-    ):
-        raise HTTPException(status_code=400, detail="Username already taken")
-
     update_data = user_in.model_dump(exclude_unset=True)
 
     if update_data:
-        await user_repo.update(current_user.id, update_data)
+        await UserRepository(db).update(current_user.id, update_data)
+
+    return await fetch_updated_user(current_user.id, db)
+
+
+@router.post("/me/email", response_model=UserSchema, responses=RESP_AUTH_400_501)
+async def request_email_change(
+    email_in: UserEmailChange,
+    background_tasks: BackgroundTasks,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+) -> dict[str, Any]:
+    """Park a new email as pending and mail it a confirmation link (local accounts only)."""
+    if current_user.auth_provider != AUTH_PROVIDER_LOCAL:
+        raise HTTPException(status_code=400, detail="Your email is managed by your identity provider")
+
+    system_settings = await deps.get_system_settings(db)
+    if not system_settings.smtp_host:
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Email server not configured")
+
+    if email_in.email == current_user.email.lower():
+        raise HTTPException(status_code=400, detail="This is already your email address")
+
+    user_repo = UserRepository(db)
+    if await user_repo.exists_by_email(email_in.email):
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+    await user_repo.update(current_user.id, {"pending_email": email_in.email})
+    send_email_change_email(background_tasks, current_user.id, email_in.email, system_settings)
 
     return await fetch_updated_user(current_user.id, db)
 
@@ -197,6 +216,14 @@ def _ensure_can_change_permissions(caller: User, existing: set[str], requested: 
         )
 
 
+async def _ensure_admin_can_set_email(user_repo: UserRepository, target: dict[str, Any], new_email: str) -> None:
+    """The IdP owns a non-local account's email; any other address must be unused in every case."""
+    if target.get("auth_provider", AUTH_PROVIDER_LOCAL) != AUTH_PROVIDER_LOCAL:
+        raise HTTPException(status_code=400, detail="This account's email is managed by its identity provider")
+    if await user_repo.exists_by_email(new_email):
+        raise HTTPException(status_code=400, detail="Email already registered")
+
+
 @router.put("/{user_id}", response_model=UserSchema, responses=RESP_AUTH_400_404)
 async def update_user(
     user_id: str,
@@ -206,13 +233,20 @@ async def update_user(
 ) -> dict[str, Any]:
     """Update self, or as an admin a user whose permissions the caller holds (or any user with system:manage)."""
     has_admin_perm = check_admin_or_self(current_user, user_id, [Permissions.USER_UPDATE])
+    is_self = str(current_user.id) == user_id
 
     existing_user = await get_user_or_404(user_id, db)
-    if str(current_user.id) != user_id:
+    if not is_self:
         ensure_can_manage_target(current_user, existing_user)
 
     user_repo = UserRepository(db)
     update_data = user_in.model_dump(exclude_unset=True)
+
+    if is_self and update_data.keys() & {"username", "email"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Change your email from your profile; only an administrator can change your username",
+        )
 
     if "permissions" in update_data:
         _ensure_can_change_permissions(
@@ -222,18 +256,15 @@ async def update_user(
         )
 
     # Forbid self-change of is_active so a user can't lock themselves or every admin out.
-    if "is_active" in update_data and str(current_user.id) == user_id:
+    if "is_active" in update_data and is_self:
         raise HTTPException(
             status_code=403,
             detail="Cannot change your own active state",
         )
 
-    if (
-        "email" in update_data
-        and update_data["email"] != existing_user.get("email")
-        and await user_repo.exists_by_email(update_data["email"])
-    ):
-        raise HTTPException(status_code=400, detail="Email already registered")
+    if "email" in update_data and update_data["email"] != existing_user["email"].lower():
+        await _ensure_admin_can_set_email(user_repo, existing_user, update_data["email"])
+        update_data["is_verified"] = False
 
     if (
         "username" in update_data

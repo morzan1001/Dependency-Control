@@ -25,6 +25,7 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_password_reset_email, send_verification_email
 from app.api.v1.helpers.responses import (
+    RESP_400,
     RESP_400_401_500,
     RESP_400_403,
     RESP_400_403_404,
@@ -287,7 +288,7 @@ async def create_user(
             detail="The user with this username already exists in the system.",
         )
 
-    if await user_repo.get_raw_by_email(user_in.email):
+    if await user_repo.exists_by_email(user_in.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="The user with this email already exists in the system.",
@@ -412,6 +413,32 @@ async def verify_email(token: str, db: DatabaseDep) -> EmailVerifyResponse:
     await user_repo.update(user["_id"], {"is_verified": True})
 
     return EmailVerifyResponse(message="Email successfully verified")
+
+
+@router.post(
+    "/confirm-email-change",
+    summary="Confirm a pending email change",
+    responses=RESP_400,
+)
+async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: DatabaseDep) -> EmailVerifyResponse:
+    """Swap in the pending email the token was mailed to; the address is verified by the click."""
+    change = security.verify_email_change_token(token)
+    if not change:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired confirmation link")
+    user_id, new_email = change
+
+    user_repo = UserRepository(db)
+    user = await user_repo.get_raw_by_id(user_id)
+    # A newer request or an earlier confirmation replaced the pending address this link was mailed to.
+    if not user or user.get("pending_email") != new_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This email change is no longer pending")
+
+    if await user_repo.exists_by_email(new_email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
+    await user_repo.update(user_id, {"email": new_email, "pending_email": None, "is_verified": True})
+
+    return EmailVerifyResponse(message="Your email address has been changed")
 
 
 @router.post(

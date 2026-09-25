@@ -120,7 +120,7 @@ def make_repositories(
     team_repo.add_binding_if_absent = AsyncMock()
 
     user_repo = MagicMock()
-    user_repo.get_raw_by_email_ci = AsyncMock(return_value=by_email or user_doc)
+    user_repo.get_raw_by_email = AsyncMock(return_value=by_email or user_doc)
     user_repo.get_raw_by_username = AsyncMock(return_value=by_username or user_doc)
 
     with (
