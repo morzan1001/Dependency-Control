@@ -31,11 +31,9 @@ class EmailProvider(NotificationProvider):
         subject: str,
         message: str,
         html_message: str | None,
-        logo_path: str | None,
+        has_logo: bool,
     ) -> MIMEMultipart:
-        """Build the MIME message, attaching logo if available."""
-        has_logo = bool(logo_path and os.path.exists(logo_path))
-
+        """Build the MIME message; a logo mail nests the body in a related part for the inline image."""
         msg = MIMEMultipart("related" if has_logo else "alternative")
 
         msg["From"] = emails_from
@@ -139,17 +137,11 @@ class EmailProvider(NotificationProvider):
             emails_from = emails_from_email
 
         try:
-            msg = self._build_message(
-                emails_from,
-                destination,
-                subject,
-                message,
-                html_message,
-                logo_path,
-            )
-
-            if logo_path and os.path.exists(logo_path):
-                await self._attach_logo(msg, logo_path)
+            logo_exists = await asyncio.to_thread(os.path.exists, logo_path) if logo_path else False
+            logo = logo_path if logo_exists else None
+            msg = self._build_message(emails_from, destination, subject, message, html_message, logo is not None)
+            if logo is not None:
+                await self._attach_logo(msg, logo)
 
             await self._send_async(
                 smtp_host,
