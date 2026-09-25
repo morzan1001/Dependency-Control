@@ -607,7 +607,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                             onChange={(e) => setGitlabProjectPath(e.target.value || undefined)}
                                         />
                                         <p className="text-xs text-muted-foreground">
-                                            For display purposes only. Taken from GitLab when the instance has an access token.
+                                            For display purposes only. Taken from GitLab when the binding is set or changed.
                                         </p>
                                     </div>
 

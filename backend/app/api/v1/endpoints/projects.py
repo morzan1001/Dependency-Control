@@ -618,7 +618,7 @@ async def _vet_gitlab_binding(
     db: Any,
 ) -> None:
     """OIDC ingest resolves a pipeline's project by this binding alone, so setting one is an estate admin's call."""
-    # The settings form resends the stored binding on every save, so only a changed value counts.
+    # Clients resend the stored binding with every update, so only a changed value counts.
     changed = [
         update_data[key]
         for key in _GITLAB_BINDING_KEYS

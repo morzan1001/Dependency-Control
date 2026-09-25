@@ -80,7 +80,7 @@ async def test_a_project_admin_cannot_bind_an_unbound_project(client, db, owner_
 
 @pytest.mark.asyncio
 async def test_a_project_admin_resending_the_stored_binding_saves_the_rest(client, db, owner_auth_headers_proj):
-    """The settings form resends the binding on every save, so an unchanged one is no change."""
+    """Clients resend the stored binding with every update, so an unchanged one is no change."""
     await _seed_instance(db)
     await _bind(db)
 
