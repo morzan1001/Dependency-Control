@@ -21,10 +21,14 @@ spec:
         {{- include "dependency-control.selectorLabels" . | nindent 8 }}
     spec:
       serviceAccountName: {{ include "dependency-control.fullname" . }}-ollama
+      enableServiceLinks: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
+        runAsGroup: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: model-pull
           image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
@@ -60,9 +64,15 @@ spec:
               value: "0.0.0.0"
             - name: HOME
               value: "/home/ollama"
+            - name: OLLAMA_NO_CLOUD
+              value: "1"
           volumeMounts:
+            - name: ollama-home
+              mountPath: /home/ollama
             - name: ollama-data
               mountPath: /home/ollama/.ollama
+            - name: tmp
+              mountPath: /tmp
           resources:
             requests:
               memory: "1Gi"
@@ -71,13 +81,11 @@ spec:
               memory: "2Gi"
               cpu: "2"
           securityContext:
-            runAsNonRoot: true
-            runAsUser: 1000
             allowPrivilegeEscalation: false
             capabilities:
               drop:
                 - ALL
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: true
       containers:
         - name: ollama
           image: "{{ .Values.ollama.image.repository }}:{{ .Values.ollama.image.tag }}"
@@ -98,14 +106,18 @@ spec:
               nvidia.com/gpu: {{ .Values.ollama.gpu.count | quote }}
               {{- end }}
           volumeMounts:
+            - name: ollama-home
+              mountPath: /home/ollama
             - name: ollama-data
               mountPath: /home/ollama/.ollama
+            - name: tmp
+              mountPath: /tmp
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop:
                 - ALL
-            readOnlyRootFilesystem: false
+            readOnlyRootFilesystem: true
           livenessProbe:
             httpGet:
               path: /
@@ -127,6 +139,8 @@ spec:
               value: "0.0.0.0"
             - name: HOME
               value: "/home/ollama"
+            - name: OLLAMA_NO_CLOUD
+              value: "1"
             {{- if .Values.ollama.numCtx }}
             - name: OLLAMA_NUM_CTX
               value: {{ .Values.ollama.numCtx | quote }}
@@ -136,6 +150,10 @@ spec:
               value: {{ .Values.ollama.keepAlive | quote }}
             {{- end }}
       volumes:
+        - name: ollama-home
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
         - name: ollama-data
           {{- if .Values.ollama.persistence.enabled }}
           persistentVolumeClaim:

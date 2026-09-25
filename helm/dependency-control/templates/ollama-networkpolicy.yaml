@@ -1,16 +1,8 @@
 {{- if and .Values.ollama.enabled .Values.networkPolicy.enabled }}
-# Deny all traffic to/from Ollama by default, with selective egress for model pull.
-#
-# Security trade-off: egress to port 443 (HTTPS) and port 53 (DNS) is permitted so
-# that the model-pull initContainer can download the model from registry.ollama.ai on
-# first deploy (and on any deploy where the PVC is empty). Without this the initContainer
-# cannot reach the registry and the pod will never become ready.
-#
-# Mitigations that limit the blast radius:
-#   - automountServiceAccountToken: false — pod carries no cluster credentials
-#   - all Linux capabilities dropped — container cannot escape to the node
-#   - Ollama is a closed binary with no user-supplied code execution paths
-# Accepting this risk is the only way to make the chat feature functional out of the box.
+# Only the backend may reach Ollama. Egress is limited to DNS and to HTTPS on public
+# addresses, which the model-pull initContainer needs for registry.ollama.ai; private,
+# CGNAT and link-local ranges stay closed so a compromised Ollama cannot reach cluster
+# services, nodes or the metadata server.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -38,9 +30,17 @@ spec:
           port: 53
         - protocol: TCP
           port: 53
-    # HTTPS — required for registry.ollama.ai model pull
-    # (destination IPs cannot be pinned without a service-mesh egress policy)
-    - ports:
+    # registry.ollama.ai sits behind a CDN, so the destination cannot be pinned by IP
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports:
         - protocol: TCP
           port: 443
   # Only allow ingress from backend
