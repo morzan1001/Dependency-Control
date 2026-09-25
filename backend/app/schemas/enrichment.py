@@ -127,26 +127,42 @@ class DependencyEnrichment(BaseModel):
 
     def to_mongo_dict(self) -> dict[str, Any]:
         """Convert to a sparse dict for MongoDB storage (no None values)."""
-        result: dict[str, Any] = {}
-
-        if self.primary_license:
-            result["license"] = self.primary_license
-        if self.license_expression:
-            result["license_expression"] = self.license_expression
-        if self.license_category:
-            result["license_category"] = self.license_category
-        if self.licenses:
-            result["licenses_detailed"] = self.licenses
-        if self.license_risks:
-            result["license_risks"] = self.license_risks
-        if self.license_obligations:
-            result["license_obligations"] = self.license_obligations
+        result = self._license_fields()
 
         if self.homepage:
             result["homepage"] = self.homepage
         if self.repository_url:
             result["repository_url"] = self.repository_url
 
+        deps_dev = self._deps_dev_fields()
+        if deps_dev:
+            result["deps_dev"] = deps_dev
+
+        if self.description:
+            result["description"] = self.description
+
+        if self.sources:
+            result["enrichment_sources"] = self.sources
+
+        return result
+
+    def _license_fields(self) -> dict[str, Any]:
+        fields: dict[str, Any] = {}
+        if self.primary_license:
+            fields["license"] = self.primary_license
+        if self.license_expression:
+            fields["license_expression"] = self.license_expression
+        if self.license_category:
+            fields["license_category"] = self.license_category
+        if self.licenses:
+            fields["licenses_detailed"] = self.licenses
+        if self.license_risks:
+            fields["license_risks"] = self.license_risks
+        if self.license_obligations:
+            fields["license_obligations"] = self.license_obligations
+        return fields
+
+    def _deps_dev_fields(self) -> dict[str, Any]:
         deps_dev: dict[str, Any] = {}
         if self.project_url:
             deps_dev["project_url"] = self.project_url
@@ -170,15 +186,9 @@ class DependencyEnrichment(BaseModel):
                 "checks_count": self.scorecard_checks_count,
             }
 
-        if self.documentation_url or self.issues_url or self.changelog_url or self.additional_links:
-            deps_dev["links"] = {}
-            if self.documentation_url:
-                deps_dev["links"]["documentation"] = self.documentation_url
-            if self.issues_url:
-                deps_dev["links"]["issues"] = self.issues_url
-            if self.changelog_url:
-                deps_dev["links"]["changelog"] = self.changelog_url
-            deps_dev["links"].update(self.additional_links)
+        links = self._deps_dev_links()
+        if links:
+            deps_dev["links"] = links
 
         if self.published_at:
             deps_dev["published_at"] = self.published_at
@@ -190,14 +200,15 @@ class DependencyEnrichment(BaseModel):
             deps_dev["has_attestations"] = True
         if self.has_slsa_provenance:
             deps_dev["has_slsa_provenance"] = True
+        return deps_dev
 
-        if deps_dev:
-            result["deps_dev"] = deps_dev
-
-        if self.description:
-            result["description"] = self.description
-
-        if self.sources:
-            result["enrichment_sources"] = self.sources
-
-        return result
+    def _deps_dev_links(self) -> dict[str, str]:
+        links: dict[str, str] = {}
+        if self.documentation_url:
+            links["documentation"] = self.documentation_url
+        if self.issues_url:
+            links["issues"] = self.issues_url
+        if self.changelog_url:
+            links["changelog"] = self.changelog_url
+        links.update(self.additional_links)
+        return links
