@@ -65,8 +65,7 @@ def _old_stats(critical=1, risk=STALE_STORED_RISK_SCORE):
 
 @pytest.fixture
 def seeded_db():
-    db = FakeDatabase()
-    return db
+    return FakeDatabase()
 
 
 async def _seed(db):

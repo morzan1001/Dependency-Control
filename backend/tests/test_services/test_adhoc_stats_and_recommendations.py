@@ -162,7 +162,7 @@ async def test_recommendations_are_serialised_dicts(_osv):
 
     updates = _recommendations_of_type(response, _DIRECT_DEPENDENCY_UPDATE)
     assert len(updates) == 1
-    assert _RECOMMENDATION_KEYS <= set(updates[0])
+    assert set(updates[0]) >= _RECOMMENDATION_KEYS
     assert updates[0]["action"]["target_version"] == _FIXED_VERSION
 
 

@@ -144,14 +144,7 @@ def _is_os_package(dep: ModelOrDict) -> bool:
     pkg_type = str(get_attr(dep, "type", "")).lower()
     purl = get_attr(dep, "purl", "") or ""
 
-    if pkg_type in OS_PACKAGE_TYPES:
-        return True
-
-    for os_type in OS_PACKAGE_TYPES:
-        if purl.startswith(f"pkg:{os_type}/"):
-            return True
-
-    return False
+    return pkg_type in OS_PACKAGE_TYPES or any(purl.startswith(f"pkg:{os_type}/") for os_type in OS_PACKAGE_TYPES)
 
 
 def _analyze_base_image_vulns(

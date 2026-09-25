@@ -46,7 +46,7 @@ class TestFormatDatetime:
 
 
 # ---------------------------------------------------------------------------
-# build_epss_kev_summary  –  helpers
+# build_epss_kev_summary - helpers
 # ---------------------------------------------------------------------------
 
 
@@ -389,7 +389,7 @@ class TestBuildEpssKevSummaryFindingId:
 
 
 # ---------------------------------------------------------------------------
-# build_reachability_summary  –  helpers
+# build_reachability_summary - helpers
 # ---------------------------------------------------------------------------
 
 
@@ -827,7 +827,7 @@ class TestReachModifier:
 
 
 # ---------------------------------------------------------------------------
-# compute_stats  –  waiver and empty-scan branches
+# compute_stats - waiver and empty-scan branches
 # ---------------------------------------------------------------------------
 
 

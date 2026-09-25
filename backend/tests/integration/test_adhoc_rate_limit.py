@@ -157,7 +157,7 @@ async def test_a_second_key_of_the_same_owner_spends_the_same_window(client, db,
 async def test_an_adhoc_denial_leaves_the_chat_dashboard_counter_alone(client, db, monkeypatch):
     """A live Grafana panel sums dc_chat_rate_limited_total unfiltered."""
     _, token = await _issue_key(db)
-    _patch_from_url(monkeypatch, lambda: _DenyingRedisCtx())
+    _patch_from_url(monkeypatch, _DenyingRedisCtx)
     chat_before = _denials(_CHAT_DENIALS)
     adhoc_before = _denials(_ADHOC_DENIALS)
 

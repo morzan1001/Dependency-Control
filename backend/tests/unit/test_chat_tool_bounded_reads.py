@@ -152,9 +152,7 @@ async def test_a_waiver_listing_cut_at_the_ceiling_names_every_waiver(seeded, ad
         lambda i: {"_id": f"row-{i}", "project_id": _PROJECT, "finding_id": f"f-{i}", "reason": "r"},
     )
 
-    result = await ChatToolRegistry().execute_tool(
-        "list_project_waivers", {"project_id": _PROJECT}, admin_user, seeded
-    )
+    result = await ChatToolRegistry().execute_tool("list_project_waivers", {"project_id": _PROJECT}, admin_user, seeded)
 
     assert result["waivers_total"] == population
     assert result["_bounded_read"] is True

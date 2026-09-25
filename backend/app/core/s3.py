@@ -1,5 +1,6 @@
 """S3-compatible storage client with streaming upload/download support."""
 
+import functools
 import logging
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -13,14 +14,10 @@ from app.core.constants import S3_MULTIPART_PART_SIZE
 
 logger = logging.getLogger(__name__)
 
-_session: AioSession | None = None
 
-
+@functools.cache
 def _get_session() -> AioSession:
-    global _session
-    if _session is None:
-        _session = get_session()
-    return _session
+    return get_session()
 
 
 def is_archive_enabled() -> bool:

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 import logging
 import re
@@ -43,6 +44,7 @@ from app.core.metrics import (
 from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Project, Scan
+from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.repositories import (
     AnalysisResultRepository,
@@ -626,10 +628,8 @@ async def _run_epss_kev_enrichment(
             details = vf.get("details", {})
             epss_score = details.get("epss_score")
             if epss_score is not None and analysis_epss_scores:
-                try:
+                with contextlib.suppress(ValueError, TypeError):
                     analysis_epss_scores.observe(float(epss_score))
-                except (ValueError, TypeError):
-                    pass
             if details.get(DETAILS_KEY_IN_KEV) and analysis_kev_vulnerabilities_total:
                 analysis_kev_vulnerabilities_total.inc()
 
@@ -1196,6 +1196,44 @@ def _release_memory_to_os() -> None:
         pass
 
 
+def _partial_run_reasons(
+    failed_analyzers: list[str],
+    sbom_load_failed: bool,
+    sbom_load_failures: int,
+    sboms_expected: int,
+    persisted_findings_count: int,
+    total_findings_count: int,
+) -> list[str]:
+    reasons: list[str] = []
+    if failed_analyzers:
+        reasons.append(f"analyzers failed or returned partial results: {', '.join(failed_analyzers)}")
+    if not sbom_load_failed and sbom_load_failures:
+        reasons.append(f"{sbom_load_failures} of {sboms_expected} SBOMs failed to load")
+    if persisted_findings_count < total_findings_count:
+        reasons.append(f"only {persisted_findings_count} of {total_findings_count} findings were persisted")
+    return reasons
+
+
+def _final_scan_status(scan_id: str, sbom_load_failed: bool, partial_reasons: list[str]) -> tuple[str, str | None]:
+    if sbom_load_failed:
+        return SCAN_STATUS_FAILED, "SBOM could not be loaded for analysis"
+    if partial_reasons:
+        error = "; ".join(partial_reasons)
+        logger.warning("Scan %s completed with errors: %s", scan_id, error)
+        return SCAN_STATUS_COMPLETED_WITH_ERRORS, error
+    return SCAN_STATUS_COMPLETED, None
+
+
+async def _notification_stats(project_id: str | None, stats: Stats, db: Database) -> Stats:
+    if project_id and await _project_has_active_waivers(project_id, db):
+        from app.services.stats import recalculate_project_stats
+
+        recalced = await recalculate_project_stats(project_id, db)
+        if recalced is not None:
+            return recalced
+    return stats
+
+
 async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyzers: list[str], db: Database) -> bool:
     """Orchestrate analysis for an SBOM scan; returns False if rescheduled due to a race condition."""
     logger.info(f"Starting analysis for scan {scan_id}")
@@ -1226,9 +1264,9 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     if scan_type == "cbom":
         active_analyzers = sorted(set(active_analyzers) | CRYPTO_ANALYZERS)
 
-    cleanup_names = _cleanup_analyzer_names(active_analyzers)
-    if cleanup_names:
-        await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": cleanup_names}})
+    await result_repo.delete_many(
+        {"scan_id": scan_id, "analyzer_name": {"$in": _cleanup_analyzer_names(active_analyzers)}}
+    )
 
     if scan_doc.is_rescan and analysis_rescan_operations_total:
         analysis_rescan_operations_total.inc()
@@ -1343,25 +1381,16 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         )
 
     failed_analyzers = _failed_analyzer_names(results_summary)
-    partial_reasons: list[str] = []
-    if failed_analyzers:
-        partial_reasons.append(f"analyzers failed or returned partial results: {', '.join(failed_analyzers)}")
-    if not sbom_load_failed and sbom_load_failures:
-        partial_reasons.append(f"{sbom_load_failures} of {sboms_expected} SBOMs failed to load")
-    if persisted_findings_count < total_findings_count:
-        partial_reasons.append(f"only {persisted_findings_count} of {total_findings_count} findings were persisted")
+    partial_reasons = _partial_run_reasons(
+        failed_analyzers,
+        sbom_load_failed,
+        sbom_load_failures,
+        sboms_expected,
+        persisted_findings_count,
+        total_findings_count,
+    )
     total_findings_count = persisted_findings_count
-
-    if sbom_load_failed:
-        final_status = SCAN_STATUS_FAILED
-        final_error: str | None = "SBOM could not be loaded for analysis"
-    elif partial_reasons:
-        final_status = SCAN_STATUS_COMPLETED_WITH_ERRORS
-        final_error = "; ".join(partial_reasons)
-        logger.warning("Scan %s completed with errors: %s", scan_id, final_error)
-    else:
-        final_status = SCAN_STATUS_COMPLETED
-        final_error = None
+    final_status, final_error = _final_scan_status(scan_id, sbom_load_failed, partial_reasons)
 
     latest_run_summary = {
         "scan_id": scan_id,
@@ -1404,14 +1433,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     # Re-apply/re-anchor waivers before notifying so webhooks report post-re-anchor stats;
     # skipped when the project has no active waivers.
     if not sbom_load_failed:
-        notify_stats = stats
-        if project_id and await _project_has_active_waivers(project_id, db):
-            from app.services.stats import recalculate_project_stats
-
-            recalced = await recalculate_project_stats(project_id, db)
-            if recalced is not None:
-                notify_stats = recalced
-
+        notify_stats = await _notification_stats(project_id, stats, db)
         notify_findings = await _filter_out_waived_findings(aggregated_findings, scan_id, db)
         await _send_integrations_and_notifications(
             project_id, scan_id, scan_doc, notify_stats, notify_findings, results_summary, db

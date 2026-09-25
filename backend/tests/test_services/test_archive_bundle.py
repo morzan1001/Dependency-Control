@@ -9,10 +9,7 @@ async def _async_iter(items):
 
 
 async def _collect(stream):
-    out: list[bytes] = []
-    async for chunk in stream:
-        out.append(chunk)
-    return b"".join(out)
+    return b"".join([chunk async for chunk in stream])
 
 
 @pytest.mark.asyncio
@@ -202,7 +199,7 @@ async def test_read_detects_integrity_failure():
     async def source():
         yield payload
 
-    with pytest.raises(ValueError, match="checksum|integrity"):
+    with pytest.raises(ValueError, match=r"checksum|integrity"):
         async for _ in read_bundle_frames(source()):
             pass
 
@@ -305,6 +302,6 @@ async def test_read_raises_when_footer_missing():
     async def source():
         yield truncated
 
-    with pytest.raises(ValueError, match="truncated|footer"):
+    with pytest.raises(ValueError, match=r"truncated|footer"):
         async for _ in read_bundle_frames(source()):
             pass  # drive the generator until it raises

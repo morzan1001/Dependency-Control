@@ -141,7 +141,7 @@ async def window_scans_by_branch(
     scoped = _usable_scan_match(since)
 
     activity: dict[tuple[str, str], BranchWindowActivity] = {}
-    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH):
+    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
         pipeline = [
             {"$match": {"project_id": {"$in": list(batch)}, **scoped}},
             {"$addFields": {"_commit": _COMMIT_TOKEN}},
@@ -188,7 +188,7 @@ async def window_scan_ids_by_branch(
     timeline either.
     """
     scans: dict[tuple[str, str], list[tuple[str, datetime]]] = {}
-    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH):
+    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH, strict=False):
         pipeline = [
             {"$match": {"project_id": {"$in": list(batch)}, **_usable_scan_match(since)}},
             {
@@ -264,7 +264,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         ceiling, transfers the same bytes, and leaves every metric in the pure fold.
         """
         buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
-        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH):
+        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
             query = {
                 "project_id": {"$in": list(batch)},
                 "scan_created_at": {"$gte": since},
@@ -293,7 +293,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         census as heavy as the comparison endpoint's fold.
         """
         chains: dict[tuple[str, str], dict[str, LedgerEntry]] = {}
-        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH):
+        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH, strict=False):
             pipeline = [
                 {"$match": {"project_id": {"$in": list(batch)}, "scan_created_at": {"$gte": since}}},
                 {
@@ -324,11 +324,10 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         if not prev_scan_ids:
             return []
         with track_db_operation(self.collection_name, "find"):
-            docs = await self.collection.find(
+            return await self.collection.find(
                 {"project_id": project_id, "branch": branch, "prev_scan_id": {"$in": list(prev_scan_ids)}},
                 _NEIGHBOUR_PROJECTION,
             ).to_list(None)
-        return docs
 
     async def find_project_window(
         self, project_id: str, branch: str, since: datetime, limit: int

@@ -6,7 +6,6 @@ from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from prometheus_client import Counter
 from pydantic import ValidationError
 
 from app.core import security
@@ -19,6 +18,7 @@ from app.core.constants import (
     TEAM_SOURCE_GITLAB,
     team_source,
 )
+from app.core.metrics import auth_token_validations_total
 from app.core.permissions import Permissions, has_permission
 from app.db.mongodb import get_database
 from app.models.project import Project
@@ -48,13 +48,6 @@ _MSG_INVALID_API_KEY = "Invalid API Key"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token", auto_error=False)
-
-auth_token_validations_total: Counter | None = None
-
-try:
-    from app.core.metrics import auth_token_validations_total
-except ImportError:
-    pass
 
 
 async def get_system_settings(
@@ -495,7 +488,7 @@ def _extract_oidc_issuer(oidc_token: str) -> str:
         issuer = unverified_payload.get("iss")
     except Exception as e:
         logger.exception("Failed to decode OIDC token: %s", e)
-        raise HTTPException(status_code=403, detail="Invalid OIDC token format")
+        raise HTTPException(status_code=403, detail="Invalid OIDC token format") from e
 
     if not issuer:
         raise HTTPException(status_code=403, detail="OIDC token missing issuer (iss) claim")

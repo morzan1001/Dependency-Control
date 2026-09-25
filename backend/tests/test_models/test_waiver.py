@@ -47,13 +47,13 @@ class TestWaiverExpiry:
     _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     def test_naive_expiration_in_the_future_stays_active(self):
-        assert is_waiver_active(datetime(2030, 1, 1), now=self._NOW) is True  # noqa: DTZ001
+        assert is_waiver_active(datetime(2030, 1, 1), now=self._NOW) is True
 
     def test_naive_expiration_in_the_past_is_expired(self):
-        assert is_waiver_active(datetime(2020, 1, 1), now=self._NOW) is False  # noqa: DTZ001
+        assert is_waiver_active(datetime(2020, 1, 1), now=self._NOW) is False
 
     def test_is_active_reads_a_naive_expiration_without_raising(self):
-        waiver = Waiver(reason="Test", created_by="admin", expiration_date=datetime(2030, 1, 1))  # noqa: DTZ001
+        waiver = Waiver(reason="Test", created_by="admin", expiration_date=datetime(2030, 1, 1))
         assert waiver.expiration_date.tzinfo is None
         assert waiver.is_active is True
 

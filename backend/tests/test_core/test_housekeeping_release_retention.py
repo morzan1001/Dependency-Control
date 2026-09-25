@@ -82,7 +82,7 @@ async def test_project_retention_cursor_does_not_key_on_the_release_flag(monkeyp
     async def _agg(_pipeline):
         yield {"_id": {"days": _RETENTION_DAYS, "action": _RETENTION_ACTION}, "project_ids": [_PROJECT_ID]}
 
-    db.projects.aggregate = lambda pipeline: _agg(pipeline)
+    db.projects.aggregate = _agg
 
     class _Settings:
         retention_mode = "project"

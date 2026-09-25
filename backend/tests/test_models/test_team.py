@@ -77,9 +77,8 @@ class TestTeamBindings:
     def test_a_stored_key_never_overrides_the_one_the_binding_derives(self):
         """A key that named another binding would hand that binding's uniqueness to this team."""
         team = Team(
-            name="Edge", bindings=[
-                    {"provider": "gitlab", "instance_id": "gl-1", "external_id": 77, "key": "gitlab:gl-9:1"}
-                ]
+            name="Edge",
+            bindings=[{"provider": "gitlab", "instance_id": "gl-1", "external_id": 77, "key": "gitlab:gl-9:1"}],
         )
         assert team.bindings[0].key == "gitlab:gl-1:77"
 
@@ -122,4 +121,3 @@ class TestTeamBindings:
         """A team holding an unmigrated member is read by every request that resolves the caller's
         teams; rejecting the value here answers 500 instead of leaving the member in place."""
         assert TeamMember(user_id="u-1", source="gitlab").source == "gitlab"
-

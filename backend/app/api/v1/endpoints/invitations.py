@@ -30,8 +30,7 @@ async def read_system_invitations(
 ) -> list[dict[str, Any]]:
     """List all pending system invitations. Requires 'user:create' permission."""
     invitation_repo = InvitationRepository(db)
-    invitations = await invitation_repo.find_active_system_invitations(skip=skip, limit=limit)
-    return invitations
+    return await invitation_repo.find_active_system_invitations(skip=skip, limit=limit)
 
 
 @router.post("/system", status_code=status.HTTP_201_CREATED, responses=RESP_AUTH_400)

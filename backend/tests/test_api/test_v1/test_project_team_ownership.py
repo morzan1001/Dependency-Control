@@ -86,9 +86,7 @@ async def test_every_team_the_user_picked_is_stored():
 async def test_a_retained_provider_owner_keeps_its_provenance():
     """Restamping it as a hand assignment would exempt it from the retirement its own provider's
     next sync applies, so any project admin could pin a team the provider no longer resolves."""
-    project = _project(
-        team_ids=["gh-a"], team_sources={"gh-a": "github"}, team_id="gh-a", team_source="github"
-    )
+    project = _project(team_ids=["gh-a"], team_sources={"gh-a": "github"}, team_id="gh-a", team_source="github")
     db = await _db_with(project, _team("gh-a", "someone-else"), _team("t-new", _ACTOR))
 
     updated = await _put(db, project, _user(), team_ids=["gh-a", "t-new"])

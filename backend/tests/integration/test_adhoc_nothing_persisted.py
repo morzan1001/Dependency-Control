@@ -937,7 +937,8 @@ def test_reaching_mongo_without_the_injected_handle_is_caught(bypass_attempts):
         (_GRIDFS_BUCKET_LABEL, lambda: motor_asyncio.AsyncIOMotorGridFSBucket(FakeDatabase())),
         (_PYMONGO_CLIENT_LABEL, lambda: pymongo.MongoClient(_MONGO_URL)),
         (_PYMONGO_ASYNC_CLIENT_LABEL, lambda: pymongo.AsyncMongoClient(_MONGO_URL)),
-        (_REDIS_CLIENT_LABEL, lambda: redis.asyncio.Redis()),
+        # The lambda defers the lookup until the tripwire fixture has rebound redis.asyncio.Redis.
+        (_REDIS_CLIENT_LABEL, lambda: redis.asyncio.Redis()),  # noqa: PLW0108
         (_REDIS_FROM_URL_LABEL, lambda: redis.asyncio.from_url(settings.REDIS_URL)),
     ],
 )

@@ -340,6 +340,45 @@ class TestCreateInstance:
         assert exc_info.value.status_code == 400
         assert "Failed to connect" in exc_info.value.detail
 
+    def test_a_rejected_token_reports_the_gitlab_status_exactly_once(self, admin_user):
+        from app.api.v1.endpoints.gitlab_instances import create_instance
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.GitLabService", return_value=_make_gitlab_service_mock(MagicMock(status_code=401))):
+                with pytest.raises(HTTPException) as exc_info:
+                    asyncio.run(
+                        create_instance(
+                            instance_data=self._make_create_data(),
+                            db=MagicMock(),
+                            current_user=admin_user,
+                        )
+                    )
+        assert exc_info.value.detail == "Failed to connect to GitLab instance: HTTP 401"
+        mock_repo.create.assert_not_called()
+
+    def test_an_unreachable_instance_reports_the_transport_error(self, admin_user):
+        from app.api.v1.endpoints.gitlab_instances import create_instance
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
+        mock_svc = _make_gitlab_service_mock(MagicMock(status_code=200))
+        mock_svc._api_client.return_value.get = AsyncMock(side_effect=OSError("connection refused"))
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.GitLabService", return_value=mock_svc):
+                with pytest.raises(HTTPException) as exc_info:
+                    asyncio.run(
+                        create_instance(
+                            instance_data=self._make_create_data(),
+                            db=MagicMock(),
+                            current_user=admin_user,
+                        )
+                    )
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Failed to connect to GitLab instance: connection refused"
+        mock_repo.create.assert_not_called()
+
     def test_success_creates_and_returns_instance(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import create_instance
 
@@ -845,9 +884,7 @@ class TestBindingPickerListing:
             patch(f"{MODULE}.GitLabService", return_value=service),
         ):
             result = asyncio.run(
-                list_instance_groups(
-                    instance_id="gl-1", db=MagicMock(), current_user=admin_user, search=search
-                )
+                list_instance_groups(instance_id="gl-1", db=MagicMock(), current_user=admin_user, search=search)
             )
         return result, service
 
@@ -885,9 +922,7 @@ class TestBindingPickerListing:
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=_make_repo_mock(get_by_id=None)):
             with pytest.raises(HTTPException) as excinfo:
                 asyncio.run(
-                    list_instance_groups(
-                        instance_id="gl-absent", db=MagicMock(), current_user=admin_user, search=None
-                    )
+                    list_instance_groups(instance_id="gl-absent", db=MagicMock(), current_user=admin_user, search=None)
                 )
 
         assert excinfo.value.status_code == 404

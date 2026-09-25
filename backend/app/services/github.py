@@ -72,9 +72,7 @@ _WRITE_PERMISSIONS = ("push", "maintain", "admin")
 
 _AUTO_TEAM_NAME_PREFIX = "GitHub Team:"
 
-_org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = (
-    weakref.WeakKeyDictionary()
-)
+_org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
 
 
 def _org_walk_gate() -> asyncio.Semaphore:
@@ -490,9 +488,7 @@ class GitHubService:
                 written.append(str(full_name).lower())
         return written
 
-    async def _fetch_org_repository_map(
-        self, org: str, org_teams: list[dict[str, Any]]
-    ) -> dict[str, list[int]] | None:
+    async def _fetch_org_repository_map(self, org: str, org_teams: list[dict[str, Any]]) -> dict[str, list[int]] | None:
         """Walk every team of the organisation. None when one of them went unanswered.
 
         Half a walk names the wrong holders rather than fewer of them: the teams it did not reach
@@ -520,9 +516,7 @@ class GitHubService:
         as ``{}``, and that unwrapped would read as an organisation whose teams hold nothing.
         """
         try:
-            repo_map = await asyncio.wait_for(
-                self._fetch_org_repository_map(org, org_teams), _GITHUB_ORG_WALK_TIMEOUT
-            )
+            repo_map = await asyncio.wait_for(self._fetch_org_repository_map(org, org_teams), _GITHUB_ORG_WALK_TIMEOUT)
         except TimeoutError:
             logger.warning(
                 "Walking the %d team(s) of GitHub organisation %s took longer than %.0fs; the "
@@ -847,8 +841,7 @@ class GitHubService:
         repo_map = await self.get_org_repository_map(org, org_teams)
         if repo_map is None:
             logger.warning(
-                "Could not map the teams of GitHub organisation %s onto its repositories; "
-                "leaving %s/%s untouched.",
+                "Could not map the teams of GitHub organisation %s onto its repositories; leaving %s/%s untouched.",
                 org,
                 owner,
                 repo,

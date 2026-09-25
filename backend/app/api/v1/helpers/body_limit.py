@@ -21,8 +21,8 @@ def enforce_declared_body_size(limit: int) -> Callable[[Request], None]:
             return
         try:
             size = int(raw)
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid Content-Length header")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
         if size > limit:
             raise _too_large(limit, str(size))
 

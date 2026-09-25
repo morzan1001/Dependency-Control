@@ -31,14 +31,21 @@ class TestApplyLiveThreatIntel:
         assert f["details"]["epss_score"] == 0.9
 
     def test_finding_level_worst_case_across_advisories(self):
-        f = _finding({"vulnerabilities": [
-            {"id": "CVE-1", "resolved_cve": "CVE-1"},
-            {"id": "CVE-2", "resolved_cve": "CVE-2"},
-        ]})
-        _run([f], {
-            "CVE-1": VulnerabilityEnrichment(cve="CVE-1", is_kev=False, epss_score=0.2, kev_ransomware_use=False),
-            "CVE-2": VulnerabilityEnrichment(cve="CVE-2", is_kev=True, epss_score=0.7, kev_ransomware_use=True),
-        })
+        f = _finding(
+            {
+                "vulnerabilities": [
+                    {"id": "CVE-1", "resolved_cve": "CVE-1"},
+                    {"id": "CVE-2", "resolved_cve": "CVE-2"},
+                ]
+            }
+        )
+        _run(
+            [f],
+            {
+                "CVE-1": VulnerabilityEnrichment(cve="CVE-1", is_kev=False, epss_score=0.2, kev_ransomware_use=False),
+                "CVE-2": VulnerabilityEnrichment(cve="CVE-2", is_kev=True, epss_score=0.7, kev_ransomware_use=True),
+            },
+        )
         assert f["details"]["in_kev"] is True
         assert f["details"]["kev_ransomware_use"] is True
         assert f["details"]["epss_score"] == 0.7  # max across advisories

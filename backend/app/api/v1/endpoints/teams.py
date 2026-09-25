@@ -97,18 +97,14 @@ async def read_teams(
     elif has_permission(current_user.permissions, "team:read"):
         permission_query = {"members.user_id": str(current_user.id)}
 
-        if query:
-            final_query = {"$and": [query, permission_query]}
-        else:
-            final_query = permission_query
+        final_query = {"$and": [query, permission_query]} if query else permission_query
     else:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
     sort_direction = 1 if sort_order == "asc" else -1
 
     pipeline = build_team_enrichment_pipeline(final_query, sort_by, sort_direction)
-    teams = await team_repo.aggregate(pipeline, limit=1000)
-    return teams
+    return await team_repo.aggregate(pipeline, limit=1000)
 
 
 @router.get("/{team_id}", response_model=TeamResponse, responses=RESP_AUTH_404)
@@ -284,12 +280,12 @@ async def set_team_binding(
 
     try:
         await team_repo.replace_binding_for_instance(team_id, binding.model_dump())
-    except DuplicateKeyError:
+    except DuplicateKeyError as exc:
         # The unique index caught a binding written between the check above and this write.
         raise HTTPException(
             status_code=409,
             detail=f"Another team was just bound to {_binding_conflict(binding)}.",
-        )
+        ) from exc
 
     logger.info(
         "Team %s bound to %s on instance %s by %s",

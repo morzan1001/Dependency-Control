@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from prometheus_client import Counter
 from pymongo import ReadPreference
 
 from app.core.config import settings
@@ -39,6 +38,7 @@ from app.core.constants import (
     WEBHOOK_USER_AGENT_VALUE,
 )
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
 from app.services.webhooks.teams_formatter import TeamsFormatter
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
@@ -70,14 +70,6 @@ def _event_match_set(event_type: str) -> list[str]:
 
 
 logger = logging.getLogger(__name__)
-
-webhooks_triggered_total: Counter | None = None
-webhooks_failed_total: Counter | None = None
-
-try:
-    from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
-except ImportError:
-    pass
 
 
 class WebhookService:
@@ -378,12 +370,11 @@ class WebhookService:
                             retry_count=retry_count,
                         )
                         return True
-                    else:
-                        logger.warning(
-                            f"Webhook {webhook.id} returned non-success status {response.status_code} "
-                            f"for {event_type}: {response.text[:200]}"
-                        )
-                        last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                    logger.warning(
+                        f"Webhook {webhook.id} returned non-success status {response.status_code} "
+                        f"for {event_type}: {response.text[:200]}"
+                    )
+                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
 
             except ValueError as e:
                 # SSRF policy violation — don't retry.
@@ -469,9 +460,7 @@ class WebhookService:
                 owners = (project_doc or {}).get("team_ids") or []
                 if owners:
                     webhooks.extend(
-                        await self._fetch_webhooks_by_query(
-                            db, {**base_conditions, "team_id": {"$in": owners}}, "team"
-                        )
+                        await self._fetch_webhooks_by_query(db, {**base_conditions, "team_id": {"$in": owners}}, "team")
                     )
             except Exception as e:
                 logger.exception("Failed to look up team webhooks for project %s: %s", project_id, e)
@@ -682,13 +671,12 @@ class WebhookService:
                         "error": None,
                         "response_time_ms": round(response_time_ms, 2),
                     }
-                else:
-                    return {
-                        "success": False,
-                        "status_code": response.status_code,
-                        "error": f"HTTP {response.status_code}: {response.text[:200]}",
-                        "response_time_ms": round(response_time_ms, 2),
-                    }
+                return {
+                    "success": False,
+                    "status_code": response.status_code,
+                    "error": f"HTTP {response.status_code}: {response.text[:200]}",
+                    "response_time_ms": round(response_time_ms, 2),
+                }
 
         except ValueError as e:
             return {

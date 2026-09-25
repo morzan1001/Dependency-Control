@@ -7,21 +7,12 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from pathlib import Path
 
-from prometheus_client import Counter
-
 from app.core.constants import SMTP_TIMEOUT_SECONDS
+from app.core.metrics import notifications_failed_total, notifications_sent_total
 from app.models.system import SystemSettings
 from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
-
-notifications_sent_total: Counter | None = None
-notifications_failed_total: Counter | None = None
-
-try:
-    from app.core.metrics import notifications_failed_total, notifications_sent_total
-except ImportError:
-    pass
 
 try:
     import aiosmtplib
@@ -38,15 +29,10 @@ class EmailProvider(NotificationProvider):
         subject: str,
         message: str,
         html_message: str | None,
-        logo_path: str | None,
+        has_logo: bool,
     ) -> MIMEMultipart:
-        """Build the MIME message, attaching logo if available."""
-        has_logo = bool(logo_path and os.path.exists(logo_path))
-
-        if has_logo:
-            msg = MIMEMultipart("related")
-        else:
-            msg = MIMEMultipart("alternative")
+        """Build the MIME message; a logo mail nests the body in a related part for the inline image."""
+        msg = MIMEMultipart("related" if has_logo else "alternative")
 
         msg["From"] = emails_from
         msg["To"] = destination
@@ -149,17 +135,11 @@ class EmailProvider(NotificationProvider):
             emails_from = emails_from_email
 
         try:
-            msg = self._build_message(
-                emails_from,
-                destination,
-                subject,
-                message,
-                html_message,
-                logo_path,
-            )
-
-            if logo_path and os.path.exists(logo_path):
-                await self._attach_logo(msg, logo_path)
+            logo_exists = await asyncio.to_thread(os.path.exists, logo_path) if logo_path else False
+            logo = logo_path if logo_exists else None
+            msg = self._build_message(emails_from, destination, subject, message, html_message, logo is not None)
+            if logo is not None:
+                await self._attach_logo(msg, logo)
 
             await self._send_async(
                 smtp_host,

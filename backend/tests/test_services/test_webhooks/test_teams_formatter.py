@@ -238,11 +238,12 @@ class TestBuildVulnerabilityFoundCard:
             )
         )
         containers = [b for b in card["body"] if b["type"] == "Container"]
-        cve_blocks = []
-        for container in containers:
-            for item in container.get("items", []):
-                if item.get("type") == "TextBlock" and "CVE-2024-" in item.get("text", ""):
-                    cve_blocks.append(item)
+        cve_blocks = [
+            item
+            for container in containers
+            for item in container.get("items", [])
+            if item.get("type") == "TextBlock" and "CVE-2024-" in item.get("text", "")
+        ]
         assert len(cve_blocks) == 3
 
     def test_card_names_the_cve_and_component_the_producer_emitted(self):

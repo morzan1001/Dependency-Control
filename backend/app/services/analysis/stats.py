@@ -411,39 +411,47 @@ class StatsAccumulator:
         # not also in _BUCKETED_SEVERITIES collapses to UNKNOWN and silently contributes 0.
         self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * _reach_modifier(reachable, level)
 
-        if finding.get("type") == "vulnerability":
-            self._vuln_total += 1
-            if bucket in self._vuln_severity:
-                self._vuln_severity[bucket] += 1
-            if is_actionable_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
-                self._actionable_total += 1
-                if bucket == "CRITICAL":
-                    self._actionable_critical += 1
-                elif bucket == "HIGH":
-                    self._actionable_high += 1
-            if is_deprioritized_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
-                self._deprioritized += 1
-            component = finding.get("component")
-            if self._component_languages and component and lookup_component(self._component_languages, component):
-                self._coverable += 1
+        finding_type = finding.get("type")
+        if finding_type == "vulnerability":
+            self._add_vulnerability(bucket, epss, in_kev, reachable, finding.get("component"))
+        elif finding_type == "secret":
+            self._add_secret(details)
+        self._add_threat_intel(details, epss, in_kev)
+        self._add_reachability(bucket, reachable, level, details)
 
-        if finding.get("type") == "secret":
-            verified = details.get("verified")
-            in_current_tree = details.get("in_current_tree")
-            self._secret_total += 1
-            if verified is True:
-                self._secret_verified += 1
-            if in_current_tree is True:
-                self._secret_in_tree += 1
-            elif in_current_tree is False:
-                self._secret_historical += 1
-            elif in_current_tree is None:
-                self._secret_unknown_tree += 1
-            if verified is True and in_current_tree is True:
-                self._secret_actionable += 1
-            if is_deprioritized_secret(verified, in_current_tree):
-                self._secret_deprioritized += 1
+    def _add_vulnerability(self, bucket: str, epss: float | None, in_kev: bool, reachable: Any, component: Any) -> None:
+        self._vuln_total += 1
+        if bucket in self._vuln_severity:
+            self._vuln_severity[bucket] += 1
+        if is_actionable_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
+            self._actionable_total += 1
+            if bucket == "CRITICAL":
+                self._actionable_critical += 1
+            elif bucket == "HIGH":
+                self._actionable_high += 1
+        if is_deprioritized_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
+            self._deprioritized += 1
+        if self._component_languages and component and lookup_component(self._component_languages, component):
+            self._coverable += 1
 
+    def _add_secret(self, details: Mapping[str, Any]) -> None:
+        verified = details.get("verified")
+        in_current_tree = details.get("in_current_tree")
+        self._secret_total += 1
+        if verified is True:
+            self._secret_verified += 1
+        if in_current_tree is True:
+            self._secret_in_tree += 1
+        elif in_current_tree is False:
+            self._secret_historical += 1
+        elif in_current_tree is None:
+            self._secret_unknown_tree += 1
+        if verified is True and in_current_tree is True:
+            self._secret_actionable += 1
+        if is_deprioritized_secret(verified, in_current_tree):
+            self._secret_deprioritized += 1
+
+    def _add_threat_intel(self, details: Mapping[str, Any], epss: float | None, in_kev: bool) -> None:
         kev_ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
         if in_kev:
             self._kev += 1
@@ -462,28 +470,32 @@ class StatsAccumulator:
         if in_kev or (epss is not None and epss >= EPSS_ACTIVE_EXPLOITATION_THRESHOLD):
             self._active_exploitation += 1
 
+    def _add_reachability(self, bucket: str, reachable: Any, level: Any, details: Mapping[str, Any]) -> None:
         if reachable is not None:
             self._analyzed += 1
         if reachable is True:
-            self._reachable += 1
-            if level == REACHABILITY_LEVEL_SYMBOL:
-                self._confirmed += 1
-            elif level == REACHABILITY_LEVEL_IMPORT:
-                self._likely += 1
-            if bucket == "CRITICAL":
-                self._reachable_critical += 1
-            elif bucket == "HIGH":
-                self._reachable_high += 1
-            raw_reach = details.get("reachability")
-            confidence = _numeric(raw_reach.get("confidence_score")) if isinstance(raw_reach, Mapping) else None
-            if confidence is not None and confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD:
-                self._reachable_hc += 1
-                if bucket == "CRITICAL":
-                    self._reachable_critical_hc += 1
-                elif bucket == "HIGH":
-                    self._reachable_high_hc += 1
+            self._add_reachable(bucket, level, details)
         elif reachable is False:
             self._unreachable += 1
+
+    def _add_reachable(self, bucket: str, level: Any, details: Mapping[str, Any]) -> None:
+        self._reachable += 1
+        if level == REACHABILITY_LEVEL_SYMBOL:
+            self._confirmed += 1
+        elif level == REACHABILITY_LEVEL_IMPORT:
+            self._likely += 1
+        if bucket == "CRITICAL":
+            self._reachable_critical += 1
+        elif bucket == "HIGH":
+            self._reachable_high += 1
+        raw_reach = details.get("reachability")
+        confidence = _numeric(raw_reach.get("confidence_score")) if isinstance(raw_reach, Mapping) else None
+        if confidence is not None and confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD:
+            self._reachable_hc += 1
+            if bucket == "CRITICAL":
+                self._reachable_critical_hc += 1
+            elif bucket == "HIGH":
+                self._reachable_high_hc += 1
 
     def result(self) -> Stats:
         # The four sub-models stay None on an empty or fully waived scan: the frontend's
@@ -574,7 +586,7 @@ def _stats_projection() -> dict[str, int]:
 
 # Tautological today; it fires the moment someone hand-edits the projection, which is the one
 # failure class a differential test cannot see — a typo zeroes a counter on both sides.
-assert StatsAccumulator.REQUIRED_PATHS <= _stats_projection().keys(), "stats projection drops a required path"
+assert _stats_projection().keys() >= StatsAccumulator.REQUIRED_PATHS, "stats projection drops a required path"
 
 # scan_id + type is the only index pair immutable after insert; severity and waived are rewritten by
 # _rollup_vulnerability_waivers and _apply_waivers, so hinting either opens a skip window mid-cursor.

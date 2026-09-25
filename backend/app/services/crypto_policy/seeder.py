@@ -25,8 +25,7 @@ def load_seed_rules() -> list[CryptoRule]:
     for path in sorted(_SEED_DIR.glob("*.yaml")):
         with open(path) as f:
             data = yaml.safe_load(f) or {}
-        for rule_dict in data.get("rules") or []:
-            rules.append(CryptoRule.model_validate(rule_dict))
+        rules.extend(CryptoRule.model_validate(rule_dict) for rule_dict in data.get("rules") or [])
     return rules
 
 

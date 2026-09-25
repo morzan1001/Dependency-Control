@@ -131,7 +131,9 @@ class TestMemberResolution:
         service = _service()
         repo = _user_repo(by_username=None, by_email={"_id": "u-2", "email": "ada@corp.com"})
 
-        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup("Ada@Corp.com"))):
+        with patch.object(
+            service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup("Ada@Corp.com"))
+        ):
             members, _, _ = await service._build_team_members([{"login": "ada-l", "role": "member"}], repo)
 
         assert [m.user_id for m in members] == ["u-2"]
@@ -272,7 +274,8 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-gh", source=_OWN)])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-gh", source=_OWN)]
+        )
 
         assert "members" not in repo.update_with_binding.await_args.args[1]
         assert _written_subset(repo) == MemberSubset(_OWN, [{"user_id": "u-gh", "role": "member", "source": _OWN}])
@@ -301,7 +304,8 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)]
+        )
 
         update = repo.update_with_binding.await_args.args[1]
         assert "name" not in update
@@ -314,7 +318,8 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)]
+        )
 
         update = repo.update_with_binding.await_args.args[1]
         assert update["name"] == "GitHub Team: acme/payments"
@@ -327,7 +332,8 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)]
+        )
 
         assert "name" not in repo.update_with_binding.await_args.args[1]
 
@@ -338,7 +344,8 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)]
+        )
 
         assert repo.update_with_binding.await_args.args[3] == {"slug": "payments"}
 
@@ -349,8 +356,7 @@ class TestTeamMemberWrite:
         team = _bound("t-1", 4711, slug="pay-old", name="GitHub Team: acme/pay-old")
         repo = _team_repo(team)
 
-        await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), None)
+        await service._refresh_team(repo, "acme", _RepositoryHolder(team, 4711, "payments"), None)
 
         update = repo.update_with_binding.await_args.args[1]
         assert update["name"] == "GitHub Team: acme/payments"
@@ -362,8 +368,7 @@ class TestTeamMemberWrite:
         team = _bound("t-1", 4711)
         repo = _team_repo(team)
 
-        await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), None)
+        await service._refresh_team(repo, "acme", _RepositoryHolder(team, 4711, "payments"), None)
 
         repo.update_with_binding.assert_not_called()
 
@@ -898,9 +903,7 @@ class TestOwnerBudget:
 
         with _sync_stubs(service, team_repo, org_teams=_SIX_TEAMS, repo_map=_SIX_HOLDERS):
             with caplog.at_level("WARNING", logger="app.services.github"):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", owner_budget=5
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", owner_budget=5)
 
         assert result == GitHubTeamSyncResult(None)
         team_repo.create.assert_not_called()

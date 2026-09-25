@@ -177,8 +177,7 @@ async def update_webhook(
     if "url" in update_data and "webhook_type" not in update_data:
         update_data["webhook_type"] = detect_webhook_type(update_data["url"])
 
-    updated_webhook = await webhook_repo.update(webhook_id, update_data)
-    return updated_webhook
+    return await webhook_repo.update(webhook_id, update_data)
 
 
 @router.delete("/{webhook_id}", status_code=204, responses=RESP_AUTH_404)

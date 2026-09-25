@@ -160,7 +160,7 @@ def _bson_identical(left: Any, right: Any) -> bool:
     if isinstance(left, dict) and isinstance(right, dict):
         return left.keys() == right.keys() and all(_bson_identical(left[key], right[key]) for key in left)
     if isinstance(left, list) and isinstance(right, list):
-        return len(left) == len(right) and all(_bson_identical(a, b) for a, b in zip(left, right))
+        return len(left) == len(right) and all(_bson_identical(a, b) for a, b in zip(left, right, strict=True))
     return _bson_equal(left, right)
 
 
@@ -174,7 +174,7 @@ def _bson_same_value(left: Any, right: Any) -> bool:
     if isinstance(left, list) or isinstance(right, list):
         if not (isinstance(left, list) and isinstance(right, list)):
             return False
-        return len(left) == len(right) and all(_bson_same_value(a, b) for a, b in zip(left, right))
+        return len(left) == len(right) and all(_bson_same_value(a, b) for a, b in zip(left, right, strict=True))
     return _bson_equal(left, right)
 
 

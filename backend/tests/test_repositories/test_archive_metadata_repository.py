@@ -45,9 +45,7 @@ def db():
     database.archive_metadata._docs["a-feature"] = _archive_doc(
         "a-feature", branch=_FEATURE, archived_at=_T0 - _DAY, scan_created_at=_T0 - _DAY
     )
-    database.archive_metadata._docs["b-0"] = _archive_doc(
-        "b-0", project_id=_OTHER_PROJECT, branch=_OTHER_BRANCH
-    )
+    database.archive_metadata._docs["b-0"] = _archive_doc("b-0", project_id=_OTHER_PROJECT, branch=_OTHER_BRANCH)
     return database
 
 

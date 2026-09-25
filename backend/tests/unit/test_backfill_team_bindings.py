@@ -76,8 +76,13 @@ def _numbered(teams: list[dict]) -> list[dict]:
 
 
 def test_a_github_binding_moves_whole():
-    team = {"_id": "t", "github_instance_id": "gh-1", "github_org": "acme", "github_team_id": 4711,
-            "github_team_slug": "payments"}
+    team = {
+        "_id": "t",
+        "github_instance_id": "gh-1",
+        "github_org": "acme",
+        "github_team_id": 4711,
+        "github_team_slug": "payments",
+    }
 
     assert derive_bindings(team) == [_GITHUB]
 
@@ -117,8 +122,16 @@ def test_an_instance_with_no_group_number_produces_no_binding():
 def test_an_entry_the_team_already_holds_is_never_overwritten():
     """The array is what the new image writes; re-deriving over it would undo a live binding."""
     stored = GitHubTeamBinding(instance_id="gh-1", org="acme", external_id=900, slug="cards").model_dump()
-    teams = [{"_id": "t", "bindings": [stored], "github_instance_id": "gh-1", "github_org": "acme",
-              "github_team_id": 4711, "github_team_slug": "payments"}]
+    teams = [
+        {
+            "_id": "t",
+            "bindings": [stored],
+            "github_instance_id": "gh-1",
+            "github_org": "acme",
+            "github_team_id": 4711,
+            "github_team_slug": "payments",
+        }
+    ]
 
     assert plan_bindings(teams, drop_scalars=False) == []
 

@@ -38,9 +38,7 @@ def _reads(service: GitHubService, org_teams: list[dict]):
     return (
         patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams)),
         patch.object(service, "get_team_repository", new=AsyncMock(return_value=True)),
-        patch.object(
-            service, "get_team_members", new=AsyncMock(return_value=[{"login": "ada", "role": "maintainer"}])
-        ),
+        patch.object(service, "get_team_members", new=AsyncMock(return_value=[{"login": "ada", "role": "maintainer"}])),
         patch.object(service, "get_org_repository_map", new=AsyncMock(return_value={})),
     )
 

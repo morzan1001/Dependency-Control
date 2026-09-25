@@ -94,4 +94,3 @@ class TestAnalysisResultModel:
 class TestProjectGitHubTeamProvenance:
     def test_team_source_accepts_github(self):
         assert Project(name="p", team_source="github").team_source == "github"
-

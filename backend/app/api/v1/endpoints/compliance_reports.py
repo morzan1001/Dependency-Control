@@ -71,9 +71,9 @@ async def create_report(
             scope_id=req.scope_id,
         )
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=403, detail=f"Scope resolution failed: {exc}")
+        raise HTTPException(status_code=403, detail=f"Scope resolution failed: {exc}") from exc
 
     repo = ComplianceReportRepository(db)
     pending_count = await repo.count_pending_for_user(current_user.id)
@@ -216,16 +216,16 @@ async def download_report(
     try:
         await ScopeResolver(db, current_user).resolve(scope=r.scope, scope_id=r.scope_id)
     except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=403, detail=f"Scope resolution failed: {exc}")
+        raise HTTPException(status_code=403, detail=f"Scope resolution failed: {exc}") from exc
 
     bucket = AsyncIOMotorGridFSBucket(db)
     try:
         # artifact_gridfs_id is stored as a string; GridFS needs an ObjectId.
         stream = await bucket.open_download_stream(ObjectId(r.artifact_gridfs_id))
-    except Exception:
-        raise HTTPException(status_code=410, detail="Artifact storage error")
+    except Exception as exc:
+        raise HTTPException(status_code=410, detail="Artifact storage error") from exc
 
     async def _iter() -> AsyncIterator[bytes]:
         try:

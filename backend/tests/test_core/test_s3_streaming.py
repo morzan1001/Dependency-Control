@@ -57,9 +57,7 @@ async def test_download_stream_chunks_body(fake_s3):
 
     fake_s3.objects["k"] = b"D" * 200_000
 
-    chunks: list[bytes] = []
-    async for chunk in download_stream("k"):
-        chunks.append(chunk)
+    chunks = [chunk async for chunk in download_stream("k")]
     assert b"".join(chunks) == b"D" * 200_000
     assert len(chunks) > 1  # confirms chunking
 

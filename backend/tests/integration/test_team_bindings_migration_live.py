@@ -73,9 +73,7 @@ async def test_after_the_expand_pass_both_shapes_answer(db):
     # What the previous image reads is untouched, field for field.
     for team in _UNMIGRATED:
         stored = await db.teams.find_one({"_id": team["_id"]})
-        assert {name: stored.get(name) for name in SCALAR_FIELDS} == {
-            name: team[name] for name in SCALAR_FIELDS
-        }
+        assert {name: stored.get(name) for name in SCALAR_FIELDS} == {name: team[name] for name in SCALAR_FIELDS}
     assert await run_verify(db) == EXIT_SCALAR_BINDINGS_FOUND
 
 
@@ -104,8 +102,14 @@ async def test_a_binding_an_old_pod_wrote_during_the_rollout_is_carried_over(db)
     await run_move(db, batch_size=10, sleep_ms=0, execute=True, drop_scalars=False)
     await db.teams.update_one(
         {"_id": "t-edge"},
-        {"$set": {"github_instance_id": "gh-1", "github_org": "acme", "github_team_id": 900,
-                  "github_team_slug": "cards"}},
+        {
+            "$set": {
+                "github_instance_id": "gh-1",
+                "github_org": "acme",
+                "github_team_id": 900,
+                "github_team_slug": "cards",
+            }
+        },
     )
 
     await run_move(db, batch_size=10, sleep_ms=0, execute=True, drop_scalars=True)
@@ -121,8 +125,15 @@ async def test_the_migration_cannot_hand_one_group_to_two_teams(db):
     derived entries inherited that."""
     await _seed(db)
     await db.teams.insert_one(
-        {"_id": "t-rival", "name": "Rival", "members": [], **dict.fromkeys(SCALAR_FIELDS),
-         "github_instance_id": "gh-1", "github_org": "acme", "github_team_id": 4711}
+        {
+            "_id": "t-rival",
+            "name": "Rival",
+            "members": [],
+            **dict.fromkeys(SCALAR_FIELDS),
+            "github_instance_id": "gh-1",
+            "github_org": "acme",
+            "github_team_id": 4711,
+        }
     )
 
     with pytest.raises(Exception, match="E11000"):

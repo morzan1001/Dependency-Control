@@ -226,4 +226,4 @@ async def test_the_sweep_can_tell_an_authorised_answer_apart(tool_name: str, cal
 
 def test_the_registry_walk_still_finds_the_project_scoped_tools() -> None:
     """The sweep is driven off the schema, so a change to its shape would silently empty it."""
-    assert _ALWAYS_PROJECT_SCOPED <= set(_PROJECT_SCOPED_TOOLS)
+    assert set(_PROJECT_SCOPED_TOOLS) >= _ALWAYS_PROJECT_SCOPED

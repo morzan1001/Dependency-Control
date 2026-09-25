@@ -39,9 +39,7 @@ class TestSharedVcsInstanceBehaviour:
         assert await db[collection_name].find_one({"_id": "i-1"}) is not None
 
     @pytest.mark.asyncio
-    async def test_a_lookup_url_is_matched_with_its_trailing_slash_stripped(
-        self, repo_class, model, collection_name
-    ):
+    async def test_a_lookup_url_is_matched_with_its_trailing_slash_stripped(self, repo_class, model, collection_name):
         db = FakeDatabase()
         repo = repo_class(db)
         await repo.create(_instance(model))

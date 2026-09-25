@@ -166,7 +166,8 @@ class GHSAProvider:
         cache_keys = [CacheKeys.ghsa(ghsa_id) for ghsa_id in ghsa_ids]
         cached_data = await cache_service.mget(cache_keys)
 
-        for ghsa_id, cached in zip(ghsa_ids, cached_data.values()):
+        for ghsa_id, cache_key in zip(ghsa_ids, cache_keys, strict=True):
+            cached = cached_data[cache_key]
             if cached:
                 results[ghsa_id] = GHSAData(**cached)
             else:

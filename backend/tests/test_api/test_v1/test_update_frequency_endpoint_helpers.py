@@ -109,6 +109,7 @@ class FakeCache:
         self.plain_sets: list[str] = []
         self.fetches: list[str] = []
         self._held: set[str] = set()
+        self._lock_called = asyncio.Condition()
 
     async def get(self, key: str) -> Any | None:
         return self.store.get(key)
@@ -127,15 +128,17 @@ class FakeCache:
         max_wait_seconds: float = 5.0,
         reraise_fetch_errors: bool = False,
     ) -> Any | None:
-        self.lock_calls.append(
-            {
-                "key": key,
-                "ttl_seconds": ttl_seconds,
-                "lock_ttl_seconds": lock_ttl_seconds,
-                "max_wait_seconds": max_wait_seconds,
-                "reraise_fetch_errors": reraise_fetch_errors,
-            }
-        )
+        async with self._lock_called:
+            self.lock_calls.append(
+                {
+                    "key": key,
+                    "ttl_seconds": ttl_seconds,
+                    "lock_ttl_seconds": lock_ttl_seconds,
+                    "max_wait_seconds": max_wait_seconds,
+                    "reraise_fetch_errors": reraise_fetch_errors,
+                }
+            )
+            self._lock_called.notify_all()
         deadline = time.monotonic() + max_wait_seconds
         while time.monotonic() < deadline:
             cached = await self.get(key)
@@ -145,6 +148,10 @@ class FakeCache:
                 return await self._fetch_holding_lock(key, fetch_fn, reraise_fetch_errors)
             await asyncio.sleep(_FAKE_LOCK_POLL_SECONDS)
         return await fetch_fn()
+
+    async def wait_for_lock_calls(self, count: int) -> None:
+        async with self._lock_called:
+            await self._lock_called.wait_for(lambda: len(self.lock_calls) >= count)
 
     async def _fetch_holding_lock(self, key: str, fetch_fn: Any, reraise_fetch_errors: bool) -> Any | None:
         self._held.add(key)
@@ -398,8 +405,7 @@ class TestComparisonEndpointCaching:
                     waiter = asyncio.create_task(
                         get_update_frequency_comparison(request=FakeRequest(), current_user=_user("u2"), db=db)
                     )
-                    while len(cache.lock_calls) < 2:
-                        await asyncio.sleep(0)
+                    await cache.wait_for_lock_calls(2)
                     holder.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await holder

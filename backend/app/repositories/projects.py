@@ -176,9 +176,7 @@ def set_owners_pipeline(team_ids: list[str]) -> list[dict[str, Any]]:
         {
             "$set": {
                 "team_ids": {"$literal": owners},
-                "team_sources": {
-                    "$mergeObjects": [dict.fromkeys(owners, TEAM_SOURCE_MANUAL), _sources_kept(owners)]
-                },
+                "team_sources": {"$mergeObjects": [dict.fromkeys(owners, TEAM_SOURCE_MANUAL), _sources_kept(owners)]},
             }
         },
         *scalar_mirror_stages(),

@@ -55,9 +55,7 @@ class TeamGitLabBindingRequest(BaseModel):
     external_id: int
 
 
-TeamBindingRequest = Annotated[
-    TeamGitHubBindingRequest | TeamGitLabBindingRequest, Field(discriminator="provider")
-]
+TeamBindingRequest = Annotated[TeamGitHubBindingRequest | TeamGitLabBindingRequest, Field(discriminator="provider")]
 
 
 class TeamResponse(TeamBase):

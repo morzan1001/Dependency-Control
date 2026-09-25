@@ -273,14 +273,13 @@ class TestIngestOidcProjectLookup:
         gitlab_instances_coll = create_mock_collection(find_one=instance_doc)
         projects_coll = create_mock_collection(find_one=project_doc)
         users_coll = create_mock_collection(find_one=None)
-        db = create_mock_db(
+        return create_mock_db(
             {
                 "gitlab_instances": gitlab_instances_coll,
                 "projects": projects_coll,
                 "users": users_coll,
             }
         )
-        return db
 
     def test_returns_existing_project_via_composite_key(self):
         from app.api.deps import get_project_for_ingest

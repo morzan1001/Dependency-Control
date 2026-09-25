@@ -188,7 +188,7 @@ def _clip_value(value: Any) -> Any:
     if isinstance(value, str) and len(value) > 400:
         return value[:400] + "…"
     if isinstance(value, list) and len(value) > 5:
-        return value[:5] + ["…"]
+        return [*value[:5], "…"]
     return value
 
 
@@ -252,7 +252,7 @@ def _compare_versions(a: str, b: str) -> int:
         return out
 
     pa, pb = parts(a), parts(b)
-    for x, y in zip(pa, pb):
+    for x, y in zip(pa, pb, strict=False):
         if x < y:
             return -1
         if x > y:

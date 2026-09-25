@@ -171,10 +171,7 @@ class TrivyAnalyzer(CLIAnalyzer):
         title: str,
     ) -> str:
         """Create a human-readable message for the vulnerability."""
-        if title:
-            msg = f"{vuln_id}: {title}"
-        else:
-            msg = f"{vuln_id} in {pkg_name}@{installed_version}"
+        msg = f"{vuln_id}: {title}" if title else f"{vuln_id} in {pkg_name}@{installed_version}"
 
         if fixed_version:
             msg += f" (fix available: {fixed_version})"

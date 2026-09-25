@@ -231,9 +231,9 @@ class MaintainerRiskAnalyzer(Analyzer):
         max_severity = max(r.get("severity_score", 1) for r in risks)
         if max_severity >= 4:
             return Severity.CRITICAL.value
-        elif max_severity >= 3:
+        if max_severity >= 3:
             return Severity.HIGH.value
-        elif max_severity >= 2:
+        if max_severity >= 2:
             return Severity.MEDIUM.value
         return Severity.LOW.value
 

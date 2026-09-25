@@ -1,6 +1,5 @@
 """Integration tests for POST /api/v1/ingest/cbom."""
 
-import asyncio
 import json
 from pathlib import Path
 
@@ -21,15 +20,6 @@ def _ingests(status: str) -> float:
     return REGISTRY.get_sample_value("cbom_ingests_total", {"status": status}) or 0.0
 
 
-async def _wait_for_scan(db, scan_id: str, timeout: float = 5.0) -> None:
-    deadline = asyncio.get_event_loop().time() + timeout
-    while asyncio.get_event_loop().time() < deadline:
-        scan = await db.scans.find_one({"_id": scan_id})
-        if scan and scan.get("status") not in ("running", "pending", None):
-            return
-        await asyncio.sleep(0.05)
-
-
 @pytest.mark.asyncio
 async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
     payload = {
@@ -41,8 +31,6 @@ async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
     body = resp.json()
     scan_id = body["scan_id"]
     assert body["status"] in ("accepted", "completed")
-
-    await _wait_for_scan(db, scan_id)
 
     # legacy_crypto_mixed.json has 3 cryptographic-asset components.
     project_id = "test-project-id"

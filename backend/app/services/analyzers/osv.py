@@ -195,7 +195,7 @@ class OSVAnalyzer(Analyzer):
         cache_mapping: dict[str, dict[str, Any]] = {}
         for component, vulns in pending:
             ids = [vuln.get("id", "") for vuln in vulns]
-            hydrated = [records.get(vuln_id, vuln) for vuln_id, vuln in zip(ids, vulns)]
+            hydrated = [records.get(vuln_id, vuln) for vuln_id, vuln in zip(ids, vulns, strict=True)]
             entry = self._build_cache_entry(component, hydrated)
             # Caching an entry built from unresolved stubs would serve UNKNOWN for the next
             # six hours with no partial flag, making the failure invisible on the next scan.
@@ -361,7 +361,7 @@ class OSVAnalyzer(Analyzer):
             skipped = max(0, len(valid_components) - len(batch_results))
             batch_results = batch_results[: len(valid_components)]
 
-        for comp, res in zip(valid_components, batch_results):
+        for comp, res in zip(valid_components, batch_results, strict=False):
             pending.append((comp, res.get("vulns") or []))
         return skipped
 

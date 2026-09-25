@@ -69,22 +69,23 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
         completed_at: datetime | None = None,
         expires_at: datetime | None = None,
     ) -> None:
-        update: dict[str, Any] = {"status": status.value if hasattr(status, "value") else status}
-        for key, val in [
-            ("artifact_gridfs_id", artifact_gridfs_id),
-            ("artifact_filename", artifact_filename),
-            ("artifact_size_bytes", artifact_size_bytes),
-            ("artifact_mime_type", artifact_mime_type),
-            ("summary", summary),
-            ("coverage", coverage.model_dump() if coverage else None),
-            ("error_message", error_message),
-            ("policy_version_snapshot", policy_version_snapshot),
-            ("iana_catalog_version_snapshot", iana_catalog_version_snapshot),
-            ("completed_at", completed_at),
-            ("expires_at", expires_at),
-        ]:
-            if val is not None:
-                update[key] = val
+        optional_fields = {
+            "artifact_gridfs_id": artifact_gridfs_id,
+            "artifact_filename": artifact_filename,
+            "artifact_size_bytes": artifact_size_bytes,
+            "artifact_mime_type": artifact_mime_type,
+            "summary": summary,
+            "coverage": coverage.model_dump() if coverage else None,
+            "error_message": error_message,
+            "policy_version_snapshot": policy_version_snapshot,
+            "iana_catalog_version_snapshot": iana_catalog_version_snapshot,
+            "completed_at": completed_at,
+            "expires_at": expires_at,
+        }
+        update: dict[str, Any] = {
+            "status": status.value if hasattr(status, "value") else status,
+            **{key: val for key, val in optional_fields.items() if val is not None},
+        }
         with track_db_operation(self.collection_name, "update_one"):
             await self.collection.update_one({"_id": report_id}, {"$set": update})
 

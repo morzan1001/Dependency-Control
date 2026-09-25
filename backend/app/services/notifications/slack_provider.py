@@ -3,25 +3,16 @@ import logging
 import time
 from typing import Any
 
-from prometheus_client import Counter
-
 from app.core.config import settings
 from app.core.constants import SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.metrics import notifications_failed_total, notifications_sent_total
 from app.db.mongodb import get_database
 from app.models.system import SystemSettings
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
-
-notifications_sent_total: Counter | None = None
-notifications_failed_total: Counter | None = None
-
-try:
-    from app.core.metrics import notifications_failed_total, notifications_sent_total
-except ImportError:
-    pass
 
 
 class SlackProvider(NotificationProvider):
@@ -224,11 +215,10 @@ class SlackProvider(NotificationProvider):
                     if notifications_sent_total:
                         notifications_sent_total.labels(type="slack").inc()
                     return True
-                else:
-                    logger.error(f"Failed to send Slack message: {response.text}")
-                    if notifications_failed_total:
-                        notifications_failed_total.labels(type="slack").inc()
-                    return False
+                logger.error(f"Failed to send Slack message: {response.text}")
+                if notifications_failed_total:
+                    notifications_failed_total.labels(type="slack").inc()
+                return False
         except Exception as e:
             logger.exception("Error sending Slack message: %s", e)
             if notifications_failed_total:

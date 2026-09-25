@@ -12,8 +12,6 @@ from app.core.metrics import chat_ollama_queue_depth, chat_ollama_requests_total
 
 logger = logging.getLogger(__name__)
 
-_active_requests = 0
-
 
 class OllamaClient:
     def __init__(
@@ -32,8 +30,6 @@ class OllamaClient:
         tools: list[dict[str, Any]] | None = None,
     ) -> AsyncIterator[dict[str, Any]]:
         """Stream a chat completion, yielding token / tool_call / done / error dicts keyed by "type"."""
-        global _active_requests
-
         payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
@@ -45,8 +41,7 @@ class OllamaClient:
         if tools:
             payload["tools"] = tools
 
-        _active_requests += 1
-        chat_ollama_queue_depth.set(_active_requests)
+        chat_ollama_queue_depth.inc()
 
         try:
             async with (
@@ -101,5 +96,4 @@ class OllamaClient:
             chat_ollama_requests_total.labels(status="error").inc()
             yield {"type": "error", "message": "Could not connect to Ollama"}
         finally:
-            _active_requests -= 1
-            chat_ollama_queue_depth.set(_active_requests)
+            chat_ollama_queue_depth.dec()

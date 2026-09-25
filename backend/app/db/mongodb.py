@@ -6,19 +6,12 @@ from typing import Any
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
-from prometheus_client import Gauge
 from pymongo import ReadPreference
 
 from app.core.config import settings
+from app.core.metrics import db_connections_active
 
 logger = logging.getLogger(__name__)
-
-db_connections_active: Gauge | None = None
-
-try:
-    from app.core.metrics import db_connections_active
-except ImportError:
-    pass
 
 
 DEFAULT_MAX_POOL_SIZE = 50

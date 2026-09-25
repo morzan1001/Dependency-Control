@@ -70,4 +70,3 @@ async def resolve_sbom_refs(
             logger.warning(f"Invalid SBOM reference format at index {index}: {type(item)}")
 
     return resolved_sboms
-

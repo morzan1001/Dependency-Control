@@ -22,6 +22,8 @@ from app.core.constants import (
     SCAN_DEPENDENCY_READ_LIMIT,
 )
 from app.core.permissions import Permissions
+from app.models.finding_record import FindingRecord
+from app.models.project import Scan
 from app.repositories import (
     DependencyRepository,
     FindingRepository,
@@ -32,6 +34,7 @@ from app.schemas.analytics import (
     RecommendationResponse,
     RecommendationsResponse,
 )
+from app.schemas.recommendation import Recommendation, RecommendationType
 from app.services.enrichment import canonical_cves, get_cve_enrichment
 from app.services.recommendation import trends
 from app.services.recommendation.common import get_attr
@@ -45,6 +48,36 @@ router = CustomAPIRouter()
 
 # Newest scans the recurrence count is taken over; the recommendation text names the window.
 _RECURRENCE_WINDOW_SCANS = 10
+
+# Recommendation type -> (summary key counted once per recommendation, summary key its impact total adds to).
+_SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
+    RecommendationType.BASE_IMAGE_UPDATE: ("base_image_updates", "total_fixable_vulns"),
+    RecommendationType.DIRECT_DEPENDENCY_UPDATE: ("direct_updates", "total_fixable_vulns"),
+    RecommendationType.TRANSITIVE_FIX_VIA_PARENT: ("transitive_updates", "total_fixable_vulns"),
+    RecommendationType.NO_FIX_AVAILABLE: ("no_fix", "total_unfixable_vulns"),
+    RecommendationType.ROTATE_SECRETS: (None, "secrets_to_rotate"),
+    RecommendationType.REMOVE_SECRETS: (None, "secrets_to_rotate"),
+    RecommendationType.FIX_CODE_SECURITY: (None, "sast_issues"),
+    RecommendationType.FIX_INFRASTRUCTURE: (None, "iac_issues"),
+    RecommendationType.LICENSE_COMPLIANCE: (None, "license_issues"),
+    RecommendationType.SUPPLY_CHAIN_RISK: (None, "quality_issues"),
+    RecommendationType.OUTDATED_DEPENDENCY: (None, "outdated_deps"),
+    RecommendationType.UNMAINTAINED_PACKAGE: (None, "outdated_deps"),
+    RecommendationType.VERSION_FRAGMENTATION: (None, "fragmentation_issues"),
+    RecommendationType.DEV_IN_PRODUCTION: (None, "fragmentation_issues"),
+    RecommendationType.DUPLICATE_FUNCTIONALITY: (None, "fragmentation_issues"),
+    RecommendationType.DEEP_DEPENDENCY_CHAIN: (None, "fragmentation_issues"),
+    RecommendationType.RECURRING_VULNERABILITY: ("trend_alerts", None),
+    RecommendationType.REGRESSION_DETECTED: ("trend_alerts", None),
+    RecommendationType.CROSS_PROJECT_PATTERN: (None, "cross_project_issues"),
+    RecommendationType.SHARED_VULNERABILITY: (None, "cross_project_issues"),
+    RecommendationType.REPLACE_WEAK_ALGORITHM: (None, "crypto_issues"),
+    RecommendationType.INCREASE_KEY_SIZE: (None, "crypto_issues"),
+    RecommendationType.UPGRADE_PROTOCOL: (None, "crypto_issues"),
+    RecommendationType.PQC_MIGRATION: (None, "crypto_issues"),
+    RecommendationType.ROTATE_CERTIFICATE: (None, "crypto_issues"),
+    RecommendationType.REPLACE_WEAK_CIPHER_SUITE: (None, "crypto_issues"),
+}
 
 
 async def _apply_live_threat_intel(findings: list[Any]) -> None:
@@ -104,16 +137,7 @@ async def get_project_recommendations(
     if project_id not in user_project_ids:
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
-    if scan_id:
-        scan = await scan_repo.get_by_id(scan_id)
-        if scan and scan.project_id != project_id:
-            scan = None
-    else:
-        scan = await scan_repo.get_latest_active_scan(project)
-
-    if not scan:
-        raise HTTPException(status_code=404, detail="No scan found for this project")
-
+    scan = await _resolve_scan(scan_repo, project, project_id, scan_id)
     scan_id = scan.id
 
     # Cache per scan + caller scope so users with different project access never
@@ -124,24 +148,16 @@ async def get_project_recommendations(
     if cached:
         return RecommendationsResponse(**cached)
 
-    source_target = None
-
     findings = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
     await _apply_live_threat_intel(findings)
 
     dependencies, dependencies_total = await dep_repo.find_by_scan(
         project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
     )
-
-    for dep in dependencies:
-        if dep.source_target:
-            source_target = dep.source_target
-            break
+    source_target = next((dep.source_target for dep in dependencies if dep.source_target), None)
 
     previous_scan_findings = None
-
     previous_scan = await scan_repo.get_preceding_scan(scan_id)
-
     if previous_scan:
         previous_scan_findings = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
 
@@ -167,14 +183,51 @@ async def get_project_recommendations(
         cross_project_data=cross_project_data,
     )
 
-    vuln_count = sum(1 for f in findings if f.type == "vulnerability")
-    secret_count = sum(1 for f in findings if f.type == "secret")
-    sast_count = sum(1 for f in findings if f.type == "sast")
-    iac_count = sum(1 for f in findings if f.type == "iac")
-    license_count = sum(1 for f in findings if f.type == "license")
-    quality_count = sum(1 for f in findings if f.type == "quality")
-    crypto_count = sum(1 for f in findings if isinstance(f.type, str) and f.type.startswith("crypto_"))
+    finding_counts = _finding_counts(findings)
+    response = RecommendationsResponse(
+        project_id=project_id,
+        project_name=project.get("name", "Unknown"),
+        scan_id=scan_id,
+        total_findings=len(findings),
+        total_vulnerabilities=finding_counts["vulnerabilities"],
+        recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
+        summary=_summarize(recommendations, finding_counts),
+        dependencies_read=len(dependencies),
+        dependencies_total=dependencies_total,
+    )
+    # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
+    await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)
+    return response
 
+
+async def _resolve_scan(
+    scan_repo: ScanRepository, project: dict[str, Any], project_id: str, scan_id: str | None
+) -> Scan:
+    if scan_id:
+        scan = await scan_repo.get_by_id(scan_id)
+        if scan and scan.project_id != project_id:
+            scan = None
+    else:
+        scan = await scan_repo.get_latest_active_scan(project)
+
+    if not scan:
+        raise HTTPException(status_code=404, detail="No scan found for this project")
+    return scan
+
+
+def _finding_counts(findings: list[FindingRecord]) -> dict[str, int]:
+    return {
+        "vulnerabilities": sum(1 for f in findings if f.type == "vulnerability"),
+        "secrets": sum(1 for f in findings if f.type == "secret"),
+        "sast": sum(1 for f in findings if f.type == "sast"),
+        "iac": sum(1 for f in findings if f.type == "iac"),
+        "license": sum(1 for f in findings if f.type == "license"),
+        "quality": sum(1 for f in findings if f.type == "quality"),
+        "crypto": sum(1 for f in findings if isinstance(f.type, str) and f.type.startswith("crypto_")),
+    }
+
+
+def _summarize(recommendations: list[Recommendation], finding_counts: dict[str, int]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "base_image_updates": 0,
         "direct_updates": 0,
@@ -192,77 +245,12 @@ async def get_project_recommendations(
         "fragmentation_issues": 0,
         "trend_alerts": 0,
         "cross_project_issues": 0,
-        "finding_counts": {
-            "vulnerabilities": vuln_count,
-            "secrets": secret_count,
-            "sast": sast_count,
-            "iac": iac_count,
-            "license": license_count,
-            "quality": quality_count,
-            "crypto": crypto_count,
-        },
+        "finding_counts": finding_counts,
     }
-
     for rec in recommendations:
-        rec_type = rec.type.value
-        impact_total = rec.impact.get("total", 0)
-
-        if rec_type == "base_image_update":
-            summary["base_image_updates"] += 1
-            summary["total_fixable_vulns"] += impact_total
-        elif rec_type == "direct_dependency_update":
-            summary["direct_updates"] += 1
-            summary["total_fixable_vulns"] += impact_total
-        elif rec_type == "transitive_fix_via_parent":
-            summary["transitive_updates"] += 1
-            summary["total_fixable_vulns"] += impact_total
-        elif rec_type == "no_fix_available":
-            summary["no_fix"] += 1
-            summary["total_unfixable_vulns"] += impact_total
-        elif rec_type in ("rotate_secrets", "remove_secrets"):
-            summary["secrets_to_rotate"] += impact_total
-        elif rec_type == "fix_code_security":
-            summary["sast_issues"] += impact_total
-        elif rec_type == "fix_infrastructure":
-            summary["iac_issues"] += impact_total
-        elif rec_type == "license_compliance":
-            summary["license_issues"] += impact_total
-        elif rec_type == "supply_chain_risk":
-            summary["quality_issues"] += impact_total
-        elif rec_type in ("outdated_dependency", "unmaintained_package"):
-            summary["outdated_deps"] += impact_total
-        elif rec_type in (
-            "version_fragmentation",
-            "dev_in_production",
-            "duplicate_functionality",
-            "deep_dependency_chain",
-        ):
-            summary["fragmentation_issues"] += impact_total
-        elif rec_type in ("recurring_vulnerability", "regression_detected"):
-            summary["trend_alerts"] += 1
-        elif rec_type in ("cross_project_pattern", "shared_vulnerability"):
-            summary["cross_project_issues"] += impact_total
-        elif rec_type in (
-            "replace_weak_algorithm",
-            "increase_key_size",
-            "upgrade_protocol",
-            "pqc_migration",
-            "rotate_certificate",
-            "replace_weak_cipher_suite",
-        ):
-            summary["crypto_issues"] += impact_total
-
-    response = RecommendationsResponse(
-        project_id=project_id,
-        project_name=project.get("name", "Unknown"),
-        scan_id=scan_id,
-        total_findings=len(findings),
-        total_vulnerabilities=vuln_count,
-        recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
-        summary=summary,
-        dependencies_read=len(dependencies),
-        dependencies_total=dependencies_total,
-    )
-    # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
-    await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)
-    return response
+        count_key, impact_key = _SUMMARY_BUCKETS.get(rec.type, (None, None))
+        if count_key:
+            summary[count_key] += 1
+        if impact_key:
+            summary[impact_key] += rec.impact.get("total", 0)
+    return summary

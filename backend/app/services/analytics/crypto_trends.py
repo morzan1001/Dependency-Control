@@ -160,16 +160,10 @@ class CryptoTrendService:
             {"$group": {"_id": "$bucket", "value": {"$sum": "$value"}}},
             {"$sort": {"_id": 1}},
         ]
-        out: list[TrendPoint] = []
-        async for row in self.db.findings.aggregate(pipeline):
-            out.append(
-                TrendPoint(
-                    timestamp=row["_id"],
-                    metric=metric,
-                    value=float(row["value"]),
-                )
-            )
-        return out
+        return [
+            TrendPoint(timestamp=row["_id"], metric=metric, value=float(row["value"]))
+            async for row in self.db.findings.aggregate(pipeline)
+        ]
 
     async def _asset_distinct_buckets(
         self,
@@ -213,16 +207,10 @@ class CryptoTrendService:
             ]
         )
         metric_name = "unique_algorithms" if asset_type == "algorithm" else "unique_cipher_suites"
-        out: list[TrendPoint] = []
-        async for row in self.db.crypto_assets.aggregate(pipeline):
-            out.append(
-                TrendPoint(
-                    timestamp=row["_id"],
-                    metric=metric_name,
-                    value=float(row["value"]),
-                )
-            )
-        return out
+        return [
+            TrendPoint(timestamp=row["_id"], metric=metric_name, value=float(row["value"]))
+            async for row in self.db.crypto_assets.aggregate(pipeline)
+        ]
 
     def _cache_key(
         self,

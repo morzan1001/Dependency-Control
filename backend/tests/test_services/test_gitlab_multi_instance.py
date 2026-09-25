@@ -990,7 +990,9 @@ class TestTeamSyncMergeSemantics:
 
     def test_a_user_the_group_also_holds_is_resolved_once_with_the_gitlab_role(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
-        existing_team = self._team("team-2", [{"user_id": "dual-user", "role": "member", "source": "manual"}], path="grp")
+        existing_team = self._team(
+            "team-2", [{"user_id": "dual-user", "role": "member", "source": "manual"}], path="grp"
+        )
         # GitLab reports the same user as a Maintainer (admin).
         members = [GitLabMember(username="dual", email="dual@test.com", access_level=40)]
 

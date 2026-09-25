@@ -298,3 +298,23 @@ class TestTestWebhookForTeams:
         sent = json.loads(mock_client.post.call_args.kwargs["content"])
         assert sent.get("event") == "scan.completed"
         assert "attachments" not in sent
+
+    @pytest.mark.asyncio
+    async def test_a_non_2xx_answer_reports_the_status_and_body(self):
+        webhook = make_webhook("generic")
+        webhook.url = "https://example.test/generic-hook"
+
+        mock_client = _make_mock_http_client(status_code=503)
+        mock_client.post.return_value.text = "down for maintenance"
+
+        with (
+            patch("app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=None)),
+            patch("app.services.webhooks.webhook_service.InstrumentedAsyncClient", return_value=mock_client),
+        ):
+            result = await WebhookService().test_webhook(webhook)
+
+        assert (result["success"], result["status_code"], result["error"]) == (
+            False,
+            503,
+            "HTTP 503: down for maintenance",
+        )

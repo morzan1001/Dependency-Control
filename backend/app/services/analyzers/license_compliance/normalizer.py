@@ -75,8 +75,8 @@ def extract_licenses(component: dict[str, Any]) -> list[tuple[str, str | None]]:
         if "expression" in lic_entry:
             expr = lic_entry["expression"]
             if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS:
-                for lic_id in SPDX_EXPR_SPLIT.split(expr):
-                    lic_id = lic_id.strip("() ")
+                for raw_id in SPDX_EXPR_SPLIT.split(expr):
+                    lic_id = raw_id.strip("() ")
                     if lic_id:
                         licenses.append((lic_id, None))
 
@@ -88,13 +88,13 @@ def extract_licenses(component: dict[str, Any]) -> list[tuple[str, str | None]]:
         and direct_license.upper() not in UNKNOWN_LICENSE_PATTERNS
     ):
         if SPDX_EXPR_SPLIT.search(direct_license):
-            for lic_id in SPDX_EXPR_SPLIT.split(direct_license):
-                lic_id = lic_id.strip("() ")
+            for raw_id in SPDX_EXPR_SPLIT.split(direct_license):
+                lic_id = raw_id.strip("() ")
                 if lic_id:
                     licenses.append((lic_id, license_url))
         elif "," in direct_license:
-            for lic_id in direct_license.split(","):
-                lic_id = lic_id.strip()
+            for raw_id in direct_license.split(","):
+                lic_id = raw_id.strip()
                 if lic_id:
                     licenses.append((lic_id, license_url))
         else:
@@ -142,8 +142,8 @@ def parse_spdx_expression(expr: str) -> list[list[str]]:
     # OR has the lowest precedence in SPDX.
     or_parts = SPDX_OR_SPLIT.split(expr)
     result: list[list[str]] = []
-    for or_part in or_parts:
-        or_part = or_part.strip("() ")
+    for raw_or_part in or_parts:
+        or_part = raw_or_part.strip("() ")
         if not or_part:
             continue
         and_parts = SPDX_AND_SPLIT.split(or_part)

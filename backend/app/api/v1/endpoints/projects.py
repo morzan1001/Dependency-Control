@@ -417,8 +417,7 @@ async def read_all_scans(
         {"$project": {"project_info": 0, "sboms": 0, "findings_summary": 0}},
     ]
 
-    scans = await scan_repo.aggregate(pipeline, limit)
-    return scans
+    return await scan_repo.aggregate(pipeline, limit)
 
 
 # Every owning team's member ids as one flat list. A field path across two array levels answers
@@ -781,7 +780,7 @@ async def read_project_branches(
         last_usable,
     )
 
-    result = [
+    return [
         BranchInfo(
             name=b,
             is_active=b not in deleted_set,
@@ -790,7 +789,6 @@ async def read_project_branches(
         )
         for b in sorted(branches)
     ]
-    return result
 
 
 @router.post(

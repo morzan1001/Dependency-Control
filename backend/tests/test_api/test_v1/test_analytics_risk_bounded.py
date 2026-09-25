@@ -303,9 +303,27 @@ class TestHotspotsPipelineBounded:
 _LODASH_DETAILS = {
     "fixed_version": "4.17.21",
     "vulnerabilities": [
-        {"id": "CVE-2021-1", "resolved_cve": "CVE-2021-1", "aliases": [], "severity": "CRITICAL", "fixed_version": "4.17.21"},
-        {"id": "CVE-2021-2", "resolved_cve": "CVE-2021-2", "aliases": [], "severity": "HIGH", "fixed_version": "4.17.21"},
-        {"id": "CVE-2021-3", "resolved_cve": "CVE-2021-3", "aliases": [], "severity": "HIGH", "fixed_version": "4.17.21"},
+        {
+            "id": "CVE-2021-1",
+            "resolved_cve": "CVE-2021-1",
+            "aliases": [],
+            "severity": "CRITICAL",
+            "fixed_version": "4.17.21",
+        },
+        {
+            "id": "CVE-2021-2",
+            "resolved_cve": "CVE-2021-2",
+            "aliases": [],
+            "severity": "HIGH",
+            "fixed_version": "4.17.21",
+        },
+        {
+            "id": "CVE-2021-3",
+            "resolved_cve": "CVE-2021-3",
+            "aliases": [],
+            "severity": "HIGH",
+            "fixed_version": "4.17.21",
+        },
     ],
 }
 
@@ -560,7 +578,9 @@ def _details_from_counts(component: str, critical: int, high: int, medium: int, 
     for sev, n in (("critical", critical), ("high", high), ("medium", medium), ("low", low)):
         for i in range(n):
             cid = f"CVE-{component}-{sev}-{i}"
-            vulns.append({"id": cid, "resolved_cve": cid, "aliases": [], "severity": sev.upper(), "fixed_version": None})
+            vulns.append(
+                {"id": cid, "resolved_cve": cid, "aliases": [], "severity": sev.upper(), "fixed_version": None}
+            )
     return {"fixed_version": None, "vulnerabilities": vulns}
 
 
@@ -603,7 +623,7 @@ class TestSelectImpactCandidates:
         # 24 broad low-severity groups outrank a narrow critical on blast radius...
         broad = [_impact_row(f"broad{i}", ap=50, low=1) for i in range(24)]  # pre = 1*10 = 10
         narrow = _impact_row("narrow", ap=1, critical=3)  # pre = 30*1 = 30
-        cands = select_impact_candidates(broad + [narrow], limit=20)
+        cands = select_impact_candidates([*broad, narrow], limit=20)
         assert any(r["component"] == "narrow" for r in cands), (
             "narrow-but-severe fix must survive candidate selection; its boosted ceiling can top the list"
         )
@@ -612,7 +632,7 @@ class TestSelectImpactCandidates:
         top = [_impact_row(f"t{i}", ap=10, critical=1) for i in range(5)]  # pre = 100 (limit-th)
         reachable = _impact_row("reachable", ap=1, critical=2)  # pre 20; 20*B_MAX=166 > 100
         unreachable = _impact_row("unreachable", ap=1, low=1)  # pre 1; 1*B_MAX=8.3 < 100
-        cands = select_impact_candidates(top + [reachable, unreachable], limit=5)
+        cands = select_impact_candidates([*top, reachable, unreachable], limit=5)
         names = {r["component"] for r in cands}
         assert "reachable" in names, "a group whose boosted ceiling clears the limit-th pre-score must be kept"
         assert "unreachable" not in names, "a group that can never reach the top-limit must be dropped"
@@ -622,7 +642,7 @@ class TestSelectImpactCandidates:
         top = [_impact_row(f"t{i}", ap=10, critical=1) for i in range(5)]  # P_limit = 100
         boundary_low = round(100 / IMPACT_MAX_SCORE_BOOST) + 1  # low count -> pre just above threshold
         boundary = _impact_row("boundary", ap=1, low=boundary_low)
-        cands = select_impact_candidates(top + [boundary], limit=5)
+        cands = select_impact_candidates([*top, boundary], limit=5)
         assert any(r["component"] == "boundary" for r in cands)
 
     def test_the_cut_is_taken_from_the_limit_th_row(self):
@@ -631,7 +651,7 @@ class TestSelectImpactCandidates:
         top = [_impact_row(f"t{i}", ap=10, critical=1) for i in range(5)]  # pre 100 each
         sixth = _impact_row("sixth", ap=2, critical=1)  # pre 20, the first row below the cut
         unreachable = _impact_row("unreachable", ap=1, medium=1)  # pre 4: under 12.03, over 2.4
-        cands = select_impact_candidates(top + [sixth, unreachable], limit=5)
+        cands = select_impact_candidates([*top, sixth, unreachable], limit=5)
         names = {r["component"] for r in cands}
         assert "sixth" in names
         assert "unreachable" not in names, "the cut must come from the limit-th pre-score"
@@ -671,7 +691,7 @@ class TestImpactEndpointRanksByScoreNotBlastRadius:
         # critical never entered the top-5 and was never scored. It must now rank first.
         broad = [_impact_row(f"broad{i}", ap=50, low=1) for i in range(24)]  # pre 10, blast radius 50
         narrow = _impact_row("narrow-critical", ap=2, critical=5)  # pre 50*2 = 100
-        response, _, _ = _run_impact(agg_results=broad + [narrow], limit=5)
+        response, _, _ = _run_impact(agg_results=[*broad, narrow], limit=5)
         names = [item.component for item in response]
         assert "narrow-critical" in names, "narrow critical must surface by fix_impact_score, not blast radius"
         assert response[0].component == "narrow-critical", "highest fix_impact_score must rank first"
@@ -766,9 +786,7 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
     ):
         for sb in sort_bys:
             asyncio.run(
-                get_vulnerability_hotspots(
-                    current_user=user, db=db, skip=0, limit=20, sort_by=sb, sort_order="desc"
-                )
+                get_vulnerability_hotspots(current_user=user, db=db, skip=0, limit=20, sort_by=sb, sort_order="desc")
             )
     return calls["n"]
 
@@ -887,8 +905,6 @@ def _hotspot_group_row(component: str, version: str, first_seen: Any) -> dict[st
 class TestHistoricalFirstSeen:
     def test_pipeline_uses_indexable_first_over_scan_created_at(self):
         # $first after an index-ordered $sort is an index min; a $min accumulator would scan all docs.
-        from app.api.v1.helpers.analytics import historical_first_seen  # noqa: F401
-
         captured: list[list[dict[str, Any]]] = []
 
         async def _agg(pipeline, **_kw):
@@ -914,7 +930,13 @@ class TestHistoricalFirstSeen:
         findings = [
             {"_id": "a", "component": "curl", "version": "8.0", "type": "vulnerability", "scan_created_at": mid},
             {"_id": "b", "component": "curl", "version": "8.0", "type": "vulnerability", "scan_created_at": old},
-            {"_id": "c", "component": "curl", "version": "8.0", "type": "vulnerability", "scan_created_at": datetime(2025, 9, 1, tzinfo=timezone.utc)},
+            {
+                "_id": "c",
+                "component": "curl",
+                "version": "8.0",
+                "type": "vulnerability",
+                "scan_created_at": datetime(2025, 9, 1, tzinfo=timezone.utc),
+            },
         ]
         col = FakeCollection()
         col._docs = {d["_id"]: d for d in findings}
@@ -970,7 +992,9 @@ class TestHistoricalFirstSeen:
             resp = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=20))
 
         item = resp[0]
-        assert item.days_known is not None and item.days_known >= 199, "days_known must follow the historical first-seen (200d), not the active scan (2d)"
+        assert item.days_known is not None and item.days_known >= 199, (
+            "days_known must follow the historical first-seen (200d), not the active scan (2d)"
+        )
         assert any(r.startswith("overdue:") for r in item.priority_reasons)
 
     def test_hotspots_days_known_uses_historical_not_active_scan(self):
@@ -1014,4 +1038,6 @@ class TestHistoricalFirstSeen:
             )
 
         item = resp[0]
-        assert item.days_known is not None and item.days_known >= 199, "days_known must follow the historical first-seen (200d), not the active scan (2d)"
+        assert item.days_known is not None and item.days_known >= 199, (
+            "days_known must follow the historical first-seen (200d), not the active scan (2d)"
+        )

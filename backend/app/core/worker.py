@@ -10,25 +10,18 @@ from pymongo import ReadPreference
 
 from app.core.config import settings
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
+from app.core.metrics import (
+    worker_active_count,
+    worker_job_duration_seconds,
+    worker_jobs_processed_total,
+    worker_queue_size,
+)
 from app.db.mongodb import get_database
 from app.services.analysis import run_analysis
 from app.services.notifications.service import safe_notify_project_event
 from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
-
-try:
-    from app.core.metrics import (
-        worker_active_count,
-        worker_job_duration_seconds,
-        worker_jobs_processed_total,
-        worker_queue_size,
-    )
-except ImportError:
-    worker_queue_size = None  # type: ignore[assignment]
-    worker_active_count = None  # type: ignore[assignment]
-    worker_jobs_processed_total = None  # type: ignore[assignment]
-    worker_job_duration_seconds = None  # type: ignore[assignment]
 
 # Default graceful shutdown timeout (should be less than K8s terminationGracePeriodSeconds)
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25
@@ -45,7 +38,8 @@ class AnalysisWorkerManager:
         self.stale_scan_task: asyncio.Task[None] | None = None
         self._shutting_down: bool = False
         self._active_scans: set[str] = set()
-        self._shutdown_event: asyncio.Event = asyncio.Event()
+        self._no_active_scans = asyncio.Event()
+        self._no_active_scans.set()
 
     async def start(self) -> None:
         """Start workers and recover pending jobs from the DB."""
@@ -115,15 +109,26 @@ class AnalysisWorkerManager:
             except asyncio.QueueEmpty:
                 break
 
-    async def _await_active_scans(self, timeout: int) -> None:
+    def _track_scan(self, scan_id: str) -> None:
+        self._active_scans.add(scan_id)
+        self._no_active_scans.clear()
+
+    def _untrack_scan(self, scan_id: str) -> None:
+        self._active_scans.discard(scan_id)
+        if not self._active_scans:
+            self._no_active_scans.set()
+
+    async def _await_active_scans(self) -> None:
         if not self._active_scans:
             return
 
+        timeout = DEFAULT_SHUTDOWN_TIMEOUT_SECONDS
         logger.info(f"Waiting for {len(self._active_scans)} active scan(s) to complete: {self._active_scans}")
         try:
-            await asyncio.wait_for(self._wait_for_active_scans(), timeout=timeout)
+            async with asyncio.timeout(timeout):
+                await self._no_active_scans.wait()
             logger.info("All active scans completed gracefully.")
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.warning(
                 f"Shutdown timeout ({timeout}s) exceeded. "
                 f"Force-cancelling {len(self._active_scans)} active scan(s): "
@@ -143,13 +148,12 @@ class AnalysisWorkerManager:
         )
 
         self._shutting_down = True
-        self._shutdown_event.set()
 
         self._cancel_background_tasks()
 
         self._drain_queue()
 
-        await self._await_active_scans(timeout)
+        await self._await_active_scans()
 
         for task in self.workers:
             if not task.done():
@@ -164,10 +168,6 @@ class AnalysisWorkerManager:
             worker_queue_size.set(0)
 
         logger.info("Graceful shutdown complete.")
-
-    async def _wait_for_active_scans(self) -> None:
-        while self._active_scans:
-            await asyncio.sleep(0.5)
 
     async def add_job(self, scan_id: str) -> bool:
         """Add a scan to the queue. Returns False when rejected during shutdown."""
@@ -221,7 +221,7 @@ class AnalysisWorkerManager:
         """Apply the retry ceiling. Engine owns status and retry_count writes."""
         max_retries = 5
         retry_count = scan.get("retry_count", 0) + 1
-        self._active_scans.discard(scan_id)
+        self._untrack_scan(scan_id)
 
         if retry_count >= max_retries:
             logger.error(
@@ -302,7 +302,7 @@ class AnalysisWorkerManager:
                     continue
 
                 # Track this scan as actively processing (for graceful shutdown)
-                self._active_scans.add(scan_id)
+                self._track_scan(scan_id)
 
                 project = await db.projects.find_one({"_id": scan["project_id"]})
                 if not project:
@@ -311,7 +311,7 @@ class AnalysisWorkerManager:
                         {"_id": scan_id},
                         {"$set": {"status": "failed", "error": "Project not found"}},
                     )
-                    self._active_scans.discard(scan_id)
+                    self._untrack_scan(scan_id)
                     self.queue.task_done()
                     continue
 
@@ -348,7 +348,7 @@ class AnalysisWorkerManager:
 
                     await self._notify_analysis_failed(db, scan, str(e))
 
-                self._active_scans.discard(scan_id)
+                self._untrack_scan(scan_id)
                 self.queue.task_done()
                 logger.info(f"Worker {worker_id} finished scan {scan_id}")
 

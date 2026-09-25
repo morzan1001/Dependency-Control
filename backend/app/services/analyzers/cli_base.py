@@ -93,7 +93,7 @@ class CLIAnalyzer(Analyzer):
             return {"error": f"Exception during {self.name} analysis: {e!s}"}
 
         finally:
-            self._cleanup_files([p for p in [tmp_sbom_path] + extra_paths if p is not None])
+            self._cleanup_files([p for p in [tmp_sbom_path, *extra_paths] if p is not None])
 
     def _create_temp_sbom(self, sbom: dict[str, Any]) -> str:
         """Create a temporary file containing the SBOM JSON."""

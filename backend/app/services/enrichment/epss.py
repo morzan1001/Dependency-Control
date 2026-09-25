@@ -110,7 +110,8 @@ class EPSSProvider:
         cache_keys = [CacheKeys.epss(cve) for cve in cves]
         cached_data = await cache_service.mget(cache_keys)
 
-        for cve, cached in zip(cves, cached_data.values()):
+        for cve, cache_key in zip(cves, cache_keys, strict=True):
+            cached = cached_data[cache_key]
             if cached:
                 result[cve] = EPSSData(**cached)
             else:

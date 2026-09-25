@@ -154,6 +154,7 @@ _CRYPTO_ANALYZER_NO_EQUIVALENT: dict[str, str] = {
     ),
 }
 
+
 # The finding types the registered rule-driven analyzers own. A seeded rule outside them belongs
 # to an analyzer with its own grading logic: the certificate-lifecycle rule constrains nothing,
 # so the matcher alone would fire it on every asset in the CBOM.

@@ -242,3 +242,26 @@ async def test_trend_rejects_excessive_range(db):
             range_start=now - timedelta(days=1000),
             range_end=now,
         )
+
+
+@pytest.mark.asyncio
+async def test_distinct_cipher_suites_are_counted_once_per_bucket(db):
+    now = datetime.now(timezone.utc)
+    ts = now - timedelta(days=2)
+    resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
+    for _id, suites in (("c1", ["TLS_A", "TLS_B"]), ("c2", ["TLS_B", "TLS_C"])):
+        await db.crypto_assets.insert_one(
+            {"_id": _id, "asset_type": "protocol", "project_id": "p", "created_at": ts, "cipher_suites": suites}
+        )
+
+    points = await CryptoTrendService(db)._asset_distinct_buckets(
+        resolved,
+        "day",
+        now - timedelta(days=7),
+        now,
+        asset_type="protocol",
+        field="cipher_suites",
+        unwind_field="$cipher_suites",
+    )
+
+    assert [(p.metric, p.value) for p in points] == [("unique_cipher_suites", 3.0)]

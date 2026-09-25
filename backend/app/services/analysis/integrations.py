@@ -214,8 +214,7 @@ async def decorate_github_pr(
 
         if not github_instance.is_active:
             logger.info(
-                f"GitHub instance '{github_instance.name}' is inactive, "
-                f"skipping PR decoration for project {project.id}"
+                f"GitHub instance '{github_instance.name}' is inactive, skipping PR decoration for project {project.id}"
             )
             return
 

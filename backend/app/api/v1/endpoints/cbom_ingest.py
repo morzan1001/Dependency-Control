@@ -35,8 +35,8 @@ def _enforce_body_size_limit(request: Request) -> None:
         return
     try:
         size = int(raw)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid Content-Length header")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid Content-Length header") from exc
     if size > MAX_CBOM_BODY_BYTES:
         raise HTTPException(
             status_code=413,
@@ -145,7 +145,7 @@ async def ingest_cbom(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist crypto assets. Please retry the upload.",
-        )
+        ) from exc
 
     return CBOMIngestResponse(
         scan_id=scan_id,

@@ -289,7 +289,7 @@ async def ingest_sbom(
             raise HTTPException(
                 status_code=500,
                 detail="Failed to store dependencies. Please try again.",
-            )
+            ) from e
 
         if sboms_failed > 0 and sboms_processed == 0:
             raise HTTPException(

@@ -114,16 +114,15 @@ async def get_analytics_summary(
 
     type_results = await dep_repo.get_type_distribution(scan_ids)
 
-    dependency_types = []
-    for t in type_results:
-        if t["_id"]:
-            dependency_types.append(
-                DependencyTypeStats(
-                    type=t["_id"],
-                    count=t["count"],
-                    percentage=round((t["count"] / total_deps * 100) if total_deps > 0 else 0, 1),
-                )
-            )
+    dependency_types = [
+        DependencyTypeStats(
+            type=t["_id"],
+            count=t["count"],
+            percentage=round((t["count"] / total_deps * 100) if total_deps > 0 else 0, 1),
+        )
+        for t in type_results
+        if t["_id"]
+    ]
 
     severity_counts = await finding_repo.get_severity_distribution(scan_ids)
 
