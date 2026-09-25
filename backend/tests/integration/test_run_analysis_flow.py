@@ -1,5 +1,7 @@
 """run_analysis on a FakeDatabase: analyzer set, GitHub token, final status and what reaches notifications."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.models.project import Scan
@@ -7,6 +9,7 @@ from app.models.stats import Stats
 from app.services.analysis import engine
 
 _PROJECT_ID = "notify-project"
+_T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 async def _seed_scan(db) -> str:
@@ -147,13 +150,85 @@ async def test_the_settings_github_token_is_used_before_any_instance_token(db, n
     assert enrichment_inputs["github_token"] == "settings-token"
 
 
+_ACTIONS_ISSUER = "https://token.actions.githubusercontent.com"
+_GHES_ISSUER = "https://ghes.corp.example/_services/token"
+
+
+def _github_instance(_id: str, created_at: datetime, **fields) -> dict:
+    return {
+        "_id": _id,
+        "is_active": True,
+        "url": _ACTIONS_ISSUER,
+        "github_url": "https://github.com",
+        "created_at": created_at,
+        **fields,
+    }
+
+
 @pytest.mark.asyncio
-async def test_without_a_settings_token_the_active_instance_token_is_used(db, notified, enrichment_inputs):
-    await db.github_instances.insert_one({"_id": "gh", "is_active": True, "access_token": "instance-token"})
+async def test_without_a_settings_token_the_github_com_instance_token_is_used(db, notified, enrichment_inputs):
+    await db.github_instances.insert_one(_github_instance("gh", _T0, access_token="instance-token"))
 
     assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
 
     assert enrichment_inputs["github_token"] == "instance-token"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "ghes_fields",
+    [
+        pytest.param({"url": _GHES_ISSUER, "github_url": "https://ghes.corp.example"}, id="ghes-web-url"),
+        pytest.param({"url": _GHES_ISSUER, "github_url": None}, id="ghes-without-web-url"),
+        pytest.param({"url": _GHES_ISSUER}, id="ghes-web-url-absent"),
+    ],
+)
+async def test_a_ghes_instance_token_is_never_sent_to_github_com(db, notified, enrichment_inputs, ghes_fields):
+    await db.github_instances.insert_one(
+        {"_id": "ghes", "is_active": True, "created_at": _T0, "access_token": "ghes-pat", **ghes_fields}
+    )
+
+    assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
+
+    assert enrichment_inputs["github_token"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_github_com_token_is_chosen_over_an_older_ghes_instance(db, notified, enrichment_inputs):
+    await db.github_instances.insert_one(
+        _github_instance("ghes", _T0, url=_GHES_ISSUER, github_url="https://ghes.corp.example", access_token="ghes-pat")
+    )
+    await db.github_instances.insert_one(_github_instance("gh", _T0 + timedelta(days=1), access_token="gh-token"))
+
+    assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
+
+    assert enrichment_inputs["github_token"] == "gh-token"
+
+
+@pytest.mark.asyncio
+async def test_of_several_github_com_instances_the_oldest_token_is_used(db, notified, enrichment_inputs):
+    await db.github_instances.insert_one(_github_instance("newer", _T0 + timedelta(days=1), access_token="newer"))
+    await db.github_instances.insert_one(_github_instance("older", _T0, access_token="older"))
+
+    assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
+
+    assert enrichment_inputs["github_token"] == "older"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fields",
+    [
+        pytest.param({"access_token": ""}, id="empty-token"),
+        pytest.param({"access_token": "gh-token", "is_active": False}, id="inactive"),
+    ],
+)
+async def test_without_a_usable_instance_token_ghsa_runs_unauthenticated(db, notified, enrichment_inputs, fields):
+    await db.github_instances.insert_one(_github_instance("gh", _T0, **fields))
+
+    assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
+
+    assert enrichment_inputs["github_token"] is None
 
 
 @pytest.mark.asyncio

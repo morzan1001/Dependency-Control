@@ -77,6 +77,7 @@ from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
+from app.services.github import is_public_github
 from app.services.reachability_enrichment import enrich_findings_with_reachability, persist_reachability_result
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -103,12 +104,15 @@ def _get_waiver_type(waiver: Waiver) -> str:
 
 
 async def _get_github_instance_token(db: Database) -> str | None:
-    """Fallback: Use access_token from first active GitHub instance."""
-    doc = await db.github_instances.find_one(
-        {"is_active": True, "access_token": {"$exists": True, "$ne": None}},
-        {"access_token": 1},
-    )
-    return doc.get("access_token") if doc else None
+    """The token of the oldest active github.com instance, since GHSA lookups send it to api.github.com."""
+    cursor = db.github_instances.find(
+        {"is_active": True, "access_token": {"$nin": [None, ""]}},
+        {"access_token": 1, "github_url": 1, "url": 1},
+    ).sort([("created_at", 1), ("_id", 1)])
+    async for doc in cursor:
+        if is_public_github(doc.get("github_url"), doc["url"]):
+            return str(doc["access_token"])
+    return None
 
 
 async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:

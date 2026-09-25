@@ -21,7 +21,8 @@ class GitHubInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     url: str = Field(..., description="OIDC issuer URL (e.g. 'https://token.actions.githubusercontent.com')")
     github_url: str | None = Field(
         None,
-        description="GitHub web URL (e.g. 'https://github.com'). Used for display/links.",
+        description="GitHub web URL (e.g. 'https://github.com'). Also picks the API host the access token "
+        "is sent to; a GHES instance without it makes no API calls.",
     )
     description: str | None = Field(None, description="Optional description of this instance")
     is_active: bool = Field(True, description="Whether this instance is currently active")
