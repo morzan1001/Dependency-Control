@@ -2,7 +2,6 @@ import asyncio
 import logging
 from typing import Any
 
-
 from app.core.config import settings
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import notifications_failed_total, notifications_sent_total

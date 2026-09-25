@@ -66,7 +66,6 @@ from app.schemas.user import UserPasswordReset, UserSignup
 
 logger = logging.getLogger(__name__)
 
-
 router = CustomAPIRouter()
 
 _MSG_EMAIL_NOT_CONFIGURED = "Email server not configured"

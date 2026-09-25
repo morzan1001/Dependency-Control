@@ -3,7 +3,6 @@ import logging
 import time
 from typing import Any
 
-
 from app.core.config import settings
 from app.core.constants import SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
 from app.core.http_utils import InstrumentedAsyncClient

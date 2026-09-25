@@ -23,7 +23,6 @@ from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
 
-
 # Default graceful shutdown timeout (should be less than K8s terminationGracePeriodSeconds)
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25
 
