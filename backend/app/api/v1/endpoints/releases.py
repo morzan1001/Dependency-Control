@@ -17,8 +17,7 @@ from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, PROJECT_ROLE_VIEWER,
 from app.core.init_db import RELEASES_LATEST_SORT
 from app.models.release import Release
 from app.repositories.releases import ReleaseRepository
-from app.repositories.scans import ScanRepository
-from app.repositories.scans import LineageAnalysis
+from app.repositories.scans import LineageAnalysis, ScanRepository
 from app.schemas.release import ReleaseItem, ReleaseListResponse, ReleaseMarkRequest, ReleaseUnmarkResponse
 
 logger = logging.getLogger(__name__)
@@ -93,7 +92,7 @@ async def mark_release(
     environment = payload.environment or DEFAULT_RELEASE_ENVIRONMENT
     released_at = ensure_utc(payload.released_at) or datetime.now(timezone.utc)
 
-    await ReleaseRepository(db).record(
+    row = await ReleaseRepository(db).record(
         Release(
             project_id=project_id,
             environment=environment,
@@ -110,9 +109,8 @@ async def mark_release(
         extra={"project_id": project_id, "scan_id": scan_id, "environment": environment},
     )
 
-    # Read back rather than echo: an unversioned re-mark keeps the version the deploy job recorded,
-    # and that fallback belongs to the repository alone.
-    row = await db.releases.find_one({"project_id": project_id, "environment": environment, "scan_id": scan_id})
+    # The stored row rather than an echo: an unversioned re-mark keeps the version the deploy job
+    # recorded, and that fallback belongs to the repository alone.
     if row is None:
         raise HTTPException(status_code=409, detail=f"The release of {scan_id} to {environment} was withdrawn")
     return _to_item(row, scan, (await ScanRepository(db).freshest_in_lineage([scan_id])).get(scan_id))
@@ -130,12 +128,10 @@ async def unmark_release(
     environment: _EnvironmentQuery = DEFAULT_RELEASE_ENVIRONMENT,
 ) -> ReleaseUnmarkResponse:
     """Remove one environment's release record, the inverse of a mark of the same environment."""
-    key = {"project_id": project_id, "environment": environment, "scan_id": scan_id}
-    if (await db.releases.delete_one(key)).deleted_count == 0:
+    release_repo = ReleaseRepository(db)
+    remaining = await release_repo.withdraw(project_id, environment, scan_id)
+    if remaining is None:
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} is not released to {environment}")
-
-    scan_key = {"project_id": project_id, "scan_id": scan_id}
-    remaining: list[str] = sorted(await db.releases.distinct("environment", scan_key))
     # is_release denormalises "this scan has a release record" for the scans_released_list partial
     # index, so it is recomputed rather than cleared: a scan still released to another environment
     # has to stay indexed. Ingest never demotes; this is the only path that does.
@@ -144,9 +140,7 @@ async def unmark_release(
 
     # Marks are history, so withdrawing the newest uncovers the one below it and the environment
     # goes on reporting a release the operator did not choose. Read it back and say which.
-    uncovered = await db.releases.find_one(
-        {"project_id": project_id, "environment": environment}, sort=RELEASES_LATEST_SORT
-    )
+    uncovered = await release_repo.latest_for_environment(project_id, environment)
     environment_release = (await _to_items(db, [uncovered]))[0] if uncovered else None
 
     logger.info(

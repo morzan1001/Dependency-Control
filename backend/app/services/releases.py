@@ -7,8 +7,8 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import RELEASE_FLAG_RECONCILE_BATCH_SIZE
-from app.core.init_db import RELEASES_LATEST_SORT
 from app.repositories.projects import ProjectRepository
+from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.schemas.projections import ProjectWithScanId
 from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
@@ -86,12 +86,7 @@ async def reconcile_release_flags(db: AsyncIOMotorDatabase) -> tuple[int, int]:
 async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environment: str) -> str | None:
     """The scan running in one environment. Ordered by released_at, so re-marking an older scan is
     the rollback path and needs no extra flag."""
-    row = await db.releases.find_one(
-        {"project_id": project_id, "environment": environment},
-        # Same tie-break as the analytics path, or two marks landing in one millisecond answer
-        # "what is in production" differently depending on which endpoint is asked.
-        sort=RELEASES_LATEST_SORT,
-    )
+    row = await ReleaseRepository(db).latest_for_environment(project_id, environment)
     if row is None:
         return None
     resolved = (await ScanRepository(db).freshest_in_lineage([row["scan_id"]])).get(row["scan_id"])
