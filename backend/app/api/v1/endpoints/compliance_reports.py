@@ -3,7 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 from bson import ObjectId
 from fastapi import BackgroundTasks, HTTPException, Query
@@ -23,6 +23,7 @@ from app.core.permissions import Permissions, has_permission
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
+from app.schemas.analytics import ScopeKind
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
@@ -32,12 +33,11 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter(prefix="/compliance", tags=["compliance-reports"])
 
-_SCOPE_PATTERN = "^(project|team|global|user)$"
 _REPORT_NOT_FOUND = "Report not found"
 
 
 class ReportRequest(BaseModel):
-    scope: Literal["project", "team", "global", "user"] = Field(..., pattern=_SCOPE_PATTERN)
+    scope: ScopeKind
     scope_id: str | None = None
     framework: ReportFramework
     format: ReportFormat
@@ -109,7 +109,7 @@ async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: Com
 async def list_reports(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    scope: str | None = Query(None, pattern=_SCOPE_PATTERN),
+    scope: ScopeKind | None = Query(None),
     scope_id: str | None = None,
     framework: ReportFramework | None = None,
     status: ReportStatus | None = None,

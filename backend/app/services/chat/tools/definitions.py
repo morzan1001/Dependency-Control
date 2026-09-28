@@ -1,8 +1,9 @@
 """Static tool metadata: TOOL_DEFINITIONS, TOOL_PERMISSIONS, get_tool_definitions()."""
 
-from typing import Any
+from typing import Any, get_args
 
 from app.core.permissions import Permissions
+from app.schemas.analytics import ScopeKind
 
 _DESC_PROJECT_ID = "The project ID"
 _DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."
@@ -1052,7 +1053,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scope": {"type": "string", "enum": ["project", "team", "global", "user"]},
+                    "scope": {"type": "string", "enum": list(get_args(ScopeKind))},
                     "scope_id": {"type": "string"},
                     "framework": {
                         "type": "string",

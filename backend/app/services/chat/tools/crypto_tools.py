@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.user import User
+from app.schemas.analytics import ScopeKind
 from app.services.compliance.renderers.base import coverage_statement
 
 _NOISY_RULE_SAMPLE = 10
@@ -256,7 +257,7 @@ async def get_framework_evaluation_summary(
         return {"error": f"Unknown framework: {framework}"}
     resolver = pkg.ScopeResolver(db, user)
     resolved = await resolver.resolve(
-        scope=cast(Literal["project", "team", "global", "user"], scope),
+        scope=cast(ScopeKind, scope),
         scope_id=scope_id,
     )
 
