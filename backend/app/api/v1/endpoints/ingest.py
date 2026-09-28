@@ -36,7 +36,7 @@ from app.services.dependency_store import store_scan_dependencies
 from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, make_gridfs_ref
 from app.services.notifications.service import safe_notify_project_event
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
-from app.services.scan_manager import ScanManager
+from app.services.scan_manager import ScanManager, deterministic_scan_id
 from app.services.webhooks import webhook_service
 
 ProjectIngestDep = Annotated[Project, Depends(deps.get_project_for_ingest)]
@@ -140,17 +140,6 @@ async def ingest_bearer(
 
     response = await process_findings_ingest(manager, "bearer", result_dict, ctx.scan_id)
     return FindingsIngestResponse(**response)
-
-
-def _generate_scan_id(project_id: str, pipeline_id: int | str | None, commit_hash: str | None) -> str:
-    """Generate a deterministic or random scan ID based on available pipeline context."""
-    if pipeline_id and commit_hash:
-        scan_id_seed = f"{project_id}-{pipeline_id}-{commit_hash}"
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-    if pipeline_id:
-        scan_id_seed = f"{project_id}-{pipeline_id}"
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-    return str(uuid.uuid4())
 
 
 async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_id: str) -> dict[str, Any]:
@@ -257,7 +246,7 @@ async def ingest_sbom(
         raise HTTPException(status_code=400, detail="No SBOM provided")
 
     pipeline_url = manager.build_pipeline_url(data)
-    scan_id = _generate_scan_id(str(project.id), data.pipeline_id, data.commit_hash)
+    scan_id = deterministic_scan_id(str(project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
     # Serialise concurrent ingests of the same scan_id (CI retries) best-effort.
     lock_repo = DistributedLocksRepository(db)

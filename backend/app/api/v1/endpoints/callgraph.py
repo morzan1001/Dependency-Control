@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import uuid
 from typing import Any
 
 from fastapi import HTTPException
@@ -29,6 +28,7 @@ from app.schemas.callgraph import (
 )
 from app.services.component_identity import canonical_callgraph_language
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
+from app.services.scan_manager import deterministic_scan_id
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -55,6 +55,13 @@ def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
     return detected
 
 
+def _canonical_language(language: str) -> str:
+    try:
+        return canonical_callgraph_language(language)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def _resolve_language(request_language: str | None, format_type: str) -> str:
     """Resolve the callgraph language in its canonical spelling; only madge implies one."""
     language = request_language or _FORMAT_LANGUAGE_MAP.get(format_type)
@@ -63,18 +70,26 @@ def _resolve_language(request_language: str | None, format_type: str) -> str:
             status_code=400,
             detail=f"'language' is required for '{format_type}' callgraph payloads",
         )
-    try:
-        return canonical_callgraph_language(language)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _canonical_language(language)
 
 
-def _resolve_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
-    """The scan the CI run produced, derived from the authorized project so it cannot name another's."""
-    if not pipeline_id:
-        return None
-    scan_id_seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
+async def _resolve_scan_id(
+    db: Any, project_id: str, pipeline_id: int | None, commit_hash: str | None
+) -> tuple[str | None, bool]:
+    """``(scan_id, exists)`` of the scan the CI run produced, only ever one of the authorized project's.
+
+    An upload without the commit derives an id no ingest writes, so the run's newest scan stands in.
+    """
+    derived = deterministic_scan_id(project_id, pipeline_id, commit_hash)
+    if derived is None:
+        return None, False
+    scans = ScanRepository(db).collection
+    if await scans.find_one({"_id": derived, "project_id": project_id}, {"_id": 1}):
+        return derived, True
+    newest = await scans.find_one(
+        {"project_id": project_id, "pipeline_id": pipeline_id}, {"_id": 1}, sort=[("created_at", -1)]
+    )
+    return (newest["_id"], True) if newest else (derived, False)
 
 
 def _build_upsert_filter(project_id: str, language: str, scan_id: str | None) -> tuple[dict[str, Any], str]:
@@ -130,11 +145,13 @@ async def upload_callgraph(
         logger.exception("Failed to parse callgraph: %s", e)
         raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}") from e
 
-    scan_id = _resolve_scan_id(project_id, request.pipeline_id, request.commit_hash)
+    scan_id, scan_exists = await _resolve_scan_id(db, project_id, request.pipeline_id, request.commit_hash)
     if not scan_id:
-        warnings.append("No pipeline_id provided - callgraph may not match scans correctly")
-    else:
-        logger.debug(f"Generated deterministic scan_id {scan_id} from pipeline_id {request.pipeline_id}")
+        warnings.append(
+            "No pipeline_id: the callgraph is stored project-level and is not used for reachability verdicts"
+        )
+    elif not scan_exists:
+        warnings.append(f"No scan of pipeline {request.pipeline_id} exists yet; its analysis applies this callgraph")
 
     callgraph = Callgraph(
         project_id=project_id,
@@ -171,7 +188,7 @@ async def upload_callgraph(
         f"{len(analyzed_modules)} analyzed modules"
     )
 
-    if scan_id:
+    if scan_exists:
         # Rescans created before this upload read the callgraph through their lineage root.
         pending_rescans = await ScanRepository(db).distinct(
             "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
@@ -217,7 +234,7 @@ async def get_callgraph(
     callgraph_repo = CallgraphRepository(db)
     query: dict[str, Any] = {"project_id": project_id}
     if language:
-        query["language"] = language
+        query["language"] = _canonical_language(language)
     callgraph = await callgraph_repo.find_one(query)
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found for this project")
@@ -239,7 +256,7 @@ async def get_module_usage(
     callgraph_repo = CallgraphRepository(db)
     query: dict[str, Any] = {"project_id": project_id}
     if language:
-        query["language"] = language
+        query["language"] = _canonical_language(language)
     callgraph = await callgraph_repo.find_one(query)
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found")

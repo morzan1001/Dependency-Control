@@ -18,6 +18,14 @@ from app.schemas.ingest import BaseIngest, ScanContext
 logger = logging.getLogger(__name__)
 
 
+def deterministic_scan_id(project_id: str, pipeline_id: int | str | None, commit_hash: str | None) -> str | None:
+    """The scan one CI run's SBOM, scanner results and callgraphs share, or None without a pipeline."""
+    if not pipeline_id:
+        return None
+    seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))
+
+
 class ScanManager:
     """Manages the lifecycle of scans."""
 
@@ -42,16 +50,7 @@ class ScanManager:
         scanners for the same commit+pipeline share one scan across pods."""
         pipeline_url = self.build_pipeline_url(data)
 
-        if data.pipeline_id and data.commit_hash:
-            scan_id_seed = f"{self.project.id}-{data.pipeline_id}-{data.commit_hash}"
-            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-        elif data.pipeline_id:
-            # No commit_hash: pipeline_id only (less precise).
-            scan_id_seed = f"{self.project.id}-{data.pipeline_id}"
-            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-        else:
-            # Manual upload: random UUID.
-            scan_id = str(uuid.uuid4())
+        scan_id = deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
         # Atomic upsert to avoid races between concurrent scanners.
         now = datetime.now(timezone.utc)

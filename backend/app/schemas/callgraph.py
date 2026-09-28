@@ -15,7 +15,7 @@ class CallgraphUploadRequest(BaseModel):
 
     # pipeline_id is the primary key for matching a callgraph to a CI/CD run.
     pipeline_id: int | None = None
-    branch: str | None = None  # fallback when no pipeline_id
+    branch: str | None = None
     commit_hash: str | None = None
 
     tool: str | None = None

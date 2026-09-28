@@ -221,7 +221,9 @@ class TestProducerUploads:
         assert body["project_id"] == _PROJECT_ID
         assert body["modules_detected"] == len(module_keys)
         assert body["analyzed_modules_count"] == len(analyzed)
-        assert body["warnings"] == []
+        assert body["warnings"] == [
+            f"No scan of pipeline {_PIPELINE_ID} exists yet; its analysis applies this callgraph"
+        ]
 
         stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID, "language": language})
         assert stored is not None
@@ -649,3 +651,57 @@ class TestForeignScanId:
         assert await db.callgraphs.count_documents({"scan_id": _FOREIGN_SCAN_ID}) == 0
         stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
         assert stored["scan_id"] == _SCAN_ID
+
+
+class TestScanResolution:
+    @pytest.mark.asyncio
+    async def test_an_upload_without_the_commit_reaches_the_pipeline_s_analysed_scan(self, client, db):
+        await _seed_scan_with_findings(db)
+        await db.scans.update_one({"_id": _SCAN_ID}, {"$set": {"pipeline_id": _PIPELINE_ID}})
+        payload = _envelope("generic", "python", _PYTHON_DATA)
+        del payload["commit_hash"]
+
+        response = await _upload(client, payload)
+
+        assert response.json()["warnings"] == []
+        assert (await db.callgraphs.find_one({"project_id": _PROJECT_ID}))["scan_id"] == _SCAN_ID
+        assert (await db.findings.find_one({"_id": "f-CVE-PY"}))["reachable"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_upload_before_the_analysis_says_the_analysis_will_apply_it(self, client, db):
+        response = await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert response.json()["warnings"] == [
+            f"No scan of pipeline {_PIPELINE_ID} exists yet; its analysis applies this callgraph"
+        ]
+        assert (await db.callgraphs.find_one({"project_id": _PROJECT_ID}))["scan_id"] == _SCAN_ID
+
+    @pytest.mark.asyncio
+    async def test_an_upload_without_a_pipeline_says_it_gives_no_verdicts(self, client, db):
+        payload = _envelope("generic", "python", _PYTHON_DATA)
+        del payload["pipeline_id"]
+
+        response = await _upload(client, payload)
+
+        assert response.json()["warnings"] == [
+            "No pipeline_id: the callgraph is stored project-level and is not used for reachability verdicts"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_language_filter_reads_the_canonical_spelling(self, client, db):
+        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+        headers = await _seed_user(db, "admin", PRESET_ADMIN)
+
+        response = await client.get(
+            f"/api/v1/projects/{_PROJECT_ID}/callgraph", params={"language": "Python"}, headers=headers
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["language"] == "python"
+
+
+def test_one_ci_run_names_one_scan():
+    from app.services.scan_manager import deterministic_scan_id
+
+    assert deterministic_scan_id(_PROJECT_ID, _PIPELINE_ID, _COMMIT) == _SCAN_ID
+    assert deterministic_scan_id(_PROJECT_ID, None, _COMMIT) is None
