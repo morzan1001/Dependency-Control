@@ -21,7 +21,7 @@ from app.core.constants import (
     SLOWEST_PACKAGES_LIMIT,
     UPDATE_SAMPLE_RANK,
 )
-from app.core.purl import parse_purl
+from app.core.purl import package_identity, parse_purl
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -103,29 +103,24 @@ def classify_version_change(old_version: str, new_version: str) -> str:
 def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
     """``(identity, info)`` for one dependency document.
 
-    Identity comes from the purl (type + namespace + name) so same-named
-    packages across ecosystems/namespaces — and npm names stored without
-    their scope — never collide; bare ``name`` stays in the info for joins
-    against analyzer results, which are keyed by that name.
+    The identity is the package's :func:`package_identity`, the same notion of "same package"
+    the components delta uses; bare ``name`` stays in the info for joins against analyzer
+    results, which are keyed by that name.
     """
     name = dep.get("name", "")
     if not name:
         return None
     purl = dep.get("purl", "")
+    identity = ":".join(package_identity(purl, name, dep.get("type")))
     parsed = parse_purl(purl) if purl else None
     if parsed:
-        # deps_dev_name folds ecosystem naming (Maven group:artifact, npm scope,
-        # PEP 503 for PyPI) so the same package keeps one identity across scans
-        # even when the purl name casing/separators vary.
         deps_dev_name = parsed.deps_dev_name
-        identity = f"{parsed.type}:{deps_dev_name}"
         display = parsed.full_name
         # SBOM component types ("library") say nothing about the ecosystem; the purl type does.
         dep_type = parsed.type
         deps_dev_system = parsed.deps_dev_system or ""
     else:
         deps_dev_name = ""
-        identity = f"{dep.get('type', 'unknown')}::{name}"
         display = name
         dep_type = dep.get("type", "unknown")
         deps_dev_system = ""
