@@ -1,47 +1,29 @@
 import pytest
 
-from app.services.analytics.components_delta import (
-    component_identity_key,
-    compute_components_delta,
-)
+from app.services.analytics.components_delta import compute_components_delta
 
 
-def test_identity_strips_version_from_purl():
-    assert component_identity_key({"purl": "pkg:npm/react@17.0.2", "name": "react"}) == ("npm", "react")
-
-
-def test_identity_with_namespace():
-    assert component_identity_key({"purl": "pkg:maven/org.springframework/spring-core@5.3", "name": "spring-core"}) == (
-        "maven:org.springframework",
-        "spring-core",
+@pytest.mark.asyncio
+async def test_a_package_respelled_by_another_producer_is_a_version_change(db):
+    """Identity is the package, however each SBOM spells its purl: PyPI folds case, npm scopes decode."""
+    rows = [
+        ("sa", "PyYAML", "5.4", "pkg:pypi/PyYAML@5.4"),
+        ("sb", "pyyaml", "6.0.1", "pkg:pypi/pyyaml@6.0.1"),
+        ("sa", "core", "16.2.0", "pkg:npm/%40angular/core@16.2.0"),
+        ("sb", "@angular/core", "17.0.0", "pkg:npm/@angular/core@17.0.0"),
+    ]
+    await db["dependencies"].insert_many(
+        [
+            {"_id": f"r{n}", "project_id": "p1", "scan_id": scan, "name": name, "version": version, "purl": purl}
+            for n, (scan, name, version, purl) in enumerate(rows)
+        ]
     )
 
+    resp = await compute_components_delta(
+        db, project_id="p1", from_scan="sa", to_scan="sb", page=1, page_size=50, change=None
+    )
 
-def test_identity_unencoded_npm_scope_does_not_collapse():
-    # SBOM generators that emit the scope '@' unencoded must not collapse every
-    # scoped package to the same identity by splitting on the first '@'.
-    core = component_identity_key({"purl": "pkg:npm/@angular/core@1.2.3"})
-    router = component_identity_key({"purl": "pkg:npm/@angular/router@1.2.3"})
-    assert core == ("npm:@angular", "core")
-    assert router == ("npm:@angular", "router")
-    assert core != router
-
-
-def test_identity_unencoded_npm_scope_without_version():
-    # No version present: the only '@' is the scope, which must be preserved.
-    assert component_identity_key({"purl": "pkg:npm/@angular/core"}) == ("npm:@angular", "core")
-
-
-def test_identity_strips_qualifiers_and_subpath():
-    assert component_identity_key({"purl": "pkg:npm/react@17.0.2?foo=bar#sub"}) == ("npm", "react")
-
-
-def test_identity_without_purl_uses_name_and_type():
-    assert component_identity_key({"name": "react", "type": "npm"}) == ("npm", "react")
-
-
-def test_identity_without_purl_or_type():
-    assert component_identity_key({"name": "react"}) == ("unknown", "react")
+    assert (resp.totals.added, resp.totals.removed, resp.totals.changed) == (0, 0, 2)
 
 
 @pytest.mark.asyncio
