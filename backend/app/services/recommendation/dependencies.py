@@ -223,7 +223,8 @@ def analyze_dev_in_production(
     potential_dev_deps: list[dict[str, Any]] = []
 
     for dep in dependencies:
-        name = str(get_attr(dep, "name") or "").lower()
+        # The qualified name, so scoped patterns such as '@types/' match a scope the SBOM kept apart.
+        _, name = package_identity(get_attr(dep, "purl"), get_attr(dep, "name") or "", get_attr(dep, "type"))
         scope = str(get_attr(dep, "scope") or "").lower()
 
         if scope in ("dev", "development", "test"):
@@ -233,7 +234,7 @@ def analyze_dev_in_production(
             if re.search(pattern, name, re.IGNORECASE):
                 potential_dev_deps.append(
                     {
-                        "name": get_attr(dep, "name"),
+                        "name": name,
                         "version": get_attr(dep, "version"),
                         "reason": f"Matches dev pattern: {pattern}",
                     }

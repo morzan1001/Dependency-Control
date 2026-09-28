@@ -2,13 +2,13 @@ from collections import deque
 from dataclasses import dataclass
 
 from app.core.constants import DEEP_CHAIN_MEDIUM_IMPACT_DEPTH, MAX_DEPENDENCY_DEPTH, SIMILAR_PACKAGE_GROUPS
-from app.core.purl import dependency_node_key
+from app.core.purl import dependency_node_key, package_identity
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
+from app.services.recommendation.common import ModelOrDict, dependency_label, get_attr, sample_components
 
 # Chains detailed in the action; paired with the population it was taken from.
 _DEEPEST_CHAINS_SAMPLED = 5
@@ -47,10 +47,6 @@ def build_dependency_edges(dependencies: list[ModelOrDict]) -> DependencyEdges:
         children_by_parent={parent: list(children) for parent, children in children_by_parent.items()},
         direct_keys=direct_keys,
     )
-
-
-def _label(dep: ModelOrDict) -> str:
-    return f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
 def analyze_deep_dependency_chains(
@@ -129,7 +125,9 @@ def _shortest_depths(edges: DependencyEdges) -> tuple[dict[str, int], dict[str, 
 
 
 def _circular_dependency_recommendation(members: set[str], edges: DependencyEdges) -> Recommendation:
-    cycle_shown, cycle_total = sample_components(_label(dep) for key, dep in edges.dep_by_key.items() if key in members)
+    cycle_shown, cycle_total = sample_components(
+        dependency_label(dep) for key, dep in edges.dep_by_key.items() if key in members
+    )
     return Recommendation(
         type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
         priority=Priority.MEDIUM,
@@ -164,14 +162,14 @@ def _chain_preview(key: str, via: dict[str, str], edges: DependencyEdges) -> str
     path = [key]
     while path[-1] in via:
         path.append(via[path[-1]])
-    return " → ".join(_label(edges.dep_by_key[node]) for node in reversed(path))
+    return " → ".join(dependency_label(edges.dep_by_key[node]) for node in reversed(path))
 
 
 def _deep_chain_recommendation(
     deep: list[tuple[str, int]], via: dict[str, str], edges: DependencyEdges, max_dependency_depth: int
 ) -> Recommendation:
     deep_shown, deep_total = sample_components(
-        f"{_label(edges.dep_by_key[key])} (depth: {depth})" for key, depth in deep
+        f"{dependency_label(edges.dep_by_key[key])} (depth: {depth})" for key, depth in deep
     )
     medium = sum(1 for _, depth in deep if depth >= DEEP_CHAIN_MEDIUM_IMPACT_DEPTH)
     return Recommendation(
@@ -222,7 +220,9 @@ def analyze_duplicate_packages(
 
     recommendations = []
 
-    dep_names = {str(get_attr(dep, "name", "")).lower() for dep in dependencies}
+    dep_names = {
+        package_identity(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"))[1] for dep in dependencies
+    }
 
     duplicates_found = []
     for group in SIMILAR_PACKAGE_GROUPS:

@@ -431,3 +431,23 @@ class TestAnalyzeDuplicatePackagesMultipleCategories:
         components = " ".join(rec.affected_components)
         assert "HTTP Clients" in components
         assert "Date/Time Libraries" in components
+
+
+class TestDuplicatePackagesMatchTheQualifiedName:
+    def test_scoped_packages_match_their_duplicate_group(self):
+        deps = [
+            {"name": "react", "version": "11.0.0", "purl": "pkg:npm/%40emotion/react@11.0.0"},
+            {"name": "styled-components", "version": "6.0.0", "purl": "pkg:npm/styled-components@6.0.0"},
+        ]
+
+        [rec] = analyze_duplicate_packages(deps)
+
+        assert rec.action["duplicates"][0]["found"] == ["styled-components", "@emotion/react"]
+
+    def test_a_maven_artifact_is_not_an_npm_package_of_the_same_name(self):
+        deps = [
+            {"name": "request", "version": "1.0", "purl": "pkg:maven/com.example/request@1.0"},
+            {"name": "axios", "version": "1.0", "purl": "pkg:npm/axios@1.0"},
+        ]
+
+        assert analyze_duplicate_packages(deps) == []

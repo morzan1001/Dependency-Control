@@ -1,8 +1,10 @@
 from collections import defaultdict
 from dataclasses import dataclass, field
 from functools import cached_property
+from typing import Any
 
 from app.core.constants import SCORECARD_LOW_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
+from app.core.purl import dependency_node_key
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -19,7 +21,10 @@ from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     VulnStats,
+    dependency_label,
+    finding_cve_ids,
     get_attr,
+    name_some,
     newest_first,
     sample_components,
     summarize_vulns,
@@ -32,6 +37,8 @@ from app.services.recommendation.common import (
 # rather than a list inside one card; each emitted card carries the rank it was cut at.
 CRITICAL_HOTSPOTS_SHOWN = 10
 TOXIC_DEPENDENCIES_SHOWN = 5
+# Parents named per transitive dependency on the attack-surface card before "and N more".
+_PARENTS_NAMED = 3
 
 # Findings about a package; SAST, secret and IaC findings name a file as their component.
 _PACKAGE_FINDING_TYPES = frozenset({"vulnerability", "quality", "license", "malware", "eol"})
@@ -345,35 +352,45 @@ def analyze_attack_surface(
 
     recommendations = []
 
-    counts: dict[str, int] = defaultdict(int)
+    # Advisories per installed copy: another version of the package carries its own.
+    counts_by_version: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
-            counts[get_attr(f, "component", "")] += 1
-    # Findings carry the qualified component while the inventory keeps the bare name.
-    vuln_count_by_pkg = build_component_index(dict(counts))
-
-    transitive_with_vulns = []
-    for dep in dependencies:
-        pkg_name = get_attr(dep, "name", "")
-        is_direct = get_attr(dep, "direct", False)
-        vuln_count = lookup_component(vuln_count_by_pkg, pkg_name) or 0
-
-        if not is_direct and vuln_count >= 2:
-            transitive_with_vulns.append(
-                {
-                    "name": pkg_name,
-                    "version": get_attr(dep, "version", "unknown"),
-                    "vuln_count": vuln_count,
-                    "parent": get_attr(dep, "introduced_by", get_attr(dep, "parent", "unknown")),
-                }
+            counts_by_version[get_attr(f, "version") or ""][get_attr(f, "component", "")] += (
+                len(finding_cve_ids(f)) or 1
             )
+    # Findings carry the qualified component while the inventory keeps the bare name.
+    index_by_version = {version: build_component_index(counts) for version, counts in counts_by_version.items()}
+    # Parents are stored as node keys; a ref naming no inventory entry is shown as stored.
+    label_by_key = {
+        dependency_node_key(get_attr(d, "purl"), get_attr(d, "name"), get_attr(d, "version")): dependency_label(d)
+        for d in dependencies
+    }
+
+    by_label: dict[str, dict[str, Any]] = {}
+    for dep in dependencies:
+        version = get_attr(dep, "version") or ""
+        vuln_count = lookup_component(index_by_version.get(version, {}), get_attr(dep, "name", "")) or 0
+        if not get_attr(dep, "direct", False) and vuln_count >= 2:
+            by_label.setdefault(
+                dependency_label(dep),
+                {
+                    "name": get_attr(dep, "name", ""),
+                    "version": version,
+                    "vuln_count": vuln_count,
+                    "parents": [label_by_key.get(ref, ref) for ref in get_attr(dep, "parent_components") or []],
+                },
+            )
+    transitive_with_vulns = list(by_label.values())
 
     if transitive_with_vulns:
         transitive_with_vulns.sort(key=lambda x: x["vuln_count"], reverse=True)
 
         total_vulns = sum(t["vuln_count"] for t in transitive_with_vulns)
         transitive_shown, transitive_total = sample_components(
-            f"{t['name']}@{t['version']} (via {t['parent']})" for t in transitive_with_vulns
+            f"{t['name']}@{t['version']}"
+            + (f" (via {name_some(t['parents'], _PARENTS_NAMED)})" if t["parents"] else "")
+            for t in transitive_with_vulns
         )
 
         recommendations.append(

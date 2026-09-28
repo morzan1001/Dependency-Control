@@ -320,3 +320,12 @@ class TestAnalyzeVersionFragmentationPackageIdentity:
         rec = analyze_version_fragmentation(deps)[0]
 
         assert rec.action["packages"][0]["name"] == "@angular/core"
+
+
+class TestHygieneCardsMatchTheQualifiedName:
+    def test_a_scope_kept_in_the_purl_matches_a_scoped_dev_pattern(self):
+        dep = {"name": "node", "version": "18.0.0", "purl": "pkg:npm/%40types/node@18.0.0"}
+
+        [rec] = analyze_dev_in_production([dep])
+
+        assert rec.affected_components == ["@types/node@18.0.0"]

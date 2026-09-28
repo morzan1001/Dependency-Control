@@ -771,3 +771,59 @@ class TestOnlyPackageFindingsAreRolledUp:
         ]
 
         assert [pkg.name for pkg in _roll_up_packages(findings)] == ["pkg"]
+
+
+def _advisories(component, version, *cves):
+    return {
+        "type": "vulnerability",
+        "severity": "HIGH",
+        "component": component,
+        "version": version,
+        "details": {"vulnerabilities": [{"id": cve} for cve in cves]},
+    }
+
+
+class TestAttackSurfaceCountsEachInstalledCopy:
+    def test_a_clean_version_is_not_listed_and_the_total_is_the_distinct_advisories(self):
+        deps = [_dep("minimist", version=v, direct=False) for v in ("0.0.8", "1.2.0", "1.2.6")]
+        findings = [
+            _advisories("minimist", "0.0.8", "CVE-2020-7598", "CVE-2021-44906"),
+            _advisories("minimist", "1.2.0", "CVE-2021-44906", "CVE-2020-7598"),
+        ]
+
+        [rec] = analyze_attack_surface(deps, findings)
+
+        assert rec.affected_components == ["minimist@0.0.8", "minimist@1.2.0"]
+        assert rec.impact["total"] == 4
+
+    def test_one_installed_copy_listed_twice_is_one_row(self):
+        deps = [_dep("lib", direct=False), {**_dep("lib", direct=False), "purl": "pkg:npm/lib@1.0?arch=x"}]
+
+        [rec] = analyze_attack_surface(deps, [_advisories("lib", "1.0", "CVE-1", "CVE-2")])
+
+        assert rec.affected_components_total == 1
+        assert rec.impact["total"] == 2
+
+
+class TestAttackSurfaceNamesTheParents:
+    def test_parents_are_named_by_their_inventory_entry(self):
+        deps = [
+            {"name": "mkdirp", "version": "0.5.1", "purl": "pkg:npm/mkdirp@0.5.1", "direct": True},
+            {
+                "name": "minimist",
+                "version": "0.0.8",
+                "purl": "pkg:npm/minimist@0.0.8",
+                "direct": False,
+                "parent_components": ["pkg:npm/mkdirp@0.5.1", "some-bom-ref"],
+            },
+        ]
+
+        [rec] = analyze_attack_surface(deps, [_advisories("minimist", "0.0.8", "CVE-1", "CVE-2")])
+
+        assert rec.affected_components == ["minimist@0.0.8 (via mkdirp@0.5.1, some-bom-ref)"]
+        assert rec.action["transitive_deps"][0]["parents"] == ["mkdirp@0.5.1", "some-bom-ref"]
+
+    def test_a_dependency_without_parents_claims_none(self):
+        [rec] = analyze_attack_surface([_dep("lib", direct=False)], [_advisories("lib", "1.0", "CVE-1", "CVE-2")])
+
+        assert rec.affected_components == ["lib@1.0"]

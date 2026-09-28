@@ -73,6 +73,10 @@ def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
     return default
 
 
+def dependency_label(dep: ModelOrDict) -> str:
+    return f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+
+
 def scorecard_details(details: Any) -> dict[str, Any]:
     """Per-issue scorecard fields (critical_issues, failed_checks, project_url) live
     one level down in the aggregated shape: details.quality_issues[].details."""
