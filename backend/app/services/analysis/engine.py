@@ -16,7 +16,6 @@ from pymongo import UpdateMany, UpdateOne
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
-    MAX_RESCAN_HOPS,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
@@ -48,7 +47,6 @@ from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.repositories import (
     AnalysisResultRepository,
-    CallgraphRepository,
     DependencyRepository,
     FindingRepository,
     ProjectRepository,
@@ -78,7 +76,11 @@ from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.github import is_public_github
-from app.services.reachability_enrichment import enrich_findings_with_reachability, persist_reachability_result
+from app.services.reachability_enrichment import (
+    enrich_findings_with_reachability,
+    fetch_callgraphs,
+    persist_reachability_result,
+)
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.update_frequency_rollup import record_scan_update_delta
 
@@ -650,20 +652,13 @@ async def _run_reachability_enrichment(
     vulnerability_findings: list[dict[str, Any]],
     scan_id: str,
     project_id: str,
-    scan_doc: Scan,
     db: Database,
-    callgraph_repo: CallgraphRepository,
     result_repo: AnalysisResultRepository,
     scan_repo: ScanRepository,
     results_summary: list[str],
 ) -> None:
     """Run reachability analysis on vulnerability findings."""
-    callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
-
-    if not callgraphs:
-        pipeline_id = scan_doc.pipeline_id if scan_doc else None
-        if pipeline_id:
-            callgraphs = await callgraph_repo.find_all_minimal_by_pipeline(project_id, pipeline_id)
+    callgraphs = await fetch_callgraphs(project_id, scan_id, db)
 
     if not callgraphs:
         await scan_repo.update_raw(
@@ -674,12 +669,7 @@ async def _run_reachability_enrichment(
         return
 
     try:
-        enriched_count = await enrich_findings_with_reachability(
-            findings=vulnerability_findings,
-            project_id=str(project_id),
-            db=db,
-            scan_id=scan_id,
-        )
+        enriched_count = await enrich_findings_with_reachability(vulnerability_findings, callgraphs, db, scan_id)
         reachability_summary = build_reachability_summary(
             vulnerability_findings,
             [cg.model_dump(by_alias=True) for cg in callgraphs],
@@ -881,10 +871,8 @@ async def _run_vuln_enrichments(
     vulnerability_findings: list[dict[str, Any]],
     scan_id: str,
     project_id: str | None,
-    scan_doc: Any,
     db: Database,
     result_repo: AnalysisResultRepository,
-    callgraph_repo: CallgraphRepository,
     scan_repo: ScanRepository,
     github_token: str | None,
     results_summary: list[str],
@@ -894,15 +882,7 @@ async def _run_vuln_enrichments(
 
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
         await _run_reachability_enrichment(
-            vulnerability_findings,
-            scan_id,
-            project_id,
-            scan_doc,
-            db,
-            callgraph_repo,
-            result_repo,
-            scan_repo,
-            results_summary,
+            vulnerability_findings, scan_id, project_id, db, result_repo, scan_repo, results_summary
         )
 
 
@@ -956,25 +936,6 @@ def _as_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
-async def _lineage_root(scan_id: str, scan_doc: Any, scan_repo: ScanRepository) -> str:
-    """The scan a rescan lineage descends from, following original_scan_id upwards.
-
-    A pointer may name a rescan rather than the root, so one hop is not enough. Bounded, so a
-    cyclic pointer cannot hang the ingest path.
-    """
-    root_id = scan_id
-    doc = scan_doc
-    for _hop in range(MAX_RESCAN_HOPS):
-        if doc is None or not getattr(doc, "is_rescan", False):
-            break
-        parent_id = getattr(doc, "original_scan_id", None)
-        if not parent_id or parent_id == root_id:
-            break
-        root_id = parent_id
-        doc = await scan_repo.get_by_id_strong(parent_id)
-    return root_id
-
-
 async def _should_update_project_latest_scan(
     scan_id: str,
     scan_doc: Any,
@@ -1016,8 +977,8 @@ async def _should_update_project_latest_scan(
         # One shared parent settles the common case with no read at all; only a mismatch is worth
         # resolving both sides for, because a pointer into the middle of a chain names no root.
         if incoming_parent and incoming_parent != current_parent:
-            incoming_root = await _lineage_root(scan_id, scan_doc, scan_repo)
-            current_root = await _lineage_root(current_latest_id, current_latest, scan_repo)
+            incoming_root = await scan_repo.lineage_root(scan_id, scan_doc)
+            current_root = await scan_repo.lineage_root(current_latest_id, current_latest)
             if incoming_root != current_root:
                 return False
 
@@ -1252,7 +1213,6 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     scan_repo = ScanRepository(db)
     result_repo = AnalysisResultRepository(db)
     finding_repo = FindingRepository(db)
-    callgraph_repo = CallgraphRepository(db)
     project_repo = ProjectRepository(db)
 
     scan_doc = await scan_repo.get_by_id_strong(scan_id)
@@ -1365,10 +1325,8 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         vulnerability_findings,
         scan_id,
         project_id,
-        scan_doc,
         db,
         result_repo,
-        callgraph_repo,
         scan_repo,
         github_token,
         results_summary,

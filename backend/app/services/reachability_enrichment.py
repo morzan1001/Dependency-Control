@@ -251,30 +251,25 @@ class ReachabilityResult(TypedDict, total=False):
     vulnerable_symbol_count: int
 
 
-async def _fetch_callgraphs(
-    project_id: str,
-    scan_id: str,
-    db: AsyncIOMotorDatabase,
-) -> list[Any]:
-    """
-    Fetch all callgraphs for a scan (one per language), falling back to pipeline_id match.
+async def fetch_callgraphs(project_id: str, scan_id: str, db: AsyncIOMotorDatabase) -> list[Any]:
+    """Callgraphs (one per language) of the scan's lineage root, else of the root's pipeline.
 
-    Returns a list of callgraph objects (may be empty).
+    Uploads land on the pipeline scan; a rescan is a later scan of its lineage with no pipeline id.
     """
     from app.repositories import CallgraphRepository, ScanRepository
 
     callgraph_repo = CallgraphRepository(db)
     scan_repo = ScanRepository(db)
 
-    # Priority: exact scan_id match > fallback to pipeline_id match
-    callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
+    scan = await scan_repo.get_by_id(scan_id)
+    root_id = await scan_repo.lineage_root(scan_id, scan)
+    callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, root_id)
     if callgraphs:
         return callgraphs
 
-    # Fallback: try to find callgraphs via pipeline_id
-    scan = await scan_repo.get_by_id(scan_id)
-    if scan and scan.pipeline_id:
-        return await callgraph_repo.find_all_minimal_by_pipeline(project_id, scan.pipeline_id)
+    root = scan if root_id == scan_id else await scan_repo.get_by_id(root_id)
+    if root and root.pipeline_id:
+        return await callgraph_repo.find_all_minimal_by_pipeline(project_id, root.pipeline_id)
 
     return []
 
@@ -424,28 +419,16 @@ def enrich_findings_from_callgraphs(
 
 async def enrich_findings_with_reachability(
     findings: list[dict[str, Any]],
-    project_id: str,
+    callgraphs: list[Any],
     db: AsyncIOMotorDatabase,
-    scan_id: str | None = None,
+    scan_id: str,
 ) -> int:
     """Enrich vulnerability findings (modified in-place) with reachability; return count enriched.
 
-    Uses the per-language callgraph where each finding's package is imported.
+    Uses the per-language callgraph where each finding's package is imported; the ecosystem gate
+    reads the inventory of ``scan_id`` itself, which a rescan keeps under its own id.
     """
-    if not findings:
-        return 0
-
-    if not scan_id and findings:
-        scan_id = findings[0].get("scan_id")
-
-    if not scan_id:
-        logger.warning("No scan_id available for reachability enrichment")
-        return 0
-
-    callgraphs = await _fetch_callgraphs(project_id, scan_id, db)
-
-    if not callgraphs:
-        logger.debug(f"No callgraph available for scan {scan_id}")
+    if not findings or not callgraphs:
         return 0
 
     prepared_graphs = [_prepare_callgraph(cg) for cg in callgraphs]
@@ -682,16 +665,10 @@ async def run_pending_reachability_for_scan(
         "error": None,
     }
 
-    from app.repositories import (
-        AnalysisResultRepository,
-        CallgraphRepository,
-        FindingRepository,
-        ScanRepository,
-    )
+    from app.repositories import AnalysisResultRepository, FindingRepository, ScanRepository
 
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
-    callgraph_repo = CallgraphRepository(db)
     result_repo = AnalysisResultRepository(db)
 
     scan = await scan_repo.get_by_id(scan_id)
@@ -725,12 +702,8 @@ async def run_pending_reachability_for_scan(
 
         findings_dicts = [f.model_dump(by_alias=True) for f in findings]
 
-        enriched_count = await enrich_findings_with_reachability(
-            findings=findings_dicts,
-            project_id=project_id,
-            db=db,
-            scan_id=scan_id,
-        )
+        callgraphs = await fetch_callgraphs(project_id, scan_id, db)
+        enriched_count = await enrich_findings_with_reachability(findings_dicts, callgraphs, db, scan_id)
 
         # Chunked unordered bulk_write instead of one update per finding, so a 10k-finding
         # scan doesn't fire 10k serial Mongo calls inline in the callgraph-upload request.
@@ -759,7 +732,6 @@ async def run_pending_reachability_for_scan(
         # Lazy import to avoid the stats -> reachability_enrichment import cycle.
         from app.services.analysis.stats import build_reachability_summary, calculate_comprehensive_stats
 
-        callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
         if callgraphs:
             reachability_summary = build_reachability_summary(
                 findings_dicts,

@@ -19,7 +19,7 @@ from app.api.v1.helpers.callgraph import (
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
 from app.core.constants import CALLGRAPH_MAX_ENTRIES
 from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
-from app.repositories import CallgraphRepository
+from app.repositories import CallgraphRepository, ScanRepository
 from app.schemas.callgraph import (
     CallgraphResponse,
     CallgraphUploadRequest,
@@ -168,20 +168,25 @@ async def upload_callgraph(
     )
 
     if scan_id:
-        try:
-            reachability_result = await run_pending_reachability_for_scan(
-                scan_id=scan_id,
-                project_id=project_id,
-                db=db,
-            )
-            if reachability_result["findings_enriched"] > 0:
-                logger.info(
-                    f"Processed pending reachability for scan {scan_id}: "
-                    f"enriched {reachability_result['findings_enriched']} findings"
+        # Rescans created before this upload read the callgraph through their lineage root.
+        pending_rescans = await ScanRepository(db).distinct(
+            "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
+        )
+        for target_scan_id in [scan_id, *pending_rescans]:
+            try:
+                reachability_result = await run_pending_reachability_for_scan(
+                    scan_id=target_scan_id,
+                    project_id=project_id,
+                    db=db,
                 )
-        except Exception as e:
-            logger.warning(f"Failed to run pending reachability analysis: {e}")
-            warnings.append(f"Reachability analysis deferred: {e!s}")
+                if reachability_result["findings_enriched"] > 0:
+                    logger.info(
+                        f"Processed pending reachability for scan {target_scan_id}: "
+                        f"enriched {reachability_result['findings_enriched']} findings"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to run pending reachability analysis: {e}")
+                warnings.append(f"Reachability analysis deferred: {e!s}")
 
     return CallgraphUploadResponse(
         success=True,

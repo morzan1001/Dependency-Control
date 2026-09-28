@@ -11,6 +11,7 @@ import pytest
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.reachability_enrichment import (
     enrich_findings_with_reachability,
+    fetch_callgraphs,
     run_pending_reachability_for_scan,
 )
 
@@ -79,7 +80,7 @@ async def test_inline_enrichment_reaches_the_stats_pipeline(db):
     findings = [_finding("CVE-1", "requests"), _finding("CVE-2", "urllib3")]
 
     enriched = await enrich_findings_with_reachability(
-        findings=findings, project_id=_PROJECT_ID, db=db, scan_id=_SCAN_ID
+        findings, await fetch_callgraphs(_PROJECT_ID, _SCAN_ID, db), db, _SCAN_ID
     )
     assert enriched == 2
 

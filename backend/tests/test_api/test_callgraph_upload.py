@@ -457,6 +457,37 @@ async def _seed_scan_with_findings(db) -> None:
         )
 
 
+_RESCAN_ID = "rescan-of-pipeline-scan"
+
+
+async def _seed_rescan(db) -> None:
+    """A rescan of the pipeline scan: its own findings and inventory, no pipeline id of its own."""
+    await db.scans.insert_one(
+        {
+            "_id": _RESCAN_ID,
+            "project_id": _PROJECT_ID,
+            "branch": _BRANCH,
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+            "is_rescan": True,
+            "original_scan_id": _SCAN_ID,
+            "pipeline_id": None,
+            "reachability_pending": True,
+        }
+    )
+    await db.findings.insert_one(_finding("CVE-PY", "requests", scan_id=_RESCAN_ID))
+    await db.dependencies.insert_one(
+        {
+            "_id": "dep-requests",
+            "scan_id": _RESCAN_ID,
+            "name": "requests",
+            "version": "1.0.0",
+            "type": "pypi",
+            "purl": "pkg:pypi/requests@1.0.0",
+        }
+    )
+
+
 class TestReachabilityVerdicts:
     @pytest.mark.asyncio
     async def test_second_language_upload_is_also_applied(self, client, db):
@@ -480,6 +511,24 @@ class TestReachabilityVerdicts:
 
         py_finding = await db.findings.find_one({"_id": "f-CVE-PY"})
         assert py_finding["reachable"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_upload_after_a_rescan_also_reaches_the_rescan(self, client, db):
+        """Callgraphs land on the pipeline scan; a rescan created before the upload is its lineage's head."""
+        await db.scans.insert_one(
+            {
+                "_id": _SCAN_ID,
+                "project_id": _PROJECT_ID,
+                "branch": _BRANCH,
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        await _seed_rescan(db)
+
+        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert (await db.findings.find_one({"_id": "f-CVE-PY"}))["reachable"] is True
 
     @pytest.mark.asyncio
     async def test_analyzed_but_unimported_package_is_unreachable(self, client, db):
