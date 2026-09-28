@@ -518,8 +518,9 @@ def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMa
 
     if entry["purl"]:
         # The canonical purl names package and version whatever each SBOM called it; the prefix
-        # match keeps qualifier variants together.
-        dep_filter: dict[str, Any] = {"scan_id": scan_id, "purl": {"$regex": f"^{re.escape(entry['purl'])}([?#]|$)"}}
+        # match keeps qualifier variants together. A lookahead, unlike an alternation, leaves the
+        # server a tight index range on the literal prefix.
+        dep_filter: dict[str, Any] = {"scan_id": scan_id, "purl": {"$regex": f"^{re.escape(entry['purl'])}(?![^?#])"}}
     else:
         # Without a purl the enrichment describes an unidentified package; restrict it to
         # the equally purl-less docs so it cannot stamp a same-named package of another

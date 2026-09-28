@@ -102,6 +102,19 @@ def test_cross_ecosystem_twin_is_not_touched():
     assert "license_category" not in _find_dep(db, purl="pkg:deb/debian/foo@1.0.0")
 
 
+def test_a_purl_that_merely_starts_with_the_enriched_one_is_not_touched():
+    db = FakeDatabase()
+    _insert_dep(db, name="foo", version="1.0.0", purl="pkg:npm/foo@1.0.0#dist/foo.js")
+    _insert_dep(db, name="foo", version="1.0.01", purl="pkg:npm/foo@1.0.01")
+    _insert_dep(db, name="foo", version="1.0.0-beta", purl="pkg:npm/foo@1.0.0-beta")
+
+    _run(db, [_entry("foo", "1.0.0", "pkg:npm/foo@1.0.0", {"license_category": "permissive"})])
+
+    assert _find_dep(db, purl="pkg:npm/foo@1.0.0#dist/foo.js")["license_category"] == "permissive"
+    assert "license_category" not in _find_dep(db, purl="pkg:npm/foo@1.0.01")
+    assert "license_category" not in _find_dep(db, purl="pkg:npm/foo@1.0.0-beta")
+
+
 def test_sbom_declared_license_survives_but_twin_without_license_is_filled():
     db = FakeDatabase()
     _insert_dep(
