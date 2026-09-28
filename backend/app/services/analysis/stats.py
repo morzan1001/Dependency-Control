@@ -51,6 +51,7 @@ from app.services.analysis.types import (
     VulnerabilityInfo,
 )
 from app.services.reachability_enrichment import (
+    ComponentLanguages,
     build_component_language_map,
     is_high_confidence_reachable,
     reachability_display_tier,
@@ -352,7 +353,7 @@ class StatsAccumulator:
         }
     )
 
-    def __init__(self, component_languages: Mapping[str, frozenset[str]]) -> None:
+    def __init__(self, component_languages: ComponentLanguages) -> None:
         self._component_languages = component_languages
         self._counted = 0
         self._severity: dict[str, int] = dict.fromkeys((*_BUCKETED_SEVERITIES, _UNKNOWN_SEVERITY), 0)
@@ -568,7 +569,7 @@ class StatsAccumulator:
 
 def compute_stats(
     findings: Iterable[Mapping[str, Any]],
-    component_languages: Mapping[str, frozenset[str]],
+    component_languages: ComponentLanguages,
 ) -> Stats:
     acc = StatsAccumulator(component_languages)
     for finding in findings:

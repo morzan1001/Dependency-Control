@@ -53,6 +53,7 @@ from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import VulnerabilityEnrichmentService
 from app.services.reachability_enrichment import (
+    ComponentLanguages,
     _prepare_callgraph,
     _PreparedCallgraph,
     component_language_map,
@@ -761,7 +762,7 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
 def _run_reachability(
     records: list[dict[str, Any]],
     callgraph_payload: dict[str, Any] | None,
-    languages: dict[str, frozenset[str]],
+    languages: ComponentLanguages,
     report: AnalyzerReport,
 ) -> dict[str, Any] | None:
     if callgraph_payload is None:

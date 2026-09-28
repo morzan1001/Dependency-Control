@@ -20,12 +20,18 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
+    REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE,
     REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED,
     REACHABILITY_REASON_NO_COVERAGE_UNIVERSE,
     REACHABILITY_REASON_OUTSIDE_COVERAGE,
     REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM,
 )
-from app.services.component_identity import build_component_index, canonical_module_key, lookup_component
+from app.services.component_identity import (
+    JVM_LANGUAGES,
+    build_component_index,
+    canonical_module_key,
+    lookup_component,
+)
 from app.services.purl_utils import get_purl_type
 from app.services.enrichment.scoring import (
     calculate_adjusted_risk_score,
@@ -46,20 +52,25 @@ _FINDINGS_PAGE_SIZE = 1000
 _MAX_FINDINGS_PER_RUN = 100_000
 
 # Ecosystem identifier (a dependency's `type`, e.g. "pypi"/"npm"/"go-module", OR a
-# purl type) -> the callgraph language(s) that can actually analyze it. Anything
-# else (maven, cargo, nuget, rpm, deb, ...) has no callgraph support, so a missing
-# package in those ecosystems is never treated as unreachable.
-_ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: dict[str, frozenset] = {
+# purl type) -> the callgraph language(s) that can analyze it. Any other ecosystem
+# (cargo, nuget, rpm, deb, ...) has no callgraph producer.
+_ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: dict[str, frozenset[str]] = {
     "pypi": frozenset({"python"}),
     "python": frozenset({"python"}),
     "npm": frozenset({"javascript", "typescript"}),
     "go": frozenset({"go"}),
     "golang": frozenset({"go"}),
     "go-module": frozenset({"go"}),
+    "maven": JVM_LANGUAGES,
 }
+# jdeps cannot see classes loaded through reflection or ServiceLoader, so a missing import is no evidence.
+_NON_FALSIFYING_LANGUAGES = JVM_LANGUAGES
+
+# Per component name, one (version, callgraph languages) candidate per ecosystem that lists it.
+ComponentLanguages = Mapping[str, list[tuple[str, frozenset[str]]]]
 
 
-def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset:
+def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset[str]:
     """Callgraph language(s) that can analyze a package, derived from its
     dependency ecosystem/type or (fallback) its purl. Empty when undeterminable
     or unsupported."""
@@ -74,27 +85,40 @@ def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset:
     return frozenset()
 
 
-def component_language_map(deps: Iterable[Mapping[str, Any]]) -> dict[str, frozenset[str]]:
-    """Map component name -> callgraph language(s) that could analyze it, from dependency ``type``/``purl``.
+def component_language_map(deps: Iterable[Mapping[str, Any]]) -> dict[str, list[tuple[str, frozenset[str]]]]:
+    """Map component name -> a (version, callgraph languages) candidate per ecosystem listing it.
 
     This is the reliable ecosystem signal: vulnerability findings carry no purl (the OSV/Trivy/Grype
     normalizers do not persist one), so the fail-closed gate looks the package up in the inventory.
+    Ecosystems sharing a name stay separate, so one ecosystem's callgraph never speaks for another.
     """
-    out: dict[str, frozenset[str]] = {}
+    out: dict[str, dict[tuple[str, frozenset[str]], None]] = {}
     for dep in deps:
         name = dep.get("name")
         if not name:
             continue
         langs = _ecosystem_languages(dep.get("type"), dep.get("purl"))
         if langs:
-            out[name] = out.get(name, frozenset()) | langs
+            out.setdefault(name, {})[(str(dep.get("version") or ""), langs)] = None
     # Findings carry the qualified component while the inventory keeps the bare name.
-    return build_component_index(out)
+    return build_component_index({name: list(candidates) for name, candidates in out.items()})
 
 
-async def build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) -> dict[str, frozenset[str]]:
-    deps = await db.dependencies.find({"scan_id": scan_id}, {"name": 1, "type": 1, "purl": 1}).to_list(None)
+async def build_component_language_map(
+    db: AsyncIOMotorDatabase, scan_id: str
+) -> dict[str, list[tuple[str, frozenset[str]]]]:
+    projection = {"name": 1, "version": 1, "type": 1, "purl": 1}
+    deps = await db.dependencies.find({"scan_id": scan_id}, projection).to_list(None)
     return component_language_map(deps)
+
+
+def _candidate_languages(
+    component_languages: ComponentLanguages | None, component: str, version: str | None
+) -> list[frozenset[str]]:
+    """The language sets of every ecosystem a finding's package may belong to, narrowed by its version."""
+    candidates = lookup_component(component_languages or {}, component) or []
+    matching = [langs for candidate_version, langs in candidates if candidate_version == version]
+    return list(dict.fromkeys(matching or [langs for _, langs in candidates]))
 
 
 @dataclass(frozen=True)
@@ -148,26 +172,33 @@ def _find_usage(prepared: _PreparedCallgraph, component: str) -> Any | None:
     return lookup_component(prepared.usage_index, component) or lookup_component(prepared.usage_index, normalized)
 
 
-def _callgraph_can_falsify(
-    prepared: _PreparedCallgraph,
-    component: str,
-    component_languages: dict[str, frozenset] | None,
-) -> bool:
-    """True only when this callgraph's absence of a component is real evidence.
-
-    Requires the producer to have listed the component in its coverage universe
-    (``analyzed_modules``) for a language that covers the component's ecosystem;
-    anything weaker means the package was never inspected.
-    """
-    langs = lookup_component(component_languages or {}, component) or frozenset()
-    if prepared.language not in langs:
-        return False
-    if not prepared.analyzed_index:
-        return False
+def _lists_package(prepared: _PreparedCallgraph, component: str) -> bool:
+    """Whether the producer listed the package in its coverage universe (``analyzed_modules``)."""
     normalized = _normalize_component(component, prepared.language)
     return bool(
         lookup_component(prepared.analyzed_index, component) or lookup_component(prepared.analyzed_index, normalized)
     )
+
+
+def _falsifying_languages(
+    component: str, prepared_graphs: list[_PreparedCallgraph], language_sets: list[frozenset[str]]
+) -> list[str]:
+    """Languages whose callgraphs prove the package unused; empty unless every candidate ecosystem has one.
+
+    A graph counts only for a language covering that ecosystem and only when it listed the
+    package in its coverage universe; anything weaker means the package was never inspected.
+    """
+    falsifying: list[str] = []
+    for langs in language_sets:
+        covering = [
+            p.language
+            for p in prepared_graphs
+            if p.language in langs and p.language not in _NON_FALSIFYING_LANGUAGES and _lists_package(p, component)
+        ]
+        if not covering:
+            return []
+        falsifying.extend(covering)
+    return list(dict.fromkeys(falsifying))
 
 
 def _apply_adjusted_risk_score(finding: dict[str, Any], reachability: Mapping[str, Any]) -> None:
@@ -308,7 +339,7 @@ def _is_package_in_callgraph(prepared: _PreparedCallgraph, component: str) -> bo
 def _unknown_verdict(
     component: str,
     prepared_graphs: list[_PreparedCallgraph],
-    component_languages: dict[str, frozenset] | None,
+    language_sets: list[frozenset[str]],
 ) -> tuple[str, str]:
     """Why absence from the analyzed callgraphs yields no verdict, as (reason, message).
 
@@ -316,24 +347,24 @@ def _unknown_verdict(
     OS packages, which dominate container scans — from the cases a pipeline change would fix.
     Readers must be able to tell those apart without parsing prose.
     """
-    langs = lookup_component(component_languages or {}, component) or frozenset()
-    if not langs:
+    if not language_sets:
         return (
             REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM,
             f"Package '{component}' is in an ecosystem no callgraph tool supports; reachability unknown.",
         )
 
-    covering = [p for p in prepared_graphs if p.language in langs]
-    if not covering:
+    uncovered = next((langs for langs in language_sets if not any(p.language in langs for p in prepared_graphs)), None)
+    if uncovered is not None:
         analyzed = ", ".join(p.language for p in prepared_graphs) or "none"
         return (
             REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED,
             (
-                f"No {'/'.join(sorted(langs))} callgraph was uploaded for this scan "
+                f"No {'/'.join(sorted(uncovered))} callgraph was uploaded for this scan "
                 f"(analyzed: {analyzed}); reachability unknown."
             ),
         )
 
+    covering = [p for p in prepared_graphs if any(p.language in langs for langs in language_sets)]
     covering_langs = ", ".join(p.language for p in covering)
     if all(not p.analyzed_index for p in covering):
         return (
@@ -341,6 +372,14 @@ def _unknown_verdict(
             (
                 f"Package '{component}' is absent from the {covering_langs} callgraph(s), "
                 "which published no coverage universe; reachability unknown."
+            ),
+        )
+    if any(p.language in _NON_FALSIFYING_LANGUAGES and _lists_package(p, component) for p in covering):
+        return (
+            REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE,
+            (
+                f"Package '{component}' was analyzed but is not imported ({covering_langs}); this callgraph "
+                "cannot see reflective loading, so its absence is no evidence; reachability unknown."
             ),
         )
     return (
@@ -355,7 +394,7 @@ def _unknown_verdict(
 def _enrich_finding_from_callgraphs(
     finding: dict[str, Any],
     prepared_graphs: list[_PreparedCallgraph],
-    component_languages: dict[str, frozenset] | None = None,
+    component_languages: ComponentLanguages | None = None,
 ) -> bool:
     """
     Try each callgraph for a finding. Returns True if enriched.
@@ -372,7 +411,8 @@ def _enrich_finding_from_callgraphs(
             _enrich_single_finding(finding, prepared)
             return True
 
-    falsifying = [p.language for p in prepared_graphs if _callgraph_can_falsify(p, component, component_languages)]
+    language_sets = _candidate_languages(component_languages, component, finding.get("version"))
+    falsifying = _falsifying_languages(component, prepared_graphs, language_sets)
     if falsifying:
         reachability: dict[str, Any] = {
             "is_reachable": False,
@@ -385,7 +425,7 @@ def _enrich_finding_from_callgraphs(
             ),
         }
     else:
-        reason, message = _unknown_verdict(component, prepared_graphs, component_languages)
+        reason, message = _unknown_verdict(component, prepared_graphs, language_sets)
         reachability = {
             "is_reachable": None,
             "confidence_score": 0.0,
@@ -402,7 +442,7 @@ def _enrich_finding_from_callgraphs(
 def enrich_findings_from_callgraphs(
     findings: list[dict[str, Any]],
     prepared_graphs: list[_PreparedCallgraph],
-    component_languages: dict[str, frozenset] | None = None,
+    component_languages: ComponentLanguages | None = None,
 ) -> int:
     """Enrich vulnerability findings in place from prepared callgraphs; return how many were enriched."""
     enriched_count = 0

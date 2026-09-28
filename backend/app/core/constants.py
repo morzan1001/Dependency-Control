@@ -997,12 +997,14 @@ REACHABILITY_EXTRACTION_CONFIDENCE = {
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
-# Why a finding carries no reachability verdict. "unsupported_ecosystem" is terminal — OS
-# packages have no callgraph tooling — while the others name something a pipeline can fix.
+# Why a finding carries no reachability verdict. "unsupported_ecosystem" and "absence_not_evidence"
+# are terminal — OS packages have no callgraph tooling, a JVM graph cannot rule a package out — while
+# the others name something a pipeline can fix.
 REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM = "unsupported_ecosystem"
 REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED = "language_not_analyzed"
 REACHABILITY_REASON_NO_COVERAGE_UNIVERSE = "no_coverage_universe"
 REACHABILITY_REASON_OUTSIDE_COVERAGE = "outside_coverage"
+REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE = "absence_not_evidence"
 
 # Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
 # calls, the symbols each import names, madge dependencies and the analyzed-modules list.

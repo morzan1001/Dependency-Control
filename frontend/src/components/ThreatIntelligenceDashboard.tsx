@@ -272,7 +272,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
               </CardTitle>
               <CardDescription>
                 {(reachability.coverable_count ?? 0) === 0
-                  ? 'No finding here is in an ecosystem a callgraph can analyse (npm, PyPI, Go). ' +
+                  ? 'No finding here is in an ecosystem a callgraph can analyse (npm, PyPI, Go, Maven). ' +
                     'OS packages from a container image are never coverable, so enabling the ' +
                     'callgraph jobs would not change these results.'
                   : `${reachability.coverable_count} of ${totalVulns} findings are in a callgraph-supported ` +

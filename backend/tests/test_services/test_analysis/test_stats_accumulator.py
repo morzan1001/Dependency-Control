@@ -22,7 +22,7 @@ from app.services.analysis.stats import (
     calculate_comprehensive_stats,
     compute_stats,
 )
-from app.services.reachability_enrichment import component_language_map
+from app.services.reachability_enrichment import ComponentLanguages, component_language_map
 from tests.mocks.fake_mongo import FakeDatabase
 
 # One CRITICAL finding, scored through saturating_risk_score at each reachability tier.
@@ -296,10 +296,9 @@ class TestHighConfidenceGate:
 
 
 class TestCoverableCount:
-    _LANGS: ClassVar[dict[str, frozenset[str]]] = {
-        "lodash": frozenset({"javascript"}),
-        "requests": frozenset({"python"}),
-    }
+    _LANGS: ClassVar[ComponentLanguages] = component_language_map(
+        [{"name": "lodash", "type": "npm"}, {"name": "requests", "type": "pypi"}]
+    )
 
     def test_counts_only_components_a_callgraph_could_analyse(self):
         findings = [
@@ -331,6 +330,11 @@ class TestCoverableCount:
         findings = [{**_finding(), "component": "org.acme:json"}]
         assert compute_stats(findings, langs).reachability.coverable_count == 1
 
+    def test_a_maven_package_is_coverable(self):
+        langs = component_language_map([{"name": "jackson-databind", "type": "maven"}])
+        findings = [{**_finding(), "component": "com.fasterxml.jackson.core:jackson-databind"}]
+        assert compute_stats(findings, langs).reachability.coverable_count == 1
+
 
 class TestComponentLanguageMap:
     def test_derives_languages_from_type_then_purl(self):
@@ -342,14 +346,16 @@ class TestComponentLanguageMap:
             {"type": "npm"},
         ]
         m = component_language_map(deps)
-        assert m["requests"] == frozenset({"python"})
-        assert m["left-pad"] == frozenset({"javascript", "typescript"})
-        assert m["viapurl"] == frozenset({"python"})
+        assert m["requests"] == [("", frozenset({"python"}))]
+        assert m["left-pad"] == [("", frozenset({"javascript", "typescript"}))]
+        assert m["viapurl"] == [("", frozenset({"python"}))]
         assert "rpmpkg" not in m
 
-    def test_a_name_listed_twice_unions_its_languages(self):
-        m = component_language_map([{"name": "x", "type": "npm"}, {"name": "x", "type": "pypi"}])
-        assert m["x"] == frozenset({"javascript", "typescript", "python"})
+    def test_a_name_two_ecosystems_list_keeps_one_candidate_per_ecosystem(self):
+        m = component_language_map(
+            [{"name": "x", "version": "1.0", "type": "npm"}, {"name": "x", "version": "2.0", "type": "pypi"}]
+        )
+        assert m["x"] == [("1.0", frozenset({"javascript", "typescript"})), ("2.0", frozenset({"python"}))]
 
 
 class TestDriverReadsOneCursor:

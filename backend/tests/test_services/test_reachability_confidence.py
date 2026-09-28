@@ -103,7 +103,7 @@ class TestImportMatchingUsesWholePackageKeys:
         finding = _vuln_finding(component=component)
         prepared = _prepared(_usage(imported, "a.src"), language=language, analyzed_modules=[component, imported])
 
-        _enrich_finding_from_callgraphs(finding, [prepared], {component: frozenset({language})})
+        _enrich_finding_from_callgraphs(finding, [prepared], {component: [("1.0.0", frozenset({language}))]})
 
         assert finding["details"]["reachability"]["is_reachable"] is False
 
@@ -136,7 +136,7 @@ class TestEcosystemFromDependencyMap:
             language="python",
             analyzed_modules=["requests", "other"],
         )
-        comp_langs = {"requests": frozenset({"python"})}
+        comp_langs = {"requests": [("1.0.0", frozenset({"python"}))]}
         _enrich_finding_from_callgraphs(finding, [cg], comp_langs)
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is False
@@ -149,7 +149,7 @@ class TestEcosystemFromDependencyMap:
             language="javascript",
             analyzed_modules=["lodash", "requests"],
         )
-        comp_langs = {"requests": frozenset({"python"})}
+        comp_langs = {"requests": [("1.0.0", frozenset({"python"}))]}
         _enrich_finding_from_callgraphs(finding, [cg], comp_langs)
         assert finding["details"]["reachability"]["is_reachable"] is None
         assert finding["details"]["adjusted_risk_score"] == 80.0
@@ -159,16 +159,16 @@ class TestEcosystemFromDependencyMap:
         from tests.mocks.fake_mongo import FakeDatabase
 
         db = FakeDatabase()
-        await db.dependencies.insert_one({"scan_id": "s1", "name": "requests", "type": "pypi"})
-        await db.dependencies.insert_one({"scan_id": "s1", "name": "left-pad", "type": "npm"})
-        await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "type": "go-module"})
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "requests", "version": "2.31.0", "type": "pypi"})
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "left-pad", "version": "1.3.0", "type": "npm"})
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "version": "v1.0.0", "type": "go-module"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "viapurl", "purl": "pkg:pypi/viapurl@1.0"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "rpmpkg", "type": "rpm"})  # no callgraph lang
         m = await build_component_language_map(db, "s1")
-        assert m["requests"] == frozenset({"python"})
-        assert m["left-pad"] == frozenset({"javascript", "typescript"})
-        assert m["mymod"] == frozenset({"go"})
-        assert m["viapurl"] == frozenset({"python"})
+        assert m["requests"] == [("2.31.0", frozenset({"python"}))]
+        assert m["left-pad"] == [("1.3.0", frozenset({"javascript", "typescript"}))]
+        assert m["mymod"] == [("v1.0.0", frozenset({"go"}))]
+        assert m["viapurl"] == [("", frozenset({"python"}))]
         assert "rpmpkg" not in m  # unsupported ecosystem omitted
 
 
@@ -240,7 +240,9 @@ class TestReachabilityAdjustedScoreWiring:
             language="python",
             analyzed_modules=["not-imported-pkg", "other"],
         )
-        enriched = _enrich_finding_from_callgraphs(finding, [cg], {"not-imported-pkg": frozenset({"python"})})
+        enriched = _enrich_finding_from_callgraphs(
+            finding, [cg], {"not-imported-pkg": [("1.0.0", frozenset({"python"}))]}
+        )
         assert enriched is True
         assert finding["details"]["reachability"]["is_reachable"] is False
         # 80 * 0.4 == 32.0
@@ -259,7 +261,7 @@ class TestReachabilityFailClosed:
             language="javascript",
             analyzed_modules=["lodash", "requests"],
         )
-        _enrich_finding_from_callgraphs(finding, [cg], {"requests": frozenset({"python"})})
+        _enrich_finding_from_callgraphs(finding, [cg], {"requests": [("1.0.0", frozenset({"python"}))]})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
         assert reach["unknown_reason"] == "language_not_analyzed"
@@ -283,7 +285,7 @@ class TestReachabilityFailClosed:
         # The producer published no analyzed_modules -> it inspected nothing we can name.
         finding = _vuln_finding(component="requests", risk_score=80.0)
         cg = _prepared(module_usage=_usage("other", "a.py"), language="python")
-        _enrich_finding_from_callgraphs(finding, [cg], {"requests": frozenset({"python"})})
+        _enrich_finding_from_callgraphs(finding, [cg], {"requests": [("1.0.0", frozenset({"python"}))]})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
         assert reach["unknown_reason"] == "no_coverage_universe"
@@ -293,7 +295,7 @@ class TestReachabilityFailClosed:
         # The producer resolved a universe, but never resolved this package.
         finding = _vuln_finding(component="requests", risk_score=80.0)
         cg = _prepared(module_usage=_usage("other", "a.py"), language="python", analyzed_modules=["other"])
-        _enrich_finding_from_callgraphs(finding, [cg], {"requests": frozenset({"python"})})
+        _enrich_finding_from_callgraphs(finding, [cg], {"requests": [("1.0.0", frozenset({"python"}))]})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
         assert reach["unknown_reason"] == "outside_coverage"
@@ -307,7 +309,9 @@ class TestReachabilityFailClosed:
             language="javascript",
             analyzed_modules=["lodash", "left-pad"],
         )
-        _enrich_finding_from_callgraphs(finding, [cg], {"left-pad": frozenset({"javascript", "typescript"})})
+        _enrich_finding_from_callgraphs(
+            finding, [cg], {"left-pad": [("1.0.0", frozenset({"javascript", "typescript"}))]}
+        )
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is False
         assert finding["details"]["adjusted_risk_score"] == 32.0
@@ -321,7 +325,9 @@ class TestReachabilityFailClosed:
             language="javascript",
             analyzed_modules=["lodash", "left-pad"],
         )
-        _enrich_finding_from_callgraphs(finding, [cg], {"left-pad": frozenset({"javascript", "typescript"})})
+        _enrich_finding_from_callgraphs(
+            finding, [cg], {"left-pad": [("1.0.0", frozenset({"javascript", "typescript"}))]}
+        )
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is False
         assert reach["analysis_level"] == "import"
@@ -335,7 +341,7 @@ class TestReachabilityFailClosed:
             language="javascript",
             analyzed_modules=["left-pad"],
         )
-        _enrich_finding_from_callgraphs(finding, [cg], {"org.example:left-pad": frozenset({"javascript"})})
+        _enrich_finding_from_callgraphs(finding, [cg], {"org.example:left-pad": [("1.0.0", frozenset({"javascript"}))]})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is True
         assert reach["import_locations"] == ["a.js"]
@@ -373,7 +379,9 @@ class TestPureEnrichmentEntryPoint:
         secret = {"type": "secret", "component": "config/aws.env", "details": {}}
         cg = _prepared(module_usage=_usage("requests", "app/client.py"), language="python")
 
-        enriched = enrich_findings_from_callgraphs([vuln, secret], [cg], {"requests": frozenset({"python"})})
+        enriched = enrich_findings_from_callgraphs(
+            [vuln, secret], [cg], {"requests": [("1.0.0", frozenset({"python"}))]}
+        )
 
         assert enriched == 1
         assert vuln["reachable"] is True
@@ -385,7 +393,7 @@ class TestPureEnrichmentEntryPoint:
         vuln = _vuln_finding(component="requests", risk_score=80.0)
         cg = _prepared(module_usage=_usage("requests", "app/client.py"), language="python")
 
-        enrich_findings_from_callgraphs([vuln], [cg], {"requests": frozenset({"python"})})
+        enrich_findings_from_callgraphs([vuln], [cg], {"requests": [("1.0.0", frozenset({"python"}))]})
 
         assert vuln["reachability_level"] == REACHABILITY_LEVEL_IMPORT
 

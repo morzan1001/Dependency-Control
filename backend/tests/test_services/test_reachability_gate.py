@@ -3,12 +3,14 @@ producer listed that package in ``analyzed_modules`` for a language covering its
 
 import pytest
 
+from app.core.constants import REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE, REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED
 from app.services.component_identity import canonical_module_key
 from app.schemas.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
-    _callgraph_can_falsify,
     _enrich_finding_from_callgraphs,
+    _lists_package,
     _prepare_callgraph,
+    component_language_map,
     reachability_display_tier,
 )
 
@@ -53,7 +55,7 @@ def _enrich(finding, prepared, component_languages=None):
     return finding["details"]["reachability"]
 
 
-_PY = {"requests": frozenset({"python"})}
+_PY = component_language_map([{"name": "requests", "version": "1.0.0", "type": "pypi"}])
 
 
 class TestFalsificationMatrix:
@@ -163,7 +165,7 @@ class TestAliasResolution:
     )
     def test_coverage_universe_resolves_either_spelling(self, component, analyzed):
         prepared = _prepared(language="java", analyzed_modules=[analyzed])
-        assert _callgraph_can_falsify(prepared, component, {component: frozenset({"java"})}) is True
+        assert _lists_package(prepared, component) is True
 
 
 class TestWriteSideMeetsReadSide:
@@ -176,6 +178,65 @@ class TestWriteSideMeetsReadSide:
 
         finding = _finding(component=component)
         prepared = _prepared(module_usage=_usage(stored_key), analyzed_modules=[stored_key])
-        reach = _enrich(finding, prepared, {component: frozenset({"python"})})
+        reach = _enrich(finding, prepared, component_language_map([{"name": component, "type": "pypi"}]))
         assert reach["is_reachable"] is True
         assert reach["import_locations"] == ["app/client.py"]
+
+
+class TestSameNameInTwoEcosystems:
+    """A name two ecosystems share resolves per finding; one ecosystem's graph cannot speak for the other."""
+
+    _DEPS = (
+        {"name": "semver", "version": "5.7.1", "type": "npm", "purl": "pkg:npm/semver@5.7.1"},
+        {"name": "semver", "version": "3.0.2", "type": "pypi", "purl": "pkg:pypi/semver@3.0.2"},
+    )
+
+    def _verdict(self, version):
+        finding = {**_finding(component="semver"), "version": version}
+        prepared = _prepared(module_usage=_usage("requests"), analyzed_modules=["semver", "requests"])
+        return _enrich(finding, prepared, component_language_map(self._DEPS))
+
+    def test_a_python_graph_cannot_falsify_the_npm_twin(self):
+        reach = self._verdict("5.7.1")
+
+        assert reach["is_reachable"] is None
+        assert reach["unknown_reason"] == REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED
+
+    def test_the_python_twin_is_still_falsified(self):
+        assert self._verdict("3.0.2")["is_reachable"] is False
+
+    def test_a_version_neither_lists_needs_every_ecosystem_covered(self):
+        assert self._verdict("9.9.9")["is_reachable"] is None
+
+
+class TestJvmCoverage:
+    """A Java callgraph covers Maven packages, but its missing imports are no evidence of absence."""
+
+    _COORDINATE = "com.fasterxml.jackson.core:jackson-databind"
+    _DEPS = (
+        {
+            "name": "jackson-databind",
+            "version": "2.15.0",
+            "type": "maven",
+            "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.15.0",
+        },
+    )
+
+    def _verdict(self, prepared):
+        finding = {**_finding(component=self._COORDINATE), "version": "2.15.0"}
+        return _enrich(finding, prepared, component_language_map(self._DEPS))
+
+    def test_a_listed_but_unimported_package_stays_unknown_for_that_reason(self):
+        prepared = _prepared(
+            language="java", module_usage=_usage("com.google.guava:guava"), analyzed_modules=[self._COORDINATE]
+        )
+
+        reach = self._verdict(prepared)
+
+        assert reach["is_reachable"] is None
+        assert reach["unknown_reason"] == REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE
+
+    def test_without_a_java_graph_the_verdict_asks_for_one(self):
+        reach = self._verdict(_prepared(language="python", analyzed_modules=["requests"]))
+
+        assert reach["unknown_reason"] == REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED

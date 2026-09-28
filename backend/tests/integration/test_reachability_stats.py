@@ -224,7 +224,8 @@ async def test_coverable_count_excludes_os_packages(db):
         await db.findings.insert_one(_finding(finding_id, component))
 
     stats = await calculate_comprehensive_stats(db, _SCAN_ID)
-    assert stats.reachability.coverable_count == 1
+    # A Java callgraph covers the Maven package; only the two OS packages stay out of reach.
+    assert stats.reachability.coverable_count == 2
 
 
 @pytest.mark.asyncio

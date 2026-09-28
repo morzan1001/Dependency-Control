@@ -22,7 +22,7 @@ class ReachabilityStats(BaseModel):
         0,
         description=(
             "Count of vulnerabilities in an ecosystem a callgraph could ever analyze "
-            "(npm/PyPI/Go); zero means reachability cannot help this project"
+            "(npm/PyPI/Go/Maven); zero means reachability cannot help this project"
         ),
     )
     reachable_count: int = Field(
