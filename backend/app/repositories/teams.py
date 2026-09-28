@@ -226,8 +226,8 @@ class TeamRepository:
     async def count(self, query: dict[str, Any] | None = None) -> int:
         return await self.collection.count_documents(query or {})
 
-    async def find_ids_by_member(self, user_id: str) -> list[str]:
-        return [str(doc["_id"]) async for doc in self.collection.find({_MEMBERS_USER_ID: user_id}, {"_id": 1})]
+    async def find_ids(self, query: dict[str, Any]) -> list[str]:
+        return [str(doc["_id"]) async for doc in self.collection.find(query, {"_id": 1})]
 
     async def members_by_team(self, team_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
         """Each existing team's member entries (user_id and role), in one read."""

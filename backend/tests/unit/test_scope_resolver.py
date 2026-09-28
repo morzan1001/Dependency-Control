@@ -31,17 +31,6 @@ async def test_project_scope_denied_nonmember():
 
 
 @pytest.mark.asyncio
-async def test_team_scope_expands_to_projects():
-    db = MagicMock()
-    user = MagicMock(id="u1", permissions=frozenset())
-    resolver = ScopeResolver(db, user)
-    resolver._check_team_member = AsyncMock(return_value=True)
-    resolver._list_team_project_ids = AsyncMock(return_value=["p1", "p2"])
-    result = await resolver.resolve(scope="team", scope_id="t1")
-    assert result.project_ids == ["p1", "p2"]
-
-
-@pytest.mark.asyncio
 async def test_team_scope_denied_for_a_user_the_team_does_not_list(db):
     await db.teams.insert_one({"_id": "t1", "name": "Alpha", "members": [{"user_id": "someone-else"}]})
     await db.projects.insert_one({"_id": "p1", "name": "P1", "team_ids": ["t1"]})

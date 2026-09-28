@@ -499,9 +499,6 @@ MAX_POLICY_AUDIT_PAGE: int = 200
 # MATCH order would drop high-EPSS/KEV CVEs. They keep the working set small via
 # pre-$group $project slimming, scalar $sum/$cond counts, $addToSet, and allowDiskUse.
 
-# Permission required to query analytics at global scope (all projects)
-PERMISSION_ANALYTICS_GLOBAL: str = "analytics:global"
-
 # Impact score calculation parameters
 IMPACT_REACH_MULTIPLIER_CAP: int = 10  # Max multiplier for affected projects
 IMPACT_FIX_AVAILABLE_BOOST: float = 1.2  # Boost for issues with available fixes

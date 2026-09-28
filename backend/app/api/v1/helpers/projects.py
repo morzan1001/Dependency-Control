@@ -49,7 +49,7 @@ async def build_user_project_query(
             {"members.user_id": str(user.id)},
             # An element test, not a scalar equality: a project answers to every team that owns it,
             # so a co-owner's members see it whichever owner a writer left in the scalar.
-            {"team_ids": {"$in": await team_repo.find_ids_by_member(str(user.id))}},
+            {"team_ids": {"$in": await team_repo.find_ids({"members.user_id": str(user.id)})}},
         ]
     }
 

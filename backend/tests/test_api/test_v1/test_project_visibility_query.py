@@ -11,7 +11,7 @@ from app.api.v1.helpers.projects import build_user_project_query
 from app.core.permissions import Permissions
 from app.models.user import User
 from app.repositories.teams import TeamRepository
-from app.services.analytics.scopes import ScopeResolver
+from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.chat.tools import ChatToolRegistry
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -119,6 +119,15 @@ async def test_the_analytics_scope_refuses_a_member_holding_no_project_read_perm
     resolved = await ScopeResolver(db, _user()).resolve(scope="user", scope_id=None)
 
     assert set(resolved.project_ids or []) == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("permissions", [(), ("auth:setup_2fa",), (Permissions.TEAM_READ,)])
+async def test_the_analytics_team_scope_refuses_a_member_holding_no_project_read_permission(permissions):
+    db = await _seeded_db()
+
+    with pytest.raises(ScopeResolutionError):
+        await ScopeResolver(db, _user(*permissions)).resolve(scope="team", scope_id="b")
 
 
 @pytest.mark.asyncio

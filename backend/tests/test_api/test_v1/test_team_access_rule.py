@@ -14,6 +14,7 @@ from app.models.user import User
 from app.schemas.team import TeamMemberUpdate
 from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.chat.tools import ChatToolRegistry
+from app.services.compliance.visibility import report_visibility_filter
 from app.services.chat.tools.definitions import TOOL_PERMISSIONS
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -114,6 +115,58 @@ class TestAnalyticsTeamScope:
         resolved = await ScopeResolver(db, caller).resolve(scope="team", scope_id="t-1")
 
         assert resolved.project_ids == ["p-mine"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "permission", [Permissions.PROJECT_READ_ALL, Permissions.ANALYTICS_GLOBAL, Permissions.SYSTEM_MANAGE]
+    )
+    async def test_a_caller_who_reads_every_project_opens_a_team_they_are_not_in(self, permission):
+        resolved = await ScopeResolver(await _db(), _user(permission, user_id="u-out")).resolve(
+            scope="team", scope_id="t-1"
+        )
+
+        assert sorted(resolved.project_ids or []) == ["p-mine", "p-other"]
+
+    @pytest.mark.asyncio
+    async def test_team_read_all_without_a_project_read_is_refused(self):
+        with pytest.raises(ScopeResolutionError):
+            await ScopeResolver(await _db(), _user(Permissions.TEAM_READ_ALL, user_id="u-out")).resolve(
+                scope="team", scope_id="t-1"
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_missing_team_is_refused_to_global_analytics(self):
+        with pytest.raises(ScopeResolutionError):
+            await ScopeResolver(await _db(), _user(Permissions.ANALYTICS_GLOBAL)).resolve(
+                scope="team", scope_id="t-missing"
+            )
+
+
+class TestTeamReportVisibility:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("caller", "expected"),
+        [
+            (_user(), set()),
+            (_user(Permissions.TEAM_READ), set()),
+            (_user(Permissions.TEAM_READ, Permissions.PROJECT_READ), {"t-1"}),
+            (_user(Permissions.TEAM_READ_ALL, Permissions.PROJECT_READ, user_id="u-out"), {"t-1", "t-2"}),
+            (_user(Permissions.ANALYTICS_GLOBAL, user_id="u-out"), {"t-1", "t-2"}),
+        ],
+    )
+    async def test_the_report_list_shows_the_teams_the_scope_resolves(self, caller, expected):
+        db = await _db()
+        visibility = await report_visibility_filter(db, caller)
+        team_branch = next((branch for branch in visibility["$or"] if branch["scope"] == "team"), None)
+        resolvable = set()
+        for team_id in ("t-1", "t-2"):
+            try:
+                await ScopeResolver(db, caller).resolve(scope="team", scope_id=team_id)
+            except ScopeResolutionError:
+                continue
+            resolvable.add(team_id)
+
+        assert (set(team_branch["scope_id"]["$in"]) if team_branch else set()) == expected == resolvable
 
 
 class TestTeamWrites:

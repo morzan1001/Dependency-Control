@@ -11,8 +11,11 @@ from typing import TYPE_CHECKING, Any, Literal, TypeVar
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
+from app.core.permissions import Permissions, has_permission
 from app.repositories.base import and_filters
+from app.repositories.projects import ProjectRepository
+from app.repositories.teams import TeamRepository
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +60,20 @@ def ensure_whole_scope(rows: list[_T]) -> list[_T]:
     return rows
 
 
+def may_query_global(user: "User") -> bool:
+    return has_permission(user.permissions, [Permissions.ANALYTICS_GLOBAL, Permissions.SYSTEM_MANAGE])
+
+
+def team_scope_filter(user: "User") -> dict[str, Any] | None:
+    """Teams whose analytics the user may query, None for none; team:read_all alone opens no project data."""
+    from app.api.v1.helpers.projects import may_read_projects
+    from app.api.v1.helpers.teams import visible_teams_filter
+
+    if may_query_global(user) or has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
+        return {}
+    return visible_teams_filter(user) if may_read_projects(user) else None
+
+
 @dataclass
 class ResolvedScope:
     scope: Scope
@@ -65,8 +82,6 @@ class ResolvedScope:
 
 
 class ScopeResolver:
-    SYSTEM_MANAGE = "system:manage"
-
     def __init__(self, db: AsyncIOMotorDatabase, user: "User | Any") -> None:
         self.db = db
         self.user = user
@@ -90,16 +105,25 @@ class ScopeResolver:
         return ResolvedScope(scope="project", scope_id=scope_id, project_ids=[scope_id])
 
     async def _resolve_team(self, scope_id: str | None) -> ResolvedScope:
+        """The team's projects the user may read; global analytics reads them all, reading a team opens none."""
+        from app.api.v1.helpers.projects import build_user_project_query
+
         if not scope_id:
             raise ScopeResolutionError("team scope requires scope_id")
-        if not await self._check_team_member(scope_id):
+        team_repo = TeamRepository(self.db)
+        teams = team_scope_filter(self.user)
+        if teams is None or not await team_repo.count(and_filters({"_id": scope_id}, teams)):
             raise ScopeResolutionError(f"User not authorised for team {scope_id}")
-        project_ids = await self._list_team_project_ids(scope_id)
-        return ResolvedScope(scope="team", scope_id=scope_id, project_ids=project_ids)
+        readable = {} if may_query_global(self.user) else await build_user_project_query(self.user, team_repo)
+        projects = await ProjectRepository(self.db).find_many_minimal(
+            and_filters(readable, {"team_ids": scope_id}), limit=scope_probe_limit()
+        )
+        return ResolvedScope(
+            scope="team", scope_id=scope_id, project_ids=[str(p.id) for p in ensure_whole_scope(projects)]
+        )
 
     def _resolve_global(self) -> ResolvedScope:
-        perms: frozenset[str] = getattr(self.user, "permissions", frozenset()) or frozenset()
-        if PERMISSION_ANALYTICS_GLOBAL not in perms and self.SYSTEM_MANAGE not in perms:
+        if not may_query_global(self.user):
             raise ScopeResolutionError("Global analytics requires analytics:global or system:manage")
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
 
@@ -119,27 +143,6 @@ class ScopeResolver:
             logger.warning("check_project_access failed unexpectedly for project %s", project_id, exc_info=True)
             return False
 
-    async def _check_team_member(self, team_id: str) -> bool:
-        from app.api.v1.helpers.teams import check_team_access
-
-        try:
-            await check_team_access(team_id, self.user, self.db)
-        except HTTPException:
-            return False
-        return True
-
-    async def _list_team_project_ids(self, team_id: str) -> list[str]:
-        """The team's projects the user may read; reading a team does not open its projects."""
-        from app.api.v1.helpers.projects import build_user_project_query
-        from app.repositories.projects import ProjectRepository
-        from app.repositories.teams import TeamRepository
-
-        readable = await build_user_project_query(self.user, TeamRepository(self.db))
-        projects = await ProjectRepository(self.db).find_many_minimal(
-            and_filters(readable, {"team_ids": team_id}), limit=scope_probe_limit()
-        )
-        return [str(p.id) for p in ensure_whole_scope(projects)]
-
     async def list_user_projects(self) -> list["ProjectWithScanId"]:
         """Every project the user may see, under the same query the project routes are filtered by,
         with the fields scan resolution and a name map need, so no caller reads them again.
@@ -149,8 +152,6 @@ class ScopeResolver:
         A read-all user gets an empty filter, which is the whole collection.
         """
         from app.api.v1.helpers.projects import build_user_project_query
-        from app.repositories.projects import ProjectRepository
-        from app.repositories.teams import TeamRepository
 
         query = await build_user_project_query(self.user, TeamRepository(self.db))
         projects = await ProjectRepository(self.db).find_many_with_scan_id(query, limit=scope_probe_limit())
