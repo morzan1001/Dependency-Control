@@ -468,7 +468,7 @@ class ResultAggregator:
                 finding.related_findings_omitted = siblings
 
     def get_dependency_enrichments(self) -> list[dict[str, Any]]:
-        """Enrichment entries for persistence: canonical purl (cross-scan key), name/version (per-scan match), payload."""
+        """Enrichment entries for persistence: canonical purl (the match key), name/version (purl-less match), payload."""
         return [
             {
                 "name": enrichment.name,

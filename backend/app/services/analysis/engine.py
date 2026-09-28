@@ -518,16 +518,20 @@ def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMa
     if not slim:
         return []
 
-    dep_filter: dict[str, Any] = {"scan_id": scan_id, "name": entry["name"], "version": entry["version"]}
     if entry["purl"]:
-        # Prefix match keeps qualifier variants together without touching a
-        # same-named package from another ecosystem.
-        dep_filter["purl"] = {"$regex": f"^{re.escape(entry['purl'])}([?#]|$)"}
+        # The canonical purl names package and version whatever each SBOM called it; the prefix
+        # match keeps qualifier variants together.
+        dep_filter: dict[str, Any] = {"scan_id": scan_id, "purl": {"$regex": f"^{re.escape(entry['purl'])}([?#]|$)"}}
     else:
         # Without a purl the enrichment describes an unidentified package; restrict it to
         # the equally purl-less docs so it cannot stamp a same-named package of another
         # ecosystem with its licence.
-        dep_filter["purl"] = {"$in": [None, ""]}
+        dep_filter = {
+            "scan_id": scan_id,
+            "name": entry["name"],
+            "version": entry["version"],
+            "purl": {"$in": [None, ""]},
+        }
 
     if "license" not in slim:
         return [UpdateMany(dep_filter, {"$set": slim})]

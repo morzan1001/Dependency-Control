@@ -203,3 +203,16 @@ def test_empty_payload_entries_are_skipped():
     _run(db, [_entry("lodash", "4.17.21", "pkg:npm/lodash@4.17.21", {})])
 
     assert asyncio.run(db.dependency_enrichments.count_documents({})) == 0
+
+
+def test_every_spelling_of_one_purl_receives_the_enrichment():
+    """Two SBOMs of one scan name the same purl differently; the enrichment kept only the first name."""
+    db = FakeDatabase()
+    purl = "pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1"
+    _insert_dep(db, name="log4j-core", version="2.17.1", purl=purl)
+    _insert_dep(db, name="org.apache.logging.log4j:log4j-core", version="2.17.1", purl=purl)
+
+    _run(db, [_entry("log4j-core", "2.17.1", purl, {"license_category": "permissive"})])
+
+    for name in ("log4j-core", "org.apache.logging.log4j:log4j-core"):
+        assert _find_dep(db, name=name)["license_category"] == "permissive"
