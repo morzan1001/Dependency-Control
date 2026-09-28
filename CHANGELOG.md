@@ -1,14 +1,278 @@
 # Upgrade notes
 
-These notes cover the upgrade to 1.9.41. It needs one index build before the rollout, two data migrations and a retention review after it, and one index drop once 1.9.41 is confirmed stable. Three optional checks look for abuse of the fixed permission gaps from before the upgrade. It also changes several behaviours that users and operators will notice.
+These notes cover the upgrade to 1.9.41. Run the steps in this order. Run mongosh commands in-pod against the application database, and Python and bash snippets in a backend pod, from the working directory where `app` is importable.
 
-## Before the rollout: build the findings index
+Before the rollout, resolve each gate before the first new pod starts:
+
+1. Build the findings index.
+2. Check partial restores made before the restore fix.
+3. Resolve email addresses that differ only in case, then add the case-insensitive unique index.
+4. Check what each team-syncing GitLab token can see, and decide per instance.
+5. Check SMTP in the database settings.
+6. Set the base URL of GitHub Enterprise Server instances that have none.
+7. Review synced team members and active accounts that are not verified (a review, not a gate).
+
+Deploy blocker, also before the rollout: fill the allowlists of the github.com and gitlab.com instances, or switch their auto-create off.
+
+After the rollout, once the last pod on the previous image has terminated:
+
+1. End every session. Mandatory on every installation.
+2. Remove TruffleHog plaintext secrets from `analysis_results`.
+3. Rewrite archive bundles that still hold TruffleHog plaintext.
+4. Backfill `first_seen_at`.
+5. Purge leaked chat tool results, then rotate the exposed secrets.
+6. Rotate GitHub Enterprise tokens that reached github.com.
+7. Review GitLab bindings set through the old unchecked path.
+8. Review the retention of projects created in the dialog.
+
+Once 1.9.41 is confirmed stable, drop the old findings index. Four optional checks look for abuse of the fixed gaps from before the upgrade. The behaviour changes that users and operators will notice are listed at the end.
+
+## Before the rollout (gate): build the findings index
 
 The `(project_id, component, type)` findings index grows into a covering index for the first-detection lookup. Startup's `create_index` would build it in-line on the large findings collection and block pod start until the build finishes. Build it in-pod with mongosh before rolling out the new image, with the exact key, so startup finds it and does nothing. The old image does not read it, so building it early is harmless.
 
 ```js
 db.findings.createIndex({ project_id: 1, component: 1, type: 1, finding_id: 1, version: 1, first_seen_at: 1, scan_created_at: 1 })
 ```
+
+## Before the rollout (gate): check partial restores made before the restore fix
+
+A restore now marks its scan `restore_in_progress` until its last write, and housekeeping keeps the archive metadata and bundle of an unfinished restore. A partial restore from before 1.9.41 carries `restored_at` without the flag, so it looks complete, and the next housekeeping pass would drop its metadata and orphan its bundle. Completed restores need nothing.
+
+Run this right before the rollout, and at the latest before the first housekeeping pass on the new image. It lists restored scans whose archive metadata still exists, with the expected and found counts:
+
+```js
+db.archive_metadata.aggregate([
+  {$lookup: {from: "scans", localField: "scan_id", foreignField: "_id", as: "scan"}},
+  {$unwind: "$scan"},
+  {$match: {"scan.restored_at": {$ne: null}, "scan.restore_in_progress": {$ne: true},
+            $expr: {$gt: ["$scan.restored_at", "$archived_at"]}}},
+  {$lookup: {from: "dependencies", localField: "scan_id", foreignField: "scan_id", pipeline: [{$count: "n"}], as: "deps"}},
+  {$lookup: {from: "findings", localField: "scan_id", foreignField: "scan_id", pipeline: [{$count: "n"}], as: "fnd"}},
+  {$project: {scan_id: 1, archived_at: 1, restored_at: "$scan.restored_at",
+              dependencies_expected: "$dependencies_count", dependencies_found: {$ifNull: [{$first: "$deps.n"}, 0]},
+              findings_expected: "$findings_count", findings_found: {$ifNull: [{$first: "$fnd.n"}, 0]}}}
+])
+```
+
+For every row where a found count is below its expected count, mark the scan unfinished. Housekeeping then keeps its metadata and bundle, and the next restore of the scan rolls back the leftovers and restores it again:
+
+```js
+db.scans.updateOne({_id: "<scan_id>"}, {$set: {restore_in_progress: true}, $unset: {restored_at: ""}})
+```
+
+Marking a scan is safe under the old image too: its housekeeping and retention skip a pinned scan without `restored_at`, and restoring it answers 409 until the new image runs. Rows whose counts match are completed restores whose metadata cleanup failed; leave them to housekeeping. An empty result means there is nothing to do.
+
+## Before the rollout (gate): resolve email addresses that differ only in case
+
+Email lookups are now case-insensitive: login by email, forgot and reset password, verification, the OIDC callback, team and project member add, the CI initial member and team sync. Take a local `Alice@x` and an OIDC `alice@x`: the OIDC login can resolve to the local account and be refused, and so can the password login the other way round. List the pairs. The result must be empty before the rollout:
+
+```js
+db.users.aggregate([
+  { $group: { _id: { $toLower: "$email" }, n: { $sum: 1 },
+      accounts: { $push: { id: "$_id", username: "$username", email: "$email",
+        auth_provider: "$auth_provider", is_verified: "$is_verified", is_active: "$is_active" } } } },
+  { $match: { n: { $gt: 1 } } }
+])
+```
+
+A person decides each pair: which account keeps the address, and whether to merge or delete the other. There is no automatic fix. Once the query returns nothing, add the case-insensitive unique index next to the exact `email_1` that startup creates. MongoDB allows a second index on the same key when its collation differs:
+
+```js
+db.users.createIndex({ email: 1 }, { unique: true, name: "email_ci_unique", collation: { locale: "en", strength: 2 } })
+```
+
+Optional and cosmetic, at any time after the pairs are resolved: lowercase the stored legacy addresses. All lookups ignore case, so correctness does not depend on it.
+
+```js
+db.users.updateMany({ email: { $regex: "[A-Z]" } }, [{ $set: { email: { $toLower: "$email" } } }])
+```
+
+## Before the rollout (gate): check what each team-syncing GitLab token can see
+
+Team sync now matches a member only by an email GitLab vouches for, and only against verified DC accounts. With an administrator's token that is the address in the members listing. With any other token the listing carries no emails, so each member costs one `GET /users/:id` lookup of the public profile email. GitLab rate-limits that lookup per token user, to 300 per 10 minutes by default. Synced teams then shrink to the members whose public email matches a verified account, and where the limit is hit they freeze. Users lose the project access those teams gave them.
+
+Run this script in a backend pod before the rollout. It reads each instance's stored token and pages through every group bound to a team. A group the token cannot read is reported and skipped, not counted:
+
+```bash
+python - <<'PY'
+import asyncio, httpx
+from motor.motor_asyncio import AsyncIOMotorClient
+from app.core.config import settings
+
+async def members_of(c, gid):
+    """Return (rows, None) or (None, reason) when the token cannot read the group."""
+    rows, page = [], "1"
+    while page:
+        try:
+            r = await c.get(f"/groups/{gid}/members/all", params={"per_page": 100, "page": page})
+        except httpx.HTTPError as exc:
+            return None, f"request failed: {exc!r}"
+        if r.status_code != 200:
+            return None, f"HTTP {r.status_code}"
+        try:
+            chunk = r.json()
+        except ValueError:
+            return None, "answer is not JSON"
+        if not isinstance(chunk, list):
+            return None, f"answer is not a list: {str(chunk)[:120]}"
+        rows += chunk
+        page = r.headers.get("x-next-page")
+    return rows, None
+
+async def main():
+    db = AsyncIOMotorClient(settings.MONGODB_URL)[settings.DATABASE_NAME]
+    async for inst in db.gitlab_instances.find({"sync_teams": True, "is_active": {"$ne": False}}):
+        iid, base = str(inst["_id"]), inst["url"].rstrip("/")
+        if not inst.get("access_token"):
+            print(f"{inst['name']}: no access token stored; team sync cannot read any group")
+            continue
+        async with httpx.AsyncClient(base_url=base + "/api/v4", timeout=30,
+                                     headers={"PRIVATE-TOKEN": inst["access_token"]}) as c:
+            try:
+                r = await c.get("/user")
+            except httpx.HTTPError as exc:
+                print(f"{inst['name']}: GET /user failed: {exc!r}; instance skipped")
+                continue
+            if r.status_code != 200:
+                print(f"{inst['name']}: GET /user answered HTTP {r.status_code}; token invalid, instance skipped")
+                continue
+            me = r.json()
+            with_email, without_email, unreadable = set(), set(), []
+            async for team in db.teams.find({"bindings.instance_id": iid}, {"name": 1, "bindings": 1}):
+                for b in team["bindings"]:
+                    if b["instance_id"] != iid:
+                        continue
+                    rows, reason = await members_of(c, b["external_id"])
+                    if rows is None:
+                        unreadable.append((team.get("name"), b["external_id"], reason))
+                        continue
+                    for m in rows:
+                        if isinstance(m, dict) and "id" in m:
+                            (with_email if m.get("email") else without_email).add(m["id"])
+            without_email -= with_email
+            print(f"{inst['name']}: token user={me.get('username')} is_admin={bool(me.get('is_admin'))} "
+                  f"members with listed email={len(with_email)}, needing GET /users/:id={len(without_email)}")
+            for team_name, gid, reason in unreadable:
+                print(f"  UNREADABLE group {gid} (team {team_name!r}): {reason}; not counted above")
+            s = await c.get("/application/settings")
+            if s.status_code == 200:
+                js = s.json()
+                print(f"  users_get_by_id_limit={js.get('users_get_by_id_limit')} "
+                      f"excluded users={js.get('users_get_by_id_limit_allowlist_raw')!r}")
+            elif without_email:
+                print(f"  token cannot read the limit; a GitLab administrator runs: curl -sH "
+                      f"'PRIVATE-TOKEN: <admin token>' {base}/api/v4/application/settings | jq "
+                      f"'{{users_get_by_id_limit, users_get_by_id_limit_allowlist_raw}}'")
+
+asyncio.run(main())
+PY
+```
+
+Read the output per instance:
+
+- `needing GET /users/:id=0`: the listing carries the emails, so the token reads as an administrator. No lookups, no limit.
+- Any other count: the token is not an effective administrator and `users_get_by_id_limit` applies. Get the limit and the "Excluded users" list with the printed curl, or in Admin > Settings > Network > Users API rate limits. The token user is unlimited when the limit is 0 or when the printed username is in "Excluded users". For a group access token that username is its `group_<id>_bot_...` user. Without either, a group of M members that need a lookup stays frozen for about M / limit x 10 minutes of ingests, when its entries are first filled and again when they are refilled a day later.
+- Admin Mode: where GitLab's Admin Mode is on, an administrator's token acts as an administrator only with the `admin_mode` scope. `is_admin=True` alone does not show that; the "needing" count does.
+- `UNREADABLE group ...`: the token cannot read that bound group, and team sync cannot either. Fix the token's access or the binding before the rollout.
+- `no access token stored` or `GET /user answered HTTP 401`: team sync on that instance cannot work at all. Fix the token first.
+- Independent of the limit, a non-admin token keeps only the members whose public GitLab email matches a verified DC account.
+- On gitlab.com neither remedy exists: customers get no administrator tokens and cannot change the limit. There the listing carries emails only for enterprise users, and only when the token user may read them.
+
+Decide per instance before the rollout: switch to an administrator's token, have a GitLab administrator add the token user to "Excluded users", or accept the shrink.
+
+## Before the rollout (gate): check SMTP in the database settings
+
+Admin password reset (`POST /users/{id}/reset-password`) now only sends mail. It no longer returns a manual link, and it answers 501 "Email server not configured" when `system_settings` has no `smtp_host`. Self-service email changes need the same setting. Accounts verify their email through the mailed link, and adding a member by email now needs a verified account. The environment variable `SMTP_HOST` does not count. Check:
+
+```js
+db.system_settings.findOne({ _id: "current" }, { smtp_host: 1 })
+```
+
+If it is empty and admins reset passwords, configure SMTP in System Settings before the rollout.
+
+## Before the rollout (gate): set the base URL of GitHub Enterprise Server instances
+
+After the rollout, a GitHub instance with an empty base URL (`github_url`) and an issuer other than GitHub Actions makes no GitHub API calls at all: no team sync, PR decoration, branch listing or pickers. The old image already sends API calls to `<github_url>/api/v3` when the URL is set, so setting it before the rollout is safe. List the instances without it, then set each one's URL:
+
+```js
+db.github_instances.find(
+  { github_url: { $in: [null, ""] }, url: { $not: /^https:\/\/token\.actions\.githubusercontent\.com(\/|$)/ } },
+  { name: 1, url: 1, is_active: 1, sync_teams: 1 })
+db.github_instances.updateOne({ _id: "<id>" }, { $set: { github_url: "https://<ghes-host>" } })
+```
+
+Running the find again returns nothing once every instance is set.
+
+## Before the rollout (review): synced members and accounts that are not verified
+
+Identity matching now uses verified accounts only. These read-only reviews show who is affected; they do not block the rollout.
+
+Synced team members whose account is unverified drop out at the next sync, and with them the project roles the team gave them:
+
+```js
+db.teams.aggregate([
+  {$unwind: "$members"},
+  {$match: {"members.source": {$regex: "^(gitlab|github)"}}},
+  {$lookup: {from: "users", localField: "members.user_id", foreignField: "_id", as: "u"}},
+  {$unwind: "$u"},
+  {$match: {"u.is_verified": {$ne: true}}},
+  {$project: {team: "$name", user: "$u.username", email: "$u.email", source: "$members.source"}}
+])
+```
+
+Members matched by username so far, with a verified account whose provider email differs from the DC email, drop out too. Mongo cannot show them; the next sync logs them at DEBUG.
+
+Active unverified accounts are no longer found by team member add, project invite by email, CI auto-create or team sync. They verify through the mailed link if SMTP is configured. Mark an account verified only after checking it by hand, never in bulk, because a squatted address would then become trusted:
+
+```js
+db.users.find({is_active: {$ne: false}, is_verified: {$ne: true}}, {username: 1, email: 1, auth_provider: 1})
+```
+
+## Deploy blocker: fill the allowlists of the github.com and gitlab.com instances
+
+Every repository on github.com and every project on gitlab.com can mint a token for the shared issuers `https://token.actions.githubusercontent.com` and `https://gitlab.com`. From 1.9.41, an instance on a shared issuer with auto-create on and an empty allowlist stops auto-creating: a token for an unknown repository gets 403. Tokens of projects already bound keep ingesting. Every edit of that instance (`PUT`) answers 400 until the list is filled or auto-create is switched off. Before the rollout, fill `allowed_owner_ids` (GitHub) or `allowed_namespaces` (GitLab) for these instances, or switch their auto-create off in Settings > CI/CD Instances.
+
+The old image ignores the unknown field, so setting it before the rollout is safe. The ids must be strings: `allowed_owner_ids: [123]` fails `GitHubInstance` validation, and every ingest on that instance would answer 500.
+
+Find the owners in use (replace `<GH_INSTANCE_ID>`):
+
+```js
+db.projects.aggregate([
+  { $match: { github_instance_id: "<GH_INSTANCE_ID>" } },
+  { $group: { _id: { $arrayElemAt: [{ $split: ["$github_repository_path", "/"] }, 0] }, projects: { $sum: 1 } } },
+  { $sort: { projects: -1 } }
+])
+```
+
+Look up each legitimate owner's numeric id with `curl -s https://api.github.com/orgs/<org> | jq .id`, or `/users/<login>` for a user account. Then set the list:
+
+```js
+db.github_instances.updateOne(
+  { _id: "<GH_INSTANCE_ID>", url: "https://token.actions.githubusercontent.com" },
+  { $set: { allowed_owner_ids: ["<ORG_ID_1>", "<ORG_ID_2>"], last_modified_at: new Date() } }
+)
+```
+
+For a gitlab.com instance, set its top-level groups:
+
+```js
+db.gitlab_instances.updateOne({ url: "https://gitlab.com" }, { $set: { allowed_namespaces: ["<top-level-group>"], last_modified_at: new Date() } })
+```
+
+Both updates must report `matchedCount: 1`; 0 means the filter did not match the stored `_id` or `url`, for example a URL stored with a trailing slash. Once a list is set, tokens from other owners or namespaces get 403 even for projects already bound, and so does a GitHub token without the `repository_owner_id` claim. Projects the aggregation shows under owners that are not yours were created by outsiders: review and delete them. After the rollout both lists can also be edited in Settings > CI/CD Instances.
+
+## After the rollout (mandatory): end every session
+
+Run this on every installation, once the last pod on the previous image has terminated:
+
+```js
+db.users.updateMany({}, { $set: { last_logout_at: new Date() } })
+```
+
+Tokens now name the user id as their subject, and `/login/refresh-token` resolves it by id. Before 1.9.41, `PATCH /users/me` let anyone rename themselves to another account's id, log in and rename back. Ids appear in team and project member lists. The refresh token they kept names the victim's id, and the new image resolves it to the victim and keeps re-minting tokens until this command runs. Current usernames show no trace of it, so this step cannot depend on a collision check. An old pod that still serves keeps minting username tokens, hence after the last old pod.
+
+Afterwards every earlier token has an `iat` before every account's `last_logout_at` and is refused (bearer 401, refresh 403), and everyone logs in again. The alternative is to rotate `SECRET_KEY` with the deploy. That also invalidates every earlier token, and in addition every open email-verification and password-reset link, all signed with the same key.
 
 ## After the rollout: remove TruffleHog plaintext secrets
 
@@ -62,7 +326,62 @@ print("sampled ids changed:", [i for i, before in sample.items() if ids(coll.fin
 
 The last line recomputes the ids of up to 50 sampled documents with the deployed normalizer and compares them with the ids from before pass 1. An empty list shows that pass 1 hashed exactly the way the model does.
 
-Archive bundles already in S3 keep `Raw` until retention deletes them, and no Mongo migration can reach them. A restore passes TruffleHog results through the same model, so a restored scan gets `RawHash` without `Raw` and identical finding ids, and nothing needs re-running after a restore.
+Archive bundles already in S3 still hold `Raw`, and no Mongo migration can reach them; the bundle rewrite in the next section removes it. A restore passes TruffleHog results through the same model, so a restored scan gets `RawHash` without `Raw` and identical finding ids, and nothing needs re-running after a restore.
+
+## After the rollout: rewrite archive bundles that still hold TruffleHog plaintext
+
+From 1.9.41, downloads and new bundles carry no `Raw`, but bundles archived before still hold it at rest in S3. This one-off rewrite replaces each affected bundle with a copy whose TruffleHog findings carry `RawHash` instead. Run it after the rollout, in a backend pod (`kubectl exec -it <backend-pod> -- python`), in a window with no restore running. Start with `DRY_RUN = True`, which only lists the affected bundles:
+
+```python
+import asyncio, time
+from app.core.encryption import is_encryption_enabled
+from app.core.s3 import delete_object, upload_stream
+from app.db.mongodb import connect_to_mongo, get_database
+from app.models.archive import ArchiveMetadata
+from app.services.archive import _encrypt_stream, _open_bundle_stream, stream_bundle_for_download
+from app.services.archive_bundle import read_bundle_frames
+
+DRY_RUN = True
+
+async def has_plaintext(meta):
+    async for e in read_bundle_frames(_open_bundle_stream(meta)):
+        d = e.get("data") or {}
+        if e["type"] == "doc" and e["collection"] == "analysis_results" and d.get("analyzer_name") == "trufflehog":
+            if any("Raw" in f for f in (d.get("result") or {}).get("findings") or []):
+                return True
+    return False
+
+async def main():
+    await connect_to_mongo()
+    db = await get_database()
+    async for doc in db.archive_metadata.find({}):
+        meta = ArchiveMetadata.model_validate(doc)
+        if not await has_plaintext(meta):
+            continue
+        print("plaintext:", meta.scan_id, meta.s3_key)
+        if DRY_RUN:
+            continue
+        payload, ctype = stream_bundle_for_download(meta), "application/gzip"
+        if is_encryption_enabled():
+            payload, ctype = _encrypt_stream(payload), "application/octet-stream"
+        new_key = f"{meta.project_id}/{meta.scan_id}-{int(time.time())}.bundle"
+        size = await upload_stream(new_key, payload, content_type=ctype, bucket=meta.s3_bucket)
+        res = await db.archive_metadata.update_one(
+            {"scan_id": meta.scan_id, "s3_key": meta.s3_key},
+            {"$set": {"s3_key": new_key, "compressed_size_bytes": size}},
+        )
+        if res.modified_count == 1:
+            await delete_object(meta.s3_key, bucket=meta.s3_bucket)
+        print("rewritten:", meta.scan_id, "->", new_key, size)
+    await asyncio.sleep(1)  # let the S3 reads left open after each footer close before shutdown
+
+asyncio.run(main())
+```
+
+- A second dry run afterwards lists nothing once every bundle is clean. The snippet has only run against the test fakes, not against real S3 and MongoDB, so compare the dry-run list with the rewritten lines.
+- It uploads the new object and swaps the metadata before it deletes the old object, so a crash midway leaves the old bundle referenced. The orphan reaper removes an unreferenced new object after `ARCHIVE_ORPHAN_MIN_AGE_HOURS`.
+- New bundles are encrypted with the live key, the same rule as archiving.
+- Versioning and backups: check the bucket for object versioning (`aws s3api get-bucket-versioning --bucket <bucket>`, or on GCS `gcloud storage buckets describe gs://<bucket> --format="value(versioning)"`) and for backups or replicas. With versioning on, `delete_object` only adds a delete marker, and the old plaintext versions stay. Remove them explicitly: list them with `list-object-versions` and delete each `VersionId` of the old keys. Backups of the bucket hold the plaintext too.
 
 ## After the rollout: backfill `first_seen_at`
 
@@ -109,6 +428,59 @@ db.tmp_first_seen_backfill.drop()
 
 Scans restored from archives written before this release come back without `first_seen_at`. Re-running steps 2 to 4 after such a restore stamps them.
 
+## After the rollout: purge leaked chat tool results, then rotate the exposed secrets
+
+Before 1.9.41 the chat and MCP tools `list_project_webhooks`, `get_system_settings` and `get_project_details` returned webhook secrets and headers, system integration secrets and the project API key hash. Chat history still holds those results in `chat_messages.tool_calls[].result`. Run this after the rollout, because old pods keep writing them:
+
+```js
+const leaky = ["list_project_webhooks", "get_system_settings", "get_project_details"];
+db.chat_messages.updateMany(
+  { "tool_calls.tool_name": { $in: leaky } },
+  { $set: { "tool_calls.$[t].result": { error: "Result redacted: it contained credentials" } } },
+  { arrayFilters: [ { "t.tool_name": { $in: leaky } } ] })
+```
+
+Then rotate every project webhook `secret` and any credential in webhook `headers`. If an admin used `get_system_settings` through chat or an external MCP client, rotate the system integration tokens as well: GitHub and GitLab tokens, the OIDC client secret, the SMTP password, the Slack and Mattermost tokens, and the OSM API key. Running the update again reports `modifiedCount: 0`. Assistant replies (`chat_messages.content`) may repeat a secret in prose; the update does not reach them.
+
+## After the rollout: rotate GitHub Enterprise tokens that reached github.com
+
+Before 1.9.41, GHSA enrichment sent an instance token to api.github.com whenever `system_settings.github_token` was empty. A GHES instance's PAT went too when that instance was the one picked. Every GHES instance without a base URL also sent its PAT there with its own API calls. Rotate those PATs after the rollout; before it, a new PAT would leak the same way. List the candidates, and check the settings token: if it is empty, or was empty at any time, the instance fallback was in use:
+
+```js
+db.github_instances.find({ is_active: true, access_token: { $nin: [null, ""] } }, { name: 1, url: 1, github_url: 1, created_at: 1 })
+db.system_settings.findOne({ _id: "current" }, { github_token: 1 })
+```
+
+## After the rollout: review GitLab bindings set through the old unchecked path
+
+Before 1.9.41 any project admin could bind their project to any GitLab project through `PUT /api/v1/projects/{id}`. 1.9.41 stops new bindings of that kind, but bindings carry no provenance, so an existing one set that way cannot be told apart from one set by OIDC ingest. These read-only reviews list the candidates.
+
+Bindings to an instance that does not exist, possible only through the old unchecked path:
+
+```js
+db.projects.aggregate([
+  {$match: {gitlab_instance_id: {$type: "string"}}},
+  {$lookup: {from: "gitlab_instances", localField: "gitlab_instance_id", foreignField: "_id", as: "inst"}},
+  {$match: {inst: {$size: 0}}},
+  {$project: {name: 1, gitlab_instance_id: 1, gitlab_project_id: 1, gitlab_project_path: 1}}
+])
+```
+
+Bound projects whose name no longer matches the bound path. Ingest keeps name and path equal for the projects it creates, so review who administers these:
+
+```js
+db.projects.find(
+  {gitlab_instance_id: {$type: "string"}, $expr: {$ne: ["$name", "$gitlab_project_path"]}},
+  {name: 1, gitlab_instance_id: 1, gitlab_project_id: 1, gitlab_project_path: 1, "members.user_id": 1, "members.role": 1}
+)
+```
+
+Only if a binding is confirmed as illegitimate, unbind it:
+
+```js
+db.projects.updateOne({_id: "<id>"}, {$set: {gitlab_instance_id: null, gitlab_project_id: null, gitlab_project_path: null}})
+```
+
 ## After the rollout: review the retention of projects created in the dialog
 
 Since 1.4.61 (2026-03-03) the create-project dialog has offered Archive and None as the retention action, but until 1.9.41 every project it created was stored with `retention_action: "delete"`. The upgrade does not correct these projects. While the system retention mode is `project`, housekeeping keeps deleting their expired scans until someone corrects the setting. The choice was never stored, so no migration can restore it.
@@ -133,7 +505,7 @@ db.findings.dropIndex("project_id_1_component_1_type_1")
 
 ## Optional after the rollout: look for abuse from before the fix
 
-The permission fixes stop three abuses but do not undo what happened before the upgrade. The queries are read-only. Run them with in-pod mongosh.
+The fixes stop four abuses but do not undo what happened before the upgrade. The queries are read-only. Run them with in-pod mongosh.
 
 Before 1.9.41 a `team:read_all` holder could add team members and make themselves team admin. This lists team admins who hold `team:read_all` but neither `team:update` nor `system:manage`. Team membership does not record who added a member, so the rows are candidates to review with the team, not proof.
 
@@ -169,16 +541,77 @@ db.callgraphs.aggregate([
 
 If it returns rows, review them, then delete them with `db.callgraphs.deleteMany({ _id: { $in: [<ids from the query>] } })`. The affected scans keep the injected verdicts until a callgraph is uploaded again for the same pipeline; a rescan replaces the run with one whose reachability stays pending until its callgraph arrives. To replace each affected run now, call `POST /api/v1/projects/<scan_project_id>/scans/<scan_id>/rescan`.
 
+Before 1.9.41 a chat or MCP tool call could pass an object, such as a MongoDB query operator, where an id was declared, for example to read another team's details. MCP arguments are not stored, but chat tool calls are. This lists stored chat tool calls that carried an object-valued argument:
+
+```js
+db.chat_messages.aggregate([
+  {$unwind: "$tool_calls"},
+  {$project: {conversation_id: 1, created_at: 1, tool: "$tool_calls.tool_name",
+    args: {$objectToArray: {$cond: [{$eq: [{$type: "$tool_calls.arguments"}, "object"]}, "$tool_calls.arguments", {}]}}}},
+  {$match: {args: {$elemMatch: {v: {$type: "object"}}}}}
+])
+```
+
 ## Behaviour changes
+
+### Sign-in, sessions and accounts
 
 - Bearer authentication accepts only access tokens. A refresh token, or a token without a `type` claim, sent as `Authorization: Bearer` now gets 401. A bearer token blacklisted at logout still gets 401, now with the detail "Could not validate credentials" instead of "Token has been revoked".
 - `/login/refresh-token` answers every refused token with 403 "Could not validate credentials". A wrongly typed, subject-less or logout-revoked token used to get the detail "Invalid token type", "Invalid token" or "Token revoked".
+- Everyone must log in again once. Tokens now carry the user id as their subject, and the mandatory session step above refuses every earlier token. Afterwards, renaming a user no longer logs them out.
+- Usernames can no longer be changed in self-service. `PATCH /users/me` answers 422 when the body contains `username`, `email` or any unknown field, and `PUT /users/{own id}` with either answers 403, for administrators too. The profile shows both read-only.
+- Local accounts change their email through a confirmation link. `POST /api/v1/users/me/email` stores `pending_email` and mails a link to the new address; `POST /api/v1/confirm-email-change` (frontend route `/confirm-email`) swaps it in and marks it verified. It needs SMTP in the database settings (501 without it). User responses carry `pending_email`.
+- An admin can no longer change the email of an account from an identity provider (400). On a local account the new address is stored lowercased and marks the account unverified; with `enforce_email_verification` on, the user must verify again. A blank username and a null username or email answer 422.
+- Email lookups ignore case everywhere, and uniqueness checks refuse every case variant of a registered address. New signups and admin-created users are stored lowercased.
+- An OIDC login whose `email_verified` claim is false in any case or padding, or `"0"` or `0`, is refused with 400 "The identity provider has not verified this email address". An absent claim still logs in.
+- Admin password reset (`POST /users/{id}/reset-password`) never returns a link. It sends the mail and answers `{"message": "Password reset email sent"}`, or 501 "Email server not configured" without SMTP in the database settings. The user dialog no longer shows a manual link.
+- User management (`PUT /users/{id}` on another user, `POST /users/{id}/migrate`, `/reset-password`, `/2fa/disable`, `DELETE /users/{id}`) answers 403 "Cannot manage a user who holds permissions you don't hold" when the target holds a permission the caller lacks, unless the caller holds `system:manage`. A permission edit can no longer revoke a permission the caller lacks, and no longer fails because the target keeps one.
+
+### Teams, projects and permissions
+
 - `team:read_all` is read-only. It still reads every team, but adding or changing members, deleting a team and writing team webhooks now need membership with the role the action requires, or the global permission for it such as `team:update` or `team:delete`. The frontend no longer offers team admin actions to users whose only team grant is `team:read_all`.
 - `project:read_all` no longer writes project webhooks. Creating, updating, deleting and test-firing a project's webhooks with `webhook:create`, `webhook:update` or `webhook:delete` now also needs membership of the project, direct or through an owning team, or `project:update` or `project:delete`. Accounts that combine `project:read_all` with a webhook permission, such as automation or auditor accounts, now get 403 on projects they are not a member of, and the frontend no longer offers them the webhook controls there. `project:read_all` with `webhook:read` still lists and reads every project's webhooks.
 - `GET /api/v1/analytics/projects/{project_id}/dependency-tree` answers 404 "No scan found for this project" for a `scan_id` of another project, which it used to serve, and 404 "Project not found" instead of 403 for an unknown project.
-- Callgraph uploads ignore a `scan_id` in the request body. The scan is always derived from the project in the path together with `pipeline_id` and the commit. Clients that still send `scan_id` keep working, and the field is dropped.
-- The `endpoint` label of `http_requests_total`, `http_request_duration_seconds`, `http_request_size_bytes` and `http_response_size_bytes` now carries the matched route template, for example `/api/v1/projects/{project_id}`, instead of the raw path with ids masked as `{id}`. Unmatched requests share the label `<unmatched>`, and `http_requests_in_progress` is labelled by `method` only. Dashboards and alerts that filter on raw paths need updating. The bundled Grafana dashboard only groups by `endpoint` and needs no change.
 - New projects keep the retention action and analyzer settings chosen at creation. They used to be stored with `retention_action: "delete"` and no analyzer settings. When the system retention mode is `global`, the global retention settings still apply. Projects created before 1.9.41 with Archive or None are still stored as Delete, and housekeeping keeps deleting their scans until an owner corrects the setting. See "review the retention of projects created in the dialog" above.
+- Team member add and project invite by email find only accounts with a verified email, in any case, and otherwise answer 404 "No user has verified this email address". Accounts created by an admin, or by a signup whose link was never clicked, are not verified.
+- GitLab binding changes need an admin. Setting or changing `gitlab_instance_id` or `gitlab_project_id` through `PUT /api/v1/projects/{id}` needs `system:manage`, `project:update` or `project:delete`; project admins get 403. Clearing both stays open to project admins, and resending the stored values is unaffected. A half binding answers 400, an unknown instance 404, and a GitLab project bound to another project 409 instead of 500. When the instance answers, the stored path is GitLab's `path_with_namespace`.
+- Project settings show other users a bound project's GitLab link read-only, with a "Remove GitLab link" action. Choosing "None" as the GitLab instance clears the project id and path too.
+
+### CI integrations
+
+- Allowlists gate OIDC auto-create. A github.com or gitlab.com instance with auto-create on and an empty `allowed_owner_ids` or `allowed_namespaces` no longer auto-creates (403). Once a list is set on any instance, tokens from other owners or namespaces get 403 even for projects already bound, and so does a GitHub token without `repository_owner_id`. Each refusal logs a warning with the repository path and owner id.
+- The instance admin API answers 422 on create and 400 on update for a shared issuer with auto-create on and an empty list. It refuses an explicit `null` list, non-numeric owner ids and namespaces with a `/`. Settings > CI/CD Instances has the new inputs.
+- CI auto-create makes the GitLab job's `user_email` project admin only if a verified account holds it, and the GitHub `actor` only if its public GitHub email belongs to a verified account. That costs one GitHub API read per auto-created project.
+- Team sync (GitLab and GitHub) matches members only by their provider email against verified accounts, never by username. Members matched by username so far drop out at the next sync, with the project roles the team gave them. GitHub sync reads `GET /users/{login}` for every member (cached 5 minutes).
+- GitLab team sync with a non-admin token looks up each member's public email with `GET /users/:id`, which GitLab rate-limits. On 429 the group's stored members stay as they are until the next window, logged as WARNING "GitLab API GET /users/<id> answered 429". Answers are cached for 24 hours, so a member who sets or changes a public email is matched up to a day later. A group where no member resolves freezes, logged as WARNING "Resolved 0 of N members of GitLab group ...".
+- GitHub tokens are sent only to github.com, so a GHES token never reaches api.github.com. Without `system_settings.github_token`, GHSA enrichment takes the token of the oldest active github.com instance, and an installation with only GHES instances runs GHSA unauthenticated (60 requests per hour). Removing or deactivating a token takes effect on the next scan.
+- A GHES instance without a base URL makes no GitHub API calls: team sync, PR decoration, branch listing and pickers get no answer, as with no token. The settings field is now "GitHub Base URL".
+
+### Archives
+
+- A restore marks its scan `restore_in_progress` until its last write, then sets `restored_at`. Restoring a scan that an earlier restore left unfinished rolls back the leftovers and restores it again; it used to answer 409. Housekeeping keeps the metadata and bundle of an unfinished restore.
+- A second restore of the same scan answers 409 for as long as the first runs, which renews its lock every 200 s. A restore that lost its lock stops without rolling back and counts `archive_failures_total{operation="restore",reason="lock_held"}`.
+- Archive downloads are re-emitted, not byte-identical to the stored object. TruffleHog findings carry `RawHash` instead of `Raw`, their lines are re-encoded, the footer digest is recomputed and the stream is compressed again; other lines and markers pass through as stored. A download holds about twice the largest line in memory.
+- Download decryption follows the bundle: a plaintext bundle downloads after encryption was switched on, and an encrypted bundle fails once the key is removed. A bundle that fails its digest check, is truncated or has an unknown header version aborts the download mid-stream.
+- New bundles never contain TruffleHog `Raw`. A TruffleHog row that fails validation fails the archive of its scan, and the scan's data stays in MongoDB.
+
+### Analysis and uploads
+
+- Callgraph uploads ignore a `scan_id` in the request body. The scan is always derived from the project in the path together with `pipeline_id` and the commit. Clients that still send `scan_id` keep working, and the field is dropped.
+- New ad-hoc and callgraph size limits answer 413 before any parsing. Ad-hoc `/api/v1/analyze` refuses more than 50 000 callgraph entries and more than 250 000 SBOM dependency-graph entries, and SPDX `externalRefs` now count against the 20 000 component-evidence budget.
+- A callgraph upload's 200 000-entry limit now also counts symbols, madge dependencies and analyzed modules, and an oversized upload with a bad format gets 413 instead of 400. A `callee_function` that is a JSON object or array fails the parse (400 on upload).
+- OSV malicious-package (MAL-) matches now produce a CRITICAL malware finding; they used to be dropped. Expect new malware findings, and the notifications they trigger, on the next scan of affected projects; a rescan surfaces them sooner. OSV findings now carry `published` and `modified`.
+
+### Webhooks, notifications and chat
+
+- Webhook response bodies are capped and bound by a deadline. A delivery attempt or `POST /webhooks/{id}/test` fails as a timeout when the attempt as a whole takes longer than `WEBHOOK_TIMEOUT_SECONDS` (default 30 s). On 2xx the body is not read; on other statuses at most 64 KiB is read, decoded as UTF-8. Requests send `Accept-Encoding: identity`. The test's `response_time_ms` and the webhook duration histogram measure time to response headers.
+- Deactivated users get no project notifications on any channel, whether they are direct or team members. Enforced notification settings come from the first active admin member with preferences.
+- Chat and MCP tool arguments are type-checked. A wrong JSON type answers `{"error": "Argument '<name>' must be of type <type>"}` (`isError: true` over MCP), arguments that are not a JSON object answer "Tool arguments must be a JSON object", and undeclared keys are dropped.
+- Chat and MCP tool results follow the REST response schemas. `get_system_settings` returns `*_configured` booleans instead of secrets, `get_project_details` no longer returns `api_key_hash`, and `list_project_webhooks` no longer returns `secret`, `headers` or the delivery counters. Members without `webhook:read` who are not project admins are refused the webhook tools, as in REST, and `get_webhook_deliveries` answers "Webhook not found or access denied" to every refusal.
+
+### Monitoring
+
+- The `endpoint` label of `http_requests_total`, `http_request_duration_seconds`, `http_request_size_bytes` and `http_response_size_bytes` now carries the matched route template, for example `/api/v1/projects/{project_id}`, instead of the raw path with ids masked as `{id}`. Unmatched requests share the label `<unmatched>`, and `http_requests_in_progress` is labelled by `method` only. Dashboards and alerts that filter on raw paths need updating. The bundled Grafana dashboard only groups by `endpoint` and needs no change.
 
 
 
