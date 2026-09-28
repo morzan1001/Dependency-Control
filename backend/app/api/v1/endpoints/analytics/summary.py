@@ -80,18 +80,6 @@ async def get_analytics_summary(
 
     projects = await get_user_projects(current_user, db)
     project_ids = [p.id for p in projects]
-
-    if not project_ids:
-        return AnalyticsSummary(
-            total_dependencies=0,
-            total_vulnerabilities=0,
-            unique_packages=0,
-            dependency_types=[],
-            severity_distribution=SeverityBreakdown(),
-            resolved_projects=0,
-            projects_without_release=0,
-        )
-
     scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     resolved_projects, projects_without_release = scope_resolution_counts(project_ids, scan_ids)
 
@@ -164,12 +152,7 @@ async def get_top_dependencies(
 
     projects = await get_user_projects(current_user, db)
     project_ids = [p.id for p in projects]
-
-    if not project_ids:
-        return []
-
     scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
-
     if not scan_ids:
         return []
 
@@ -239,12 +222,7 @@ async def get_dependency_types(
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     projects = await get_user_projects(current_user, db)
-
-    if not projects:
-        return []
-
     scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
-
     if not scan_ids:
         return []
 

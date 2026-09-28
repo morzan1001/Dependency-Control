@@ -1808,8 +1808,7 @@ class ChatToolRegistry:
 
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
         """The scan representing the head of a project the caller already read and authorised."""
-        project_id: str = project["_id"]
-        return (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
+        return await ScanRepository(db).get_latest_active_scan_id(project)
 
     async def _scan_under_answer(
         self, project: dict[str, Any], requested_scan_id: str | None, db: AsyncIOMotorDatabase

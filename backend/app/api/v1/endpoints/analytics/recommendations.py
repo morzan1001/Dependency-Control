@@ -13,6 +13,7 @@ from app.api.v1.helpers.analytics import (
     get_user_project_ids,
     require_analytics_permission,
 )
+from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import (
@@ -23,11 +24,9 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions
 from app.models.finding_record import FindingRecord
-from app.models.project import Scan
 from app.repositories import (
     DependencyRepository,
     FindingRepository,
-    ProjectRepository,
     ScanRepository,
 )
 from app.schemas.analytics import (
@@ -40,7 +39,7 @@ from app.services.recommendation import trends
 from app.services.recommendation.common import get_attr
 from app.services.recommendations import recommendation_engine
 
-from ._shared import _MSG_ACCESS_DENIED
+from ._shared import SCAN_NOT_IN_PROJECT, resolve_project_scan_id
 
 logger = logging.getLogger(__name__)
 
@@ -124,21 +123,15 @@ async def get_project_recommendations(
     """Generate remediation recommendations for a project's findings."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
-    project_repo = ProjectRepository(db)
+    project = await check_project_access(project_id, current_user, db)
+    scan_id = await resolve_project_scan_id(db, project, scan_id)
+    if not scan_id:
+        raise HTTPException(status_code=404, detail=SCAN_NOT_IN_PROJECT)
+
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
     dep_repo = DependencyRepository(db)
-
-    project = await project_repo.get_raw_by_id(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
     user_project_ids = await get_user_project_ids(current_user, db)
-    if project_id not in user_project_ids:
-        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
-
-    scan = await _resolve_scan(scan_repo, project, project_id, scan_id)
-    scan_id = scan.id
 
     # Cache per scan + caller scope so users with different project access never
     # share an entry; cross-project signal isn't in the key and may be TTL-stale.
@@ -186,7 +179,7 @@ async def get_project_recommendations(
     finding_counts = _finding_counts(findings)
     response = RecommendationsResponse(
         project_id=project_id,
-        project_name=project.get("name", "Unknown"),
+        project_name=project.name,
         scan_id=scan_id,
         total_findings=len(findings),
         total_vulnerabilities=finding_counts["vulnerabilities"],
@@ -198,21 +191,6 @@ async def get_project_recommendations(
     # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
     await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)
     return response
-
-
-async def _resolve_scan(
-    scan_repo: ScanRepository, project: dict[str, Any], project_id: str, scan_id: str | None
-) -> Scan:
-    if scan_id:
-        scan = await scan_repo.get_by_id(scan_id)
-        if scan and scan.project_id != project_id:
-            scan = None
-    else:
-        scan = await scan_repo.get_latest_active_scan(project)
-
-    if not scan:
-        raise HTTPException(status_code=404, detail="No scan found for this project")
-    return scan
 
 
 def _finding_counts(findings: list[FindingRecord]) -> dict[str, int]:

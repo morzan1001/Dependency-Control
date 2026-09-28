@@ -77,7 +77,7 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
     )
     if not project:
         return None
-    head_scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(waiver_in.project_id)
+    head_scan_id = await ScanRepository(db).get_latest_active_scan_id(project)
     if not head_scan_id:
         return None
 

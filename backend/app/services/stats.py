@@ -418,7 +418,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     if not project:
         return None
 
-    scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
+    scan_id = await ScanRepository(db).get_latest_active_scan_id(project)
     released_ids = [rid for rid in await _released_analysis_ids(db, project_id) if rid != scan_id]
     if not scan_id and not released_ids:
         return None

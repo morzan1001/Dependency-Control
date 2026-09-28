@@ -18,6 +18,7 @@ def _scan_doc(scan_id: str, project_id: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_returns_403_for_non_member(client, db, owner_auth_headers_proj_p2):
+    await db.projects.insert_one({"_id": "p", "name": "project-p", "members": []})
     await db["scans"].insert_one(_scan_doc("s1", "p"))
     await db["scans"].insert_one(_scan_doc("s2", "p"))
 
@@ -35,7 +36,7 @@ async def test_returns_403_for_non_member(client, db, owner_auth_headers_proj_p2
 
 
 @pytest.mark.asyncio
-async def test_returns_400_when_scan_not_in_project(client, db, owner_auth_headers_proj):
+async def test_returns_404_when_scan_not_in_project(client, db, owner_auth_headers_proj):
     await db["scans"].insert_one(_scan_doc("in1", "p"))
     await db["scans"].insert_one(_scan_doc("out1", "p_other"))
 
@@ -49,12 +50,14 @@ async def test_returns_400_when_scan_not_in_project(client, db, owner_auth_heade
         },
         headers=owner_auth_headers_proj,
     )
-    assert resp.status_code == 400, resp.text
-    assert "not in project" in resp.json()["detail"].lower()
+    assert resp.status_code == 404, resp.text
+    assert resp.json()["detail"] == "No scan found for this project"
 
 
 @pytest.mark.asyncio
-async def test_returns_400_for_identical_scan_ids(client, owner_auth_headers_proj):
+async def test_returns_400_for_identical_scan_ids(client, db, owner_auth_headers_proj):
+    await db["scans"].insert_one(_scan_doc("x", "p"))
+
     resp = await client.get(
         BASE,
         params={

@@ -323,15 +323,25 @@ class ScanRepository:
                 return await self.collection.count_documents(query or {}, limit=limit)
             return await self.collection.count_documents(query or {})
 
-    async def get_latest_active_scan(self, project: Any, deleted_branches: list[str] | None = None) -> Scan | None:
-        """The project's head as a full document. ``project`` may be a model or a raw dict, and
+    async def get_latest_active_scan_id(self, project: Any, deleted_branches: list[str] | None = None) -> str | None:
+        """The id of the project's head. ``project`` may be a model or a raw dict, and
         ``deleted_branches`` overrides the project's own set, which housekeeping needs while the
         freshly-computed one is not yet persisted."""
         project_id, scope = _head_scope(project, deleted_branches)
         if not project_id:
             return None
-        scan_id = (await self._head_scan_ids({project_id: scope})).get(project_id)
+        return (await self._head_scan_ids({project_id: scope})).get(project_id)
+
+    async def get_latest_active_scan(self, project: Any, deleted_branches: list[str] | None = None) -> Scan | None:
+        """The project's head as a full document."""
+        scan_id = await self.get_latest_active_scan_id(project, deleted_branches)
         return await self.get_by_id(scan_id) if scan_id else None
+
+    async def belongs_to_project(self, scan_ids: set[str], project_id: str) -> bool:
+        """Whether every one of ``scan_ids`` is a scan of ``project_id``."""
+        return (
+            await self.count({"_id": {"$in": list(scan_ids)}, "project_id": project_id}, limit=len(scan_ids))
+        ) == len(scan_ids)
 
     async def get_preceding_scan(self, scan_id: str) -> Scan | None:
         """The build the given scan succeeded: the newest usable build on its own branch that
