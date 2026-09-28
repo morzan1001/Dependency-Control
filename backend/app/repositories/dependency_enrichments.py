@@ -4,7 +4,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 
-from app.services.purl_utils import canonical_purl
+from app.core.purl import canonical_purl
 
 
 class DependencyEnrichmentRepository:

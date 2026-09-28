@@ -22,7 +22,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.config import settings
-from app.services.purl_utils import canonical_purl
+from app.core.purl import canonical_purl
 
 DEFAULT_BATCH_SIZE = 200
 DEFAULT_SLEEP_MS = 50

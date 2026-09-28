@@ -2,9 +2,9 @@
 
 from typing import Any
 
+from app.core.purl import package_identity_expr
 from app.models.dependency import Dependency
 from app.repositories.base import BaseRepository
-from app.services.purl_utils import package_identity_expr
 
 
 class DependencyRepository(BaseRepository[Dependency]):

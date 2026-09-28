@@ -3,8 +3,8 @@ itself: FakeDatabase evaluates $regexFind with Python's engine, the server with 
 
 import pytest
 
-from app.services.purl_utils import package_identity_expr
-from tests.test_services.test_purl_utils import _IDENTITY_TABLE
+from app.core.purl import package_identity_expr
+from tests.test_core.test_purl import _IDENTITY_TABLE
 
 
 @pytest.mark.live_mongo

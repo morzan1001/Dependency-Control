@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.purl import package_identity
 from app.schemas.scan_delta import (
     ComponentDeltaItem,
     DeltaCategory,
@@ -15,7 +16,6 @@ from app.schemas.scan_delta import (
 )
 from app.services.analytics._delta_pagination import MAX_FETCH, delta_truncation, paginate
 from app.services.analytics._delta_reachability import side_reachability
-from app.services.purl_utils import package_identity
 
 # Served by the {scan_id, name, version} index, so a capped side is cut at the same point in the
 # component namespace on both sides instead of at two arbitrary points in natural order.

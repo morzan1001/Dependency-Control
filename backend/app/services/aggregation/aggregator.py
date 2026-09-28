@@ -46,7 +46,7 @@ from app.services.analyzers.license_compliance.normalizer import (
 from app.services.analyzers.license_compliance.normalizer import (
     tokenize_license_string,
 )
-from app.services.purl_utils import canonical_purl
+from app.core.purl import canonical_purl
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
 from app.services.normalizers.license import normalize_license

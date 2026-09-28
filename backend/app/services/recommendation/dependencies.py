@@ -6,12 +6,12 @@ from app.core.constants import (
     DEV_DEPENDENCY_PATTERNS,
     SIGNIFICANT_FRAGMENTATION_THRESHOLD,
 )
+from app.core.purl import package_identity
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
 )
-from app.services.purl_utils import package_identity
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     AFFECTED_COMPONENTS_SHOWN,

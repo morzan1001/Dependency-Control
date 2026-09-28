@@ -16,7 +16,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
-from app.services.purl_utils import parse_purl
+from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
 

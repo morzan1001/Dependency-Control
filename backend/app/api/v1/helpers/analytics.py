@@ -33,11 +33,11 @@ from app.core.constants import (
     SEVERITY_WEIGHTS,
 )
 from app.core.permissions import Permissions, has_permission
+from app.core.purl import package_identity_expr
 from app.models.user import User
 from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
 from app.services.component_identity import build_component_index
-from app.services.purl_utils import package_identity_expr
 from app.services.recommendation.common import get_attr
 
 MONGO_MATCH = "$match"

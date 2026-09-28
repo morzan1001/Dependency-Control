@@ -17,7 +17,7 @@ from app.core.constants import (
     SPDX_ORGANIZATION_PREFIX,
 )
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
-from app.services.purl_utils import dependency_node_key, get_purl_type, parse_purl
+from app.core.purl import dependency_node_key, get_purl_type, parse_purl
 from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)

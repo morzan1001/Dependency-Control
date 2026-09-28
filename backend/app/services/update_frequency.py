@@ -21,6 +21,7 @@ from app.core.constants import (
     SLOWEST_PACKAGES_LIMIT,
     UPDATE_SAMPLE_RANK,
 )
+from app.core.purl import parse_purl
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -38,7 +39,6 @@ from app.schemas.analytics import (
     UpdateFrequencyComparison,
     UpdateFrequencyMetrics,
 )
-from app.services.purl_utils import parse_purl
 from app.services.release_history import (
     Observation,
     ReleaseHistoryFetcher,

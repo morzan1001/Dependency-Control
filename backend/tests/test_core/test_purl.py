@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from app.services.purl_utils import (
+from app.core.purl import (
     MAX_NAME_LENGTH,
     MAX_PURL_LENGTH,
     MAX_VERSION_LENGTH,

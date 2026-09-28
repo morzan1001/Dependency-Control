@@ -17,8 +17,8 @@ from app.core.constants import (
 from app.core.cvss import cvss_base_score
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import external_api_rate_limit_hits_total
+from app.core.purl import ParsedPURL, canonical_purl, parse_purl
 from app.models.finding import Severity
-from app.services.purl_utils import ParsedPURL, canonical_purl, parse_purl
 
 from .base import Analyzer
 

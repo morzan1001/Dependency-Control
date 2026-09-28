@@ -32,7 +32,7 @@ from app.services.component_identity import (
     canonical_module_key,
     lookup_component,
 )
-from app.services.purl_utils import get_purl_type
+from app.core.purl import get_purl_type
 from app.services.enrichment.scoring import (
     calculate_adjusted_risk_score,
     map_reachability_level_to_modifier,

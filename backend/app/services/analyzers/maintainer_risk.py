@@ -22,7 +22,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
-from app.services.purl_utils import is_npm, is_pypi, parse_purl
+from app.core.purl import is_npm, is_pypi, parse_purl
 
 logger = logging.getLogger(__name__)
 

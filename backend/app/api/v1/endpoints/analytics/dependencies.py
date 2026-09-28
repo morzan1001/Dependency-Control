@@ -18,6 +18,7 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PROJECT_ROLE_VIEWER, SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
+from app.core.purl import dependency_node_key
 from app.repositories import (
     DependencyEnrichmentRepository,
     DependencyRepository,
@@ -38,7 +39,6 @@ from app.services.component_identity import (
     lookup_component,
     normalize_component,
 )
-from app.services.purl_utils import dependency_node_key
 from app.services.recommendation.common import get_attr
 
 from ._shared import _get_enrichment_info, _resolve_scan_id

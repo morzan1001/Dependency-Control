@@ -17,6 +17,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.permissions import Permissions
+from app.core.purl import package_identity_expr
 from app.repositories import (
     DependencyRepository,
     FindingRepository,
@@ -30,7 +31,6 @@ from app.schemas.analytics import (
     SeverityBreakdown,
 )
 from app.services.component_identity import build_component_index, lookup_component
-from app.services.purl_utils import package_identity_expr
 from app.services.recommendation.common import parse_version_tuple
 
 router = CustomAPIRouter()

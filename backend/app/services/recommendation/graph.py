@@ -1,12 +1,12 @@
 from typing import Any
 
 from app.core.constants import SIMILAR_PACKAGE_GROUPS
+from app.core.purl import dependency_node_key
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
 )
-from app.services.purl_utils import dependency_node_key
 from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
 
 # Chains detailed in the action, and parents previewed per chain; each is paired with the

@@ -8,7 +8,7 @@ dependency docs carry tool-specific qualifier variants like `?type=jar` or
 import asyncio
 
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
-from app.services.purl_utils import canonical_purl
+from app.core.purl import canonical_purl
 from tests.mocks.fake_mongo import FakeDatabase
 
 CANONICAL = "pkg:maven/com.opencsv/opencsv@5.12.0"

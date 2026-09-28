@@ -35,7 +35,7 @@ from app.services.component_identity import artifact_segment, build_component_in
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
 from app.services.analytics.scopes import ScopeTooLargeError, ensure_whole_scope, scope_probe_limit
-from app.services.purl_utils import canonical_purl
+from app.core.purl import canonical_purl
 from app.services.reachability_enrichment import reachability_display_tier
 
 from ._arguments import ToolArgumentError, checked_arguments
