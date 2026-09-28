@@ -393,3 +393,17 @@ class TestConcurrentFetch:
 def _suppress_unused(_set: set[str]) -> None:
     """Hint to linters that Set is intentionally imported for type hints."""
     return
+
+
+@pytest.mark.asyncio
+async def test_an_ecosystem_deps_dev_does_not_serve_is_neither_requested_nor_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cache = _FakeCache()
+    monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
+    monkeypatch.setattr("app.services.analyzers.outdated.InstrumentedAsyncClient", _AlwaysFailingClient)
+
+    result = await OutdatedAnalyzer().analyze({}, parsed_components=[_component("framework", "10.0.0", "composer")])
+
+    assert result == {"outdated_dependencies": [], "ahead_of_default": [], "yanked_versions": []}
+    assert cache.sets == []
