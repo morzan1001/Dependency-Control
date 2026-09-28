@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 # pytest-asyncio tests) can't raise "bound to a different event loop".
 _COMPARISON_CONCURRENCY = 3
 
-DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1}
+DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "group": 1}
 
 DAYS_PER_MONTH = 30.44
 
@@ -111,7 +111,7 @@ def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
     if not name:
         return None
     purl = dep.get("purl", "")
-    identity = ":".join(package_identity(purl, name, dep.get("type")))
+    identity = ":".join(package_identity(purl, name, dep.get("type"), dep.get("group")))
     parsed = parse_purl(purl) if purl else None
     if parsed:
         deps_dev_name = parsed.deps_dev_name

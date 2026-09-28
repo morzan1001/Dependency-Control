@@ -129,7 +129,10 @@ def analyze_version_fragmentation(
 
     deps_by_package: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for dep in dependencies:
-        deps_by_package[package_identity(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"))].append(
+        identity = package_identity(
+            get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"), get_attr(dep, "group")
+        )
+        deps_by_package[identity].append(
             {"version": get_attr(dep, "version"), "direct": get_attr(dep, "direct", False)}
         )
 
@@ -224,7 +227,9 @@ def analyze_dev_in_production(
 
     for dep in dependencies:
         # The qualified name, so scoped patterns such as '@types/' match a scope the SBOM kept apart.
-        _, name = package_identity(get_attr(dep, "purl"), get_attr(dep, "name") or "", get_attr(dep, "type"))
+        _, name = package_identity(
+            get_attr(dep, "purl"), get_attr(dep, "name") or "", get_attr(dep, "type"), get_attr(dep, "group")
+        )
         scope = str(get_attr(dep, "scope") or "").lower()
 
         if scope in ("dev", "development", "test"):

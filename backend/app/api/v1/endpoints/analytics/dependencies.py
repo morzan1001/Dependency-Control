@@ -340,7 +340,10 @@ async def get_dependency_metadata_endpoint(
     dependencies = [
         dep
         for dep in await dep_repo.find_many({**dep_query, "version": shown_version}, limit=100)
-        if package_identity(get_attr(dep, "purl"), get_attr(dep, "name", ""), get_attr(dep, "type")) == package
+        if package_identity(
+            get_attr(dep, "purl"), get_attr(dep, "name", ""), get_attr(dep, "type"), get_attr(dep, "group")
+        )
+        == package
     ]
     if not dependencies:
         return None

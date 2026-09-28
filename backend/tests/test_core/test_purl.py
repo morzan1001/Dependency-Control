@@ -187,27 +187,40 @@ class TestParsedPURLProperties:
 
 
 _IDENTITY_TABLE = [
-    pytest.param("pkg:npm/%40angular/core@16.2.0", "core", "library", ("npm", "@angular/core"), id="npm_encoded_scope"),
     pytest.param(
-        "pkg:npm/@angular/core@16.2.0", "@angular/core", "library", ("npm", "@angular/core"), id="npm_literal_scope"
+        "pkg:npm/%40angular/core@16.2.0", "core", "library", None, ("npm", "@angular/core"), id="npm_encoded_scope"
     ),
-    pytest.param("pkg:npm/@angular/core", "core", "library", ("npm", "@angular/core"), id="npm_scope_without_version"),
-    pytest.param("pkg:npm/JSONStream@1.3.5", "JSONStream", "library", ("npm", "JSONStream"), id="npm_keeps_case"),
-    pytest.param("pkg:pypi/PyYAML@6.0.1", "PyYAML", "library", ("pypi", "pyyaml"), id="pypi_folds_case"),
+    pytest.param(
+        "pkg:npm/@angular/core@16.2.0",
+        "@angular/core",
+        "library",
+        None,
+        ("npm", "@angular/core"),
+        id="npm_literal_scope",
+    ),
+    pytest.param(
+        "pkg:npm/@angular/core", "core", "library", None, ("npm", "@angular/core"), id="npm_scope_without_version"
+    ),
+    pytest.param("pkg:npm/JSONStream@1.3.5", "JSONStream", "library", None, ("npm", "JSONStream"), id="npm_keeps_case"),
+    pytest.param("pkg:pypi/PyYAML@6.0.1", "PyYAML", "library", None, ("pypi", "pyyaml"), id="pypi_folds_case"),
     pytest.param(
         "pkg:pypi/typing_extensions@4.8.0",
         "typing_extensions",
         "library",
+        None,
         ("pypi", "typing-extensions"),
         id="pypi_underscore",
     ),
-    pytest.param("pkg:pypi/zope.interface@5.0", "zope.interface", "library", ("pypi", "zope-interface"), id="pypi_dot"),
-    pytest.param("pkg:pypi/Foo._-Bar@1.0", "Foo._-Bar", "library", ("pypi", "foo-bar"), id="pypi_separator_run"),
-    pytest.param("pkg:pypi/._odd-@1.0", "._odd-", "library", ("pypi", "-odd-"), id="pypi_separators_at_the_ends"),
+    pytest.param(
+        "pkg:pypi/zope.interface@5.0", "zope.interface", "library", None, ("pypi", "zope-interface"), id="pypi_dot"
+    ),
+    pytest.param("pkg:pypi/Foo._-Bar@1.0", "Foo._-Bar", "library", None, ("pypi", "foo-bar"), id="pypi_separator_run"),
+    pytest.param("pkg:pypi/._odd-@1.0", "._odd-", "library", None, ("pypi", "-odd-"), id="pypi_separators_at_the_ends"),
     pytest.param(
         "pkg:maven/org.jetbrains/annotations@24.0.1?type=jar",
         "annotations",
         "library",
+        None,
         ("maven", "org.jetbrains/annotations"),
         id="maven_group_kept_qualifiers_dropped",
     ),
@@ -215,6 +228,7 @@ _IDENTITY_TABLE = [
         "pkg:maven/software.amazon.awssdk/annotations@2.20.0",
         "annotations",
         "library",
+        None,
         ("maven", "software.amazon.awssdk/annotations"),
         id="maven_other_group",
     ),
@@ -222,18 +236,20 @@ _IDENTITY_TABLE = [
         "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
         "github.com/cespare/xxhash/v2",
         "library",
+        None,
         ("golang", "github.com/cespare/xxhash/v2"),
         id="golang_module_path",
     ),
-    pytest.param("pkg:cargo/serde@1.0.188", "serde", "library", ("cargo", "serde"), id="cargo"),
+    pytest.param("pkg:cargo/serde@1.0.188", "serde", "library", None, ("cargo", "serde"), id="cargo"),
     pytest.param(
-        "pkg:nuget/Newtonsoft.Json@13.0.3", "Newtonsoft.Json", "library", ("nuget", "Newtonsoft.Json"), id="nuget"
+        "pkg:nuget/Newtonsoft.Json@13.0.3", "Newtonsoft.Json", "library", None, ("nuget", "Newtonsoft.Json"), id="nuget"
     ),
-    pytest.param("pkg:gem/rails@7.0.8", "rails", "library", ("gem", "rails"), id="gem"),
+    pytest.param("pkg:gem/rails@7.0.8", "rails", "library", None, ("gem", "rails"), id="gem"),
     pytest.param(
         "pkg:composer/Laravel/Framework@10.0.0",
         "framework",
         "library",
+        None,
         ("composer", "laravel/framework"),
         id="composer_folds",
     ),
@@ -241,35 +257,56 @@ _IDENTITY_TABLE = [
         "pkg:deb/debian/zlib1g@1.2.13?arch=amd64&distro=debian-12",
         "zlib1g",
         "library",
+        None,
         ("deb", "debian/zlib1g"),
         id="deb",
     ),
-    pytest.param("pkg:apk/alpine/zlib@1.3-r0?arch=x86_64", "zlib", "library", ("apk", "alpine/zlib"), id="apk"),
-    pytest.param("pkg:rpm/redhat/zlib@1.2.11?arch=x86_64", "zlib", "library", ("rpm", "redhat/zlib"), id="rpm"),
+    pytest.param("pkg:apk/alpine/zlib@1.3-r0?arch=x86_64", "zlib", "library", None, ("apk", "alpine/zlib"), id="apk"),
+    pytest.param("pkg:rpm/redhat/zlib@1.2.11?arch=x86_64", "zlib", "library", None, ("rpm", "redhat/zlib"), id="rpm"),
     pytest.param(
-        "pkg:github/Actions/Checkout@v4", "checkout", "library", ("github", "actions/checkout"), id="github_folds"
+        "pkg:github/Actions/Checkout@v4", "checkout", "library", None, ("github", "actions/checkout"), id="github_folds"
     ),
     pytest.param(
-        "pkg:npm/lodash@4.17.21#dist/lodash.min.js", "lodash", "library", ("npm", "lodash"), id="subpath_dropped"
+        "pkg:npm/lodash@4.17.21#dist/lodash.min.js", "lodash", "library", None, ("npm", "lodash"), id="subpath_dropped"
     ),
     pytest.param(
-        "pkg:github/actions/cache@releases/v3", "cache", "library", ("github", "actions/cache"), id="slash_in_version"
+        "pkg:github/actions/cache@releases/v3",
+        "cache",
+        "library",
+        None,
+        ("github", "actions/cache"),
+        id="slash_in_version",
     ),
-    pytest.param(None, " Debian ", "operating-system", ("operating-system", "debian"), id="no_purl_keys_type_and_name"),
-    pytest.param(None, "Debian", "application", ("application", "debian"), id="no_purl_other_type_other_package"),
-    pytest.param("not-a-purl", "Foo", None, ("", "foo"), id="unparseable_purl_without_type"),
+    pytest.param(
+        None, " Debian ", "operating-system", None, ("operating-system", "debian"), id="no_purl_keys_type_and_name"
+    ),
+    pytest.param(None, "Debian", "application", None, ("application", "debian"), id="no_purl_other_type_other_package"),
+    pytest.param("not-a-purl", "Foo", None, None, ("", "foo"), id="unparseable_purl_without_type"),
+    pytest.param(
+        None,
+        "core",
+        "library",
+        "org.eclipse.jdt",
+        ("library", "org.eclipse.jdt/core"),
+        id="no_purl_keys_group_and_name",
+    ),
+    pytest.param(None, " utils ", "npm", " @Acme ", ("npm", "@acme/utils"), id="no_purl_scope_as_group"),
+    pytest.param(None, "core", "library", " ", ("library", "core"), id="no_purl_blank_group"),
+    pytest.param(
+        "pkg:maven/org.a/core@1", "core", "maven", "org.b", ("maven", "org.a/core"), id="purl_wins_over_group"
+    ),
 ]
 
 
 class TestPackageIdentity:
-    @pytest.mark.parametrize(("purl", "name", "component_type", "expected"), _IDENTITY_TABLE)
-    def test_identity_per_ecosystem(self, purl, name, component_type, expected):
-        assert package_identity(purl, name, component_type) == expected
+    @pytest.mark.parametrize(("purl", "name", "component_type", "group", "expected"), _IDENTITY_TABLE)
+    def test_identity_per_ecosystem(self, purl, name, component_type, group, expected):
+        assert package_identity(purl, name, component_type, group) == expected
 
-    @pytest.mark.parametrize(("purl", "name", "component_type", "expected"), _IDENTITY_TABLE)
-    def test_the_aggregation_expression_computes_the_same_identity(self, purl, name, component_type, expected):
+    @pytest.mark.parametrize(("purl", "name", "component_type", "group", "expected"), _IDENTITY_TABLE)
+    def test_the_aggregation_expression_computes_the_same_identity(self, purl, name, component_type, group, expected):
         collection = FakeCollection()
-        collection._docs = {"d": {"_id": "d", "purl": purl, "name": name, "type": component_type}}
+        collection._docs = {"d": {"_id": "d", "purl": purl, "name": name, "type": component_type, "group": group}}
         pipeline = [{"$project": {"identity": package_identity_expr()}}]
 
         [row] = asyncio.run(collection.aggregate(pipeline).to_list())

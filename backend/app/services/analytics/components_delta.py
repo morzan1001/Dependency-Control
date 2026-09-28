@@ -74,8 +74,10 @@ async def compute_components_delta(
     from_docs, from_total = await _fetch_components(db, project_id, from_scan)
     to_docs, to_total = await _fetch_components(db, project_id, to_scan)
 
-    from_map = {package_identity(d.get("purl"), d.get("name") or "", d.get("type")): d for d in from_docs}
-    to_map = {package_identity(d.get("purl"), d.get("name") or "", d.get("type")): d for d in to_docs}
+    from_map = {
+        package_identity(d.get("purl"), d.get("name") or "", d.get("type"), d.get("group")): d for d in from_docs
+    }
+    to_map = {package_identity(d.get("purl"), d.get("name") or "", d.get("type"), d.get("group")): d for d in to_docs}
 
     added_keys = to_map.keys() - from_map.keys()
     removed_keys = from_map.keys() - to_map.keys()

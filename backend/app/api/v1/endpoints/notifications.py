@@ -217,7 +217,7 @@ def _rule_matches(rule: AdvisoryPackage, dep_type: str, dep_path: str) -> bool:
         return False
     rule_name = rule.name.strip().replace(":", "/")
     # The rule's name is read under the dependency's own ecosystem rules, as its identity was.
-    _, rule_path = package_identity(f"pkg:{dep_type}/{rule_name}", rule_name, dep_type)
+    _, rule_path = package_identity(f"pkg:{dep_type}/{rule_name}", rule_name, dep_type, None)
     qualified = artifact_segment(rule_path) != rule_path
     return (dep_path if qualified else artifact_segment(dep_path)).lower() == rule_path.lower()
 
@@ -236,9 +236,9 @@ async def _find_affected_projects(db: Any, rules: list[AdvisoryPackage]) -> dict
     query = {"scan_id": {"$in": list(project_by_scan)}, "name": {"$regex": f"(^|[/:])({names})$", "$options": "i"}}
 
     affected: dict[str, dict[str, None]] = {}
-    projection = {"_id": 0, "scan_id": 1, "name": 1, "version": 1, "type": 1, "purl": 1}
+    projection = {"_id": 0, "scan_id": 1, "name": 1, "version": 1, "type": 1, "purl": 1, "group": 1}
     async for dep in DependencyRepository(db).iterate_raw(query, projection):
-        dep_type, dep_path = package_identity(dep.get("purl"), dep["name"], dep.get("type"))
+        dep_type, dep_path = package_identity(dep.get("purl"), dep["name"], dep.get("type"), dep.get("group"))
         candidates = rules_by_segment.get(_segment_key(dep_path), [])
         version = dep.get("version") or ""
         if any(_rule_matches(r, dep_type, dep_path) and r.covers(version) for r in candidates):

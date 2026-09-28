@@ -11,7 +11,7 @@ from tests.test_core.test_purl import _IDENTITY_TABLE
 @pytest.mark.asyncio
 async def test_the_server_computes_every_identity_of_the_table(db):
     rows = [
-        {"_id": index, "purl": param.values[0], "name": param.values[1], "type": param.values[2]}
+        {"_id": index, **dict(zip(("purl", "name", "type", "group"), param.values[:4], strict=True))}
         for index, param in enumerate(_IDENTITY_TABLE)
     ]
     await db.dependencies.insert_many(rows)
@@ -21,5 +21,5 @@ async def test_the_server_computes_every_identity_of_the_table(db):
     ).to_list(None)
 
     assert [(row["identity"]["type"], row["identity"]["path"]) for row in computed] == [
-        param.values[3] for param in _IDENTITY_TABLE
+        param.values[4] for param in _IDENTITY_TABLE
     ]

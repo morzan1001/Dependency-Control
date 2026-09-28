@@ -933,7 +933,7 @@ class TestReadShape:
         assert len(finds["dependencies"]) == 2
         for projection in finds["dependencies"]:
             assert projection
-            assert set(projection) <= {"name", "version", "type", "purl"}
+            assert set(projection) <= {"name", "version", "type", "purl", "group"}
 
         # An outdated_packages document averages 48 KB; only component names may be pulled.
         assert len(finds["analysis_results"]) == 2

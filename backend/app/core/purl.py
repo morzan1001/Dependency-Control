@@ -125,14 +125,16 @@ _CASE_INSENSITIVE_TYPES = ("alpm", "apk", "bitbucket", "composer", "deb", "githu
 _IDENTITY_PATTERN = r"^pkg:([^/]+)/([^?#]*?)(?:(?<!/)@[^@?#]*)?(?:[?#].*)?$"
 
 
-def package_identity(purl: str | None, name: str, component_type: str | None) -> tuple[str, str]:
+def package_identity(purl: str | None, name: str, component_type: str | None, group: str | None) -> tuple[str, str]:
     """Version-free package identity ``(type, namespace/name)`` under the purl spec's per-type rules.
 
-    Without a parseable purl the row is keyed by its component type and lowercased name.
+    Without a parseable purl the row is keyed by its component type and lowercased ``group/name``.
     """
     parsed = parse_purl(purl) if purl else None
     if parsed is None:
-        return component_type or "", name.strip().lower()
+        namespace = (group or "").strip()
+        path = f"{namespace}/{name.strip()}" if namespace else name.strip()
+        return component_type or "", path.lower()
     path = parsed.full_name
     if parsed.type in _CASE_INSENSITIVE_TYPES:
         path = path.lower()
@@ -152,7 +154,7 @@ def _pep503_expr(name: dict[str, Any]) -> dict[str, Any]:
 
 
 def package_identity_expr() -> dict[str, Any]:
-    """:func:`package_identity` as an aggregation expression over a dependency row's ``purl``, ``name`` and ``type``."""
+    """:func:`package_identity` as an aggregation expression over a dependency row."""
     # Mongo cannot percent-decode; '%40' (the npm scope) is the only escape producers write in a package path.
     path = {"$replaceAll": {"input": {"$arrayElemAt": ["$$m.captures", 1]}, "find": "%40", "replacement": "@"}}
     folded = {"$cond": [{"$in": ["$$type", list(_CASE_INSENSITIVE_TYPES)]}, {"$toLower": path}, path]}
@@ -164,7 +166,23 @@ def package_identity_expr() -> dict[str, Any]:
                     {"$eq": ["$$m", None]},
                     {
                         "type": {"$ifNull": ["$type", ""]},
-                        "path": {"$toLower": {"$trim": {"input": {"$ifNull": ["$name", ""]}}}},
+                        "path": {
+                            "$let": {
+                                "vars": {
+                                    "group": {"$trim": {"input": {"$ifNull": ["$group", ""]}}},
+                                    "name": {"$trim": {"input": {"$ifNull": ["$name", ""]}}},
+                                },
+                                "in": {
+                                    "$toLower": {
+                                        "$cond": [
+                                            {"$eq": ["$$group", ""]},
+                                            "$$name",
+                                            {"$concat": ["$$group", "/", "$$name"]},
+                                        ]
+                                    }
+                                },
+                            }
+                        },
                     },
                     {
                         "$let": {

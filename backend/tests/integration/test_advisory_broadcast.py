@@ -33,6 +33,7 @@ _INVENTORY = {
     ],
     "netty": [_dependency("netty", "netty-codec-http", "4.1.100.Final", None, "java-archive")],
     "js": [_dependency("js", "lodash", "4.17.15", "pkg:npm/lodash@4.17.15", "npm")],
+    "scoped": [_dependency("scoped", "utils", "1.0.0", None, "npm", group="@acme")],
 }
 
 
@@ -129,6 +130,13 @@ async def test_an_unversioned_rule_after_a_versioned_one_still_covers(client, he
 async def test_a_group_qualified_rule_skips_other_groups_artifacts(client, headers):
     assert await _affected(client, headers, {"name": "org.eclipse.jdt:core"}) == 0
     assert await _affected(client, headers, {"name": "com.google.zxing:core", "type": "maven"}) == 1
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_scoped_rule_reads_a_purl_less_row_by_its_group(client, headers):
+    assert await _affected(client, headers, {"name": "@acme/utils", "type": "npm"}) == 1
+    assert await _affected(client, headers, {"name": "@other/utils", "type": "npm"}) == 0
 
 
 @pytest.mark.live_mongo

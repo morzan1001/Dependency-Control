@@ -84,7 +84,7 @@ Supported aggregation stages
 Supported aggregation expression operators (in ``$project`` / accumulator args)
 ------------------------------------------------------------------------------
 - ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``, ``$toString``
-- Strings: ``$trim``, ``$replaceAll``, ``$regexFind``, ``$regexMatch``
+- Strings: ``$concat``, ``$trim``, ``$replaceAll``, ``$regexFind``, ``$regexMatch``
 - Arrays and maps: ``$size``, ``$setUnion``, ``$setDifference``, ``$objectToArray``,
   ``$arrayToObject``, ``$arrayElemAt``, ``$split``
 - Comparison: ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``
@@ -772,6 +772,10 @@ def _eval_expr(doc: dict, expr):
     if "$toLower" in expr:
         val = _eval_expr(doc, expr["$toLower"])
         return str(val).lower() if val is not None else None
+    if "$concat" in expr:
+        pieces = [_eval_expr(doc, e) for e in expr["$concat"]]
+        # The server answers null as soon as one operand is null or missing.
+        return None if any(p is None or p is _REMOVE for p in pieces) else "".join(pieces)
     if "$trim" in expr:
         val = _eval_expr(doc, expr["$trim"]["input"])
         return val.strip() if isinstance(val, str) else None

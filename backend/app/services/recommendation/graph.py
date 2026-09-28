@@ -221,7 +221,8 @@ def analyze_duplicate_packages(
     recommendations = []
 
     dep_names = {
-        package_identity(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"))[1] for dep in dependencies
+        package_identity(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"), get_attr(dep, "group"))[1]
+        for dep in dependencies
     }
 
     duplicates_found = []

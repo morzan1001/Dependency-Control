@@ -371,6 +371,17 @@ async def test_a_qualified_component_reads_only_its_own_group_s_metadata(client,
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_a_qualified_component_reads_purl_less_rows_by_their_group(client, db, seeded):
+    await db.dependencies.insert_one({**_maven("zxing", "com.google.zxing", license="Apache-2.0"), "purl": None})
+    await db.dependencies.insert_one({**_maven("jdt", "org.eclipse.jdt", license="EPL-2.0"), "purl": None})
+
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="org.eclipse.jdt:core")
+
+    assert (metadata["group"], metadata["license"]) == ("org.eclipse.jdt", "EPL-2.0")
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_metadata_without_a_version_describes_the_most_used_version(client, db, seeded):
     group = "org.example"
     await _add_project(db, "p2", "scan-p2")
