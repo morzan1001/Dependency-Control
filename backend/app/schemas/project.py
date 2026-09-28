@@ -188,7 +188,7 @@ class ProjectNotificationSettings(BaseModel):
         ],
     )
     enforce_notification_settings: bool | None = Field(
-        None, description="Enforce these settings for all members (Owner only)"
+        None, description="Enforce these settings for all members (project admins only)"
     )
 
 

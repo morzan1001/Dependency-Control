@@ -129,6 +129,21 @@ async def admin_supplying_owners(team_ids: list[str], team_repo: TeamRepository)
     )
 
 
+async def project_admin_ids(projects: list[Project], team_repo: TeamRepository) -> dict[str, set[str]]:
+    """Each project's admins: its direct admin members and the admins of every team that owns it."""
+    by_team = await team_repo.members_by_team(sorted({team_id for p in projects for team_id in p.team_ids}))
+    team_admins = {
+        team_id: {m["user_id"] for m in members if m.get("role") == TEAM_ROLE_ADMIN}
+        for team_id, members in by_team.items()
+    }
+    return {
+        p.id: {m.user_id for m in p.members if m.role == PROJECT_ROLE_ADMIN}.union(
+            *(team_admins.get(team_id, set()) for team_id in p.team_ids)
+        )
+        for p in projects
+    }
+
+
 async def last_admin_guard(
     project: Project,
     user: User,

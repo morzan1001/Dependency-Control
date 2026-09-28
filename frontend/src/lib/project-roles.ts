@@ -8,21 +8,18 @@ export const PROJECT_ROLE_ADMIN = 'admin';
 
 const ROLE_HIERARCHY: string[] = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN];
 
-// 'owner' for the project owner, the effective member role, or null if not a member.
+// The effective member role, or null if not a member.
 export function getUserProjectRole(
   project: Project,
   userId: string
-): 'owner' | 'admin' | 'editor' | 'viewer' | null {
-  if (project.owner_id === userId) {
-    return 'owner';
-  }
+): 'admin' | 'editor' | 'viewer' | null {
   const member = project.members?.find(m => m.user_id === userId);
   return ((member?.effective_role ?? member?.role) as 'admin' | 'editor' | 'viewer') ?? null;
 }
 
 // Minimum-role gate: viewer = read, editor/admin = write. project:update bypasses
-// membership for any request (write implies read); project:read_all grants read only;
-// owner satisfies any role. project:delete opens canDeleteProject alone.
+// membership for any request (write implies read); project:read_all grants read only.
+// project:delete opens canDeleteProject alone.
 export function hasProjectRole(
   project: Project,
   userId: string,
@@ -41,7 +38,6 @@ export function hasProjectRole(
 
   const role = getUserProjectRole(project, userId);
   if (role === null) return false;
-  if (role === 'owner') return true;
   return ROLE_HIERARCHY.indexOf(role) >= ROLE_HIERARCHY.indexOf(requiredRole);
 }
 

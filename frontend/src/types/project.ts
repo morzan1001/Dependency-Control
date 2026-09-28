@@ -28,7 +28,6 @@ export type RetentionAction = 'delete' | 'archive' | 'none';
 export interface Project {
   id: string;
   name: string;
-  owner_id?: string; // access is controlled via team/member admins
   // Every team that owns the project. The detail read answers ids and their provenance; the list
   // read and the analytics rows answer resolved names.
   team_ids?: string[];

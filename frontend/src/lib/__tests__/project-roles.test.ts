@@ -90,11 +90,11 @@ describe('hasProjectRole — WRITE superuser (project:update); project:delete de
 })
 
 describe('getUserProjectRole / role hierarchy', () => {
-  it('owner beats everything', () => {
+  it('a legacy owner_id grants nothing, as check_project_access ignores it', () => {
     const project = makeProject([], 'owner-1')
-    expect(getUserProjectRole(project, 'owner-1')).toBe('owner')
-    expect(isProjectAdmin(project, 'owner-1', [])).toBe(true)
-    expect(canDeleteProject(project, 'owner-1', [])).toBe(true)
+    expect(getUserProjectRole(project, 'owner-1')).toBeNull()
+    expect(isProjectAdmin(project, 'owner-1', [])).toBe(false)
+    expect(canDeleteProject(project, 'owner-1', [])).toBe(false)
   })
 
   it('direct member roles resolve and respect the hierarchy', () => {

@@ -8,7 +8,6 @@ import type { User } from '@/types/user'
 interface ProjectStub {
   id: string
   name: string
-  owner_id?: string
   members?: { user_id: string }[]
   team_ids?: string[]
 }
@@ -18,18 +17,16 @@ const targetUserId = 'user-target'
 const firstPage: ProjectStub[] = Array.from({ length: 100 }, (_, i) => ({
   id: `p-${i}`,
   name: `Project ${i}`,
-  owner_id: 'someone-else',
 }))
 const projectBeyondFirstPage: ProjectStub = {
   id: 'p-150',
   name: 'Project 150',
-  owner_id: targetUserId,
+  members: [{ user_id: targetUserId }],
 }
 // The user's team is the second of two owners, so a lookup that reads one owner misses this one.
 const coOwnedProject: ProjectStub = {
   id: 'p-200',
   name: 'Project 200',
-  owner_id: 'someone-else',
   team_ids: ['team-other', 'team-target'],
 }
 const allProjects: ProjectStub[] = [...firstPage, projectBeyondFirstPage, coOwnedProject]
