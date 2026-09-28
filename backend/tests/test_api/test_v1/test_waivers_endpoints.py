@@ -700,6 +700,40 @@ class TestListWaivers:
         assert flags == {"w-expired": False, "w-active": True, "w-no-exp": True}
 
 
+class TestWaiverResponseShape:
+    """Every waiver endpoint answers one shape: is_active computed on read, the match signature internal."""
+
+    def test_a_waiver_stored_while_active_lists_as_expired_once_it_lapses(self, admin_user):
+        db = FakeDatabase()
+        lapsed = _make_waiver(id="w-lapsed", expiration_date=datetime.now(timezone.utc) - timedelta(days=1))
+        match = {"rule_key": "bearer:r1", "file_key": "app.py", "anchor": "a1", "anchor_kind": "scanner_fp"}
+        db.waivers._docs[lapsed.id] = {**lapsed.model_dump(by_alias=True), "is_active": True, "match": match}
+
+        (item,) = _call_list_waivers(admin_user, db=db)["items"]
+
+        assert item["is_active"] is False
+        assert "match" not in item
+
+    def test_a_legacy_status_does_not_fail_the_page(self, admin_user):
+        db = FakeDatabase()
+        legacy = _make_waiver(id="w-legacy", status="risk_accepted_legacy", scope="component")
+        db.waivers._docs[legacy.id] = legacy.model_dump(by_alias=True)
+
+        (item,) = _call_list_waivers(admin_user, db=db)["items"]
+
+        assert (item["status"], item["scope"]) == ("risk_accepted_legacy", "component")
+
+    def test_a_single_waiver_response_carries_is_active(self):
+        from app.schemas.waiver import WaiverResponse
+
+        waiver = _make_waiver(id="w-1", expiration_date=None)
+
+        assert WaiverResponse.model_validate(waiver).model_dump()["is_active"] is True
+
+    def test_the_computed_flag_is_not_persisted(self):
+        assert "is_active" not in _make_waiver(id="w-1").model_dump(by_alias=True)
+
+
 class TestOrphanedFilter:
     """FakeDatabase-backed: the orphaned filter is a query, so a mock that answers every query the
     same way cannot tell whether it selected anything."""

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from pydantic import ConfigDict, Field, computed_field
+from pydantic import ConfigDict, Field
 
 from app.core import ensure_utc
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
@@ -44,8 +44,3 @@ class Waiver(CreatedAtModel):
     created_by: str
 
     model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def is_active(self) -> bool:
-        return is_waiver_active(self.expiration_date)

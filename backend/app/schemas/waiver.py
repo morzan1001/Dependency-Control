@@ -1,11 +1,12 @@
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK, WAIVER_STATUSES
 from app.models.finding import FindingType
 from app.models.types import PyObjectId
+from app.models.waiver import is_waiver_active
 
 WAIVER_SCOPES = ("finding", "file", "rule")
 
@@ -64,11 +65,29 @@ class WaiverUpdate(BaseModel):
         return v
 
 
-class WaiverResponse(WaiverCreate):
+class WaiverResponse(BaseModel):
+    """Lenient on purpose: a stored legacy status or scope must not fail a whole listing."""
+
     id: PyObjectId = Field(validation_alias="_id")
+    project_id: str | None = None
+    finding_id: str | None = None
+    vulnerability_id: str | None = None
+    package_name: str | None = None
+    package_version: str | None = None
+    finding_type: FindingType | None = None
+    scope: str = "finding"
+    rule_id: str | None = None
+    reason: str
+    status: str
+    expiration_date: datetime | None = None
     created_by: str
     created_at: datetime
     last_eval_scan_id: str | None = None
     last_match_count: int | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_active(self) -> bool:
+        return is_waiver_active(self.expiration_date)

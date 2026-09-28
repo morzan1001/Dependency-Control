@@ -227,7 +227,7 @@ async def list_waivers(
     sort_direction = parse_sort_direction(sort_order)
     waivers = await waiver_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
 
-    items = [w.model_dump() for w in waivers]
+    items = [WaiverResponse.model_validate(w).model_dump() for w in waivers]
     return build_pagination_response(items, total, skip, limit)
 
 
