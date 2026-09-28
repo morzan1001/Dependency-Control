@@ -823,7 +823,6 @@ SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
 
 # Authentication providers
 AUTH_PROVIDER_LOCAL = "local"
-AUTH_PROVIDER_OIDC = "oidc"
 
 # Token expiration times
 EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24

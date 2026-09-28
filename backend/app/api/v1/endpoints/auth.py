@@ -24,6 +24,7 @@ from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_password_reset_email, send_verification_email
+from app.api.v1.helpers.users import ensure_identity_available
 from app.api.v1.helpers.responses import (
     RESP_400,
     RESP_400_401_500,
@@ -39,6 +40,7 @@ from app.core import security
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.core.constants import (
+    AUTH_PROVIDER_LOCAL,
     OIDC_HTTP_TIMEOUT_SECONDS,
     OIDC_STATE_TTL_SECONDS,
     TOTP_VALID_WINDOW,
@@ -52,7 +54,7 @@ from app.core.metrics import (
     auth_signups_total,
 )
 from app.models.system import SystemSettings
-from app.models.user import User
+from app.models.user import User, is_local_account
 from app.repositories import UserRepository
 from app.schemas.auth import (
     EmailVerifyResponse,
@@ -62,7 +64,7 @@ from app.schemas.auth import (
     VerificationEmailResponse,
 )
 from app.schemas.token import Token
-from app.schemas.user import User as UserSchema
+from app.schemas.user import UserResponse
 from app.schemas.user import UserPasswordReset, UserSignup
 
 logger = logging.getLogger(__name__)
@@ -128,9 +130,7 @@ def _enforce_2fa_setup_scope(user: dict, system_config: SystemSettings) -> list 
     if user.get("totp_enabled", False):
         return None
 
-    auth_provider = user.get("auth_provider")
-    is_local = not auth_provider or auth_provider == "local"
-    if system_config.enforce_2fa and is_local:
+    if system_config.enforce_2fa and is_local_account(user.get("auth_provider")):
         return ["auth:setup_2fa"]
 
     return None
@@ -185,11 +185,10 @@ async def login_access_token(
     system_config = await deps.get_system_settings(db)
 
     # Skip email-verification gate for OIDC users; trust the provider.
-    auth_provider = user.get("auth_provider", "local")
     if (
         system_config.enforce_email_verification
         and not user.get("is_verified", False)
-        and (not auth_provider or auth_provider == "local")
+        and is_local_account(user.get("auth_provider"))
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -264,7 +263,7 @@ async def refresh_token(
     }
 
 
-@router.post("/signup", response_model=UserSchema, summary="Register a new user", responses=RESP_400_403)
+@router.post("/signup", response_model=UserResponse, summary="Register a new user", responses=RESP_400_403)
 async def create_user(
     background_tasks: BackgroundTasks,
     user_in: UserSignup,
@@ -282,17 +281,7 @@ async def create_user(
 
     user_repo = UserRepository(db)
 
-    if await user_repo.exists_by_username(user_in.username):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The user with this username already exists in the system.",
-        )
-
-    if await user_repo.exists_by_email(user_in.email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The user with this email already exists in the system.",
-        )
+    await ensure_identity_available(user_repo, email=user_in.email, username=user_in.username)
 
     new_user = User(
         email=user_in.email,
@@ -304,7 +293,7 @@ async def create_user(
         permissions=[],
         is_active=True,
         is_verified=False,
-        auth_provider="local",
+        auth_provider=AUTH_PROVIDER_LOCAL,
     )
     await user_repo.create(new_user)
 
@@ -433,8 +422,7 @@ async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: Data
     if not user or user.get("pending_email") != new_email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This email change is no longer pending")
 
-    if await user_repo.exists_by_email(new_email):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+    await ensure_identity_available(user_repo, email=new_email)
 
     await user_repo.update(user_id, {"email": new_email, "pending_email": None, "is_verified": True})
 
@@ -663,8 +651,7 @@ async def _create_oidc_user(
 
 def _validate_existing_oidc_user(user: dict, email: str) -> None:
     """Verify an existing user can use OIDC and is active."""
-    existing_auth_provider = user.get("auth_provider", "local")
-    if existing_auth_provider == "local" or existing_auth_provider is None:
+    if is_local_account(user.get("auth_provider")):
         if auth_oidc_logins_total:
             auth_oidc_logins_total.labels(status="local_user_blocked").inc()
         logger.warning(f"OIDC login attempt blocked for local user: {email}")
@@ -810,7 +797,7 @@ async def forgot_password(
     if (
         user
         and user.get("is_active", True)
-        and (user.get("auth_provider", "local") == "local" or user.get("hashed_password"))
+        and (is_local_account(user.get("auth_provider")) or user.get("hashed_password"))
     ):
         await send_password_reset_email(
             background_tasks,
@@ -871,9 +858,9 @@ async def reset_password(request: Request, reset_in: UserPasswordReset, db: Data
             detail=_MSG_USER_INACTIVE,
         )
 
-    auth_provider = user.get("auth_provider", "local")
+    auth_provider = user.get("auth_provider")
     has_password = user.get("hashed_password") is not None
-    if auth_provider != "local" and not has_password:
+    if not is_local_account(auth_provider) and not has_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Password reset not available for {auth_provider} accounts. Please use your identity provider.",

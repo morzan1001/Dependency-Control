@@ -28,6 +28,16 @@ async def fetch_updated_user(user_id: str, db: AsyncIOMotorDatabase) -> dict[str
     return user
 
 
+async def ensure_identity_available(
+    user_repo: UserRepository, *, email: str | None = None, username: str | None = None
+) -> None:
+    """400 when the email, in any case, or the username already names an account."""
+    if email is not None and await user_repo.exists_by_email(email):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if username is not None and await user_repo.exists_by_username(username):
+        raise HTTPException(status_code=400, detail="Username already taken")
+
+
 def check_admin_or_self(current_user: User, target_user_id: str, permissions: list[str]) -> None:
     """Raise 403 unless the current user holds one of ``permissions`` or is the target user."""
     if not has_permission(current_user.permissions, permissions) and str(current_user.id) != target_user_id:

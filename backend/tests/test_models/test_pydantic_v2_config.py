@@ -153,9 +153,9 @@ class TestFromAttributes:
     """Response schemas with from_attributes=True can parse ORM-like objects."""
 
     def test_user_schema_from_dict(self):
-        from app.schemas.user import User as UserSchema
+        from app.schemas.user import UserResponse
 
-        user = UserSchema(
+        user = UserResponse(
             _id="user-1",
             username="test",
             email="test@example.com",

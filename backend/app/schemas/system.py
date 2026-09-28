@@ -1,6 +1,6 @@
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, RETENTION_ACTION_DELETE, RetentionAction
+from app.core.constants import AUTH_PROVIDER_LOCAL, DEFAULT_ACTIVE_ANALYZERS, RETENTION_ACTION_DELETE, RetentionAction
 
 
 class SystemSettingsBase(BaseModel):
@@ -81,6 +81,15 @@ class SystemSettingsUpdate(SystemSettingsBase):
     # Narrowed only on the way in: the response shares this base and must stay able to render a
     # setting that predates this constraint.
     global_retention_action: RetentionAction = RETENTION_ACTION_DELETE
+    # Stored as the auth_provider of every OIDC-created account, so it must not read as a local one.
+    oidc_provider_name: str = Field("GitLab", min_length=1)
+
+    @field_validator("oidc_provider_name")
+    @classmethod
+    def reject_local_provider_name(cls, v: str) -> str:
+        if v == AUTH_PROVIDER_LOCAL:
+            raise ValueError(f"'{AUTH_PROVIDER_LOCAL}' names password accounts")
+        return v
 
 
 class SystemSettingsResponse(SystemSettingsBase):
