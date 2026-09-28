@@ -10,11 +10,15 @@ from typing import Any, ClassVar
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.api.v1.helpers.projects import authorize_waiver_read, build_user_project_query
 from app.api.v1.helpers.teams import check_team_access, resolve_team_names, team_refs, visible_teams_filter
-from app.api.v1.helpers.webhooks import check_webhook_list_permission
+from app.api.v1.helpers.webhooks import (
+    check_team_webhook_list_permission,
+    check_webhook_list_permission,
+    check_webhook_permission,
+)
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CRYPTO_ASSET_PAGE,
@@ -26,8 +30,8 @@ from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.finding import FindingType, Severity
 from app.models.project import Project
-from app.models.team import Team
 from app.models.user import User
+from app.models.webhook import Webhook
 from app.repositories.base import and_filters
 from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
@@ -85,7 +89,7 @@ logger = logging.getLogger(__name__)
 _ERR_PROJECT_NOT_FOUND = "Project not found or access denied"
 _ERR_SCAN_NOT_FOUND_IN_PROJECT = "Scan not found in this project"
 _ERR_FINDING_NOT_FOUND = "Finding not found"
-_ERR_TEAM_NOT_FOUND = "Team not found"
+_ERR_TEAM_NOT_FOUND = "Team not found or access denied"
 _ERR_ACCESS_DENIED = "Access denied"
 _ERR_WEBHOOK_NOT_FOUND = "Webhook not found or access denied"
 _ERR_ARCHIVE_NOT_FOUND = "Archive not found or access denied"
@@ -656,17 +660,8 @@ class ChatToolRegistry:
             "teams_total": teams_total,
         }
 
-    async def _readable_team(self, ctx: _ToolContext) -> Team | dict[str, Any]:
-        """The team REST's read rule admits, or the error to answer with."""
-        try:
-            return await check_team_access(ctx.args["team_id"], ctx.user, ctx.db)
-        except HTTPException as exc:
-            return {"error": _ERR_TEAM_NOT_FOUND if exc.status_code == 404 else _ERR_ACCESS_DENIED}
-
     async def _tool_get_team_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await self._readable_team(ctx)
-        if isinstance(team, dict):
-            return team
+        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         return {
             "team": {
                 "id": team.id,
@@ -677,9 +672,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_team_projects(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await self._readable_team(ctx)
-        if isinstance(team, dict):
-            return team
+        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         query = and_filters(ctx.user_project_query, {"team_ids": team.id})
         projects, projects_total = await bounded_read(
             ctx.db["projects"], query, subject="team projects", limit=_TEAM_PROJECT_READ
@@ -1321,9 +1314,7 @@ class ChatToolRegistry:
         return {"waivers": out, "count": len(out), "waivers_total": rows_total, "window_days": days}
 
     async def _tool_get_team_risk_overview(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await self._readable_team(ctx)
-        if isinstance(team, dict):
-            return team
+        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         projects, projects_total = await bounded_read(
             ctx.db["projects"],
             and_filters(ctx.user_project_query, {"team_ids": team.id}),
@@ -1443,23 +1434,45 @@ class ChatToolRegistry:
     async def _tool_list_project_webhooks(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
         await _gated(check_webhook_list_permission(project["_id"], ctx.user, ctx.db), _ERR_PROJECT_NOT_FOUND)
+        # Every hook that fires for the project's events: its own, its owning teams', the global ones.
+        scopes: list[dict[str, Any]] = [{"project_id": project["_id"]}]
+        for team_id in project.get("team_ids") or []:
+            try:
+                await check_team_webhook_list_permission(team_id, ctx.user, ctx.db)
+            except HTTPException:
+                continue
+            scopes.append({"team_id": team_id})
+        if has_permission(ctx.user.permissions, Permissions.SYSTEM_MANAGE):
+            scopes.append({"project_id": None, "team_id": None})
         webhooks, webhooks_total = await bounded_read(
-            ctx.db["webhooks"], {"project_id": project["_id"]}, subject="webhooks", limit=_WEBHOOK_READ
+            ctx.db["webhooks"], {"$or": scopes}, subject="webhooks", limit=_WEBHOOK_READ
         )
         return {
-            "webhooks": [_serialize_doc(w, _WEBHOOK_FIELDS) for w in webhooks],
+            "webhooks": [
+                {
+                    **_serialize_doc(w, _WEBHOOK_FIELDS),
+                    "scope": "project" if w.get("project_id") else "team" if w.get("team_id") else "global",
+                }
+                for w in webhooks
+            ],
             "webhooks_total": webhooks_total,
         }
 
     async def _tool_get_webhook_deliveries(self, ctx: _ToolContext) -> dict[str, Any]:
-        webhook = await ctx.db["webhooks"].find_one({"_id": ctx.args["webhook_id"]})
-        if not webhook:
+        doc = await ctx.db["webhooks"].find_one({"_id": ctx.args.get("webhook_id")})
+        try:
+            webhook = Webhook.model_validate(doc)
+        except ValidationError:
+            # Absent, or a stored hook the model rejects, which never fires; the error would quote its secret.
             return {"error": _ERR_WEBHOOK_NOT_FOUND}
-        project = await self._require_project(ctx, webhook.get("project_id") or "", refusal=_ERR_WEBHOOK_NOT_FOUND)
-        await _gated(check_webhook_list_permission(project["_id"], ctx.user, ctx.db), _ERR_WEBHOOK_NOT_FOUND)
+        if webhook.project_id:
+            await self._require_project(ctx, webhook.project_id, refusal=_ERR_WEBHOOK_NOT_FOUND)
+        await _gated(
+            check_webhook_permission(webhook, ctx.user, ctx.db, Permissions.WEBHOOK_READ), _ERR_WEBHOOK_NOT_FOUND
+        )
         deliveries, deliveries_total = await bounded_read(
             ctx.db["webhook_deliveries"],
-            {"webhook_id": webhook["_id"]},
+            {"webhook_id": webhook.id},
             subject="webhook deliveries",
             limit=_WEBHOOK_DELIVERY_READ,
             sort=[("timestamp", -1)],

@@ -192,7 +192,12 @@ async def test_a_webhook_listing_cut_at_the_ceiling_names_every_webhook(seeded, 
 
 @pytest.mark.asyncio
 async def test_a_delivery_history_cut_at_the_ceiling_names_every_delivery(seeded, admin_user):
-    seeded.webhooks._docs[_WEBHOOK] = {"_id": _WEBHOOK, "project_id": _PROJECT, "url": "https://example.invalid"}
+    seeded.webhooks._docs[_WEBHOOK] = {
+        "_id": _WEBHOOK,
+        "project_id": _PROJECT,
+        "url": "https://example.invalid",
+        "events": ["scan_completed"],
+    }
     population = _WEBHOOK_DELIVERY_READ + _OVER_THE_CEILING
     _fill(
         seeded.webhook_deliveries,
