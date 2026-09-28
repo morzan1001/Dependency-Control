@@ -397,7 +397,7 @@ async def read_all_scans(
 
     pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": {"$in": project_ids}}},
-        {"$sort": {sort_field: direction, "_id": 1}},
+        {"$sort": dict(_scan_page_sort(sort_field, direction))},
         {"$skip": skip},
         {"$limit": limit},
         {

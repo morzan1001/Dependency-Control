@@ -72,16 +72,26 @@ async def test_a_paged_find_breaks_ties_on_the_id(method):
 
 
 @pytest.mark.asyncio
-async def test_the_recent_scans_list_breaks_ties_on_the_id():
+@pytest.mark.parametrize(
+    ("sort_by", "sort_order", "expected"),
+    [
+        ("status", "asc", {"status": 1, "created_at": -1, "_id": 1}),
+        ("branch", "desc", {"branch": -1, "created_at": 1}),
+        ("pipeline_iid", "asc", {"pipeline_iid": 1, "created_at": -1, "_id": 1}),
+        # The dashboard's recent-scans call; {created_at: -1} serves it and stops after the page.
+        ("created_at", "desc", {"created_at": -1}),
+    ],
+)
+async def test_the_recent_scans_list_breaks_ties_on_an_indexed_key(sort_by, sort_order, expected):
     db = FakeDatabase()
     await db.projects.insert_one({"_id": "p1", "name": "p1"})
     aggregate = AsyncMock(return_value=[])
     reader = User(id="u1", username="u1", email="u1@test.com", permissions=[Permissions.PROJECT_READ_ALL])
     with patch.object(ScanRepository, "aggregate", aggregate):
-        await read_all_scans(reader, db, sort_by="status", sort_order="asc")
+        await read_all_scans(reader, db, sort_by=sort_by, sort_order=sort_order)
 
-    pipeline = aggregate.await_args.args[0]
-    assert {"$sort": {"status": 1, "_id": 1}} in pipeline
+    sort_stage = next(stage["$sort"] for stage in aggregate.await_args.args[0] if "$sort" in stage)
+    assert list(sort_stage.items()) == list(expected.items())
 
 
 @pytest.mark.asyncio
