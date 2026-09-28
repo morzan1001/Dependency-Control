@@ -3,6 +3,8 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.models.github_api import GitHubOIDCPayload
 from app.services.github import GitHubService
 from tests.mocks.github import github_instance_a, github_instance_b, make_github_instance
@@ -35,9 +37,15 @@ class TestGitHubServiceInitialization:
         service = GitHubService(instance)
         assert service.api_url == "https://api.github.com"
 
-    def test_api_url_empty_github_url_defaults_to_public(self):
-        instance = make_github_instance(github_url="")
-        service = GitHubService(instance)
+    @pytest.mark.parametrize(
+        "issuer",
+        [
+            "https://token.actions.githubusercontent.com",
+            "https://token.actions.githubusercontent.com/acme-enterprise",
+        ],
+    )
+    def test_api_url_without_a_web_url_is_public_for_the_actions_issuer(self, issuer):
+        service = GitHubService(make_github_instance(url=issuer, github_url=None))
         assert service.api_url == "https://api.github.com"
 
     def test_api_url_for_ghes(self):
@@ -515,3 +523,32 @@ class TestGitHubApiWriteMethods:
 
         with _patch_api_client(service, mock_client):
             assert asyncio.run(service._api_patch("/repos/o/r/issues/comments/9", {"body": "x"})) is None
+
+
+class TestGhesInstanceWithoutWebUrl:
+    """A GHES issuer with no web URL has no known API host, so its token must go nowhere, least of all github.com."""
+
+    @staticmethod
+    def _service() -> GitHubService:
+        return GitHubService(
+            make_github_instance(
+                url="https://ghes.corp.example/_services/token", github_url=None, access_token="ghes-pat"
+            )
+        )
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(lambda s: s._api_get("/user"), id="get"),
+            pytest.param(lambda s: s._api_post("/repos/o/r/issues/1/comments", {"body": "x"}), id="post"),
+            pytest.param(lambda s: s._api_patch("/repos/o/r/issues/comments/9", {"body": "x"}), id="patch"),
+            pytest.param(lambda s: s._api_get_paginated("/orgs/acme/teams"), id="paginated"),
+        ],
+    )
+    def test_no_request_is_sent(self, call):
+        service = self._service()
+
+        with _patch_api_client(service, MagicMock()) as api_client:
+            assert asyncio.run(call(service)) is None
+
+        api_client.assert_not_called()

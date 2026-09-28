@@ -13,6 +13,7 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.cache import cache_service
 from app.core.constants import (
+    GITHUB_API_URL,
     GITHUB_JWKS_CACHE_TTL,
     GITHUB_JWKS_URI_CACHE_TTL,
     GITHUB_ORG_REPO_MAP_CACHE_TTL,
@@ -26,7 +27,7 @@ from app.core.constants import (
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.log_utils import sanitize_for_log
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
-from app.models.github_instance import GitHubInstance
+from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
 from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of
 from app.repositories import TeamRepository, UserRepository
 from app.repositories.teams import MemberSubset
@@ -35,6 +36,8 @@ from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 logger = logging.getLogger(__name__)
 
 _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/jwks"
+
+_PUBLIC_GITHUB_WEB_HOSTS = frozenset({"github.com", "www.github.com"})
 
 
 _GITHUB_API_TIMEOUT = 10.0
@@ -232,6 +235,18 @@ class GitHubCoreRateLimit(NamedTuple):
     reset_at: datetime
 
 
+def _hostname(url: str) -> str:
+    return (urllib.parse.urlsplit(url).hostname or "").lower()
+
+
+def is_public_github(github_url: str | None, issuer_url: str) -> bool:
+    """Whether an instance's API, and so its access token, belongs to github.com rather than a GHES host."""
+    # The parsed host, not a substring: "github.company.com" and "github.com.corp.internal" are GHES.
+    if github_url:
+        return _hostname(github_url) in _PUBLIC_GITHUB_WEB_HOSTS
+    return _hostname(issuer_url) == _hostname(GITHUB_SHARED_OIDC_ISSUER)
+
+
 class GitHubService:
     """OIDC token validation and API operations for github.com and GHES instances."""
 
@@ -240,17 +255,15 @@ class GitHubService:
         self.base_url = github_instance.url.rstrip("/")
         self._cache_key_prefix = f"gh_instance:{github_instance.id}"
 
-        # Derive API URL from github_url. Match on the parsed host (not a
-        # substring): hostnames like "github.company.com" or
-        # "github.com.mycorp.internal" contain "github.com" but are GHES
-        # instances that must NOT have their PAT sent to public api.github.com.
         github_url = (github_instance.github_url or "").rstrip("/")
-        host = (urllib.parse.urlsplit(github_url).hostname or "").lower()
-        if not github_url or host in ("github.com", "www.github.com"):
-            self.api_url = "https://api.github.com"
-        else:
-            # GHES: https://{host}/api/v3
+        self.api_url: str | None
+        if is_public_github(github_url, github_instance.url):
+            self.api_url = GITHUB_API_URL
+        elif github_url:
             self.api_url = f"{github_url}/api/v3"
+        else:
+            # A GHES issuer without a web URL names no API host; its token is sent nowhere.
+            self.api_url = None
 
     def _get_cache_key(self, suffix: str) -> str:
         """Generate cache key for this specific instance."""
@@ -272,7 +285,7 @@ class GitHubService:
         params: dict[str, Any] | None = None,
         accept: str = _DEFAULT_ACCEPT,
     ) -> httpx.Response | None:
-        if not self.instance.access_token:
+        if not self.instance.access_token or self.api_url is None:
             return None
 
         try:
@@ -287,7 +300,7 @@ class GitHubService:
             return None
 
     async def _api_post(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
-        if not self.instance.access_token:
+        if not self.instance.access_token or self.api_url is None:
             return None
 
         try:
@@ -302,7 +315,7 @@ class GitHubService:
             return None
 
     async def _api_patch(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
-        if not self.instance.access_token:
+        if not self.instance.access_token or self.api_url is None:
             return None
 
         try:
@@ -327,7 +340,7 @@ class GitHubService:
         ``max_pages=None`` fetches all pages uncapped; a hit finite cap logs a
         truncation WARNING.
         """
-        if not self.instance.access_token:
+        if not self.instance.access_token or self.api_url is None:
             return None
 
         all_items: list[dict[str, Any]] = []
@@ -626,17 +639,13 @@ class GitHubService:
         await cache_service.set(cache_key, email, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
         return GitHubEmailLookup(email or None)
 
-    async def _find_user_for_github_member(self, login: str, user_repo: UserRepository) -> _MemberResolution:
-        """Resolve a GitHub login to an EXISTING local user: username first, then the public email."""
-        user = await user_repo.get_raw_by_username(login)
-        if user:
-            return _MemberResolution(user)
+    async def resolve_login(self, login: str, user_repo: UserRepository) -> _MemberResolution:
+        """The EXISTING local user that verified the login's public email; a matching username proves nothing."""
         lookup = await self.get_user_public_email(login)
         if not lookup.determined:
             return _MemberResolution(None, undetermined=True)
         if lookup.email:
-            # Case-insensitive: the OIDC-login email may differ in case from the profile one.
-            return _MemberResolution(await user_repo.get_raw_by_email_ci(lookup.email))
+            return _MemberResolution(await user_repo.get_raw_by_verified_email(lookup.email))
         return _MemberResolution(None)
 
     @property
@@ -656,7 +665,7 @@ class GitHubService:
         undetermined = 0
         for member in members:
             login = member["login"]
-            resolution = await self._find_user_for_github_member(login, user_repo)
+            resolution = await self.resolve_login(login, user_repo)
             if resolution.undetermined:
                 undetermined += 1
                 continue

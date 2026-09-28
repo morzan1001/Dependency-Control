@@ -52,6 +52,7 @@ router = CustomAPIRouter()
 _MSG_ALREADY_IN_TEAM = "User already in team"
 _MSG_LAST_ADMIN = "Cannot remove the last admin. Add another admin first."
 _MSG_TEAM_NOT_FOUND = "Team not found"
+_MSG_NO_VERIFIED_USER = "No user has verified this email address"
 
 
 @router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED, responses=RESP_AUTH)
@@ -339,9 +340,9 @@ async def add_team_member(
 
     await get_team_with_access(team_id, current_user, db)
 
-    user_to_add = await user_repo.get_raw_by_email(member_in.email)
+    user_to_add = await user_repo.get_raw_by_verified_email(member_in.email)
     if not user_to_add:
-        raise HTTPException(status_code=404, detail="User with this email not found")
+        raise HTTPException(status_code=404, detail=_MSG_NO_VERIFIED_USER)
 
     new_member = TeamMember(user_id=str(user_to_add["_id"]), role=member_in.role)
 

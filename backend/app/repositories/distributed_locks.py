@@ -44,6 +44,15 @@ class DistributedLocksRepository:
 
         return result is not None
 
+    async def renew_lock(self, lock_name: str, holder_id: str, ttl_seconds: int = 30) -> bool:
+        expires_at = datetime.now(timezone.utc) + timedelta(seconds=ttl_seconds)
+        # False once another holder took the expired lock over (or it was released): the caller lost it.
+        result = await self.collection.update_one(
+            {"_id": lock_name, "holder": holder_id},
+            {"$set": {"expires_at": expires_at}},
+        )
+        return result.matched_count > 0
+
     async def release_lock(self, lock_name: str, holder_id: str) -> bool:
         # Scope delete to holder so a pod can't delete a lock another pod took over after TTL.
         result = await self.collection.delete_one({"_id": lock_name, "holder": holder_id})

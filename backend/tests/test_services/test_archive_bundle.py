@@ -305,3 +305,69 @@ async def test_read_raises_when_footer_missing():
     with pytest.raises(ValueError, match=r"truncated|footer"):
         async for _ in read_bundle_frames(source()):
             pass  # drive the generator until it raises
+
+
+@pytest.mark.asyncio
+async def test_rewrite_keeps_header_and_stats_and_redigests_an_edited_doc():
+    from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames, rewrite_bundle_frames
+
+    original = await _collect(
+        BundleFrames.write(
+            scan_doc={"_id": "scan-1", "project_id": "p1"},
+            collections={"findings": _async_iter([{"_id": "f1", "severity": "HIGH", "note": "before"}])},
+            stats=BundleStats(),
+        )
+    )
+    original_events = [event async for event in read_bundle_frames(_async_iter([original]))]
+
+    def edit(collection: str, line: bytes) -> bytes:
+        assert collection == "findings"
+        return line.replace(b'"before"', b'"after"')
+
+    rewritten = await _collect(rewrite_bundle_frames(_async_iter([original]), edit))
+    events = [event async for event in read_bundle_frames(_async_iter([rewritten]))]
+
+    assert events[0] == original_events[0]
+    assert events[1] == {
+        "type": "doc",
+        "collection": "findings",
+        "data": {"_id": "f1", "severity": "HIGH", "note": "after"},
+    }
+    assert events[2]["data"]["stats"] == original_events[2]["data"]["stats"]
+
+
+@pytest.mark.asyncio
+async def test_rewrite_of_a_tampered_bundle_emits_no_footer():
+    from app.services.archive_bundle import rewrite_bundle_frames
+
+    header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {}}).encode() + b"\n"
+    coll = json.dumps({"collection": "findings"}).encode() + b"\n"
+    doc = json.dumps({"_id": "f1"}).encode() + b"\n"
+    footer = json.dumps({"footer": True, "stats": {}, "sha256": "deadbeef" * 8}).encode() + b"\n"
+    rewritten = rewrite_bundle_frames(_async_iter([header + coll + doc + footer]), lambda _collection, line: line)
+    emitted: list[bytes] = []
+
+    with pytest.raises(ValueError, match=r"checksum"):
+        while True:
+            emitted.append(await anext(rewritten))
+
+    assert not any(b'"footer"' in line for line in emitted)
+
+
+@pytest.mark.asyncio
+async def test_rewrite_that_changes_no_line_reproduces_a_bundle_read_in_tiny_chunks():
+    from app.services.archive_bundle import BundleFrames, BundleStats, rewrite_bundle_frames
+
+    original = await _collect(
+        BundleFrames.write(
+            scan_doc={"_id": "scan-1", "project_id": "p1"},
+            collections={
+                "findings": _async_iter([{"_id": f"f{i}", "severity": "LOW"} for i in range(20)]),
+                "callgraphs": _async_iter([]),
+            },
+            stats=BundleStats(),
+        )
+    )
+    chunks = [original[i : i + 3] for i in range(0, len(original), 3)]
+
+    assert await _collect(rewrite_bundle_frames(_async_iter(chunks), lambda _collection, line: line)) == original

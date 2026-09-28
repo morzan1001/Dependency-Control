@@ -428,6 +428,8 @@ class OSVAnalyzer(Analyzer):
                     "severity": self._extract_severity(vuln),
                     "message": summary or f"Vulnerability {vuln_id} detected",
                     "references": [ref.get("url") for ref in vuln.get("references", []) if ref.get("url")],
+                    "published": vuln.get("published"),
+                    "modified": vuln.get("modified"),
                     "affected": vuln.get("affected", []),
                 }
             )

@@ -14,9 +14,9 @@ from app.core.config import settings
 from app.core.permissions import Permissions
 from tests.mocks.fake_mongo import FakeDatabase
 
-# Reset and verification tokens name an email, so an account whose username is its email is the
-# one they would open.
-_USERNAME = "bob@test.com"
+# Every token is minted for the account's id, so only the type check stands between it and the account.
+_USER_ID = "u-1"
+_USERNAME = "bob"
 _STORED_PERMISSIONS = [Permissions.SYSTEM_MANAGE]
 _UNAUTHORIZED = 401
 _MSG_CREDENTIALS = "Could not validate credentials"
@@ -37,9 +37,9 @@ async def _db_with_user(**fields) -> FakeDatabase:
     db = FakeDatabase()
     await db.users.insert_one(
         {
-            "_id": "u-1",
+            "_id": _USER_ID,
             "username": _USERNAME,
-            "email": _USERNAME,
+            "email": "bob@test.com",
             "is_active": True,
             "permissions": list(_STORED_PERMISSIONS),
             **fields,
@@ -54,6 +54,7 @@ async def _db_with_user(**fields) -> FakeDatabase:
         pytest.param(security.create_refresh_token, id="refresh"),
         pytest.param(security.create_password_reset_token, id="password-reset"),
         pytest.param(security.create_email_verification_token, id="email-verification"),
+        pytest.param(lambda subject: security.create_email_change_token(subject, "new@test.com"), id="email-change"),
         pytest.param(_untyped_token, id="no-type-claim"),
     ],
 )
@@ -63,7 +64,7 @@ async def test_a_token_of_another_type_is_refused_as_bearer_and_counted_invalid(
     invalid_before = _validations("invalid")
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(db=db, token=mint(_USERNAME))
+        await get_current_user(db=db, token=mint(_USER_ID))
 
     assert exc_info.value.status_code == _UNAUTHORIZED
     assert exc_info.value.detail == _MSG_CREDENTIALS
@@ -75,7 +76,7 @@ async def test_an_access_token_is_accepted_as_bearer():
     db = await _db_with_user()
     valid_before = _validations("valid")
 
-    user = await get_current_user(db=db, token=security.create_access_token(_USERNAME))
+    user = await get_current_user(db=db, token=security.create_access_token(_USER_ID))
 
     assert user.username == _USERNAME
     assert user.permissions == _STORED_PERMISSIONS
@@ -88,7 +89,7 @@ async def test_an_access_token_issued_before_the_last_logout_is_refused():
     revoked_before = _validations("revoked")
 
     with pytest.raises(HTTPException) as exc_info:
-        await get_current_user(db=db, token=security.create_access_token(_USERNAME))
+        await get_current_user(db=db, token=security.create_access_token(_USER_ID))
 
     assert exc_info.value.status_code == _UNAUTHORIZED
     assert _validations("revoked") == revoked_before + 1
@@ -97,7 +98,7 @@ async def test_an_access_token_issued_before_the_last_logout_is_refused():
 @pytest.mark.asyncio
 async def test_a_blacklisted_access_token_is_refused_and_counted_blacklisted():
     db = await _db_with_user()
-    token = security.create_access_token(_USERNAME)
+    token = security.create_access_token(_USER_ID)
     await db.token_blacklist.insert_one({"_id": jwt.get_unverified_claims(token)["jti"]})
     blacklisted_before = _validations("blacklisted")
 
@@ -107,3 +108,27 @@ async def test_a_blacklisted_access_token_is_refused_and_counted_blacklisted():
     assert exc_info.value.status_code == _UNAUTHORIZED
     assert exc_info.value.detail == _MSG_CREDENTIALS
     assert _validations("blacklisted") == blacklisted_before + 1
+
+
+@pytest.mark.asyncio
+async def test_an_access_token_keeps_working_after_the_account_is_renamed():
+    db = await _db_with_user()
+    token = security.create_access_token(_USER_ID)
+    await db.users.update_one({"_id": _USER_ID}, {"$set": {"username": "robert"}})
+
+    user = await get_current_user(db=db, token=token)
+
+    assert user.id == _USER_ID
+    assert user.username == "robert"
+
+
+@pytest.mark.asyncio
+async def test_an_access_token_naming_a_username_is_refused():
+    db = await _db_with_user()
+    not_found_before = _validations("user_not_found")
+
+    with pytest.raises(HTTPException) as exc_info:
+        await get_current_user(db=db, token=security.create_access_token(_USERNAME))
+
+    assert exc_info.value.status_code == _UNAUTHORIZED
+    assert _validations("user_not_found") == not_found_before + 1

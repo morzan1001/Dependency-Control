@@ -38,19 +38,25 @@ def _create_token(
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def _verify_token(token: str, expected_type: str) -> str | None:
-    """Verify a JWT of the expected type, returning its subject (sub claim) or None if invalid."""
+def _decode_typed_token(token: str, expected_type: str) -> dict[str, Any] | None:
+    """The claims of a valid JWT of the expected type, or None if invalid."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        if payload.get("type") != expected_type:
-            return None
-        return payload.get("sub")
     except ExpiredSignatureError:
         logger.debug(f"{expected_type} token expired")
         return None
     except JWTError as e:
         logger.debug(f"{expected_type} token invalid: {e}")
         return None
+    if payload.get("type") != expected_type:
+        return None
+    return payload
+
+
+def _verify_token(token: str, expected_type: str) -> str | None:
+    """Verify a JWT of the expected type, returning its subject (sub claim) or None if invalid."""
+    payload = _decode_typed_token(token, expected_type)
+    return payload.get("sub") if payload else None
 
 
 def create_access_token(
@@ -106,6 +112,20 @@ def create_email_verification_token(email: str) -> str:
 def verify_email_verification_token(token: str) -> str | None:
     """Verify an email verification token and return the email if valid."""
     return _verify_token(token, "email_verification")
+
+
+def create_email_change_token(user_id: str, new_email: str) -> str:
+    """Create a token confirming that user_id may switch to new_email (valid for 24 hours)."""
+    expire = datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS)
+    return _create_token(subject=user_id, token_type="email_change", expire=expire, extra_claims={"email": new_email})
+
+
+def verify_email_change_token(token: str) -> tuple[str, str] | None:
+    """Verify an email change token and return (user_id, new_email) if valid."""
+    payload = _decode_typed_token(token, "email_change")
+    if not payload or not payload.get("sub") or not payload.get("email"):
+        return None
+    return payload["sub"], payload["email"]
 
 
 def create_password_reset_token(email: str) -> str:

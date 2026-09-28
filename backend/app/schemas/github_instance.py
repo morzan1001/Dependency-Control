@@ -1,11 +1,33 @@
+import re
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.models.github_instance import is_shared_github_issuer
 from app.schemas._oidc_audience import (
     validate_audience_not_blank,
     validate_optional_audience_not_blank,
 )
+
+AUTO_CREATE_NEEDS_OWNERS = (
+    "Auto-creating projects on the shared github.com issuer needs at least one allowed owner id, "
+    "since every github.com repository can mint tokens for it"
+)
+
+_OWNER_ID = re.compile(r"[0-9]+")
+
+
+def lacks_required_owners(url: str, auto_create_projects: bool, allowed_owner_ids: list[str]) -> bool:
+    return auto_create_projects and is_shared_github_issuer(url) and not allowed_owner_ids
+
+
+def _validate_owner_ids(value: list[str] | None) -> list[str]:
+    if value is None:
+        raise ValueError("allowed_owner_ids must be a list; send [] to clear it")
+    for owner_id in value:
+        if not _OWNER_ID.fullmatch(owner_id):
+            raise ValueError(f"allowed_owner_ids holds numeric repository_owner_id values, not logins: {owner_id!r}")
+    return value
 
 
 class GitHubInstanceBase(BaseModel):
@@ -23,6 +45,10 @@ class GitHubInstanceBase(BaseModel):
     is_active: bool = Field(True, description="Whether this instance is currently active")
     auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
     sync_teams: bool = Field(False, description="Sync GitHub team members to local teams")
+    allowed_owner_ids: list[str] = Field(
+        default_factory=list,
+        description="Numeric repository_owner_id claims whose tokens are accepted; empty accepts every owner",
+    )
 
 
 class GitHubInstanceCreate(GitHubInstanceBase):
@@ -37,11 +63,14 @@ class GitHubInstanceCreate(GitHubInstanceBase):
     access_token: str | None = Field(None, description="Personal Access Token for GitHub API operations")
 
     _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
+    _owner_ids_numeric = field_validator("allowed_owner_ids")(_validate_owner_ids)
 
     @model_validator(mode="after")
     def validate_token_dependent_features(self) -> "GitHubInstanceCreate":
         if self.sync_teams and not self.access_token:
             raise ValueError("An access token is required to enable team syncing")
+        if lacks_required_owners(self.url, self.auto_create_projects, self.allowed_owner_ids):
+            raise ValueError(AUTO_CREATE_NEEDS_OWNERS)
         return self
 
 
@@ -59,8 +88,12 @@ class GitHubInstanceUpdate(BaseModel):
     auto_create_projects: bool | None = Field(None, description="Automatically create projects from OIDC tokens")
     sync_teams: bool | None = Field(None, description="Sync GitHub team members to local teams")
     access_token: str | None = Field(None, description="Personal Access Token for GitHub API operations")
+    allowed_owner_ids: list[str] | None = Field(
+        None, description="Numeric repository_owner_id claims whose tokens are accepted; [] accepts every owner"
+    )
 
     _audience_not_blank = field_validator("oidc_audience")(validate_optional_audience_not_blank)
+    _owner_ids_numeric = field_validator("allowed_owner_ids")(_validate_owner_ids)
 
 
 class GitHubInstanceResponse(GitHubInstanceBase):

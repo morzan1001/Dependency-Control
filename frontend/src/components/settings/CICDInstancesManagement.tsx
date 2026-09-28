@@ -7,7 +7,7 @@ import { githubInstancesApi } from "@/api/github-instances";
 import { GitLabInstanceCreate, GitLabInstanceUpdate } from "@/types/gitlab";
 import { GitHubInstanceCreate, GitHubInstanceUpdate } from "@/types/github";
 import { useGitLabInstances, useGitHubInstances, gitlabInstanceKeys, githubInstanceKeys } from "@/hooks/queries/use-instances";
-import { InstanceType, UnifiedInstance, mergeInstances } from "./cicd-instances";
+import { InstanceType, UnifiedInstance, isSharedIssuer, mergeInstances, parseAllowlist } from "./cicd-instances";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -53,8 +53,10 @@ interface InstanceFormData {
   // GitLab-specific
   team_sync_depth: number;
   is_default: boolean;
+  allowed_namespaces: string;
   // GitHub-specific
   github_url: string;
+  allowed_owner_ids: string;
 }
 
 const emptyFormData: InstanceFormData = {
@@ -69,8 +71,19 @@ const emptyFormData: InstanceFormData = {
   sync_teams: false,
   team_sync_depth: 1,
   is_default: false,
+  allowed_namespaces: "",
   github_url: "",
+  allowed_owner_ids: "",
 };
+
+function lacksRequiredAllowlist(formData: InstanceFormData): boolean {
+  const allowlist = formData.type === "github" ? formData.allowed_owner_ids : formData.allowed_namespaces;
+  return (
+    formData.auto_create_projects &&
+    isSharedIssuer(formData.type, formData.url) &&
+    parseAllowlist(allowlist).length === 0
+  );
+}
 
 export function CICDInstancesManagement() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -230,6 +243,7 @@ export function CICDInstancesManagement() {
         team_sync_depth: formData.team_sync_depth,
         is_active: formData.is_active,
         is_default: formData.is_default,
+        allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
       };
       createGitLabMutation.mutate(data);
     } else {
@@ -243,6 +257,7 @@ export function CICDInstancesManagement() {
         sync_teams: formData.sync_teams,
         is_active: formData.is_active,
         access_token: formData.access_token || undefined,
+        allowed_owner_ids: parseAllowlist(formData.allowed_owner_ids),
       };
       createGitHubMutation.mutate(data);
     }
@@ -263,6 +278,7 @@ export function CICDInstancesManagement() {
         team_sync_depth: formData.team_sync_depth,
         is_active: formData.is_active,
         is_default: formData.is_default,
+        allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
       };
       updateGitLabMutation.mutate({ id: editingInstance.id, data });
     } else {
@@ -276,6 +292,7 @@ export function CICDInstancesManagement() {
         sync_teams: formData.sync_teams,
         is_active: formData.is_active,
         access_token: formData.access_token || undefined,
+        allowed_owner_ids: parseAllowlist(formData.allowed_owner_ids),
       };
       updateGitHubMutation.mutate({ id: editingInstance.id, data });
     }
@@ -295,7 +312,9 @@ export function CICDInstancesManagement() {
       sync_teams: instance.sync_teams || false,
       team_sync_depth: instance.team_sync_depth ?? 1,
       is_default: instance.is_default || false,
+      allowed_namespaces: (instance.allowed_namespaces ?? []).join(", "),
       github_url: instance.github_url || "",
+      allowed_owner_ids: (instance.allowed_owner_ids ?? []).join(", "),
     });
     setIsEditDialogOpen(true);
   };
@@ -320,7 +339,7 @@ export function CICDInstancesManagement() {
   const isCreateDisabled = () => {
     if (isCreatePending || !formData.name || !formData.url) return true;
     if (formData.sync_teams && !formData.access_token) return true;
-    return false;
+    return lacksRequiredAllowlist(formData);
   };
 
   return (
@@ -551,6 +570,10 @@ function InstanceForm({
     formData.type === "gitlab"
       ? "Sync GitLab group members to local teams"
       : "Create a team for each GitHub team holding a repository and sync its members. The token needs read:org and must belong to a member of the organisation.";
+  const allowlistRequirement =
+    formData.type === "github"
+      ? "Auto-creating projects on github.com needs at least one owner ID in the list above."
+      : "Auto-creating projects on gitlab.com needs at least one namespace in the list above.";
   return (
     <div className="space-y-4">
       {showTypeSelector && (
@@ -612,15 +635,17 @@ function InstanceForm({
 
       {formData.type === "github" && (
         <div className="grid gap-2">
-          <Label htmlFor="ci-github-url">GitHub Web URL</Label>
+          <Label htmlFor="ci-github-url">GitHub Base URL</Label>
           <Input
             id="ci-github-url"
-            placeholder="https://github.com"
+            placeholder="https://github.example.com"
             value={formData.github_url}
             onChange={(e) => setFormData((prev) => ({ ...prev, github_url: e.target.value }))}
           />
           <p className="text-sm text-muted-foreground">
-            Optional. The GitHub web interface URL (for links in the UI).
+            Required for GitHub Enterprise Server: API calls and the access token go to{" "}
+            <code className="text-xs">&lt;base URL&gt;/api/v3</code>, and without it the instance makes no API calls.
+            For GitHub.com leave it empty or enter <code className="text-xs">https://github.com</code>.
           </p>
         </div>
       )}
@@ -667,6 +692,40 @@ function InstanceForm({
         </p>
       </div>
 
+      {formData.type === "github" ? (
+        <div className="grid gap-2">
+          <Label htmlFor="ci-allowed-owner-ids">Allowed Owner IDs</Label>
+          <Input
+            id="ci-allowed-owner-ids"
+            placeholder="e.g. 1234567, 7654321"
+            value={formData.allowed_owner_ids}
+            onChange={(e) => setFormData((prev) => ({ ...prev, allowed_owner_ids: e.target.value }))}
+          />
+          <p className="text-sm text-muted-foreground">
+            Numeric IDs of the organisations or users whose repositories may authenticate (the
+            repository_owner_id claim; an organisation's ID is the <code className="text-xs">id</code> field
+            of <code className="text-xs">https://api.github.com/orgs/NAME</code>). Every repository on
+            github.com can mint a token for its issuer, so auto-creating projects there requires this list.
+            Leave empty to accept every owner.
+          </p>
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          <Label htmlFor="ci-allowed-namespaces">Allowed Namespaces</Label>
+          <Input
+            id="ci-allowed-namespaces"
+            placeholder="e.g. acme, acme-labs"
+            value={formData.allowed_namespaces}
+            onChange={(e) => setFormData((prev) => ({ ...prev, allowed_namespaces: e.target.value }))}
+          />
+          <p className="text-sm text-muted-foreground">
+            Top-level groups whose projects may authenticate, matched case-insensitively. Every project on
+            gitlab.com can mint a token for it, so auto-creating projects there requires this list. Leave
+            empty to accept every project.
+          </p>
+        </div>
+      )}
+
       <div className="space-y-4 pt-2">
         <div className="flex items-center justify-between">
           <Label htmlFor="ci-is-active">Active</Label>
@@ -695,9 +754,13 @@ function InstanceForm({
         <div className="flex items-center justify-between">
           <div>
             <Label htmlFor="ci-auto-create">Auto-Create Projects</Label>
-            <p className="text-xs text-muted-foreground">
-              Automatically create projects from OIDC tokens
-            </p>
+            {lacksRequiredAllowlist(formData) ? (
+              <p className="text-xs text-destructive">{allowlistRequirement}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Automatically create projects from OIDC tokens
+              </p>
+            )}
           </div>
           <Switch
             id="ci-auto-create"

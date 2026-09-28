@@ -90,6 +90,20 @@ class TestNormalizedEntryShape:
         assert entry["severity"] == "MEDIUM"
         assert "database_specific" not in entry
 
+    def test_references_are_url_strings_and_dates_are_carried(self):
+        vulns = [
+            {
+                "id": "GHSA-x",
+                "published": "2024-01-02T00:00:00Z",
+                "modified": "2024-05-06T00:00:00Z",
+                "references": [{"type": "WEB", "url": "https://example.test/a"}, {"type": "WEB"}],
+            }
+        ]
+        entry = self.analyzer._normalize_vulnerabilities(vulns)[0]
+        assert entry["references"] == ["https://example.test/a"]
+        assert entry["published"] == "2024-01-02T00:00:00Z"
+        assert entry["modified"] == "2024-05-06T00:00:00Z"
+
 
 class TestCvssVersionAwareSeverity:
     """CVSS v2 has no CRITICAL bucket (top tier is HIGH); the mapper must respect the source version."""

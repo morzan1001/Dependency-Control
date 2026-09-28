@@ -137,3 +137,43 @@ def test_dead_helpers_removed():
         "with_http_error_handling",
     ):
         assert not hasattr(http_utils, name), f"{name} should have been removed"
+
+
+@pytest.mark.asyncio
+async def test_stream_yields_the_open_response_and_records_request_metrics():
+    service = "MetricStream"
+    req_before = _counter_value(external_api_requests_total, service)
+    transport = httpx.MockTransport(lambda request: httpx.Response(202, content=b"accepted"))
+
+    async with (
+        InstrumentedAsyncClient(service, transport=transport) as client,
+        client.stream("POST", "https://example.test/x", content=b"{}") as response,
+    ):
+        assert response.status_code == 202
+        assert response.request.content == b"{}"
+        assert await response.aread() == b"accepted"
+
+    assert _counter_value(external_api_requests_total, service) == req_before + 1
+
+
+@pytest.mark.asyncio
+async def test_stream_error_records_error_metric_and_reraises():
+    service = "MetricStreamError"
+    err_before = _counter_value(external_api_errors_total, service)
+
+    def refuse(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("boom", request=request)
+
+    async with InstrumentedAsyncClient(service, transport=httpx.MockTransport(refuse)) as client:
+        with pytest.raises(httpx.ConnectError):
+            async with client.stream("POST", "https://example.test/x"):
+                pass
+
+    assert _counter_value(external_api_errors_total, service) == err_before + 1
+
+
+@pytest.mark.asyncio
+async def test_stream_raises_when_not_started():
+    with pytest.raises(RuntimeError):
+        async with InstrumentedAsyncClient("StreamNotStarted").stream("GET", "https://example.test"):
+            pass

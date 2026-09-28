@@ -1,16 +1,20 @@
 import { useEffect } from 'react'
 import { useSearchParams, Link } from 'react-router-dom'
-import { useVerifyEmail } from '@/hooks/queries/use-auth'
+import { useMutation } from '@tanstack/react-query'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { CheckCircle2, XCircle } from 'lucide-react'
 import { getErrorMessage } from '@/lib/utils'
 
-export default function VerifyEmail() {
+interface VerifyEmailProps {
+  verifyToken: (token: string) => Promise<{ message: string }>
+}
+
+export default function VerifyEmail({ verifyToken }: Readonly<VerifyEmailProps>) {
   const [searchParams] = useSearchParams()
   const token = searchParams.get('token')
-  const { mutate: verify, isPending, isSuccess, isError, error, data } = useVerifyEmail()
+  const { mutate: verify, isPending, isSuccess, isError, error, data } = useMutation({ mutationFn: verifyToken })
   
   const getStatus = () => {
     if (isPending) return 'loading'

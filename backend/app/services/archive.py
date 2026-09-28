@@ -5,12 +5,14 @@ import json
 import logging
 import os
 import time
+import uuid
 import zlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
+from functools import partial
 from typing import Any
 
-from bson import ObjectId
+from bson import ObjectId, json_util
 from cryptography.exceptions import InvalidTag
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pymongo.errors import DuplicateKeyError, PyMongoError
@@ -44,13 +46,22 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.archive import ArchiveRestoreResponse
 from app.schemas.trufflehog import TruffleHogFinding
-from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
+from app.services.archive_bundle import (
+    BundleFrames,
+    BundleStats,
+    json_line,
+    read_bundle_frames,
+    rewrite_bundle_frames,
+)
 from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_rollup import record_scan_update_delta
 
 logger = logging.getLogger(__name__)
 
 _ARCHIVE_LOCK_TTL_SECONDS = 600
+_RESTORE_LOCK_RENEWALS_PER_TTL = 3
+# zlib releases the GIL, so a chunk this large (a whole SBOM line) compresses in a thread instead of stalling the loop.
+_COMPRESS_IN_THREAD_MIN_BYTES = 1 << 20
 
 # Collections a bundle may restore into. Marker names are attacker-influenceable (footer
 # is a plain sha256, not an HMAC), so any name outside this set must abort the restore.
@@ -63,7 +74,8 @@ class _ArchiveSourceReadError(Exception):
 
 
 def _holder_id(prefix: str) -> str:
-    return f"{prefix}-{os.getenv('HOSTNAME', 'unknown')}"
+    # Unique per call, so a holder can tell its own lock apart from one a second call on the same pod took over.
+    return f"{prefix}-{os.getenv('HOSTNAME', 'unknown')}-{uuid.uuid4().hex}"
 
 
 def _extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
@@ -75,6 +87,23 @@ def _extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
             if gid:
                 ids.append(str(gid))
     return ids
+
+
+def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
+    """Legacy rows and bundles can hold TruffleHog's plaintext Raw; only its digest prefix may leave them."""
+    if collection != "analysis_results" or doc.get("analyzer_name") != "trufflehog":
+        return
+    findings = (doc.get("result") or {}).get("findings")
+    if findings:
+        doc["result"]["findings"] = [TruffleHogFinding.model_validate(f).model_dump() for f in findings]
+
+
+async def _hash_plaintext_secrets_in(
+    collection: str, docs: AsyncIterator[dict[str, Any]]
+) -> AsyncIterator[dict[str, Any]]:
+    async for doc in docs:
+        _hash_plaintext_secrets(collection, doc)
+        yield doc
 
 
 async def _stream_collection(collection: Any, scan_id: str) -> AsyncIterator[dict[str, Any]]:
@@ -117,7 +146,10 @@ async def _gzip_compress_stream(source: AsyncIterator[bytes]) -> AsyncIterator[b
     async for chunk in source:
         if not chunk:
             continue
-        out = compressor.compress(chunk)
+        if len(chunk) >= _COMPRESS_IN_THREAD_MIN_BYTES:
+            out = await asyncio.to_thread(compressor.compress, chunk)
+        else:
+            out = compressor.compress(chunk)
         if out:
             yield out
     tail = compressor.flush(zlib.Z_FINISH)
@@ -185,7 +217,10 @@ def _build_archive_payload(
     frames = BundleFrames.write(
         scan_doc=scan_doc,
         collections={
-            **{name: _stream_collection(getattr(db, name), scan_id) for name in SCAN_SCOPED_COLLECTIONS},
+            **{
+                name: _hash_plaintext_secrets_in(name, _stream_collection(getattr(db, name), scan_id))
+                for name in SCAN_SCOPED_COLLECTIONS
+            },
             ARCHIVE_GRIDFS_FRAME: _stream_gridfs_sboms(db, scan_doc),
         },
         stats=stats,
@@ -393,12 +428,7 @@ async def archive_scan(
         await lock_repo.release_lock(lock_name, holder)
 
 
-# ---------------------------------------------------------------------------
-# restore_scan helpers
-# ---------------------------------------------------------------------------
-
-
-async def _open_restore_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
+async def _open_bundle_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
     """Yield a decompressed (and, if encrypted, decrypted) byte stream for the bundle.
 
     Encryption is detected by sniffing the ENCRYPTION_MAGIC prefix, not the live
@@ -429,6 +459,25 @@ async def _open_restore_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes
         yield out
 
 
+def _hash_plaintext_secrets_in_line(collection: str, line: bytes) -> bytes:
+    # json_util never escapes ASCII, so every serialized trufflehog result spells out its analyzer name.
+    if collection != "analysis_results" or b"trufflehog" not in line:
+        return line
+    doc = json_util.loads(line)
+    _hash_plaintext_secrets(collection, doc)
+    return json_line(doc)
+
+
+def stream_bundle_for_download(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
+    """Stream the bundle as unencrypted gzip NDJSON, TruffleHog plaintext hashed and the footer digest recomputed."""
+    return _gzip_compress_stream(rewrite_bundle_frames(_open_bundle_stream(metadata), _hash_plaintext_secrets_in_line))
+
+
+# ---------------------------------------------------------------------------
+# restore_scan helpers
+# ---------------------------------------------------------------------------
+
+
 def _parse_error_reason(exc: ValueError) -> str:
     """Map a bundle ValueError to the appropriate ArchiveFailureReason string."""
     return ArchiveFailureReason.VERSION_MISMATCH if "version" in str(exc).lower() else ArchiveFailureReason.INTEGRITY
@@ -453,7 +502,7 @@ async def _handle_header_event(
     data: dict[str, Any],
     collections_restored: list[str],
 ) -> None:
-    """Insert the scan doc from a header event.
+    """Insert the scan doc from a header event, marked as a restore still in progress.
 
     Version validation lives in ``read_bundle_frames``, which raises before yielding a
     header with a mismatched version, so no version check is needed here.
@@ -461,16 +510,11 @@ async def _handle_header_event(
     scan_data = data.get("scan")
     if scan_data:
         scan_data["pinned"] = True
-        scan_data["restored_at"] = datetime.now(timezone.utc)
+        # restored_at is the reaper's evidence of a finished restore; a re-archived scan's bundle carries its old one.
+        scan_data.pop("restored_at", None)
+        scan_data["restore_in_progress"] = True
         await db.scans.insert_one(scan_data)
         collections_restored.append("scans")
-
-
-def _hash_plaintext_secrets(analysis_result: dict[str, Any]) -> None:
-    """A bundle can hold TruffleHog's plaintext Raw; only its digest prefix may be written back to Mongo."""
-    findings = (analysis_result.get("result") or {}).get("findings")
-    if findings:
-        analysis_result["result"]["findings"] = [TruffleHogFinding.model_validate(f).model_dump() for f in findings]
 
 
 async def _handle_doc_event(
@@ -489,8 +533,7 @@ async def _handle_doc_event(
         gridfs_entries.append(event["data"])
         return
     doc = event["data"]
-    if coll == "analysis_results" and doc.get("analyzer_name") == "trufflehog":
-        _hash_plaintext_secrets(doc)
+    _hash_plaintext_secrets(coll, doc)
     batch_by_collection.setdefault(coll, []).append(doc)
     if len(batch_by_collection[coll]) >= RESTORE_INSERT_BATCH_SIZE:
         await _flush_batch(db, coll, batch_by_collection, collections_restored)
@@ -592,22 +635,14 @@ async def _restore_gridfs(
 
 
 async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
-    """Best-effort cleanup of partial MongoDB state after a restore failure.
+    """Best-effort cleanup of the MongoDB state a failed or abandoned restore left behind.
 
-    _replay_bundle inserts the scan doc before collections, so a mid-stream failure can
-    leave partial state that makes a retry hit the ALREADY_EXISTS guard and never recover.
+    The scan doc goes last, so a failed cleanup leaves it marked restore_in_progress for the next restore to retry.
     """
     try:
-        await db.scans.delete_one({"_id": scan_id})
-        for coll in (
-            "findings",
-            "finding_records",
-            "dependencies",
-            "analysis_results",
-            "callgraphs",
-            "crypto_assets",
-        ):
+        for coll in SCAN_SCOPED_COLLECTIONS:
             await getattr(db, coll).delete_many({"scan_id": scan_id})
+        await db.scans.delete_one({"_id": scan_id})
     except Exception as e:
         logger.warning(
             "Partial-restore rollback failed",
@@ -620,7 +655,10 @@ async def _load_restore_metadata(
     repo: ArchiveMetadataRepository,
     scan_id: str,
 ) -> ArchiveMetadata | None:
-    """Return restore metadata, or None (metrics recorded) if it's missing or the scan already exists."""
+    """Return restore metadata once an unfinished restore's leftovers are rolled back.
+
+    Returns None (metrics recorded) if the metadata is missing or the scan exists without restore_in_progress.
+    """
     metadata = await repo.find_by_scan_id(scan_id)
     if not metadata:
         logger.error(
@@ -631,8 +669,15 @@ async def _load_restore_metadata(
         archive_operations_total.labels(operation="restore", status="failure").inc()
         return None
 
-    existing = await db.scans.find_one({"_id": scan_id})
-    if existing:
+    existing = await db.scans.find_one({"_id": scan_id}, {"restore_in_progress": 1})
+    if existing and existing.get("restore_in_progress"):
+        # A running restore keeps renewing its lock, so while we hold it nobody still writes this leftover.
+        logger.warning(
+            "Rolling back an unfinished restore before restoring again",
+            extra={"scan_id": sanitize_for_log(scan_id)},
+        )
+        await _rollback_partial_restore(db, scan_id)
+    elif existing:
         logger.warning(
             "Scan already exists in MongoDB, aborting restore",
             extra={"scan_id": sanitize_for_log(scan_id)},
@@ -675,30 +720,88 @@ async def _finalize_restore_cleanup(
         )
 
 
+async def _mark_restore_complete(
+    db: Any,
+    scan_id: str,
+    renew_lock: Callable[[], Awaitable[bool]],
+) -> str | None:
+    """Stamp the scan restored if this restore still owns it; otherwise return the failure reason."""
+    # The heartbeat checks the lock only every TTL/3, so a takeover in between must still be caught before finalize.
+    if not await renew_lock():
+        logger.error(
+            "Restore lost its lock to another restore, leaving the scan to it",
+            extra={"scan_id": sanitize_for_log(scan_id)},
+        )
+        return ArchiveFailureReason.LOCK_HELD
+    completed = await db.scans.update_one(
+        {"_id": scan_id, "restore_in_progress": True},
+        {"$set": {"restored_at": datetime.now(timezone.utc)}, "$unset": {"restore_in_progress": ""}},
+    )
+    if completed.matched_count == 0:
+        logger.error(
+            "Restored scan disappeared before the restore completed",
+            extra={"scan_id": sanitize_for_log(scan_id)},
+        )
+        await _rollback_partial_restore(db, scan_id)
+        return ArchiveFailureReason.UNKNOWN
+    return None
+
+
+async def _abandon_restore(
+    db: Any,
+    scan_id: str,
+    renew_lock: Callable[[], Awaitable[bool]],
+    reason: str,
+) -> None:
+    """Count a failed restore and roll back its writes, but only while it still owns the scan's restore lock."""
+    try:
+        still_held = await renew_lock()
+    except PyMongoError as e:
+        # The leftover keeps its restore_in_progress flag, so the next restore rolls it back.
+        logger.warning(
+            "Restore could not confirm it still holds its lock, leaving the rollback to the next restore",
+            extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+        )
+    else:
+        if still_held:
+            await _rollback_partial_restore(db, scan_id)
+        else:
+            logger.error(
+                "Restore lost its lock to another restore, leaving the scan to it",
+                extra={"scan_id": sanitize_for_log(scan_id)},
+            )
+            reason = ArchiveFailureReason.LOCK_HELD
+    archive_failures_total.labels(operation="restore", reason=reason).inc()
+    archive_operations_total.labels(operation="restore", status="failure").inc()
+
+
 async def _run_restore_pipeline(
     db: Any,
     repo: ArchiveMetadataRepository,
     metadata: ArchiveMetadata,
     scan_id: str,
+    renew_lock: Callable[[], Awaitable[bool]],
 ) -> ArchiveRestoreResponse | None:
     """Drive the replay+GridFS+cleanup pipeline after preconditions are met."""
     start_time = time.monotonic()
-    decompressed = _open_restore_stream(metadata)
+    decompressed = _open_bundle_stream(metadata)
     failure_reason, collections_restored, gridfs_entries = await _replay_bundle(db, scan_id, decompressed)
 
     if failure_reason is not None:
-        await _rollback_partial_restore(db, scan_id)
-        archive_failures_total.labels(operation="restore", reason=failure_reason).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
+        await _abandon_restore(db, scan_id, renew_lock, failure_reason)
         return None
 
     if gridfs_entries and not await _restore_gridfs(db, scan_id, gridfs_entries):
-        await _rollback_partial_restore(db, scan_id)
-        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.INTEGRITY).inc()
-        archive_operations_total.labels(operation="restore", status="failure").inc()
+        await _abandon_restore(db, scan_id, renew_lock, ArchiveFailureReason.INTEGRITY)
         return None
     if gridfs_entries:
         collections_restored.append(ARCHIVE_GRIDFS_FRAME)
+
+    failure_reason = await _mark_restore_complete(db, scan_id, renew_lock)
+    if failure_reason is not None:
+        archive_failures_total.labels(operation="restore", reason=failure_reason).inc()
+        archive_operations_total.labels(operation="restore", status="failure").inc()
+        return None
 
     # The restored scan re-enters its branch timeline, so the rollup also re-points the successor.
     await record_scan_update_delta(db, scan_id)
@@ -723,14 +826,64 @@ async def _run_restore_pipeline(
     )
 
 
+async def _renew_restore_lock_until_lost(
+    renew_lock: Callable[[], Awaitable[bool]],
+    pipeline: asyncio.Task[ArchiveRestoreResponse | None],
+    scan_id: str,
+) -> None:
+    """Keep the restore lock alive while the pipeline runs; cancel the pipeline once another restore took it over."""
+    while True:
+        await asyncio.sleep(_ARCHIVE_LOCK_TTL_SECONDS / _RESTORE_LOCK_RENEWALS_PER_TTL)
+        try:
+            still_held = await renew_lock()
+        except PyMongoError as e:
+            logger.warning(
+                "Restore lock renewal failed, retrying",
+                extra={"scan_id": sanitize_for_log(scan_id), "error": sanitize_for_log(e)},
+            )
+            continue
+        if not still_held:
+            logger.error(
+                "Restore lost its lock to another restore, aborting",
+                extra={"scan_id": sanitize_for_log(scan_id)},
+            )
+            pipeline.cancel()
+            return
+
+
+async def _run_restore_pipeline_holding_lock(
+    db: Any,
+    repo: ArchiveMetadataRepository,
+    metadata: ArchiveMetadata,
+    scan_id: str,
+    renew_lock: Callable[[], Awaitable[bool]],
+) -> ArchiveRestoreResponse | None:
+    pipeline = asyncio.create_task(_run_restore_pipeline(db, repo, metadata, scan_id, renew_lock))
+    heartbeat = asyncio.create_task(_renew_restore_lock_until_lost(renew_lock, pipeline, scan_id))
+    try:
+        return await pipeline
+    except asyncio.CancelledError:
+        # Only the heartbeat cancels the pipeline without cancelling us; our own cancellation must propagate.
+        this_task = asyncio.current_task()
+        if this_task is None or this_task.cancelling():
+            raise
+        archive_failures_total.labels(operation="restore", reason=ArchiveFailureReason.LOCK_HELD).inc()
+        archive_operations_total.labels(operation="restore", status="failure").inc()
+        return None
+    finally:
+        heartbeat.cancel()
+        await asyncio.gather(heartbeat, return_exceptions=True)
+
+
 async def restore_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
 ) -> ArchiveRestoreResponse | None:
     """Restore an archived scan back to MongoDB under a distributed lock on restore:{scan_id}.
 
-    Aborts if the scan already exists. On success, deletes the S3 archive and metadata;
-    either deletion failing is logged but the orphan reaper sweeps remnants.
+    An unfinished restore's leftovers (restore_in_progress) are rolled back and replayed; any other
+    existing scan aborts the restore. On success, deletes the S3 archive and metadata; either
+    deletion failing is logged but the orphan reaper sweeps remnants.
     """
     if not is_archive_enabled():
         return None
@@ -739,6 +892,7 @@ async def restore_scan(
     lock_repo = DistributedLocksRepository(db)
     lock_name = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
     holder = _holder_id("restore")
+    renew_lock = partial(lock_repo.renew_lock, lock_name, holder, _ARCHIVE_LOCK_TTL_SECONDS)
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
         logger.info(
@@ -753,6 +907,6 @@ async def restore_scan(
         metadata = await _load_restore_metadata(db, repo, scan_id)
         if metadata is None:
             return None
-        return await _run_restore_pipeline(db, repo, metadata, scan_id)
+        return await _run_restore_pipeline_holding_lock(db, repo, metadata, scan_id, renew_lock)
     finally:
         await lock_repo.release_lock(lock_name, holder)

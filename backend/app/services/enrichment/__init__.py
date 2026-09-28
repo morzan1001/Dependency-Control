@@ -42,8 +42,8 @@ async def enrich_vulnerability_findings(
     github_token: str | None = None,
 ) -> None:
     """Enrich findings in place; the shared HTTP client is process-lifetime and must not be closed here (concurrent runs share it)."""
-    if github_token:
-        vulnerability_enrichment_service.set_github_token(github_token)
+    # Set even when None, so a token removed since an earlier run stops being sent.
+    vulnerability_enrichment_service.set_github_token(github_token)
     await vulnerability_enrichment_service.enrich_findings(findings)
 
 

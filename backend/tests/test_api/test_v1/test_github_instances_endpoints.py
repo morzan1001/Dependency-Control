@@ -127,14 +127,14 @@ class TestGitHubInstanceUpdateTokenGuard:
         assert "access token" in exc_info.value.detail
 
     def test_enabling_sync_teams_together_with_a_token_is_allowed(self, admin_user):
-        instance = make_github_instance(id="gh-1", access_token=None)
+        instance = make_github_instance(id="gh-1", access_token=None, auto_create_projects=False)
 
         repo = _run_update(instance, admin_user, sync_teams=True, access_token="ghp-secret")
 
         assert repo.update.await_args.args[1]["sync_teams"] is True
 
     def test_enabling_sync_teams_on_an_instance_that_already_has_a_token_is_allowed(self, admin_user):
-        instance = make_github_instance(id="gh-1", access_token="ghp-stored")
+        instance = make_github_instance(id="gh-1", access_token="ghp-stored", auto_create_projects=False)
 
         repo = _run_update(instance, admin_user, sync_teams=True)
 
@@ -568,3 +568,87 @@ class TestConnectionTellsAThrottledTokenFromAScopeProblem:
         assert result.success is False
         assert "any moment now" in result.message
         assert "minute(s)" not in result.message
+
+
+class TestGitHubInstanceOwnerAllowlist:
+    """Auto-create on the shared github.com issuer admits the world unless an owner list narrows it."""
+
+    _GHES = "https://github.corp.example.com/_services/token"
+
+    def test_create_persists_and_returns_the_owner_list(self, admin_user):
+        from app.api.v1.endpoints.github_instances import create_instance
+        from app.schemas.github_instance import GitHubInstanceCreate
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
+        mock_repo.create = AsyncMock(side_effect=lambda instance: instance)
+        service = MagicMock()
+        service.get_jwks = AsyncMock(return_value={"keys": [{"kid": "k1"}]})
+        payload = GitHubInstanceCreate(
+            name="GitHub.com",
+            url="https://token.actions.githubusercontent.com",
+            oidc_audience="dependency-control",
+            auto_create_projects=True,
+            allowed_owner_ids=["111", "222"],
+        )
+
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.GitHubService", return_value=service):
+                response = asyncio.run(create_instance(instance_data=payload, db=MagicMock(), current_user=admin_user))
+
+        assert mock_repo.create.await_args.args[0].allowed_owner_ids == ["111", "222"]
+        assert response.allowed_owner_ids == ["111", "222"]
+
+    def test_enabling_auto_create_on_the_shared_issuer_without_a_list_is_rejected(self, admin_user):
+        instance = make_github_instance(id="gh-1", auto_create_projects=False)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run_update(instance, admin_user, auto_create_projects=True)
+
+        assert exc_info.value.status_code == 400
+        assert "allowed owner" in exc_info.value.detail
+
+    def test_enabling_auto_create_together_with_a_list_is_allowed(self, admin_user):
+        instance = make_github_instance(id="gh-1", auto_create_projects=False)
+
+        repo = _run_update(instance, admin_user, auto_create_projects=True, allowed_owner_ids=["111"])
+
+        assert repo.update.await_args.args[1]["allowed_owner_ids"] == ["111"]
+
+    def test_emptying_the_list_while_auto_create_stays_on_is_rejected(self, admin_user):
+        instance = make_github_instance(id="gh-1", auto_create_projects=True, allowed_owner_ids=["111"])
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run_update(instance, admin_user, allowed_owner_ids=[])
+
+        assert exc_info.value.status_code == 400
+
+    def test_moving_an_auto_creating_instance_onto_the_shared_issuer_without_a_list_is_rejected(self, admin_user):
+        instance = make_github_instance(id="gh-1", url=self._GHES, auto_create_projects=True)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run_update(instance, admin_user, url="https://token.actions.githubusercontent.com")
+
+        assert exc_info.value.status_code == 400
+
+    def test_turning_auto_create_off_needs_no_list(self, admin_user):
+        instance = make_github_instance(id="gh-1", auto_create_projects=True)
+
+        repo = _run_update(instance, admin_user, auto_create_projects=False)
+
+        assert repo.update.await_args.args[1]["auto_create_projects"] is False
+
+    def test_ghes_auto_creates_without_a_list(self, admin_user):
+        instance = make_github_instance(id="gh-1", url=self._GHES, auto_create_projects=False)
+
+        repo = _run_update(instance, admin_user, auto_create_projects=True)
+
+        assert repo.update.await_args.args[1]["auto_create_projects"] is True
+
+    def test_the_response_carries_the_stored_list(self, admin_user):
+        from app.api.v1.endpoints.github_instances import get_instance
+
+        mock_repo = _make_repo_mock(get_by_id=make_github_instance(allowed_owner_ids=["111"]))
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo):
+            result = asyncio.run(get_instance(instance_id="gh-1", db=MagicMock(), current_user=admin_user))
+
+        assert result.allowed_owner_ids == ["111"]

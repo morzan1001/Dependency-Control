@@ -35,6 +35,7 @@ from app.core.constants import (
     WEBHOOK_HEADER_TEST,
     WEBHOOK_HEADER_TIMESTAMP,
     WEBHOOK_HEADER_USER_AGENT,
+    WEBHOOK_RESPONSE_BODY_LIMIT_BYTES,
     WEBHOOK_USER_AGENT_VALUE,
 )
 from app.core.http_utils import InstrumentedAsyncClient
@@ -321,6 +322,28 @@ class WebhookService:
 
         return TeamsFormatter.build_generic_card(subject=subject, message=message, url=None)
 
+    async def _post_bounded(
+        self, client_name: str, url: str, content: str, headers: Mapping[str, str]
+    ) -> tuple[int, str]:
+        """POST under one overall deadline; returns the status and, for a non-2xx answer, a capped body prefix."""
+        async with asyncio.timeout(self.timeout):
+            transport = await build_pinned_transport(url)
+            async with (
+                InstrumentedAsyncClient(client_name, timeout=self.timeout, transport=transport) as client,
+                # identity keeps the raw prefix readable; decoding compressed chunks has no output limit.
+                client.stream(
+                    "POST", url, content=content, headers={**headers, "Accept-Encoding": "identity"}
+                ) as response,
+            ):
+                if 200 <= response.status_code < 300:
+                    return response.status_code, ""
+                body = bytearray()
+                async for chunk in response.aiter_raw():
+                    body += chunk
+                    if len(body) >= WEBHOOK_RESPONSE_BODY_LIMIT_BYTES:
+                        break
+                return response.status_code, body[:WEBHOOK_RESPONSE_BODY_LIMIT_BYTES].decode("utf-8", "replace")
+
     async def _send_webhook(
         self,
         db: AsyncIOMotorDatabase,
@@ -341,47 +364,36 @@ class WebhookService:
 
         while retry_count < self.max_retries:
             try:
-                transport = await build_pinned_transport(webhook.url)
+                status_code, body_prefix = await self._post_bounded(
+                    "Webhook Delivery", webhook.url, json_payload, headers
+                )
+                last_status_code = status_code
 
-                async with InstrumentedAsyncClient(
-                    "Webhook Delivery", timeout=self.timeout, transport=transport
-                ) as client:
-                    response = await client.post(
-                        webhook.url,
-                        content=json_payload,
-                        headers=headers,
+                if 200 <= status_code < 300:
+                    logger.info(f"Webhook {webhook.id} triggered successfully for {event_type} (status: {status_code})")
+                    await self._update_webhook_status(db, webhook.id, success=True)
+                    await self._log_webhook_delivery(
+                        db,
+                        webhook.id,
+                        event_type,
+                        payload,
+                        success=True,
+                        status_code=status_code,
+                        retry_count=retry_count,
                     )
-
-                    last_status_code = response.status_code
-
-                    if 200 <= response.status_code < 300:
-                        logger.info(
-                            f"Webhook {webhook.id} triggered successfully for {event_type} "
-                            f"(status: {response.status_code})"
-                        )
-                        await self._update_webhook_status(db, webhook.id, success=True)
-                        await self._log_webhook_delivery(
-                            db,
-                            webhook.id,
-                            event_type,
-                            payload,
-                            success=True,
-                            status_code=response.status_code,
-                            retry_count=retry_count,
-                        )
-                        return True
-                    logger.warning(
-                        f"Webhook {webhook.id} returned non-success status {response.status_code} "
-                        f"for {event_type}: {response.text[:200]}"
-                    )
-                    last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+                    return True
+                logger.warning(
+                    f"Webhook {webhook.id} returned non-success status {status_code} "
+                    f"for {event_type}: {body_prefix[:200]}"
+                )
+                last_error = f"HTTP {status_code}: {body_prefix[:200]}"
 
             except ValueError as e:
                 # SSRF policy violation — don't retry.
                 logger.warning(f"Webhook {webhook.id} blocked for {event_type}: {e}")
                 last_error = f"Blocked target: {e}"
                 break
-            except httpx.TimeoutException:
+            except (httpx.TimeoutException, TimeoutError):
                 logger.warning(f"Webhook {webhook.id} timed out for {event_type} (attempt {retry_count + 1})")
                 last_error = "Timeout"
             except httpx.RequestError as e:
@@ -653,30 +665,22 @@ class WebhookService:
         start_time = time.monotonic()
 
         try:
-            transport = await build_pinned_transport(webhook.url)
+            status_code, body_prefix = await self._post_bounded("Webhook Test", webhook.url, json_payload, headers)
+            response_time_ms = (time.monotonic() - start_time) * 1000
 
-            async with InstrumentedAsyncClient("Webhook Test", timeout=self.timeout, transport=transport) as client:
-                response = await client.post(
-                    webhook.url,
-                    content=json_payload,
-                    headers=headers,
-                )
-
-                response_time_ms = (time.monotonic() - start_time) * 1000
-
-                if 200 <= response.status_code < 300:
-                    return {
-                        "success": True,
-                        "status_code": response.status_code,
-                        "error": None,
-                        "response_time_ms": round(response_time_ms, 2),
-                    }
+            if 200 <= status_code < 300:
                 return {
-                    "success": False,
-                    "status_code": response.status_code,
-                    "error": f"HTTP {response.status_code}: {response.text[:200]}",
+                    "success": True,
+                    "status_code": status_code,
+                    "error": None,
                     "response_time_ms": round(response_time_ms, 2),
                 }
+            return {
+                "success": False,
+                "status_code": status_code,
+                "error": f"HTTP {status_code}: {body_prefix[:200]}",
+                "response_time_ms": round(response_time_ms, 2),
+            }
 
         except ValueError as e:
             return {
@@ -685,7 +689,7 @@ class WebhookService:
                 "error": f"Blocked target: {e}",
                 "response_time_ms": None,
             }
-        except httpx.TimeoutException:
+        except (httpx.TimeoutException, TimeoutError):
             return {
                 "success": False,
                 "status_code": None,

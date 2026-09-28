@@ -84,19 +84,37 @@ async def check_callgraph_access(
     return project
 
 
+def callgraph_entry_count(data: dict[str, Any]) -> int:
+    """What either parser walks, counted off the raw payload: every top-level list, plus the
+    symbols each import names."""
+    total = 0
+    for value in data.values():
+        if not isinstance(value, list):
+            continue
+        total += len(value)
+        total += sum(
+            len(entry["symbols"])
+            for entry in value
+            if isinstance(entry, dict) and isinstance(entry.get("symbols"), list)
+        )
+    return total
+
+
 def _canonical_module_list(names: Any, language: str) -> list[str]:
     """Canonicalise and de-duplicate an uploaded analyzed_modules list, order-stable."""
     if not isinstance(names, list):
         return []
 
-    result: list[str] = []
-    for name in names:
-        if not isinstance(name, str):
-            continue
-        key = canonical_module_key(name, language)
-        if key and key not in result:
-            result.append(key)
-    return result
+    return list(
+        dict.fromkeys(key for name in names if isinstance(name, str) and (key := canonical_module_key(name, language)))
+    )
+
+
+def _dedupe_module_usage(module_usage: dict[str, ModuleUsage]) -> None:
+    """Collapse the lists the record helpers append to, keeping first-seen order."""
+    for usage in module_usage.values():
+        usage.import_locations = list(dict.fromkeys(usage.import_locations))
+        usage.used_symbols = list(dict.fromkeys(usage.used_symbols))
 
 
 def _get_or_create_module_usage(module_usage: dict[str, ModuleUsage], base_module: str) -> ModuleUsage:
@@ -147,8 +165,7 @@ def _record_madge_dep(
 
     usage = _get_or_create_module_usage(module_usage, canonical_module_key(package, language))
     usage.import_count += 1
-    if file_path not in usage.import_locations:
-        usage.import_locations.append(file_path)
+    usage.import_locations.append(file_path)
 
 
 def parse_madge_format(
@@ -166,6 +183,7 @@ def parse_madge_format(
             if isinstance(dep, str) and dep:
                 _record_madge_dep(dep, file_path, language, imports, module_usage)
 
+    _dedupe_module_usage(module_usage)
     return imports, [], module_usage, analyzed_modules
 
 
@@ -195,11 +213,9 @@ def _record_generic_import(
 
     usage = _get_or_create_module_usage(module_usage, canonical_module_key(module, language))
     usage.import_count += 1
-    if file_path and file_path not in usage.import_locations:
+    if file_path:
         usage.import_locations.append(file_path)
-    for symbol in symbols:
-        if symbol not in usage.used_symbols:
-            usage.used_symbols.append(symbol)
+    usage.used_symbols.extend(symbols)
 
 
 def _record_generic_call(
@@ -226,7 +242,7 @@ def _record_generic_call(
     usage = _get_or_create_module_usage(module_usage, canonical_module_key(module, language))
     usage.call_count += 1
     func = call.get("callee_function", "")
-    if func and func not in usage.used_symbols:
+    if func:
         usage.used_symbols.append(func)
 
 
@@ -245,6 +261,7 @@ def parse_generic_format(
     for call in data.get("calls", []):
         _record_generic_call(call, language, calls, module_usage)
 
+    _dedupe_module_usage(module_usage)
     return imports, calls, module_usage, analyzed_modules
 
 

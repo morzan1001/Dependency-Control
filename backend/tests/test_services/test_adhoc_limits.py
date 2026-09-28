@@ -1,13 +1,17 @@
 """Ad-hoc runs are bounded: an input-shape ceiling, a findings ceiling that keeps the worst first."""
 
+import threading
 import time
 from collections import Counter
+from unittest.mock import MagicMock
 
 import pytest
 
 from app.core.constants import (
+    ADHOC_MAX_CALLGRAPH_ENTRIES,
     ADHOC_MAX_SBOM_COMPONENTS,
     ADHOC_MAX_SBOM_EVIDENCE_ENTRIES,
+    ADHOC_MAX_SBOM_GRAPH_ENTRIES,
     ADHOC_MAX_SCANNER_FINDINGS,
 )
 from app.schemas.adhoc import AdhocAnalyzeRequest
@@ -26,6 +30,7 @@ _LOW = "LOW"
 _TYPE_SAST = "sast"
 _TYPE_SECRET = "secret"
 _VULNERABILITY = "vulnerability"
+_REACHABILITY = "reachability"
 _COMPONENT = "requests"
 _VERSION = "2.31.0"
 
@@ -366,3 +371,231 @@ async def test_findings_crowded_onto_one_path_stay_affordable():
 
     assert len(response.findings) == _CROWDED_FINDINGS
     assert time.perf_counter() - started < _AFFORDABLE_SECONDS
+
+
+# ── The dependency-graph and callgraph ceilings
+
+
+def _cyclonedx_fan_out(entries: int) -> dict:
+    return {**_SBOM, "dependencies": [{"ref": "root", "dependsOn": [f"c{i}" for i in range(entries)]}]}
+
+
+def _cyclonedx_string_depends_on(entries: int) -> dict:
+    return {**_SBOM, "dependencies": [{"ref": "root", "dependsOn": "c" * entries}]}
+
+
+def _spdx_relationships(entries: int) -> dict:
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "packages": [{"SPDXID": "SPDXRef-lodash", "name": "lodash", "versionInfo": "4.17.21"}],
+        "relationships": [
+            {"spdxElementId": f"SPDXRef-p{i}", "relationshipType": "DEPENDS_ON", "relatedSpdxElement": "SPDXRef-lodash"}
+            for i in range(entries)
+        ],
+    }
+
+
+def _syft_relationships(entries: int) -> dict:
+    return {
+        "descriptor": {"name": "syft"},
+        "source": {},
+        "artifacts": [{"id": "lodash", "name": "lodash", "version": "4.17.21", "purl": "pkg:npm/lodash@4.17.21"}],
+        "artifactRelationships": [{"parent": f"p{i}", "child": "lodash", "type": "depends-on"} for i in range(entries)],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "build",
+    [
+        pytest.param(_cyclonedx_fan_out, id="cyclonedx-depends-on"),
+        pytest.param(_cyclonedx_string_depends_on, id="cyclonedx-depends-on-walked-per-character"),
+        pytest.param(_spdx_relationships, id="spdx-relationships"),
+        pytest.param(_syft_relationships, id="syft-artifact-relationships"),
+    ],
+)
+async def test_an_oversized_dependency_graph_is_refused_before_it_is_parsed(monkeypatch, build):
+    merge = MagicMock()
+    monkeypatch.setattr("app.services.sbom_parser.merge_duplicate_dependencies", merge)
+    request = AdhocAnalyzeRequest(
+        sboms=[build(ADHOC_MAX_SBOM_GRAPH_ENTRIES + 1)], analyzers=[], apply_global_waivers=False
+    )
+
+    with pytest.raises(AdhocInputTooLarge, match=str(ADHOC_MAX_SBOM_GRAPH_ENTRIES)):
+        await _run(request)
+    assert merge.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_fan_in_onto_two_copies_of_one_package_is_analysed_up_to_the_ceiling():
+    """Two bom-refs for one package are merged, so their parent lists are too."""
+    component = dict(_SBOM["components"][0])
+    fan_in = ADHOC_MAX_SBOM_GRAPH_ENTRIES // 3
+    sbom = {
+        **_SBOM,
+        "components": [{**component, "bom-ref": "A"}, {**component, "bom-ref": "B"}],
+        "dependencies": [{"ref": f"p{i}", "dependsOn": ["A", "B"]} for i in range(fan_in)],
+    }
+
+    response = await _run(AdhocAnalyzeRequest(sboms=[sbom], analyzers=[], apply_global_waivers=False))
+
+    assert response.analyzers.skipped_inputs == {}
+
+
+@pytest.mark.asyncio
+async def test_spdx_cpe_refs_count_as_component_evidence():
+    package = {
+        "SPDXID": "SPDXRef-lodash",
+        "name": "lodash",
+        "versionInfo": "4.17.21",
+        "externalRefs": [
+            {"referenceType": "cpe23Type", "referenceLocator": f"cpe:2.3:a:lodash:lodash:{i}:*:*:*:*:*:*:*"}
+            for i in range(ADHOC_MAX_SBOM_EVIDENCE_ENTRIES + 1)
+        ],
+    }
+    sbom = {"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": [package]}
+
+    with pytest.raises(AdhocInputTooLarge, match=str(ADHOC_MAX_SBOM_EVIDENCE_ENTRIES)):
+        await _run(AdhocAnalyzeRequest(sboms=[sbom], analyzers=[], apply_global_waivers=False))
+
+
+def _symbols_on_one_import(symbols: int) -> dict:
+    return {
+        "language": "python",
+        "imports": [{"module": _COMPONENT, "file": "app/client.py", "symbols": [f"s{i}" for i in range(symbols)]}],
+    }
+
+
+def _madge_fan_in(files: int) -> dict:
+    return {f"src/f{i}.js": ["lodash"] for i in range(files)}
+
+
+def _coverage_universe(modules: int) -> dict:
+    return {"language": "python", "analyzed_modules": [f"pkg{i}" for i in range(modules)]}
+
+
+def _calls(calls: int) -> dict:
+    return {
+        "language": "python",
+        "calls": [{"callee_module": _COMPONENT, "callee_function": f"f{i}"} for i in range(calls)],
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "oversized",
+    [
+        # One import plus the symbols it names.
+        pytest.param(lambda: _symbols_on_one_import(ADHOC_MAX_CALLGRAPH_ENTRIES), id="symbols-on-one-import"),
+        pytest.param(lambda: _madge_fan_in(ADHOC_MAX_CALLGRAPH_ENTRIES + 1), id="madge-fan-in"),
+        pytest.param(lambda: _coverage_universe(ADHOC_MAX_CALLGRAPH_ENTRIES + 1), id="coverage-universe"),
+        pytest.param(lambda: _calls(ADHOC_MAX_CALLGRAPH_ENTRIES + 1), id="calls"),
+    ],
+)
+async def test_an_oversized_callgraph_is_refused_before_it_is_parsed(monkeypatch, oversized):
+    prepare = MagicMock()
+    monkeypatch.setattr(adhoc, "_prepare_posted_callgraph", prepare)
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], callgraph=oversized(), analyzers=[], apply_global_waivers=False)
+
+    with pytest.raises(AdhocInputTooLarge, match=str(ADHOC_MAX_CALLGRAPH_ENTRIES)):
+        await _run(request)
+    assert prepare.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_callgraph_at_the_ceiling_is_analysed(_osv):
+    request = AdhocAnalyzeRequest(
+        sboms=[_SBOM],
+        callgraph=_symbols_on_one_import(ADHOC_MAX_CALLGRAPH_ENTRIES - 1),
+        analyzers=[_OSV],
+        apply_global_waivers=False,
+    )
+
+    response = await _run(request)
+
+    assert _REACHABILITY in response.analyzers.ran
+    assert response.findings[0]["details"]["reachability"]["import_locations"] == ["app/client.py"]
+
+
+_LARGE_CALLGRAPH_FILES = 2000
+_LARGE_CALLGRAPH_MODULES = ("requests", "urllib3", "yaml", "jinja2", "click")
+_SHARED_SYMBOLS = ["sym0", "common", "sym1", "sym2", "sym3"]
+
+
+def _large_callgraph() -> dict:
+    """Every file imports a submodule of every package, naming one rotating symbol and one shared one."""
+    imports = [
+        {
+            "module": f"{module}.sub{file % 3}",
+            "file": f"app/f{file}.py",
+            "line": 1,
+            "symbols": [f"sym{file % 4}", "common"],
+        }
+        for file in range(_LARGE_CALLGRAPH_FILES)
+        for module in _LARGE_CALLGRAPH_MODULES
+    ]
+    calls = [
+        {
+            "caller_file": f"app/f{file}.py",
+            "callee_module": "requests",
+            "callee_function": "get" if file % 2 else "post",
+        }
+        for file in range(_LARGE_CALLGRAPH_FILES)
+    ]
+    analyzed = [*_LARGE_CALLGRAPH_MODULES, *(module.upper() for module in _LARGE_CALLGRAPH_MODULES)]
+    return {"language": "python", "format": "generic", "imports": imports, "calls": calls, "analyzed_modules": analyzed}
+
+
+def test_a_large_valid_callgraph_prepares_to_the_pinned_result():
+    payload = _large_callgraph()
+    adhoc._reject_unaffordable_input(AdhocAnalyzeRequest(sboms=[_SBOM], callgraph=payload))
+
+    as_dict, prepared = adhoc._prepare_posted_callgraph(payload)
+
+    every_file = [f"app/f{file}.py" for file in range(_LARGE_CALLGRAPH_FILES)]
+    imported_only = {
+        "import_count": _LARGE_CALLGRAPH_FILES,
+        "call_count": 0,
+        "import_locations": every_file,
+        "used_symbols": _SHARED_SYMBOLS,
+        "is_direct_dependency": True,
+    }
+    assert as_dict["total_imports"] == _LARGE_CALLGRAPH_FILES * len(_LARGE_CALLGRAPH_MODULES)
+    assert as_dict["analyzed_modules"] == list(_LARGE_CALLGRAPH_MODULES)
+    assert list(as_dict["module_usage"]) == list(_LARGE_CALLGRAPH_MODULES)
+    assert as_dict["module_usage"]["requests"] == {
+        "module": "requests",
+        **imported_only,
+        "call_count": _LARGE_CALLGRAPH_FILES,
+        "used_symbols": [*_SHARED_SYMBOLS, "post", "get"],
+    }
+    for module in _LARGE_CALLGRAPH_MODULES[1:]:
+        assert as_dict["module_usage"][module] == {"module": module, **imported_only}
+    assert len(prepared.import_map) == _LARGE_CALLGRAPH_FILES
+    assert prepared.import_map["app/f1999.py"] == list(_LARGE_CALLGRAPH_MODULES)
+
+
+@pytest.mark.asyncio
+async def test_the_posted_inputs_are_parsed_off_the_event_loop(monkeypatch):
+    threads = {}
+    real_parse, real_prepare = adhoc.parse_sbom, adhoc._prepare_posted_callgraph
+
+    def _parse(sbom):
+        threads["sbom"] = threading.current_thread()
+        return real_parse(sbom)
+
+    def _prepare(payload):
+        threads["callgraph"] = threading.current_thread()
+        return real_prepare(payload)
+
+    monkeypatch.setattr(adhoc, "parse_sbom", _parse)
+    monkeypatch.setattr(adhoc, "_prepare_posted_callgraph", _prepare)
+    request = AdhocAnalyzeRequest(
+        sboms=[_SBOM], callgraph=_symbols_on_one_import(1), analyzers=[], apply_global_waivers=False
+    )
+
+    await _run(request)
+
+    assert set(threads) == {"sbom", "callgraph"}
+    assert threading.main_thread() not in threads.values()

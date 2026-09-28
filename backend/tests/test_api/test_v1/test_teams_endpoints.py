@@ -315,7 +315,11 @@ class TestAddTeamMember:
         from app.schemas.team import TeamMemberAdd
 
         db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN)])
-        asyncio.run(db.users.insert_one({"_id": "new-user-id", "username": "newuser", "email": "new@test.com"}))
+        asyncio.run(
+            db.users.insert_one(
+                {"_id": "new-user-id", "username": "newuser", "email": "new@test.com", "is_verified": True}
+            )
+        )
 
         with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
             result = asyncio.run(
@@ -340,7 +344,7 @@ class TestAddTeamMember:
         team = _make_team()
         mock_team_repo = MagicMock()
         mock_user_repo = MagicMock()
-        mock_user_repo.get_raw_by_email = AsyncMock(return_value=None)
+        mock_user_repo.get_raw_by_verified_email = AsyncMock(return_value=None)
 
         with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
             with patch(f"{MODULE}.TeamRepository", return_value=mock_team_repo):
@@ -362,7 +366,7 @@ class TestAddTeamMember:
         from app.schemas.team import TeamMemberAdd
 
         db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN), ("existing-id", TEAM_ROLE_MEMBER)])
-        asyncio.run(db.users.update_one({"_id": "existing-id"}, {"$set": {"email": "e@test.com"}}))
+        asyncio.run(db.users.update_one({"_id": "existing-id"}, {"$set": {"email": "e@test.com", "is_verified": True}}))
 
         with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
             with pytest.raises(HTTPException) as exc_info:

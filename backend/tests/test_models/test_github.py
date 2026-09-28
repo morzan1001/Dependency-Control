@@ -137,6 +137,13 @@ class TestGitHubOIDCPayloadModel:
         assert not hasattr(payload, "iss")
         assert not hasattr(payload, "unknown_field")
 
+    def test_the_numeric_owner_id_claim_is_kept(self):
+        """The owner allowlist compares this claim; dropped as an extra it would admit no one."""
+        payload = GitHubOIDCPayload(
+            repository_id="1", repository="o/r", repository_owner="o", repository_owner_id="4242", actor="u"
+        )
+        assert payload.repository_owner_id == "4242"
+
 
 class TestProjectGitHubFields:
     def test_project_with_github_fields(self):

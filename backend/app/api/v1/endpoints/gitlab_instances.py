@@ -21,12 +21,14 @@ from app.models.user import User
 from app.repositories import ProjectRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.schemas.gitlab_instance import (
+    AUTO_CREATE_NEEDS_NAMESPACES,
     GitLabGroupOption,
     GitLabInstanceCreate,
     GitLabInstanceList,
     GitLabInstanceResponse,
     GitLabInstanceTestConnectionResponse,
     GitLabInstanceUpdate,
+    lacks_required_namespaces,
 )
 from app.services.gitlab import GitLabService, build_group_options
 
@@ -46,6 +48,7 @@ def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
         auto_create_projects=instance.auto_create_projects,
         sync_teams=instance.sync_teams,
         team_sync_depth=getattr(instance, "team_sync_depth", 1),
+        allowed_namespaces=instance.allowed_namespaces,
         created_at=instance.created_at,
         created_by=instance.created_by,
         last_modified_at=instance.last_modified_at,
@@ -128,6 +131,7 @@ async def create_instance(
         auto_create_projects=instance_data.auto_create_projects,
         sync_teams=instance_data.sync_teams,
         team_sync_depth=instance_data.team_sync_depth,
+        allowed_namespaces=instance_data.allowed_namespaces,
         created_by=str(current_user.id),
         created_at=datetime.now(timezone.utc),
     )
@@ -204,6 +208,13 @@ async def update_instance(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="An access token is required to enable team syncing",
         )
+
+    if lacks_required_namespaces(
+        update_dict.get("url", instance.url),
+        update_dict.get("auto_create_projects", instance.auto_create_projects),
+        update_dict.get("allowed_namespaces", instance.allowed_namespaces),
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=AUTO_CREATE_NEEDS_NAMESPACES)
 
     update_dict["last_modified_at"] = datetime.now(timezone.utc)
 

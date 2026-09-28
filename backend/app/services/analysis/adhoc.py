@@ -12,9 +12,11 @@ from pydantic import BaseModel, ValidationError
 
 from app.core.cache import suppress_cache_writes
 from app.core.constants import (
+    ADHOC_MAX_CALLGRAPH_ENTRIES,
     ADHOC_MAX_FINDINGS,
     ADHOC_MAX_SBOM_COMPONENTS,
     ADHOC_MAX_SBOM_EVIDENCE_ENTRIES,
+    ADHOC_MAX_SBOM_GRAPH_ENTRIES,
     ADHOC_MAX_SCANNER_FINDINGS,
     DEPS_DEV_API_URL,
     EOL_API_URL,
@@ -249,13 +251,16 @@ class AdhocInputTooLarge(Exception):
 
 # Where each SBOM dialect keeps its component list.
 _COMPONENT_KEYS: tuple[str, ...] = ("components", "packages", "artifacts")
-# Per-component lists the parser folds into a deduped list with a linear membership test,
-# which makes the parse quadratic in whatever one component carries.
-_EVIDENCE_LIST_KEYS: tuple[str, ...] = ("properties", "cpes", "locations")
+# Per-component lists the parser walks; ``externalRefs`` is where SPDX keeps its CPEs.
+_EVIDENCE_LIST_KEYS: tuple[str, ...] = ("properties", "cpes", "locations", "externalRefs")
+# Where each SBOM dialect keeps its dependency graph.
+_GRAPH_KEYS: tuple[str, ...] = ("dependencies", "relationships", "artifactRelationships")
 
 _TOO_MANY_COMPONENTS = "{count} components exceeds the ad-hoc limit of {limit}"
 _TOO_MANY_EVIDENCE = "{count} component evidence entries exceeds the ad-hoc limit of {limit}"
+_TOO_MANY_GRAPH_ENTRIES = "{count} dependency-graph entries exceeds the ad-hoc limit of {limit}"
 _TOO_MANY_SCANNER_FINDINGS = "{count} posted scanner findings exceeds the ad-hoc limit of {limit}"
+_TOO_MANY_CALLGRAPH_ENTRIES = "{count} callgraph entries exceeds the ad-hoc limit of {limit}"
 
 
 def _components_of(sbom: dict[str, Any], depth: int = 0) -> list[dict[str, Any]]:
@@ -287,6 +292,18 @@ def _evidence_entries(component: dict[str, Any]) -> int:
     return total + (len(occurrences) if isinstance(occurrences, list) else 0)
 
 
+def _graph_entries(sbom: dict[str, Any]) -> int:
+    """The graph entries the parser walks, each CycloneDX ``dependsOn`` ref included."""
+    total = sum(len(sbom[key]) for key in _GRAPH_KEYS if isinstance(sbom.get(key), list))
+    dependencies = sbom.get("dependencies")
+    for entry in dependencies if isinstance(dependencies, list) else []:
+        depends_on = entry.get("dependsOn") if isinstance(entry, dict) else None
+        # A string is walked character by character, one edge per character.
+        if isinstance(depends_on, list | str):
+            total += len(depends_on)
+    return total
+
+
 def _posted_entries(name: str, payload: dict[str, Any], key: str) -> list[Any] | None:
     """The entry list under `key`, or None when the payload carries no readable list there.
 
@@ -314,30 +331,40 @@ def _posted_finding_count(name: str, payload: dict[str, Any]) -> int:
     return total
 
 
-def _reject_unaffordable_input(request: AdhocAnalyzeRequest) -> None:
-    """Refuse a request whose shape drives a superlinear synchronous stage.
-
-    The parse and the cross-linking run to completion without an await, so no deadline can
-    interrupt them and the 25 MB body ceiling sits far above where they become expensive.
-    Counting the three shapes that drive them is linear, and it happens before any of them run.
-    """
-    components = [component for sbom in request.sboms for component in _components_of(sbom)]
-    if len(components) > ADHOC_MAX_SBOM_COMPONENTS:
-        raise AdhocInputTooLarge(_TOO_MANY_COMPONENTS.format(count=len(components), limit=ADHOC_MAX_SBOM_COMPONENTS))
-
-    evidence = sum(_evidence_entries(component) for component in components)
-    if evidence > ADHOC_MAX_SBOM_EVIDENCE_ENTRIES:
-        raise AdhocInputTooLarge(_TOO_MANY_EVIDENCE.format(count=evidence, limit=ADHOC_MAX_SBOM_EVIDENCE_ENTRIES))
-
+def _posted_scanner_findings(request: AdhocAnalyzeRequest) -> int:
     if request.scanners is None:
-        return
-    posted = sum(
+        return 0
+    return sum(
         _posted_finding_count(name, payload)
         for name, payload in request.scanners.model_dump(exclude_none=True).items()
         if payload
     )
-    if posted > ADHOC_MAX_SCANNER_FINDINGS:
-        raise AdhocInputTooLarge(_TOO_MANY_SCANNER_FINDINGS.format(count=posted, limit=ADHOC_MAX_SCANNER_FINDINGS))
+
+
+def _posted_callgraph_entries(request: AdhocAnalyzeRequest) -> int:
+    from app.api.v1.helpers.callgraph import callgraph_entry_count
+
+    return callgraph_entry_count(request.callgraph) if request.callgraph else 0
+
+
+def _reject_unaffordable_input(request: AdhocAnalyzeRequest) -> None:
+    """Refuse a request whose shape would make a synchronous stage too expensive to run.
+
+    The parse, the cross-linking and the callgraph lookups run to completion once started, on
+    a worker thread or not, so no deadline can interrupt them and the 25 MB body ceiling sits far
+    above where they become expensive. Every count is linear, and it happens before any of them run.
+    """
+    components = [component for sbom in request.sboms for component in _components_of(sbom)]
+    limits = (
+        (len(components), ADHOC_MAX_SBOM_COMPONENTS, _TOO_MANY_COMPONENTS),
+        (sum(map(_evidence_entries, components)), ADHOC_MAX_SBOM_EVIDENCE_ENTRIES, _TOO_MANY_EVIDENCE),
+        (sum(map(_graph_entries, request.sboms)), ADHOC_MAX_SBOM_GRAPH_ENTRIES, _TOO_MANY_GRAPH_ENTRIES),
+        (_posted_scanner_findings(request), ADHOC_MAX_SCANNER_FINDINGS, _TOO_MANY_SCANNER_FINDINGS),
+        (_posted_callgraph_entries(request), ADHOC_MAX_CALLGRAPH_ENTRIES, _TOO_MANY_CALLGRAPH_ENTRIES),
+    )
+    for count, limit, message in limits:
+        if count > limit:
+            raise AdhocInputTooLarge(message.format(count=count, limit=limit))
 
 
 def _by_descending_severity(records: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
@@ -887,7 +914,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     report = AnalyzerReport()
     aggregator = ResultAggregator()
 
-    parsed_inputs = _parse_sboms(request, report)
+    parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
     # Defaults, not the stored document: the settings dependency exposes an ``auto_init`` query
     # parameter that writes a ``system_settings`` document.
@@ -924,7 +951,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     components = [component for pi in parsed_inputs for component in pi.components]
     languages = component_language_map(components)
-    reachability_summary = _run_reachability(records, request.callgraph, languages, report)
+    reachability_summary = await asyncio.to_thread(_run_reachability, records, request.callgraph, languages, report)
 
     waived_count = 0
     waivers_applied = _WAIVERS_NONE

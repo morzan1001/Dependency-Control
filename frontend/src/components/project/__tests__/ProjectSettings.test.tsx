@@ -8,7 +8,9 @@ import type { User } from '@/types/user'
 
 const mockUpdate = vi.fn().mockResolvedValue({})
 const mockUseGitHubInstances = vi.fn()
+const mockUseGitLabInstances = vi.fn()
 const mockUseTeams = vi.fn()
+const mockUseAuth = vi.fn()
 
 vi.mock('@/api/projects', () => ({
   projectApi: {
@@ -30,10 +32,10 @@ vi.mock('@/hooks/queries/use-webhooks', () => ({
   useDeleteWebhook: () => ({ mutateAsync: vi.fn() }),
 }))
 vi.mock('@/hooks/queries/use-instances', () => ({
-  useGitLabInstances: () => ({ data: { items: [] } }),
+  useGitLabInstances: () => mockUseGitLabInstances(),
   useGitHubInstances: () => mockUseGitHubInstances(),
 }))
-vi.mock('@/context/useAuth', () => ({ useAuth: () => ({ permissions: [] }) }))
+vi.mock('@/context/useAuth', () => ({ useAuth: () => mockUseAuth() }))
 vi.mock('react-router-dom', () => ({ useNavigate: () => vi.fn() }))
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 vi.mock('@/components/WebhookManager', () => ({ WebhookManager: () => <div /> }))
@@ -48,6 +50,11 @@ const USER: User = {
   permissions: [],
   totp_enabled: false,
 }
+
+beforeEach(() => {
+  mockUseAuth.mockReturnValue({ permissions: [] })
+  mockUseGitLabInstances.mockReturnValue({ data: { items: [] } })
+})
 
 function githubInstances(hasToken: boolean) {
   return {
@@ -220,5 +227,129 @@ describe('ProjectSettings team ownership', () => {
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
     expect(mockUpdate.mock.calls[0][1].team_ids).toEqual(['t1', 't9'])
+  })
+})
+
+const GITLAB_INSTANCES = {
+  data: {
+    items: [
+      {
+        id: 'gl-1',
+        name: 'Internal GitLab',
+        url: 'https://gitlab.example.com',
+        is_active: true,
+        is_default: true,
+        auto_create_projects: true,
+        sync_teams: false,
+        team_sync_depth: 1,
+        created_at: '',
+        created_by: 'a',
+        token_configured: true,
+      },
+    ],
+  },
+}
+
+function gitlabProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: 'p1',
+    name: 'widget',
+    members: [{ user_id: 'u1', role: 'admin' }],
+    active_analyzers: [],
+    gitlab_instance_id: 'gl-1',
+    gitlab_project_id: 4242,
+    gitlab_project_path: 'acme/widget',
+    ...overrides,
+  } as Project
+}
+
+describe('ProjectSettings GitLab binding', () => {
+  beforeEach(() => {
+    mockUpdate.mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
+    mockUseGitHubInstances.mockReturnValue({ data: { items: [] } })
+    // The instance list answers only system:manage.
+    mockUseGitLabInstances.mockReturnValue({ data: undefined })
+  })
+
+  it('shows a project admin the binding without a way to edit it', () => {
+    renderSettings(gitlabProject())
+
+    expect(screen.getByText('GitLab Integration')).toBeInTheDocument()
+    expect(screen.getByText('4242')).toBeInTheDocument()
+    expect(screen.getByText('acme/widget')).toBeInTheDocument()
+    expect(screen.queryByLabelText('GitLab Project ID')).toBeNull()
+    expect(screen.queryByLabelText('GitLab Project Path (Optional)')).toBeNull()
+  })
+
+  it('saves the stored binding back unchanged for a project admin', async () => {
+    renderSettings(gitlabProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({
+      gitlab_instance_id: 'gl-1',
+      gitlab_project_id: 4242,
+      gitlab_project_path: 'acme/widget',
+    })
+  })
+
+  it('lets a project admin remove the binding', async () => {
+    renderSettings(gitlabProject())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove GitLab link' }))
+    expect(screen.getByText('The GitLab link is removed when you save.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({
+      gitlab_instance_id: null,
+      gitlab_project_id: null,
+      gitlab_project_path: null,
+    })
+  })
+
+  it('offers a project admin no way to bind an unbound project', () => {
+    mockUseGitLabInstances.mockReturnValue(GITLAB_INSTANCES)
+
+    renderSettings(
+      gitlabProject({ gitlab_instance_id: undefined, gitlab_project_id: undefined, gitlab_project_path: undefined }),
+    )
+
+    expect(screen.queryByText('GitLab Integration')).toBeNull()
+  })
+
+  it('lets a system manager change the bound project id', async () => {
+    mockUseAuth.mockReturnValue({ permissions: ['system:manage'] })
+    mockUseGitLabInstances.mockReturnValue(GITLAB_INSTANCES)
+
+    renderSettings(gitlabProject())
+
+    const projectIdInput = screen.getByLabelText('GitLab Project ID')
+    expect(projectIdInput).toHaveValue(4242)
+    fireEvent.change(projectIdInput, { target: { value: '5151' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ gitlab_instance_id: 'gl-1', gitlab_project_id: 5151 })
+  })
+
+  it('clears the whole binding when a system manager picks no instance', async () => {
+    mockUseAuth.mockReturnValue({ permissions: ['system:manage'] })
+    mockUseGitLabInstances.mockReturnValue(GITLAB_INSTANCES)
+
+    renderSettings(gitlabProject())
+
+    fireEvent.click(screen.getByLabelText('GitLab Instance'))
+    fireEvent.click(screen.getByRole('option', { name: 'None (Auto-detect from OIDC)' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({
+      gitlab_instance_id: null,
+      gitlab_project_id: null,
+      gitlab_project_path: null,
+    })
   })
 })

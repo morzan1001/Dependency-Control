@@ -29,6 +29,11 @@ export const userApi = {
     return response.data;
   },
 
+  requestEmailChange: async (email: string): Promise<User> => {
+    const response = await api.post<User>('/users/me/email', { email });
+    return response.data;
+  },
+
   updatePassword: async (currentPassword: string, newPassword: string): Promise<User> => {
     const response = await api.post<User>('/users/me/password', {
       current_password: currentPassword,
@@ -47,8 +52,8 @@ export const userApi = {
     return response.data;
   },
 
-  adminResetPassword: async (userId: string): Promise<{ message: string; email_sent: boolean; reset_link?: string }> => {
-    const response = await api.post<{ message: string; email_sent: boolean; reset_link?: string }>(`/users/${userId}/reset-password`);
+  adminResetPassword: async (userId: string): Promise<{ message: string }> => {
+    const response = await api.post<{ message: string }>(`/users/${userId}/reset-password`);
     return response.data;
   },
 

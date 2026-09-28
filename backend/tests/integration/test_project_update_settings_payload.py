@@ -26,6 +26,25 @@ _FORM_PAYLOAD = {
 
 @pytest.mark.asyncio
 async def test_every_field_the_form_sends_is_persisted(client, db, owner_auth_headers_proj):
+    # A project admin may only resend the binding it holds; setting one is an estate admin's call.
+    await db.gitlab_instances.insert_one(
+        {
+            "_id": "gl-1",
+            "name": "Internal GitLab",
+            "url": "https://gitlab.example.com",
+            "access_token": "glpat-real",
+            "created_by": "admin-user",
+        }
+    )
+    await db.projects.update_one(
+        {"_id": "p"},
+        {
+            "$set": {
+                key: _FORM_PAYLOAD[key] for key in ("gitlab_instance_id", "gitlab_project_id", "gitlab_project_path")
+            }
+        },
+    )
+
     resp = await client.put("/api/v1/projects/p", json=_FORM_PAYLOAD, headers=owner_auth_headers_proj)
     assert resp.status_code == 200, resp.text
 

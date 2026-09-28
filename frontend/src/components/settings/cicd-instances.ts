@@ -3,6 +3,20 @@ import { GitHubInstance } from "@/types/github";
 
 export type InstanceType = "gitlab" | "github";
 
+const SHARED_ISSUERS: Record<InstanceType, string> = {
+  github: "https://token.actions.githubusercontent.com",
+  gitlab: "https://gitlab.com",
+};
+
+// Mirrors the backend: any repository hosted behind these issuers can mint a token for them.
+export function isSharedIssuer(type: InstanceType, url: string): boolean {
+  return url.replace(/\/+$/, "") === SHARED_ISSUERS[type];
+}
+
+export function parseAllowlist(text: string): string[] {
+  return text.split(/[\s,]+/).filter(Boolean);
+}
+
 export type UnifiedInstance = {
   _type: InstanceType;
   id: string;
@@ -18,9 +32,11 @@ export type UnifiedInstance = {
   is_default?: boolean;
   team_sync_depth?: number;
   token_configured?: boolean;
+  allowed_namespaces?: string[];
   // GitHub-specific
   github_url?: string;
   has_access_token?: boolean;
+  allowed_owner_ids?: string[];
 };
 
 export function mergeInstances(
@@ -45,6 +61,7 @@ export function mergeInstances(
         is_default: gl.is_default,
         team_sync_depth: gl.team_sync_depth,
         token_configured: gl.token_configured,
+        allowed_namespaces: gl.allowed_namespaces,
       });
     }
   }
@@ -64,6 +81,7 @@ export function mergeInstances(
         created_at: gh.created_at,
         github_url: gh.github_url,
         has_access_token: gh.has_access_token,
+        allowed_owner_ids: gh.allowed_owner_ids,
       });
     }
   }

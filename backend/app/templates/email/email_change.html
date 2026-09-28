@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+{% block title %}Confirm your new email{% endblock %}
+
+{% block content %}
+<h2>Confirm your new email address</h2>
+<p>Your {{ project_name }} account asked to use this address from now on.</p>
+<p>Please confirm the change by clicking the button below:</p>
+<div style="text-align: center;">
+    <a href="{{ link }}" class="button">Confirm Email</a>
+</div>
+<p style="margin-top: 30px; font-size: 14px; color: #666;">
+    If you didn't ask for this, you can safely ignore this email; the account keeps its current address.
+</p>
+{% endblock %}

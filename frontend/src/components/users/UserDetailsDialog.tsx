@@ -63,7 +63,6 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
   const { hasPermission } = useAuth();
 
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
-  const [resetLink, setResetLink] = useState<string | null>(null);
 
   // Fetch all projects (paged) so membership isn't truncated in large orgs.
   const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjectsDropdown();
@@ -101,13 +100,8 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
 
   const handleResetPassword = (userId: string) => {
       resetPasswordMutation.mutate(userId, {
-          onSuccess: (data: { email_sent?: boolean; reset_link?: string }) => {
-            if (data.email_sent) {
-                toast.success("Password Reset Initiated", { description: "An email with the reset link has been sent to the user." });
-            } else {
-                toast.success("Password Reset Initiated", { description: "Email not configured. Please share the link manually." });
-            }
-            setResetLink(data.reset_link || null);
+          onSuccess: () => {
+            toast.success("Password Reset Initiated", { description: "An email with the reset link has been sent to the user." });
           },
           onError: (error) => {
               toast.error("Reset Failed", { description: getErrorMessage(error) });
@@ -158,10 +152,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
 
   return (
     <>
-      <Dialog open={open} onOpenChange={(val) => {
-        if (!val) setResetLink(null);
-        onOpenChange(val);
-      }}>
+      <Dialog open={open} onOpenChange={onOpenChange}>
         <DialogContent className="max-w-3xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>User Details: {user?.username}</DialogTitle>
@@ -267,13 +258,6 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
                             >
                                 {resetPasswordMutation.isPending ? "Sending..." : "Send Reset Email"}
                             </Button>
-                        </div>
-                    )}
-
-                    {resetLink && (
-                        <div className="bg-muted p-3 rounded-md text-sm break-all">
-                            <div className="font-medium mb-1">Reset Link (Manual):</div>
-                            {resetLink}
                         </div>
                     )}
 

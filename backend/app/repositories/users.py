@@ -8,6 +8,11 @@ from app.models.user import User
 from app.repositories.base import BaseRepository
 
 
+def _email_query(email: str) -> dict[str, Any]:
+    """Case-insensitive: emails stored before normalisation keep their case and the index isn't collated."""
+    return {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
+
+
 class UserRepository(BaseRepository[User]):
     collection_name = "users"
     model_class = User
@@ -16,12 +21,11 @@ class UserRepository(BaseRepository[User]):
         return await self.find_one_raw({"username": username})
 
     async def get_raw_by_email(self, email: str) -> dict[str, Any] | None:
-        return await self.find_one_raw({"email": email})
+        return await self.find_one_raw(_email_query(email))
 
-    async def get_raw_by_email_ci(self, email: str) -> dict[str, Any] | None:
-        """Case-insensitive email lookup; stored emails aren't normalised and the index isn't collated, so an exact match can miss a user differing only in case."""
-        with track_db_operation(self.collection_name, "find_one"):
-            return await self.collection.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
+    async def get_raw_by_verified_email(self, email: str) -> dict[str, Any] | None:
+        """The lookup identity matching must use: an unverified address names whoever typed it."""
+        return await self.find_one_raw({**_email_query(email), "is_verified": True})
 
     async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
         with track_db_operation(self.collection_name, "find"):
@@ -32,4 +36,4 @@ class UserRepository(BaseRepository[User]):
         return await self.exists({"username": username})
 
     async def exists_by_email(self, email: str) -> bool:
-        return await self.exists({"email": email})
+        return await self.exists(_email_query(email))

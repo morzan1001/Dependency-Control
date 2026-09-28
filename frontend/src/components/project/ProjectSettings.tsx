@@ -19,6 +19,7 @@ import { useAuth } from '@/context/useAuth'
 import {
   isProjectAdmin,
   canUpdateProject,
+  canBindGitLabProject,
   canDeleteProject,
   canRotateApiKey,
   canEnforceNotifications,
@@ -141,6 +142,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const canCreateWh = canCreateProjectWebhook(project, userId, permissions)
   const canDeleteWh = canDeleteProjectWebhook(project, userId, permissions)
   const canEditCryptoPolicy = isProjectAdmin(project, userId, permissions)
+  const canBindGitLab = canBindGitLabProject(permissions)
   const isMember = !!project.members?.some(m => m.user_id === userId)
   
   const [name, setName] = useState(project.name)
@@ -207,6 +209,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
 
   // Show only the config for the platform the project was sourced from (by *_instance_id).
   const gitlabSource: "gitlab" | "none" = project.gitlab_instance_id ? "gitlab" : "none";
+  const gitlabBindingEditable = canBindGitLab && (gitlabInstances?.items?.length ?? 0) > 0;
   const projectSource: "gitlab" | "github" | "none" = project.github_instance_id
     ? "github"
     : gitlabSource;
@@ -305,6 +308,12 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
       gitlab_project_path: gitlabProjectPath || null,
       github_pr_comments_enabled: githubPrCommentsEnabled,
     })
+  }
+
+  const clearGitlabBinding = () => {
+    setGitlabInstanceId(undefined)
+    setGitlabProjectId(undefined)
+    setGitlabProjectPath(undefined)
   }
 
   const toggleAnalyzer = (analyzerId: string) => {
@@ -512,7 +521,41 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     </div>
                 )}
 
-                {(projectSource === "gitlab" || projectSource === "none") && (gitlabInstances?.items?.length ?? 0) > 0 && (
+                {projectSource === "gitlab" && !gitlabBindingEditable && (
+                    <div className="grid gap-2">
+                        <Label>GitLab Integration</Label>
+                        <div className="border rounded-md p-4 space-y-2 text-sm">
+                            {gitlabInstanceId ? (
+                                <>
+                                    <div className="grid grid-cols-[150px_1fr] gap-x-4 gap-y-1">
+                                        <span className="text-muted-foreground">Instance</span>
+                                        <span className="font-mono">{gitlabInstanceId}</span>
+                                        <span className="text-muted-foreground">Project ID</span>
+                                        <span className="font-mono">{gitlabProjectId}</span>
+                                        {gitlabProjectPath && (
+                                            <>
+                                                <span className="text-muted-foreground">Project Path</span>
+                                                <span className="font-mono">{gitlabProjectPath}</span>
+                                            </>
+                                        )}
+                                    </div>
+                                    <p className="text-xs text-muted-foreground pt-2">
+                                        Only administrators can change this link.
+                                    </p>
+                                    {canUpdate && (
+                                        <Button type="button" variant="outline" size="sm" onClick={clearGitlabBinding}>
+                                            Remove GitLab link
+                                        </Button>
+                                    )}
+                                </>
+                            ) : (
+                                <p className="text-muted-foreground">The GitLab link is removed when you save.</p>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {(projectSource === "gitlab" || projectSource === "none") && gitlabBindingEditable && (
                     <div className="grid gap-2">
                         <Label>GitLab Integration</Label>
                         <div className="border rounded-md p-4 space-y-4">
@@ -520,9 +563,9 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                 <Label htmlFor="gitlab-instance">GitLab Instance</Label>
                                 <Select
                                     value={gitlabInstanceId || "none"}
-                                    onValueChange={(value) => setGitlabInstanceId(value === "none" ? undefined : value)}
+                                    onValueChange={(value) => (value === "none" ? clearGitlabBinding() : setGitlabInstanceId(value))}
                                 >
-                                    <SelectTrigger>
+                                    <SelectTrigger id="gitlab-instance">
                                         <SelectValue placeholder="Select GitLab instance" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -564,7 +607,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                             onChange={(e) => setGitlabProjectPath(e.target.value || undefined)}
                                         />
                                         <p className="text-xs text-muted-foreground">
-                                            For display purposes only. Example: "mygroup/myproject"
+                                            For display purposes only. Taken from GitLab when the binding is set or changed.
                                         </p>
                                     </div>
 

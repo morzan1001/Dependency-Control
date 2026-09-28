@@ -7,12 +7,14 @@ Payload shapes are transcribed from ``dependency-control-pipeline-templates/call
 import copy
 import uuid
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+import threading
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
+from app.api.v1.endpoints import callgraph as callgraph_endpoint
 from app.core.constants import CALLGRAPH_MAX_ENTRIES
 from app.core.permissions import Permissions
 from app.models.project import Project
@@ -30,6 +32,9 @@ _COMMIT = "9f1c0d3a2b5e4f6a7c8d9e0f1a2b3c4d5e6f7a8b"
 # uuid5 over "<project>-<pipeline>-<commit>" is the contract between the upload endpoint
 # and the scan the CI job produced; spelled out here so a change to it fails loudly.
 _SCAN_ID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{_PROJECT_ID}-{_PIPELINE_ID}-{_COMMIT}"))
+
+# Each oversized payload below walks exactly one entry more than this.
+_SMALL_ENTRY_LIMIT = 3
 
 
 def _envelope(fmt: str, language: str | None, data: dict) -> dict:
@@ -322,6 +327,51 @@ class TestPayloadValidation:
         assert str(CALLGRAPH_MAX_ENTRIES) in detail
         assert str(CALLGRAPH_MAX_ENTRIES + 1) in detail
         assert await db.callgraphs.count_documents({}) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "oversized",
+        [
+            pytest.param(
+                {"imports": [{"module": "lodash", "file": "src/a.js", "symbols": ["map", "get", "set"]}]},
+                id="symbols",
+            ),
+            pytest.param({"src/a.js": ["lodash", "express"], "src/b.js": ["react", "vue"]}, id="madge-dependencies"),
+            pytest.param(
+                {"imports": [], "analyzed_modules": ["lodash", "express", "react", "vue"]}, id="coverage-universe"
+            ),
+        ],
+    )
+    async def test_everything_the_parser_walks_counts_and_is_refused_before_parsing(
+        self, client, db, monkeypatch, oversized
+    ):
+        monkeypatch.setattr("app.api.v1.endpoints.callgraph.CALLGRAPH_MAX_ENTRIES", _SMALL_ENTRY_LIMIT)
+        parse = MagicMock()
+        monkeypatch.setattr("app.api.v1.endpoints.callgraph._parse_callgraph", parse)
+
+        response = await _upload(client, _envelope("auto", "javascript", oversized))
+
+        assert response.status_code == 413
+        assert f"exceeds the limit of {_SMALL_ENTRY_LIMIT}" in response.json()["detail"]
+        assert parse.call_count == 0
+        assert await db.callgraphs.count_documents({}) == 0
+
+    @pytest.mark.asyncio
+    async def test_the_parse_runs_off_the_event_loop(self, client, db, monkeypatch):
+        threads = []
+        real_parse = callgraph_endpoint._parse_callgraph
+
+        def _recording_parse(*args):
+            threads.append(threading.current_thread())
+            return real_parse(*args)
+
+        monkeypatch.setattr("app.api.v1.endpoints.callgraph._parse_callgraph", _recording_parse)
+
+        response = await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert response.status_code == 200, response.text
+        assert threads
+        assert threading.main_thread() not in threads
 
 
 class TestReupload:

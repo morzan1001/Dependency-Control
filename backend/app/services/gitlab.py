@@ -13,6 +13,7 @@ from app.core.constants import (
     GITLAB_ADMIN_MIN_ACCESS,
     GITLAB_JWKS_CACHE_TTL,
     GITLAB_JWKS_URI_CACHE_TTL,
+    GITLAB_USER_EMAIL_CACHE_TTL,
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITLAB,
@@ -100,6 +101,13 @@ class GitLabSyncTarget(NamedTuple):
     """
 
     group: tuple[int, str] | None
+    determined: bool = True
+
+
+class GitLabEmailLookup(NamedTuple):
+    """A user's public profile email; ``determined`` is False for a GitLab that would not answer."""
+
+    email: str | None
     determined: bool = True
 
 
@@ -423,6 +431,43 @@ class GitLabService:
         # An empty list is a group nobody is left in, and stays a list; only None is a failure.
         return None if members is None else [GitLabMember(**m) for m in members]
 
+    async def get_user_public_email(self, user_id: int) -> GitLabEmailLookup:
+        """The public profile email, which GitLab accepts only from the user's confirmed addresses."""
+        cache_key = self._get_cache_key(f"user_email:{user_id}")
+        # "" is the stored "no public email": a cached None reads back as a miss.
+        cached: str | None = await cache_service.get(cache_key)
+        if cached is not None:
+            return GitLabEmailLookup(cached or None)
+
+        response = await self._api_get(f"/users/{user_id}")
+        if response is None:
+            return GitLabEmailLookup(None, determined=False)
+        if response.status_code == 200:
+            public_email = response.json().get("public_email")
+            email = str(public_email) if public_email else ""
+        elif response.status_code == 404:
+            email = ""
+        else:
+            logger.warning("GitLab API GET /users/%s answered %s", user_id, response.status_code)
+            return GitLabEmailLookup(None, determined=False)
+
+        await cache_service.set(cache_key, email, ttl_seconds=GITLAB_USER_EMAIL_CACHE_TTL)
+        return GitLabEmailLookup(email or None)
+
+    async def _with_public_emails(self, members: list[GitLabMember]) -> list[GitLabMember] | None:
+        """The members, each one listed without an email carrying its public one; None if GitLab would not say."""
+        completed: list[GitLabMember] = []
+        for member in members:
+            if member.email or member.id is None:
+                completed.append(member)
+                continue
+            lookup = await self.get_user_public_email(member.id)
+            if not lookup.determined:
+                # Written without them, the members GitLab would not describe would lose the team.
+                return None
+            completed.append(member.model_copy(update={"email": lookup.email}))
+        return completed
+
     async def get_groups(self, search: str | None = None) -> list[dict[str, Any]] | None:
         """The groups this instance's token can see, to pick from when binding a team.
 
@@ -536,19 +581,19 @@ class GitLabService:
         """Resolve each GitLab member to an EXISTING local user, plus the unresolved count.
 
         Tagged with this instance so the merge in ``_upsert_team_with_members`` refreshes only the
-        subset this instance established. Members without a local account are skipped — sync never
-        creates users (see ``_find_user``).
+        subset this instance established. Members without a verified local account are skipped —
+        sync never creates users (see ``_find_user``).
         """
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
         for member in gitlab_members:
             user = await self._find_user(member, user_repo)
             if not user:
-                # No local account yet, or a GitLab service account/bot. Sync never creates
-                # users; a real member is added on their next sync after logging in via OIDC.
+                # No verified local account yet, or a GitLab service account/bot. Sync never
+                # creates users; a real member is added on their next sync after logging in via OIDC.
                 unresolved += 1
                 logger.debug(
-                    "Skipping GitLab member with no local account (username=%s, access_level=%s).",
+                    "Skipping GitLab member with no verified local account (username=%s, access_level=%s).",
                     member.username,
                     member.access_level,
                 )
@@ -568,20 +613,10 @@ class GitLabService:
         member: GitLabMember,
         user_repo: UserRepository,
     ) -> dict[str, Any] | None:
-        """Resolve a GitLab member to an EXISTING local user: the public email, then the username.
-
-        The email comes with the listing and costs no request, so it is tried first; the username
-        must still be tried, or a member whose GitLab email differs from their account's is dropped.
-        """
-        if member.email:
-            # Case-insensitive: OIDC-login email may differ in case, and an exact match
-            # would silently drop a real member.
-            user = await user_repo.get_raw_by_email_ci(member.email)
-            if user:
-                return user
-        if member.username:
-            return await user_repo.get_raw_by_username(member.username)
-        return None
+        """The EXISTING local user that verified the member's email; a self-chosen username proves nothing."""
+        if not member.email:
+            return None
+        return await user_repo.get_raw_by_verified_email(member.email)
 
     async def _resolve_group_members(
         self,
@@ -687,7 +722,8 @@ class GitLabService:
         target = await self._resolve_sync_target_group(gitlab_project_id, gitlab_project_path, gitlab_project_data)
         if target.group is None:
             return target, None
-        return target, await self.get_group_members(target.group[0])
+        members = await self.get_group_members(target.group[0])
+        return target, None if members is None else await self._with_public_emails(members)
 
     async def sync_team_from_gitlab(
         self,

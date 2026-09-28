@@ -7,6 +7,7 @@ from fastapi import HTTPException
 
 from app.api.v1.endpoints.callgraph import _parse_callgraph, _resolve_format
 from app.api.v1.helpers.callgraph import (
+    callgraph_entry_count,
     canonical_module_key,
     detect_format,
     parse_generic_format,
@@ -14,6 +15,7 @@ from app.api.v1.helpers.callgraph import (
 )
 from app.services.aggregation.components import build_component_index, lookup_component
 from app.services.reachability_enrichment import _normalize_component
+from tests.helpers.comparisons import counted_str_type
 
 # madge 8.0.0: `npx madge@latest --json --include-npm src` over a fixture tree with a real
 # node_modules (lodash, @babel/core), then the template's jq merge of package.json deps.
@@ -304,3 +306,107 @@ class TestFormatDetectionRegressions:
         _, _, module_usage, analyzed_modules = parse_madge_format(data, "typescript")
         assert module_usage == {}
         assert analyzed_modules == ["lodash"]
+
+
+# Large enough that a list-membership dedupe makes about two million comparisons.
+_DISTINCT = 2000
+
+
+class TestDedupeIsLinear:
+    """Each dedupe compares a value only on a hash match, so distinct values cost no comparison."""
+
+    def test_generic_import_symbols(self):
+        counted = counted_str_type()
+        symbols = [counted(f"sym{i}") for i in range(_DISTINCT)]
+        data = {"imports": [{"module": "lodash", "file": "src/a.js", "line": 1, "symbols": symbols}]}
+
+        _, _, module_usage, _ = parse_generic_format(data, "javascript")
+
+        assert counted.comparisons == 0
+        assert module_usage["lodash"].used_symbols == [f"sym{i}" for i in range(_DISTINCT)]
+
+    def test_generic_call_symbols(self):
+        counted = counted_str_type()
+        calls = [{"callee_module": "lodash", "callee_function": counted(f"fn{i}")} for i in range(_DISTINCT)]
+
+        _, _, module_usage, _ = parse_generic_format({"calls": calls}, "javascript")
+
+        assert counted.comparisons == 0
+        assert module_usage["lodash"].used_symbols == [f"fn{i}" for i in range(_DISTINCT)]
+
+    def test_generic_import_locations(self):
+        counted = counted_str_type()
+        imports = [{"module": "lodash", "file": counted(f"src/f{i}.js"), "symbols": []} for i in range(_DISTINCT)]
+
+        _, _, module_usage, _ = parse_generic_format({"imports": imports}, "javascript")
+
+        assert counted.comparisons == 0
+        assert module_usage["lodash"].import_locations == [f"src/f{i}.js" for i in range(_DISTINCT)]
+
+    def test_madge_import_locations(self):
+        counted = counted_str_type()
+        data = {counted(f"src/f{i}.js"): ["node_modules/lodash/index.js"] for i in range(_DISTINCT)}
+
+        _, _, module_usage, _ = parse_madge_format(data, "javascript")
+
+        # Each file key is told apart from the analyzed-modules key once, and deduped without a comparison.
+        assert counted.comparisons == _DISTINCT
+        assert module_usage["lodash"].import_locations == [f"src/f{i}.js" for i in range(_DISTINCT)]
+
+    def test_analyzed_modules(self, monkeypatch):
+        counted = counted_str_type()
+        monkeypatch.setattr("app.api.v1.helpers.callgraph.canonical_module_key", lambda name, _language: counted(name))
+        names = [f"pkg{i}" for i in range(_DISTINCT)]
+
+        _, _, _, analyzed_modules = parse_generic_format({"analyzed_modules": names}, "javascript")
+
+        assert counted.comparisons == 0
+        assert analyzed_modules == names
+
+    def test_duplicates_collapse_in_first_seen_order(self):
+        data = {
+            "imports": [
+                {"module": "lodash", "file": "src/b.js", "symbols": ["map", "get"]},
+                {"module": "lodash", "file": "src/a.js", "symbols": ["get", "set"]},
+                {"module": "lodash", "file": "src/b.js", "symbols": ["map"]},
+            ],
+            "calls": [
+                {"callee_module": "lodash", "callee_function": "set"},
+                {"callee_module": "lodash", "callee_function": "pick"},
+            ],
+            "analyzed_modules": ["lodash", "express", "lodash"],
+        }
+
+        _, _, module_usage, analyzed_modules = parse_generic_format(data, "javascript")
+
+        usage = module_usage["lodash"]
+        assert usage.import_locations == ["src/b.js", "src/a.js"]
+        assert usage.used_symbols == ["map", "get", "set", "pick"]
+        assert (usage.import_count, usage.call_count) == (3, 2)
+        assert analyzed_modules == ["lodash", "express"]
+
+
+class TestCallgraphEntryCount:
+    """What the parsers walk, counted off the raw payload before any of it is parsed."""
+
+    def test_generic_counts_imports_symbols_calls_and_universe(self):
+        data = {
+            "imports": [
+                {"module": "lodash", "file": "src/a.js", "symbols": ["map", "get"]},
+                {"module": "express", "file": "src/b.js", "symbols": []},
+            ],
+            "calls": [{"callee_module": "lodash", "callee_function": "map"}],
+            "analyzed_modules": ["lodash", "express", "react"],
+        }
+
+        assert callgraph_entry_count(data) == 2 + 2 + 1 + 3
+
+    def test_madge_counts_every_dependency_and_the_universe(self):
+        data = {"src/a.js": ["lodash", "src/b.js"], "src/b.js": ["express"], "__analyzed_modules__": ["lodash"]}
+
+        assert callgraph_entry_count(data) == 3 + 1
+
+    def test_non_list_values_cost_nothing(self):
+        data = {"format": "generic", "language": "python", "imports": "not-a-list", "src/a.js": {"x": 1}}
+
+        assert callgraph_entry_count(data) == 0
