@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReturnDocument
 
 from app.core.metrics import track_db_operation
 
@@ -69,7 +70,8 @@ class ChatRepository:
         images: list[str] | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
         token_count: int = 0,
-    ) -> dict[str, Any]:
+    ) -> int:
+        """Store the message and return the conversation's message count including it."""
         doc = {
             "_id": str(uuid.uuid4()),
             "conversation_id": conversation_id,
@@ -83,14 +85,16 @@ class ChatRepository:
         with track_db_operation(_MSG_COL, "insert"):
             await self.messages.insert_one(doc)
         with track_db_operation(_CONV_COL, "update"):
-            await self.conversations.update_one(
+            conversation = await self.conversations.find_one_and_update(
                 {"_id": conversation_id},
                 {
                     "$inc": {"message_count": 1},
                     "$set": {"updated_at": datetime.now(timezone.utc)},
                 },
+                projection={"message_count": 1},
+                return_document=ReturnDocument.AFTER,
             )
-        return doc
+        return int(conversation["message_count"]) if conversation else 0
 
     async def get_messages(self, conversation_id: str, limit: int = 100, skip: int = 0) -> list[dict[str, Any]]:
         with track_db_operation(_MSG_COL, "find"):

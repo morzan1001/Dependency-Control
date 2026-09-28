@@ -45,14 +45,9 @@ def _make_service() -> ChatService:
     service = ChatService(db)
 
     service.repo = MagicMock()
-    service.repo.add_message = AsyncMock(return_value={"_id": "msg-1"})
+    service.repo.add_message = AsyncMock(return_value=1)
     service.repo.get_conversation = AsyncMock(
-        return_value={
-            "_id": "conv-1",
-            "user_id": "user-1",
-            "title": "Test",
-            "message_count": 1,
-        }
+        side_effect=AssertionError("the title must follow the write, not a read-back")
     )
     service.repo.update_conversation_title = AsyncMock()
     service.repo.get_recent_messages = AsyncMock(return_value=[])
@@ -126,14 +121,7 @@ async def test_send_message_auto_titles_first_message():
 async def test_a_later_message_does_not_retitle_the_conversation():
     service = _make_service()
     user = _make_user()
-    service.repo.get_conversation = AsyncMock(
-        return_value={
-            "_id": "conv-1",
-            "user_id": "user-1",
-            "title": "Renamed by the user",
-            "message_count": 7,
-        }
-    )
+    service.repo.add_message = AsyncMock(return_value=7)
 
     service.ollama.chat_stream = MagicMock(
         return_value=_async_gen(

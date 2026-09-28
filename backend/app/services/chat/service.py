@@ -79,15 +79,13 @@ class ChatService:
         # Load history before persisting the new message so the current turn isn't replayed twice.
         history = await self.repo.get_recent_messages(conversation_id, limit=settings.CHAT_MAX_HISTORY_MESSAGES)
 
-        await self.repo.add_message(
+        message_count = await self.repo.add_message(
             conversation_id,
             role="user",
             content=content,
             images=images or [],
         )
-
-        conv = await self.repo.get_conversation(conversation_id, user_id=str(user.id))
-        if conv and conv.get("message_count", 0) == 1:
+        if message_count == 1:
             title = content[:80] + ("..." if len(content) > 80 else "")
             await self.repo.update_conversation_title(conversation_id, str(user.id), title)
 
