@@ -179,6 +179,10 @@ class BaseRepository[T: BaseModel]:
         self,
         query: dict[str, Any] | None = None,
         projection: dict[str, int] | None = None,
+        sort: list[tuple[str, int]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        async for doc in self.collection.find(query or {}, projection):
+        cursor = self.collection.find(query or {}, projection)
+        if sort:
+            cursor = cursor.sort(sort)
+        async for doc in cursor:
             yield doc

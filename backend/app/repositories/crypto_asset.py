@@ -11,7 +11,7 @@ from app.repositories.base import BaseRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
 
-def _scan_query(
+def scan_query(
     project_id: str,
     scan_id: str,
     asset_type: CryptoAssetType | None = None,
@@ -90,8 +90,8 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
     ) -> list[CryptoAsset]:
         """A scan's assets, name-ascending. ``limit`` is the caller's own budget and is applied
         as given, so a short list means the scan is short and a caller can say so."""
-        query = _scan_query(project_id, scan_id, asset_type, primitive, name_search)
-        cursor = self.collection.find(query).sort("name", 1).skip(skip).limit(limit)
+        query = scan_query(project_id, scan_id, asset_type, primitive, name_search)
+        cursor = self.collection.find(query).sort([("name", 1), ("bom_ref", 1)]).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [CryptoAsset.model_validate(d) for d in docs]
 
@@ -107,7 +107,7 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         primitive: CryptoPrimitive | None = None,
         name_search: str | None = None,
     ) -> int:
-        query = _scan_query(project_id, scan_id, asset_type, primitive, name_search)
+        query = scan_query(project_id, scan_id, asset_type, primitive, name_search)
         return await self.collection.count_documents(query)
 
     async def summary_for_scan(self, project_id: str, scan_id: str) -> dict[str, Any]:

@@ -118,9 +118,8 @@ def _row(scan: Scan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dict[str, A
 
 
 async def _dependency_lookup(db: AsyncIOMotorDatabase, scan: Scan) -> _DepLookup:
-    cursor = DependencyRepository(db).collection.find({"scan_id": scan.id}, _DEP_PROJECTION)
     by_version: dict[str, dict[str, tuple[str | None, bool | None]]] = {}
-    async for dep in cursor:
+    async for dep in DependencyRepository(db).iterate_raw({"scan_id": scan.id}, _DEP_PROJECTION):
         by_name = by_version.setdefault(str(dep.get("version")), {})
         name = str(dep.get("name"))
         # A name@version can hold several docs (purl-qualifier variants); on 60 sampled
@@ -134,13 +133,11 @@ async def _dependency_lookup(db: AsyncIOMotorDatabase, scan: Scan) -> _DepLookup
 
 
 async def iter_findings_rows(db: AsyncIOMotorDatabase, scans: list[Scan]) -> AsyncIterator[dict[str, Any]]:
-    collection = FindingRepository(db).collection
+    findings = FindingRepository(db)
     for scan in scans:
         dep_lookup = await _dependency_lookup(db, scan)
         # One query per severity bucket keeps streaming order without an in-memory sort.
         for severity in _SEVERITY_ORDER:
-            cursor = collection.find({"scan_id": scan.id, "severity": severity.value}, _PROJECTION).sort(
-                [("type", 1), ("finding_id", 1)]
-            )
-            async for doc in cursor:
+            query = {"scan_id": scan.id, "severity": severity.value}
+            async for doc in findings.iterate_raw(query, _PROJECTION, [("type", 1), ("finding_id", 1)]):
                 yield _row(scan, doc, dep_lookup)

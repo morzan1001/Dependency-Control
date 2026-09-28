@@ -12,6 +12,8 @@ from app.services.analyzers.purl_utils import canonical_purl
 logger = logging.getLogger(__name__)
 
 _UPSERT_CHUNK_SIZE = 500
+# Bounds the width of one $in.
+ENRICHMENT_LOOKUP_CHUNK = 500
 
 
 class DependencyEnrichmentRepository:
@@ -60,11 +62,10 @@ class DependencyEnrichmentRepository:
             return {}
 
         canonical_by_requested = {purl: canonical_purl(purl) for purl in purls}
-        canonical_purls = list(set(canonical_by_requested.values()))
-        cursor = self.collection.find({"purl": {"$in": canonical_purls}})
-        docs = await cursor.to_list(length=len(canonical_purls))
-
-        by_canonical = {doc["purl"]: doc for doc in docs if doc.get("purl")}
+        by_canonical: dict[str, dict[str, Any]] = {}
+        for chunk in batched(set(canonical_by_requested.values()), ENRICHMENT_LOOKUP_CHUNK, strict=False):
+            docs = await self.collection.find({"purl": {"$in": list(chunk)}}).to_list(length=len(chunk))
+            by_canonical.update((doc["purl"], doc) for doc in docs if doc.get("purl"))
         return {
             requested: by_canonical[canonical]
             for requested, canonical in canonical_by_requested.items()
