@@ -1,10 +1,20 @@
 """Distributed locks for multi-pod coordination (e.g. Slack token refresh)."""
 
+import os
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
 from pymongo.errors import DuplicateKeyError
+
+# HOSTNAME alone repeats across the uvicorn processes of one pod.
+INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
+
+
+def new_lock_holder() -> str:
+    """A holder unique to one acquisition, so a release never drops a lock someone took over."""
+    return f"{INSTANCE_ID}:{uuid.uuid4().hex[:12]}"
 
 
 class DistributedLocksRepository:

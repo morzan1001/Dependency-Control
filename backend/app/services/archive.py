@@ -3,9 +3,7 @@
 import asyncio
 import json
 import logging
-import os
 import time
-import uuid
 import zlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
@@ -43,7 +41,7 @@ from app.core.s3 import (
 )
 from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
-from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.schemas.archive import ArchiveRestoreResponse
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.archive_bundle import (
@@ -72,11 +70,6 @@ _RESTORABLE_COLLECTIONS = frozenset({*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FR
 class _ArchiveSourceReadError(Exception):
     """A source document could not be read intact; raised to abort the S3 upload so
     housekeeping (which only deletes successfully-archived scans) can't lose data."""
-
-
-def _holder_id(prefix: str) -> str:
-    # Unique per call, so a holder can tell its own lock apart from one a second call on the same pod took over.
-    return f"{prefix}-{os.getenv('HOSTNAME', 'unknown')}-{uuid.uuid4().hex}"
 
 
 def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
@@ -357,7 +350,7 @@ async def archive_scan(
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"archive:{scan_id}"
-    holder = _holder_id("archive")
+    holder = new_lock_holder()
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
         logger.info(
@@ -881,7 +874,7 @@ async def restore_scan(
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
     lock_name = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
-    holder = _holder_id("restore")
+    holder = new_lock_holder()
     renew_lock = partial(lock_repo.renew_lock, lock_name, holder, _ARCHIVE_LOCK_TTL_SECONDS)
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):

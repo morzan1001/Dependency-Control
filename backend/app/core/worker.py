@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -17,6 +16,7 @@ from app.core.metrics import (
     worker_queue_size,
 )
 from app.db.mongodb import get_database
+from app.repositories.distributed_locks import INSTANCE_ID
 from app.services.analysis import run_analysis
 from app.services.notifications.service import safe_notify_project_event
 from app.services.webhooks import webhook_service
@@ -248,8 +248,7 @@ class AnalysisWorkerManager:
         return False
 
     async def worker(self, name: str) -> None:
-        hostname = os.getenv("HOSTNAME", "unknown")
-        worker_id = f"{hostname}/{name}"
+        worker_id = f"{INSTANCE_ID}/{name}"
         logger.info(f"Worker {worker_id} started")
 
         while True:

@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.worker import AnalysisWorkerManager
+from app.repositories.distributed_locks import INSTANCE_ID
 from tests.mocks.fake_mongo import FakeDatabase
 
 _OTHER_POD_CLAIM = datetime(2025, 1, 1, tzinfo=timezone.utc)
@@ -67,4 +68,4 @@ async def test_a_pending_scan_is_claimed_and_flipped_to_processing():
     run_analysis.assert_awaited_once()
     scan = await db.scans.find_one({"_id": "scan-1"})
     assert scan["status"] == "processing"
-    assert scan["worker_id"].endswith("/worker-1")
+    assert scan["worker_id"] == f"{INSTANCE_ID}/worker-1"

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import re
 from collections import Counter
 from typing import TYPE_CHECKING, Any
@@ -386,6 +385,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         ScanRepository,
         WaiverRepository,
     )
+    from app.repositories.distributed_locks import new_lock_holder
 
     project_repo = ProjectRepository(db)
     finding_repo = FindingRepository(db)
@@ -403,7 +403,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
 
     # Acquire distributed lock to prevent race conditions
     lock_name = f"stats_recalc:{project_id}"
-    holder_id = f"pod-{os.getenv('HOSTNAME', 'unknown')}-{os.getpid()}"
+    holder_id = new_lock_holder()
 
     # Retry with bounded exponential backoff instead of dropping the recalc on the
     # first contention. Two concurrent waiver changes must both end up reflected: the

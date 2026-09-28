@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -21,6 +20,7 @@ from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
 from app.models.project import Project
 from app.models.release import Release
 from app.repositories import DependencyRepository, DistributedLocksRepository, ReleaseRepository
+from app.repositories.distributed_locks import new_lock_holder
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,
@@ -262,7 +262,7 @@ async def ingest_sbom(
     # Serialise concurrent ingests of the same scan_id (CI retries) best-effort.
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"sbom_ingest:{scan_id}"
-    lock_holder = f"ingest-{os.getenv('HOSTNAME', 'unknown')}-{uuid.uuid4().hex[:8]}"
+    lock_holder = new_lock_holder()
     locked = False
     for _ in range(20):
         locked = await lock_repo.acquire_lock(lock_name, lock_holder, ttl_seconds=120)

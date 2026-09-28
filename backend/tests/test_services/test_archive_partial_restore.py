@@ -11,7 +11,8 @@ from app.core.constants import SCAN_SCOPED_COLLECTIONS
 from app.core.housekeeping import _reap_stale_metadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
-from app.services.archive import _holder_id, archive_scan, restore_scan
+from app.repositories.distributed_locks import new_lock_holder
+from app.services.archive import archive_scan, restore_scan
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.services.archive"
@@ -165,7 +166,7 @@ async def _take_over_the_restore_lock(db: FakeDatabase) -> str:
     """Another restore on this pod takes the lock over, as it can once missed renewals let the lock expire."""
     expired = datetime.now(timezone.utc) - timedelta(seconds=1)
     await db.distributed_locks.update_one({"_id": LOCK_NAME}, {"$set": {"expires_at": expired}})
-    taker = _holder_id("restore")
+    taker = new_lock_holder()
     assert await DistributedLocksRepository(db).acquire_lock(LOCK_NAME, taker, ttl_seconds=600)
     return taker
 
