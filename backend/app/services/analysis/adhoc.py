@@ -916,8 +916,6 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
-    # Defaults, not the stored document: the settings dependency exposes an ``auto_init`` query
-    # parameter that writes a ``system_settings`` document.
     license_policy = request.license_policy.model_dump() if request.license_policy else None
     settings_for = _build_settings_resolver(SystemSettings(), license_policy, None)
 

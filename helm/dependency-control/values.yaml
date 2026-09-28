@@ -560,5 +560,3 @@ ollama:
 # -----------------------------------------------------------------------------
 chat:
   enabled: false
-  rateLimitPerMinute: 10
-  rateLimitPerHour: 60

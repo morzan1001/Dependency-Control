@@ -14,16 +14,10 @@ class SystemSettingsRepository:
         self.db = db
         self.collection = db.system_settings
 
-    async def get(self, auto_init: bool = False) -> SystemSettings:
-        """auto_init persists defaults to the DB when no settings document exists."""
+    async def get(self) -> SystemSettings:
+        """The stored settings, or the defaults while none are stored; update() upserts the document."""
         data = await self.collection.find_one({"_id": self.SETTINGS_ID})
-        if data:
-            return SystemSettings(**data)
-
-        default_settings = SystemSettings()
-        if auto_init:
-            await self.collection.insert_one(default_settings.model_dump(by_alias=True))
-        return default_settings
+        return SystemSettings(**data) if data else SystemSettings()
 
     async def update(self, update_data: dict[str, Any]) -> SystemSettings:
         await self.collection.update_one(

@@ -66,6 +66,8 @@ class ChatService:
         user: User,
         content: str,
         images: list[str] | None = None,
+        *,
+        max_tool_rounds: int,
     ) -> AsyncIterator[str]:
         """Process a user message and stream the response as SSE event strings."""
         start_time = time.time()
@@ -93,10 +95,8 @@ class ChatService:
         messages = build_messages(history, content, images or [])
 
         try:
-            system_doc = await self.db["system_settings"].find_one({"_id": "current"})
-            max_rounds = (system_doc or {}).get("chat_max_tool_rounds") or settings.CHAT_MAX_TOOL_ROUNDS
             rounds_used = 0
-            for _ in range(max_rounds):
+            for _ in range(max_tool_rounds):
                 rounds_used += 1
                 round_tool_calls = 0
                 stream_iter = self.ollama.chat_stream(messages, tools=available_tools).__aiter__()
@@ -181,7 +181,7 @@ class ChatService:
                     break
 
             # Model stuck looping tool calls with no text: give the user an honest fallback.
-            if not full_response and rounds_used >= max_rounds and all_tool_calls:
+            if not full_response and rounds_used >= max_tool_rounds and all_tool_calls:
                 fallback = (
                     "_I gathered data from "
                     f"{total_tool_calls} tool call(s) but couldn't put together a "

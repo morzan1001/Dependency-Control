@@ -87,12 +87,6 @@ class Settings(BaseSettings):
     CHAT_ENABLED: bool = False
     CHAT_MAX_HISTORY_MESSAGES: int = 15
     CHAT_MAX_TOKEN_BUDGET: int = 12000
-    CHAT_RATE_LIMIT_PER_MINUTE: int = 10
-    CHAT_RATE_LIMIT_PER_HOUR: int = 60
-    # Maximum rounds of the LLM ↔ tool call loop before we synthesise a
-    # fallback message. Raising this lets the model chain more tool calls
-    # at the cost of worst-case latency per message.
-    CHAT_MAX_TOOL_ROUNDS: int = 20
 
     # Policy audit settings
     # Minimum age (days) an entry must have before it can be manually pruned via API.

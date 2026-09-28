@@ -40,8 +40,6 @@ async def _dying_gen(chunks: list[dict[str, Any]], error: Exception) -> AsyncIte
 
 def _make_service() -> ChatService:
     db = MagicMock()
-    # Stub system_settings so the config.py default for chat_max_tool_rounds applies.
-    db["system_settings"].find_one = AsyncMock(return_value=None)
     service = ChatService(db)
 
     service.repo = MagicMock()
@@ -81,7 +79,7 @@ async def test_send_message_streams_tokens_and_persists():
         )
     )
 
-    events = [chunk async for chunk in service.send_message("conv-1", user, "hi")]
+    events = [chunk async for chunk in service.send_message("conv-1", user, "hi", max_tool_rounds=20)]
 
     types = [c.split('"type":')[1].split(",")[0].split('"')[1] if '"type":' in c else "" for c in events]
     assert "token" in types
@@ -107,7 +105,7 @@ async def test_send_message_auto_titles_first_message():
         )
     )
 
-    async for _ in service.send_message("conv-1", user, "my very first question"):
+    async for _ in service.send_message("conv-1", user, "my very first question", max_tool_rounds=20):
         pass
 
     service.repo.update_conversation_title.assert_awaited_once()
@@ -132,7 +130,7 @@ async def test_a_later_message_does_not_retitle_the_conversation():
         )
     )
 
-    async for _ in service.send_message("conv-1", user, "a follow-up question"):
+    async for _ in service.send_message("conv-1", user, "a follow-up question", max_tool_rounds=20):
         pass
 
     service.repo.update_conversation_title.assert_not_awaited()
@@ -142,7 +140,6 @@ async def test_a_later_message_does_not_retitle_the_conversation():
 async def test_tool_rounds_exhausted_without_text_still_answers_the_user():
     service = _make_service()
     user = _make_user()
-    service.db["system_settings"].find_one = AsyncMock(return_value={"chat_max_tool_rounds": 2})
 
     def tool_only_round(messages, tools=None):
         return _async_gen(
@@ -154,7 +151,7 @@ async def test_tool_rounds_exhausted_without_text_still_answers_the_user():
 
     service.ollama.chat_stream = MagicMock(side_effect=tool_only_round)
 
-    events = [c async for c in service.send_message("conv-1", user, "why is it slow?")]
+    events = [c async for c in service.send_message("conv-1", user, "why is it slow?", max_tool_rounds=2)]
 
     assert "reasoning budget" in "".join(events)
     assistant_call = service.repo.add_message.call_args_list[-1]
@@ -175,7 +172,7 @@ async def test_a_stream_dying_after_some_text_persists_the_partial_answer():
     )
 
     with pytest.raises(RuntimeError):
-        async for _ in service.send_message("conv-1", user, "hi"):
+        async for _ in service.send_message("conv-1", user, "hi", max_tool_rounds=20):
             pass
 
     assistant_call = service.repo.add_message.call_args_list[-1]
@@ -196,7 +193,7 @@ async def test_a_stream_dying_after_a_tool_call_keeps_the_tool_result():
     )
 
     with pytest.raises(RuntimeError):
-        async for _ in service.send_message("conv-1", user, "list projects"):
+        async for _ in service.send_message("conv-1", user, "list projects", max_tool_rounds=20):
             pass
 
     assistant_call = service.repo.add_message.call_args_list[-1]
@@ -227,7 +224,7 @@ async def test_send_message_executes_tool_call():
         ]
     )
 
-    events = [c async for c in service.send_message("conv-1", user, "list projects")]
+    events = [c async for c in service.send_message("conv-1", user, "list projects", max_tool_rounds=20)]
 
     combined = "".join(events)
     assert "tool_call_start" in combined
@@ -250,7 +247,7 @@ async def test_send_message_error_stops_stream():
         )
     )
 
-    events = [c async for c in service.send_message("conv-1", user, "hi")]
+    events = [c async for c in service.send_message("conv-1", user, "hi", max_tool_rounds=20)]
 
     combined = "".join(events)
     assert "error" in combined
@@ -298,7 +295,7 @@ async def test_current_user_message_not_duplicated_in_prompt():
 
     service.ollama.chat_stream = MagicMock(side_effect=capture_chat_stream)
 
-    async for _ in service.send_message("conv-1", user, "which project is worst?"):
+    async for _ in service.send_message("conv-1", user, "which project is worst?", max_tool_rounds=20):
         pass
 
     user_turns = [
@@ -334,7 +331,7 @@ async def test_warmup_task_cancelled_on_client_disconnect(monkeypatch):
 
     service.ollama.chat_stream = MagicMock(return_value=HangingStream())
 
-    agen = service.send_message("conv-1", user, "hi")
+    agen = service.send_message("conv-1", user, "hi", max_tool_rounds=20)
     # First heartbeat comment proves we are mid warm-up.
     first = await agen.__anext__()
     assert first.startswith(": keepalive")

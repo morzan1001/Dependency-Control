@@ -36,7 +36,7 @@ async def get_settings(
     db: DatabaseDep,
 ) -> SystemSettings:
     """Get system settings. Requires 'system:manage' permission."""
-    return await deps.get_system_settings(db, auto_init=True)
+    return await deps.get_system_settings(db)
 
 
 @router.put("/", response_model=SystemSettingsResponse, responses=RESP_AUTH)

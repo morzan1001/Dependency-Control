@@ -1,7 +1,7 @@
 """Tests for system settings API endpoints (get/update settings, public config, app config, notification channels)."""
 
 import asyncio
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.system import SystemSettings
 
@@ -29,16 +29,36 @@ class TestGetSettings:
 
         assert result.instance_name == "My Instance"
 
-    def test_passes_auto_init_true(self, admin_user):
+    def test_reading_the_settings_writes_nothing(self, admin_user):
         from app.api.v1.endpoints.system import get_settings
+        from tests.mocks.fake_mongo import FakeDatabase
 
-        settings = _make_settings()
+        db = FakeDatabase()
+        result = asyncio.run(get_settings(current_user=admin_user, db=db))
 
-        with patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = settings
-            asyncio.run(get_settings(current_user=admin_user, db=MagicMock()))
+        assert result.chat_max_tool_rounds == SystemSettings().chat_max_tool_rounds
+        assert db.system_settings._docs == {}
 
-        mock_get.assert_called_once_with(ANY, auto_init=True)
+    def test_no_operation_exposes_a_persistence_switch(self):
+        from app.main import app
+
+        parameters = {
+            parameter["name"]
+            for path in app.openapi()["paths"].values()
+            for operation in path.values()
+            for parameter in operation.get("parameters", [])
+        }
+        assert "auto_init" not in parameters
+
+    def test_the_tool_round_limit_is_bounded_on_the_way_in(self):
+        import pytest
+        from pydantic import ValidationError
+
+        from app.schemas.system import SystemSettingsUpdate
+
+        for rejected in ({"chat_max_tool_rounds": 0}, {"chat_max_tool_rounds": 51}, {"chat_rate_limit_per_minute": 0}):
+            with pytest.raises(ValidationError):
+                SystemSettingsUpdate(**rejected)
 
 
 class TestUpdateSettings:

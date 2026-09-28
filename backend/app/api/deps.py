@@ -48,13 +48,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/acce
 optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token", auto_error=False)
 
 
-async def get_system_settings(
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    auto_init: bool = False,
-) -> SystemSettings:
-    """Get system settings; create defaults in DB when auto_init is True."""
-    repo = SystemSettingsRepository(db)
-    return await repo.get(auto_init=auto_init)
+async def get_system_settings(db: AsyncIOMotorDatabase = Depends(get_database)) -> SystemSettings:
+    return await SystemSettingsRepository(db).get()
 
 
 class TokenRejected(Exception):

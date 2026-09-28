@@ -81,6 +81,9 @@ class SystemSettingsUpdate(SystemSettingsBase):
     # Narrowed only on the way in: the response shares this base and must stay able to render a
     # setting that predates this constraint.
     global_retention_action: RetentionAction = RETENTION_ACTION_DELETE
+    chat_rate_limit_per_minute: int = Field(10, ge=1)
+    chat_rate_limit_per_hour: int = Field(60, ge=1)
+    chat_max_tool_rounds: int = Field(20, ge=1, le=50)
 
 
 class SystemSettingsResponse(SystemSettingsBase):

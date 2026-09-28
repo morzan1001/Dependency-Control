@@ -29,6 +29,7 @@ from app.models.project import Project
 from app.models.user import User
 from app.models.waiver import is_waiver_active
 from app.repositories.scans import ScanRepository
+from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
@@ -1512,8 +1513,8 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_system_settings(self, ctx: _ToolContext) -> dict[str, Any]:
-        doc = await ctx.db["system_settings"].find_one({"_id": "current"})
-        return {"settings": SystemSettingsResponse.model_validate(doc).model_dump(mode="json") if doc else {}}
+        stored = await SystemSettingsRepository(ctx.db).get()
+        return {"settings": SystemSettingsResponse.model_validate(stored).model_dump(mode="json")}
 
     async def _tool_get_system_health(self, ctx: _ToolContext) -> dict[str, Any]:
         from app.core.cache import cache_service

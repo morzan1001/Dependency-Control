@@ -5,14 +5,13 @@ import logging
 import redis.asyncio as redis
 from fastapi import HTTPException, status
 from fastapi.responses import StreamingResponse
-from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.config import settings
 from app.core.permissions import Permissions, has_permission
-from app.models.system import SystemSettings
 from app.models.user import User
 from app.schemas.chat import (
     ConversationCreate,
@@ -29,13 +28,6 @@ logger = logging.getLogger(__name__)
 _MSG_CONVERSATION_NOT_FOUND = "Conversation not found"
 
 router = CustomAPIRouter()
-
-
-async def _get_system_settings(db: AsyncIOMotorDatabase) -> SystemSettings:
-    doc = await db["system_settings"].find_one({"_id": "current"})
-    if doc:
-        return SystemSettings(**doc)
-    return SystemSettings()
 
 
 def _check_chat_enabled() -> None:
@@ -162,7 +154,7 @@ async def send_message(
     """Send a message and stream the AI response via SSE."""
     _check_chat_enabled()
     _check_permission(current_user, Permissions.CHAT_ACCESS)
-    system_settings = await _get_system_settings(db)
+    system_settings = await deps.get_system_settings(db)
 
     try:
         async with redis.from_url(settings.REDIS_URL) as redis_client:
@@ -187,7 +179,13 @@ async def send_message(
         raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
     return StreamingResponse(
-        service.send_message(conversation_id, current_user, body.content, body.images),
+        service.send_message(
+            conversation_id,
+            current_user,
+            body.content,
+            body.images,
+            max_tool_rounds=system_settings.chat_max_tool_rounds,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
