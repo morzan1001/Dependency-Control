@@ -31,9 +31,9 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
         if scope_id:
             query["scope_id"] = scope_id
         if framework:
-            query["framework"] = framework.value if hasattr(framework, "value") else framework
+            query["framework"] = framework
         if status:
-            query["status"] = status.value if hasattr(status, "value") else status
+            query["status"] = status
         if extra_filter:
             # $and so an $or visibility clause doesn't collide with the field-level filters.
             query = {"$and": [query, extra_filter]} if query else extra_filter
@@ -72,7 +72,7 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
             "expires_at": expires_at,
         }
         update: dict[str, Any] = {
-            "status": status.value if hasattr(status, "value") else status,
+            "status": status,
             **{key: val for key, val in optional_fields.items() if val is not None},
         }
         await self.collection.update_one({"_id": report_id}, {"$set": update})

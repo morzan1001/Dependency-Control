@@ -20,9 +20,9 @@ def _scan_query(
 ) -> dict[str, Any]:
     query: dict[str, Any] = {"project_id": project_id, "scan_id": scan_id}
     if asset_type is not None:
-        query["asset_type"] = asset_type.value if hasattr(asset_type, "value") else asset_type
+        query["asset_type"] = asset_type
     if primitive is not None:
-        query["primitive"] = primitive.value if hasattr(primitive, "value") else primitive
+        query["primitive"] = primitive
     if name_search:
         query["name"] = {"$regex": re.escape(name_search), "$options": "i"}
     return query
