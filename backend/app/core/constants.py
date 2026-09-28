@@ -1014,7 +1014,6 @@ GITLAB_ADMIN_MIN_ACCESS = GITLAB_ACCESS_MAINTAINER
 # Aggregation key prefixes for finding deduplication
 AGG_KEY_VULNERABILITY = "AGG:VULN"
 AGG_KEY_QUALITY = "AGG:QUALITY"
-AGG_KEY_SAST = "SAST-AGG"
 
 # Cross-linking is pairwise, so a component carrying thousands of findings costs O(n^2) to
 # produce a related-findings list no reader can use. Above this the group is left unlinked.

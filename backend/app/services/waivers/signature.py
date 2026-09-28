@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from app.models.match_signature import MatchSignature
+from app.services.normalizers.utils import FindingIdPrefix
 
 # Deterministic preference when several scanners confirm one SAST finding.
 _SCANNER_PREFERENCE = ("opengrep", "bearer")
@@ -159,11 +160,12 @@ def compute_match_signature(finding: SignatureSource) -> MatchSignature | None:
     fid = finding.id or ""
     details = finding.details or {}
 
-    if details.get("sast_findings") is not None or fid.startswith(("OPENGREP-", "BEARER-", "SAST-AGG-")):
+    sast_prefixes = tuple(f"{p}-" for p in (FindingIdPrefix.OPENGREP, FindingIdPrefix.BEARER, FindingIdPrefix.SAST_AGG))
+    if details.get("sast_findings") is not None or fid.startswith(sast_prefixes):
         return _sast_signature(finding)
-    if fid.startswith("KICS-"):
+    if fid.startswith(f"{FindingIdPrefix.KICS}-"):
         return _iac_signature(finding)
-    if fid.startswith("SECRET-"):
+    if fid.startswith(f"{FindingIdPrefix.SECRET}-"):
         return _secret_signature(finding)
     return None
 

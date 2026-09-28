@@ -10,6 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.services.analysis.stats import calculate_comprehensive_stats
+from app.services.normalizers.utils import extract_rule_prefix, strip_line_number
 
 if TYPE_CHECKING:
     from app.services.waivers.matching import MatchFinding, WaiverApplication
@@ -33,29 +34,6 @@ _WAIVER_FIELD_MAP = {
 }
 
 
-def _strip_line_number(finding_id: str) -> str | None:
-    """Strip the trailing ``-<line_number>`` from a SAST finding ID, so file-scope matching covers
-    every line of the same rule + file.
-    """
-    parts = finding_id.rsplit("-", 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        return parts[0]
-    return None
-
-
-def _extract_rule_prefix(finding_id: str, component: str) -> str | None:
-    """Extract ``{SCANNER}-{rule_id}`` from a SAST/IAC ``{SCANNER}-{rule_id}-{file_path}-{line}``
-    ID, given ``component = {file_path}``, so rule-scope waivers match the rule across all files.
-    """
-    file_prefix = _strip_line_number(finding_id)
-    if not file_prefix:
-        return None
-    suffix = f"-{component}"
-    if file_prefix.endswith(suffix):
-        return file_prefix[: -len(suffix)]
-    return None
-
-
 def _resolve_finding_id_query(
     finding_id: str,
     scope: str,
@@ -63,11 +41,11 @@ def _resolve_finding_id_query(
 ) -> str | dict[str, str]:
     """Resolve the MongoDB query value for ``finding_id`` based on waiver scope."""
     if scope == "file":
-        prefix = _strip_line_number(finding_id)
+        prefix = strip_line_number(finding_id)
         if prefix:
             return {"$regex": f"^{re.escape(prefix)}-\\d+$"}
     elif scope == "rule":
-        rule_prefix = _extract_rule_prefix(finding_id, component)
+        rule_prefix = extract_rule_prefix(finding_id, component)
         if rule_prefix:
             return {"$regex": f"^{re.escape(rule_prefix)}-"}
     return finding_id

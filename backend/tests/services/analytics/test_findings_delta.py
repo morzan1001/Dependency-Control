@@ -126,12 +126,13 @@ def test_identity_key_malware_typosquat_uses_imitated_package():
     assert finding_identity_key(f) == ("malware", "axios2", "axios")
 
 
-def test_identity_key_malware_os_malware_uses_info_id():
+def test_identity_key_malware_prefers_the_osv_id_over_the_owning_feed_s_reference():
     f = {
         "type": "malware",
         "component": "evil-pkg",
         "details": {
-            "info": {"id": "MAL-2023-1234", "description": "bad"},
+            "osv_id": "MAL-2023-1234",
+            "info": {"description": "bad"},
             "threats": ["trojan"],
             "reference": "https://example.com/mal",
             "source": "opensourcemalware",
@@ -547,7 +548,7 @@ async def test_fetch_uses_projection(db, monkeypatch):
         "details.fixed_version",
         "details.sast_findings.id",
         "details.imitated_package",
-        "details.info.id",
+        "details.osv_id",
         "details.reference",
         "details.license",
     ):

@@ -4,6 +4,7 @@ from app.core.constants import BEARER_SEVERITY_MAP, OPENGREP_SEVERITY_MAP
 from app.models.finding import Finding, FindingType
 from app.schemas.finding_details import LineSpan, SastScannerDetails
 from app.services.normalizers.utils import (
+    FindingIdPrefix,
     build_finding_id,
     normalize_cwe_list,
     normalize_list,
@@ -56,7 +57,7 @@ def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
     cwe = metadata.get("cwe") or []
     owasp = metadata.get("owasp") or []
 
-    finding_id = build_finding_id("OPENGREP", check_id, path, start_line)
+    finding_id = build_finding_id(FindingIdPrefix.OPENGREP, check_id, path, start_line)
 
     description = _build_opengrep_description(check_id, message)
 
@@ -147,7 +148,7 @@ def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], sou
 
         rule_id = item.get("id") or item.get("rule_id") or "unknown"
 
-        finding_id = build_finding_id("BEARER", rule_id, filename, line_number)
+        finding_id = build_finding_id(FindingIdPrefix.BEARER, rule_id, filename, line_number)
 
         details = SastScannerDetails(
             rule_id=rule_id,

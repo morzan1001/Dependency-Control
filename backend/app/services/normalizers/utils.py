@@ -1,6 +1,7 @@
 """Shared helpers for normalizing scanner result data."""
 
 import re
+from enum import StrEnum
 from typing import Any
 
 from app.core.constants import SEVERITY_ALIASES
@@ -65,6 +66,18 @@ def safe_get(
     return value if value is not None else default
 
 
+class FindingIdPrefix(StrEnum):
+    """Id prefixes that readers dispatch on (quality buckets, waiver signatures, SAST merging)."""
+
+    SCORECARD = "SCORECARD"
+    MAINT = "MAINT"
+    OPENGREP = "OPENGREP"
+    BEARER = "BEARER"
+    KICS = "KICS"
+    SECRET = "SECRET"
+    SAST_AGG = "SAST-AGG"
+
+
 def build_finding_id(
     prefix: str,
     *parts: Any,
@@ -77,6 +90,26 @@ def build_finding_id(
         return f"{prefix}{separator}unknown"
 
     return f"{prefix}{separator}{separator.join(valid_parts)}"
+
+
+def strip_line_number(finding_id: str) -> str | None:
+    """The id without its trailing ``-<line>``, or None when it ends in no line number."""
+    parts = finding_id.rsplit("-", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0]
+    return None
+
+
+def extract_rule_prefix(finding_id: str, component: str) -> str | None:
+    """``{SCANNER}-{rule_id}`` of a ``{SCANNER}-{rule_id}-{file_path}[-{line}]`` id, given ``component = {file_path}``.
+
+    A hit at line 0 carries no line segment, because build_finding_id drops falsy parts.
+    """
+    file_prefix = strip_line_number(finding_id) or finding_id
+    suffix = f"-{component}"
+    if file_prefix.endswith(suffix):
+        return file_prefix[: -len(suffix)]
+    return None
 
 
 def _find_v3_score(cvss_data: dict[str, Any], source_priority: list[str]) -> tuple[float | None, str | None]:

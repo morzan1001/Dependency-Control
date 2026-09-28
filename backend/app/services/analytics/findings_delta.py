@@ -60,15 +60,9 @@ def _sast_identifier(details: dict[str, Any]) -> str:
 
 
 def _malware_identifier(details: dict[str, Any]) -> str:
-    """Typosquat findings carry ``imitated_package``; os_malware findings carry
-    ``info``/``reference``."""
-    imitated = details.get("imitated_package")
-    if imitated:
-        return str(imitated)
-    info = details.get("info")
-    if isinstance(info, dict) and info.get("id"):
-        return str(info["id"])
-    return _first_id(details, "reference")
+    """Typosquats carry ``imitated_package``; OSV malware ``osv_id``, kept whichever feed owns the
+    merged finding; os_malware alone only its report ``reference``."""
+    return _first_id(details, "imitated_package", "osv_id", "reference")
 
 
 def _vulnerability_identifier(finding: dict[str, Any], include_waived: bool) -> str:
@@ -160,7 +154,7 @@ FINDING_IDENTITY_PROJECTION: dict[str, int] = {
     "details.line": 1,
     "details.license": 1,
     "details.imitated_package": 1,
-    "details.info.id": 1,
+    "details.osv_id": 1,
     "details.reference": 1,
     "details.eol_date": 1,
     "details.fixed_version": 1,

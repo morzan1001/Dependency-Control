@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from app.core.constants import AGG_KEY_SAST, get_severity_value
+from app.core.constants import get_severity_value
+from app.services.normalizers.utils import FindingIdPrefix
 from app.models.finding import Finding, FindingType
 from app.schemas.finding import VulnerabilityEntry
 from app.services.aggregation.versions import parse_version_key, resolve_fixed_versions
@@ -67,7 +68,7 @@ def merge_sast_findings(findings: list[Finding]) -> Finding | None:
         description += f" (Confirmed by {len(merged_scanners)} scanners)"
 
     return Finding(
-        id=(base.id if len(findings) == 1 else f"{AGG_KEY_SAST}-{base.component}-{merged_details['line']}"),
+        id=(base.id if len(findings) == 1 else f"{FindingIdPrefix.SAST_AGG}-{base.component}-{merged_details['line']}"),
         type=FindingType.SAST,
         severity=max_severity,
         component=base.component,

@@ -25,6 +25,7 @@ from app.models.waiver import Waiver
 from app.repositories import ScanRepository, WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
+from app.services.normalizers.utils import extract_rule_prefix
 from app.services.stats import _build_waiver_query, recalculate_all_projects, recalculate_project_stats
 
 
@@ -119,9 +120,7 @@ async def create_waiver(
     matched_finding = await _ensure_waiver_matches_finding(waiver_in, db)
 
     if waiver_in.scope == "rule" and not waiver_in.rule_id and waiver_in.finding_id and waiver_in.package_name:
-        from app.services.stats import _extract_rule_prefix
-
-        rule_prefix = _extract_rule_prefix(waiver_in.finding_id, waiver_in.package_name)
+        rule_prefix = extract_rule_prefix(waiver_in.finding_id, waiver_in.package_name)
         if rule_prefix:
             # Strip scanner prefix (e.g. "BEARER-rule_name" → "rule_name")
             parts = rule_prefix.split("-", 1)

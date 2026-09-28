@@ -57,6 +57,7 @@ from app.services.normalizers.quality import (
     normalize_typosquatting,
 )
 from app.services.normalizers.sast import normalize_bearer, normalize_opengrep
+from app.services.normalizers.utils import FindingIdPrefix
 from app.services.normalizers.secret import normalize_trufflehog
 from app.services.normalizers.security import (
     normalize_hash_verification,
@@ -565,9 +566,9 @@ class ResultAggregator:
     @staticmethod
     def _quality_issue_type(finding: Finding) -> str:
         """Determine the quality issue-type bucket for a finding id."""
-        if finding.id.startswith("SCORECARD-"):
+        if finding.id.startswith(f"{FindingIdPrefix.SCORECARD}-"):
             return "scorecard"
-        if finding.id.startswith("MAINT-"):
+        if finding.id.startswith(f"{FindingIdPrefix.MAINT}-"):
             return "maintainer_risk"
         return "other"
 
@@ -670,13 +671,22 @@ class ResultAggregator:
 
     @staticmethod
     def _merge_generic_into_existing(existing: Finding, finding: Finding, source: str | None) -> None:
-        """Merge a generic finding's fields into an existing aggregate."""
+        """Merge a generic finding's fields into an existing aggregate.
+
+        The side whose scanners sort first owns description and conflicting detail keys, so two
+        feeds minting one id (OSV and os_malware for MALWARE-<pkg>) merge the same in any order.
+        """
+        incoming_owns = min(finding.scanners, default="") < min(existing.scanners, default="")
         existing.scanners = sorted(set(existing.scanners + finding.scanners))
 
         if get_severity_value(finding.severity) > get_severity_value(existing.severity):
             existing.severity = finding.severity
 
-        existing.details.update(finding.details)
+        if incoming_owns:
+            existing.details = {**existing.details, **finding.details}
+            existing.description = finding.description
+        else:
+            existing.details = {**finding.details, **existing.details}
 
         new_aliases = set(existing.aliases)
         new_aliases.update(finding.aliases)
