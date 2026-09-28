@@ -249,15 +249,7 @@ async def test_engine_gather_inputs_builds_evaluation_input():
 
     asset_repo_mock = MagicMock(list_by_scan=AsyncMock(return_value=[]))
 
-    findings_cursor = MagicMock()
-
-    async def findings_iter():
-        if False:
-            yield None
-
-    findings_cursor.__aiter__ = lambda self: findings_iter()
-    find_mock = MagicMock(limit=MagicMock(return_value=findings_cursor))
-    db.findings.find = MagicMock(return_value=find_mock)
+    db.findings.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[])))
 
     policy_repo_mock = MagicMock(get_system_policy=AsyncMock(return_value=None))
 
@@ -297,17 +289,10 @@ def _make_engine_db(*, agg_rows, project_doc=None):
 
     captured: dict = {}
 
-    async def findings_iter():
-        if False:
-            yield None
-
-    findings_cursor = MagicMock()
-    findings_cursor.__aiter__ = lambda self: findings_iter()
-
-    def find(query, projection):
+    def find(query, projection=None, **_kwargs):
         captured["findings_query"] = query
         captured["findings_projection"] = projection
-        return MagicMock(limit=MagicMock(return_value=findings_cursor))
+        return MagicMock(to_list=AsyncMock(return_value=[]))
 
     db.findings.find = MagicMock(side_effect=find)
 

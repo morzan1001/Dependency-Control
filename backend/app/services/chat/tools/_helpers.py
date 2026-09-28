@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from app.core.config import settings
+from app.repositories.base import find_window
 from app.services.aggregation.components import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
 from app.services.recommendation.common import finding_cve_ids
@@ -83,16 +84,11 @@ async def bounded_read(
 ) -> tuple[list[dict[str, Any]], int]:
     """The first `limit` rows matching `query`, and how many rows match in total.
 
-    The count costs a round trip only once the read saturates, which is the only time the two
-    can differ. A saturated read is recorded so the answer says so even where the caller never
-    named a limit.
+    A truncated read is recorded so the answer says so even where the caller never named a limit.
     """
-    rows: list[dict[str, Any]] = await collection.find(query, limit=limit, **find_kwargs).to_list(length=limit)
-    if len(rows) < limit:
-        return rows, len(rows)
-    total = await collection.count_documents(query)
+    rows, total = await find_window(collection, query, limit, **find_kwargs)
     ledger = _BOUNDED_READS.get()
-    if ledger is not None:
+    if ledger is not None and total > len(rows):
         ledger.append((subject, len(rows), total))
     return rows, total
 

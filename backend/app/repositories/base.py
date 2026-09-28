@@ -14,6 +14,22 @@ logger = logging.getLogger(__name__)
 UpdateOps = dict[str, Any] | list[dict[str, Any]]
 
 
+async def find_window(
+    collection: AsyncIOMotorCollection, query: dict[str, Any], limit: int, **find_kwargs: Any
+) -> tuple[list[dict[str, Any]], int]:
+    """The first ``limit`` matches and how many match in total.
+
+    The count costs a round trip only once the read saturates, the only time the two can differ;
+    a caller compares them to tell a truncated result from one that exactly fills the limit.
+    """
+    if limit <= 0:
+        return [], await collection.count_documents(query)
+    rows: list[dict[str, Any]] = await collection.find(query, limit=limit, **find_kwargs).to_list(length=limit)
+    if len(rows) < limit:
+        return rows, len(rows)
+    return rows, await collection.count_documents(query)
+
+
 class BaseRepository[T: BaseModel]:
     """Generic CRUD base. Subclasses set ``collection_name`` and ``model_class``."""
 

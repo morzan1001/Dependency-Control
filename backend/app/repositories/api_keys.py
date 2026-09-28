@@ -13,6 +13,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import API_KEY_SURFACES
+from app.repositories.base import find_window
 
 logger = logging.getLogger(__name__)
 
@@ -86,14 +87,8 @@ class ApiKeyRepository:
         return doc, token
 
     async def list_for_user(self, user_id: str) -> tuple[list[dict[str, Any]], int]:
-        """The newest page of the user's keys and how many they hold; the count costs a round
-        trip only once the page saturates, which is the only time the two differ."""
-        query = {"user_id": user_id}
-        cursor = self.collection.find(query, sort=[("created_at", -1)])
-        docs: list[dict[str, Any]] = await cursor.to_list(length=LIST_LIMIT)
-        if len(docs) < LIST_LIMIT:
-            return docs, len(docs)
-        return docs, await self.collection.count_documents(query)
+        """The newest page of the user's keys and how many they hold."""
+        return await find_window(self.collection, {"user_id": user_id}, LIST_LIMIT, sort=[("created_at", -1)])
 
     async def get_by_plaintext(self, plaintext: str) -> dict[str, Any] | None:
         if not plaintext.startswith(_TOKEN_PREFIX):

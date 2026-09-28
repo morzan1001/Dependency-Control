@@ -3,7 +3,7 @@
 from typing import Any
 
 from app.models.dependency import Dependency
-from app.repositories.base import BaseRepository
+from app.repositories.base import BaseRepository, find_window
 
 
 class DependencyRepository(BaseRepository[Dependency]):
@@ -14,13 +14,9 @@ class DependencyRepository(BaseRepository[Dependency]):
         return await self.find_one({"name": name})
 
     async def find_by_scan(self, project_id: str, scan_id: str, limit: int) -> tuple[list[Dependency], int]:
-        """The scan's dependencies up to ``limit``, and how many it holds. The count costs a
-        round trip only once the read has saturated, and a caller that reports the pair can tell
-        a small scan from a windowed one."""
-        rows = await self.find_many({"project_id": project_id, "scan_id": scan_id}, limit=limit)
-        if len(rows) < limit:
-            return rows, len(rows)
-        return rows, await self.count_by_scan(project_id, scan_id)
+        """The scan's dependencies up to ``limit``, and how many it holds."""
+        rows, total = await find_window(self.collection, {"project_id": project_id, "scan_id": scan_id}, limit)
+        return self._to_model_list(rows), total
 
     async def find_raw_by_scan(self, scan_id: str, projection: dict[str, int]) -> list[dict[str, Any]]:
         """Every dependency of one scan, unbounded: a scan's inventory is read whole to be folded."""

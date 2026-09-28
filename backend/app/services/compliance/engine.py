@@ -12,6 +12,7 @@ from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.base import find_window
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
     EvaluationCoverage,
@@ -211,11 +212,9 @@ class ComplianceReportEngine:
             "aliases": 0,
             "related_findings": 0,
         }
-        cursor = db.findings.find(query, projection).limit(_FINDINGS_LIMIT)
-        results = [doc async for doc in cursor]
-        if len(results) < _FINDINGS_LIMIT:
-            return results, len(results)
-        in_scope: int = await db.findings.count_documents(query)
+        results, in_scope = await find_window(db.findings, query, _FINDINGS_LIMIT, projection=projection)
+        if in_scope == len(results):
+            return results, in_scope
         logger.warning(
             "Compliance evaluation hit findings cap (%d of %d) for scope %s; "
             "report may understate exposure — consider narrowing the scope",
