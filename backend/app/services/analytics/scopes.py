@@ -44,13 +44,14 @@ def may_query_global(user: User) -> bool:
 
 
 def team_scope_filter(user: User) -> dict[str, Any] | None:
-    """Teams whose analytics the user may query, None for none; team:read_all alone opens no project data."""
+    """Teams whose analytics the user may query, None for none; team:read_all opens team metadata, not project data."""
     from app.api.v1.helpers.projects import may_read_projects
-    from app.api.v1.helpers.teams import visible_teams_filter
 
     if may_query_global(user) or has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return {}
-    return visible_teams_filter(user) if may_read_projects(user) else None
+    if may_read_projects(user) and has_permission(user.permissions, [Permissions.TEAM_READ, Permissions.TEAM_READ_ALL]):
+        return {"members.user_id": str(user.id)}
+    return None
 
 
 @dataclass
@@ -86,17 +87,13 @@ class ScopeResolver:
         return ResolvedScope(scope="project", scope_id=scope_id, project_ids=[scope_id])
 
     async def _resolve_team(self, scope_id: str | None) -> ResolvedScope:
-        """The team's projects the user may read; global analytics reads them all, reading a team opens none."""
-        from app.api.v1.helpers.projects import build_user_project_query
-
+        """Every project of the team, as the gate admits only callers who read all of them."""
         if not scope_id:
             raise ScopeResolutionError("team scope requires scope_id")
-        team_repo = TeamRepository(self.db)
         teams = team_scope_filter(self.user)
-        if teams is None or not await team_repo.count(and_filters({"_id": scope_id}, teams)):
+        if teams is None or not await TeamRepository(self.db).count(and_filters({"_id": scope_id}, teams)):
             raise ScopeResolutionError(f"User not authorised for team {scope_id}")
-        readable = {} if may_query_global(self.user) else await build_user_project_query(self.user, team_repo)
-        projects = await read_scope_projects(self.db, and_filters(readable, {"team_ids": scope_id}))
+        projects = await read_scope_projects(self.db, {"team_ids": scope_id})
         return ResolvedScope(scope="team", scope_id=scope_id, project_ids=[p.id for p in projects], projects=projects)
 
     def _resolve_global(self) -> ResolvedScope:

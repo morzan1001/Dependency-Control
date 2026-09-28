@@ -107,14 +107,13 @@ class TestAnalyticsTeamScope:
             await ScopeResolver(db, _user(Permissions.PROJECT_READ)).resolve(scope="team", scope_id="t-1")
 
     @pytest.mark.asyncio
-    async def test_a_read_all_holder_sees_only_the_team_projects_they_may_read(self):
-        db = await _db()
-        await db.projects.update_one({"_id": "p-mine"}, {"$set": {"members": [{"user_id": "u-out", "role": "viewer"}]}})
-        caller = _user(Permissions.TEAM_READ_ALL, Permissions.PROJECT_READ, user_id="u-out")
+    @pytest.mark.parametrize("permission", [Permissions.TEAM_READ, Permissions.TEAM_READ_ALL])
+    async def test_a_member_with_a_project_read_gets_every_team_project(self, permission):
+        resolved = await ScopeResolver(await _db(), _user(permission, Permissions.PROJECT_READ)).resolve(
+            scope="team", scope_id="t-1"
+        )
 
-        resolved = await ScopeResolver(db, caller).resolve(scope="team", scope_id="t-1")
-
-        assert resolved.project_ids == ["p-mine"]
+        assert sorted(resolved.project_ids or []) == ["p-mine", "p-other"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -128,11 +127,15 @@ class TestAnalyticsTeamScope:
         assert sorted(resolved.project_ids or []) == ["p-mine", "p-other"]
 
     @pytest.mark.asyncio
-    async def test_team_read_all_without_a_project_read_is_refused(self):
+    @pytest.mark.parametrize(
+        "permissions", [(Permissions.TEAM_READ_ALL,), (Permissions.TEAM_READ_ALL, Permissions.PROJECT_READ)]
+    )
+    async def test_team_read_all_opens_no_team_the_caller_is_not_in(self, permissions):
+        db = await _db()
+        await db.projects.update_one({"_id": "p-mine"}, {"$set": {"members": [{"user_id": "u-out", "role": "viewer"}]}})
+
         with pytest.raises(ScopeResolutionError):
-            await ScopeResolver(await _db(), _user(Permissions.TEAM_READ_ALL, user_id="u-out")).resolve(
-                scope="team", scope_id="t-1"
-            )
+            await ScopeResolver(db, _user(*permissions, user_id="u-out")).resolve(scope="team", scope_id="t-1")
 
     @pytest.mark.asyncio
     async def test_a_missing_team_is_refused_to_global_analytics(self):
@@ -150,7 +153,8 @@ class TestTeamReportVisibility:
             (_user(), set()),
             (_user(Permissions.TEAM_READ), set()),
             (_user(Permissions.TEAM_READ, Permissions.PROJECT_READ), {"t-1"}),
-            (_user(Permissions.TEAM_READ_ALL, Permissions.PROJECT_READ, user_id="u-out"), {"t-1", "t-2"}),
+            (_user(Permissions.TEAM_READ_ALL, Permissions.PROJECT_READ), {"t-1"}),
+            (_user(Permissions.TEAM_READ_ALL, Permissions.PROJECT_READ, user_id="u-out"), set()),
             (_user(Permissions.ANALYTICS_GLOBAL, user_id="u-out"), {"t-1", "t-2"}),
         ],
     )
