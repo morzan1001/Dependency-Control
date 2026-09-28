@@ -66,14 +66,6 @@ class DistributedLocksRepository:
         result = await self.collection.delete_one({"_id": lock_name, "holder": holder_id})
         return result.deleted_count > 0
 
-    async def get_lock_info(self, lock_name: str) -> dict | None:
-        return await self._reads.find_one({"_id": lock_name})
-
-    async def is_locked(self, lock_name: str) -> bool:
-        now = datetime.now(timezone.utc)
-        lock = await self._reads.find_one({"_id": lock_name, "expires_at": {"$gt": now}})
-        return lock is not None
-
     async def held_locks(self, lock_names: list[str]) -> set[str]:
         now = datetime.now(timezone.utc)
         cursor = self._reads.find({"_id": {"$in": lock_names}, "expires_at": {"$gt": now}}, {"_id": 1})
