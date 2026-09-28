@@ -11,8 +11,7 @@ from app.services.analytics.scopes import ScopeResolver
 
 
 async def report_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict[str, Any]:
-    """Own user-scoped reports (every one for system:manage), the readable projects', the own teams', and
-    global ones with analytics:global."""
+    """Own user reports (all for system:manage), readable projects', own teams', global with analytics:global."""
     is_super = has_permission(user.permissions, Permissions.SYSTEM_MANAGE)
     user_id = str(user.id)
     branches: list[dict[str, Any]] = [{"scope": "user"} if is_super else {"scope": "user", "requested_by": user_id}]

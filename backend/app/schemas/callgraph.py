@@ -13,7 +13,7 @@ class CallgraphUploadRequest(BaseModel):
     # Required if format is generic or auto-detection fails.
     language: str | None = None  # javascript, typescript, python, go, java
 
-    # scan_id (uuid5 of project+pipeline+commit) is the match key; pipeline_id (GitLab pipeline or GitHub run id) is the fallback.
+    # Matched on scan_id (uuid5 of project+pipeline+commit), else on pipeline_id (GitLab pipeline or GitHub run).
     pipeline_id: int | None = None
     branch: str | None = None
     commit_hash: str | None = None

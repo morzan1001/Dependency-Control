@@ -13,15 +13,14 @@ _WRITE_SUPERUSER = bearer_headers("editor-of-all", [*_ANALYTICS, Permissions.PRO
 _MEMBER_OF_NOTHING = bearer_headers("stranger", [*_ANALYTICS, Permissions.PROJECT_READ])
 
 
-def _routes(project_id: str) -> list[tuple[str, dict[str, str]]]:
-    return [
-        (f"/api/v1/analytics/projects/{project_id}/recommendations", {}),
-        (f"/api/v1/analytics/projects/{project_id}/update-frequency", {}),
-        (
-            "/api/v1/analytics/scan-delta",
-            {"project_id": project_id, "from_scan_id": "s1", "to_scan_id": "s2", "category": "findings"},
-        ),
-    ]
+_ROUTES = ["recommendations", "update-frequency", "scan-delta"]
+
+
+def _request(route: str, project_id: str) -> tuple[str, dict[str, str]]:
+    if route == "scan-delta":
+        params = {"project_id": project_id, "from_scan_id": "s1", "to_scan_id": "s2", "category": "findings"}
+        return "/api/v1/analytics/scan-delta", params
+    return f"/api/v1/analytics/projects/{project_id}/{route}", {}
 
 
 async def _seed_project_with_scans(db) -> None:
@@ -34,10 +33,10 @@ async def _seed_project_with_scans(db) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("route", range(3))
+@pytest.mark.parametrize("route", _ROUTES)
 async def test_a_write_superuser_opens_a_project_they_are_not_a_member_of(client, db, route):
     await _seed_project_with_scans(db)
-    path, params = _routes("gp")[route]
+    path, params = _request(route, "gp")
 
     resp = await client.get(path, params=params, headers=_WRITE_SUPERUSER)
 
@@ -45,10 +44,10 @@ async def test_a_write_superuser_opens_a_project_they_are_not_a_member_of(client
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("route", range(3))
+@pytest.mark.parametrize("route", _ROUTES)
 async def test_a_non_member_is_refused(client, db, route):
     await _seed_project_with_scans(db)
-    path, params = _routes("gp")[route]
+    path, params = _request(route, "gp")
 
     resp = await client.get(path, params=params, headers=_MEMBER_OF_NOTHING)
 
@@ -56,9 +55,9 @@ async def test_a_non_member_is_refused(client, db, route):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("route", range(3))
+@pytest.mark.parametrize("route", _ROUTES)
 async def test_an_unknown_project_is_not_found(client, route):
-    path, params = _routes("absent")[route]
+    path, params = _request(route, "absent")
 
     resp = await client.get(path, params=params, headers=_WRITE_SUPERUSER)
 
