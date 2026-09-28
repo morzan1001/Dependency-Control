@@ -23,6 +23,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400_404_409_502,
     RESP_AUTH_404,
 )
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.constants import TEAM_ROLE_ADMIN
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
@@ -85,7 +86,7 @@ async def read_teams(
     db: DatabaseDep,
     search: str | None = None,
     sort_by: str = "name",
-    sort_order: str = "asc",
+    sort_order: SortOrderQuery = "asc",
 ) -> list[dict[str, Any]]:
     """List teams."""
     team_repo = TeamRepository(db)
@@ -103,9 +104,7 @@ async def read_teams(
     else:
         raise HTTPException(status_code=403, detail="Not enough permissions")
 
-    sort_direction = 1 if sort_order == "asc" else -1
-
-    pipeline = build_team_enrichment_pipeline(final_query, sort_by, sort_direction)
+    pipeline = build_team_enrichment_pipeline(final_query, sort_by, parse_sort_direction(sort_order))
     return await team_repo.aggregate(pipeline, limit=1000)
 
 

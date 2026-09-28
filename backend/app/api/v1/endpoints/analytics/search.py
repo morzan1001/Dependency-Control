@@ -15,6 +15,7 @@ from app.api.v1.helpers.analytics import (
     scope_resolution_counts,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
 from app.core.permissions import Permissions
 from app.repositories.dependencies import DependencyRepository
@@ -106,7 +107,7 @@ async def search_dependencies_advanced(
         str,
         Query(description="Sort field: name, version, type, project_name, license, direct"),
     ] = "name",
-    sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "asc",
+    sort_order: SortOrderQuery = "asc",
     release_environment: ReleaseEnvironmentQuery = None,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
@@ -162,7 +163,7 @@ async def search_dependencies_advanced(
         "direct": "direct",
     }
     mongo_sort_field = sort_field_map.get(sort_by, "name")
-    sort_direction = 1 if sort_order == "asc" else -1
+    sort_direction = parse_sort_direction(sort_order)
 
     dependencies = await dep_repo.find_many(
         query,
@@ -420,7 +421,7 @@ async def search_vulnerabilities(
         str,
         Query(description="Sort field: severity, cvss, epss, component, project_name"),
     ] = "severity",
-    sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "desc",
+    sort_order: SortOrderQuery = "desc",
     release_environment: ReleaseEnvironmentQuery = None,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
@@ -461,7 +462,7 @@ async def search_vulnerabilities(
     total_count = await finding_repo.count(query)
 
     mongo_sort_field = _VULN_SORT_FIELD_MAP.get(sort_by, "severity")
-    sort_direction = -1 if sort_order == "desc" else 1
+    sort_direction = parse_sort_direction(sort_order)
 
     findings = await finding_repo.find_many(
         query,
@@ -480,7 +481,7 @@ async def search_vulnerabilities(
     if sort_by == "severity":
         results.sort(
             key=lambda x: get_severity_value(x.severity),
-            reverse=(sort_order == "desc"),
+            reverse=sort_direction == -1,
         )
 
     return VulnerabilitySearchResponse(

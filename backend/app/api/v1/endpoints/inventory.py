@@ -8,6 +8,7 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.models.project import Project, Scan
 from app.schemas.inventory import (
     ComponentsPageResponse,
@@ -67,12 +68,18 @@ async def inventory_components(
     page_size: int = Query(25, ge=1, le=200),
     search: str | None = Query(None),
     sort_by: str = Query("name"),
-    sort_order: str = Query("asc"),
+    sort_order: SortOrderQuery = "asc",
 ) -> ComponentsPageResponse:
     project = await check_project_access(project_id, current_user, db, required_role="viewer")
     scan = await _resolve_scan_or_404(db, project, branch)
     items, total = await get_components_page(
-        db, scan, page=page, page_size=page_size, search=search, sort_by=sort_by, sort_order=sort_order
+        db,
+        scan,
+        page=page,
+        page_size=page_size,
+        search=search,
+        sort_by=sort_by,
+        direction=parse_sort_direction(sort_order),
     )
     return ComponentsPageResponse(scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size)
 

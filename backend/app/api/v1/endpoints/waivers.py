@@ -15,6 +15,7 @@ from app.api.v1.helpers import (
     parse_sort_direction,
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
+from app.api.v1.helpers.sorting import SortOrderQuery
 from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
@@ -159,7 +160,7 @@ async def list_waivers(
         bool, Query(description="Only return orphaned waivers (evaluated but matching 0 findings)")
     ] = False,
     sort_by: Annotated[str, Query(description="Field to sort by")] = "created_at",
-    sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "desc",
+    sort_order: SortOrderQuery = "desc",
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500, description="Number of items to return")] = 50,
 ) -> dict[str, Any]:

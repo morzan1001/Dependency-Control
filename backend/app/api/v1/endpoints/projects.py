@@ -24,6 +24,7 @@ from app.api.v1.helpers import (
     generate_project_api_key,
     get_category_type_filter,
     get_sort_field,
+    get_user_project_ids,
     is_write_superuser,
     load_from_gridfs,
     may_read_projects,
@@ -34,6 +35,7 @@ from app.api.v1.helpers import (
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
 from app.api.v1.helpers.projects import max_project_role
+from app.api.v1.helpers.sorting import SortOrderQuery
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -96,7 +98,6 @@ from app.schemas.project import (
     ScanWithReleases,
 )
 from app.services.aggregation.components import component_match_expr
-from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
 from app.services.branches import resolve_default_branch
 from app.services.gitlab import GitLabService
 from app.services.inventory.csv_stream import csv_response, export_filename
@@ -322,7 +323,7 @@ async def read_projects(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     sort_by: str = "created_at",
-    sort_order: str = "desc",
+    sort_order: SortOrderQuery = "desc",
 ) -> dict[str, Any]:
     """Retrieve projects; superusers see all, everyone else those they are a member of or that a team of theirs owns."""
     project_repo = ProjectRepository(db)
@@ -381,20 +382,13 @@ async def read_all_scans(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     skip: Annotated[int, Query(ge=0)] = 0,
     sort_by: str = "created_at",
-    sort_order: str = "desc",
+    sort_order: SortOrderQuery = "desc",
 ) -> list[dict[str, Any]]:
     """Retrieve scans for all projects the user has access to, with pagination and sorting."""
-    project_repo = ProjectRepository(db)
-    team_repo = TeamRepository(db)
-    scan_repo = ScanRepository(db)
-
     if not may_read_projects(current_user):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    permission_query = await build_user_project_query(current_user, team_repo)
-    projects = ensure_whole_scope(await project_repo.find_many_minimal(permission_query, limit=scope_probe_limit()))
-    project_ids = [str(p.id) for p in projects]
-
+    project_ids = await get_user_project_ids(current_user, db)
     if not project_ids:
         return []
 
@@ -403,7 +397,7 @@ async def read_all_scans(
 
     pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": {"$in": project_ids}}},
-        {"$sort": {sort_field: direction}},
+        {"$sort": {sort_field: direction, "_id": 1}},
         {"$skip": skip},
         {"$limit": limit},
         {
@@ -419,7 +413,7 @@ async def read_all_scans(
         {"$project": {"project_info": 0, "sboms": 0, "findings_summary": 0}},
     ]
 
-    return await scan_repo.aggregate(pipeline, limit)
+    return await ScanRepository(db).aggregate(pipeline, limit)
 
 
 # Every owning team's member ids as one flat list. A field path across two array levels answers
@@ -896,7 +890,7 @@ async def read_project_scans(
     exclude_rescans: bool = False,
     is_release: bool | None = None,
     sort_by: str = "created_at",
-    sort_order: str = "desc",
+    sort_order: SortOrderQuery = "desc",
 ) -> list[ScanWithReleases]:
     """Get scans for a project, each carrying the environments it was released to."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
@@ -1406,23 +1400,19 @@ _SCAN_FINDINGS_SORT_FIELDS: dict[str, str] = {
 }
 
 
-def _scan_findings_sort_stage(sort_by: str, sort_order: str) -> dict[str, Any]:
+def _scan_findings_sort_stage(sort_by: str, sort_dir: int) -> dict[str, Any]:
     """Compose the $sort stage, always ending with the unique _id tiebreaker so skip/limit pagination is stable (finding_id is not unique within a scan)."""
-    sort_dir = -1 if sort_order == "desc" else 1
     field = _SCAN_FINDINGS_SORT_FIELDS.get(sort_by, "severity")
     if field == "severity":
         return {"$sort": {"severity_rank": sort_dir, "component": 1, "_id": 1}}
-    sort_spec: dict[str, Any] = {field: sort_dir}
-    if field != "_id":
-        sort_spec["_id"] = 1
-    return {"$sort": sort_spec}
+    return {"$sort": {field: sort_dir, "_id": 1}}
 
 
 def _build_scan_findings_pipeline(
     query: dict[str, Any],
     *,
     sort_by: str,
-    sort_order: str,
+    sort_dir: int,
     skip: int,
     limit: int,
     direct_only: bool = False,
@@ -1439,7 +1429,7 @@ def _build_scan_findings_pipeline(
     stages += [
         # Keep _id through the $sort as the unique tiebreaker; it's dropped from output in the $facet below.
         {"$project": {"dependency_info": 0}},
-        _scan_findings_sort_stage(sort_by, sort_order),
+        _scan_findings_sort_stage(sort_by, sort_dir),
         {
             "$facet": {
                 "metadata": [{"$count": "total"}],
@@ -1508,7 +1498,7 @@ async def read_scan_findings(
     # Cap at 500 (higher than the 100 used elsewhere) for deep-link and per-component drilldowns.
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     sort_by: str = "severity",  # severity, type, component
-    sort_order: str = "desc",  # asc, desc
+    sort_order: SortOrderQuery = "desc",
     type: str | None = None,
     category: str | None = None,  # security, secret, sast, compliance, quality
     severity: str | None = None,
@@ -1536,7 +1526,7 @@ async def read_scan_findings(
     pipeline = _build_scan_findings_pipeline(
         query,
         sort_by=sort_by,
-        sort_order=sort_order,
+        sort_dir=parse_sort_direction(sort_order),
         skip=skip,
         limit=limit,
         direct_only=bool(direct_only),

@@ -25,6 +25,7 @@ from app.api.v1.helpers.analytics import (
     select_impact_candidates,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.core.permissions import Permissions
 from app.repositories.dependencies import DependencyRepository
@@ -343,7 +344,7 @@ async def get_vulnerability_hotspots(
         str,
         Query(description="Sort field: finding_count, component, first_seen, epss, risk"),
     ] = "finding_count",
-    sort_order: Annotated[str, Query(description="Sort order: asc, desc")] = "desc",
+    sort_order: SortOrderQuery = "desc",
     release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[VulnerabilityHotspot]:
     """Get dependencies with the most vulnerabilities (hotspots)."""
@@ -366,7 +367,7 @@ async def get_vulnerability_hotspots(
     if hit:
         return [VulnerabilityHotspot.model_validate(r) for r in cached]
 
-    sort_direction = -1 if sort_order == "desc" else 1
+    sort_direction = parse_sort_direction(sort_order)
     # finding_count/epss/risk are derived in Python (from advisories / enrichment), so they are
     # sorted and paginated in Python; only component/first_seen can be ordered in Mongo.
     mongo_sort_field = {"component": "_id.component", "first_seen": "first_seen"}.get(sort_by)
@@ -431,7 +432,7 @@ async def get_vulnerability_hotspots(
         "risk": lambda x: x.max_risk_score or 0,
     }
     if post_sort_by:
-        hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=(sort_order == "desc"))
+        hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=sort_direction == -1)
         hotspots = hotspots[skip : skip + limit]
 
     # first_seen/days_known off the active scans is only the current scan's age; replace it on the

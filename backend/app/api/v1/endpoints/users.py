@@ -29,6 +29,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400_501,
     RESP_AUTH_404,
 )
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core import security
 from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
@@ -115,7 +116,7 @@ async def read_users(
     limit: Annotated[int, Query(ge=1, le=100)] = 100,
     search: str | None = None,
     sort_by: str = "username",
-    sort_order: str = "asc",
+    sort_order: SortOrderQuery = "asc",
 ) -> list[User]:
     query = {}
     if search:
@@ -127,10 +128,10 @@ async def read_users(
             ]
         }
 
-    sort_direction = 1 if sort_order == "asc" else -1
-
     user_repo = UserRepository(db)
-    return await user_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
+    return await user_repo.find_many(
+        query, skip=skip, limit=limit, sort_by=sort_by, sort_order=parse_sort_direction(sort_order)
+    )
 
 
 @router.get("/me", response_model=UserSchema, responses=RESP_AUTH)

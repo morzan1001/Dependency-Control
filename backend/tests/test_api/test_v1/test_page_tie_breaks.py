@@ -4,8 +4,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.api.v1.endpoints.projects import read_project_scans
+from app.api.v1.endpoints.projects import read_all_scans, read_project_scans
+from app.core.permissions import Permissions
 from app.models.user import User
+from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from tests.mocks.fake_mongo import FakeDatabase
@@ -53,3 +55,40 @@ async def test_the_waiver_list_breaks_ties_on_the_id(sort_by, sort_order, expect
     await repo.find_many({}, skip=0, limit=10, sort_by=sort_by, sort_order=sort_order)
 
     assert waivers.find.return_value.sort.call_args.args == (expected,)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["find_many", "find_many_raw"])
+async def test_a_paged_find_breaks_ties_on_the_id(method):
+    projects = create_mock_collection()
+    repo = ProjectRepository(create_mock_db({"projects": projects}))
+
+    await getattr(repo, method)({}, skip=20, limit=10, sort_by="stats.critical", sort_order=-1)
+
+    assert projects.find.return_value.sort.call_args.args == ([("stats.critical", -1), ("_id", 1)],)
+
+
+@pytest.mark.asyncio
+async def test_the_recent_scans_list_breaks_ties_on_the_id():
+    db = FakeDatabase()
+    await db.projects.insert_one({"_id": "p1", "name": "p1"})
+    aggregate = AsyncMock(return_value=[])
+    reader = User(id="u1", username="u1", email="u1@test.com", permissions=[Permissions.PROJECT_READ_ALL])
+    with patch.object(ScanRepository, "aggregate", aggregate):
+        await read_all_scans(reader, db, sort_by="status", sort_order="asc")
+
+    pipeline = aggregate.await_args.args[0]
+    assert {"$sort": {"status": 1, "_id": 1}} in pipeline
+
+
+@pytest.mark.asyncio
+async def test_the_recent_scans_list_covers_the_projects_analytics_resolves():
+    aggregate = AsyncMock(return_value=[])
+    reader = User(id="u1", username="u1", email="u1@test.com", permissions=[Permissions.PROJECT_READ])
+    with (
+        patch("app.api.v1.endpoints.projects.get_user_project_ids", AsyncMock(return_value=["p2"])),
+        patch.object(ScanRepository, "aggregate", aggregate),
+    ):
+        await read_all_scans(reader, FakeDatabase(), sort_by="created_at", sort_order="desc")
+
+    assert aggregate.await_args.args[0][0] == {"$match": {"project_id": {"$in": ["p2"]}}}

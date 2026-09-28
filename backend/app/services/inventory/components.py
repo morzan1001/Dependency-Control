@@ -116,13 +116,12 @@ async def get_components_page(
     page_size: int,
     search: str | None,
     sort_by: str,
-    sort_order: str,
+    direction: int,
 ) -> tuple[list[ComponentItem], int]:
     deps = DependencyRepository(db)
     query = _query(scan.id, search)
     total = await deps.count(query)
     sort_field = sort_by if sort_by in _SORT_FIELDS else "name"
-    direction = -1 if sort_order == "desc" else 1
 
     if sort_field == "license":
         docs, enrichment = await _license_sorted_page(db, deps, query, direction == -1, page, page_size)

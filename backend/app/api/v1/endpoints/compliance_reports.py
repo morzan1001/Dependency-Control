@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.analytics import get_user_project_ids
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CONCURRENT_COMPLIANCE_REPORTS,
@@ -132,7 +133,7 @@ async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict
         user_branch["requested_by"] = user_id
     branches.append(user_branch)
 
-    project_ids = await ScopeResolver(db, user)._list_user_project_ids()
+    project_ids = await get_user_project_ids(user, db)
     if project_ids:
         branches.append({"scope": "project", "scope_id": {"$in": project_ids}})
 

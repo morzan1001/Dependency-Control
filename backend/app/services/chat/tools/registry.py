@@ -36,7 +36,7 @@ from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
-from app.services.analytics.scopes import ScopeTooLargeError, ensure_whole_scope, scope_probe_limit
+from app.services.analytics.scopes import ScopeTooLargeError, project_ids_matching
 from app.services.analyzers.purl_utils import canonical_purl
 from app.services.reachability_enrichment import reachability_display_tier
 
@@ -505,7 +505,7 @@ class ChatToolRegistry:
 
     async def _tool_search_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         search_query = ctx.args["query"]
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
+        project_ids = await project_ids_matching(ctx.db, ctx.user_project_query)
         escaped_search_query = re.escape(search_query)
         query = {
             "project_id": {"$in": project_ids},
@@ -560,7 +560,7 @@ class ChatToolRegistry:
         return {"breakdown": {r["_id"]: r["count"] for r in results}}
 
     async def _tool_get_analytics_summary(self, ctx: _ToolContext) -> dict[str, Any]:
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
+        project_ids = await project_ids_matching(ctx.db, ctx.user_project_query)
         if not project_ids:
             return {"total_projects": 0, "total_findings": 0, "severity_breakdown": {}}
         head = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
@@ -594,7 +594,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_risk_trends(self, ctx: _ToolContext) -> dict[str, Any]:
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
+        project_ids = await project_ids_matching(ctx.db, ctx.user_project_query)
         days = ctx.args.get("days", 30)
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         match_query: dict[str, Any] = {"project_id": {"$in": project_ids}, "created_at": {"$gte": cutoff}}
@@ -776,7 +776,7 @@ class ChatToolRegistry:
             match["project_id"] = proj["_id"]
         else:
             # Each project's head, to look at current state rather than history.
-            project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
+            project_ids = await project_ids_matching(ctx.db, ctx.user_project_query)
             if not project_ids:
                 return {"findings": [], "message": "No accessible projects"}
             head = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
@@ -1115,7 +1115,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_find_component_usage(self, ctx: _ToolContext) -> dict[str, Any]:
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
+        project_ids = await project_ids_matching(ctx.db, ctx.user_project_query)
         if not project_ids:
             return {"matches": [], "message": "No accessible projects"}
         latest = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
@@ -1200,7 +1200,7 @@ class ChatToolRegistry:
 
     async def _tool_get_cve_details(self, ctx: _ToolContext) -> dict[str, Any]:
         cve = ctx.args["cve_id"].strip().upper()
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
+        project_ids = await project_ids_matching(ctx.db, ctx.user_project_query)
         if not project_ids:
             return {"error": "No accessible projects to source CVE data from"}
         finding = await ctx.db["findings"].find_one(
@@ -1309,7 +1309,7 @@ class ChatToolRegistry:
         from datetime import timezone as _tz
 
         days = _clamp_limit(ctx.args.get("days"), 30, maximum=MAX_DAY_WINDOW)
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
+        project_ids = await project_ids_matching(ctx.db, ctx.user_project_query)
         now = _dt.now(_tz.utc)
         cutoff = now + _td(days=days)
         rows, rows_total = await bounded_read(
@@ -1456,7 +1456,7 @@ class ChatToolRegistry:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
             query["project_id"] = project["_id"]
         elif not has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL):
-            project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
+            project_ids = await project_ids_matching(ctx.db, ctx.user_project_query)
             query["project_id"] = {"$in": project_ids}
         limit = _clamp_limit(ctx.args.get("limit"), 20, maximum=MAX_SUMMARY_ROWS)
         cursor = ctx.db["archive_metadata"].find(query, sort=[("archived_at", -1)], limit=limit)
@@ -1645,7 +1645,7 @@ class ChatToolRegistry:
         # query is unfiltered and leaks every scope's reports org-wide.
         from app.services.chat import tools as _pkg
 
-        authorized_project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
+        authorized_project_ids = await project_ids_matching(ctx.db, ctx.user_project_query)
         visibility = await self._compliance_visibility_filter(ctx.user, authorized_project_ids, ctx.team_repo)
         framework = ctx.args.get("framework")
         fw: Any | None = None
@@ -1798,15 +1798,6 @@ class ChatToolRegistry:
 
         return {"$or": branches}
 
-    async def _get_authorized_project_ids(
-        self, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
-    ) -> list[str]:
-        """Every accessible project id, on the ceiling analytics answers the same question under.
-        A cut here changes which projects an answer covers without changing how the answer reads."""
-        cursor = db["projects"].find(user_project_query, {"_id": 1}, limit=scope_probe_limit())
-        projects = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
-        return [p["_id"] for p in projects]
-
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
         """The scan representing the head of a project the caller already read and authorised."""
         project_id: str = project["_id"]
@@ -1863,7 +1854,7 @@ class ChatToolRegistry:
             scan_id = await self._head_scan_id(project, db)
             return {project["_id"]: scan_id} if scan_id else {}
 
-        project_ids = await self._get_authorized_project_ids(user_project_query, db)
+        project_ids = await project_ids_matching(db, user_project_query)
         if not project_ids:
             return {}
 

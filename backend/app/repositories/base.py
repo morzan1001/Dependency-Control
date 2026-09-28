@@ -74,14 +74,7 @@ class BaseRepository[T: BaseModel]:
         sort_by: str | None = None,
         sort_order: int = 1,
     ) -> list[T]:
-        if limit <= 0:
-            return []
-        cursor = self.collection.find(query)
-        if sort_by:
-            cursor = cursor.sort(sort_by, sort_order)
-        cursor = cursor.skip(skip).limit(limit)
-        docs = await cursor.to_list(limit)
-        return self._to_model_list(docs)
+        return self._to_model_list(await self.find_many_raw(query, skip, limit, sort_by, sort_order))
 
     async def find_many_raw(
         self,
@@ -96,7 +89,8 @@ class BaseRepository[T: BaseModel]:
             return []
         cursor = self.collection.find(query, projection)
         if sort_by:
-            cursor = cursor.sort(sort_by, sort_order)
+            # Mongo leaves the order among equal keys open per query, so skip/limit pages would overlap.
+            cursor = cursor.sort([(sort_by, sort_order)] if sort_by == "_id" else [(sort_by, sort_order), ("_id", 1)])
         cursor = cursor.skip(skip).limit(limit)
         return await cursor.to_list(limit)
 

@@ -43,6 +43,16 @@ def scope_probe_limit() -> int:
     return ANALYTICS_MAX_QUERY_LIMIT + 1
 
 
+async def project_ids_matching(db: AsyncIOMotorDatabase, query: dict[str, Any]) -> list[str]:
+    """Every project id the access query admits, under the ceiling every scope shares.
+
+    Shared rather than restated: two spellings of one access rule drift, and the half that
+    drifts is invisible until someone is shown a project the other spelling would have hidden.
+    """
+    cursor = db.projects.find(query, {"_id": 1}).limit(scope_probe_limit())
+    return [str(d["_id"]) for d in ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))]
+
+
 def ensure_whole_scope(rows: list[_T]) -> list[_T]:
     """``rows``, or a refusal when the read that produced them came back over the ceiling.
 
@@ -134,15 +144,8 @@ class ScopeResolver:
 
     async def _list_user_project_ids(self) -> list[str]:
         """Every project the user may see, under the same query the project routes are filtered by.
-
-        Shared rather than restated: two spellings of one access rule drift, and the half that
-        drifts is invisible until someone is shown a project the other spelling would have hidden.
-        A read-all user gets an empty filter, which is the whole collection.
-        """
+        A read-all user gets an empty filter, which is the whole collection."""
         from app.api.v1.helpers.projects import build_user_project_query
         from app.repositories.teams import TeamRepository
 
-        query = await build_user_project_query(self.user, TeamRepository(self.db))
-        cursor = self.db.projects.find(query, {"_id": 1}).limit(scope_probe_limit())
-        docs = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
-        return [str(d["_id"]) for d in docs]
+        return await project_ids_matching(self.db, await build_user_project_query(self.user, TeamRepository(self.db)))
