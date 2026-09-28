@@ -1,5 +1,6 @@
 from datetime import timedelta
 
+import pytest
 from prometheus_client import REGISTRY
 from pymongo import monitoring
 from pymongo.errors import AutoReconnect
@@ -35,7 +36,9 @@ def test_a_read_is_counted_and_timed_under_its_collection_and_command():
     _run(DbCommandMetrics(), {"find": "findings", "filter": {}}, 1)
 
     assert _sample("db_operations_total", labels) == count_before + 1
-    assert _sample("db_operation_duration_seconds_sum", labels) - seconds_before == _DURATION.total_seconds()
+    assert _sample("db_operation_duration_seconds_sum", labels) - seconds_before == pytest.approx(
+        _DURATION.total_seconds()
+    )
 
 
 def test_a_cursor_batch_is_counted_under_the_collection_it_reads():
