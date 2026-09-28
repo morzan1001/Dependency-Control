@@ -254,7 +254,7 @@ async def update_user(
         _ensure_can_change_permissions(
             current_user,
             existing=set(existing_user.get("permissions") or []),
-            requested=set(update_data["permissions"] or []),
+            requested=set(update_data["permissions"]),
         )
 
     # Forbid self-change of is_active so a user can't lock themselves or every admin out.

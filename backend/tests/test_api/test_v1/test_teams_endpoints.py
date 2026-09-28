@@ -261,6 +261,18 @@ class TestUpdateTeam:
         assert result.name == "Updated"
         mock_repo.update.assert_called_once()
 
+    def test_a_rename_cannot_write_a_null_name(self):
+        from app.schemas.team import TeamUpdate
+
+        with pytest.raises(ValidationError):
+            TeamUpdate(name=None)
+
+    def test_the_description_can_still_be_cleared(self):
+        from app.schemas.team import TeamUpdate
+
+        cleared = TeamUpdate(description=None).model_dump(exclude_unset=True)
+        assert Team(name="t", **cleared).description is None
+
 
 class TestDeleteTeam:
     def test_the_deleted_team_stops_owning_every_project_and_its_co_owners_stay(self, admin_user):

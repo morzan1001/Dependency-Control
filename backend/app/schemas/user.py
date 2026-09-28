@@ -74,7 +74,7 @@ class UserUpdate(BaseModel):
     notification_preferences: NotificationPreferences = None
     password: str | None = None
 
-    _not_null = field_validator("email", "username")(reject_null)
+    _not_null = field_validator("email", "username", "is_active", "permissions")(reject_null)
 
 
 class UserUpdateMe(BaseModel):

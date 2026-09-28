@@ -163,6 +163,16 @@ class TestUpdateUserIdentityFields:
         with pytest.raises(ValidationError):
             user_schemas.UserUpdate.model_validate(fields)
 
+    @pytest.mark.parametrize("field", ["is_active", "permissions"])
+    def test_a_field_the_stored_user_requires_cannot_be_written_as_null(self, field):
+        with pytest.raises(ValidationError):
+            user_schemas.UserUpdate.model_validate({field: None})
+
+    @pytest.mark.parametrize("field", ["slack_username", "mattermost_username", "notification_preferences"])
+    def test_a_nullable_field_can_still_be_cleared(self, field):
+        cleared = user_schemas.UserUpdate.model_validate({field: None}).model_dump(exclude_unset=True)
+        User(username="u", email="u@corp.com", **cleared)
+
 
 class TestEmailChangeRequest:
     @pytest.mark.asyncio
