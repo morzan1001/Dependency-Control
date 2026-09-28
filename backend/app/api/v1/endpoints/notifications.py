@@ -222,8 +222,8 @@ def _rule_matches(rule: AdvisoryPackage, dep_type: str, dep_path: str) -> bool:
     return (dep_path if qualified else artifact_segment(dep_path)).lower() == rule_path.lower()
 
 
-async def _find_affected_projects(db: Any, rules: list[AdvisoryPackage]) -> dict[str, dict[str, None]]:
-    """project_id -> the covered "name (version)" entries of each project's head scan."""
+async def _find_affected_projects(db: Any, rules: list[AdvisoryPackage]) -> dict[str, dict[str, bool]]:
+    """project_id -> "name (version)" of each matched head-scan dependency -> covered (False: not comparable)."""
     project_by_scan = {scan_id: project_id for project_id, scan_id in (await resolve_scan_ids(db, None)).items()}
     if not project_by_scan:
         return {}
@@ -235,15 +235,17 @@ async def _find_affected_projects(db: Any, rules: list[AdvisoryPackage]) -> dict
     names = "|".join("[-_.]+".join(map(re.escape, key.split("-"))) for key in rules_by_segment)
     query = {"scan_id": {"$in": list(project_by_scan)}, "name": {"$regex": f"(^|[/:])({names})$", "$options": "i"}}
 
-    affected: dict[str, dict[str, None]] = {}
+    affected: dict[str, dict[str, bool]] = {}
     projection = {"_id": 0, "scan_id": 1, "name": 1, "version": 1, "type": 1, "purl": 1, "group": 1}
     async for dep in DependencyRepository(db).iterate_raw(query, projection):
         dep_type, dep_path = package_identity(dep.get("purl"), dep["name"], dep.get("type"), dep.get("group"))
         candidates = rules_by_segment.get(_segment_key(dep_path), [])
         version = dep.get("version") or ""
-        if any(_rule_matches(r, dep_type, dep_path) and r.covers(version) for r in candidates):
+        verdicts = {r.covers(version) for r in candidates if _rule_matches(r, dep_type, dep_path)}
+        if verdicts - {False}:
             findings = affected.setdefault(project_by_scan[dep["scan_id"]], {})
-            findings[f"{dep['name']} ({version})"] = None
+            entry = f"{dep['name']} ({version})"
+            findings[entry] = findings.get(entry, False) or True in verdicts
     return affected
 
 
@@ -296,7 +298,7 @@ def _collect_admin_ids(projects: list[Project]) -> set[str]:
 
 def _group_projects_by_admin(
     projects: list[Project],
-    affected: dict[str, dict[str, None]],
+    affected: dict[str, dict[str, bool]],
     users_dict: dict[str, Any],
 ) -> dict[str, dict]:
     """Group affected projects under each admin user that should be notified."""
@@ -309,7 +311,14 @@ def _group_projects_by_admin(
             if uid not in user_notification_map:
                 user_notification_map[uid] = {"user": users_dict[uid], "projects": []}
             user_notification_map[uid]["projects"].append(
-                {"id": str(project.id), "name": project.name, "findings": list(affected[str(project.id)])},
+                {
+                    "id": str(project.id),
+                    "name": project.name,
+                    "findings": [
+                        entry if covered else f"{entry}: version could not be compared"
+                        for entry, covered in affected[str(project.id)].items()
+                    ],
+                },
             )
     return user_notification_map
 
@@ -358,7 +367,7 @@ def _queue_advisory_for_user(
 
 async def _notify_advisory_admins(
     projects: list[Project],
-    affected: dict[str, dict[str, None]],
+    affected: dict[str, dict[str, bool]],
     user_repo: UserRepository,
     payload: "BroadcastRequest",
     background_tasks: BackgroundTasks,
@@ -407,6 +416,7 @@ async def broadcast_message(
 
     project_count = 0
     unique_user_count = 0
+    uncomparable: list[str] = []
 
     frontend_url = settings.FRONTEND_BASE_URL.rstrip("/")
 
@@ -451,7 +461,8 @@ async def broadcast_message(
             raise HTTPException(status_code=400, detail="At least one package required for advisory")
 
         affected = await _find_affected_projects(db, payload.packages)
-        project_count = len(affected)
+        project_count = sum(any(findings.values()) for findings in affected.values())
+        uncomparable = sorted({entry for f in affected.values() for entry, covered in f.items() if not covered})
         if affected:
             projects = await project_repo.find_many({"_id": {"$in": list(affected)}}, limit=len(affected))
             unique_user_count = await _notify_advisory_admins(
@@ -485,4 +496,5 @@ async def broadcast_message(
         recipient_count=unique_user_count,
         project_count=project_count,
         unique_user_count=unique_user_count,
+        uncomparable_versions=uncomparable,
     )

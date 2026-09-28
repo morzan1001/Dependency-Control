@@ -20,10 +20,11 @@ from app.schemas.notification import AdvisoryPackage
         ("v0.0.0-20210101000000-abcdef123456", "0.1.0", True),
         ("1:2.30-1", "2.29", False),
         ("2.15.0", "2.14.1", False),
-        ("latest", "1.0.0", True),
+        ("latest", "1.0.0", None),
     ],
 )
 def test_a_version_is_covered_up_to_the_bound_it_names(installed, bound, affected):
+    """None: the installed version names no release the bound could be compared with."""
     assert AdvisoryPackage(name="pkg", version=bound).covers(installed) is affected
 
 
@@ -40,3 +41,14 @@ def test_a_bound_that_names_no_version_is_rejected(bound):
 @pytest.mark.parametrize(("given", "stored"), [("pip", "pypi"), ("Go", "golang"), ("", None), ("maven", "maven")])
 def test_the_ecosystem_is_named_by_its_purl_type(given, stored):
     assert AdvisoryPackage(name="pkg", type=given).type == stored
+
+
+@pytest.mark.parametrize("given", ["bogus", "java-archive", "Python Package"])
+def test_a_type_that_is_no_purl_type_is_rejected(given):
+    with pytest.raises(ValidationError):
+        AdvisoryPackage(name="pkg", type=given)
+
+
+@pytest.mark.parametrize("given", ["cargo", "deb", "gem", "conan"])
+def test_any_purl_type_is_accepted(given):
+    assert AdvisoryPackage(name="pkg", type=given).type == given

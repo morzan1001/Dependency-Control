@@ -45,6 +45,7 @@ export default function Broadcasts() {
   ])
   const [impactCount, setImpactCount] = useState<number | null>(null)
   const [impactProjectCount, setImpactProjectCount] = useState<number | null>(null)
+  const [uncomparableVersions, setUncomparableVersions] = useState<string[]>([])
   const [isCalculating, setIsCalculating] = useState(false)
   const [channels, setChannels] = useState<NotificationChannel[]>(["email"])
 
@@ -64,6 +65,7 @@ export default function Broadcasts() {
     setLastImpactInputs({ activeTab, announcementTarget, packages, selectedTeams })
     setImpactCount(null)
     setImpactProjectCount(null)
+    setUncomparableVersions([])
   }
 
   const handleChannelToggle = (channel: NotificationChannel) => {
@@ -120,6 +122,7 @@ export default function Broadcasts() {
          })
          setImpactCount(result.recipient_count)
          setImpactProjectCount(result.project_count || 0)
+         setUncomparableVersions(result.uncomparable_versions ?? [])
       }
     } catch {
       // Handled by mutation hook
@@ -169,7 +172,7 @@ export default function Broadcasts() {
       setImpactCount(null)
       setImpactProjectCount(null)
       toast.success("Advisory queued", {
-        description: `Sending to owners of ${result.project_count || 0} affected projects in the background.`
+        description: `Sending to ${result.recipient_count} project admins in the background.`
       })
       setAdvisorySubject("")
       setAdvisoryMessage("")
@@ -431,6 +434,11 @@ export default function Broadcasts() {
                         <Badge variant="destructive" className="text-base px-3 py-1">
                             {impactProjectCount} Projects Affected
                         </Badge>
+                    )}
+                    {impactProjectCount !== null && uncomparableVersions.length > 0 && (
+                        <p className="text-sm text-muted-foreground">
+                            Version could not be compared, their admins are told so: {uncomparableVersions.join(", ")}
+                        </p>
                     )}
                 </div>
                 <Button

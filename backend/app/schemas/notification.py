@@ -7,6 +7,43 @@ from pydantic import BaseModel, Field, field_validator
 _ECOSYSTEM_ALIASES = {"pip": "pypi", "python": "pypi", "go": "golang", "go-module": "golang", "dotnet": "nuget"}
 # Dependency types a purl-less row of the ecosystem is stored under, besides the purl type itself.
 ECOSYSTEM_STORED_TYPES = {"pypi": {"python"}, "golang": {"go-module"}, "maven": {"java-archive"}, "nuget": {"dotnet"}}
+# The types the purl spec registers; a rule typed otherwise could never match a dependency.
+_PURL_TYPES = frozenset(
+    {
+        "alpm",
+        "apk",
+        "bitbucket",
+        "bitnami",
+        "cargo",
+        "cocoapods",
+        "composer",
+        "conan",
+        "conda",
+        "cpan",
+        "cran",
+        "deb",
+        "docker",
+        "gem",
+        "generic",
+        "github",
+        "golang",
+        "hackage",
+        "hex",
+        "huggingface",
+        "luarocks",
+        "maven",
+        "mlflow",
+        "npm",
+        "nuget",
+        "oci",
+        "pub",
+        "pypi",
+        "qpm",
+        "rpm",
+        "swid",
+        "swift",
+    }
+)
 _RELEASE = re.compile(r"[vV]?(\d+(?:\.\d+)*)")
 _WILDCARD_SEGMENT = re.compile(r"(^|[.-])[xX*](\.|$)")
 
@@ -37,7 +74,10 @@ class AdvisoryPackage(BaseModel):
         if not value or not value.strip():
             return None
         value = value.strip().lower()
-        return _ECOSYSTEM_ALIASES.get(value, value)
+        value = _ECOSYSTEM_ALIASES.get(value, value)
+        if value not in _PURL_TYPES:
+            raise ValueError(f"'{value}' is not a purl type")
+        return value
 
     @field_validator("version")
     @classmethod
@@ -49,17 +89,17 @@ class AdvisoryPackage(BaseModel):
             raise ValueError(f"'{value}' names no version to compare against")
         return value
 
-    def covers(self, version: str) -> bool:
-        """Whether ``version`` is at or below this rule's inclusive max version."""
+    def covers(self, version: str) -> bool | None:
+        """Whether ``version`` is at or below this rule's inclusive max version; None if it cannot be compared."""
         if self.version is None:
             return True
         try:
             return Version(version) <= Version(self.version)
         except InvalidVersion:
             # Other schemes compare by numeric release, so a qualifier (.Final, -SNAPSHOT) never lifts a
-            # version past its own release; one without a numeric release cannot be placed and stays covered.
+            # version past its own release.
             installed = _release(version)
-            return installed is None or installed <= (_release(self.version) or ())
+            return None if installed is None else installed <= (_release(self.version) or ())
 
 
 class BroadcastRequest(BaseModel):
@@ -80,6 +120,11 @@ class BroadcastResult(BaseModel):
     recipient_count: int
     project_count: int = 0
     unique_user_count: int = 0
+    uncomparable_versions: list[str] = Field(
+        default_factory=list,
+        description="Matched dependencies whose version could not be compared with the max version; "
+        "their projects are not counted, and their admins are told the version could not be compared",
+    )
 
 
 class BroadcastHistoryItem(BaseModel):

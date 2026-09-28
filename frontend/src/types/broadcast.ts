@@ -23,6 +23,8 @@ export interface BroadcastResult {
   recipient_count: number;
   project_count?: number;
   unique_user_count?: number;
+  // Matched dependencies whose version could not be compared with the max version.
+  uncomparable_versions?: string[];
 }
 
 export interface BroadcastHistoryItem {

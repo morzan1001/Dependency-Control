@@ -1,11 +1,13 @@
 """An advisory reaches the projects whose head scan carries a covered version of the package."""
 
 from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 
 from app.core.permissions import Permissions
+from app.services.notifications.service import notification_service
 from tests.helpers.auth import bearer_headers
 
 _NOW = datetime(2026, 9, 28, tzinfo=timezone.utc)
@@ -34,6 +36,7 @@ _INVENTORY = {
     "netty": [_dependency("netty", "netty-codec-http", "4.1.100.Final", None, "java-archive")],
     "js": [_dependency("js", "lodash", "4.17.15", "pkg:npm/lodash@4.17.15", "npm")],
     "scoped": [_dependency("scoped", "utils", "1.0.0", None, "npm", group="@acme")],
+    "unpinned": [_dependency("unpinned", "express", "latest", "pkg:npm/express@latest", "npm")],
 }
 
 
@@ -75,7 +78,7 @@ async def headers(db, client):
     return bearer_headers("broadcaster", [Permissions.NOTIFICATIONS_BROADCAST])
 
 
-async def _affected(client, headers, *packages: dict) -> int:
+async def _broadcast(client, headers, *packages: dict, dry_run: bool = True) -> dict:
     resp = await client.post(
         "/api/v1/notifications/broadcast",
         json={
@@ -84,12 +87,16 @@ async def _affected(client, headers, *packages: dict) -> int:
             "packages": list(packages),
             "subject": "s",
             "message": "m",
-            "dry_run": True,
+            "dry_run": dry_run,
         },
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
-    return resp.json()["project_count"]
+    return resp.json()
+
+
+async def _affected(client, headers, *packages: dict) -> int:
+    return (await _broadcast(client, headers, *packages))["project_count"]
 
 
 @pytest.mark.live_mongo
@@ -165,6 +172,46 @@ async def test_a_wildcard_bound_is_rejected(client, headers):
             "type": "advisory",
             "target_type": "advisory",
             "packages": [{"name": "log4j-core", "version": "2.14.x"}],
+            "subject": "s",
+            "message": "m",
+            "dry_run": True,
+        },
+        headers=headers,
+    )
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_version_that_cannot_be_compared_is_reported_apart(client, headers):
+    result = await _broadcast(client, headers, {"name": "express", "version": "4.17.0"})
+
+    assert (result["project_count"], result["uncomparable_versions"]) == (0, ["express (latest)"])
+    assert result["recipient_count"] == 1
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_advisory_text_says_which_versions_could_not_be_compared(client, headers, monkeypatch):
+    sent = AsyncMock()
+    monkeypatch.setattr(notification_service, "notify_users", sent)
+
+    await _broadcast(client, headers, {"name": "express", "version": "4.17.0"}, dry_run=False)
+
+    [call] = sent.await_args_list
+    assert "express (latest): version could not be compared" in call.args[3]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_type_that_is_no_purl_type_is_rejected(client, headers):
+    resp = await client.post(
+        "/api/v1/notifications/broadcast",
+        json={
+            "type": "advisory",
+            "target_type": "advisory",
+            "packages": [{"name": "log4j-core", "type": "java-archive"}],
             "subject": "s",
             "message": "m",
             "dry_run": True,
