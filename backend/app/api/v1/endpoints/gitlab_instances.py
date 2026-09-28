@@ -1,8 +1,8 @@
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import HTTPException, status
 
 from app.api import deps
 from app.api.deps import DatabaseDep
@@ -15,9 +15,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_502,
 )
-from app.core.permissions import Permissions
 from app.models.gitlab_instance import GitLabInstance
-from app.models.user import User
 from app.repositories import ProjectRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.schemas.gitlab_instance import (
@@ -59,7 +57,7 @@ def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
 @router.get("/", response_model=GitLabInstanceList, responses=RESP_AUTH)
 async def list_instances(
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     page: int = 1,
     size: int = 100,
     active_only: bool = False,
@@ -85,7 +83,7 @@ async def list_instances(
 async def get_instance(
     instance_id: str,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> GitLabInstanceResponse:
     """Get a specific GitLab instance by ID."""
     instance_repo = GitLabInstanceRepository(db)
@@ -103,7 +101,7 @@ async def get_instance(
 async def create_instance(
     instance_data: GitLabInstanceCreate,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> GitLabInstanceResponse:
     """Create a new GitLab instance after validating uniqueness and testing the connection."""
     instance_repo = GitLabInstanceRepository(db)
@@ -169,7 +167,7 @@ async def update_instance(
     instance_id: str,
     update_data: GitLabInstanceUpdate,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> GitLabInstanceResponse:
     """Update a GitLab instance; only provided fields are changed, with uniqueness validation."""
     instance_repo = GitLabInstanceRepository(db)
@@ -239,7 +237,7 @@ async def update_instance(
 async def delete_instance(
     instance_id: str,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     force: bool = False,
 ) -> None:
     """Delete a GitLab instance; fails if projects are still linked unless force=true (which orphans them)."""
@@ -280,7 +278,7 @@ async def delete_instance(
 async def list_instance_groups(
     instance_id: str,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     search: str | None = None,
 ) -> list[GitLabGroupOption]:
     """The groups this instance's token can see, to pick from when binding a team."""
@@ -355,7 +353,7 @@ async def _probe_group_access(
 async def test_connection(
     instance_id: str,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> GitLabInstanceTestConnectionResponse:
     """Call GitLab's /version endpoint and, for a team-syncing instance, exercise the token's group access."""
     instance_repo = GitLabInstanceRepository(db)

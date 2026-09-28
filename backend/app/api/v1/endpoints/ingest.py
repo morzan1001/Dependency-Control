@@ -6,19 +6,17 @@ import logging
 import os
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, HTTPException
+from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import ReturnDocument
 
-from app.api import deps
-from app.api.deps import DatabaseDep
+from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
-from app.models.project import Project
 from app.models.release import Release
 from app.repositories import DependencyRepository, DistributedLocksRepository, ReleaseRepository
 from app.schemas.bearer import BearerIngest
@@ -39,7 +37,6 @@ from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
 
-ProjectIngestDep = Annotated[Project, Depends(deps.get_project_for_ingest)]
 
 logger = logging.getLogger(__name__)
 

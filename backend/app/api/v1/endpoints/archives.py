@@ -7,10 +7,11 @@ from collections.abc import AsyncIterator
 from datetime import datetime
 from typing import Annotated
 
-from fastapi import HTTPException, Query
+from fastapi import Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.deps import DatabaseDep, PermissionChecker
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
@@ -22,8 +23,10 @@ from app.core.metrics import (
     archive_operation_duration_seconds,
     archive_operations_total,
 )
-from app.core.permissions import Permissions, has_permission
+from app.core.permissions import Permissions
 from app.core.s3 import is_archive_enabled
+from app.models.archive import ArchiveMetadata
+from app.models.user import User
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.schemas.archive import (
     AdminArchiveListItem,
@@ -43,10 +46,18 @@ admin_router = CustomAPIRouter()
 _MSG_ARCHIVE_NOT_CONFIGURED = "Archive storage is not configured"
 
 
-def _require_archive_permission(user_permissions: list[str], permission: str) -> None:
-    """Raise 403 if user lacks the given archive permission."""
-    if not has_permission(user_permissions, permission):
-        raise HTTPException(status_code=403, detail="Not enough permissions")
+ArchiveReaderDep = Annotated[User, Depends(PermissionChecker(Permissions.ARCHIVE_READ))]
+ArchiveRestorerDep = Annotated[User, Depends(PermissionChecker(Permissions.ARCHIVE_RESTORE))]
+ArchiveDownloaderDep = Annotated[User, Depends(PermissionChecker(Permissions.ARCHIVE_DOWNLOAD))]
+ArchiveAdminDep = Annotated[User, Depends(PermissionChecker(Permissions.ARCHIVE_READ_ALL))]
+
+
+async def _archive_for_project(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> ArchiveMetadata:
+    """The scan's archive, 404 unless it belongs to ``project_id``: access to one project opens no other's bundle."""
+    metadata = await ArchiveMetadataRepository(db).find_by_scan_id(scan_id)
+    if not metadata or metadata.project_id != project_id:
+        raise HTTPException(status_code=404, detail="Archive not found for this project")
+    return metadata
 
 
 def _require_archive_enabled() -> None:
@@ -62,7 +73,7 @@ def _require_archive_enabled() -> None:
 )
 async def list_archives(
     project_id: str,
-    current_user: CurrentUserDep,
+    current_user: ArchiveReaderDep,
     db: DatabaseDep,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -71,7 +82,6 @@ async def list_archives(
     date_to: Annotated[datetime | None, Query(description="Filter scans created until this date")] = None,
 ) -> ArchiveListResponse:
     """List all archived scans for a project. Requires archive:read permission."""
-    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_READ)
     await check_project_access(project_id, current_user, db)
 
     _require_archive_enabled()
@@ -122,11 +132,10 @@ async def list_archives(
 )
 async def list_archive_branches(
     project_id: str,
-    current_user: CurrentUserDep,
+    current_user: ArchiveReaderDep,
     db: DatabaseDep,
 ) -> list[str]:
     """Get all unique branch names in a project's archives. Requires archive:read."""
-    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_READ)
     await check_project_access(project_id, current_user, db)
 
     _require_archive_enabled()
@@ -143,20 +152,15 @@ async def list_archive_branches(
 async def restore_archive(
     project_id: str,
     scan_id: str,
-    current_user: CurrentUserDep,
+    current_user: ArchiveRestorerDep,
     db: DatabaseDep,
 ) -> ArchiveRestoreResponse:
     """Restore an archived scan from S3 back into MongoDB (404 if absent, 409 if already present, 500 otherwise)."""
-    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_RESTORE)
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
     _require_archive_enabled()
 
-    repo = ArchiveMetadataRepository(db)
-    metadata = await repo.find_by_scan_id(scan_id)
-
-    if not metadata or metadata.project_id != project_id:
-        raise HTTPException(status_code=404, detail="Archive not found for this project")
+    await _archive_for_project(db, project_id, scan_id)
 
     result = await restore_scan(db, scan_id)
     if not result:
@@ -170,7 +174,7 @@ async def restore_archive(
     logger.info(
         "archive.restore",
         extra={
-            "user_id": getattr(current_user, "id", None),
+            "user_id": current_user.id,
             "scan_id": scan_id,
             "project_id": project_id,
             "collections_restored": result.collections_restored,
@@ -187,23 +191,19 @@ async def restore_archive(
 async def download_archive(
     project_id: str,
     scan_id: str,
-    current_user: CurrentUserDep,
+    current_user: ArchiveDownloaderDep,
     db: DatabaseDep,
 ) -> StreamingResponse:
     """Stream the bundle with TruffleHog plaintext hashed. Requires archive:download permission."""
-    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_DOWNLOAD)
     await check_project_access(project_id, current_user, db)
     _require_archive_enabled()
 
-    repo = ArchiveMetadataRepository(db)
-    metadata = await repo.find_by_scan_id(scan_id)
-    if not metadata or metadata.project_id != project_id:
-        raise HTTPException(status_code=404, detail="Archive not found for this project")
+    metadata = await _archive_for_project(db, project_id, scan_id)
 
     logger.info(
         "archive.download.initiated",
         extra={
-            "user_id": getattr(current_user, "id", None),
+            "user_id": current_user.id,
             "scan_id": scan_id,
             "project_id": project_id,
             "s3_key": metadata.s3_key,
@@ -250,11 +250,10 @@ async def download_archive(
 async def pin_scan(
     project_id: str,
     scan_id: str,
-    current_user: CurrentUserDep,
+    current_user: ArchiveRestorerDep,
     db: DatabaseDep,
 ) -> ScanPinResponse:
     """Pin a scan so housekeeping will not archive or delete it. Requires archive:restore + project admin."""
-    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_RESTORE)
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
     scan = await db.scans.find_one({"_id": scan_id, "project_id": project_id})
@@ -265,7 +264,7 @@ async def pin_scan(
     logger.info(
         "archive.pin",
         extra={
-            "user_id": getattr(current_user, "id", None),
+            "user_id": current_user.id,
             "scan_id": scan_id,
             "project_id": project_id,
         },
@@ -281,11 +280,10 @@ async def pin_scan(
 async def unpin_scan(
     project_id: str,
     scan_id: str,
-    current_user: CurrentUserDep,
+    current_user: ArchiveRestorerDep,
     db: DatabaseDep,
 ) -> ScanPinResponse:
     """Unpin a scan so housekeeping can archive or delete it again. Requires archive:restore + project admin."""
-    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_RESTORE)
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
     scan = await db.scans.find_one({"_id": scan_id, "project_id": project_id})
@@ -296,7 +294,7 @@ async def unpin_scan(
     logger.info(
         "archive.unpin",
         extra={
-            "user_id": getattr(current_user, "id", None),
+            "user_id": current_user.id,
             "scan_id": scan_id,
             "project_id": project_id,
         },
@@ -310,7 +308,7 @@ async def unpin_scan(
     responses=RESP_AUTH_404,
 )
 async def list_all_archives(
-    current_user: CurrentUserDep,
+    current_user: ArchiveAdminDep,
     db: DatabaseDep,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
@@ -320,7 +318,6 @@ async def list_all_archives(
     date_to: Annotated[datetime | None, Query(description="Filter scans created until this date")] = None,
 ) -> AdminArchiveListResponse:
     """List all archived scans across all projects. Requires archive:read_all permission."""
-    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_READ_ALL)
 
     _require_archive_enabled()
 

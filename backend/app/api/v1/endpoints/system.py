@@ -1,7 +1,3 @@
-from typing import Annotated
-
-from fastapi import Depends
-
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -13,10 +9,8 @@ from app.core.constants import (
     NOTIFICATION_CHANNEL_MATTERMOST,
     NOTIFICATION_CHANNEL_SLACK,
 )
-from app.core.permissions import Permissions
 from app.core.s3 import is_archive_enabled
 from app.models.system import SystemSettings
-from app.models.user import User
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.system import (
     AppConfig,
@@ -32,7 +26,7 @@ router = CustomAPIRouter()
 @router.get("/", response_model=SystemSettingsResponse, responses=RESP_AUTH)
 @router.get("/settings", response_model=SystemSettingsResponse, responses=RESP_AUTH)
 async def get_settings(
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> SystemSettings:
     """Get system settings. Requires 'system:manage' permission."""
@@ -43,7 +37,7 @@ async def get_settings(
 @router.put("/settings", response_model=SystemSettingsResponse, responses=RESP_AUTH)
 async def update_settings(
     settings_in: SystemSettingsUpdate,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> SystemSettings:
     """Update system settings. Requires 'system:manage' permission."""

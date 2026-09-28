@@ -207,22 +207,6 @@ class TestListArchives:
                 )
                 assert mock_repo.find_by_project.call_args.kwargs["skip"] == expected_skip
 
-    def test_raises_403_without_archive_read_permission(self, no_perms_user):
-        from app.api.v1.endpoints.archives import list_archives
-
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(
-                list_archives(
-                    project_id="proj-1",
-                    current_user=no_perms_user,
-                    db=MagicMock(),
-                    page=1,
-                    size=20,
-                )
-            )
-
-        assert exc_info.value.status_code == 403
-
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import list_archives
 
@@ -457,21 +441,6 @@ class TestDownloadArchive:
             db=MagicMock(),
         )
 
-    def test_raises_403_without_archive_download_permission(self, no_perms_user):
-        from app.api.v1.endpoints.archives import download_archive
-
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(
-                download_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=no_perms_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 403
-
 
 # ---------------------------------------------------------------------------
 # list_archive_branches
@@ -499,20 +468,6 @@ class TestListArchiveBranches:
             )
 
         assert result == ["main", "develop", "feature/test"]
-
-    def test_raises_403_without_archive_read_permission(self, no_perms_user):
-        from app.api.v1.endpoints.archives import list_archive_branches
-
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(
-                list_archive_branches(
-                    project_id="proj-1",
-                    current_user=no_perms_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 403
 
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import list_archive_branches
@@ -592,21 +547,6 @@ class TestPinScan:
 
         assert exc_info.value.status_code == 404
         assert (await db.scans.find_one({"_id": "scan-1"})).get("pinned") is None
-
-    def test_raises_403_without_archive_restore_permission(self, no_perms_user):
-        from app.api.v1.endpoints.archives import pin_scan
-
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(
-                pin_scan(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=no_perms_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert exc_info.value.status_code == 403
 
 
 class TestUnpinScan:
@@ -706,21 +646,6 @@ class TestListAllArchives:
         assert result.items[0].project_name == "Project Alpha"
         assert result.items[1].project_name == "Project Beta"
 
-    def test_raises_403_without_archive_read_all_permission(self, regular_user):
-        from app.api.v1.endpoints.archives import list_all_archives
-
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(
-                list_all_archives(
-                    current_user=regular_user,
-                    db=MagicMock(),
-                    page=1,
-                    size=20,
-                )
-            )
-
-        assert exc_info.value.status_code == 403
-
     def test_passes_filters_including_project_id(self, admin_user):
         from app.api.v1.endpoints.archives import list_all_archives
 
@@ -817,21 +742,6 @@ class TestRestoreArchivePermissions:
 
         with pytest.raises(HTTPException) as exc_info:
             asyncio.run(_run())
-
-        assert exc_info.value.status_code == 403
-
-    def test_raises_403_without_archive_restore_permission(self, no_perms_user):
-        from app.api.v1.endpoints.archives import restore_archive
-
-        with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(
-                restore_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=no_perms_user,
-                    db=MagicMock(),
-                )
-            )
 
         assert exc_info.value.status_code == 403
 

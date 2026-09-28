@@ -249,7 +249,7 @@ async def _reject_taken_binding(
 async def set_team_binding(
     team_id: str,
     binding_in: TeamBindingRequest,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> TeamResponse:
     """Bind a team to a group on one instance, which is what makes it resolvable from that
@@ -292,7 +292,7 @@ async def set_team_binding(
 async def clear_team_binding(
     team_id: str,
     instance_id: str,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> TeamResponse:
     """Remove a team's binding for one instance, leaving the ones it holds on the others. Its

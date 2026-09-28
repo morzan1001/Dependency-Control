@@ -486,3 +486,37 @@ async def test_crypto_search_escapes_regex_metacharacters(client, db, member_aut
     )
     assert resp.status_code == 200
     assert resp.json()["total"] == 1
+
+
+_INVENTORY_ROUTES = [
+    "stats",
+    "components",
+    "components/export",
+    "licenses",
+    "licenses/export",
+    "crypto",
+    "crypto/export",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", _INVENTORY_ROUTES)
+async def test_every_inventory_route_refuses_a_non_member(client, db, owner_auth_headers_proj_p2, route):
+    await _seed_scan(db)
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/{route}", headers=owner_auth_headers_proj_p2)
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", _INVENTORY_ROUTES)
+async def test_every_inventory_route_404s_a_branch_without_a_scan(client, db, member_auth_headers, route):
+    await _seed_scan(db)
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/{route}", params={"branch": "gone"}, headers=member_auth_headers
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "No completed scan found for branch 'gone'"

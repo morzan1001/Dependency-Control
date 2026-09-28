@@ -743,3 +743,9 @@ AdhocKeyDep = Annotated[
     tuple[User, dict[str, Any]],
     Depends(require_api_key(API_KEY_SURFACE_ADHOC)),
 ]
+McpKeyDep = Annotated[
+    tuple[User, dict[str, Any]],
+    Depends(require_api_key(API_KEY_SURFACE_MCP, touch=True)),
+]
+ProjectIngestDep = Annotated[Project, Depends(get_project_for_ingest)]
+SystemManagerDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]

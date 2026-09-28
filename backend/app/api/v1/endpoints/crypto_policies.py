@@ -1,17 +1,15 @@
 """Admin + project-scoped crypto policy endpoints."""
 
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import HTTPException, status
 
-from app.api.deps import CurrentUserDep, DatabaseDep, PermissionChecker
+from app.api.deps import CurrentUserDep, DatabaseDep, SystemManagerDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_500
 from app.core.constants import PROJECT_ROLE_ADMIN
-from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
-from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
@@ -22,12 +20,10 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 
 router = CustomAPIRouter(tags=["crypto-policies"])
 
-AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]
-
 
 @router.get("/crypto-policies/system", responses=RESP_500)
 async def get_system_policy(
-    current_user: AdminUserDep,
+    current_user: SystemManagerDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get the system-level crypto policy. Seeds defaults on first access if missing."""
@@ -43,7 +39,7 @@ async def get_system_policy(
 
 @router.put("/crypto-policies/system")
 async def put_system_policy(
-    current_user: AdminUserDep,
+    current_user: SystemManagerDep,
     db: DatabaseDep,
     body: CryptoPolicyPutRequest,
 ) -> dict[str, Any]:
@@ -53,14 +49,11 @@ async def put_system_policy(
     repo = CryptoPolicyRepository(db)
     existing = await repo.get_system_policy()
     new_version = (existing.version + 1) if existing else 1
-    updated_by = getattr(current_user, "id", None)
-    if updated_by is not None:
-        updated_by = str(updated_by)
     policy = CryptoPolicy(
         scope="system",
         rules=rules,
         version=new_version,
-        updated_by=updated_by,
+        updated_by=current_user.id,
     )
     action = PolicyAuditAction.UPDATE if existing else PolicyAuditAction.CREATE
     await record_policy_change(
@@ -111,15 +104,12 @@ async def put_project_policy(
     repo = CryptoPolicyRepository(db)
     existing = await repo.get_project_policy(project_id)
     new_version = (existing.version + 1) if existing else 1
-    updated_by = getattr(current_user, "id", None)
-    if updated_by is not None:
-        updated_by = str(updated_by)
     policy = CryptoPolicy(
         scope="project",
         project_id=project_id,
         rules=rules,
         version=new_version,
-        updated_by=updated_by,
+        updated_by=current_user.id,
     )
     action = PolicyAuditAction.UPDATE if existing else PolicyAuditAction.CREATE
     await record_policy_change(
