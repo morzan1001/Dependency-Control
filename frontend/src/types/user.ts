@@ -24,7 +24,6 @@ export interface UserCreate {
 
 export interface UserUpdate {
   permissions?: string[];
-  password?: string;
   is_active?: boolean;
 }
 

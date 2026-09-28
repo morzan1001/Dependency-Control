@@ -39,13 +39,11 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     email: LowercaseEmail
-    password: str | None = None
+    password: str
 
     @field_validator("password")
     @classmethod
-    def validate_password(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
+    def validate_password(cls, v: str) -> str:
         return validate_password_strength(v)
 
 
@@ -64,6 +62,8 @@ class UserSignup(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: LowercaseEmail | None = None
     username: Username | None = None
     is_active: bool | None = None
@@ -71,7 +71,6 @@ class UserUpdate(BaseModel):
     slack_username: str | None = None
     mattermost_username: str | None = None
     notification_preferences: NotificationPreferences = None
-    password: str | None = None
 
     @field_validator("email", "username")
     @classmethod

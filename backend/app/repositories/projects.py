@@ -456,6 +456,9 @@ class ProjectRepository:
         )
         return bool(result.matched_count)
 
+    async def remove_user_from_all(self, user_id: str) -> None:
+        await self.collection.update_many({_MEMBERS_USER_ID: user_id}, {"$pull": {"members": {"user_id": user_id}}})
+
     async def update_member(
         self,
         project_id: str,

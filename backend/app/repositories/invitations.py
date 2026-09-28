@@ -24,9 +24,6 @@ class InvitationRepository:
         return result.deleted_count
 
     # System Invitations
-    async def get_system_invitation(self, invitation_id: str) -> dict[str, Any] | None:
-        return await self.system_invitations.find_one({"_id": invitation_id})
-
     async def get_system_invitation_by_token(self, token: str) -> dict[str, Any] | None:
         return await self._system_primary.find_one(
             {

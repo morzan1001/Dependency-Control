@@ -1,6 +1,6 @@
 import { getErrorMessage } from '@/lib/utils';
 import { User } from '@/types/user';
-import { useDeleteUser, useInviteUser } from '@/hooks/queries/use-users';
+import { useDeleteUser, useInviteUser, useRevokeInvitation } from '@/hooks/queries/use-users';
 import { Button } from '@/components/ui/button';
 import { Check, X, Trash2, ArrowUp, ArrowDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import {
@@ -46,17 +46,20 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
   const [userToDelete, setUserToDelete] = useState<User | null>(null);
 
   const deleteUserMutation = useDeleteUser();
+  const revokeInvitationMutation = useRevokeInvitation();
   const resendInviteMutation = useInviteUser();
-  
+  const isInvitation = userToDelete?.status === 'invited';
+  const removeMutation = isInvitation ? revokeInvitationMutation : deleteUserMutation;
+
   const handleDeleteUser = (userId: string) => {
-      deleteUserMutation.mutate(userId, {
+      removeMutation.mutate(userId, {
         onSuccess: () => {
           setIsDeleteDialogOpen(false);
           setUserToDelete(null);
-          toast.success("User deleted successfully");
+          toast.success(isInvitation ? "Invitation revoked" : "User deleted successfully");
         },
         onError: (error) => {
-          toast.error("Failed to delete user", {
+          toast.error(isInvitation ? "Failed to revoke invitation" : "Failed to delete user", {
             description: getErrorMessage(error)
           })
         }
@@ -227,7 +230,7 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
                          {resendInviteMutation.isPending ? "Sending..." : "Resend"}
                        </Button>
                     )}
-                    {hasPermission('user:delete') && (
+                    {hasPermission(user.status === 'invited' ? 'user:create' : 'user:delete') && (
                       <Button 
                           variant="ghost" 
                           size="icon" 
@@ -275,9 +278,11 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
       <Dialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Delete User</DialogTitle>
+            <DialogTitle>{isInvitation ? "Revoke Invitation" : "Delete User"}</DialogTitle>
             <DialogDescription>
-              Are you sure you want to delete user {userToDelete?.username}? This action cannot be undone.
+              {isInvitation
+                ? `Revoke the invitation for ${userToDelete?.email}?`
+                : `Are you sure you want to delete user ${userToDelete?.username}? This action cannot be undone.`}
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -285,9 +290,9 @@ export function UserTable({ users, page, limit, onPageChange, onSelectUser, sort
             <Button 
                 variant="destructive" 
                 onClick={() => userToDelete && handleDeleteUser(userToDelete.id)}
-                disabled={deleteUserMutation.isPending}
+                disabled={removeMutation.isPending}
             >
-              {deleteUserMutation.isPending ? "Deleting..." : "Delete"}
+              {removeMutation.isPending ? "Deleting..." : "Delete"}
             </Button>
           </DialogFooter>
         </DialogContent>

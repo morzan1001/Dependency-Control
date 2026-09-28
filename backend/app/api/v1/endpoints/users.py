@@ -2,6 +2,7 @@ import base64
 import io
 import logging
 import re
+from datetime import datetime, timezone
 from typing import Annotated, Any
 
 import pyotp
@@ -34,7 +35,7 @@ from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import InvitationRepository, UserRepository
+from app.repositories import ProjectRepository, TeamRepository, UserRepository
 from app.schemas.user import User as UserSchema
 from app.schemas.user import (
     User2FADisable,
@@ -54,6 +55,28 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
+def _ensure_can_set_permissions(caller: User, existing: set[str], requested: set[str]) -> None:
+    """Require user:manage_permissions and refuse to grant or revoke any permission the caller lacks."""
+    if not has_permission(caller.permissions, [Permissions.USER_MANAGE_PERMISSIONS]):
+        raise HTTPException(
+            status_code=403,
+            detail="Setting 'permissions' requires user:manage_permissions",
+        )
+    caller_perms = set(caller.permissions or [])
+    unauthorised_grants = requested - existing - caller_perms
+    if unauthorised_grants:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot grant permissions you don't hold: {sorted(unauthorised_grants)}",
+        )
+    unauthorised_revokes = existing - requested - caller_perms
+    if unauthorised_revokes:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Cannot revoke permissions you don't hold: {sorted(unauthorised_revokes)}",
+        )
+
+
 @router.post("/", response_model=UserSchema, status_code=status.HTTP_201_CREATED, responses=RESP_AUTH_400)
 async def create_user(
     user_in: UserCreate,
@@ -61,27 +84,8 @@ async def create_user(
     db: DatabaseDep,
 ) -> User:
     """Create a new user. Requires 'user:create' permission."""
-    if not user_in.password:
-        raise HTTPException(
-            status_code=400,
-            detail="Password is required when creating a user",
-        )
-
-    # A caller may never grant a permission they don't hold themselves.
     if user_in.permissions:
-        if not has_permission(current_user.permissions, [Permissions.USER_MANAGE_PERMISSIONS]):
-            raise HTTPException(
-                status_code=403,
-                detail="Setting 'permissions' requires user:manage_permissions",
-            )
-        caller_perms = set(current_user.permissions or [])
-        requested = set(user_in.permissions or [])
-        unauthorised = requested - caller_perms
-        if unauthorised:
-            raise HTTPException(
-                status_code=403,
-                detail=f"Cannot grant permissions you don't hold: {sorted(unauthorised)}",
-            )
+        _ensure_can_set_permissions(current_user, existing=set(), requested=set(user_in.permissions))
 
     user_repo = UserRepository(db)
 
@@ -194,28 +198,6 @@ async def read_user_by_id(
     return await get_user_or_404(user_id, db)
 
 
-def _ensure_can_change_permissions(caller: User, existing: set[str], requested: set[str]) -> None:
-    """Require user:manage_permissions and refuse to grant or revoke any permission the caller lacks."""
-    if not has_permission(caller.permissions, [Permissions.USER_MANAGE_PERMISSIONS]):
-        raise HTTPException(
-            status_code=403,
-            detail="Changing 'permissions' requires user:manage_permissions",
-        )
-    caller_perms = set(caller.permissions or [])
-    unauthorised_grants = requested - existing - caller_perms
-    if unauthorised_grants:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Cannot grant permissions you don't hold: {sorted(unauthorised_grants)}",
-        )
-    unauthorised_revokes = existing - requested - caller_perms
-    if unauthorised_revokes:
-        raise HTTPException(
-            status_code=403,
-            detail=f"Cannot revoke permissions you don't hold: {sorted(unauthorised_revokes)}",
-        )
-
-
 async def _ensure_admin_can_set_email(user_repo: UserRepository, target: dict[str, Any], new_email: str) -> None:
     """The IdP owns a non-local account's email; any other address must be unused in every case."""
     if target.get("auth_provider", AUTH_PROVIDER_LOCAL) != AUTH_PROVIDER_LOCAL:
@@ -228,16 +210,14 @@ async def _ensure_admin_can_set_email(user_repo: UserRepository, target: dict[st
 async def update_user(
     user_id: str,
     user_in: UserUpdate,
-    current_user: CurrentUserDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    """Update self, or as an admin a user whose permissions the caller holds (or any user with system:manage)."""
-    has_admin_perm = check_admin_or_self(current_user, user_id, [Permissions.USER_UPDATE])
+    """Update a user whose permissions the caller holds (or any user with system:manage)."""
     is_self = str(current_user.id) == user_id
 
     existing_user = await get_user_or_404(user_id, db)
-    if not is_self:
-        ensure_can_manage_target(current_user, existing_user)
+    ensure_can_manage_target(current_user, existing_user)
 
     user_repo = UserRepository(db)
     update_data = user_in.model_dump(exclude_unset=True)
@@ -249,7 +229,7 @@ async def update_user(
         )
 
     if "permissions" in update_data:
-        _ensure_can_change_permissions(
+        _ensure_can_set_permissions(
             current_user,
             existing=set(existing_user.get("permissions") or []),
             requested=set(update_data["permissions"] or []),
@@ -272,20 +252,6 @@ async def update_user(
         and await user_repo.exists_by_username(update_data["username"])
     ):
         raise HTTPException(status_code=400, detail="Username already taken")
-
-    if "password" in update_data:
-        if has_admin_perm:
-            raise HTTPException(
-                status_code=400,
-                detail=(
-                    "Admins cannot set passwords directly. Please use the "
-                    "'Reset Password' feature to send a reset link."
-                ),
-            )
-        raise HTTPException(
-            status_code=400,
-            detail="Use the /me/password endpoint to change your password.",
-        )
 
     if update_data:
         await user_repo.update(user_id, update_data)
@@ -577,23 +543,17 @@ async def delete_user(
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_DELETE]))],
     db: DatabaseDep,
 ) -> None:
-    """Delete a user or revoke a pending invitation. Requires 'user:delete' permission."""
+    """Delete a user and their team and project memberships. Requires 'user:delete' permission."""
     if user_id == str(current_user.id):
         raise HTTPException(status_code=400, detail="Users cannot delete themselves")
 
     user_repo = UserRepository(db)
-    invitation_repo = InvitationRepository(db)
-
     user = await user_repo.get_raw_by_id(user_id)
-    if user:
-        ensure_can_manage_target(current_user, user)
-        await user_repo.delete(user_id)
-        return
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    ensure_can_manage_target(current_user, user)
 
-    # Pending invitations use their _id as the user_id in the frontend list.
-    invitation = await invitation_repo.get_system_invitation(user_id)
-    if invitation:
-        await invitation_repo.delete_system_invitation(user_id)
-        return
-
-    raise HTTPException(status_code=404, detail="User or invitation not found")
+    # Memberships first: a leftover admin entry would satisfy the last-admin guards for a ghost.
+    await TeamRepository(db).remove_user_from_all(user_id, datetime.now(timezone.utc))
+    await ProjectRepository(db).remove_user_from_all(user_id)
+    await user_repo.delete(user_id)

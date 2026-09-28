@@ -72,6 +72,10 @@ export const userApi = {
     return response.data;
   },
 
+  revokeInvitation: async (invitationId: string): Promise<void> => {
+    await api.delete(`/invitations/system/${invitationId}`);
+  },
+
   validateInvitation: async (token: string): Promise<{ email: string }> => {
     const response = await api.get<{ email: string }>(`/invitations/system/${token}`);
     return response.data;

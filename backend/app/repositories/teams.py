@@ -252,6 +252,12 @@ class TeamRepository:
         )
         return bool(result.matched_count)
 
+    async def remove_user_from_all(self, user_id: str, updated_at: datetime) -> None:
+        await self.collection.update_many(
+            {_MEMBERS_USER_ID: user_id},
+            {"$pull": {_MEMBERS: {_USER_ID: user_id}}, "$set": {"updated_at": updated_at}},
+        )
+
     async def update_member_role(self, team_id: str, user_id: str, role: str, updated_at: datetime) -> None:
         # Address the member by identity: a concurrent $pull shifts array indices under a positional write.
         await self.collection.update_one(

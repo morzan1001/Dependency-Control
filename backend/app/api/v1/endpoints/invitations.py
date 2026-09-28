@@ -9,9 +9,10 @@ from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_system_invitation_email
-from app.api.v1.helpers.responses import RESP_400, RESP_404, RESP_AUTH, RESP_AUTH_400
+from app.api.v1.helpers.responses import RESP_400, RESP_404, RESP_AUTH, RESP_AUTH_400, RESP_AUTH_404
 from app.core import security
 from app.core.config import settings
+from app.core.permissions import Permissions
 from app.models.invitation import SystemInvitation
 from app.models.user import User
 from app.repositories import InvitationRepository, UserRepository
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 @router.get("/system", response_model=list[SystemInvitation], responses=RESP_AUTH)
 async def read_system_invitations(
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.USER_CREATE))],
     skip: int = 0,
     limit: int = 100,
 ) -> list[dict[str, Any]]:
@@ -37,7 +38,7 @@ async def read_system_invitations(
 async def create_system_invitation(
     background_tasks: BackgroundTasks,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.USER_CREATE))],
     email: Annotated[str, Body(..., embed=True)],
 ) -> dict[str, Any]:
     """Create a system invitation for a new user. Requires 'user:create' permission."""
@@ -81,6 +82,17 @@ async def create_system_invitation(
     if not email_sent:
         response["warning"] = "Email could not be sent. Share the link manually."
     return response
+
+
+@router.delete("/system/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT, responses=RESP_AUTH_404)
+async def revoke_system_invitation(
+    invitation_id: str,
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.USER_CREATE))],
+) -> None:
+    """Revoke a pending system invitation. Requires 'user:create' permission."""
+    if not await InvitationRepository(db).delete_system_invitation(invitation_id):
+        raise HTTPException(status_code=404, detail="Invitation not found")
 
 
 @router.get("/system/{token}", responses=RESP_404)
