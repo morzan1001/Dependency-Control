@@ -5,72 +5,13 @@ from typing import Any
 from app.models.webhook import Webhook
 from app.repositories.base import BaseRepository
 
+GLOBAL_WEBHOOK_SCOPE: dict[str, Any] = {"project_id": None, "team_id": None}
+
 
 class WebhookRepository(BaseRepository[Webhook]):
     collection_name = "webhooks"
     model_class = Webhook
 
-    async def find_by_project(
-        self,
-        project_id: str,
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "created_at",
-        sort_order: int = -1,
-    ) -> list[Webhook]:
-        cursor = self.collection.find({"project_id": project_id}).sort(sort_by, sort_order).skip(skip).limit(limit)
-        docs = await cursor.to_list(limit)
-        return self._to_model_list(docs)
-
-    async def find_by_team(
-        self,
-        team_id: str,
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "created_at",
-        sort_order: int = -1,
-    ) -> list[Webhook]:
-        cursor = self.collection.find({"team_id": team_id}).sort(sort_by, sort_order).skip(skip).limit(limit)
-        docs = await cursor.to_list(limit)
-        return self._to_model_list(docs)
-
-    async def find_global(
-        self,
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "created_at",
-        sort_order: int = -1,
-    ) -> list[Webhook]:
-        cursor = (
-            self.collection.find({"project_id": None, "team_id": None})
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
-        docs = await cursor.to_list(limit)
-        return self._to_model_list(docs)
-
-    async def find_many(
-        self,
-        query: dict[str, Any],
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str | None = "created_at",
-        sort_order: int = -1,
-        projection: dict[str, int] | None = None,
-    ) -> list[Webhook]:
-        cursor = self.collection.find(query, projection)
-        if sort_by:
-            cursor = cursor.sort(sort_by, sort_order)
-        cursor = cursor.skip(skip).limit(limit)
-        docs = await cursor.to_list(limit)
-        return self._to_model_list(docs)
-
-    async def count_by_project(self, project_id: str) -> int:
-        return await self.collection.count_documents({"project_id": project_id})
-
-    async def count_by_team(self, team_id: str) -> int:
-        return await self.collection.count_documents({"team_id": team_id})
-
-    async def count_global(self) -> int:
-        return await self.collection.count_documents({"project_id": None, "team_id": None})
+    async def list_scope(self, scope: dict[str, Any], skip: int, limit: int) -> list[Webhook]:
+        """One page of a project's, a team's or the global webhooks, newest first."""
+        return await self.find_many(scope, skip=skip, limit=limit, sort_by="created_at", sort_order=-1)

@@ -96,8 +96,8 @@ class TestListWebhooks:
 
         webhooks = [_make_webhook(id="wh-1"), _make_webhook(id="wh-2")]
         mock_repo = MagicMock()
-        mock_repo.count_by_project = AsyncMock(return_value=2)
-        mock_repo.find_by_project = AsyncMock(return_value=webhooks)
+        mock_repo.count = AsyncMock(return_value=2)
+        mock_repo.list_scope = AsyncMock(return_value=webhooks)
 
         with patch(f"{MODULE}.check_webhook_list_permission", new_callable=AsyncMock):
             with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
@@ -121,8 +121,8 @@ class TestListGlobalWebhooks:
 
         webhooks = [_make_webhook(project_id=None)]
         mock_repo = MagicMock()
-        mock_repo.count_global = AsyncMock(return_value=1)
-        mock_repo.find_global = AsyncMock(return_value=webhooks)
+        mock_repo.count = AsyncMock(return_value=1)
+        mock_repo.list_scope = AsyncMock(return_value=webhooks)
 
         with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
             result = asyncio.run(
@@ -152,8 +152,8 @@ class TestListRoutesWithholdSecret:
         from app.api.v1.endpoints.webhooks import list_webhooks
 
         mock_repo = MagicMock()
-        mock_repo.count_by_project = AsyncMock(return_value=1)
-        mock_repo.find_by_project = AsyncMock(return_value=[_make_webhook(secret=self.SECRET)])
+        mock_repo.count = AsyncMock(return_value=1)
+        mock_repo.list_scope = AsyncMock(return_value=[_make_webhook(secret=self.SECRET)])
 
         with patch(f"{MODULE}.check_webhook_list_permission", new_callable=AsyncMock):
             with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
@@ -167,8 +167,8 @@ class TestListRoutesWithholdSecret:
         from app.api.v1.endpoints.webhooks import list_global_webhooks
 
         mock_repo = MagicMock()
-        mock_repo.count_global = AsyncMock(return_value=1)
-        mock_repo.find_global = AsyncMock(return_value=[_make_webhook(project_id=None, secret=self.SECRET)])
+        mock_repo.count = AsyncMock(return_value=1)
+        mock_repo.list_scope = AsyncMock(return_value=[_make_webhook(project_id=None, secret=self.SECRET)])
 
         with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
             result = asyncio.run(list_global_webhooks(skip=0, limit=50, current_user=admin_user, db=MagicMock()))
@@ -179,8 +179,8 @@ class TestListRoutesWithholdSecret:
         from app.api.v1.endpoints.webhooks import list_team_webhooks
 
         mock_repo = MagicMock()
-        mock_repo.count_by_team = AsyncMock(return_value=1)
-        mock_repo.find_by_team = AsyncMock(
+        mock_repo.count = AsyncMock(return_value=1)
+        mock_repo.list_scope = AsyncMock(
             return_value=[_make_webhook(project_id=None, team_id="team-1", secret=self.SECRET)]
         )
 

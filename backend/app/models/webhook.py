@@ -5,14 +5,10 @@ Webhook model for MongoDB storage.
 from datetime import datetime
 from typing import Literal
 
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict
 
 from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
-from app.services.webhooks.validation import (
-    validate_webhook_events,
-    validate_webhook_url,
-)
 
 
 class Webhook(MongoDocument, CreatedAtModel):
@@ -34,15 +30,5 @@ class Webhook(MongoDocument, CreatedAtModel):
     circuit_breaker_until: datetime | None = None
     total_deliveries: int = 0
     total_failures: int = 0
-
-    @field_validator("events")
-    @classmethod
-    def _validate_events(cls, v: list[str]) -> list[str]:
-        return validate_webhook_events(v, allow_empty=False)
-
-    @field_validator("url")
-    @classmethod
-    def _validate_url(cls, v: str) -> str:
-        return validate_webhook_url(v)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

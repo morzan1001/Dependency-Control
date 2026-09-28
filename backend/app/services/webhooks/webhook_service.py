@@ -39,6 +39,7 @@ from app.core.constants import (
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
+from app.repositories.webhooks import GLOBAL_WEBHOOK_SCOPE
 from app.services.webhooks.teams_formatter import TeamsFormatter
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
@@ -49,7 +50,7 @@ from app.services.webhooks.types import (
     TestWebhookPayload,
     VulnerabilityFoundPayload,
 )
-from app.services.webhooks.validation import build_pinned_transport
+from app.services.webhooks.validation import build_pinned_transport, validate_webhook_url
 
 
 def _normalize_event_name(event_type: str) -> str:
@@ -325,6 +326,8 @@ class WebhookService:
         self, client_name: str, url: str, content: str, headers: Mapping[str, str]
     ) -> tuple[int, str]:
         """POST under one overall deadline; returns the status and, for a non-2xx answer, a capped body prefix."""
+        # A stored URL predates today's rules, which WebhookCreate/WebhookUpdate enforce only inbound.
+        validate_webhook_url(url)
         async with asyncio.timeout(self.timeout):
             transport = await build_pinned_transport(url)
             async with (
@@ -474,9 +477,7 @@ class WebhookService:
             except Exception as e:
                 logger.exception("Failed to look up team webhooks for project %s: %s", project_id, e)
 
-        webhooks.extend(
-            await self._fetch_webhooks_by_query(db, {**base_conditions, "project_id": None, "team_id": None}, "global")
-        )
+        webhooks.extend(await self._fetch_webhooks_by_query(db, {**base_conditions, **GLOBAL_WEBHOOK_SCOPE}, "global"))
 
         return webhooks
 

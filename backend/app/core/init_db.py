@@ -399,9 +399,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["webhook_deliveries"].create_index(
         [("webhook_id", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)]
     )
-    await database["webhook_deliveries"].create_index(
-        [("success", pymongo.ASCENDING), ("webhook_id", pymongo.ASCENDING)]
-    )
     # TTL: drops deliveries after 30 days.
     await database["webhook_deliveries"].create_index([("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000)
 
