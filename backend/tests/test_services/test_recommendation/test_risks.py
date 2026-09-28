@@ -687,6 +687,31 @@ class TestCardsWithoutVulnerabilitiesKeepTheirVersion:
         assert rec.action["versions"] == ["1.2.3"]
 
 
+class TestCardsNameOnlyTheVulnerableCopies:
+    def _lodash(self):
+        return [
+            _vuln("lodash", "CRITICAL", version="4.17.15", fixed_version="4.17.21", finding_id="CVE-1"),
+            _vuln("lodash", "HIGH", version="4.17.15", fixed_version="4.17.21", finding_id="CVE-2"),
+            _vuln("lodash", "HIGH", version="4.17.15", fixed_version="4.17.21", finding_id="CVE-3"),
+            {**_quality("lodash", overall_score=2.0), "version": "4.17.15"},
+            {**_quality("lodash", overall_score=2.0), "version": "5.0.0"},
+            {**_eol("lodash"), "version": "3.10.1"},
+        ]
+
+    def test_a_hotspot_does_not_list_a_copy_with_only_quality_or_eol_findings(self):
+        [rec] = _hotspots(self._lodash())
+
+        assert rec.affected_components == ["lodash@4.17.15"]
+        assert rec.action["current_versions"] == ["4.17.15"]
+        assert rec.description.startswith("**lodash@4.17.15** is a critical security hotspot")
+
+    def test_a_toxic_card_does_not_list_a_copy_with_only_quality_or_eol_findings(self):
+        [rec] = _toxic(self._lodash())
+
+        assert rec.affected_components == ["lodash@4.17.15"]
+        assert rec.action["versions"] == ["4.17.15"]
+
+
 class TestPackageFindingsJoinAcrossSpellings:
     def test_a_maven_vulnerability_and_a_bare_scorecard_finding_are_one_package(self):
         findings = [
@@ -802,6 +827,14 @@ class TestAttackSurfaceCountsEachInstalledCopy:
         [rec] = analyze_attack_surface(deps, [_advisories("lib", "1.0", "CVE-1", "CVE-2")])
 
         assert rec.affected_components_total == 1
+        assert rec.impact["total"] == 2
+
+    def test_a_v_prefixed_inventory_version_matches_its_finding(self):
+        deps = [_dep("github.com/gin-gonic/gin", version="v1.6.0", direct=False)]
+
+        [rec] = analyze_attack_surface(deps, [_advisories("github.com/gin-gonic/gin", "1.6.0", "CVE-1", "CVE-2")])
+
+        assert rec.affected_components == ["github.com/gin-gonic/gin@v1.6.0"]
         assert rec.impact["total"] == 2
 
 

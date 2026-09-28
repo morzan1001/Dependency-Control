@@ -11,6 +11,7 @@ from app.schemas.recommendation import (
     RecommendationType,
     VulnerabilityInfo,
 )
+from app.services.aggregation.versions import normalize_version
 from app.services.component_identity import (
     build_component_index,
     cluster_by_package_identity,
@@ -49,7 +50,7 @@ class _PackageRisks:
     """Every fact the hotspot and toxic cards read about one package, from one pass over its findings."""
 
     name: str
-    versions: set[str] = field(default_factory=set)
+    finding_versions: set[str] = field(default_factory=set)
     vulns: list[VulnerabilityInfo] = field(default_factory=list)
     has_malware: bool = False
     is_eol: bool = False
@@ -69,8 +70,13 @@ class _PackageRisks:
         )
 
     @property
+    def versions(self) -> list[str]:
+        # Scorecard and EOL findings land on every installed copy; only vulnerabilities single one out.
+        return self.stats.versions if self.vulns else newest_first(self.finding_versions)
+
+    @property
     def labels(self) -> list[str]:
-        return [f"{self.name}@{version}" for version in newest_first(self.versions) or ["unknown"]]
+        return [f"{self.name}@{version}" for version in self.versions or ["unknown"]]
 
 
 def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
@@ -107,7 +113,7 @@ def _roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
         component = get_attr(f, "component")
         pkg = packages.setdefault(representative[normalize_component(component)], _PackageRisks(name=component))
         if get_attr(f, "version"):
-            pkg.versions.add(get_attr(f, "version"))
+            pkg.finding_versions.add(get_attr(f, "version"))
         _record(pkg, f)
     return list(packages.values())
 
@@ -235,7 +241,7 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
         action={
             "type": "fix_hotspot",
             "package": pkg.name,
-            "current_versions": newest_first(pkg.versions),
+            "current_versions": pkg.versions,
             "fixed_versions": stats.fixed_versions,
             "target_version": stats.best_fix,
             "reasons": reasons,
@@ -326,7 +332,7 @@ def _toxic_recommendation(
         action={
             "type": "replace_toxic_dependency",
             "package": pkg.name,
-            "versions": newest_first(pkg.versions),
+            "versions": pkg.versions,
             "risk_factors": factors,
             "steps": [
                 f"1. Evaluate if {pkg.name} is essential to your application",
@@ -356,7 +362,7 @@ def analyze_attack_surface(
     counts_by_version: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
-            counts_by_version[get_attr(f, "version") or ""][get_attr(f, "component", "")] += (
+            counts_by_version[normalize_version(get_attr(f, "version"))][get_attr(f, "component", "")] += (
                 len(finding_cve_ids(f)) or 1
             )
     # Findings carry the qualified component while the inventory keeps the bare name.
@@ -370,7 +376,9 @@ def analyze_attack_surface(
     by_label: dict[str, dict[str, Any]] = {}
     for dep in dependencies:
         version = get_attr(dep, "version") or ""
-        vuln_count = lookup_component(index_by_version.get(version, {}), get_attr(dep, "name", "")) or 0
+        vuln_count = (
+            lookup_component(index_by_version.get(normalize_version(version), {}), get_attr(dep, "name", "")) or 0
+        )
         if not get_attr(dep, "direct", False) and vuln_count >= 2:
             by_label.setdefault(
                 dependency_label(dep),
