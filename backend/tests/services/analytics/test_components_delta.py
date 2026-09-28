@@ -215,16 +215,16 @@ async def test_components_change_filter_only_added(db):
 
 
 @pytest.mark.parametrize(
-    ("before", "after", "totals"),
+    ("before", "after", "changes"),
     [
-        ("pkg:pypi/PyYAML@6.0", "pkg:pypi/pyyaml@6.0.1", (0, 0, 1)),
-        ("pkg:pypi/zope.interface@5.0", "pkg:pypi/zope-interface@5.1", (0, 0, 1)),
-        ("pkg:NPM/x@1.0.0", "pkg:npm/x@1.0.1", (0, 0, 1)),
-        ("pkg:maven/g1/core@1.0", "pkg:maven/g2/core@1.1", (1, 1, 0)),
+        ("pkg:pypi/PyYAML@6.0", "pkg:pypi/pyyaml@6.0.1", ["version_changed"]),
+        ("pkg:pypi/zope.interface@5.0", "pkg:pypi/zope-interface@5.1", ["version_changed"]),
+        ("pkg:NPM/x@1.0.0", "pkg:npm/x@1.0.1", ["version_changed"]),
+        ("pkg:maven/g1/core@1.0", "pkg:maven/g2/core@1.1", ["added", "removed"]),
     ],
 )
 @pytest.mark.asyncio
-async def test_a_respelled_package_is_one_version_change(db, before, after, totals):
+async def test_a_respelled_package_is_one_version_change(db, before, after, changes):
     await db["dependencies"].insert_many(
         [
             {"_id": scan, "project_id": "p1", "scan_id": scan, "name": purl.split("/")[-1].split("@")[0], "purl": purl}
@@ -237,4 +237,4 @@ async def test_a_respelled_package_is_one_version_change(db, before, after, tota
         db, project_id="p1", from_scan="sa", to_scan="sb", page=1, page_size=50, change=None
     )
 
-    assert (resp.totals.added, resp.totals.removed, resp.totals.changed) == totals
+    assert sorted(item.change for item in resp.items) == changes
