@@ -19,11 +19,12 @@ from app.core.constants import (
     MAX_CONCURRENT_COMPLIANCE_REPORTS,
     WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
 )
+from app.core.permissions import Permissions, has_permission
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
-from app.services.analytics.scopes import ScopeResolver
+from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.visibility import report_visibility_filter
 
@@ -66,15 +67,7 @@ async def create_report(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ReportAck:
-    try:
-        await ScopeResolver(db, current_user).resolve(
-            scope=req.scope,
-            scope_id=req.scope_id,
-        )
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=403, detail=f"Scope resolution failed: {exc}") from exc
+    await ScopeResolver(db, current_user).resolve(scope=req.scope, scope_id=req.scope_id)
 
     repo = ComplianceReportRepository(db)
     pending_count = await repo.count_pending_for_user(current_user.id)
@@ -104,17 +97,12 @@ async def create_report(
 async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: ComplianceReport) -> bool:
     """True iff the ScopeResolver resolves the report's scope for this user; scope='user' is gated on requester id (ScopeResolver ignores scope_id there) with system:manage as an admin escape."""
     if report.scope == "user":
-        if report.requested_by == str(user.id):
-            return True
-        from app.core.permissions import Permissions, has_permission
-
-        return has_permission(getattr(user, "permissions", []) or [], Permissions.SYSTEM_MANAGE)
+        return report.requested_by == str(user.id) or has_permission(user.permissions, Permissions.SYSTEM_MANAGE)
     try:
         await ScopeResolver(db, user).resolve(scope=report.scope, scope_id=report.scope_id)
-        return True
-    except Exception:
-        # Any resolution failure (permission or missing project) must hide the report.
+    except ScopeResolutionError:
         return False
+    return True
 
 
 @router.get("/reports")
@@ -161,7 +149,6 @@ async def get_report(
 @router.get(
     "/reports/{report_id}/download",
     responses={
-        403: {"description": "Forbidden"},
         404: {"description": "Report not found"},
         409: {"description": "Report not ready"},
         410: {"description": "Artifact expired or unavailable"},
@@ -173,19 +160,13 @@ async def download_report(
     db: DatabaseDep,
 ) -> StreamingResponse:
     r = await ComplianceReportRepository(db).get(report_id)
-    if r is None:
+    if r is None or not await _user_can_see_report(db, current_user, r):
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     status_val = _status_str(r.status)
     if status_val != "completed":
         raise HTTPException(status_code=409, detail=f"Report not ready (status: {status_val})")
     if r.artifact_gridfs_id is None:
         raise HTTPException(status_code=410, detail="Artifact expired or missing")
-    try:
-        await ScopeResolver(db, current_user).resolve(scope=r.scope, scope_id=r.scope_id)
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=403, detail=f"Scope resolution failed: {exc}") from exc
 
     bucket = AsyncIOMotorGridFSBucket(db)
     try:

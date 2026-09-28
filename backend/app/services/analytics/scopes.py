@@ -4,7 +4,6 @@ Translates a (scope, scope_id) pair into a ResolvedScope carrying the project_id
 authorised to query. Permission gating is enforced here so query functions stay scope-agnostic.
 """
 
-import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
@@ -16,8 +15,6 @@ from app.core.permissions import Permissions, has_permission
 from app.repositories.base import and_filters
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
-
-logger = logging.getLogger(__name__)
 
 _SCOPE_TOO_LARGE = (
     "This scope holds more than {limit} projects. Analytics is answered over a materialised "
@@ -136,12 +133,9 @@ class ScopeResolver:
 
         try:
             await check_project_access(project_id, self.user, self.db)
-            return True
         except HTTPException:
-            return False  # legitimate 403/404 access denial
-        except Exception:
-            logger.warning("check_project_access failed unexpectedly for project %s", project_id, exc_info=True)
             return False
+        return True
 
     async def list_user_projects(self) -> list["ProjectWithScanId"]:
         """Every project the user may see, under the same query the project routes are filtered by,

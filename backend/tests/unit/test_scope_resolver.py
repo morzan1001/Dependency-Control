@@ -1,7 +1,9 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pymongo.errors import ServerSelectionTimeoutError
 
+from app.repositories.projects import ProjectRepository
 from tests.helpers.analytics_scope import projections
 from app.services.analytics.scopes import (
     ScopeResolutionError,
@@ -83,3 +85,15 @@ async def test_unknown_scope_errors():
     resolver = ScopeResolver(MagicMock(), MagicMock(id="u", permissions=frozenset()))
     with pytest.raises(ScopeResolutionError):
         await resolver.resolve(scope="nonsense", scope_id=None)
+
+
+@pytest.mark.asyncio
+async def test_a_database_failure_in_the_project_gate_is_not_a_refusal(db):
+    down = ServerSelectionTimeoutError("no primary")
+    with (
+        patch.object(ProjectRepository, "get_by_id", AsyncMock(side_effect=down)),
+        pytest.raises(ServerSelectionTimeoutError),
+    ):
+        await ScopeResolver(db, MagicMock(id="u1", permissions=["project:read"])).resolve(
+            scope="project", scope_id="p1"
+        )
