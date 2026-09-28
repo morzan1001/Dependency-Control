@@ -216,8 +216,7 @@ class TestRateLimitRetry:
         monkeypatch.setattr("app.services.analyzers.osv.cache_service", _FakeCache())
         monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", _noop_sleep)
 
-        results: list[dict[str, Any]] = []
-        await self.analyzer._fetch_uncached([self.component], results)
+        results = (await self.analyzer.analyze({}, parsed_components=[self.component]))["osv_vulnerabilities"]
 
         assert counter[0] == 2
         assert len(results) == 1
@@ -233,8 +232,7 @@ class TestRateLimitRetry:
         monkeypatch.setattr("app.services.analyzers.osv.cache_service", _FakeCache())
         monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", _noop_sleep)
 
-        results: list[dict[str, Any]] = []
-        await self.analyzer._fetch_uncached([self.component], results)
+        results = (await self.analyzer.analyze({}, parsed_components=[self.component]))["osv_vulnerabilities"]
 
         assert counter[0] == 1 + self.analyzer.max_retries
         assert results == []
@@ -247,8 +245,7 @@ class TestRateLimitRetry:
         monkeypatch.setattr("app.services.analyzers.osv.cache_service", _FakeCache())
         monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", _noop_sleep)
 
-        results: list[dict[str, Any]] = []
-        await self.analyzer._fetch_uncached([self.component], results)
+        results = (await self.analyzer.analyze({}, parsed_components=[self.component]))["osv_vulnerabilities"]
 
         assert counter[0] == 1
         assert len(results) == 1
