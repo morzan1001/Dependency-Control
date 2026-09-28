@@ -294,7 +294,7 @@ In both cases, at the moment of the key change or the reset, snapshot the accoun
 
 ```js
 print(new Date().toISOString())
-db.users.aggregate([{ $project: { email: 1, pending_email: 1, auth_provider: 1 } }, { $out: "tmp_account_snapshot" }])
+db.users.aggregate([{ $project: { email: 1, pending_email: 1, auth_provider: 1, totp_enabled: 1 } }, { $out: "tmp_account_snapshot" }])
 ```
 
 ## After the rollout (mandatory): end every session and review the rollout window
@@ -335,25 +335,27 @@ db.users.aggregate([
 
 Ask each listed owner whether the key or change was theirs. For each account with one that was not, run the steps that apply in this order, with `<user_id>` as the account's `_id`:
 
-- Pending email: unset it, which voids its confirmation link.
+- Pending email: unset it, which voids its confirmation link, and end its sessions in the same update.
 
   ```js
-  db.users.updateOne({ _id: "<user_id>" }, { $unset: { pending_email: "" } })
+  db.users.updateOne({ _id: "<user_id>" }, { $set: { last_logout_at: new Date() }, $unset: { pending_email: "" } })
   ```
 
-- Changed email: set the snapshot's address back and unset the password and any pending email in one update, since the new address could have reset the password. Then, if the account is local, send the owner a password reset from the user's details in Users (Send Reset Email).
+- Changed email: set the snapshot's address back, unset the password and any pending email, and end its sessions in one update, since the new address could have reset the password. Then, if the snapshot's `auth_provider` is local, send the owner a password reset from the user's details in Users (Send Reset Email).
 
   ```js
-  db.users.updateOne({ _id: "<user_id>" }, { $set: { email: "<before.email>" }, $unset: { hashed_password: "", pending_email: "" } })
+  db.users.updateOne({ _id: "<user_id>" }, { $set: { email: "<before.email>", last_logout_at: new Date() }, $unset: { hashed_password: "", pending_email: "" } })
   ```
 
-- Auth provider changed to local: set it back to the snapshot value and unset the password, because password login accepts any account that has one.
+- Auth provider changed to local: set it back to the snapshot value, unset the password and end its sessions in one update, because password login accepts any account that has one.
 
   ```js
-  db.users.updateOne({ _id: "<user_id>" }, { $set: { auth_provider: "<before.auth_provider>" }, $unset: { hashed_password: "" } })
+  db.users.updateOne({ _id: "<user_id>" }, { $set: { auth_provider: "<before.auth_provider>", last_logout_at: new Date() }, $unset: { hashed_password: "" } })
   ```
 
-- Every such account: end its sessions, after the password is unset so no login slips in behind the bump. Each refresh mints a new refresh token, so a session opened during the window, or since with a password set in it, lives until `last_logout_at` moves.
+- Every repaired account: if `totp_enabled` differs from the snapshot, set it to false and unset `totp_secret`; disabling 2FA drops the secret, so the owner re-enrols if the snapshot had it on. Then run the account query again. It must list none of the repaired accounts.
+
+- Account with only unrecognised keys: end its sessions. Each refresh mints a new refresh token, so a session opened during the window, or since with a password set in it, lives until `last_logout_at` moves.
 
   ```js
   db.users.updateOne({ _id: "<user_id>" }, { $set: { last_logout_at: new Date() } })
