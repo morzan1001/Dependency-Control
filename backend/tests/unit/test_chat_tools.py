@@ -20,7 +20,7 @@ def test_tool_definitions_valid_json_schema():
 
 def test_admin_tools_require_admin_permission():
     registry = ChatToolRegistry()
-    admin_tools = {"get_system_settings", "get_system_health", "list_global_waivers"}
+    admin_tools = {"get_system_settings", "get_system_health"}
 
     available_for_user = registry.get_available_tool_names(PRESET_USER)
     for tool_name in admin_tools:

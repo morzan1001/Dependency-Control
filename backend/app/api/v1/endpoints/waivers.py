@@ -15,12 +15,9 @@ from app.api.v1.helpers import (
     parse_sort_direction,
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
-from app.core.constants import (
-    PROJECT_ROLE_ADMIN,
-    PROJECT_ROLE_EDITOR,
-    PROJECT_ROLE_VIEWER,
-)
+from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR
 from app.core.permissions import Permissions, has_permission
+from app.models.user import User
 from app.models.waiver import Waiver
 from app.repositories import ScanRepository, WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
@@ -100,6 +97,22 @@ _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 _MSG_WAIVER_NOT_FOUND = "Waiver not found"
 
 
+async def _authorize_waiver_read(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> None:
+    """waiver:read or read_all opens global waivers, read_all every project's, read the viewable projects'."""
+    if not has_permission(user.permissions, [Permissions.WAIVER_READ, Permissions.WAIVER_READ_ALL]):
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
+    if project_id and not has_permission(user.permissions, Permissions.WAIVER_READ_ALL):
+        await check_project_access(project_id, user, db)
+
+
+async def _authorize_waiver_write(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> None:
+    """A project waiver is written by a project editor, a global one by a waiver:manage holder."""
+    if project_id:
+        await check_project_access(project_id, user, db, required_role=PROJECT_ROLE_EDITOR)
+    elif not has_permission(user.permissions, Permissions.WAIVER_MANAGE):
+        raise HTTPException(status_code=403, detail="Only admins can manage global waivers")
+
+
 @router.post("/", response_model=WaiverResponse, status_code=201, responses=RESP_AUTH)
 async def create_waiver(
     waiver_in: WaiverCreate,
@@ -108,11 +121,7 @@ async def create_waiver(
     current_user: CurrentUserDep,
 ) -> Waiver:
     """Create a new waiver/exception for a vulnerability."""
-    if waiver_in.project_id:
-        await check_project_access(waiver_in.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
-    else:
-        if not has_permission(current_user.permissions, Permissions.WAIVER_MANAGE):
-            raise HTTPException(status_code=403, detail="Only admins can create global waivers")
+    await _authorize_waiver_write(waiver_in.project_id, current_user, db)
 
     # Reject zombie and over-broad waivers early, before consuming a write and recalculating stats.
     _reject_unscoped_broad_waiver(waiver_in)
@@ -165,20 +174,12 @@ async def list_waivers(
     """List waivers with pagination."""
     query: dict[str, Any] = {}
 
-    has_read_all = has_permission(current_user.permissions, Permissions.WAIVER_READ_ALL)
-    has_read_own = has_permission(current_user.permissions, Permissions.WAIVER_READ)
+    scoped_project = None if global_only else project_id
+    await _authorize_waiver_read(scoped_project, current_user, db)
 
-    if not (has_read_all or has_read_own):
-        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
-
-    if global_only:
-        if not (has_read_all or has_permission(current_user.permissions, Permissions.WAIVER_MANAGE)):
-            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
-        query["project_id"] = None
-    elif project_id:
-        await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
-        query["project_id"] = project_id
-    elif not has_read_all:
+    if global_only or project_id:
+        query["project_id"] = scoped_project
+    elif not has_permission(current_user.permissions, Permissions.WAIVER_READ_ALL):
         accessible_project_ids = await get_user_project_ids(current_user, db)
 
         query["$or"] = [
@@ -236,23 +237,14 @@ async def get_waiver(
     current_user: CurrentUserDep,
 ) -> Waiver:
     """Retrieve a single waiver by ID."""
-    has_read_all = has_permission(current_user.permissions, Permissions.WAIVER_READ_ALL)
-    has_read_own = has_permission(current_user.permissions, Permissions.WAIVER_READ)
+    # Refused before the read, so a caller with no waiver permission cannot probe which ids exist.
+    await _authorize_waiver_read(None, current_user, db)
 
-    if not (has_read_all or has_read_own):
-        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
-
-    waiver_repo = WaiverRepository(db)
-    waiver = await waiver_repo.get_by_id(waiver_id)
+    waiver = await WaiverRepository(db).get_by_id(waiver_id)
     if not waiver:
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
 
-    if waiver.project_id:
-        await check_project_access(waiver.project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
-    else:
-        if not (has_read_all or has_permission(current_user.permissions, Permissions.WAIVER_MANAGE)):
-            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
-
+    await _authorize_waiver_read(waiver.project_id, current_user, db)
     return waiver
 
 
@@ -270,11 +262,7 @@ async def update_waiver(
     if not waiver:
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
 
-    if waiver.project_id:
-        await check_project_access(waiver.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
-    else:
-        if not has_permission(current_user.permissions, Permissions.WAIVER_MANAGE):
-            raise HTTPException(status_code=403, detail="Only admins can update global waivers")
+    await _authorize_waiver_write(waiver.project_id, current_user, db)
 
     update_data = waiver_in.model_dump(exclude_unset=True)
     if not update_data:

@@ -53,6 +53,10 @@ describe('hasProjectRole — project:read_all is READ-ONLY (audit #1)', () => {
     expect(canUpdateProject(project, AUDITOR, readAll)).toBe(false)
     expect(canCreateProjectWaiver(project, AUDITOR, readAll)).toBe(false)
   })
+
+  it('waiver:manage governs global waivers only; a project waiver needs an editor role', () => {
+    expect(canCreateProjectWaiver(project, AUDITOR, ['waiver:manage'])).toBe(false)
+  })
 })
 
 describe('hasProjectRole — WRITE superuser (project:update / project:delete)', () => {

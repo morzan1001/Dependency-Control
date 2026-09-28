@@ -1074,6 +1074,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 
 _TEAM_READ = [Permissions.TEAM_READ, Permissions.TEAM_READ_ALL]
+_WAIVER_READ = [Permissions.WAIVER_READ, Permissions.WAIVER_READ_ALL]
 
 TOOL_PERMISSIONS: dict[str, list[str]] = {
     # Any-of, checked before the handler runs; the handler still applies the per-resource rule.
@@ -1081,7 +1082,10 @@ TOOL_PERMISSIONS: dict[str, list[str]] = {
     "get_team_details": _TEAM_READ,
     "get_team_projects": _TEAM_READ,
     "get_team_risk_overview": _TEAM_READ,
-    "list_global_waivers": [Permissions.WAIVER_READ_ALL],
+    "list_project_waivers": _WAIVER_READ,
+    "list_global_waivers": _WAIVER_READ,
+    "get_waiver_status": _WAIVER_READ,
+    "get_expiring_waivers": _WAIVER_READ,
     "get_system_settings": [Permissions.SYSTEM_MANAGE],
     "get_system_health": [Permissions.SYSTEM_MANAGE],
     "list_archives": [Permissions.ARCHIVE_READ],

@@ -148,14 +148,13 @@ export function canDeleteProjectWebhook(
   return canWriteProjectWebhook(project, userId, globalPermissions, 'webhook:delete');
 }
 
-/** Create waiver (project-scoped): project editor or higher OR global waiver:manage */
+/** Create waiver (project-scoped): project editor or higher; waiver:manage covers global waivers only */
 export function canCreateProjectWaiver(
   project: Project,
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isProjectEditor(project, userId, globalPermissions)
-    || globalPermissions.includes('waiver:manage');
+  return isProjectEditor(project, userId, globalPermissions);
 }
 
 /** Delete waiver (project-scoped): project admin OR global waiver:delete */
