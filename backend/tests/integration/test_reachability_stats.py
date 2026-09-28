@@ -10,6 +10,7 @@ import pytest
 
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.reachability_enrichment import (
+    build_component_language_map,
     enrich_findings_with_reachability,
     fetch_callgraphs,
     run_pending_reachability_for_scan,
@@ -79,8 +80,10 @@ async def test_inline_enrichment_reaches_the_stats_pipeline(db):
     await _seed_dependencies(db)
     findings = [_finding("CVE-1", "requests"), _finding("CVE-2", "urllib3")]
 
-    enriched = await enrich_findings_with_reachability(
-        findings, await fetch_callgraphs(_PROJECT_ID, _SCAN_ID, db), db, _SCAN_ID
+    enriched = enrich_findings_with_reachability(
+        findings,
+        await fetch_callgraphs(_PROJECT_ID, _SCAN_ID, db),
+        await build_component_language_map(db, _SCAN_ID),
     )
     assert enriched == 2
 
@@ -129,6 +132,36 @@ async def test_deferred_run_recomputes_and_persists_scan_stats(db):
     info = (await db.analysis_results.find_one({"scan_id": _SCAN_ID}))["result"]["callgraph_info"][0]
     assert info["coverage_modules"] == 2
     assert info["generated_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_deferred_run_reads_the_dependency_inventory_once(db, monkeypatch):
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    await db.findings.insert_one(_finding("CVE-1", "requests"))
+    await db.scans.insert_one(
+        {
+            "_id": _SCAN_ID,
+            "project_id": _PROJECT_ID,
+            "branch": "main",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+            "reachability_pending": True,
+        }
+    )
+    reads: list[dict] = []
+    real_find = db.dependencies.find
+
+    def _counting_find(query, *args, **kwargs):
+        reads.append(query)
+        return real_find(query, *args, **kwargs)
+
+    monkeypatch.setattr(db.dependencies, "find", _counting_find)
+
+    result = await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+
+    assert result["findings_enriched"] == 1
+    assert reads == [{"scan_id": _SCAN_ID}]
 
 
 @pytest.mark.asyncio

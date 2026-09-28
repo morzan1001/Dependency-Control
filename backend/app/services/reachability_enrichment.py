@@ -454,26 +454,21 @@ def enrich_findings_from_callgraphs(
     return enriched_count
 
 
-async def enrich_findings_with_reachability(
+def enrich_findings_with_reachability(
     findings: list[dict[str, Any]],
     callgraphs: list[Any],
-    db: AsyncIOMotorDatabase,
-    scan_id: str,
+    component_languages: ComponentLanguages,
 ) -> int:
     """Enrich vulnerability findings (modified in-place) with reachability; return count enriched.
 
-    Uses the per-language callgraph where each finding's package is imported; the ecosystem gate
-    reads the inventory of ``scan_id`` itself, which a rescan keeps under its own id.
+    Uses the per-language callgraph where each finding's package is imported; ``component_languages``
+    comes from the inventory of the scan itself, which a rescan keeps under its own id.
     """
     if not findings or not callgraphs:
         return 0
 
     prepared_graphs = [_prepare_callgraph(cg) for cg in callgraphs]
-    logger.debug(f"Found {len(callgraphs)} callgraph(s) for scan {scan_id}: {[p.language for p in prepared_graphs]}")
-
-    # Per-finding ecosystem gates the unreachable down-weight to the analyzed languages.
-    component_languages = await build_component_language_map(db, scan_id)
-
+    logger.debug(f"Found {len(callgraphs)} callgraph(s): {[p.language for p in prepared_graphs]}")
     return enrich_findings_from_callgraphs(findings, prepared_graphs, component_languages)
 
 
@@ -713,7 +708,8 @@ async def run_pending_reachability_for_scan(
         findings_dicts = [f.model_dump(by_alias=True) for f in findings]
 
         callgraphs = await fetch_callgraphs(project_id, scan_id, db)
-        enriched_count = await enrich_findings_with_reachability(findings_dicts, callgraphs, db, scan_id)
+        component_languages = await build_component_language_map(db, scan_id)
+        enriched_count = enrich_findings_with_reachability(findings_dicts, callgraphs, component_languages)
 
         # Chunked unordered bulk_write instead of one update per finding, so a 10k-finding
         # scan doesn't fire 10k serial Mongo calls inline in the callgraph-upload request.
@@ -751,7 +747,7 @@ async def run_pending_reachability_for_scan(
             await persist_reachability_result(result_repo, scan_id, reachability_summary)
 
         # The scan's stats were frozen at completion, before any reachability verdict existed.
-        stats = await calculate_comprehensive_stats(db, scan_id)
+        stats = await calculate_comprehensive_stats(db, scan_id, component_languages)
         await scan_repo.update_raw(
             scan_id,
             {

@@ -76,6 +76,8 @@ from app.services.enrichment import enrich_vulnerability_findings
 from app.services.github import is_public_github
 from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs, gridfs_ref_id, load_gridfs_json
 from app.services.reachability_enrichment import (
+    ComponentLanguages,
+    build_component_language_map,
     enrich_findings_with_reachability,
     fetch_callgraphs,
     persist_reachability_result,
@@ -653,8 +655,8 @@ async def _run_reachability_enrichment(
     result_repo: AnalysisResultRepository,
     scan_repo: ScanRepository,
     results_summary: list[str],
-) -> None:
-    """Run reachability analysis on vulnerability findings."""
+) -> ComponentLanguages | None:
+    """Run reachability analysis on vulnerability findings; returns the inventory language map it built."""
     callgraphs = await fetch_callgraphs(project_id, scan_id, db)
 
     if not callgraphs:
@@ -663,10 +665,12 @@ async def _run_reachability_enrichment(
             {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
         )
         logger.info(f"[reachability] No callgraph available for scan {scan_id}. Marked as pending.")
-        return
+        return None
 
+    component_languages = None
     try:
-        enriched_count = await enrich_findings_with_reachability(vulnerability_findings, callgraphs, db, scan_id)
+        component_languages = await build_component_language_map(db, scan_id)
+        enriched_count = enrich_findings_with_reachability(vulnerability_findings, callgraphs, component_languages)
         reachability_summary = build_reachability_summary(
             vulnerability_findings,
             [cg.model_dump(by_alias=True) for cg in callgraphs],
@@ -688,6 +692,7 @@ async def _run_reachability_enrichment(
     except Exception as e:
         results_summary.append("reachability: Failed")
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
+    return component_languages
 
 
 def _track_waiver_metrics(active_waivers: list[Waiver]) -> None:
@@ -873,14 +878,16 @@ async def _run_vuln_enrichments(
     scan_repo: ScanRepository,
     github_token: str | None,
     results_summary: list[str],
-) -> None:
+) -> ComponentLanguages | None:
+    """Run the vulnerability enrichments; returns the inventory language map reachability built."""
     if "epss_kev" in active_analyzers and vulnerability_findings:
         await _run_epss_kev_enrichment(vulnerability_findings, scan_id, result_repo, github_token, results_summary)
 
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
-        await _run_reachability_enrichment(
+        return await _run_reachability_enrichment(
             vulnerability_findings, scan_id, project_id, db, result_repo, scan_repo, results_summary
         )
+    return None
 
 
 async def _stamp_first_seen(
@@ -1317,7 +1324,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     if not github_token:
         github_token = await _get_github_instance_token(db)
 
-    await _run_vuln_enrichments(
+    component_languages = await _run_vuln_enrichments(
         active_analyzers,
         vulnerability_findings,
         scan_id,
@@ -1334,7 +1341,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     )
     _track_waiver_metrics(active_waivers)
 
-    stats = await calculate_comprehensive_stats(db, scan_id)
+    stats = await calculate_comprehensive_stats(db, scan_id, component_languages)
 
     sbom_load_failed = gridfs_expected > 0 and sbom_load_failures >= gridfs_expected
     if sbom_load_failed:

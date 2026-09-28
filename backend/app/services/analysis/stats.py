@@ -594,9 +594,16 @@ assert _stats_projection().keys() >= StatsAccumulator.REQUIRED_PATHS, "stats pro
 _STATS_CURSOR_HINT = [("scan_id", ASCENDING), ("type", ASCENDING)]
 
 
-async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
-    """Comprehensive statistics for a scan, folded from a single projected cursor."""
-    acc = StatsAccumulator(await build_component_language_map(db, scan_id))
+async def calculate_comprehensive_stats(
+    db: Database, scan_id: str, component_languages: ComponentLanguages | None = None
+) -> Stats:
+    """Comprehensive statistics for a scan, folded from a single projected cursor.
+
+    Pass ``component_languages`` when the run already built it from this scan's inventory.
+    """
+    if component_languages is None:
+        component_languages = await build_component_language_map(db, scan_id)
+    acc = StatsAccumulator(component_languages)
     # PRIMARY: with secondaryPreferred the read can miss findings written milliseconds earlier.
     findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
     cursor = findings_primary.find({"scan_id": scan_id}, _stats_projection(), hint=_STATS_CURSOR_HINT)
