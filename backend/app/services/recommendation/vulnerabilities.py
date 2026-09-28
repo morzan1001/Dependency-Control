@@ -7,6 +7,7 @@ from app.core.constants import (
     EPSS_HIGH_THRESHOLD,
     OS_PACKAGE_TYPES,
 )
+from app.core.epss import bucket_epss
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -248,9 +249,10 @@ def _aggregate_vuln_stats(component_vulns: list[VulnerabilityInfo]) -> dict[str,
 
         if v.epss_score is not None:
             stats["epss_scores"].append(v.epss_score)
-            if v.epss_score >= 0.1:
+            bucket = bucket_epss(v.epss_score)
+            if bucket == "high":
                 stats["high_epss_count"] += 1
-            elif v.epss_score >= 0.01:
+            elif bucket == "medium":
                 stats["medium_epss_count"] += 1
 
         if v.is_reachable is True:

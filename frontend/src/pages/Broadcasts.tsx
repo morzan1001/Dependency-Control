@@ -512,7 +512,7 @@ export default function Broadcasts() {
                          </TableCell>
                          <TableCell>
                             <div className="flex flex-col text-xs gap-1">
-                               <Badge variant="outline" className="w-fit">{item.unique_user_count ?? item.recipient_count} Users</Badge>
+                               <Badge variant="outline" className="w-fit">{item.recipient_count} Users</Badge>
                                {item.project_count > 0 && <span className="text-muted-foreground">{item.project_count} Projects</span>}
                             </div>
                          </TableCell>

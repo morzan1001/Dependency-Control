@@ -664,3 +664,14 @@ class TestAnalyzerNamesAreCheckedWhereTheyEnter:
             "os_malware", "typosquatting", "hash_verification", "maintainer_risk", "outdated_packages",
             "opengrep", "kics", "bearer", "trufflehog",
         } == SELECTABLE_ANALYZERS  # fmt: skip
+
+
+def test_the_scan_findings_table_ranks_severity_like_every_other_surface():
+    """A hand-written copy ranked INFO above NEGLIGIBLE, the reverse of SEVERITY_ORDER."""
+    from app.api.v1.endpoints.projects import _scan_findings_add_fields_stage
+    from app.core.constants import SEVERITY_ORDER
+
+    switch = _scan_findings_add_fields_stage()["$addFields"]["severity_rank"]["$switch"]
+    ranks = {branch["case"]["$eq"][1]: branch["then"] for branch in switch["branches"]}
+
+    assert {severity: ranks.get(severity, switch["default"]) for severity in SEVERITY_ORDER} == SEVERITY_ORDER

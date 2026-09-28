@@ -3,7 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 from bson import ObjectId
 from fastapi import BackgroundTasks, HTTPException, Query
@@ -16,6 +16,7 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import get_user_project_ids
 from app.core.constants import (
+    ScopeName,
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CONCURRENT_COMPLIANCE_REPORTS,
     WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
@@ -31,12 +32,11 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter(prefix="/compliance", tags=["compliance-reports"])
 
-_SCOPE_PATTERN = "^(project|team|global|user)$"
 _REPORT_NOT_FOUND = "Report not found"
 
 
 class ReportRequest(BaseModel):
-    scope: Literal["project", "team", "global", "user"] = Field(..., pattern=_SCOPE_PATTERN)
+    scope: ScopeName
     scope_id: str | None = None
     framework: ReportFramework
     format: ReportFormat
@@ -153,7 +153,7 @@ async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict
 async def list_reports(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    scope: str | None = Query(None, pattern=_SCOPE_PATTERN),
+    scope: ScopeName | None = Query(None),
     scope_id: str | None = None,
     framework: ReportFramework | None = None,
     status: ReportStatus | None = None,

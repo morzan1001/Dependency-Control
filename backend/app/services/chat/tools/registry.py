@@ -21,7 +21,10 @@ from app.core.constants import (
     MAX_CRYPTO_HOTSPOT_PAGE,
     MAX_POLICY_AUDIT_PAGE,
     MAX_PQC_PLAN_ITEMS,
+    SEVERITY_ORDER,
+    get_severity_value,
 )
+from app.core.epss import bucket_epss
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.finding import FindingType, Severity
@@ -43,7 +46,6 @@ from app.services.reachability_enrichment import reachability_display_tier
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
-    _SEVERITY_RANK,
     KEV_EQUIVALENT_MATURITY,
     MAX_DAY_WINDOW,
     MAX_FINDING_ROWS,
@@ -202,7 +204,7 @@ def _rank_findings(findings: list[dict[str, Any]]) -> None:
     """Sort findings in place by severity rank desc, then details.epss_score and details.cvss_score desc."""
     findings.sort(
         key=lambda f: (
-            _SEVERITY_RANK.get((f.get("severity") or "").upper(), 0),
+            get_severity_value(f.get("severity")),
             _finding_detail_number(f, "epss_score"),
             _finding_detail_number(f, "cvss_score"),
         ),
@@ -898,13 +900,8 @@ class ChatToolRegistry:
                     }
                     for v in entries
                 )
-            max_sev = max(
-                (_SEVERITY_RANK.get(f.get("severity") or "", 0) for f in g["findings"]),
-                default=0,
-            )
-            max_sev_label = next(
-                (k for k, v in _SEVERITY_RANK.items() if v == max_sev),
-                "UNKNOWN",
+            max_sev_label = (
+                max((f.get("severity") for f in g["findings"]), key=get_severity_value, default=None) or "UNKNOWN"
             )
             critical_count = sum(1 for r in resolved if r["severity"] == "CRITICAL")
 
@@ -1026,7 +1023,8 @@ class ChatToolRegistry:
             }
         if fix:
             reasons.append(f"a fix is available (upgrade to {fix})")
-        if isinstance(epss, (int, float)) and epss < 0.01:
+        low_epss = isinstance(epss, (int, float)) and bucket_epss(epss) == "low"
+        if low_epss:
             reasons.append(f"real-world exploit likelihood is low (EPSS={epss:.4f})")
         if sev in ("LOW", "NEGLIGIBLE", "INFO"):
             reasons.append(f"severity is {sev}")
@@ -1035,7 +1033,7 @@ class ChatToolRegistry:
             if reasons
             else "Accepted risk: insert justification here. No strong automatic signal found."
         )
-        expiry_days = 180 if (fix or (isinstance(epss, (int, float)) and epss < 0.01)) else 90
+        expiry_days = 180 if (fix or low_epss) else 90
         return {
             "suggested_reason": suggested_reason,
             "suggested_expiry_days": expiry_days,
@@ -1238,7 +1236,7 @@ class ChatToolRegistry:
         allowed_sev = [
             s
             for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
-            if _SEVERITY_RANK.get(s, 0) >= _SEVERITY_RANK.get(sev_min, 3)
+            if get_severity_value(s) >= SEVERITY_ORDER.get(sev_min, SEVERITY_ORDER["HIGH"])
         ]
         latest = await self._latest_scan_ids_for_user(ctx.user_project_query, ctx.args.get("project_id"), ctx.db)
         if not latest:

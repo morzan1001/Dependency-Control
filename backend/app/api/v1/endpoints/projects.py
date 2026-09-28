@@ -49,6 +49,7 @@ from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_VIEWER,
     SCAN_USABLE_STATUSES,
+    SEVERITY_ORDER,
     TEAM_ROLE_ADMIN,
     TEAM_SOURCE_MANUAL,
 )
@@ -1366,11 +1367,9 @@ def _scan_findings_add_fields_stage() -> dict[str, Any]:
             "severity_rank": {
                 "$switch": {
                     "branches": [
-                        {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 5},
-                        {"case": {"$eq": ["$severity", "HIGH"]}, "then": 4},
-                        {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 3},
-                        {"case": {"$eq": ["$severity", "LOW"]}, "then": 2},
-                        {"case": {"$eq": ["$severity", "INFO"]}, "then": 1},
+                        {"case": {"$eq": ["$severity", severity]}, "then": rank}
+                        for severity, rank in SEVERITY_ORDER.items()
+                        if rank
                     ],
                     "default": 0,
                 }

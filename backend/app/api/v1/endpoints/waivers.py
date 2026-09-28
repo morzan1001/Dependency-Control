@@ -20,6 +20,8 @@ from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
     PROJECT_ROLE_VIEWER,
+    WAIVER_SCOPE_FINDING,
+    WAIVER_SCOPE_RULE,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.waiver import Waiver
@@ -70,7 +72,7 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
     """Reject finding-scope project waivers matching no finding on the head build; return the matched finding doc, or None when validation is skipped."""
     if not waiver_in.project_id:
         return None
-    if waiver_in.scope != "finding":
+    if waiver_in.scope != WAIVER_SCOPE_FINDING:
         return None
     if waiver_in.vulnerability_id:
         return None
@@ -120,7 +122,12 @@ async def create_waiver(
     _reject_unscoped_broad_waiver(waiver_in)
     matched_finding = await _ensure_waiver_matches_finding(waiver_in, db)
 
-    if waiver_in.scope == "rule" and not waiver_in.rule_id and waiver_in.finding_id and waiver_in.package_name:
+    if (
+        waiver_in.scope == WAIVER_SCOPE_RULE
+        and not waiver_in.rule_id
+        and waiver_in.finding_id
+        and waiver_in.package_name
+    ):
         from app.services.stats import _extract_rule_prefix
 
         rule_prefix = _extract_rule_prefix(waiver_in.finding_id, waiver_in.package_name)

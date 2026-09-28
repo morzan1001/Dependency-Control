@@ -29,6 +29,8 @@ from app.core.constants import (
     OSV_VULN_API_URL,
     PYPI_API_URL,
     TOP_PYPI_PACKAGES_URL,
+    WAIVER_SCOPE_FINDING,
+    WAIVER_SCOPE_RULE,
     get_severity_value,
 )
 from app.models.crypto_asset import CryptoAsset
@@ -222,9 +224,6 @@ _POSTED_CALLGRAPH_ID = "posted"
 
 _WAIVERS_GLOBAL = "global"
 _WAIVERS_NONE = "none"
-_SCOPE_FINDING = "finding"
-# A rule-scope waiver spans every file, so the component it was taken from is not a criterion.
-_SCOPE_RULE = "rule"
 # The waiver UI stores this in place of a field the user left unset.
 _UNCONSTRAINED_WAIVER_VALUE = "Unknown"
 
@@ -790,10 +789,11 @@ def _scoped_finding_id(finding_id: str, scope: str, package_name: str) -> str | 
 
 def _waiver_criteria(waiver: Waiver, fields: tuple[tuple[str, str], ...]) -> dict[str, Any]:
     """The record fields a waiver actually constrains, keyed as they appear on a record."""
-    scope = waiver.scope or _SCOPE_FINDING
+    scope = waiver.scope or WAIVER_SCOPE_FINDING
     criteria: dict[str, Any] = {}
     for waiver_field, record_field in fields:
-        if waiver_field == _WAIVER_PACKAGE_NAME and scope == _SCOPE_RULE:
+        # A rule-scope waiver spans every file, so the component it was taken from is not a criterion.
+        if waiver_field == _WAIVER_PACKAGE_NAME and scope == WAIVER_SCOPE_RULE:
             continue
         value = getattr(waiver, waiver_field, None)
         if not value or value == _UNCONSTRAINED_WAIVER_VALUE:
@@ -887,7 +887,7 @@ def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[
     for waiver in waivers:
         # A widened scope keeps its query semantics: re-anchoring one signature would narrow it
         # back to the single location the waiver was taken from.
-        if waiver.match is not None and (waiver.scope or _SCOPE_FINDING) == _SCOPE_FINDING:
+        if waiver.match is not None and (waiver.scope or WAIVER_SCOPE_FINDING) == WAIVER_SCOPE_FINDING:
             signature_waivers.append(waiver)
         elif waiver.vulnerability_id:
             _apply_vulnerability_waiver(records, waiver)

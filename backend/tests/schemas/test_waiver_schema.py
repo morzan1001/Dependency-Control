@@ -25,7 +25,7 @@ def test_finding_type_optional_defaults_to_none():
 
 def test_unknown_status_rejected_at_schema_level():
     # An unlisted status survives to matching.py and is silently treated as accepted_risk.
-    with pytest.raises(ValidationError, match="Invalid status"):
+    with pytest.raises(ValidationError):
         WaiverCreate(reason="ok", status="wont_fix")
 
 
@@ -40,3 +40,25 @@ def test_model_dump_keeps_finding_type_value():
     waiver_in = WaiverCreate(reason="ok", finding_type="license")
     waiver = Waiver(**waiver_in.model_dump(), created_by="tester")
     assert waiver.finding_type == FindingType.LICENSE
+
+
+def test_an_update_refuses_a_status_outside_the_vocabulary_and_nulls_the_stored_waiver_requires():
+    from app.schemas.waiver import WaiverUpdate
+
+    for rejected in ({"status": "wont_fix"}, {"status": None}, {"reason": None}):
+        with pytest.raises(ValidationError):
+            WaiverUpdate(**rejected)
+
+
+def test_an_update_can_still_clear_the_expiry():
+    from app.schemas.waiver import WaiverUpdate
+
+    assert WaiverUpdate(expiration_date=None).model_dump(exclude_unset=True) == {"expiration_date": None}
+
+
+def test_the_status_list_is_derived_from_the_status_type():
+    from typing import get_args
+
+    from app.core.constants import WaiverStatus
+
+    assert list(get_args(WaiverStatus)) == WAIVER_STATUSES

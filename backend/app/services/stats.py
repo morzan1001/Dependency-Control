@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import WAIVER_SCOPE_FILE, WAIVER_SCOPE_FINDING, WAIVER_SCOPE_RULE
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.services.analysis.stats import calculate_comprehensive_stats
@@ -62,11 +63,11 @@ def _resolve_finding_id_query(
     component: str,
 ) -> str | dict[str, str]:
     """Resolve the MongoDB query value for ``finding_id`` based on waiver scope."""
-    if scope == "file":
+    if scope == WAIVER_SCOPE_FILE:
         prefix = _strip_line_number(finding_id)
         if prefix:
             return {"$regex": f"^{re.escape(prefix)}-\\d+$"}
-    elif scope == "rule":
+    elif scope == WAIVER_SCOPE_RULE:
         rule_prefix = _extract_rule_prefix(finding_id, component)
         if rule_prefix:
             return {"$regex": f"^{re.escape(rule_prefix)}-"}
@@ -75,7 +76,7 @@ def _resolve_finding_id_query(
 
 def _build_waiver_query(waiver: Waiver) -> dict[str, str | dict[str, str]]:
     """Build a finding query dict from a waiver's matching fields."""
-    scope = waiver.scope or "finding"
+    scope = waiver.scope or WAIVER_SCOPE_FINDING
     query: dict[str, str | dict[str, str]] = {}
 
     waiver_values = {
@@ -91,10 +92,10 @@ def _build_waiver_query(waiver: Waiver) -> dict[str, str | dict[str, str]]:
             continue
 
         # Rule-scope waivers must NOT filter by component (match all files)
-        if waiver_field == "package_name" and scope == "rule":
+        if waiver_field == "package_name" and scope == WAIVER_SCOPE_RULE:
             continue
 
-        if waiver_field == "finding_id" and scope in ("file", "rule"):
+        if waiver_field == "finding_id" and scope in (WAIVER_SCOPE_FILE, WAIVER_SCOPE_RULE):
             query[query_field] = _resolve_finding_id_query(
                 value,
                 scope,
@@ -176,7 +177,7 @@ def _is_signature_waiver(waiver: Any) -> bool:
     silently dropped."""
     from app.repositories.findings import FindingRepository
 
-    if getattr(waiver, "scope", "finding") != "finding":
+    if getattr(waiver, "scope", WAIVER_SCOPE_FINDING) != WAIVER_SCOPE_FINDING:
         return False
     if getattr(waiver, "match", None) is not None:
         return True

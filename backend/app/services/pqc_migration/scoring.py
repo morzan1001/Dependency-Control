@@ -4,6 +4,7 @@ import math
 from datetime import datetime
 from typing import Any
 
+from app.schemas.pqc_migration import MigrationItemStatus
 from app.services.pqc_migration.mappings_loader import Timeline
 
 EXPOSURE_WEIGHT = 0.35
@@ -29,12 +30,13 @@ _MIN_KEY_SIZE = {
     "ECDH": 256,
 }
 
-_MIGRATION_BUCKETS = {
-    "migrate_now": 80,
-    "migrate_soon": 50,
-    "plan_migration": 25,
-    "monitor": 0,
-}
+# Lowest score of each status, highest first; priority_score clamps to 0..100, so one always matches.
+_MIGRATION_BUCKETS: tuple[tuple[int, MigrationItemStatus], ...] = (
+    (80, MigrationItemStatus.MIGRATE_NOW),
+    (50, MigrationItemStatus.MIGRATE_SOON),
+    (25, MigrationItemStatus.PLAN_MIGRATION),
+    (0, MigrationItemStatus.MONITOR),
+)
 
 
 def priority_score(
@@ -56,15 +58,8 @@ def priority_score(
     return max(0, min(100, round(raw)))
 
 
-def status_from_score(score: int) -> str:
-    """Bucket a score 0..100 into a MigrationItemStatus value."""
-    if score >= _MIGRATION_BUCKETS["migrate_now"]:
-        return "migrate_now"
-    if score >= _MIGRATION_BUCKETS["migrate_soon"]:
-        return "migrate_soon"
-    if score >= _MIGRATION_BUCKETS["plan_migration"]:
-        return "plan_migration"
-    return "monitor"
+def status_from_score(score: int) -> MigrationItemStatus:
+    return next(status for threshold, status in _MIGRATION_BUCKETS if score >= threshold)
 
 
 def _score_exposure(asset: Any) -> float:

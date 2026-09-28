@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Literal
 
 from fastapi import BackgroundTasks, Depends, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -10,7 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import get_current_active_user, get_database
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_403
-from app.core.constants import MAX_PQC_PLAN_ITEMS, WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED
+from app.core.constants import MAX_PQC_PLAN_ITEMS, WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED, ScopeName
 from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
 from app.services.analytics.cache import get_analytics_cache
@@ -26,7 +25,7 @@ router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 @router.get("/pqc-migration", responses=RESP_403)
 async def get_pqc_migration_plan(
     background_tasks: BackgroundTasks,
-    scope: Literal["project", "team", "global", "user"] = Query(..., pattern="^(project|team|global|user)$"),
+    scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
     limit: int = Query(500, ge=1, le=MAX_PQC_PLAN_ITEMS),
     current_user: User = Depends(get_current_active_user),

@@ -11,7 +11,6 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoPrimitive
 from app.schemas.pqc_migration import (
     MigrationItem,
-    MigrationItemStatus,
     MigrationPlanResponse,
     MigrationPlanSummary,
 )
@@ -110,7 +109,7 @@ class PQCMigrationPlanGenerator:
             recommended_standard=mapping.standard,
             notes=mapping.notes,
             priority_score=score,
-            status=MigrationItemStatus(status_from_score(score)),
+            status=status_from_score(score),
             recommended_deadline=deadline.isoformat() if deadline else None,
         )
 
@@ -118,8 +117,7 @@ class PQCMigrationPlanGenerator:
     def _summarise(items: list[MigrationItem], *, items_returned: int) -> MigrationPlanSummary:
         status_counts: dict[str, int] = {}
         for item in items:
-            key = item.status if isinstance(item.status, str) else item.status.value
-            status_counts[key] = status_counts.get(key, 0) + 1
+            status_counts[item.status] = status_counts.get(item.status, 0) + 1
         deadlines = [i.recommended_deadline for i in items if i.recommended_deadline]
         earliest = min(deadlines) if deadlines else None
         return MigrationPlanSummary(

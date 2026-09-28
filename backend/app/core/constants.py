@@ -168,10 +168,11 @@ UNKNOWN_LICENSE_PATTERNS = {
 }
 
 # Project Roles
-PROJECT_ROLE_ADMIN = "admin"
-PROJECT_ROLE_EDITOR = "editor"
-PROJECT_ROLE_VIEWER = "viewer"
-PROJECT_ROLES = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN]
+ProjectRole = Literal["viewer", "editor", "admin"]
+PROJECT_ROLE_ADMIN: ProjectRole = "admin"
+PROJECT_ROLE_EDITOR: ProjectRole = "editor"
+PROJECT_ROLE_VIEWER: ProjectRole = "viewer"
+PROJECT_ROLES: list[str] = list(get_args(ProjectRole))
 
 # Owning teams per project. Every project access resolves each owner's document to derive the
 # caller's role, so the list is a per-request cost, and a sync resolving past this many teams has
@@ -458,19 +459,21 @@ ANALYZER_TIMEOUTS: dict[str, float] = {
 GHSA_CONCURRENT_REQUESTS_AUTHENTICATED: int = 10
 GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED: int = 2
 
+# "low"/"medium"/"high" are the EPSS buckets; "active" is KEV, "weaponized" KEV with ransomware use.
+ExploitMaturity = Literal["unknown", "low", "medium", "high", "active", "weaponized"]
+
 # Exploit maturity levels for risk prioritization (higher = more severe)
-EXPLOIT_MATURITY_ORDER: dict[str, int] = {
+EXPLOIT_MATURITY_ORDER: dict[ExploitMaturity, int] = {
     "unknown": 0,
     "low": 1,
     "medium": 2,
     "high": 3,
-    "poc": 4,  # Proof of concept
-    "active": 5,
-    "weaponized": 6,
+    "active": 4,
+    "weaponized": 5,
 }
 
 # Exploit maturity boost factors for impact score calculation
-EXPLOIT_MATURITY_BOOST: dict[str, float] = {
+EXPLOIT_MATURITY_BOOST: dict[ExploitMaturity, float] = {
     "weaponized": 1.4,
     "active": 1.3,
     "high": 1.2,
@@ -1023,14 +1026,16 @@ AGG_KEY_SAST = "SAST-AGG"
 # produce a related-findings list no reader can use. Above this the group is left unlinked.
 MAX_CROSS_LINK_GROUP_SIZE: int = 100
 
-# Waiver status values
-WAIVER_STATUS_ACCEPTED_RISK = "accepted_risk"
-WAIVER_STATUS_FALSE_POSITIVE = "false_positive"
+WaiverStatus = Literal["accepted_risk", "false_positive"]
+WAIVER_STATUS_ACCEPTED_RISK: WaiverStatus = "accepted_risk"
+WAIVER_STATUS_FALSE_POSITIVE: WaiverStatus = "false_positive"
+WAIVER_STATUSES: list[str] = list(get_args(WaiverStatus))
 
-WAIVER_STATUSES = [
-    WAIVER_STATUS_ACCEPTED_RISK,
-    WAIVER_STATUS_FALSE_POSITIVE,
-]
+# "finding" = exact match, "file" = same rule in the same file, "rule" = same rule project-wide.
+WaiverScope = Literal["finding", "file", "rule"]
+WAIVER_SCOPE_FINDING: WaiverScope = "finding"
+WAIVER_SCOPE_FILE: WaiverScope = "file"
+WAIVER_SCOPE_RULE: WaiverScope = "rule"
 
 # Default CVSS scores used when actual score is not available
 CVSS_SEVERITY_SCORES: dict[str, float] = {
@@ -1112,6 +1117,9 @@ RETENTION_ACTIONS: list[str] = list(get_args(RetentionAction))
 DEFAULT_RETENTION_DAYS: int = 90
 # timedelta overflows near 740 000 days, and a cutoff housekeeping cannot compute stops the sweep.
 MAX_RETENTION_DAYS: int = 36500
+
+# The reach of an analytics, compliance or crypto query.
+ScopeName = Literal["project", "team", "global", "user"]
 
 # Whether a system setting is enforced for every project or left to each project.
 SettingsMode = Literal["project", "global"]

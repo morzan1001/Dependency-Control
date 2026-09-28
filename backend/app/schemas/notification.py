@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -8,8 +10,8 @@ class AdvisoryPackage(BaseModel):
 
 
 class BroadcastRequest(BaseModel):
-    type: str = Field(..., description="Type of message: 'general' or 'advisory'")
-    target_type: str = Field(..., description="Target audience: 'global', 'teams', 'advisory'")
+    type: Literal["general", "advisory"] = Field(..., description="Type of message")
+    target_type: Literal["global", "teams", "advisory"] = Field(..., description="Target audience")
     target_teams: list[str] | None = Field(None, description="List of Team IDs if target_type is 'teams'")
     channels: list[str] | None = Field(None, description="Channels to send to (email, slack, mattermost)")
 
@@ -24,7 +26,6 @@ class BroadcastRequest(BaseModel):
 class BroadcastResult(BaseModel):
     recipient_count: int
     project_count: int = 0
-    unique_user_count: int = 0
 
 
 class BroadcastHistoryItem(BaseModel):
@@ -36,7 +37,6 @@ class BroadcastHistoryItem(BaseModel):
     created_by: str | None = None
     recipient_count: int
     project_count: int
-    unique_user_count: int = 0
     teams: list[str] | None = None
 
 

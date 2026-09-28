@@ -129,6 +129,14 @@ class TestGetVulnerabilityFoundTemplate:
 
         assert f"{listed} of {found} critical/high" in result
 
+    def test_only_a_vulnerability_in_the_high_epss_bucket_carries_the_epss_badge(self):
+        from app.core.constants import EPSS_HIGH_THRESHOLD
+
+        high = self._render(vulnerabilities=[{"id": "CVE-1", "severity": "HIGH", "epss_score": EPSS_HIGH_THRESHOLD}])
+        below = self._render(vulnerabilities=[{"id": "CVE-2", "severity": "HIGH", "epss_score": 0.0999}])
+
+        assert ("EPSS: 10.0%" in high, "EPSS:" in below) == (True, False)
+
 
 class TestGetAnalysisCompletedTemplate:
     def _render(self, **overrides):

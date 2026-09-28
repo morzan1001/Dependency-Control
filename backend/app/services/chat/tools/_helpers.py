@@ -49,17 +49,6 @@ _FINDING_DETAILS_FIELDS = (
     "cvss_score",
 )
 
-_SEVERITY_RANK = {
-    "CRITICAL": 4,
-    "HIGH": 3,
-    "MEDIUM": 2,
-    "LOW": 1,
-    "NEGLIGIBLE": 0,
-    "INFO": 0,
-    "UNKNOWN": 0,
-}
-
-
 # Clamps applied while one tool call runs, so the answer can say it was not the one asked for.
 _CLAMPED_LIMITS: ContextVar[list[tuple[int, int]] | None] = ContextVar("chat_tool_clamped_limits", default=None)
 

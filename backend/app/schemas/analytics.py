@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import ExploitMaturity, ScopeName
 from app.schemas.team import TeamRef
 
 
@@ -18,7 +19,7 @@ class CVEEnrichmentResult(BaseModel):
     kev_count: int = 0
     kev_ransomware_use: bool = False
     kev_due_date: str | None = None
-    exploit_maturity: str = "unknown"
+    exploit_maturity: ExploitMaturity = "unknown"
     days_until_due: int | None = None
 
 
@@ -480,6 +481,19 @@ class UpdateFrequencyComparison(BaseModel):
 
 # Crypto analytics schemas
 
+GroupBy = Literal["name", "primitive", "asset_type", "weakness_tag", "severity"]
+Metric = Literal[
+    "total_crypto_findings",
+    "quantum_vulnerable_findings",
+    "weak_algo_findings",
+    "weak_key_findings",
+    "cert_expiring_soon",
+    "cert_expired",
+    "unique_algorithms",
+    "unique_cipher_suites",
+]
+Bucket = Literal["day", "week", "month"]
+
 
 class HotspotEntry(BaseModel):
     """A single entry in a crypto hotspot report."""
@@ -503,7 +517,7 @@ class HotspotEntry(BaseModel):
 class HotspotResponse(BaseModel):
     """Paginated hotspot response for a given scope."""
 
-    scope: Literal["project", "team", "global", "user"]
+    scope: ScopeName
     scope_id: str | None = None
     grouping_dimension: str
     items: list[HotspotEntry] = Field(default_factory=list)
@@ -526,7 +540,7 @@ class TrendSeries(BaseModel):
     scope: str
     scope_id: str | None = None
     metric: str
-    bucket: Literal["day", "week", "month"]
+    bucket: Bucket
     points: list[TrendPoint] = Field(default_factory=list)
     range_start: datetime
     range_end: datetime

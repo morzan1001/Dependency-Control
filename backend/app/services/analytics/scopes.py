@@ -6,12 +6,12 @@ authorised to query. Permission gating is enforced here so query functions stay 
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL, ScopeName
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +26,6 @@ _T = TypeVar("_T")
 
 if TYPE_CHECKING:
     from app.models.user import User
-
-Scope = Literal["project", "team", "global", "user"]
 
 
 class ScopeResolutionError(PermissionError):
@@ -67,7 +65,7 @@ def ensure_whole_scope(rows: list[_T]) -> list[_T]:
 
 @dataclass
 class ResolvedScope:
-    scope: Scope
+    scope: ScopeName
     scope_id: str | None
     project_ids: list[str] | None
 
@@ -79,7 +77,7 @@ class ScopeResolver:
         self.db = db
         self.user = user
 
-    async def resolve(self, *, scope: Scope, scope_id: str | None) -> ResolvedScope:
+    async def resolve(self, *, scope: ScopeName, scope_id: str | None) -> ResolvedScope:
         if scope == "project":
             return await self._resolve_project(scope_id)
         if scope == "team":

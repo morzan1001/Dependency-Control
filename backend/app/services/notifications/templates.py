@@ -3,6 +3,8 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
+from app.core.constants import EPSS_HIGH_THRESHOLD
+
 APP_NAME = "Dependency Control"
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -83,6 +85,7 @@ def get_vulnerability_found_template(
             "kev_vulnerabilities": kev_vulnerabilities or [],
             "has_high_epss": has_high_epss,
             "high_epss_count": high_epss_count,
+            "epss_high_threshold": EPSS_HIGH_THRESHOLD,
         },
     )
 

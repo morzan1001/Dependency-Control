@@ -22,7 +22,6 @@ export interface BroadcastRequest {
 export interface BroadcastResult {
   recipient_count: number;
   project_count?: number;
-  unique_user_count?: number;
 }
 
 export interface BroadcastHistoryItem {
@@ -34,7 +33,6 @@ export interface BroadcastHistoryItem {
   created_by?: string;
   recipient_count: number;
   project_count: number;
-  unique_user_count?: number;
   teams?: string[];
 }
 

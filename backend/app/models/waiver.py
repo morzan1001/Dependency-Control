@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pydantic import ConfigDict, Field
 
 from app.core import ensure_utc
-from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
+from app.core.constants import WAIVER_SCOPE_FINDING, WAIVER_STATUS_ACCEPTED_RISK
 from app.models.base import CreatedAtModel
 from app.models.finding import FindingType
 from app.models.match_signature import MatchSignature
@@ -32,7 +32,7 @@ class Waiver(CreatedAtModel):
     package_version: str | None = None  # e.g. "2.26.0"
     finding_type: FindingType | None = None  # e.g. "vulnerability", "license", "malware", "eol"
     vulnerability_id: str | None = None  # e.g. "CVE-2021-23337"
-    scope: str = "finding"  # "finding" = exact, "file" = same rule+file, "rule" = same rule project-wide
+    scope: str = WAIVER_SCOPE_FINDING
     rule_id: str | None = None  # e.g. "javascript_lang_insufficiently_random_values"
     match: MatchSignature | None = None  # snapshot of the matched finding's signature
     last_eval_scan_id: str | None = None  # scan the signature path last evaluated this waiver against

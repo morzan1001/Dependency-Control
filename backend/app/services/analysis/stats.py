@@ -10,8 +10,6 @@ from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
     EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
-    EPSS_HIGH_THRESHOLD,
-    EPSS_MEDIUM_THRESHOLD,
     EPSS_VERY_HIGH_THRESHOLD,
     HIGH_RISK_SCORE_THRESHOLD,
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
@@ -461,9 +459,10 @@ class StatsAccumulator:
             self._epss_sum += epss
             self._epss_n += 1
             self._epss_max = epss if self._epss_max is None else max(self._epss_max, epss)
-            if epss >= EPSS_HIGH_THRESHOLD:
+            bucket = bucket_epss(epss)
+            if bucket == "high":
                 self._high_epss += 1
-            elif epss >= EPSS_MEDIUM_THRESHOLD:
+            elif bucket == "medium":
                 self._medium_epss += 1
         if kev_ransomware or (in_kev and epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD):
             self._weaponized += 1

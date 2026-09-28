@@ -5,6 +5,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.constants import get_severity_value
+from app.core.epss import bucket_epss
 from app.models.finding import Finding
 from app.models.project import Project
 from app.schemas.notification import AlertVulnerability
@@ -65,7 +66,7 @@ def _categorize_vulnerabilities(
                 kev_vulns.append(vuln_info)
 
             epss_score = vuln.get("epss_score")
-            if epss_score is not None and epss_score >= 0.1:
+            if epss_score is not None and bucket_epss(epss_score) == "high":
                 high_epss_vulns.append(vuln_info)
 
             severity = vuln.get("severity")

@@ -8,8 +8,8 @@ from app.core.constants import (
     DEFAULT_RETENTION_DAYS,
     MAX_RETENTION_DAYS,
     PROJECT_ROLE_VIEWER,
-    PROJECT_ROLES,
     RETENTION_ACTION_DELETE,
+    ProjectRole,
     RetentionAction,
 )
 from app.core.notification_prefs import NotificationPreferences
@@ -177,36 +177,14 @@ class ProjectMemberInvite(BaseModel):
         description="Email address of the user to invite",
         examples=["colleague@example.com"],
     )
-    role: str = Field(
-        PROJECT_ROLE_VIEWER,
-        description=f"Role to assign ({', '.join(PROJECT_ROLES)})",
-        examples=[PROJECT_ROLE_VIEWER],
-    )
-
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, v: str) -> str:
-        if v not in PROJECT_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
-        return v
+    role: ProjectRole = Field(PROJECT_ROLE_VIEWER, description="Role to assign", examples=[PROJECT_ROLE_VIEWER])
 
 
 class ProjectMemberUpdate(BaseModel):
-    role: str | None = Field(
-        None,
-        description=f"New role to assign ({', '.join(PROJECT_ROLES)})",
-        examples=[PROJECT_ROLE_VIEWER],
-    )
+    role: ProjectRole | None = Field(None, description="New role to assign", examples=[PROJECT_ROLE_VIEWER])
     notification_preferences: NotificationPreferences = Field(
         None, description="Notification preferences for the member"
     )
-
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, v: str | None) -> str | None:
-        if v and v not in PROJECT_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
-        return v
 
 
 class ProjectNotificationSettings(BaseModel):

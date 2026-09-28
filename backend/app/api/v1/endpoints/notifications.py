@@ -78,7 +78,6 @@ async def get_broadcast_history(
             created_by=creators_map.get(h.created_by, h.created_by),
             recipient_count=h.recipient_count,
             project_count=h.project_count,
-            unique_user_count=h.recipient_count,
             teams=[teams_map.get(tid, tid) for tid in h.teams] if h.teams else None,
         )
         for h in history
@@ -441,13 +440,6 @@ async def broadcast_message(
 
     forced_channels = payload.channels if payload.channels else None
 
-    valid_target_types: list[str] = ["global", "teams", "advisory"]
-    if payload.target_type not in valid_target_types:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid target_type. Must be one of: {', '.join(valid_target_types)}",
-        )
-
     # Escape raw HTML before Markdown to prevent XSS via embedded tags.
     safe_message = html.escape(payload.message)
     message_html_content = markdown.markdown(safe_message)
@@ -531,8 +523,4 @@ async def broadcast_message(
         )
         await broadcast_repo.create(history_entry)
 
-    return BroadcastResult(
-        recipient_count=unique_user_count,
-        project_count=project_count,
-        unique_user_count=unique_user_count,
-    )
+    return BroadcastResult(recipient_count=unique_user_count, project_count=project_count)
