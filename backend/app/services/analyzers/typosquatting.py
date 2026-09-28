@@ -1,6 +1,5 @@
 import difflib
 import logging
-import re
 from typing import Any
 
 import httpx
@@ -9,6 +8,8 @@ from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
     TOP_PYPI_PACKAGES_URL,
+    TYPOSQUATTING_CRITICAL_SIMILARITY,
+    TYPOSQUATTING_HIGH_SIMILARITY,
     TYPOSQUATTING_POPULAR_PACKAGE_RANKS,
     TYPOSQUATTING_SIMILARITY_THRESHOLD,
 )
@@ -16,32 +17,23 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
-from app.services.purl_utils import is_npm, is_pypi
+from app.services.purl_utils import is_npm, is_pypi, pep503_normalize
 
 logger = logging.getLogger(__name__)
 
 
-_SEPARATOR_RUN = re.compile(r"[-_.]+")
-_SEPARATORS = {"-", "_", "."}
-
-
 def _normalize_pkg_name(name: str | None) -> str:
-    """PEP 503-style canonical name; strips ``@scope/`` for npm, collapses ``-_.`` to ``-``."""
+    """PEP 503 name, with an npm ``@scope/`` stripped: the imitated target is the unscoped name."""
     if not name:
         return ""
     if name.startswith("@") and "/" in name:
         name = name.split("/", 1)[1]
-    name = _SEPARATOR_RUN.sub("-", name)
-    return name.lower()
+    return pep503_normalize(name)
 
 
 def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
-    """True if ``longer`` extends ``shorter`` with a separator (``react-dom`` ✓, ``expresss`` ✗)."""
-    if not longer or not shorter or longer == shorter:
-        return False
-    if not longer.startswith(shorter):
-        return False
-    return longer[len(shorter)] in _SEPARATORS
+    """True if ``longer`` extends ``shorter`` after a separator (``react-dom`` yes, ``expresss`` no)."""
+    return longer.startswith(shorter + "-")
 
 
 def _resolve_ecosystem(component: dict[str, Any], purl: str) -> str:
@@ -91,25 +83,23 @@ class TyposquattingAnalyzer(Analyzer):
 
         cached_data = await cache_service.mget([pypi_cache_key, npm_cache_key])
 
-        pypi_packages = cached_data.get(pypi_cache_key)
-        npm_packages = cached_data.get(npm_cache_key)
+        cached_pypi = cached_data.get(pypi_cache_key)
+        cached_npm = cached_data.get(npm_cache_key)
 
-        result: dict[str, set] = {"pypi": set(), "npm": set()}
-
-        if pypi_packages:
-            result["pypi"] = set(pypi_packages)
-            logger.debug(f"Loaded {len(result['pypi'])} PyPI packages from Redis cache")
+        if cached_pypi:
+            pypi = set(cached_pypi)
+            logger.debug(f"Loaded {len(pypi)} PyPI packages from Redis cache")
         else:
-            result["pypi"] = await self._fetch_pypi_packages()
+            pypi = await self._fetch_pypi_packages()
 
-        if npm_packages:
-            result["npm"] = set(npm_packages)
-            logger.debug(f"Loaded {len(result['npm'])} npm packages from Redis cache")
+        if cached_npm:
+            npm = set(cached_npm)
+            logger.debug(f"Loaded {len(npm)} npm packages from Redis cache")
         else:
-            result["npm"] = self._get_static_npm()
-            await cache_service.set(npm_cache_key, list(result["npm"]), CacheTTL.POPULAR_PACKAGES)
+            npm = self._get_static_npm()
+            await cache_service.set(npm_cache_key, list(npm), CacheTTL.POPULAR_PACKAGES)
 
-        return result
+        return {"pypi": pypi, "npm": npm}
 
     async def _fetch_pypi_packages(self) -> set[str]:
         """Fetch top PyPI packages and cache in Redis."""
@@ -232,8 +222,8 @@ class TyposquattingAnalyzer(Analyzer):
 
         settings = settings or {}
         similarity_threshold = float(settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD))
-        critical_at = float(settings.get("critical_similarity", 0.95))
-        high_at = float(settings.get("high_similarity", 0.90))
+        critical_at = float(settings.get("critical_similarity", TYPOSQUATTING_CRITICAL_SIMILARITY))
+        high_at = float(settings.get("high_similarity", TYPOSQUATTING_HIGH_SIMILARITY))
 
         normalized_popular: dict[str, set[str]] = {}  # lazy per-ecosystem cache
 
@@ -297,11 +287,9 @@ class TyposquattingAnalyzer(Analyzer):
         return None
 
     def _is_suspicious(self, name: str, popular: str) -> bool:
-        """Whether ``name`` is a suspicious near-match of ``popular``.
+        """Whether normalized ``name`` is a suspicious near-match of a different normalized ``popular``.
 
-        A prefix is legitimate only when followed by a separator (``-``/``_``/``.``):
-        ``react-dom`` is a real sub-package, but ``expresss`` is a typosquat to flag.
+        A prefix is legitimate only when a ``-`` follows it: ``react-dom`` is a real
+        sub-package, but ``expresss`` is a typosquat to flag.
         """
-        if name == popular:
-            return False
         return not (_has_legitimate_prefix(name, popular) or _has_legitimate_prefix(popular, name))

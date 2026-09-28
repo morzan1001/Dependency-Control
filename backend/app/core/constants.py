@@ -409,6 +409,8 @@ EOL_MEDIUM_AFTER_DAYS: int = 180
 
 # Typosquatting detection threshold (similarity ratio 0-1)
 TYPOSQUATTING_SIMILARITY_THRESHOLD: float = 0.82
+TYPOSQUATTING_HIGH_SIMILARITY: float = 0.90
+TYPOSQUATTING_CRITICAL_SIMILARITY: float = 0.95
 # Download-rank depth of the corpus a package name is compared against. The upstream list serves
 # 15 000 ranks and every 1 000 of them costs ~3 ms per unrecognised component, so the depth is a
 # scan-time budget: 5 000 ranks is ~15 ms per component. The analyzer result reports the depth,
