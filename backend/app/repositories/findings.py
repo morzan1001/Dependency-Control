@@ -10,7 +10,6 @@ from app.core import ensure_utc
 from app.core.constants import get_severity_value
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
-from app.services.aggregation.components import build_component_index
 
 # What names a CVE, plus the fields a recurrence row reports back.
 _VULNERABILITY_IDENTITY_PROJECTION = {
@@ -264,11 +263,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         scan_ids: list[str],
         project_ids: list[str],
     ) -> dict[str, int]:
-        """{component_name: non_waived_vulnerability_count}; scan_ids+project_ids exclude prior-scan findings.
-
-        Also keyed by the bare artifact name where unambiguous, so a bare dependency name
-        resolves a group-qualified finding component.
-        """
+        """{component_name: non_waived_vulnerability_count}; scan_ids+project_ids exclude prior-scan findings."""
         pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
@@ -281,4 +276,4 @@ class FindingRepository(BaseRepository[FindingRecord]):
             {"$group": {"_id": "$component", "count": {"$sum": 1}}},
         ]
         results = await self.aggregate(pipeline)
-        return build_component_index({r["_id"]: r["count"] for r in results if r["_id"]})
+        return {r["_id"]: r["count"] for r in results if r["_id"]}

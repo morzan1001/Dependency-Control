@@ -36,7 +36,7 @@ from app.schemas.analytics import (
     SeverityBreakdown,
     VulnerabilityHotspot,
 )
-from app.services.aggregation.components import (
+from app.services.component_identity import (
     artifact_segment,
     build_component_index,
     lookup_component,

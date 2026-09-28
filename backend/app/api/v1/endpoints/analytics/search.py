@@ -27,7 +27,7 @@ from app.schemas.analytics import (
     VulnerabilitySearchResponse,
     VulnerabilitySearchResult,
 )
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import get_attr
 
 router = CustomAPIRouter()

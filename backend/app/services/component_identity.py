@@ -1,4 +1,4 @@
-"""Stateless component-name helpers used during aggregation."""
+"""Package-name identity and name-join helpers shared by aggregation, analytics and reachability."""
 
 from __future__ import annotations
 

@@ -36,7 +36,7 @@ from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
-from app.services.aggregation.components import build_component_index
+from app.services.component_identity import build_component_index
 from app.services.recommendation.common import get_attr
 
 MONGO_MATCH = "$match"

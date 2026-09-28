@@ -3,7 +3,7 @@ producer listed that package in ``analyzed_modules`` for a language covering its
 
 import pytest
 
-from app.api.v1.helpers.callgraph import canonical_module_key
+from app.services.component_identity import canonical_module_key
 from app.schemas.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
     _callgraph_can_falsify,

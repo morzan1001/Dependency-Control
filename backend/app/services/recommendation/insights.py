@@ -10,7 +10,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     ModelOrDict,

@@ -37,7 +37,7 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
-from app.services.aggregation.components import lookup_component
+from app.services.component_identity import lookup_component
 from app.services.analysis.types import (
     CallgraphInfo,
     Database,

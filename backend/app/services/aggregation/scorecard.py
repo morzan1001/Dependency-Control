@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.models.finding import Finding, FindingType
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.component_identity import build_component_index, lookup_component
 
 
 def _index_by_artifact(scorecard_cache: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:

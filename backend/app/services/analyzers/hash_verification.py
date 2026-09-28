@@ -13,7 +13,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
-from .purl_utils import is_npm, is_pypi, normalize_hash_algorithm
+from app.services.purl_utils import is_npm, is_pypi, normalize_hash_algorithm
 
 logger = logging.getLogger(__name__)
 

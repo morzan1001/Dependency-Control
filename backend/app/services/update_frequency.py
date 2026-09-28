@@ -38,7 +38,7 @@ from app.schemas.analytics import (
     UpdateFrequencyComparison,
     UpdateFrequencyMetrics,
 )
-from app.services.analyzers.purl_utils import parse_purl
+from app.services.purl_utils import parse_purl
 from app.services.release_history import (
     Observation,
     ReleaseHistoryFetcher,

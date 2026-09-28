@@ -18,7 +18,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.aggregation.components import extract_artifact_name
+from app.services.component_identity import extract_artifact_name
 from app.services.analytics._delta_pagination import MAX_FETCH, delta_truncation, paginate
 from app.services.analytics._delta_reachability import side_reachability
 

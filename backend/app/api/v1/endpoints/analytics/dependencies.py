@@ -31,7 +31,7 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
-from app.services.aggregation.components import (
+from app.services.component_identity import (
     artifact_segment,
     cluster_by_package_identity,
     component_match_query,

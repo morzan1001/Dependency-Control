@@ -98,7 +98,7 @@ from app.schemas.project import (
     ScanReleaseRef,
     ScanWithReleases,
 )
-from app.services.aggregation.components import component_match_expr
+from app.services.component_identity import component_match_expr
 from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
 from app.services.branches import resolve_default_branch
 from app.services.gitlab import GitLabService

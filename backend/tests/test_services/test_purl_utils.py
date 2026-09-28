@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.services.analyzers.purl_utils import (
+from app.services.purl_utils import (
     MAX_NAME_LENGTH,
     MAX_PURL_LENGTH,
     MAX_VERSION_LENGTH,

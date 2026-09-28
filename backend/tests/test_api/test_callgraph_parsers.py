@@ -13,7 +13,7 @@ from app.api.v1.helpers.callgraph import (
     parse_generic_format,
     parse_madge_format,
 )
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.component_identity import build_component_index, lookup_component
 from app.services.reachability_enrichment import _normalize_component
 from tests.helpers.comparisons import counted_str_type
 

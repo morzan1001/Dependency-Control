@@ -4,7 +4,7 @@ Every consumer that joins the two collections on a name goes through these helpe
 the "exact spelling, else the artifact name, never across packages" rule is defined once.
 """
 
-from app.services.aggregation.components import (
+from app.services.component_identity import (
     artifact_name_expr,
     build_component_index,
     component_match_expr,

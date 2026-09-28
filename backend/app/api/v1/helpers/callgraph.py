@@ -19,7 +19,7 @@ from app.core.permissions import Permissions, has_permission
 from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
 from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
-from app.services.aggregation.components import canonical_module_key, npm_package_key
+from app.services.component_identity import canonical_module_key, npm_package_key
 
 _MSG_ACCESS_DENIED = "Access denied"
 _NODE_MODULES = "node_modules/"

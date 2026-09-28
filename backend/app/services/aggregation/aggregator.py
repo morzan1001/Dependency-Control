@@ -19,7 +19,7 @@ from app.schemas.finding import (
     VulnerabilityEntry,
 )
 from app.schemas.finding_details import SystemWarningDetails
-from app.services.aggregation.components import (
+from app.services.component_identity import (
     cluster_by_package_identity,
     extract_artifact_name,
     normalize_component,
@@ -46,7 +46,7 @@ from app.services.analyzers.license_compliance.normalizer import (
 from app.services.analyzers.license_compliance.normalizer import (
     tokenize_license_string,
 )
-from app.services.analyzers.purl_utils import canonical_purl
+from app.services.purl_utils import canonical_purl
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
 from app.services.normalizers.license import normalize_license

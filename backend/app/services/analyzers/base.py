@@ -3,7 +3,7 @@ from typing import Any
 
 from app.models.finding import Severity
 
-from .purl_utils import normalize_hash_algorithm
+from app.services.purl_utils import normalize_hash_algorithm
 
 
 def map_vendor_severity(raw_severity: str | None) -> str:

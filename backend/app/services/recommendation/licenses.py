@@ -2,7 +2,7 @@ from collections import defaultdict
 from typing import Any
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.aggregation.components import extract_artifact_name
+from app.services.component_identity import extract_artifact_name
 from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components
 
 _LICENSES_NAMED = 5

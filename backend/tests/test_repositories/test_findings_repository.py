@@ -56,23 +56,6 @@ class TestGetVulnCountsByComponentsScanScope:
         )
         assert result["requests"] == 3
 
-    def test_qualified_component_is_reachable_by_its_bare_artifact_name(self):
-        """Dependencies are inventoried as 'jackson-databind'; the finding carries the coordinate."""
-        agg_results = [{"_id": "com.fasterxml.jackson.core:jackson-databind", "count": 4}]
-        result, _ = self._run(["scan-1"], ["proj-1"], agg_results=agg_results)
-
-        assert result["jackson-databind"] == 4
-        assert result["com.fasterxml.jackson.core:jackson-databind"] == 4
-
-    def test_ambiguous_artifact_name_gets_no_alias(self):
-        agg_results = [
-            {"_id": "@angular/core", "count": 2},
-            {"_id": "@angular-devkit/core", "count": 1},
-        ]
-        result, _ = self._run(["scan-1"], ["proj-1"], agg_results=agg_results)
-
-        assert "core" not in result
-
     def test_project_id_still_in_pipeline_match(self):
         project_ids = ["proj-1", "proj-2"]
         _, collection = self._run(["scan-1"], project_ids)

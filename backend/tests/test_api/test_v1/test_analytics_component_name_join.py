@@ -10,7 +10,7 @@ import asyncio
 
 from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
 from app.api.v1.helpers.analytics import build_findings_severity_map
-from app.services.aggregation.components import component_match_query
+from app.services.component_identity import component_match_query
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -118,7 +118,7 @@ class TestAliasLookupIsCaseInsensitive:
         assert graph.nodes[0].findings_count == 1
 
     def test_vuln_count_map_resolves_a_mixed_case_dependency_name(self):
-        from app.services.aggregation.components import build_component_index, lookup_component
+        from app.services.component_identity import build_component_index, lookup_component
 
         counts = build_component_index({"com.zaxxer:HikariCP": 4})
 

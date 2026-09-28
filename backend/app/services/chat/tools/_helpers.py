@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import settings
-from app.services.aggregation.components import extract_artifact_name
+from app.services.component_identity import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
 from app.services.recommendation.common import finding_cve_ids
 

@@ -64,3 +64,37 @@ async def test_the_sample_is_the_newest_versions_rather_than_an_arbitrary_ten():
 
     assert rows[0].versions[0] == f"1.{_DISTINCT_VERSIONS - 1}.0"
     assert rows[0].versions == sorted(rows[0].versions, key=lambda v: int(v.split(".")[1]), reverse=True)
+
+
+async def _vulnerability_counts(findings: list[dict], dependency_name: str) -> int:
+    from tests.mocks.fake_mongo import FakeDatabase
+
+    db = FakeDatabase()
+    await db.dependencies.insert_one(
+        {"_id": "d1", "scan_id": "s1", "project_id": "p1", "name": dependency_name, "version": "1.0", "type": "maven"}
+    )
+    await db.findings.insert_many(findings)
+    with (
+        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_SCANS)),
+    ):
+        [row] = await get_top_dependencies(current_user=_user(), db=db, limit=_LIMIT, type=None)
+    return row.vulnerability_count
+
+
+def _vulnerability(finding_id: str, component: str) -> dict:
+    return {"_id": finding_id, "scan_id": "s1", "project_id": "p1", "type": "vulnerability", "component": component}
+
+
+@pytest.mark.asyncio
+async def test_a_bare_dependency_name_counts_its_group_qualified_findings():
+    findings = [_vulnerability(f"f{n}", "com.fasterxml.jackson.core:jackson-databind") for n in range(4)]
+
+    assert await _vulnerability_counts(findings, "jackson-databind") == 4
+
+
+@pytest.mark.asyncio
+async def test_a_bare_name_shared_by_two_qualified_packages_counts_neither():
+    findings = [_vulnerability("f1", "@angular/core"), _vulnerability("f2", "@angular-devkit/core")]
+
+    assert await _vulnerability_counts(findings, "core") == 0

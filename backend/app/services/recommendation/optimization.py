@@ -7,7 +7,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr, take_top
 
 # A quick win is one recommendation per package, so this bounds the advice feed rather than a

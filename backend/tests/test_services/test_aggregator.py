@@ -5,7 +5,7 @@ import pytest
 from app.core.constants import MAX_CROSS_LINK_GROUP_SIZE
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
-from app.services.aggregation.components import (
+from app.services.component_identity import (
     extract_artifact_name,
     normalize_component,
 )
