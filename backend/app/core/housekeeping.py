@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 
+from app.core import abatched
 from app.core.cache import update_cache_stats
 from app.core.config import settings
 from app.core.constants import (
@@ -97,23 +98,9 @@ async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE)
             logger.info(f"Reaped {count} orphan callgraph(s) belonging to {len(orphaned)} missing scan(s)")
         return count
 
-    deleted = 0
-    batch: list[str] = []
-    cursor = db.callgraphs.find(
-        {"created_at": {"$lt": cutoff}, "scan_id": {"$ne": None}},
-        {"scan_id": 1},
-    )
-    async for callgraph in cursor:
-        scan_id = callgraph.get("scan_id")
-        if not scan_id:
-            continue
-        batch.append(scan_id)
-        if len(batch) >= batch_size:
-            deleted += await _reap_batch(batch)
-            batch = []
-    if batch:
-        deleted += await _reap_batch(batch)
-    return deleted
+    cursor = db.callgraphs.find({"created_at": {"$lt": cutoff}, "scan_id": {"$ne": None}}, {"scan_id": 1})
+    scan_ids = (callgraph["scan_id"] async for callgraph in cursor if callgraph.get("scan_id"))
+    return sum([await _reap_batch(batch) async for batch in abatched(scan_ids, batch_size)])
 
 
 def _resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
@@ -376,18 +363,9 @@ async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) ->
             logger.warning(f"Failed to delete stale metadata for scans {stale_scan_ids}: {e}")
             return 0
 
-    deleted = 0
-    batch: list[dict[str, Any]] = []
-    async for meta in db.archive_metadata.find({}, {"_id": 1, "scan_id": 1, "archived_at": 1}):
-        if not meta.get("scan_id"):
-            continue
-        batch.append(meta)
-        if len(batch) >= batch_size:
-            deleted += await _reap_batch(batch)
-            batch = []
-    if batch:
-        deleted += await _reap_batch(batch)
-    return deleted
+    cursor = db.archive_metadata.find({}, {"_id": 1, "scan_id": 1, "archived_at": 1})
+    metas = (meta async for meta in cursor if meta.get("scan_id"))
+    return sum([await _reap_batch(batch) async for batch in abatched(metas, batch_size)])
 
 
 async def _reap_orphan_s3_objects(db: Any) -> int:
@@ -512,13 +490,7 @@ async def _process_scans_in_batches(
 ) -> None:
     """Stream scan IDs from cursor and process retention in batches, dropping the ones a rescan
     still points at."""
-    batch: list[str] = []
-    async for doc in cursor:
-        batch.append(str(doc["_id"]))
-        if len(batch) >= batch_size:
-            await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
-            batch = []
-    if batch:
+    async for batch in abatched((str(doc["_id"]) async for doc in cursor), batch_size):
         await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
 
 

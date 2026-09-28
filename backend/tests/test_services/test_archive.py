@@ -82,6 +82,8 @@ def _make_mock_db(
     crypto_assets=None,
 ):
     db = MagicMock()
+    # Repositories reach collections by name, the fixtures below by attribute.
+    db.__getitem__.side_effect = lambda name: getattr(db, name)
     db.scans.find_one = AsyncMock(return_value=scan_doc)
     db.scans.find = MagicMock(return_value=_AsyncCursorMock([scan_doc] if scan_doc else []))
     db.scans.insert_one = AsyncMock()

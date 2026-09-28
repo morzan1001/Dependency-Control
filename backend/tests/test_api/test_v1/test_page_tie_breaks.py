@@ -1,13 +1,16 @@
 """Pages sorted on a column many rows share repeat and skip rows unless a unique key breaks the tie."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.api.v1.endpoints.projects import read_all_scans, read_project_scans
+from app.api.v1.endpoints.releases import list_releases
 from app.core.permissions import Permissions
 from app.models.user import User
 from app.repositories.projects import ProjectRepository
+from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from tests.mocks.fake_mongo import FakeDatabase
@@ -92,3 +95,27 @@ async def test_the_recent_scans_list_covers_the_projects_analytics_resolves():
         await read_all_scans(reader, FakeDatabase(), sort_by="created_at", sort_order="desc")
 
     assert aggregate.await_args.args[0][0] == {"$match": {"project_id": {"$in": ["p2"]}}}
+
+
+@pytest.mark.asyncio
+async def test_the_release_list_opens_with_the_environments_current_release():
+    db = FakeDatabase()
+    released_at = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    for release_id, scan_id in (("rel-b", "scan-b"), ("rel-a", "scan-a")):
+        await db.releases.insert_one(
+            {
+                "_id": release_id,
+                "project_id": "p1",
+                "environment": "prod",
+                "scan_id": scan_id,
+                "released_at": released_at,
+            }
+        )
+
+    with patch("app.api.v1.endpoints.releases.check_project_access", AsyncMock()):
+        page = await list_releases("p1", _USER, db, skip=0, limit=10, environment="prod")
+
+    current = await ReleaseRepository(db).latest_for_environment("p1", "prod")
+    assert current is not None
+    assert [item.scan_id for item in page.items] == [current["scan_id"], "scan-b"]
+    assert (page.page, page.size, page.total) == (1, 10, 2)

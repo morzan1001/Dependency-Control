@@ -3,6 +3,7 @@ import logging
 import os
 from typing import Any
 
+from app.core import abatched
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
@@ -145,7 +146,8 @@ class NotificationService:
         if not perms:
             return
 
-        async def flush(batch: list[User]) -> None:
+        users = (User(**doc) async for doc in db.users.find({"permissions": {"$in": perms}, "is_active": True}))
+        async for batch in abatched(users, _FAN_OUT_BATCH_SIZE):
             await self.notify_users(
                 batch,
                 event_type=event_type,
@@ -157,15 +159,6 @@ class NotificationService:
                 slack_blocks=slack_blocks,
                 mattermost_props=mattermost_props,
             )
-
-        pending: list[User] = []
-        async for user_doc in db.users.find({"permissions": {"$in": perms}, "is_active": True}):
-            pending.append(User(**user_doc))
-            if len(pending) >= _FAN_OUT_BATCH_SIZE:
-                await flush(pending)
-                pending = []
-        if pending:
-            await flush(pending)
 
     async def notify_project_members(
         self,

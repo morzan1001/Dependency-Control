@@ -40,6 +40,8 @@ RELEASES_LATEST_LOOKUP_KEY: list[tuple[str, int]] = [
     ("environment", pymongo.ASCENDING),
     *RELEASES_LATEST_SORT,
 ]
+# The index order left once project_id is matched by equality.
+RELEASES_ENVIRONMENT_SORT = RELEASES_LATEST_LOOKUP_KEY[1:]
 _TIE_BREAK_INDEXES: tuple[tuple[str, list[tuple[str, int]]], ...] = (
     ("scans", SCANS_TIP_INDEX_KEY),
     ("releases", RELEASES_LATEST_LOOKUP_KEY),

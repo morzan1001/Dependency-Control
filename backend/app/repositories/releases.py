@@ -1,8 +1,8 @@
 """MongoDB access for releases."""
 
+from collections.abc import Sequence
 from typing import Any
 
-import pymongo
 from pymongo import ReturnDocument
 from pymongo.errors import DuplicateKeyError
 
@@ -20,10 +20,7 @@ class ReleaseRepository(BaseRepository[Release]):
         if not scan_ids:
             return {}
         grouped: dict[str, list[Release]] = {}
-        cursor = self.collection.find(
-            {"scan_id": {"$in": scan_ids}},
-            sort=[("released_at", pymongo.DESCENDING)],
-        )
+        cursor = self.collection.find({"scan_id": {"$in": scan_ids}}, sort=RELEASES_LATEST_SORT)
         async for doc in cursor:
             grouped.setdefault(doc["scan_id"], []).append(Release(**doc))
         return grouped
@@ -35,10 +32,10 @@ class ReleaseRepository(BaseRepository[Release]):
         Answers with the stored row; None only when a concurrent withdraw removed it in between.
         """
         key = {field: getattr(release, field) for field in RELEASES_UPSERT_KEY_FIELDS}
-        # Only carried when this payload names one, so a later job of the same CI pipeline
-        # cannot null the version the deploy job recorded.
+        # Only carried when this payload names one, so a later job of the same CI pipeline cannot
+        # null the version the deploy job recorded, nor a CI's unset tag ("") name the release.
         changes: dict[str, Any] = {"released_at": release.released_at}
-        if release.version is not None:
+        if release.version:
             changes["version"] = release.version
         try:
             row: dict[str, Any] | None = await self.collection.find_one_and_update(
@@ -61,6 +58,9 @@ class ReleaseRepository(BaseRepository[Release]):
         if not (await self.collection.delete_one({**scan_key, "environment": environment})).deleted_count:
             return None
         return sorted(await self.collection.distinct("environment", scan_key))
+
+    async def released_among(self, scan_ids: Sequence[str]) -> set[str]:
+        return set(await self.collection.distinct("scan_id", {"scan_id": {"$in": list(scan_ids)}}))
 
     async def latest_for_environment(self, project_id: str, environment: str) -> dict[str, Any] | None:
         return await self.collection.find_one(

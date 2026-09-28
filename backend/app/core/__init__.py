@@ -1,3 +1,4 @@
+from collections.abc import AsyncIterable, AsyncIterator
 from datetime import datetime, timezone
 from typing import overload
 
@@ -16,3 +17,15 @@ def ensure_utc(dt: datetime | None) -> datetime | None:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt
+
+
+async def abatched[T](items: AsyncIterable[T], size: int) -> AsyncIterator[list[T]]:
+    """The async counterpart of itertools.batched, as lists."""
+    batch: list[T] = []
+    async for item in items:
+        batch.append(item)
+        if len(batch) >= size:
+            yield batch
+            batch = []
+    if batch:
+        yield batch

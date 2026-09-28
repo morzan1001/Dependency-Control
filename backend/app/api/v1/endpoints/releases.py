@@ -10,11 +10,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep, ReleaseWriteDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_409
 from app.core import ensure_utc
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, PROJECT_ROLE_VIEWER, RELEASE_ENVIRONMENT_PATTERN
-from app.core.init_db import RELEASES_LATEST_SORT
 from app.models.release import Release
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import LineageAnalysis, ScanRepository
@@ -27,7 +27,6 @@ router = CustomAPIRouter()
 _SCAN_FIELDS = {"_id": 1, "commit_hash": 1, "branch": 1, "status": 1}
 _DEFAULT_PAGE_SIZE = 20
 _MAX_PAGE_SIZE = 100
-_FIRST_PAGE = 1
 
 _EnvironmentQuery = Annotated[str, Query(pattern=RELEASE_ENVIRONMENT_PATTERN)]
 _OptionalEnvironmentQuery = Annotated[str | None, Query(pattern=RELEASE_ENVIRONMENT_PATTERN)]
@@ -52,9 +51,13 @@ async def _to_items(db: AsyncIOMotorDatabase, rows: list[dict[str, Any]]) -> lis
     if not rows:
         return []
     scan_ids = {row["scan_id"] for row in rows}
-    scans = {doc["_id"]: doc async for doc in db.scans.find({"_id": {"$in": list(scan_ids)}}, _SCAN_FIELDS)}
+    scan_repo = ScanRepository(db)
+    scans = {
+        doc["_id"]: doc
+        for doc in await scan_repo.find_many_raw({"_id": {"$in": list(scan_ids)}}, projection=_SCAN_FIELDS)
+    }
     # The resolver's own chain walk, so a release names the scan analytics actually reports.
-    analysis = await ScanRepository(db).freshest_in_lineage(scan_ids)
+    analysis = await scan_repo.freshest_in_lineage(scan_ids)
     return [_to_item(row, scans.get(row["scan_id"], {}), analysis.get(row["scan_id"])) for row in rows]
 
 
@@ -96,9 +99,7 @@ async def mark_release(
         Release(
             project_id=project_id,
             environment=environment,
-            # A CI producer sends an unset tag as "", and ReleaseRepository.record only skips a
-            # None version, so an empty one would be stored as the release's name.
-            version=payload.version or scan.get("commit_tag") or None,
+            version=payload.version or scan.get("commit_tag"),
             scan_id=scan_id,
             released_at=released_at,
         )
@@ -134,7 +135,7 @@ async def unmark_release(
         raise HTTPException(status_code=404, detail=f"Scan {scan_id} is not released to {environment}")
     # is_release denormalises "this scan has a release record" for the scans_released_list partial
     # index, so it is recomputed rather than cleared: a scan still released to another environment
-    # has to stay indexed. Ingest never demotes; this is the only path that does.
+    # has to stay indexed. Ingest never demotes; reconcile_release_flags is the other path that does.
     if not remaining:
         await db.scans.update_one({"_id": scan_id, "project_id": project_id}, {"$set": {"is_release": False}})
 
@@ -178,19 +179,10 @@ async def list_releases(
     if environment:
         query["environment"] = environment
 
-    total = await db.releases.count_documents(query)
-    # _id breaks released_at ties: a CD job that marks two environments with one explicit timestamp
-    # would otherwise leave "the latest release" to Mongo's unspecified order among equal keys.
-    rows = await db.releases.find(
-        query,
-        sort=RELEASES_LATEST_SORT,
-        skip=skip,
-        limit=limit,
-    ).to_list(limit)
-
-    return ReleaseListResponse(
-        items=await _to_items(db, rows),
-        total=total,
-        page=(skip // limit) + _FIRST_PAGE,
-        size=limit,
+    release_repo = ReleaseRepository(db)
+    total = await release_repo.count(query)
+    # The paged find breaks released_at ties on _id ascending, as RELEASES_LATEST_SORT does.
+    rows = await release_repo.find_many_raw(
+        query, skip=skip, limit=limit, sort_by="released_at", sort_order=pymongo.DESCENDING
     )
+    return ReleaseListResponse(**build_pagination_response(await _to_items(db, rows), total, skip, limit))

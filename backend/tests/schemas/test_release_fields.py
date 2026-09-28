@@ -92,9 +92,9 @@ def test_release_fields_fall_back_to_commit_tag_and_production():
     ids=["blank tag", "both blank", "blank version", "neither sent"],
 )
 def test_a_release_off_a_branch_pipeline_is_unnamed_rather_than_named_blank(payload):
-    """ReleaseRepository.record skips a None version but stores an empty one as the release's name."""
+    """A falsy version is one ReleaseRepository.record does not store."""
     data = SBOMIngest(**_minimal_payload(is_release=True, **payload))
-    assert data.release_fields(datetime.now(timezone.utc))["version"] is None
+    assert not data.release_fields(datetime.now(timezone.utc))["version"]
 
 
 def test_a_blank_release_version_still_falls_back_to_the_commit_tag():
