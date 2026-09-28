@@ -127,11 +127,37 @@ class TestOperatingSystemPackages:
                     "purl": "pkg:deb/debian/libssl1.1@1.1.1n-0+deb11u4?arch=amd64&distro=debian-11.6",
                     "properties": {
                         "aquasecurity:trivy:SrcName": "openssl",
-                        "aquasecurity:trivy:SrcVersion": "1.1.1n-0+deb11u4",
+                        "aquasecurity:trivy:SrcVersion": "1.1.1n",
+                        "aquasecurity:trivy:SrcRelease": "0+deb11u4",
                     },
                 },
                 {"package": {"ecosystem": "Debian:11", "name": "openssl"}, "version": "1.1.1n-0+deb11u4"},
                 id="trivy_debian",
+            ),
+            pytest.param(
+                {
+                    "name": "login",
+                    "version": "1:4.13+dfsg1-1+b1",
+                    "purl": "pkg:deb/debian/login@4.13%2Bdfsg1-1%2Bb1?arch=amd64&distro=debian-12.5&epoch=1",
+                    "properties": {
+                        "aquasecurity:trivy:SrcName": "shadow",
+                        "aquasecurity:trivy:SrcVersion": "4.13+dfsg1",
+                        "aquasecurity:trivy:SrcRelease": "1",
+                        "aquasecurity:trivy:SrcEpoch": "1",
+                    },
+                },
+                {"package": {"ecosystem": "Debian:12", "name": "shadow"}, "version": "1:4.13+dfsg1-1"},
+                id="trivy_debian_epoch",
+            ),
+            pytest.param(
+                {
+                    "name": "bash",
+                    "version": "5.2.15-2+b2",
+                    "purl": "pkg:deb/debian/bash@5.2.15-2+b2?arch=amd64&distro=debian-12",
+                    "found_by": "dpkg-db-cataloger",
+                },
+                {"package": {"ecosystem": "Debian:12", "name": "bash"}, "version": "5.2.15-2+b2"},
+                id="syft_debian_source_is_the_binary",
             ),
             pytest.param(
                 {
@@ -166,8 +192,15 @@ class TestOperatingSystemPackages:
         assert CacheKeys.osv(component["purl"]) in cache
 
     @pytest.mark.asyncio
-    async def test_an_os_package_without_its_release_is_reported_unscanned(self, cache, monkeypatch):
-        component = {"name": "zlib1g", "version": "1.2.13", "purl": "pkg:deb/debian/zlib1g@1.2.13?arch=amd64"}
+    @pytest.mark.parametrize(
+        "purl",
+        [
+            pytest.param("pkg:deb/debian/zlib1g@1.2.13?arch=amd64", id="no_release"),
+            pytest.param("pkg:deb/debian/zlib1g@1.2.13?arch=amd64&distro=debian-12", id="no_known_source"),
+        ],
+    )
+    async def test_an_os_package_osv_cannot_resolve_is_reported_unscanned(self, cache, monkeypatch, purl):
+        component = {"name": "zlib1g", "version": "1.2.13", "purl": purl}
 
         queries, result = await _queries(monkeypatch, [component])
 

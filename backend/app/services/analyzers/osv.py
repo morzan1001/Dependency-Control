@@ -18,7 +18,7 @@ from app.core.cvss import cvss_base_score
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import external_api_rate_limit_hits_total
 from app.models.finding import Severity
-from app.services.purl_utils import canonical_purl, parse_purl
+from app.services.purl_utils import ParsedPURL, canonical_purl, parse_purl
 
 from .base import Analyzer
 
@@ -83,8 +83,7 @@ _OS_ECOSYSTEMS = {
     ("deb", "debian"): (re.compile(r"^(?:debian-)?(\d+)"), "Debian:{}"),
     ("apk", "alpine"): (re.compile(r"^(?:alpine-)?(\d+\.\d+)"), "Alpine:v{}"),
 }
-_TRIVY_SOURCE_NAME = "aquasecurity:trivy:SrcName"
-_TRIVY_SOURCE_VERSION = "aquasecurity:trivy:SrcVersion"
+_TRIVY = "aquasecurity:trivy:"
 
 # (component, versioned purl, querybatch query)
 _Target = tuple[dict[str, Any], str, dict[str, Any]]
@@ -119,18 +118,32 @@ def _osv_query(purl: str, component: dict[str, Any]) -> dict[str, Any] | None:
         return {"package": {"purl": purl}}
     release_pattern, ecosystem = rule
     release = release_pattern.match(parsed.qualifiers.get("distro", ""))
-    if release is None:
+    source = _os_source_package(parsed, component)
+    if release is None or source is None:
         return None
+    return {"package": {"ecosystem": ecosystem.format(release[1]), "name": source[0]}, "version": source[1]}
+
+
+def _os_source_package(parsed: ParsedPURL, component: dict[str, Any]) -> tuple[str, str | None] | None:
+    """``(name, version)`` of the source package an OS binary was built from, or None when unknown."""
+    upstream = parsed.qualifiers.get("upstream")
+    if upstream:
+        name, _, version = upstream.partition("@")
+        return name, version or parsed.version
     properties = component.get("properties") or {}
-    # Syft writes the source package as ``upstream=name[@version]``; Trivy keeps it in properties.
-    source, _, source_version = parsed.qualifiers.get("upstream", "").partition("@")
-    return {
-        "package": {
-            "ecosystem": ecosystem.format(release[1]),
-            "name": source or properties.get(_TRIVY_SOURCE_NAME) or parsed.name,
-        },
-        "version": source_version or properties.get(_TRIVY_SOURCE_VERSION) or parsed.version,
-    }
+    source = properties.get(f"{_TRIVY}SrcName")
+    if source:
+        # Trivy splits the Debian source version into epoch, upstream version and revision.
+        source_version = properties.get(f"{_TRIVY}SrcVersion")
+        if source_version and properties.get(f"{_TRIVY}SrcRelease"):
+            source_version = f"{source_version}-{properties[f'{_TRIVY}SrcRelease']}"
+        if source_version and properties.get(f"{_TRIVY}SrcEpoch"):
+            source_version = f"{properties[f'{_TRIVY}SrcEpoch']}:{source_version}"
+        return source, source_version or parsed.version
+    # Syft, the one generator naming its cataloger, leaves out ``upstream`` when the source is the binary.
+    if component.get("found_by"):
+        return parsed.name, parsed.version
+    return None
 
 
 def _query_targets(components: list[dict[str, Any]]) -> tuple[list[_Target], int]:
