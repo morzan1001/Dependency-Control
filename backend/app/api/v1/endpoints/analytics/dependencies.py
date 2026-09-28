@@ -36,6 +36,7 @@ from app.services.component_identity import (
     cluster_by_package_identity,
     component_match_query,
     lookup_component,
+    normalize_component,
 )
 from app.services.recommendation.common import get_attr
 
@@ -49,30 +50,24 @@ def _dep_key(dep: Any) -> str:
     return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
-async def _single_package_query(finding_repo: FindingRepository, scan_ids: list[str], component: str) -> dict[str, Any]:
-    """Finding filter for one component, narrowed to the exact spelling when the name is shared."""
-    base: dict[str, Any] = {
-        "scan_id": {"$in": scan_ids},
-        "waived": {"$ne": True},
-        **component_match_query(component),
-    }
-    names = await finding_repo.collection.distinct("component", base)
-    if len(set(cluster_by_package_identity(names).values())) > 1:
-        return {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}, "component": component}
-    return base
+async def _package_finding_query(
+    finding_repo: FindingRepository, scan_ids: list[str], component: str, version: str | None
+) -> dict[str, Any]:
+    """Finding filter for every stored spelling of ``component``'s package.
 
-
-def _resolve_single_package(records: list[Any], component: str) -> list[Any]:
-    """Drop the qualified matches when the requested name belongs to several packages.
-
-    The dependency-tree overlay blanks rather than guess, so an ambiguous name must not
-    return the union of every package that ends in it here either.
+    The bare artifact and its qualified forms are collected in scope (version included) first, so
+    a bare name joins its qualified package only when exactly one exists, whichever panel asks.
     """
-    names = {get_attr(r, "component", "") for r in records}
-    packages = set(cluster_by_package_identity(names).values())
-    if len(packages) <= 1:
-        return records
-    return [r for r in records if get_attr(r, "component", "") == component]
+    scope: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}}
+    if version:
+        scope["version"] = version
+    names = await finding_repo.collection.distinct(
+        "component", {**scope, **component_match_query(artifact_segment(component))}
+    )
+    representative = cluster_by_package_identity([*names, component])
+    wanted = representative[normalize_component(component)]
+    same = [name for name in names if representative[normalize_component(name)] == wanted]
+    return {**scope, "component": {"$in": same or [component]}}
 
 
 def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> DependencyTreeNode:
@@ -249,15 +244,8 @@ async def get_component_findings(
 
     # Waived findings are excluded here as everywhere else, so this list agrees with the
     # severity tiles and the hotspot ranking for the same scan.
-    query: dict[str, Any] = {
-        "scan_id": {"$in": scan_ids},
-        "waived": {"$ne": True},
-        **component_match_query(component),
-    }
-    if version:
-        query["version"] = version
-
-    finding_records = _resolve_single_package(await finding_repo.find_many(query, limit=100), component)
+    query = await _package_finding_query(finding_repo, scan_ids, component, version)
+    finding_records = await finding_repo.find_many(query, limit=100)
 
     results = []
     for fr in finding_records:
@@ -285,13 +273,8 @@ def _build_dep_query(scan_ids: list[str], component: str, version: str | None, t
 
 
 def _resolve_single_dependency_package(dependencies: list[Any], component: str) -> list[Any]:
-    """Keep one package's rows: the exact spelling if the inventory has it, else the artifact
-    match when it belongs to a single package."""
-    exact = [d for d in dependencies if get_attr(d, "name", "") == component]
-    if exact:
-        return exact
-    packages = set(cluster_by_package_identity({get_attr(d, "name", "") for d in dependencies}).values())
-    return dependencies if len(packages) <= 1 else []
+    """Keep one package's rows: the exact spelling if the inventory has it, else the artifact rows."""
+    return [d for d in dependencies if get_attr(d, "name", "") == component] or dependencies
 
 
 def _collect_affected_projects(dependencies: list[Any], project_name_map: dict[str, str]) -> dict[str, dict[str, Any]]:
@@ -357,10 +340,7 @@ async def get_dependency_metadata_endpoint(
     dep_purl = get_attr(first_dep, "purl")
     enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)
 
-    finding_query = await _single_package_query(finding_repo, scan_ids, component)
-    if version:
-        finding_query["version"] = version
-
+    finding_query = await _package_finding_query(finding_repo, scan_ids, component, version)
     finding_count = await finding_repo.count(finding_query)
     vuln_count = await finding_repo.count({**finding_query, "type": "vulnerability"})
 

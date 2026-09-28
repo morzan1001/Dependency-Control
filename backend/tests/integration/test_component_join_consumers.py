@@ -289,3 +289,49 @@ async def test_declared_direct_still_outranks_inferred_direct_in_the_plan(db, se
     plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
 
     assert [s["direct_confidence"] for s in plan["plan"]] == ["declared", "inferred"]
+
+
+async def _analytics(client, path: str, headers: dict, **params):
+    resp = await client.get(f"/api/v1/analytics/{path}", params=params, headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@pytest.mark.asyncio
+async def test_a_qualified_hotspot_lists_the_findings_stored_under_the_bare_name(client, db, seeded):
+    """Outdated and license findings keep the SBOM's bare name; the vulnerability carries the coordinate."""
+    for idx, finding_type in enumerate(["outdated", "license"]):
+        await db.findings.insert_one({**_finding(f"bare{idx}", BARE), "type": finding_type, "id": f"{finding_type}-x"})
+
+    findings = await _analytics(client, "component-findings", seeded, component=QUALIFIED)
+    metadata = await _analytics(client, "dependency-metadata", seeded, component=QUALIFIED)
+
+    assert sorted(f["type"] for f in findings) == ["license", "outdated", "vulnerability"]
+    assert metadata["total_finding_count"] == len(findings)
+    assert metadata["total_vulnerability_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_both_panels_decide_a_bare_name_from_the_same_version_scoped_evidence(client, db, seeded):
+    await db.findings.insert_one({**_finding("core-a", "com.a:core"), "version": "1.0"})
+    await db.findings.insert_one({**_finding("core-b", "com.b:core"), "version": "2.0"})
+    await db.dependencies.insert_one({**_dependency("dep-core", name="core"), "version": "1.0"})
+
+    findings = await _analytics(client, "component-findings", seeded, component="core", version="1.0")
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="core", version="1.0")
+
+    assert [f["component"] for f in findings] == ["com.a:core"]
+    assert metadata["total_finding_count"] == len(findings)
+
+
+@pytest.mark.asyncio
+async def test_a_bare_name_shared_by_two_packages_resolves_to_neither(client, db, seeded):
+    await db.findings.insert_one({**_finding("core-a", "com.a:core"), "version": "1.0"})
+    await db.findings.insert_one({**_finding("core-b", "com.b:core"), "version": "1.0"})
+    await db.dependencies.insert_one({**_dependency("dep-core", name="core"), "version": "1.0"})
+
+    findings = await _analytics(client, "component-findings", seeded, component="core")
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="core")
+
+    assert findings == []
+    assert metadata["total_finding_count"] == 0
