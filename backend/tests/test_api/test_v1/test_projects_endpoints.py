@@ -611,3 +611,56 @@ class TestWritesReadTheProjectBackOnce:
 
         assert reads.await_count == 0
         assert (await db.projects.find_one({"_id": "proj-1"}))["api_key_hash"]
+
+
+class TestAnalyzerNamesAreCheckedWhereTheyEnter:
+    """The engine skips an analyzer name it does not know without a trace, so a typo stops a scanner silently."""
+
+    def test_creating_a_project_with_an_unknown_analyzer_is_refused(self):
+        from app.api.v1.endpoints.projects import create_project
+        from app.models.system import SystemSettings
+        from app.schemas.project import ProjectCreate
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                create_project(
+                    project_in=ProjectCreate(name="New", active_analyzers=["trivy", "TruffleHog"]),
+                    current_user=User(id="c", username="c", email="c@test.com", permissions=["project:create"]),
+                    db=db,
+                    settings=SystemSettings(),
+                )
+            )
+
+        assert exc.value.status_code == 422
+        assert "TruffleHog" in exc.value.detail
+        assert db.projects._docs == {}
+
+    @pytest.mark.asyncio
+    async def test_updating_a_project_with_an_unknown_analyzer_writes_nothing(self):
+        from app.api.v1.endpoints.projects import update_project
+        from app.schemas.project import ProjectUpdate
+
+        user = _make_admin_user()
+        project = _make_project(admin_id=user.id)
+        db = await TestWritesReadTheProjectBackOnce._seeded_db(project)
+
+        with (
+            patch(f"{MODULE}._load_project_for_update", AsyncMock(return_value=project)),
+            pytest.raises(HTTPException) as exc,
+        ):
+            await update_project("proj-1", ProjectUpdate(active_analyzers=["osv "]), user, db)
+
+        assert exc.value.status_code == 422
+        assert (await db.projects.find_one({"_id": "proj-1"}))["active_analyzers"] == project.active_analyzers
+
+    def test_every_name_the_project_settings_offer_is_selectable(self):
+        """Mirrors AVAILABLE_ANALYZERS in frontend/src/lib/constants.ts."""
+        from app.services.analysis.registry import SELECTABLE_ANALYZERS
+
+        assert {
+            "trivy", "grype", "osv", "deps_dev", "epss_kev", "reachability", "end_of_life", "license_compliance",
+            "os_malware", "typosquatting", "hash_verification", "maintainer_risk", "outdated_packages",
+            "opengrep", "kics", "bearer", "trufflehog",
+        } == SELECTABLE_ANALYZERS  # fmt: skip

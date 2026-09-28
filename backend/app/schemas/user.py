@@ -5,6 +5,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, Str
 
 from app.core.notification_prefs import NotificationPreferences
 from app.models.types import PyObjectId
+from app.schemas._not_null import reject_null
 
 
 def validate_password_strength(password: str) -> str:
@@ -73,12 +74,7 @@ class UserUpdate(BaseModel):
     notification_preferences: NotificationPreferences = None
     password: str | None = None
 
-    @field_validator("email", "username")
-    @classmethod
-    def reject_null(cls, v: str | None) -> str:
-        if v is None:
-            raise ValueError("may be omitted but not null")
-        return v
+    _not_null = field_validator("email", "username")(reject_null)
 
 
 class UserUpdateMe(BaseModel):

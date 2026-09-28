@@ -3,7 +3,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, DEFAULT_RETENTION_DAYS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
 from app.core.notification_prefs import NotificationPreferences
 from app.models.base import CreatedAtModel
 from app.models.finding import Finding
@@ -48,7 +48,7 @@ class Project(MongoDocument, CreatedAtModel):
     stats: Stats | None = None
     last_scan_at: datetime | None = None
     latest_scan_id: str | None = None
-    retention_days: int = 90  # Default retention period in days
+    retention_days: int = DEFAULT_RETENTION_DAYS
     retention_action: str = "delete"  # "delete", "archive", or "none"
     default_branch: str | None = None
     enforce_notification_settings: bool = False

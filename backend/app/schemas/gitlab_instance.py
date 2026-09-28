@@ -5,10 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.models.gitlab_instance import is_shared_gitlab_issuer
 from app.schemas._instance_url import strip_trailing_slash
-from app.schemas._oidc_audience import (
-    validate_audience_not_blank,
-    validate_optional_audience_not_blank,
-)
+from app.schemas._not_null import reject_null
+from app.schemas._oidc_audience import validate_audience_not_blank
 
 AUTO_CREATE_NEEDS_NAMESPACES = (
     "Auto-creating projects on gitlab.com needs at least one allowed namespace, "
@@ -107,7 +105,10 @@ class GitLabInstanceUpdate(BaseModel):
         None, description="Top-level groups whose projects' tokens are accepted; [] accepts every project"
     )
 
-    _audience_not_blank = field_validator("oidc_audience")(validate_optional_audience_not_blank)
+    _not_null = field_validator(
+        "name", "url", "is_active", "is_default", "auto_create_projects", "sync_teams", "team_sync_depth"
+    )(reject_null)
+    _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
     _namespaces_top_level = field_validator("allowed_namespaces")(_validate_namespaces)
     _url_normalised = field_validator("url")(strip_trailing_slash)
 

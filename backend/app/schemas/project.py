@@ -1,10 +1,12 @@
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from app.core.constants import (
     DEFAULT_ACTIVE_ANALYZERS,
+    DEFAULT_RETENTION_DAYS,
+    MAX_RETENTION_DAYS,
     PROJECT_ROLE_VIEWER,
     PROJECT_ROLES,
     RETENTION_ACTION_DELETE,
@@ -14,6 +16,7 @@ from app.core.notification_prefs import NotificationPreferences
 from app.models.finding import FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
 from app.models.project import Project, Scan
+from app.schemas._not_null import reject_null
 from app.schemas.team import TeamRef
 
 
@@ -99,17 +102,20 @@ class ProjectListEnriched(BaseModel):
     pages: int
 
 
+ProjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
+
 class ProjectCreate(BaseModel):
-    name: str = Field(
-        ..., min_length=1, max_length=200, description="The name of the project", examples=["My Awesome App"]
-    )
+    name: ProjectName = Field(..., description="The name of the project", examples=["My Awesome App"])
     team_id: str | None = Field(None, description="ID of the team this project belongs to")
     active_analyzers: list[str] = Field(
         default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS),
         description="List of analyzers to run on this project",
         examples=[["end_of_life", "os_malware", "trivy"]],
     )
-    retention_days: int | None = Field(90, description="Number of days to keep scan history", ge=1)
+    retention_days: int | None = Field(
+        DEFAULT_RETENTION_DAYS, description="Number of days to keep scan history", ge=1, le=MAX_RETENTION_DAYS
+    )
     retention_action: RetentionAction | None = Field(
         RETENTION_ACTION_DELETE,
         description="Action when retention period expires: delete, archive, or none",
@@ -120,12 +126,14 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = Field(None, description="New name for the project")
+    name: ProjectName | None = Field(None, description="New name for the project")
     team_ids: list[str] | None = Field(
         None, description="Every team that is to own this project; the whole set, empty gives up ownership"
     )
     active_analyzers: list[str] | None = Field(None, description="Updated list of active analyzers")
-    retention_days: int | None = Field(None, description="Number of days to keep scan history", ge=1)
+    retention_days: int | None = Field(
+        None, description="Number of days to keep scan history", ge=1, le=MAX_RETENTION_DAYS
+    )
     retention_action: RetentionAction | None = Field(
         None,
         description="Action when retention period expires: delete, archive, or none",
@@ -151,6 +159,16 @@ class ProjectUpdate(BaseModel):
     analyzer_settings: AnalyzerSettings | None = Field(
         None, description="Per-analyzer configuration overrides keyed by analyzer ID"
     )
+
+    _not_null = field_validator(
+        "name",
+        "active_analyzers",
+        "retention_days",
+        "retention_action",
+        "gitlab_mr_comments_enabled",
+        "github_pr_comments_enabled",
+        "enforce_notification_settings",
+    )(reject_null)
 
 
 class ProjectMemberInvite(BaseModel):

@@ -5,10 +5,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.models.github_instance import is_shared_github_issuer
 from app.schemas._instance_url import strip_trailing_slash
-from app.schemas._oidc_audience import (
-    validate_audience_not_blank,
-    validate_optional_audience_not_blank,
-)
+from app.schemas._not_null import reject_null
+from app.schemas._oidc_audience import validate_audience_not_blank
 
 AUTO_CREATE_NEEDS_OWNERS = (
     "Auto-creating projects on the shared github.com issuer needs at least one allowed owner id, "
@@ -94,7 +92,8 @@ class GitHubInstanceUpdate(BaseModel):
         None, description="Numeric repository_owner_id claims whose tokens are accepted; [] accepts every owner"
     )
 
-    _audience_not_blank = field_validator("oidc_audience")(validate_optional_audience_not_blank)
+    _not_null = field_validator("name", "url", "is_active", "auto_create_projects", "sync_teams")(reject_null)
+    _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
     _owner_ids_numeric = field_validator("allowed_owner_ids")(_validate_owner_ids)
     _url_normalised = field_validator("url")(strip_trailing_slash)
 

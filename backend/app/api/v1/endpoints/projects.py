@@ -34,7 +34,7 @@ from app.api.v1.helpers import (
     team_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
-from app.api.v1.helpers.projects import max_project_role
+from app.api.v1.helpers.projects import max_project_role, reject_unknown_analyzers
 from app.api.v1.helpers.sorting import SortOrderQuery
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
@@ -242,6 +242,7 @@ async def create_project(
     settings: Annotated[SystemSettings, Depends(deps.get_system_settings)],
 ) -> ProjectApiKeyResponse:
     """Create a new project and return the initial API Key, which is only returned once."""
+    reject_unknown_analyzers(project_in.active_analyzers)
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
@@ -729,6 +730,7 @@ async def update_project(
     project = await _load_project_for_update(project_id, current_user, db)
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
+    reject_unknown_analyzers(update_data.get("active_analyzers"))
     # The picker sends every owner it showed, a sync's included, so the write keeps each retained
     # owner's provenance rather than claiming the lot as hand-assigned.
     ownership_stages: list[dict] = []

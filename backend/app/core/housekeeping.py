@@ -495,6 +495,71 @@ async def _process_scans_in_batches(
         await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
 
 
+async def _expire_older_than(db: Any, days: int, scope: dict[str, Any], action: str, label: str) -> None:
+    """Retention for one group. A stored retention no cutoff can be computed for fails only its own group."""
+    try:
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        cursor = db.scans.find(
+            {
+                **scope,
+                "created_at": {"$lt": cutoff_date},
+                "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
+                "status": {"$nin": ["pending", "processing"]},
+            },
+            {"_id": 1},
+        )
+        await _process_scans_in_batches(db, cursor, action, label)
+    except Exception:
+        logger.exception("Housekeeping: %s failed", label)
+
+
+async def _run_retention(db: Any) -> None:
+    system_settings = await SystemSettingsRepository(db).get()
+
+    if system_settings.retention_mode == SETTINGS_MODE_GLOBAL:
+        retention_days = system_settings.global_retention_days
+        retention_action = system_settings.global_retention_action
+        if retention_days > 0 and retention_action != "none":
+            logger.info(f"Running global housekeeping (action={retention_action}, older than {retention_days} days)")
+            await _expire_older_than(db, retention_days, {}, retention_action, "Global housekeeping")
+        return
+
+    logger.info("Running project-specific housekeeping...")
+
+    # Group projects by (retention_days, retention_action) to minimize DB queries
+    pipeline: list[dict[str, Any]] = [
+        {
+            "$match": {
+                "retention_days": {"$gt": 0},
+                "$or": [
+                    {"retention_action": {"$exists": False}},
+                    {"retention_action": {"$ne": "none"}},
+                ],
+            }
+        },
+        {
+            "$group": {
+                "_id": {
+                    "days": "$retention_days",
+                    "action": {"$ifNull": ["$retention_action", "delete"]},
+                },
+                "project_ids": {"$push": "$_id"},
+            }
+        },
+    ]
+
+    async for group in db.projects.aggregate(pipeline):
+        days = group["_id"]["days"]
+        action = group["_id"]["action"]
+        project_ids = group["project_ids"]
+
+        if not days or days <= 0:
+            continue
+
+        label = f"Retention {days}d/{action} ({len(project_ids)} projects)"
+        await _expire_older_than(db, days, {"project_id": {"$in": project_ids}}, action, label)
+
+
 async def run_housekeeping() -> None:
     """
     Periodically cleans up old scan data based on project retention settings.
@@ -510,78 +575,10 @@ async def run_housekeeping() -> None:
         except Exception as e:
             logger.exception("Housekeeping: release flag reconcile failed: %s", e)
 
-        repo = SystemSettingsRepository(db)
-        system_settings = await repo.get()
-
-        if system_settings.retention_mode == SETTINGS_MODE_GLOBAL:
-            retention_days = system_settings.global_retention_days
-            retention_action = system_settings.global_retention_action
-
-            if retention_days > 0 and retention_action != "none":
-                cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
-                logger.info(
-                    f"Running global housekeeping (action={retention_action}). "
-                    f"Processing scans older than {cutoff_date}"
-                )
-
-                cursor = db.scans.find(
-                    {
-                        "created_at": {"$lt": cutoff_date},
-                        "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-                        "status": {"$nin": ["pending", "processing"]},
-                    },
-                    {"_id": 1},
-                )
-
-                await _process_scans_in_batches(db, cursor, retention_action, "Global housekeeping")
-
-        else:
-            logger.info("Running project-specific housekeeping...")
-
-            # Group projects by (retention_days, retention_action) to minimize DB queries
-            pipeline: list[dict[str, Any]] = [
-                {
-                    "$match": {
-                        "retention_days": {"$gt": 0},
-                        "$or": [
-                            {"retention_action": {"$exists": False}},
-                            {"retention_action": {"$ne": "none"}},
-                        ],
-                    }
-                },
-                {
-                    "$group": {
-                        "_id": {
-                            "days": "$retention_days",
-                            "action": {"$ifNull": ["$retention_action", "delete"]},
-                        },
-                        "project_ids": {"$push": "$_id"},
-                    }
-                },
-            ]
-
-            async for group in db.projects.aggregate(pipeline):
-                days = group["_id"]["days"]
-                action = group["_id"]["action"]
-                project_ids = group["project_ids"]
-
-                if not days or days <= 0:
-                    continue
-
-                cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-
-                cursor = db.scans.find(
-                    {
-                        "project_id": {"$in": project_ids},
-                        "created_at": {"$lt": cutoff_date},
-                        "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-                        "status": {"$nin": ["pending", "processing"]},
-                    },
-                    {"_id": 1},
-                )
-
-                label = f"Retention {days}d/{action} ({len(project_ids)} projects)"
-                await _process_scans_in_batches(db, cursor, action, label)
+        try:
+            await _run_retention(db)
+        except Exception as e:
+            logger.exception("Housekeeping: retention failed: %s", e)
 
         try:
             await prune_old_audit_entries(db)

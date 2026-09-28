@@ -400,6 +400,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                     id="retention"
                                     type="number"
                                     min="1"
+                                    max="36500"
                                     value={retentionDays}
                                     onChange={(e) => setRetentionDays(Number.parseInt(e.target.value) || 90)}
                                 />
