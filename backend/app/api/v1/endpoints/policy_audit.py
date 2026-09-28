@@ -283,7 +283,7 @@ async def _revert_policy(
     try:
         rules = CryptoPolicyPutRequest(rules=target_entry.snapshot.get("rules", [])).rules
     except ValidationError as exc:
-        reasons = "; ".join(error["msg"] for error in exc.errors())
+        reasons = "; ".join(error["msg"].removeprefix("Value error, ") for error in exc.errors())
         raise HTTPException(
             status_code=422, detail=f"Version {target_version} holds rules a write would refuse: {reasons}"
         ) from exc

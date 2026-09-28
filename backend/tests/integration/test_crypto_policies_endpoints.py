@@ -276,5 +276,5 @@ async def test_a_revert_refuses_a_snapshot_holding_a_rule_a_write_would_refuse(c
     )
 
     assert resp.status_code == 422
-    assert "fires-on-everything" in resp.text
+    assert resp.json()["detail"].startswith("Version 1 holds rules a write would refuse: rule 'fires-on-everything'")
     assert (await CryptoPolicyRepository(db).get_system_policy()).version == 2

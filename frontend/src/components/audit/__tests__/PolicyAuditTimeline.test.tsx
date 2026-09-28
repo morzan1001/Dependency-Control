@@ -1,8 +1,12 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { describe, it, expect, vi } from "vitest";
 
+import { revertSystemPolicy } from "@/api/policyAudit";
 import { PolicyAuditTimeline } from "../PolicyAuditTimeline";
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 vi.mock("@/api/policyAudit", () => ({
   listSystemAudit: vi.fn().mockResolvedValue({
@@ -59,5 +63,21 @@ describe("PolicyAuditTimeline", () => {
     fireEvent.click(btn);
     expect(screen.getByText(/Prune audit entries/i)).toBeInTheDocument();
     expect(screen.getByText(/Destructive:/i)).toBeInTheDocument();
+  });
+
+  it("shows the server's reason when a revert is refused", async () => {
+    vi.mocked(revertSystemPolicy).mockRejectedValueOnce(
+      Object.assign(new Error("Request failed with status code 422"), {
+        response: { data: { detail: "Version 2 holds rules a write would refuse: rule 'r1': needs a subject matcher" } },
+      }),
+    );
+    withClient(<PolicyAuditTimeline policyScope="system" canRevert />);
+    fireEvent.click((await screen.findAllByTitle("Revert to this version"))[1]);
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "back to seed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm revert" }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
+      "Revert failed: Version 2 holds rules a write would refuse: rule 'r1': needs a subject matcher",
+    ));
   });
 });
