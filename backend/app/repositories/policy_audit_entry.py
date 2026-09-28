@@ -22,9 +22,6 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
     collection_name = "crypto_policy_history"
     model_class = PolicyAuditEntry
 
-    async def insert(self, entry: PolicyAuditEntry) -> None:
-        await self.collection.insert_one(entry.model_dump(by_alias=True))
-
     async def list(
         self,
         *,

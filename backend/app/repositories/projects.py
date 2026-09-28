@@ -1,19 +1,16 @@
 """Repository for projects."""
 
-from collections.abc import AsyncGenerator
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
 from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_SOURCE_MANUAL
 from app.models.project import Project
+from app.repositories.base import BaseRepository, UpdateOps
 from app.schemas.projections import ProjectMinimal, ProjectWithScanId
 
 _MEMBERS_USER_ID = "members.user_id"
 
-
-UpdateOps = dict[str, Any] | list[dict[str, Any]]
 
 # A project whose ``team_ids`` is absent or explicitly null. Measured against the server: this
 # matches both, ``$size: 0`` matches neither, and neither shape answers an ownership filter — such a
@@ -253,17 +250,9 @@ def surviving_owner_admin_filter(incumbent_admin_owners: list[str]) -> dict[str,
     }
 
 
-class ProjectRepository:
-    def __init__(self, db: AsyncIOMotorDatabase):
-        self.db = db
-        self.collection = db.projects
-
-    async def get_by_id(self, project_id: str) -> Project | None:
-        data = await self.collection.find_one({"_id": project_id})
-        return Project(**data) if data else None
-
-    async def get_raw_by_id(self, project_id: str) -> dict[str, Any] | None:
-        return await self.collection.find_one({"_id": project_id})
+class ProjectRepository(BaseRepository[Project]):
+    collection_name = "projects"
+    model_class = Project
 
     async def get_by_gitlab_composite_key(self, gitlab_instance_id: str, gitlab_project_id: int) -> Project | None:
         data = await self.collection.find_one(
@@ -324,56 +313,6 @@ class ProjectRepository:
         created = result["_id"] == project.id
         return Project(**result), created
 
-    async def create(self, project: Project) -> Project:
-        await self.collection.insert_one(project.model_dump(by_alias=True))
-        return project
-
-    async def create_raw(self, project_data: dict[str, Any]) -> None:
-        await self.collection.insert_one(project_data)
-
-    async def update(self, project_id: str, update_data: dict[str, Any]) -> Project | None:
-        if update_data:
-            await self.collection.update_one({"_id": project_id}, {"$set": update_data})
-        return await self.get_by_id(project_id)
-
-    async def update_raw(self, project_id: str, update_ops: UpdateOps, guard: dict[str, Any] | None = None) -> bool:
-        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
-
-        ``guard`` joins the write's own filter so a condition established beforehand cannot go
-        stale in between. False when it no longer held.
-        """
-        result = await self.collection.update_one({"_id": project_id, **(guard or {})}, update_ops)
-        return bool(result.matched_count)
-
-    async def delete(self, project_id: str) -> bool:
-        result = await self.collection.delete_one({"_id": project_id})
-        return result.deleted_count > 0
-
-    async def find_many(
-        self,
-        query: dict[str, Any],
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "name",
-        sort_order: int = 1,
-        projection: dict[str, int] | None = None,
-    ) -> list[Project]:
-        cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
-        docs = await cursor.to_list(limit)
-        return [Project(**doc) for doc in docs]
-
-    async def find_many_raw(
-        self,
-        query: dict[str, Any],
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "name",
-        sort_order: int = 1,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
-        return await cursor.to_list(limit)
-
     async def find_many_with_scan_id(
         self,
         query: dict[str, Any],
@@ -394,21 +333,11 @@ class ProjectRepository:
         query: dict[str, Any],
         limit: int,
     ) -> list[ProjectMinimal]:
+        if limit <= 0:
+            return []
         cursor = self.collection.find(query, {"_id": 1, "name": 1}).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectMinimal(**doc) for doc in docs]
-
-    async def count(self, query: dict[str, Any] | None = None) -> int:
-        return await self.collection.count_documents(query or {})
-
-    async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
-        """Prefer $limit inside the pipeline over the limit arg."""
-        return await self.collection.aggregate(pipeline).to_list(limit)
-
-    async def update_many(self, query: dict[str, Any], update_data: dict[str, Any]) -> int:
-        """``update_data`` is a document of field values; use ``update_many_raw`` for operators."""
-        result = await self.collection.update_many(query, {"$set": update_data})
-        return result.modified_count
 
     async def update_many_raw(self, query: dict[str, Any], update_ops: UpdateOps) -> int:
         """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
@@ -453,7 +382,3 @@ class ProjectRepository:
             array_filters=[{"m.user_id": user_id}],
         )
         return bool(result.matched_count)
-
-    async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[Project, None]:
-        async for doc in self.collection.find(query or {}):
-            yield Project(**doc)

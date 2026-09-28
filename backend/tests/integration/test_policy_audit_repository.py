@@ -29,8 +29,8 @@ def _entry(version=1, policy_scope="system", project_id=None, ts=None, action=Po
 @pytest.mark.asyncio
 async def test_insert_and_list(db):
     repo = PolicyAuditRepository(db)
-    await repo.insert(_entry(version=1))
-    await repo.insert(_entry(version=2))
+    await repo.create(_entry(version=1))
+    await repo.create(_entry(version=2))
     entries = await repo.list(policy_scope="system", limit=10)
     assert len(entries) == 2
 
@@ -38,8 +38,8 @@ async def test_insert_and_list(db):
 @pytest.mark.asyncio
 async def test_list_respects_project_id_filter(db):
     repo = PolicyAuditRepository(db)
-    await repo.insert(_entry(policy_scope="project", project_id="p1", version=1))
-    await repo.insert(_entry(policy_scope="project", project_id="p2", version=1))
+    await repo.create(_entry(policy_scope="project", project_id="p1", version=1))
+    await repo.create(_entry(policy_scope="project", project_id="p2", version=1))
     p1_entries = await repo.list(policy_scope="project", project_id="p1", limit=10)
     assert len(p1_entries) == 1
     assert p1_entries[0].project_id == "p1"
@@ -48,7 +48,7 @@ async def test_list_respects_project_id_filter(db):
 @pytest.mark.asyncio
 async def test_get_by_version(db):
     repo = PolicyAuditRepository(db)
-    await repo.insert(_entry(version=7))
+    await repo.create(_entry(version=7))
     hit = await repo.get_by_version(policy_scope="system", project_id=None, version=7)
     assert hit is not None
     assert hit.version == 7
@@ -62,8 +62,8 @@ async def test_entries_saved_in_one_millisecond_are_listed_newest_version_first(
     """Two saves can share a stored timestamp, and the revert view reads the head of this list."""
     same_instant = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
     repo = PolicyAuditRepository(db)
-    await repo.insert(_entry(version=_OLDER_VERSION, ts=same_instant))
-    await repo.insert(_entry(version=_NEWER_VERSION, ts=same_instant, action=PolicyAuditAction.REVERT))
+    await repo.create(_entry(version=_OLDER_VERSION, ts=same_instant))
+    await repo.create(_entry(version=_NEWER_VERSION, ts=same_instant, action=PolicyAuditAction.REVERT))
 
     entries = await repo.list(policy_scope="system", limit=_LIST_LIMIT)
 
@@ -74,9 +74,9 @@ async def test_entries_saved_in_one_millisecond_are_listed_newest_version_first(
 async def test_delete_older_than(db):
     now = datetime.now(timezone.utc)
     repo = PolicyAuditRepository(db)
-    await repo.insert(_entry(version=1, ts=now - timedelta(days=200)))
-    await repo.insert(_entry(version=2, ts=now - timedelta(days=30)))
-    await repo.insert(_entry(version=3, ts=now))
+    await repo.create(_entry(version=1, ts=now - timedelta(days=200)))
+    await repo.create(_entry(version=2, ts=now - timedelta(days=30)))
+    await repo.create(_entry(version=3, ts=now))
 
     cutoff = now - timedelta(days=90)
     deleted = await repo.delete_older_than(
@@ -95,8 +95,8 @@ async def test_delete_older_than_spares_an_entry_stamped_at_the_cutoff(db):
     the very entry it names with it."""
     cutoff = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
     repo = PolicyAuditRepository(db)
-    await repo.insert(_entry(version=1, ts=cutoff - timedelta(milliseconds=1)))
-    await repo.insert(_entry(version=2, ts=cutoff))
+    await repo.create(_entry(version=1, ts=cutoff - timedelta(milliseconds=1)))
+    await repo.create(_entry(version=2, ts=cutoff))
 
     deleted = await repo.delete_older_than(policy_scope="system", project_id=None, cutoff=cutoff)
 

@@ -26,9 +26,9 @@ def _entry(version, ts):
 async def test_prune_deletes_only_older(client, db, admin_auth_headers):
     now = datetime.now(timezone.utc)
     repo = PolicyAuditRepository(db)
-    await repo.insert(_entry(1, now - timedelta(days=200)))
-    await repo.insert(_entry(2, now - timedelta(days=30)))
-    await repo.insert(_entry(3, now))
+    await repo.create(_entry(1, now - timedelta(days=200)))
+    await repo.create(_entry(2, now - timedelta(days=30)))
+    await repo.create(_entry(3, now))
 
     cutoff = now - timedelta(days=90)
     resp = await client.delete(

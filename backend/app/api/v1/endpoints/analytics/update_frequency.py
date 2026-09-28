@@ -275,6 +275,7 @@ async def _scoped_projects(
 
     projects_raw = await ProjectRepository(db).find_many_raw(
         query,
+        sort_by="name",
         projection={"_id": 1, "name": 1, "team_ids": 1, "deleted_branches": 1, "default_branch": 1},
         limit=len(user_project_ids),
     )

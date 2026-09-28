@@ -105,7 +105,7 @@ async def record_policy_change(
         reverted_from_version=reverted_from_version,
     )
     try:
-        await PolicyAuditRepository(db).insert(entry)
+        await PolicyAuditRepository(db).create(entry)
     except Exception:
         logger.exception("Policy audit persistence failed (non-blocking)")
     # A policy change invalidates cached analytics derived from it; flush the TTL cache.
@@ -300,7 +300,7 @@ async def record_license_policy_change(
         comment=comment,
     )
     try:
-        await repo.insert(entry)
+        await repo.create(entry)
     except Exception:
         logger.exception("License-policy audit persistence failed (non-blocking)")
     try:

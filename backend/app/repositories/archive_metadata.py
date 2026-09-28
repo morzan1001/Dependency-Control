@@ -32,38 +32,6 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
             query["scan_created_at"] = date_filter
         return query
 
-    async def find_by_project(
-        self,
-        project_id: str,
-        skip: int = 0,
-        limit: int = 50,
-        branch: str | None = None,
-        date_from: datetime | None = None,
-        date_to: datetime | None = None,
-    ) -> list[ArchiveMetadata]:
-        return await self.find_all(
-            skip=skip,
-            limit=limit,
-            branch=branch,
-            date_from=date_from,
-            date_to=date_to,
-            project_id=project_id,
-        )
-
-    async def count_by_project(
-        self,
-        project_id: str,
-        branch: str | None = None,
-        date_from: datetime | None = None,
-        date_to: datetime | None = None,
-    ) -> int:
-        return await self.count_all(
-            branch=branch,
-            date_from=date_from,
-            date_to=date_to,
-            project_id=project_id,
-        )
-
     async def find_by_scan_id(self, scan_id: str) -> ArchiveMetadata | None:
         return await self.find_one({"scan_id": scan_id})
 

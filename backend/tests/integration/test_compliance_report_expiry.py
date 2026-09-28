@@ -28,7 +28,7 @@ async def test_expired_artifact_returns_410(
         summary={"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "total": 0},
         expires_at=datetime.now(timezone.utc) - timedelta(days=100),
     )
-    await ComplianceReportRepository(db).insert(report)
+    await ComplianceReportRepository(db).create(report)
 
     get = await client.get(
         f"/api/v1/compliance/reports/{report.id}",

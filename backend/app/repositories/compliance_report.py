@@ -14,13 +14,6 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
     collection_name = "compliance_reports"
     model_class = ComplianceReport
 
-    async def insert(self, report: ComplianceReport) -> None:
-        await self.collection.insert_one(report.model_dump(by_alias=True))
-
-    async def get(self, report_id: str) -> ComplianceReport | None:
-        doc = await self.collection.find_one({"_id": report_id})
-        return ComplianceReport.model_validate(doc) if doc else None
-
     async def list(
         self,
         *,
@@ -96,7 +89,3 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
                 },
             }
         )
-
-    async def delete(self, report_id: str) -> bool:
-        result = await self.collection.delete_one({"_id": report_id})
-        return result.deleted_count > 0

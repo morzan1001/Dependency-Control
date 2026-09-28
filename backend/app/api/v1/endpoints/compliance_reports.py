@@ -94,7 +94,7 @@ async def create_report(
         requested_at=datetime.now(timezone.utc),
         comment=req.comment,
     )
-    await repo.insert(report)
+    await repo.create(report)
 
     background_tasks.add_task(_run_and_webhook, db, report, current_user)
     return ReportAck(report_id=report.id, status=_status_str(report.status))
@@ -182,7 +182,7 @@ async def get_report(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    r = await ComplianceReportRepository(db).get(report_id)
+    r = await ComplianceReportRepository(db).get_by_id(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     if not await _user_can_see_report(db, current_user, r):
@@ -205,7 +205,7 @@ async def download_report(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> StreamingResponse:
-    r = await ComplianceReportRepository(db).get(report_id)
+    r = await ComplianceReportRepository(db).get_by_id(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     status_val = _status_str(r.status)
@@ -262,7 +262,7 @@ async def delete_report(
     db: DatabaseDep,
 ) -> None:
     repo = ComplianceReportRepository(db)
-    r = await repo.get(report_id)
+    r = await repo.get_by_id(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     if r.requested_by != current_user.id:
@@ -293,7 +293,7 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
 
     from app.services.webhooks import webhook_service
 
-    fresh = await ComplianceReportRepository(db).get(report.id)
+    fresh = await ComplianceReportRepository(db).get_by_id(report.id)
     fresh_status = None
     fresh_summary: dict = {}
     if fresh is not None:

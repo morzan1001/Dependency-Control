@@ -11,6 +11,7 @@ import pytest
 
 from app.repositories.projects import ProjectRepository, replace_team_subset_pipeline
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.mocks.mongodb import create_mock_db
 
 
 def _spy_repo() -> tuple[ProjectRepository, MagicMock]:
@@ -18,9 +19,7 @@ def _spy_repo() -> tuple[ProjectRepository, MagicMock]:
     collection = MagicMock()
     collection.update_one = AsyncMock(return_value=MagicMock(matched_count=1, modified_count=1))
     collection.update_many = AsyncMock(return_value=MagicMock(matched_count=1, modified_count=1))
-    db = MagicMock()
-    db.projects = collection
-    repo = ProjectRepository(db)
+    repo = ProjectRepository(create_mock_db({"projects": collection}))
     repo.get_by_id = AsyncMock(return_value=None)  # type: ignore[method-assign]
     return repo, collection
 

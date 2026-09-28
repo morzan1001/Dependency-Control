@@ -78,9 +78,9 @@ async def list_archives(
 
     repo = ArchiveMetadataRepository(db)
     skip = (page - 1) * size
-    total = await repo.count_by_project(project_id, branch=branch, date_from=date_from, date_to=date_to)
-    archives = await repo.find_by_project(
-        project_id,
+    total = await repo.count_all(project_id=project_id, branch=branch, date_from=date_from, date_to=date_to)
+    archives = await repo.find_all(
+        project_id=project_id,
         skip=skip,
         limit=size,
         branch=branch,

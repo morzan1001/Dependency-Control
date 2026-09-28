@@ -652,13 +652,9 @@ class TestUpdateWaiverRecalc:
 
 class TestListWaivers:
     def test_admin_sees_all_waivers(self, admin_user):
-        waiver_docs = [
-            _make_waiver(id="w1").model_dump(by_alias=True),
-            _make_waiver(id="w2").model_dump(by_alias=True),
-        ]
         mock_repo = MagicMock()
         mock_repo.count = AsyncMock(return_value=2)
-        mock_repo.find_many = AsyncMock(return_value=waiver_docs)
+        mock_repo.find_many = AsyncMock(return_value=[_make_waiver(id="w1"), _make_waiver(id="w2")])
 
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
             result = _call_list_waivers(admin_user)
@@ -669,11 +665,7 @@ class TestListWaivers:
     def test_filter_by_project_id(self, admin_user):
         mock_repo = MagicMock()
         mock_repo.count = AsyncMock(return_value=1)
-        mock_repo.find_many = AsyncMock(
-            return_value=[
-                _make_waiver().model_dump(by_alias=True),
-            ]
-        )
+        mock_repo.find_many = AsyncMock(return_value=[_make_waiver()])
 
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
             with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
@@ -695,11 +687,11 @@ class TestListWaivers:
         expired = _make_waiver(id="w-expired", expiration_date=now - timedelta(days=5))
         active = _make_waiver(id="w-active", expiration_date=now + timedelta(days=5))
         no_expiry = _make_waiver(id="w-no-exp", expiration_date=None)
-        docs = [w.model_dump(by_alias=True) for w in (expired, active, no_expiry)]
+        waivers = [expired, active, no_expiry]
 
         mock_repo = MagicMock()
-        mock_repo.count = AsyncMock(return_value=len(docs))
-        mock_repo.find_many = AsyncMock(return_value=docs)
+        mock_repo.count = AsyncMock(return_value=len(waivers))
+        mock_repo.find_many = AsyncMock(return_value=waivers)
 
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
             result = _call_list_waivers(admin_user)

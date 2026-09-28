@@ -11,6 +11,8 @@ from pymongo.errors import BulkWriteError
 
 logger = logging.getLogger(__name__)
 
+UpdateOps = dict[str, Any] | list[dict[str, Any]]
+
 
 class BaseRepository[T: BaseModel]:
     """Generic CRUD base. Subclasses set ``collection_name`` and ``model_class``."""
@@ -121,8 +123,14 @@ class BaseRepository[T: BaseModel]:
             await self.collection.update_one({"_id": id}, {"$set": update_data})
         return await self.get_by_id(id)
 
-    async def update_raw(self, id: str, update_ops: dict[str, Any]) -> None:
-        await self.collection.update_one({"_id": id}, update_ops)
+    async def update_raw(self, id: str, update_ops: UpdateOps, guard: dict[str, Any] | None = None) -> bool:
+        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
+
+        ``guard`` joins the write's own filter so a condition established beforehand cannot go
+        stale in between. False when it no longer held.
+        """
+        result = await self.collection.update_one({"_id": id, **(guard or {})}, update_ops)
+        return bool(result.matched_count)
 
     async def update_many(self, query: dict[str, Any], update_data: dict[str, Any]) -> int:
         result = await self.collection.update_many(query, {"$set": update_data})
