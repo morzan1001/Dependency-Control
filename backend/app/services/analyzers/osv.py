@@ -74,6 +74,10 @@ class _HydrationBudget:
 
 # OSV answers HTTP 400 for the whole batch when one query holds a malformed percent escape.
 _INVALID_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_PURL_TYPE = re.compile(r"[a-z][a-z0-9.+-]*")
+_REJECTED_QUERY = re.compile(r"error in query at index (\d+)")
+# Resends after OSV rejected a query; bisection doubles the requests at each of these levels.
+_MAX_REJECTION_RESENDS = 4
 # OSV resolves Debian and Alpine packages only by release-scoped ecosystem and source package name.
 _OS_ECOSYSTEMS = {
     ("deb", "debian"): (re.compile(r"^(?:debian-)?(\d+)"), "Debian:{}"),
@@ -108,7 +112,7 @@ def _versioned_purl(component: dict[str, Any]) -> str | None:
 def _osv_query(purl: str, component: dict[str, Any]) -> dict[str, Any] | None:
     """The querybatch query for a versioned purl, or None when OSV would reject or cannot resolve it."""
     parsed = parse_purl(purl)
-    if parsed is None or not parsed.name or _INVALID_ESCAPE.search(purl):
+    if parsed is None or not parsed.name or not _PURL_TYPE.fullmatch(parsed.type) or _INVALID_ESCAPE.search(purl):
         return None
     rule = _OS_ECOSYSTEMS.get((parsed.type, parsed.namespace or ""))
     if rule is None:
@@ -190,8 +194,8 @@ class OSVAnalyzer(Analyzer):
         """Drive the chunked batch loop, then hydrate, populating ``results`` in-place.
 
         Returns ``(components_never_scanned, vulnerability_records_not_fetched)``: dropped
-        batches, persistent rate limiting and truncated responses for the first, OSV records
-        that could not be resolved to their full form for the second.
+        batches, rejected queries, persistent rate limiting and truncated responses for the
+        first, OSV records that could not be resolved to their full form for the second.
         """
         timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
@@ -202,25 +206,7 @@ class OSVAnalyzer(Analyzer):
         async with InstrumentedAsyncClient(_OSV_SERVICE_LABEL, timeout=timeout) as client:
             for chunk_start in range(0, len(uncached), batch_size):
                 chunk = uncached[chunk_start : chunk_start + batch_size]
-                payload = {"queries": [query for _, _, query in chunk]}
-                for attempt in range(1 + self.max_retries):
-                    rate_limited, skipped = await self._post_and_handle(client, payload, chunk, pending, chunk_start)
-                    if not rate_limited:
-                        total_skipped += skipped
-                        break
-                    if attempt < self.max_retries:
-                        delay = self.retry_base_delay * (2**attempt)
-                        logger.warning(
-                            f"OSV API rate limit hit for batch starting at {chunk_start} "
-                            f"(attempt {attempt + 1}/{1 + self.max_retries}), retrying in {delay:.1f}s"
-                        )
-                        await asyncio.sleep(delay)
-                    else:
-                        logger.error(
-                            f"OSV API rate limit persisted after {1 + self.max_retries} attempts; "
-                            f"dropping batch starting at {chunk_start} ({len(chunk)} components)"
-                        )
-                        total_skipped += len(chunk)
+                total_skipped += await self._send_chunk(client, chunk, pending, chunk_start, _MAX_REJECTION_RESENDS)
                 if chunk_start + batch_size < len(uncached):
                     await asyncio.sleep(0.2)
 
@@ -357,13 +343,39 @@ class OSVAnalyzer(Analyzer):
         logger.error(f"OSV vuln fetch for {vuln_id} rate limited after {1 + self.max_retries} attempts")
         return None
 
-    async def _post_and_handle(
+    async def _send_chunk(
         self,
         client: InstrumentedAsyncClient,
-        payload: dict[str, list[dict[str, Any]]],
         chunk: list[_Target],
         pending: list[tuple[_Target, list[dict[str, Any]]]],
         chunk_start: int,
+        resends: int,
+    ) -> int:
+        """POST one chunk, retrying it on 429. Returns how many of its components were lost."""
+        for attempt in range(1 + self.max_retries):
+            rate_limited, skipped = await self._post_and_handle(client, chunk, pending, chunk_start, resends)
+            if not rate_limited:
+                return skipped
+            if attempt < self.max_retries:
+                delay = self.retry_base_delay * (2**attempt)
+                logger.warning(
+                    f"OSV API rate limit hit for batch starting at {chunk_start} "
+                    f"(attempt {attempt + 1}/{1 + self.max_retries}), retrying in {delay:.1f}s"
+                )
+                await asyncio.sleep(delay)
+        logger.error(
+            f"OSV API rate limit persisted after {1 + self.max_retries} attempts; "
+            f"dropping batch starting at {chunk_start} ({len(chunk)} components)"
+        )
+        return len(chunk)
+
+    async def _post_and_handle(
+        self,
+        client: InstrumentedAsyncClient,
+        chunk: list[_Target],
+        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        chunk_start: int,
+        resends: int,
     ) -> tuple[bool, int]:
         """POST one batch and dispatch on response status.
 
@@ -371,7 +383,7 @@ class OSVAnalyzer(Analyzer):
         retry the same chunk, ``skipped`` counts components this batch lost.
         """
         try:
-            response = await client.post(self.api_url, json=payload)
+            response = await client.post(self.api_url, json={"queries": [query for _, _, query in chunk]})
         except httpx.TimeoutException:
             logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
             return False, len(chunk)
@@ -388,11 +400,36 @@ class OSVAnalyzer(Analyzer):
         if response.status_code == 429:
             external_api_rate_limit_hits_total.labels(service=_OSV_SERVICE_LABEL).inc()
             return True, 0
-        # The body names the rejected query ("error in query at index N") within this batch.
+        if response.status_code == 400 and resends:
+            return False, await self._resend_accepted(client, chunk, pending, chunk_start, response.text, resends - 1)
         logger.warning(
             f"OSV Batch API error for batch starting at {chunk_start}: {response.status_code} {response.text[:200]}"
         )
         return False, len(chunk)
+
+    async def _resend_accepted(
+        self,
+        client: InstrumentedAsyncClient,
+        chunk: list[_Target],
+        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        chunk_start: int,
+        rejection: str,
+        resends: int,
+    ) -> int:
+        """Resend a chunk without the query OSV rejected, bisecting when the rejection does not name it.
+
+        OSV rejects the whole batch for one invalid query; returns how many components stay lost.
+        """
+        named = _REJECTED_QUERY.search(rejection)
+        index = int(named[1]) if named and int(named[1]) < len(chunk) else None
+        if index is None and len(chunk) > 1:
+            middle = len(chunk) // 2
+            lost = await self._send_chunk(client, chunk[:middle], pending, chunk_start, resends)
+            return lost + await self._send_chunk(client, chunk[middle:], pending, chunk_start + middle, resends)
+        index = index or 0
+        logger.warning(f"OSV rejected {chunk[index][1]}: {rejection[:200]}")
+        rest = chunk[:index] + chunk[index + 1 :]
+        return 1 + (await self._send_chunk(client, rest, pending, chunk_start, resends) if rest else 0)
 
     def _handle_success(
         self,
