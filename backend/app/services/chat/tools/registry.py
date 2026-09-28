@@ -36,7 +36,7 @@ from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
-from app.services.analytics.scopes import ScopeTooLargeError, read_scope_projects
+from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
 from app.services.analyzers.purl_utils import canonical_purl
 from app.services.compliance.visibility import report_visibility_filter
 from app.services.reachability_enrichment import reachability_display_tier
@@ -295,43 +295,46 @@ class ChatToolRegistry:
         user: User,
         db: AsyncIOMotorDatabase,
     ) -> dict[str, Any]:
+        if tool_name not in self._HANDLERS:
+            logger.warning("chat tool not found: %s", tool_name)
+            # A model-invented name as a label would open a new series per hallucination.
+            chat_tool_calls_total.labels(tool_name="unknown", status="unknown").inc()
+            return {"error": f"Unknown tool: {tool_name}"}
         required = TOOL_PERMISSIONS.get(tool_name)
         if required and not has_permission(user.permissions, required):
+            chat_tool_calls_total.labels(tool_name=tool_name, status="denied").inc()
             return {"error": f"You don't have permission to use {tool_name}"}
+
+        start = time.perf_counter()
+        status = "error"
         try:
             args = checked_arguments(tool_name, arguments)
-        except ToolArgumentError as e:
-            return {"error": str(e)}
-
-        start = time.time()
-        begin_limit_ledger()
-        try:
+            begin_limit_ledger()
             result = await self._dispatch(tool_name, args, user, db)
-            duration = time.time() - start
-            chat_tool_calls_total.labels(tool_name=tool_name, status="success").inc()
-            chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
-            if isinstance(result, dict):
-                _inject_urls(result)
-                note = clamped_limit_note()
-                if note:
-                    result["_limit_clamped"] = True
-                    result["_limit_clamp_note"] = note
-                saturated = bounded_read_note()
-                if saturated:
-                    result["_bounded_read"] = True
-                    result["_bounded_read_note"] = saturated
+            status = "rejected" if "error" in result else "success"
+            _inject_urls(result)
+            note = clamped_limit_note()
+            if note:
+                result["_limit_clamped"] = True
+                result["_limit_clamp_note"] = note
+            saturated = bounded_read_note()
+            if saturated:
+                result["_bounded_read"] = True
+                result["_bounded_read_note"] = saturated
             # Cap JSON size so a large dump can't blow the LLM's context budget.
-            return _truncate_if_too_large(result) if isinstance(result, dict) else result
-        except ScopeTooLargeError as e:
-            chat_tool_duration_seconds.labels(tool_name=tool_name).observe(time.time() - start)
-            chat_tool_calls_total.labels(tool_name=tool_name, status="refused").inc()
+            return _truncate_if_too_large(result)
+        except ToolArgumentError as e:
+            status = "rejected"
+            return {"error": str(e)}
+        except (ScopeTooLargeError, ScopeResolutionError) as e:
+            status = "refused"
             return {"error": str(e)}
         except Exception as e:
-            duration = time.time() - start
-            chat_tool_calls_total.labels(tool_name=tool_name, status="error").inc()
-            chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
             logger.exception(f"Tool {tool_name} failed: {e}")
             return {"error": f"Tool execution failed: {e!s}"}
+        finally:
+            chat_tool_calls_total.labels(tool_name=tool_name, status=status).inc()
+            chat_tool_duration_seconds.labels(tool_name=tool_name).observe(time.perf_counter() - start)
 
     async def _dispatch(
         self,
@@ -348,10 +351,7 @@ class ChatToolRegistry:
             team_repo=team_repo,
             user_project_query=await build_user_project_query(user, team_repo),
         )
-        handler = self._HANDLERS.get(tool_name)
-        if handler is None:
-            return {"error": f"Unknown tool: {tool_name}"}
-        return await handler(self, ctx)
+        return await self._HANDLERS[tool_name](self, ctx)
 
     async def _tool_list_projects(self, ctx: _ToolContext) -> dict[str, Any]:
         search = ctx.args.get("search")

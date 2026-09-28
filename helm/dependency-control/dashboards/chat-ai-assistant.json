@@ -961,8 +961,8 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum by (tool_name) (rate(dc_chat_tool_calls_total{status=\"error\"}[5m]))",
-          "legendFormat": "{{tool_name}}",
+          "expr": "sum by (tool_name, status) (rate(dc_chat_tool_calls_total{status!=\"success\"}[5m]))",
+          "legendFormat": "{{tool_name}} {{status}}",
           "refId": "A"
         }
       ],
