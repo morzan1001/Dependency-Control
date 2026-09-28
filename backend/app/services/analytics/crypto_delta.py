@@ -17,22 +17,12 @@ from app.services.analytics._delta_pagination import delta_truncation, paginate
 from app.services.analytics._delta_reachability import side_reachability
 
 
-def _primitive_str(asset: CryptoAsset) -> str | None:
-    """Stringify ``asset.primitive`` whether it's an enum, string, or None."""
-    primitive = asset.primitive
-    if primitive is None:
-        return None
-    if hasattr(primitive, "value"):
-        return primitive.value
-    return str(primitive)
-
-
 def _key(asset: CryptoAsset) -> tuple[str, str, str]:
     """Semantic identity used for cross-scan matching."""
     return (
         asset.name or "",
         asset.variant or "",
-        _primitive_str(asset) or "",
+        asset.primitive or "",
     )
 
 
@@ -41,7 +31,7 @@ def _asset_to_envelope_item(asset: CryptoAsset, change: str) -> CryptoDeltaItem:
         change=change,
         name=asset.name or "",
         variant=asset.variant,
-        primitive=_primitive_str(asset),
+        primitive=asset.primitive,
         locations=list(asset.occurrence_locations or []),
         asset_count=1,
     )

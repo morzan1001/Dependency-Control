@@ -26,6 +26,11 @@ class CryptoPrimitive(str, Enum):
     OTHER = "other"
 
 
+QUANTUM_VULNERABLE_PRIMITIVES: frozenset[CryptoPrimitive] = frozenset(
+    {CryptoPrimitive.PKE, CryptoPrimitive.SIGNATURE, CryptoPrimitive.KEM}
+)
+
+
 class ParsedCryptoAsset(BaseModel):
     """Normalized crypto asset from CycloneDX 1.6 cryptoProperties."""
 

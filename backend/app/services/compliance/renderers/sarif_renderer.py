@@ -47,7 +47,6 @@ class SarifRenderer:
         results = []
 
         for ctrl in evaluation.controls:
-            sev_val = ctrl.severity if isinstance(ctrl.severity, str) else ctrl.severity.value
             rules.append(
                 {
                     "id": ctrl.control_id,
@@ -56,24 +55,21 @@ class SarifRenderer:
                     "fullDescription": {"text": ctrl.description},
                     "help": {"text": ctrl.remediation},
                     "properties": {
-                        "severity": sev_val,
-                        "framework": evaluation.framework_key
-                        if isinstance(evaluation.framework_key, str)
-                        else evaluation.framework_key.value,
+                        "severity": ctrl.severity,
+                        "framework": evaluation.framework_key,
                     },
                 }
             )
 
-            status_val = ctrl.status if isinstance(ctrl.status, str) else ctrl.status.value
             message = ctrl.description if not ctrl.status_reason else f"{ctrl.description} {ctrl.status_reason}"
             result_entry = {
                 "ruleId": ctrl.control_id,
                 "message": {"text": message},
             }
-            if status_val == "failed":
-                result_entry["level"] = _SEVERITY_TO_LEVEL.get(sev_val, "warning")
+            if ctrl.status == ControlStatus.FAILED:
+                result_entry["level"] = _SEVERITY_TO_LEVEL.get(ctrl.severity, "warning")
             else:
-                result_entry.update(_STATUS_TO_RESULT.get(status_val, {}))
+                result_entry.update(_STATUS_TO_RESULT.get(ctrl.status, {}))
             results.append(result_entry)
 
         fw_name = evaluation.framework_name
@@ -110,11 +106,8 @@ class SarifRenderer:
             ],
         }
         body = json.dumps(sarif_doc, indent=2, default=str).encode("utf-8")
-        fw_key = (
-            evaluation.framework_key if isinstance(evaluation.framework_key, str) else evaluation.framework_key.value
-        )
         filename = build_filename(
-            fw_key,
+            evaluation.framework_key,
             report.scope,
             report.scope_id,
             report.requested_at,

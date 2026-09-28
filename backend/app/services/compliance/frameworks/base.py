@@ -161,8 +161,7 @@ def _finding_rule_ids(finding: dict) -> set:
 
 
 def _finding_matches_control(finding: dict, control: ControlDefinition) -> bool:
-    ft = finding.get("type")
-    if not any(ft == (t.value if hasattr(t, "value") else t) for t in control.maps_to_finding_types):
+    if finding.get("type") not in control.maps_to_finding_types:
         return False
     if control.maps_to_rule_ids:
         return bool(_finding_rule_ids(finding) & set(control.maps_to_rule_ids))
@@ -263,13 +262,6 @@ def evaluate_framework(
     )
 
 
-def status_value(status: Any) -> str:
-    """Plain-string form of a ControlStatus/Severity/enum ('' for None)."""
-    if status is None:
-        return ""
-    return status.value if hasattr(status, "value") else str(status)
-
-
 def extract_finding_id(finding: dict[str, Any]) -> str:
     """Finding ID from _id or id ('' when neither is present)."""
     return str(finding.get("_id") or finding.get("id") or "")
@@ -308,8 +300,7 @@ def build_summary(results: list[ControlResult]) -> dict[str, int]:
         "total": len(results),
     }
     for r in results:
-        key = status_value(r.status)
-        counts[key] = counts.get(key, 0) + 1
+        counts[r.status] = counts.get(r.status, 0) + 1
     return counts
 
 
@@ -323,7 +314,7 @@ def build_residual_risks(results: list[ControlResult]) -> list[ResidualRisk]:
             description=r.description,
         )
         for r in results
-        if status_value(r.status) == "failed"
+        if r.status == ControlStatus.FAILED
     ]
 
 

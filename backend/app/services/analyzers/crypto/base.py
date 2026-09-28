@@ -53,14 +53,7 @@ class CryptoRuleAnalyzer(Analyzer):
         try:
             assets = await CryptoAssetRepository(db).list_by_scan(project_id, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
             effective = await CryptoPolicyResolver(db).resolve(project_id)
-            relevant_finding_types = {ft.value if hasattr(ft, "value") else ft for ft in self.finding_types}
-            rules = [
-                r
-                for r in effective.rules
-                if r.enabled
-                and (r.finding_type if not hasattr(r.finding_type, "value") else r.finding_type.value)
-                in relevant_finding_types
-            ]
+            rules = [r for r in effective.rules if r.enabled and r.finding_type in self.finding_types]
             return {"findings": crypto_findings_for_assets(assets, rules)}
         except Exception as e:
             logger.exception("crypto analyzer %s failed: %s", self.name, e)
@@ -73,17 +66,16 @@ _SEVERITY_RANK = {"CRITICAL": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1, "U
 def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[str, Any]:
     # Lead rule (strictest by default_severity) drives top-level fields; the rest
     # are recorded under details.matched_rules.
-    lead = max(rules, key=lambda r: _SEVERITY_RANK.get(_severity_str(r.default_severity), 0))
-    severity = _severity_str(lead.default_severity)
-    ft = lead.finding_type.value if hasattr(lead.finding_type, "value") else lead.finding_type
+    lead = max(rules, key=lambda r: _SEVERITY_RANK.get(r.default_severity, 0))
+    ft = lead.finding_type
     component_label = f"{asset.name}" + (f" ({asset.variant})" if asset.variant else "") + f" [bom-ref:{asset.bom_ref}]"
 
     matched_rules_detail = [
         MatchedRuleEntry(
             rule_id=r.rule_id,
             rule_name=r.name,
-            policy_source=r.source.value if hasattr(r.source, "value") else r.source,
-            severity=_severity_str(r.default_severity),
+            policy_source=r.source,
+            severity=r.default_severity,
         )
         for r in rules
     ]
@@ -102,7 +94,7 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[st
         # which is exactly what this pair names.
         "id": f"CRYPTO-{ft}-{asset.bom_ref or asset.name}",
         "type": ft,
-        "severity": severity,
+        "severity": lead.default_severity,
         "component": component_label,
         "version": asset.variant or "",
         "description": lead.description or lead.name,
@@ -110,23 +102,15 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[st
         "details": CryptoRuleDetails(
             rule_id=lead.rule_id,
             rule_name=lead.name,
-            policy_source=lead.source.value if hasattr(lead.source, "value") else lead.source,
+            policy_source=lead.source,
             matched_rules=matched_rules_detail,
             bom_ref=asset.bom_ref,
             asset_name=asset.name,
-            asset_type=(asset.asset_type.value if hasattr(asset.asset_type, "value") else asset.asset_type),
+            asset_type=asset.asset_type,
             key_size_bits=asset.key_size_bits,
-            primitive=(
-                asset.primitive.value
-                if asset.primitive is not None and hasattr(asset.primitive, "value")
-                else asset.primitive
-            ),
+            primitive=asset.primitive,
             references=aggregated_references,
         ).model_dump(exclude_none=True),
         "found_in": list(asset.occurrence_locations),
         "aliases": [],
     }
-
-
-def _severity_str(s: Any) -> str:
-    return s.value if hasattr(s, "value") else str(s)

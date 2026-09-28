@@ -10,10 +10,6 @@ from app.services.compliance.renderers.base import build_filename, coverage_stat
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
-def _enum_value(value: Any) -> Any:
-    return value if isinstance(value, str) else value.value
-
-
 def build_template_context(
     evaluation: FrameworkEvaluation,
     report: ComplianceReport,
@@ -22,7 +18,7 @@ def build_template_context(
     """Every name `base_report.html` reads. Importable without WeasyPrint's native stack, so a
     test can render the page the renderer renders instead of a hand-built stand-in that drifts."""
     return {
-        "framework_key": _enum_value(evaluation.framework_key),
+        "framework_key": evaluation.framework_key,
         "framework_name": evaluation.framework_name,
         "framework_version": evaluation.framework_version,
         "generated_at": evaluation.generated_at.isoformat(),
@@ -38,8 +34,8 @@ def build_template_context(
                 "control_id": c.control_id,
                 "title": c.title,
                 "description": c.description,
-                "status": _enum_value(c.status),
-                "severity": _enum_value(c.severity),
+                "status": c.status,
+                "severity": c.severity,
                 "evidence_finding_ids": c.evidence_finding_ids,
                 "evidence_asset_bom_refs": c.evidence_asset_bom_refs,
                 "waiver_reasons": c.waiver_reasons,
@@ -52,7 +48,7 @@ def build_template_context(
             {
                 "control_id": r.control_id,
                 "title": r.title,
-                "severity": _enum_value(r.severity),
+                "severity": r.severity,
             }
             for r in evaluation.residual_risks
         ],
@@ -87,7 +83,7 @@ class PdfRenderer:
             base_url=str(_TEMPLATE_DIR),
         ).write_pdf(stylesheets=stylesheets)
         filename = build_filename(
-            _enum_value(evaluation.framework_key),
+            evaluation.framework_key,
             report.scope,
             report.scope_id,
             report.requested_at,

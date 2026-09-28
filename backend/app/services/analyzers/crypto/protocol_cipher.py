@@ -82,7 +82,7 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
                     severity = _severity_from_weaknesses(entry.weaknesses)
                     findings.append(_build_finding(proto, suite_name, entry, severity, rule=None))
                     findings.extend(
-                        _build_finding(proto, suite_name, entry, _rule_severity(rule), rule=rule)
+                        _build_finding(proto, suite_name, entry, Severity(rule.default_severity), rule=rule)
                         for rule in amp_rules
                         if any(w in rule.match_cipher_weaknesses for w in entry.weaknesses)
                     )
@@ -100,16 +100,6 @@ def _severity_from_weaknesses(tags: list[str]) -> Severity:
     return Severity.LOW
 
 
-def _rule_severity(rule: CryptoRule) -> Severity:
-    sev = rule.default_severity
-    if hasattr(sev, "value"):
-        return sev
-    try:
-        return Severity(sev)
-    except ValueError:
-        return Severity.MEDIUM
-
-
 def _build_finding(
     proto: CryptoAsset, suite_name: str, entry: CipherSuiteEntry, severity: Severity, rule: CryptoRule | None
 ) -> dict[str, Any]:
@@ -122,7 +112,7 @@ def _build_finding(
     return {
         "id": str(uuid.uuid4()),
         "type": FindingType.CRYPTO_WEAK_PROTOCOL.value,
-        "severity": severity.value if hasattr(severity, "value") else severity,
+        "severity": severity.value,
         "component": comp_label,
         "version": proto.version or "",
         "description": description,
