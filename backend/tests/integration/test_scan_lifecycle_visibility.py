@@ -264,7 +264,7 @@ async def test_k9_partial_gridfs_failure_marks_scan_completed_with_errors(db, _g
             raise OSError("transient gridfs outage")
         return await fs.open_download_stream(file_id)
 
-    monkeypatch.setattr("app.services.analysis.engine.open_gridfs_download_with_retry", _fail_second_file)
+    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_second_file)
     await _seed_project(db)
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan_id = await _seed_scan(db, refs)
@@ -281,7 +281,7 @@ async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _gridfs_patched
     async def _fail_all(fs, file_id, **_kwargs):
         raise OSError("gridfs outage")
 
-    monkeypatch.setattr("app.services.analysis.engine.open_gridfs_download_with_retry", _fail_all)
+    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_all)
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 

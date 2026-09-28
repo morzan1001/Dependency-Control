@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import json
 import logging
 import re
 import time
@@ -10,7 +9,6 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateMany, UpdateOne
 
@@ -40,7 +38,7 @@ from app.core.metrics import (
     analysis_scans_total,
     analysis_waivers_applied_total,
 )
-from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
+from app.db.mongodb import primary_gridfs_bucket
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Project, Scan
 from app.models.stats import Stats
@@ -76,6 +74,7 @@ from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.github import is_public_github
+from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs, gridfs_ref_id, load_gridfs_json
 from app.services.reachability_enrichment import (
     enrich_findings_with_reachability,
     fetch_callgraphs,
@@ -294,7 +293,7 @@ _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
 def _count_gridfs_refs(sboms_to_process: list[Any]) -> int:
-    return sum(1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference")
+    return len(extract_gridfs_ids_from_refs(sboms_to_process))
 
 
 def _failed_analyzer_names(results_summary: list[str]) -> list[str]:
@@ -329,15 +328,12 @@ def _enrichment_failure_names(results_summary: list[str]) -> list[str]:
 
 async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> dict[str, Any] | None:
     """Resolve a single SBOM item from inline dict or GridFS reference."""
-    if isinstance(item, dict) and item.get("type") == "gridfs_reference":
-        gridfs_id = item.get("gridfs_id")
+    gridfs_id = gridfs_ref_id(item)
+    if gridfs_id:
         try:
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
-            stream = await open_gridfs_download_with_retry(fs, ObjectId(gridfs_id))
-            content: bytes = await stream.read()
-            sbom: dict[str, Any] = json.loads(content)
-            del content
+            sbom: dict[str, Any] = await load_gridfs_json(fs, gridfs_id)
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
             return sbom

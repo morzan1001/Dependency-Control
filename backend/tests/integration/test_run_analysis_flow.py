@@ -6,6 +6,7 @@ import pytest
 
 from app.models.project import Scan
 from app.models.stats import Stats
+from app.services import gridfs_maintenance
 from app.services.analysis import engine
 
 _PROJECT_ID = "notify-project"
@@ -236,7 +237,7 @@ async def test_a_run_whose_sboms_all_fail_to_load_is_failed_and_not_notified(db,
     async def _gridfs_outage(fs, file_id, **_kwargs):
         raise OSError("gridfs outage")
 
-    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _gridfs_outage)
+    monkeypatch.setattr(gridfs_maintenance, "open_gridfs_download_with_retry", _gridfs_outage)
     file_id = "69d5332257c8763c8d8c82d7"
     ref = {"storage": "gridfs", "file_id": file_id, "type": "gridfs_reference", "gridfs_id": file_id}
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing")

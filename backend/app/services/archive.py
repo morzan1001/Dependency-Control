@@ -53,6 +53,7 @@ from app.services.archive_bundle import (
     read_bundle_frames,
     rewrite_bundle_frames,
 )
+from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs
 from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_rollup import record_scan_update_delta
 
@@ -76,17 +77,6 @@ class _ArchiveSourceReadError(Exception):
 def _holder_id(prefix: str) -> str:
     # Unique per call, so a holder can tell its own lock apart from one a second call on the same pod took over.
     return f"{prefix}-{os.getenv('HOSTNAME', 'unknown')}-{uuid.uuid4().hex}"
-
-
-def _extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
-    """Extract GridFS IDs from a list of SBOM references."""
-    ids: list[str] = []
-    for ref in sbom_refs:
-        if isinstance(ref, dict) and ref.get("type") == "gridfs_reference":
-            gid = ref.get("gridfs_id")
-            if gid:
-                ids.append(str(gid))
-    return ids
 
 
 def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
@@ -117,7 +107,7 @@ async def _stream_collection(collection: Any, scan_id: str) -> AsyncIterator[dic
 
 async def _stream_gridfs_sboms(db: Any, scan_doc: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
     """Yield one frame per GridFS SBOM (gridfs_id, filename, data)."""
-    gridfs_ids = _extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", []))
+    gridfs_ids = extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", []))
     if not gridfs_ids:
         return
     fs = AsyncIOMotorGridFSBucket(db)

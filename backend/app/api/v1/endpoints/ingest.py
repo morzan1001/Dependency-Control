@@ -33,7 +33,7 @@ from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.dependency_store import store_scan_dependencies
-from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs
+from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, make_gridfs_ref
 from app.services.notifications.service import safe_notify_project_event
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.scan_manager import ScanManager
@@ -163,13 +163,7 @@ async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_i
         metadata={"contentType": "application/json", "scan_id": scan_id},
     )
     del sbom_bytes
-    return {
-        "storage": "gridfs",
-        "file_id": str(file_id),
-        "filename": filename,
-        "type": "gridfs_reference",
-        "gridfs_id": str(file_id),
-    }
+    return make_gridfs_ref(file_id, filename)
 
 
 def _parse_one_sbom(sbom: Any, index: int, warnings: list[str]) -> Any:
@@ -346,7 +340,7 @@ async def ingest_sbom(
         )
 
         if previous and sbom_refs:
-            new_ids = {ref["gridfs_id"] for ref in sbom_refs}
+            new_ids = set(extract_gridfs_ids_from_refs(sbom_refs))
             superseded = [
                 gid for gid in extract_gridfs_ids_from_refs(previous.get("sbom_refs", [])) if gid not in new_ids
             ]
