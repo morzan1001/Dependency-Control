@@ -353,7 +353,7 @@ export default function Broadcasts() {
                             <PackageAutocomplete 
                                 value={pkg.name}
                                 onValueChange={(val) => updatePackage(index, 'name', val)}
-                                placeholder="e.g. log4j-core"
+                                placeholder="e.g. log4j-core or group:artifact"
                             />
                         </div>
                         <div className="w-32 space-y-2">
@@ -377,8 +377,8 @@ export default function Broadcasts() {
                                     <SelectItem value="any">Any</SelectItem>
                                     <SelectItem value="maven">Maven</SelectItem>
                                     <SelectItem value="npm">NPM</SelectItem>
-                                    <SelectItem value="pip">Pip</SelectItem>
-                                    <SelectItem value="go">Go</SelectItem>
+                                    <SelectItem value="pypi">Pip</SelectItem>
+                                    <SelectItem value="golang">Go</SelectItem>
                                     <SelectItem value="nuget">NuGet</SelectItem>
                                 </SelectContent>
                             </Select>
