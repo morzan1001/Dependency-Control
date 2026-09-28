@@ -17,7 +17,7 @@ import pytest
 from app.core.constants import TEAM_SOURCE_GITHUB, team_source
 from app.models.team import GitHubTeamBinding, Team, TeamMember
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubService
+from app.services.github import GitHubEmailLookup, GitHubService
 from tests.mocks.github import make_github_instance
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
@@ -33,8 +33,10 @@ _MID_SYNC = 0.05
 
 
 async def _seed(db, *, members: list[TeamMember] | None = None) -> TeamRepository:
-    await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com"})
-    await db["users"].insert_one({"_id": "u-added", "username": "added", "email": "added@corp.com"})
+    await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com", "is_verified": True})
+    await db["users"].insert_one(
+        {"_id": "u-added", "username": "added", "email": "added@corp.com", "is_verified": True}
+    )
     repo = TeamRepository(db)
     await repo.create(
         Team(
@@ -62,6 +64,7 @@ async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
         patch.object(service, "get_team_repository", new=AsyncMock(return_value=True)),
         patch.object(service, "get_team_members", new=AsyncMock(side_effect=_members_while_the_admin_adds_one)),
         patch.object(service, "get_org_repository_map", new=AsyncMock(return_value={})),
+        patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup("ada@corp.com"))),
     ):
         await service.sync_team_from_github(db, "acme", "acme/widgets")
 
