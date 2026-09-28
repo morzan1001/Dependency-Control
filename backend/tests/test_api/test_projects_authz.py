@@ -189,7 +189,7 @@ class TestDeleteProjectRoutesThroughGate:
             return
             yield  # pragma: no cover
 
-        scan_repo.iterate = _empty_iter
+        scan_repo.iterate_raw = _empty_iter
         repos["WaiverRepository"].delete_many = AsyncMock(return_value=None)
         repos["ReleaseRepository"].delete_many = AsyncMock(return_value=None)
         repos["InvitationRepository"].delete_project_invitations_by_project = AsyncMock(return_value=None)

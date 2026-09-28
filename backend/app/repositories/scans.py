@@ -249,16 +249,16 @@ class ScanRepository:
         limit: int | None = None,
         projection: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
-        # limit=0 means unbounded in pymongo; floor to 1. None stays unbounded via to_list(None).
-        safe_limit: int | None = max(limit, 1) if limit is not None else None
+        if limit is not None and limit <= 0:
+            return []
         cursor = self.collection.find(query, projection)
         if sort:
             cursor = cursor.sort(sort)
         if skip:
             cursor = cursor.skip(skip)
-        if safe_limit is not None:
-            cursor = cursor.limit(safe_limit)
-        return await cursor.to_list(safe_limit)
+        if limit is not None:
+            cursor = cursor.limit(limit)
+        return await cursor.to_list(limit)
 
     async def find_many_with_stats(
         self,
@@ -465,7 +465,7 @@ class ScanRepository:
         lineage = await self.freshest_in_lineage(tips.values())
         return {project_id: lineage[scan_id].scan_id for project_id, scan_id in tips.items() if scan_id in lineage}
 
-    async def iterate(
+    async def iterate_raw(
         self, query: dict[str, Any], projection: dict[str, int] | None = None
     ) -> AsyncGenerator[dict[str, Any], None]:
         async for doc in self.collection.find(query, projection):

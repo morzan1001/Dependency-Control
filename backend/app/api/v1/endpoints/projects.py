@@ -1207,7 +1207,7 @@ async def read_analysis_results(
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
     await check_project_access(scan.project_id, current_user, db)
 
-    return await analysis_repo.find_by_scan(scan_id)
+    return await analysis_repo.find_by_scan(scan_id, limit=1000)
 
 
 @router.get("/scans/{scan_id}", summary="Get scan details", responses=RESP_AUTH_404)
@@ -1757,7 +1757,7 @@ async def delete_project(
     release_repo = ReleaseRepository(db)
 
     # Streamed rather than read whole; the shared cascade owns which collections a scan takes with it.
-    scan_ids = [scan["_id"] async for scan in scan_repo.iterate({"project_id": project_id}, {"_id": 1})]
+    scan_ids = [scan["_id"] async for scan in scan_repo.iterate_raw({"project_id": project_id}, {"_id": 1})]
     await delete_scans_and_related_data(db, scan_ids)
 
     await waiver_repo.delete_many({"project_id": project_id})

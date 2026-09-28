@@ -249,3 +249,20 @@ class TestHTTP422OnOutOfBoundsParams:
     def test_read_scan_findings_limit_accepted(self, test_client, limit):
         r = self._patched_findings_call(test_client, limit)
         assert r.status_code != 422, f"limit={limit} must be accepted, got {r.status_code}: {r.text}"
+
+
+class TestReadUsersPaginationBounds:
+    @pytest.fixture
+    def endpoint(self):
+        from app.api.v1.endpoints.users import read_users
+
+        return read_users
+
+    def test_a_zero_or_negative_limit_is_refused(self, endpoint):
+        assert _bound(endpoint, "limit", "ge") == 1
+
+    def test_limit_has_le_cap(self, endpoint):
+        assert _bound(endpoint, "limit", "le") == 100
+
+    def test_skip_cannot_go_negative(self, endpoint):
+        assert _bound(endpoint, "skip", "ge") == 0

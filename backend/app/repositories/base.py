@@ -6,6 +6,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pydantic import BaseModel
+from pymongo.errors import BulkWriteError
 
 
 logger = logging.getLogger(__name__)
@@ -55,13 +56,13 @@ class BaseRepository[T: BaseModel]:
         sort_by: str | None = None,
         sort_order: int = 1,
     ) -> list[T]:
-        # pymongo .limit(0) means unbounded; floor to 1 to avoid loading the whole collection.
-        safe_limit = max(limit, 1)
+        if limit <= 0:
+            return []
         cursor = self.collection.find(query)
         if sort_by:
             cursor = cursor.sort(sort_by, sort_order)
-        cursor = cursor.skip(skip).limit(safe_limit)
-        docs = await cursor.to_list(safe_limit)
+        cursor = cursor.skip(skip).limit(limit)
+        docs = await cursor.to_list(limit)
         return self._to_model_list(docs)
 
     async def find_many_raw(
@@ -73,6 +74,8 @@ class BaseRepository[T: BaseModel]:
         sort_order: int = 1,
         projection: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
+        if limit <= 0:
+            return []
         cursor = self.collection.find(query, projection)
         if sort_by:
             cursor = cursor.sort(sort_by, sort_order)
@@ -99,20 +102,19 @@ class BaseRepository[T: BaseModel]:
         try:
             result = await self.collection.insert_many(docs, ordered=False)
             return len(result.inserted_ids)
-        except Exception as e:
-            # BulkWriteError can still report partial success.
-            if hasattr(e, "details") and "writeErrors" in e.details:
-                write_errors = e.details["writeErrors"]
-                inserted_count: int = e.details.get("nInserted", 0)
-                logger.warning(
-                    "Bulk insert into %s dropped %d of %d docs (first error: %s)",
-                    self.collection_name,
-                    len(write_errors),
-                    len(docs),
-                    (write_errors[0].get("errmsg", "") or "")[:200] if write_errors else "",
-                )
-                return inserted_count
-            raise
+        except BulkWriteError as e:
+            if e.details.get("writeConcernErrors"):
+                raise
+            write_errors = e.details["writeErrors"]
+            logger.warning(
+                "Bulk insert into %s dropped %d of %d docs (first error: %s)",
+                self.collection_name,
+                len(write_errors),
+                len(docs),
+                (write_errors[0].get("errmsg", "") or "")[:200] if write_errors else "",
+            )
+            inserted_count: int = e.details.get("nInserted", 0)
+            return inserted_count
 
     async def update(self, id: str, update_data: dict[str, Any]) -> T | None:
         if update_data:
@@ -151,9 +153,9 @@ class BaseRepository[T: BaseModel]:
         )
         return await cursor.to_list(limit)
 
-    async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T | None, None]:
+    async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T, None]:
         async for doc in self.collection.find(query or {}):
-            yield self._to_model(doc)
+            yield self.model_class(**doc)
 
     async def iterate_raw(
         self,

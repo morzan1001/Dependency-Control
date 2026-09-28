@@ -8,11 +8,7 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
     collection_name = "analysis_results"
     model_class = AnalysisResult
 
-    async def find_by_scan(
-        self,
-        scan_id: str,
-        limit: int = 1000,
-    ) -> list[AnalysisResult]:
+    async def find_by_scan(self, scan_id: str, limit: int) -> list[AnalysisResult]:
         return await self.find_many({"scan_id": scan_id}, limit=limit)
 
     async def delete_by_scan(self, scan_id: str) -> int:

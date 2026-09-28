@@ -57,6 +57,7 @@ APP_ROOT = Path(finding_details.__file__).resolve().parents[1]
 ALLOWED_UNDECLARED: dict[tuple[str, str], str] = {
     ("writeErrors", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
     ("nInserted", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
+    ("writeConcernErrors", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
 }
 
 # Dotted Mongo paths are validated one level deep through these fields.

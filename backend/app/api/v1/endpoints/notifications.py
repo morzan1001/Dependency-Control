@@ -199,7 +199,7 @@ async def _build_advisory_scan_map(
 ) -> dict[str, Project]:
     """Build scan_id -> Project map for advisory broadcasts, handling deleted branches."""
     projects: list[Project] = [
-        p async for p in project_repo.iterate({"latest_scan_id": {"$exists": True}}) if p and p.latest_scan_id
+        p async for p in project_repo.iterate({"latest_scan_id": {"$exists": True}}) if p.latest_scan_id
     ]
     scan_ids = await ScanRepository(db).get_latest_active_scan_ids(projects)
     proj_by_id = {p.id: p for p in projects}

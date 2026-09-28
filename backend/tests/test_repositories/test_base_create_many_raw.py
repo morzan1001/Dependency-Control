@@ -4,7 +4,8 @@ import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock
 
-from pymongo.errors import BulkWriteError
+import pytest
+from pymongo.errors import BulkWriteError, OperationFailure
 
 from app.repositories.dependencies import DependencyRepository
 from tests.mocks.fake_mongo import FakeDatabase
@@ -61,6 +62,31 @@ class TestCreateManyRawWriteErrors:
 
         assert inserted == 2
         assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+class TestCreateManyRawLetsOtherFailuresThrough:
+    def test_an_error_without_a_details_document_surfaces_as_itself(self):
+        collection = MagicMock()
+        collection.insert_many = AsyncMock(side_effect=OperationFailure("not authorized", code=13))
+        repo = _make_repo(collection)
+
+        with pytest.raises(OperationFailure, match="not authorized"):
+            asyncio.run(repo.create_many_raw([{"_id": "1"}]))
+
+    def test_an_unacknowledged_write_concern_is_not_reported_as_success(self):
+        failure = BulkWriteError(
+            {
+                "nInserted": 2,
+                "writeErrors": [],
+                "writeConcernErrors": [{"code": 64, "errmsg": "waiting for replication"}],
+            }
+        )
+        collection = MagicMock()
+        collection.insert_many = AsyncMock(side_effect=failure)
+        repo = _make_repo(collection)
+
+        with pytest.raises(BulkWriteError):
+            asyncio.run(repo.create_many_raw([{"_id": "1"}, {"_id": "2"}]))
 
 
 class TestCreateManyRawIsUnordered:

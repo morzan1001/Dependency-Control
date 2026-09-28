@@ -1,5 +1,4 @@
-"""BaseRepository.find_many treats its limit as a caller budget, and pymongo reads limit(0) as
-unbounded, so the floor is what keeps a zero budget from meaning "the whole collection"."""
+"""BaseRepository.find_many treats its limit as a caller budget."""
 
 import asyncio
 
@@ -20,14 +19,6 @@ def _seeded() -> FakeDatabase:
             "version": "1.0.0",
         }
     return db
-
-
-def test_a_limit_of_zero_still_reads_one_document():
-    repo = DependencyRepository(_seeded())
-
-    found = asyncio.run(repo.find_many({}, limit=0))
-
-    assert len(found) == 1
 
 
 def test_a_positive_limit_is_passed_through_untouched():

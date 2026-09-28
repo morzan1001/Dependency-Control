@@ -1265,7 +1265,8 @@ def _apply_projection(doc: dict | None, projection: dict | None) -> dict | None:
     if doc is None or not projection:
         return doc
     fields = {path: spec for path, spec in projection.items() if path != "_id"}
-    if any(spec in (1, True) for spec in fields.values()):
+    # {"_id": 1} alone is an inclusion projection too, and keeps nothing but the key.
+    if any(spec in (1, True) for spec in fields.values()) or (not fields and projection.get("_id") in (1, True)):
         out: dict = {}
         for path, spec in fields.items():
             if spec in (1, True):

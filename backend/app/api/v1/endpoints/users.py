@@ -6,7 +6,7 @@ from typing import Annotated, Any
 
 import pyotp
 import qrcode
-from fastapi import BackgroundTasks, Depends, HTTPException, status
+from fastapi import BackgroundTasks, Depends, HTTPException, Query, status
 
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -111,8 +111,8 @@ async def create_user(
 async def read_users(
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_READ_ALL]))],
     db: DatabaseDep,
-    skip: int = 0,
-    limit: int = 100,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
     search: str | None = None,
     sort_by: str = "username",
     sort_order: str = "asc",

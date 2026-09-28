@@ -454,8 +454,6 @@ class ProjectRepository:
         )
         return bool(result.matched_count)
 
-    async def iterate(
-        self, query: dict[str, Any] | None = None, projection: dict[str, int] | None = None
-    ) -> AsyncGenerator[Project, None]:
-        async for doc in self.collection.find(query or {}, projection):
+    async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[Project, None]:
+        async for doc in self.collection.find(query or {}):
             yield Project(**doc)
