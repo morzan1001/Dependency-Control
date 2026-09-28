@@ -1,12 +1,13 @@
 """Policy audit endpoints (list/detail/revert/prune); system scope is admin-only, project scope is member-read/admin-write."""
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import ValidationError
+from pydantic import BeforeValidator, ValidationError
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -34,6 +35,14 @@ from app.services.audit.history import record_policy_change
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter(tags=["policy-audit"])
+
+# An unencoded '+HH:MM' offset arrives with its '+' decoded to a space.
+_SPACE_DECODED_OFFSET = re.compile(r"(:\d\d(?:\.\d+)?) (\d\d:?\d\d)$")
+PruneCutoff = Annotated[
+    datetime,
+    BeforeValidator(lambda v: _SPACE_DECODED_OFFSET.sub(r"\1+\2", v) if isinstance(v, str) else v),
+    Query(description="Delete entries older than this ISO-8601 datetime"),
+]
 
 
 @router.get("/crypto-policies/system/audit", responses=RESP_403)
@@ -102,15 +111,14 @@ async def revert_system_policy(
 async def prune_system_audit(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    before: str = Query(..., description="Delete entries older than this ISO date"),
+    before: PruneCutoff,
 ) -> dict[str, Any]:
     _require_admin(current_user)
-    cutoff = _parse_datetime(before)
-    _enforce_min_prune_cutoff(cutoff)
+    _enforce_min_prune_cutoff(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
         policy_scope="system",
         project_id=None,
-        cutoff=cutoff,
+        cutoff=before,
     )
     return {"deleted": deleted}
 
@@ -179,15 +187,14 @@ async def prune_project_audit(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    before: str = Query(...),
+    before: PruneCutoff,
 ) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db, required_role="admin")
-    cutoff = _parse_datetime(before)
-    _enforce_min_prune_cutoff(cutoff)
+    _enforce_min_prune_cutoff(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
         policy_scope="project",
         project_id=project_id,
-        cutoff=cutoff,
+        cutoff=before,
     )
     return {"deleted": deleted}
 
@@ -233,13 +240,6 @@ async def get_project_license_audit_entry(
 
 
 # revert/prune for license-policy audit omitted: overwriting license settings would need a non-trivial merge with peer analyzer settings.
-
-
-def _parse_datetime(value: str) -> datetime:
-    """Parse an ISO-8601 datetime string, tolerating space-encoded '+' from URLs."""
-    # A raw-URL '+00:00' arrives with the '+' as a space; restore it before parsing.
-    value = value.replace(" ", "+")
-    return datetime.fromisoformat(value)
 
 
 def _min_prune_days() -> int:

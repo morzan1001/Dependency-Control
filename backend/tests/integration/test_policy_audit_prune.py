@@ -88,3 +88,25 @@ async def test_audit_prune_allows_cutoff_at_minimum_boundary(client, db, admin_a
     )
     assert resp.status_code == 200
     assert resp.json()["deleted"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before", ["yesterday", "2026-13-01"])
+async def test_a_malformed_cutoff_is_refused_as_client_input(
+    client, db, admin_auth_headers, owner_auth_headers_proj, before
+):
+    system = await client.delete(f"/api/v1/crypto-policies/system/audit?before={before}", headers=admin_auth_headers)
+    project = await client.delete(
+        f"/api/v1/projects/p/crypto-policy/audit?before={before}", headers=owner_auth_headers_proj
+    )
+
+    assert (system.status_code, project.status_code) == (422, 422)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before", ["2020-01-01 00:00:00", "2020-01-01 00:00", "2020-01-01T00:00:00.5 02:00"])
+async def test_a_space_in_the_cutoff_is_read_where_it_stands(client, db, admin_auth_headers, before):
+    """A space separates date and time, or is the '+' of an unencoded offset the query string decoded."""
+    resp = await client.delete(f"/api/v1/crypto-policies/system/audit?before={before}", headers=admin_auth_headers)
+
+    assert resp.status_code == 200
