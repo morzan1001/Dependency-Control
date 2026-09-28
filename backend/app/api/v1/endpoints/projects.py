@@ -873,6 +873,19 @@ async def sync_project_branches_endpoint(
     return await read_project_branches(project_id, current_user, db)
 
 
+def _scan_page_sort(field: str, direction: int) -> list[tuple[str, int]]:
+    """Break ties so pages neither repeat nor skip scans, on keys an existing index already serves."""
+    if field == "created_at":
+        return [("created_at", direction)]
+    if field == "status":
+        # SCANS_TIP_INDEX_KEY walks (status, created_at desc, _id asc) in either direction.
+        return [("status", direction), ("created_at", -direction), ("_id", direction)]
+    if field == "branch":
+        return [("branch", direction), ("created_at", -direction)]
+    # Nothing indexes these, so the sort is blocking anyway and the extra keys cost nothing.
+    return [(field, direction), ("created_at", -1), ("_id", 1)]
+
+
 @router.get("/{project_id}/scans", summary="List project scans", responses=RESP_AUTH_404)
 async def read_project_scans(
     project_id: str,
@@ -908,12 +921,9 @@ async def read_project_scans(
         # Tri-state: scans predating the mark carry no field and are not releases.
         query["is_release"] = True if is_release else {"$ne": True}
 
-    direction = parse_sort_direction(sort_order)
-    sort_field = get_sort_field("project_scans", sort_by)
-
     scan_docs = await scan_repo.find_many_raw(
         query,
-        sort=[(sort_field, direction)],
+        sort=_scan_page_sort(get_sort_field("project_scans", sort_by), parse_sort_direction(sort_order)),
         skip=skip,
         limit=limit,
     )

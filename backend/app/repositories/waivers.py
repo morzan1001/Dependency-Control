@@ -65,7 +65,9 @@ class WaiverRepository:
         sort_order: int = -1,
     ) -> list[dict[str, Any]]:
         """Returns raw dicts (not Waiver models) to avoid model overhead in bulk listings."""
-        cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
+        # The listing pages on a user-chosen column many waivers share; _id keeps the pages disjoint.
+        sort = [(sort_by, sort_order)] if sort_by == "_id" else [(sort_by, sort_order), ("_id", 1)]
+        cursor = self.collection.find(query).sort(sort).skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
     async def count(self, query: dict[str, Any] | None = None) -> int:
