@@ -1,7 +1,11 @@
 """Shared constants used across the application."""
 
+import os
 import re
 from typing import Any, Literal, get_args
+
+# HOSTNAME alone repeats across the uvicorn processes of one pod.
+INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
 
 # Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
 # finding's ``details`` dict by the enrichment writer. Every reader of persisted

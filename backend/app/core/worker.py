@@ -8,6 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
 from app.core.config import settings
+from app.core.constants import INSTANCE_ID
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
     worker_active_count,
@@ -16,7 +17,6 @@ from app.core.metrics import (
     worker_queue_size,
 )
 from app.db.mongodb import get_database
-from app.repositories.distributed_locks import INSTANCE_ID
 from app.services.analysis import run_analysis
 from app.services.notifications.service import safe_notify_project_event
 from app.services.webhooks import webhook_service

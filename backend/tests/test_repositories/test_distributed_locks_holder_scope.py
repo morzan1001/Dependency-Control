@@ -110,7 +110,8 @@ def test_every_acquisition_gets_its_own_holder_carrying_the_process():
     process release the lock another took over after the TTL."""
     import os
 
-    from app.repositories.distributed_locks import INSTANCE_ID, new_lock_holder
+    from app.core.constants import INSTANCE_ID
+    from app.repositories.distributed_locks import new_lock_holder
 
     first, second = new_lock_holder(), new_lock_holder()
 

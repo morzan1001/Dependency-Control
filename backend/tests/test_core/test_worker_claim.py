@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.worker import AnalysisWorkerManager
-from app.repositories.distributed_locks import INSTANCE_ID
+from app.core.constants import INSTANCE_ID
 from tests.mocks.fake_mongo import FakeDatabase
 
 _OTHER_POD_CLAIM = datetime(2025, 1, 1, tzinfo=timezone.utc)
