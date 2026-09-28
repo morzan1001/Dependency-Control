@@ -332,7 +332,7 @@ async def get_dependency_metadata_endpoint(
     if usage is None:
         return None
     package, projects_by_version = usage
-    # Without a version, describe the version most projects run rather than whichever row came first.
+    # Without a version, the modal describes the version most projects run.
     shown_version = version or max(
         projects_by_version,
         key=lambda v: (len({p.get("id") for p in projects_by_version[v]}), parse_version_tuple(v or ""), v or ""),
