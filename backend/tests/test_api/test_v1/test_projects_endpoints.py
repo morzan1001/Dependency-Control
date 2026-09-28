@@ -54,7 +54,7 @@ class TestUpdateNotificationSettingsAdmin:
             notification_preferences={"analysis_completed": ["email", "slack"]},
         )
         project_repo = MagicMock()
-        project_repo.update = AsyncMock()
+        project_repo.update_raw = AsyncMock()
         project_repo.update_member = AsyncMock()
         project_repo.get_by_id = AsyncMock(return_value=project)
 
@@ -75,13 +75,13 @@ class TestUpdateNotificationSettingsAdmin:
             # enforce_notification_settings omitted, so update_data is empty
         )
         project_repo = MagicMock()
-        project_repo.update = AsyncMock()
+        project_repo.update_raw = AsyncMock()
         project_repo.update_member = AsyncMock()
         project_repo.get_by_id = AsyncMock(return_value=project)
 
         self._run(user, project, settings, project_repo)
 
-        project_repo.update.assert_not_awaited()
+        project_repo.update_raw.assert_not_awaited()
         project_repo.update_member.assert_awaited_once()
         assert project_repo.update_member.await_args.args[2] == {
             "notification_preferences": {"vulnerability_found": ["slack"]}
@@ -95,14 +95,14 @@ class TestUpdateNotificationSettingsAdmin:
             enforce_notification_settings=True,
         )
         project_repo = MagicMock()
-        project_repo.update = AsyncMock()
+        project_repo.update_raw = AsyncMock()
         project_repo.update_member = AsyncMock()
         project_repo.get_by_id = AsyncMock(return_value=project)
 
         self._run(user, project, settings, project_repo)
 
-        project_repo.update.assert_awaited_once()
-        assert project_repo.update.await_args.args[1] == {"enforce_notification_settings": True}
+        project_repo.update_raw.assert_awaited_once()
+        assert project_repo.update_raw.await_args.args[1] == {"$set": {"enforce_notification_settings": True}}
         project_repo.update_member.assert_awaited_once()
 
 
@@ -556,3 +556,58 @@ class TestDashboardStats:
 
         assert stats["total_projects"] == 1
         assert [p.id for p in stats["top_risky_projects"]] == ["mine"]
+
+
+class TestWritesReadTheProjectBackOnce:
+    """A write answers with one read of the stored project, not a read per write."""
+
+    @staticmethod
+    async def _seeded_db(project):
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+        await db.projects.insert_one(project.model_dump(by_alias=True))
+        return db
+
+    @pytest.mark.asyncio
+    async def test_the_notification_update_reads_the_project_back_once(self):
+        from app.api.v1.endpoints.projects import update_notification_settings
+        from app.repositories.projects import ProjectRepository
+
+        user = _make_admin_user()
+        project = _make_project(admin_id=user.id)
+        db = await self._seeded_db(project)
+        settings = ProjectNotificationSettings(
+            notification_preferences={"analysis_completed": ["email"]}, enforce_notification_settings=True
+        )
+
+        with (
+            patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)),
+            patch.object(
+                ProjectRepository, "get_by_id", autospec=True, side_effect=ProjectRepository.get_by_id
+            ) as reads,
+        ):
+            updated = await update_notification_settings("proj-1", settings, user, db)
+
+        assert updated.enforce_notification_settings is True
+        assert reads.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_key_rotation_reads_no_project_after_the_write(self):
+        from app.api.v1.endpoints.projects import rotate_api_key
+        from app.repositories.projects import ProjectRepository
+
+        user = _make_admin_user()
+        project = _make_project(admin_id=user.id)
+        db = await self._seeded_db(project)
+
+        with (
+            patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)),
+            patch.object(
+                ProjectRepository, "get_by_id", autospec=True, side_effect=ProjectRepository.get_by_id
+            ) as reads,
+        ):
+            await rotate_api_key("proj-1", user, db)
+
+        assert reads.await_count == 0
+        assert (await db.projects.find_one({"_id": "proj-1"}))["api_key_hash"]

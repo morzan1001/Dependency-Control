@@ -55,8 +55,7 @@ class TestRotateApiKeyRoutesThroughGate:
         project = _project(members=[])
 
         mock_repo = MagicMock()
-        mock_repo.get_by_id = AsyncMock(return_value=project)
-        mock_repo.update = AsyncMock(return_value=None)
+        mock_repo.update_raw = AsyncMock(return_value=True)
 
         with patch(f"{ENDPOINTS}.ProjectRepository", return_value=mock_repo):
             with patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project) as mock_gate:

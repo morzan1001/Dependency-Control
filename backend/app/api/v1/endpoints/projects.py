@@ -309,7 +309,7 @@ async def rotate_api_key(
 
     api_key, api_key_hash = generate_project_api_key(project_id)
 
-    await project_repo.update(project_id, {"api_key_hash": api_key_hash})
+    await project_repo.update_raw(project_id, {"$set": {"api_key_hash": api_key_hash}})
 
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 
@@ -545,6 +545,14 @@ async def read_project(
     return project
 
 
+async def _reload_project(project_repo: ProjectRepository, project_id: str) -> Project:
+    """The stored project a write endpoint answers with."""
+    project = await project_repo.get_by_id(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    return project
+
+
 async def _load_project_for_update(
     project_id: str,
     current_user: User,
@@ -756,10 +764,7 @@ async def update_project(
     if not written and guard:
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_OWNER)
 
-    updated_project = await project_repo.get_by_id(project_id)
-    if not updated_project:
-        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-
+    updated_project = await _reload_project(project_repo, project_id)
     await _audit_license_policy_change(db, project_id, old_license_policy, updated_project, current_user)
     return updated_project
 
@@ -1114,7 +1119,7 @@ async def update_notification_settings(
     if is_admin:
         # Persist enforcement changes and the admin's own per-project preferences.
         if update_data:
-            await project_repo.update(project_id, update_data)
+            await project_repo.update_raw(project_id, {"$set": update_data})
         await project_repo.update_member(project_id, str(current_user.id), member_fields)
     else:
         if project.enforce_notification_settings and not has_update_perm:
@@ -1125,22 +1130,19 @@ async def update_notification_settings(
 
         if is_member:
             if update_data:
-                await project_repo.update(project_id, update_data)
+                await project_repo.update_raw(project_id, {"$set": update_data})
             await project_repo.update_member(project_id, str(current_user.id), member_fields)
         elif has_update_perm:
             # A superuser who is not a member can still update enforcement, not preferences.
             if update_data:
-                await project_repo.update(project_id, update_data)
+                await project_repo.update_raw(project_id, {"$set": update_data})
         else:
             raise HTTPException(
                 status_code=400,
                 detail="You must be a member or admin to set notification preferences",
             )
 
-    updated_project = await project_repo.get_by_id(project_id)
-    if updated_project:
-        return updated_project
-    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    return await _reload_project(project_repo, project_id)
 
 
 @router.post(
@@ -1637,11 +1639,7 @@ async def update_project_member(
         project_id, user_id, update_fields, require_another_admin=require_another_admin
     ):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_DEMOTE)
-
-    updated_project = await project_repo.get_by_id(project_id)
-    if not updated_project:
-        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-    return updated_project
+    return await _reload_project(project_repo, project_id)
 
 
 @router.delete(
@@ -1664,11 +1662,7 @@ async def remove_project_member(
     project_repo = ProjectRepository(db)
     if not await project_repo.remove_member(project_id, user_id, require_another_admin=require_another_admin):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_REMOVE)
-
-    updated_project = await project_repo.get_by_id(project_id)
-    if updated_project:
-        return updated_project
-    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    return await _reload_project(project_repo, project_id)
 
 
 @router.get(

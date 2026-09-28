@@ -1,6 +1,6 @@
 import { api, buildQueryParams } from '@/api/client';
 import { filenameFromContentDisposition } from '@/lib/download';
-import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse, ProjectNotificationSettings, ProjectMember, BranchInfo } from '@/types/project';
+import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse, ProjectNotificationSettings, BranchInfo } from '@/types/project';
 import { ArchiveListResponse, ArchiveRestoreResponse, ArchiveFilters } from '@/types/archive';
 
 export const projectApi = {
@@ -68,13 +68,13 @@ export const projectApi = {
     return response.data;
   },
 
-  updateMember: async (projectId: string, userId: string, role: string): Promise<ProjectMember> => {
-    const response = await api.put<ProjectMember>(`/projects/${projectId}/members/${userId}`, { role });
+  updateMember: async (projectId: string, userId: string, role: string): Promise<Project> => {
+    const response = await api.put<Project>(`/projects/${projectId}/members/${userId}`, { role });
     return response.data;
   },
 
-  removeMember: async (projectId: string, userId: string): Promise<{ message: string }> => {
-    const response = await api.delete<{ message: string }>(`/projects/${projectId}/members/${userId}`);
+  removeMember: async (projectId: string, userId: string): Promise<Project> => {
+    const response = await api.delete<Project>(`/projects/${projectId}/members/${userId}`);
     return response.data;
   },
 
