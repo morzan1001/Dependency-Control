@@ -1458,13 +1458,16 @@ class ChatToolRegistry:
         }
 
     async def _tool_list_archives(self, ctx: _ToolContext) -> dict[str, Any]:
+        read_all = has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL)
         query = {}
-        if ctx.args.get("project_id"):
+        if ctx.args.get("project_id") and read_all:
+            query["project_id"] = ctx.args["project_id"]
+        elif ctx.args.get("project_id"):
             project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
             query["project_id"] = project["_id"]
-        elif not has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL):
+        elif not read_all:
             project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
             query["project_id"] = {"$in": project_ids}
         limit = _clamp_limit(ctx.args.get("limit"), 20, maximum=MAX_SUMMARY_ROWS)

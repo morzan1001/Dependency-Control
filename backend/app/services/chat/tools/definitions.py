@@ -310,7 +310,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_teams",
-            "description": "List all teams the user belongs to.",
+            "description": "List the teams the user can read.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -1076,9 +1076,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 _TEAM_READ = [Permissions.TEAM_READ, Permissions.TEAM_READ_ALL]
 _WAIVER_READ = [Permissions.WAIVER_READ, Permissions.WAIVER_READ_ALL]
+_ARCHIVE_READ = [Permissions.ARCHIVE_READ, Permissions.ARCHIVE_READ_ALL]
+# The same any-of pair require_analytics_permission checks on the matching REST route.
+_ANALYTICS_SEARCH = [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_SEARCH]
 
 TOOL_PERMISSIONS: dict[str, list[str]] = {
     # Any-of, checked before the handler runs; the handler still applies the per-resource rule.
+    "search_findings": _ANALYTICS_SEARCH,
+    "get_findings_by_cve": _ANALYTICS_SEARCH,
+    "get_cve_details": _ANALYTICS_SEARCH,
+    "find_component_usage": _ANALYTICS_SEARCH,
+    "generate_remediation_plan": [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_RECOMMENDATIONS],
+    "get_analytics_summary": [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_SUMMARY],
     "list_teams": _TEAM_READ,
     "get_team_details": _TEAM_READ,
     "get_team_projects": _TEAM_READ,
@@ -1089,8 +1098,8 @@ TOOL_PERMISSIONS: dict[str, list[str]] = {
     "get_expiring_waivers": _WAIVER_READ,
     "get_system_settings": [Permissions.SYSTEM_MANAGE],
     "get_system_health": [Permissions.SYSTEM_MANAGE],
-    "list_archives": [Permissions.ARCHIVE_READ],
-    "get_archive_details": [Permissions.ARCHIVE_READ],
+    "list_archives": _ARCHIVE_READ,
+    "get_archive_details": _ARCHIVE_READ,
 }
 
 

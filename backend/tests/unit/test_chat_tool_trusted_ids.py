@@ -35,7 +35,7 @@ def _caller() -> User:
         permissions=[
             p
             for p in PRESET_ADMIN
-            if p not in {"project:read_all", "project:update", "team:read_all", "waiver:read_all"}
+            if p not in {"project:read_all", "project:update", "team:read_all", "waiver:read_all", "archive:read_all"}
         ],
     )
 
