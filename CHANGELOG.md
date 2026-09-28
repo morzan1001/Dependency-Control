@@ -18,7 +18,7 @@ Last, right before the rollout starts: rotate `SECRET_KEY` (recommended), or end
 
 After the rollout, once the last pod on the previous image has terminated:
 
-1. End every session, and review what was created during the rollout if needed. Mandatory on every installation.
+1. End every session and review what was created during the rollout. Mandatory on every installation.
 2. Remove TruffleHog plaintext secrets from `analysis_results`.
 3. Rewrite archive bundles that still hold TruffleHog plaintext.
 4. Backfill `first_seen_at`.
@@ -284,7 +284,7 @@ kubectl -n <namespace> patch secret <fullname>-secrets --type merge \
 
 With `secrets.provider: external-secrets`, change `backendSecretKey` in the store and wait until the Secret shows the new value. The key signs only tokens and links: everyone logs in again, a user may have to log in more than once while requests alternate between old and new pods, and open email-verification and password-reset links stop working. An old-image container that starts after the key change, after a crash or a scale-up during the rollout, reads the new key and reopens the window. The review after the rollout covers that case.
 
-Otherwise, end every session right before the rollout. 1.9.40 honours `last_logout_at` too, so this refuses every token obtained before it. A token obtained on an old pod during the rollout stays valid until the reset after the rollout, so the review after the rollout is then mandatory:
+Otherwise, end every session right before the rollout. 1.9.40 honours `last_logout_at` too, so this refuses every token obtained before it. A token obtained on an old pod during the rollout stays valid until the reset after the rollout, and the review after the rollout covers what it did:
 
 ```js
 db.users.updateMany({}, { $set: { last_logout_at: new Date() } })
@@ -307,7 +307,7 @@ db.users.updateMany({}, { $set: { last_logout_at: new Date() } })
 
 Afterwards every earlier token has an `iat` before every account's `last_logout_at` and is refused (bearer 401, refresh 403), and everyone logs in again. Current usernames show no trace of the rename, so this step cannot depend on a collision check.
 
-The reset does not revoke API keys, emails or passwords set during the window. Review them if you ended sessions before the rollout instead of rotating `SECRET_KEY`, or if an old-image container started after the key change: `kubectl -n <namespace> get pods` shows restarts and ages. Replace `<T0>` with the time printed before the rollout.
+The reset does not revoke API keys, emails or passwords set during the window. Whether an old-image container served after the key change cannot be read off the cluster once the rollout is over, so run both queries on every installation; they only read. Replace `<T0>` with the time printed before the rollout.
 
 API keys created since then, with their owners:
 
@@ -333,14 +333,39 @@ db.users.aggregate([
 ])
 ```
 
-Ask each listed owner whether the change was theirs. For each change that was not:
+Ask each listed owner whether the key or change was theirs. For each account with one that was not, run the steps that apply in this order, with `<user_id>` as the account's `_id`:
 
-- API key: revoke it with `db.api_keys.updateOne({ _id: "<id>" }, { $set: { revoked_at: new Date() } })`.
-- Pending email: unset `pending_email`, which voids its confirmation link.
-- Changed email: set the snapshot's address back first, then send the owner a password reset, since the new address could have reset the password.
-- Auth provider changed to local: set `auth_provider` back to the snapshot value and unset `hashed_password`.
+- Pending email: unset it, which voids its confirmation link.
 
-Changes made through the account's roles persist too, such as team or project members and webhooks it added; when the review applies, check those from the same period. Drop the snapshot after the review, or right away when no review is needed:
+  ```js
+  db.users.updateOne({ _id: "<user_id>" }, { $unset: { pending_email: "" } })
+  ```
+
+- Changed email: set the snapshot's address back and unset the password and any pending email in one update, since the new address could have reset the password. Then, if the account is local, send the owner a password reset from the user's details in Users (Send Reset Email).
+
+  ```js
+  db.users.updateOne({ _id: "<user_id>" }, { $set: { email: "<before.email>" }, $unset: { hashed_password: "", pending_email: "" } })
+  ```
+
+- Auth provider changed to local: set it back to the snapshot value and unset the password, because password login accepts any account that has one.
+
+  ```js
+  db.users.updateOne({ _id: "<user_id>" }, { $set: { auth_provider: "<before.auth_provider>" }, $unset: { hashed_password: "" } })
+  ```
+
+- Every such account: end its sessions, after the password is unset so no login slips in behind the bump. Each refresh mints a new refresh token, so a session opened during the window, or since with a password set in it, lives until `last_logout_at` moves.
+
+  ```js
+  db.users.updateOne({ _id: "<user_id>" }, { $set: { last_logout_at: new Date() } })
+  ```
+
+- Every such account: revoke its keys created since `<T0>`, after its sessions end so none can create another, then run the API-key query again. It must list no key of the account.
+
+  ```js
+  db.api_keys.updateMany({ user_id: "<user_id>", created_at: { $gte: ISODate("<T0>") }, revoked_at: null }, { $set: { revoked_at: new Date() } })
+  ```
+
+Changes made through the account's roles persist too, such as team or project members and webhooks it added; check those from the same period for every account repaired above. Drop the snapshot after the review:
 
 ```js
 db.tmp_account_snapshot.drop()
