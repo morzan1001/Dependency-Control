@@ -7,12 +7,11 @@ everything the card found, and the card has no chart next to it to disagree with
 from app.services.recommendation.common import sampled
 from app.services.recommendation.crypto import _EVIDENCE_SAMPLED, process_crypto
 from app.services.recommendation.dependencies import analyze_version_fragmentation
-from app.services.recommendation.graph import _PARENTS_SAMPLED, analyze_deep_dependency_chains
+from app.services.recommendation.graph import _DEEPEST_CHAINS_SAMPLED, analyze_deep_dependency_chains
 from app.services.recommendation.sast import _RULES_SAMPLED, process_sast
 from app.services.recommendation.vulnerabilities import _CVES_SAMPLED, process_vulnerabilities
 
 _OVER_THE_SAMPLE = 4
-_DEEP_DEPTH = 12
 _MAX_DEPTH = 5
 _FRAGMENTED_VERSIONS = 9
 _NEWEST_VERSION = "9.0.0"
@@ -100,36 +99,26 @@ def test_the_crypto_action_names_how_much_evidence_it_sampled():
     assert action["evidence_total"] == population
 
 
-def _chain_to_a_leaf_with(parent_count):
-    """A chain deep enough to be flagged, whose leaf also hangs off several direct packages."""
-    extras = [
-        {"name": f"root-{index}", "version": "1.0.0", "purl": f"pkg:npm/root-{index}@1.0.0", "direct": True}
-        for index in range(parent_count - 1)
+def _chain(length):
+    return [{"name": "step-0", "version": "1.0.0", "purl": "pkg:npm/step-0@1.0.0", "direct": True}] + [
+        {
+            "name": f"step-{step}",
+            "version": "1.0.0",
+            "purl": f"pkg:npm/step-{step}@1.0.0",
+            "parent_components": [f"pkg:npm/step-{step - 1}@1.0.0"],
+        }
+        for step in range(1, length)
     ]
-    chain = [{"name": "root", "version": "1.0.0", "purl": "pkg:npm/root@1.0.0", "direct": True}]
-    previous = "pkg:npm/root@1.0.0"
-    for step in range(_DEEP_DEPTH):
-        purl = f"pkg:npm/step-{step}@1.0.0"
-        chain.append({"name": f"step-{step}", "version": "1.0.0", "purl": purl, "parent_components": [previous]})
-        previous = purl
-    leaf = {
-        "name": "leaf",
-        "version": "1.0.0",
-        "purl": "pkg:npm/leaf@1.0.0",
-        "parent_components": [previous, *(e["purl"] for e in extras)],
-    }
-    return [*chain, *extras, leaf]
 
 
-def test_the_deep_chain_action_names_how_many_parents_it_previewed():
-    population = _PARENTS_SAMPLED + _OVER_THE_SAMPLE
+def test_the_deep_chain_action_names_how_many_chains_it_detailed():
+    population = _DEEPEST_CHAINS_SAMPLED + _OVER_THE_SAMPLE
 
-    recs = analyze_deep_dependency_chains(_chain_to_a_leaf_with(population), max_dependency_depth=_MAX_DEPTH)
+    recs = analyze_deep_dependency_chains(_chain(_MAX_DEPTH + population), max_dependency_depth=_MAX_DEPTH)
 
     action = next(r for r in recs if r.action.get("type") == "reduce_chain_depth").action
-    leaf = next(chain for chain in action["deepest_chains"] if chain["package"] == "leaf")
-    assert leaf["parents_total"] == population
-    assert action["deepest_chains_total"] > len(action["deepest_chains"])
+    assert len(action["deepest_chains"]) == _DEEPEST_CHAINS_SAMPLED
+    assert action["deepest_chains_total"] == population
 
 
 def test_the_deduplication_action_ranks_versions_before_sampling_them():

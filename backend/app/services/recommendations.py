@@ -5,7 +5,6 @@ from collections import defaultdict
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from app.core.constants import MAX_DEPENDENCY_DEPTH, OUTDATED_DEPENDENCY_THRESHOLD_DAYS
 from app.schemas.recommendation import Recommendation
 from app.services.recommendation import (
     common,
@@ -92,10 +91,6 @@ def _deduplicate_recommendations(
 
 class RecommendationEngine:
     """Generates remediation recommendations, delegating to modules in app.services.recommendation."""
-
-    def __init__(self) -> None:
-        self.outdated_threshold_days = OUTDATED_DEPENDENCY_THRESHOLD_DAYS
-        self.max_dependency_depth = MAX_DEPENDENCY_DEPTH
 
     @staticmethod
     def _collect_typosquat_findings(malware_findings: list[ModelOrDict]) -> list[ModelOrDict]:
@@ -257,9 +252,7 @@ class RecommendationEngine:
         # 9. Graph Analysis (Deep chains, Duplicates)
         _safe_extend(
             recommendations,
-            lambda: graph.analyze_deep_dependency_chains(
-                dependencies_list, max_dependency_depth=self.max_dependency_depth
-            ),
+            lambda: graph.analyze_deep_dependency_chains(dependencies_list),
             "deep_dependency_chains",
         )
         _safe_extend(

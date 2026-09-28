@@ -584,16 +584,6 @@ class TestGenerateRecommendationsTyposquatting:
         assert any(r.type == RecommendationType.MALWARE_DETECTED for r in result)
 
 
-class TestEngineInitialization:
-    def test_engine_has_outdated_threshold(self):
-        engine = RecommendationEngine()
-        assert engine.outdated_threshold_days > 0
-
-    def test_engine_has_max_dependency_depth(self):
-        engine = RecommendationEngine()
-        assert engine.max_dependency_depth > 0
-
-
 class TestTyposquatCollection:
     """The typosquatting analyzer stores the imitated name under details.imitated_package
     (2,572 production findings; zero carry a details.similar_to)."""

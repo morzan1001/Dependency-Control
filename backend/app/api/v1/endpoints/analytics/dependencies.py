@@ -18,7 +18,6 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PROJECT_ROLE_VIEWER, SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
-from app.core.purl import dependency_node_key
 from app.repositories import (
     DependencyEnrichmentRepository,
     DependencyRepository,
@@ -40,6 +39,7 @@ from app.services.component_identity import (
     normalize_component,
 )
 from app.services.recommendation.common import get_attr
+from app.services.recommendation.graph import build_dependency_edges
 
 from ._shared import _get_enrichment_info, _resolve_scan_id
 
@@ -107,32 +107,13 @@ def _build_dependency_graph(
     dependencies_total: int,
 ) -> DependencyGraph:
     """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""
-    node_by_key: dict[str, DependencyTreeNode] = {}
-    order: list[str] = []
-    # A purl can appear in several docs (e.g. one per container layer) with different
-    # parent_components; merge every doc's parents so no parent -> child edge is lost.
-    parents_by_key: dict[str, list[str]] = {}
-    for dep in dependencies:
-        key = dependency_node_key(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "version"))
-        if key not in node_by_key:
-            node_by_key[key] = _build_tree_node(dep, findings_map)
-            order.append(key)
-        known = parents_by_key.setdefault(key, [])
-        for parent in get_attr(dep, "parent_components", []) or []:
-            if parent not in known:
-                known.append(parent)
-
-    children_by_parent: dict[str, list[str]] = {}
-    for key in order:
-        for parent in parents_by_key.get(key, []):
-            siblings = children_by_parent.setdefault(parent, [])
-            if key not in siblings:
-                siblings.append(key)
-
-    for key in order:
-        child_keys = [ck for ck in children_by_parent.get(key, []) if ck in node_by_key]
-        child_keys.sort(key=lambda ck: node_by_key[ck].findings_count, reverse=True)
-        node_by_key[key].child_ids = [node_by_key[ck].id for ck in child_keys]
+    edges = build_dependency_edges(dependencies)
+    node_by_key = {key: _build_tree_node(dep, findings_map) for key, dep in edges.dep_by_key.items()}
+    for key, node in node_by_key.items():
+        child_keys = sorted(
+            edges.children_by_parent.get(key, []), key=lambda ck: node_by_key[ck].findings_count, reverse=True
+        )
+        node.child_ids = [node_by_key[ck].id for ck in child_keys]
 
     def _closure(start: str) -> set:
         seen: set = set()
@@ -142,14 +123,14 @@ def _build_dependency_graph(
             if key in seen:
                 continue
             seen.add(key)
-            stack.extend(ck for ck in children_by_parent.get(key, []) if ck in node_by_key)
+            stack.extend(edges.children_by_parent.get(key, []))
         return seen
 
     def _has_resolvable_parent(key: str) -> bool:
-        return any(p in node_by_key for p in parents_by_key.get(key, []))
+        return any(p in node_by_key for p in edges.parents_by_key[key])
 
     reachable: set = set()
-    root_keys = [key for key in order if node_by_key[key].direct or not _has_resolvable_parent(key)]
+    root_keys = [key for key in node_by_key if key in edges.direct_keys or not _has_resolvable_parent(key)]
     for key in root_keys:
         reachable |= _closure(key)
 
@@ -157,7 +138,7 @@ def _build_dependency_graph(
     # disconnected cycle). Promote one entry per component and drop any extra root its subtree
     # already covers, so a descendant seen before its component's entry is not left as a root.
     extra_roots: list[str] = []
-    for key in order:
+    for key in node_by_key:
         if key not in reachable:
             component = _closure(key)
             extra_roots = [r for r in extra_roots if r not in component]
@@ -167,7 +148,7 @@ def _build_dependency_graph(
     root_keys += extra_roots
     root_keys.sort(key=lambda k: node_by_key[k].findings_count, reverse=True)
     return DependencyGraph(
-        nodes=[node_by_key[key] for key in order],
+        nodes=list(node_by_key.values()),
         roots=[node_by_key[key].id for key in root_keys],
         dependencies_read=len(dependencies),
         dependencies_total=dependencies_total,

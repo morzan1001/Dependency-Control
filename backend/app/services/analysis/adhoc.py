@@ -60,7 +60,7 @@ from app.services.reachability_enrichment import (
     enrich_findings_from_callgraphs,
 )
 from app.services.recommendations import recommendation_engine
-from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, parse_sbom
+from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, merge_duplicate_dependencies, parse_sbom
 from app.services.stats import _resolve_finding_id_query
 
 logger = logging.getLogger(__name__)
@@ -951,7 +951,9 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     epss_kev_summary = await _enrich_vulnerabilities(records, report)
 
-    components = [component for pi in parsed_inputs for component in pi.components]
+    # One row per package across every posted SBOM, the invariant a stored scan's inventory holds.
+    merged, _ = merge_duplicate_dependencies([dep for pi in parsed_inputs for dep in pi.parsed.dependencies])
+    components = [dep.to_dict() for dep in merged]
     languages = component_language_map(components)
     reachability_summary = await asyncio.to_thread(_run_reachability, records, request.callgraph, languages, report)
 

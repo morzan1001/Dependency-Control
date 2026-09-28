@@ -2295,3 +2295,33 @@ class TestCycloneDXParentRefs:
         nodes = {node.name: node for node in graph.nodes}
         assert nodes["express"].child_ids == [nodes["body-parser"].id]
         assert graph.roots == [nodes["express"].id]
+
+    def test_chain_and_cycle_analysis_read_a_syft_cyclonedx_graph(self):
+        import itertools
+
+        from app.services.recommendation.graph import analyze_deep_dependency_chains
+
+        names = [f"p{i}" for i in range(4)]
+        ref = {name: f"pkg:npm/{name}@1.0.0?package-id={name}" for name in names}
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.6",
+            "metadata": {"component": {"type": "container", "name": "app", "bom-ref": "root-ref"}},
+            "components": [
+                {"type": "library", "name": n, "version": "1.0.0", "bom-ref": ref[n], "purl": f"pkg:npm/{n}@1.0.0"}
+                for n in names
+            ],
+            "dependencies": [
+                {"ref": "root-ref", "dependsOn": [ref["p0"]]},
+                *({"ref": ref[a], "dependsOn": [ref[b]]} for a, b in itertools.pairwise(names)),
+                {"ref": ref["p3"], "dependsOn": [ref["p2"]]},
+            ],
+        }
+        dependencies = [d.to_dict() for d in parse_sbom(sbom).dependencies]
+
+        titles = sorted(r.title for r in analyze_deep_dependency_chains(dependencies, max_dependency_depth=3))
+
+        assert titles == [
+            "Circular dependencies detected (2 packages)",
+            "Deep dependency chains detected (max depth: 4)",
+        ]

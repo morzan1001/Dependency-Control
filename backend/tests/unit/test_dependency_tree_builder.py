@@ -200,6 +200,15 @@ class TestDependencyGraphBuilder:
         assert _child_names(graph, by_name["a"]) == ["x"]
         assert _child_names(graph, by_name["c"]) == ["x"]
 
+    def test_a_node_is_a_root_when_any_of_its_documents_is_direct(self):
+        a = _dep("a", direct=True)
+        x_transitive = _dep("x", parents=[a["purl"]])
+        x_direct = _dep("x", direct=True)
+
+        graph = _graph([a, x_transitive, x_direct], {})
+
+        assert sorted(_root_names(graph)) == ["a", "x"]
+
     def test_findings_absent_yields_no_severity(self):
         node = _by_name(_graph([_dep("a", direct=True)], {}))["a"]
 

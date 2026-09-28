@@ -193,3 +193,14 @@ async def test_dependency_enrichments_are_returned_not_persisted(_osv):
 
     assert await db.dependency_enrichments.count_documents({}) == 0
     assert await db.dependencies.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_component_posted_in_two_sboms_is_one_dependency(_osv):
+    jest = {"type": "library", "name": "jest", "version": "29.0.0", "purl": "pkg:npm/jest@29.0.0"}
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": [jest]}
+
+    response = await run_adhoc_analysis(_request(sboms=[sbom, sbom]), FakeDatabase())
+
+    [dev_card] = _recommendations_of_type(response, "dev_in_production")
+    assert dev_card["title"] == "1 potential dev dependencies in production"
