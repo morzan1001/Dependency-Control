@@ -236,7 +236,7 @@ class TestUpdateProjectTeamAssignment:
     def _build_update_project_mocks(self, project: "Project"):
         """Return the mocked collaborators for update_project."""
         project_repo = MagicMock()
-        project_repo.update_raw = AsyncMock(return_value=True)
+        project_repo.update_fields_and_owners = AsyncMock(return_value=True)
         project_repo.get_by_id = AsyncMock(return_value=project)
 
         team_repo = MagicMock()
@@ -266,7 +266,7 @@ class TestUpdateProjectTeamAssignment:
         ):
             asyncio.run(update_project("proj-1", project_in, user, MagicMock()))
 
-        return project_repo.update_raw
+        return project_repo.update_fields_and_owners
 
     @staticmethod
     def _project_owned_by_gitlab():
@@ -282,7 +282,7 @@ class TestUpdateProjectTeamAssignment:
         )
 
     def test_the_picked_teams_reach_the_server_as_the_whole_owner_set(self):
-        from app.repositories.projects import literal_set_stage, set_owners_pipeline
+        from app.repositories.projects import set_owners_pipeline
         from app.schemas.project import ProjectUpdate
 
         mock_update = self._run_update(
@@ -292,10 +292,7 @@ class TestUpdateProjectTeamAssignment:
         )
 
         mock_update.assert_awaited_once()
-        assert mock_update.call_args[0][1] == [
-            literal_set_stage({"name": "Renamed"}),
-            *set_owners_pipeline(["team-abc", "team-xyz"]),
-        ]
+        assert mock_update.call_args.args[1:3] == ({"name": "Renamed"}, set_owners_pipeline(["team-abc", "team-xyz"]))
 
     def test_an_empty_pick_gives_up_every_owner(self):
         from app.repositories.projects import set_owners_pipeline
@@ -304,10 +301,9 @@ class TestUpdateProjectTeamAssignment:
         mock_update = self._run_update(self._project_owned_by_gitlab(), ProjectUpdate(team_ids=[]), _update_user())
 
         mock_update.assert_awaited_once()
-        assert mock_update.call_args[0][1] == set_owners_pipeline([])
+        assert mock_update.call_args.args[1:3] == ({}, set_owners_pipeline([]))
 
     def test_a_body_without_teams_leaves_every_owner_alone(self):
-        from app.repositories.projects import literal_set_stage
         from app.schemas.project import ProjectUpdate
 
         mock_update = self._run_update(
@@ -315,4 +311,4 @@ class TestUpdateProjectTeamAssignment:
         )
 
         mock_update.assert_awaited_once()
-        assert mock_update.call_args[0][1] == [literal_set_stage({"name": "Only a rename"})]
+        assert mock_update.call_args.args[1:3] == ({"name": "Only a rename"}, [])

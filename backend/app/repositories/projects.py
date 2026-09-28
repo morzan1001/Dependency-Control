@@ -19,32 +19,29 @@ _MEMBERS_USER_ID = "members.user_id"
 UNSHAPED_OWNERS: dict[str, Any] = {"team_ids": {"$in": [None]}}
 
 
+def _team_source_entries(cond: dict[str, Any]) -> dict[str, Any]:
+    """The provenance map's ``{k, v}`` entries satisfying ``cond``; a missing map reads as empty."""
+    return {
+        "$filter": {
+            "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+            "as": "entry",
+            "cond": cond,
+        }
+    }
+
+
 def _owned_by(source: str) -> dict[str, Any]:
     """The team_sources entries this source wrote, as an array of ``{k, v}`` documents.
 
     Equality against the whole value and not a provider prefix: ``source`` names one instance, and
     a prefix match would hand every instance of a provider the owners of all the others.
     """
-    return {
-        "$filter": {
-            "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
-            "as": "entry",
-            "cond": {"$eq": ["$$entry.v", source]},
-        }
-    }
+    return _team_source_entries({"$eq": ["$$entry.v", source]})
 
 
 def _sources_except(source: str) -> dict[str, Any]:
     """The provenance map without the entries ``source`` wrote."""
-    return {
-        "$arrayToObject": {
-            "$filter": {
-                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
-                "as": "entry",
-                "cond": {"$ne": ["$$entry.v", source]},
-            }
-        }
-    }
+    return {"$arrayToObject": _team_source_entries({"$ne": ["$$entry.v", source]})}
 
 
 def _retired_by(source: str) -> dict[str, Any]:
@@ -77,13 +74,7 @@ _MIRRORED_SOURCE = {
             "$arrayElemAt": [
                 {
                     "$map": {
-                        "input": {
-                            "$filter": {
-                                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
-                                "as": "entry",
-                                "cond": {"$eq": ["$$entry.k", {"$ifNull": ["$team_id", None]}]},
-                            }
-                        },
+                        "input": _team_source_entries({"$eq": ["$$entry.k", {"$ifNull": ["$team_id", None]}]}),
                         "as": "entry",
                         "in": "$$entry.v",
                     }
@@ -144,15 +135,7 @@ def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[
 
 def _sources_kept(team_ids: list[str]) -> dict[str, Any]:
     """The provenance entries naming one of ``team_ids``."""
-    return {
-        "$arrayToObject": {
-            "$filter": {
-                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
-                "as": "entry",
-                "cond": {"$in": ["$$entry.k", {"$literal": team_ids}]},
-            }
-        }
-    }
+    return {"$arrayToObject": _team_source_entries({"$in": ["$$entry.k", {"$literal": team_ids}]})}
 
 
 def set_owners_pipeline(team_ids: list[str]) -> list[dict[str, Any]]:
@@ -188,22 +171,14 @@ def remove_team_pipeline(team_id: str) -> list[dict[str, Any]]:
         {
             "$set": {
                 "team_ids": {"$setDifference": [{"$ifNull": ["$team_ids", []]}, [team_id]]},
-                "team_sources": {
-                    "$arrayToObject": {
-                        "$filter": {
-                            "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
-                            "as": "entry",
-                            "cond": {"$ne": ["$$entry.k", team_id]},
-                        }
-                    }
-                },
+                "team_sources": {"$arrayToObject": _team_source_entries({"$ne": ["$$entry.k", team_id]})},
             }
         },
         *scalar_mirror_stages(),
     ]
 
 
-def literal_set_stage(fields: dict[str, Any]) -> dict[str, Any]:
+def _literal_set_stage(fields: dict[str, Any]) -> dict[str, Any]:
     """A ``$set`` stage writing stored values, for a pipeline that also computes some.
 
     ``$literal`` because a stage reads a bare string beginning with ``$`` as a field path.
@@ -224,6 +199,14 @@ def ownership_fields(team_ids: list[str], source: str) -> dict[str, Any]:
         "team_id": owners[0] if owners else None,
         "team_source": source if owners else None,
     }
+
+
+def _gitlab_key(instance_id: str, project_id: int) -> dict[str, Any]:
+    return {"gitlab_instance_id": instance_id, "gitlab_project_id": project_id}
+
+
+def _github_key(instance_id: str, repository_id: str) -> dict[str, Any]:
+    return {"github_instance_id": instance_id, "github_repository_id": repository_id}
 
 
 def _surviving_admin_filter(user_id: str, required: bool) -> dict[str, Any]:
@@ -255,19 +238,12 @@ class ProjectRepository(BaseRepository[Project]):
     model_class = Project
 
     async def get_by_gitlab_composite_key(self, gitlab_instance_id: str, gitlab_project_id: int) -> Project | None:
-        data = await self.collection.find_one(
-            {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id}
-        )
-        if data:
-            return Project(**data)
-        return None
+        return await self.find_one(_gitlab_key(gitlab_instance_id, gitlab_project_id))
 
     async def get_raw_by_gitlab_composite_key(
         self, gitlab_instance_id: str, gitlab_project_id: int
     ) -> dict[str, Any] | None:
-        return await self.collection.find_one(
-            {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id}
-        )
+        return await self.find_one_raw(_gitlab_key(gitlab_instance_id, gitlab_project_id))
 
     async def list_by_instance(self, gitlab_instance_id: str, skip: int = 0, limit: int = 100) -> list[Project]:
         cursor = self.collection.find({"gitlab_instance_id": gitlab_instance_id}).skip(skip).limit(limit)
@@ -280,9 +256,7 @@ class ProjectRepository(BaseRepository[Project]):
     async def get_raw_by_github_composite_key(
         self, github_instance_id: str, github_repository_id: str
     ) -> dict[str, Any] | None:
-        return await self.collection.find_one(
-            {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id}
-        )
+        return await self.find_one_raw(_github_key(github_instance_id, github_repository_id))
 
     async def count_by_github_instance(self, github_instance_id: str) -> int:
         return await self.collection.count_documents({"github_instance_id": github_instance_id})
@@ -290,28 +264,22 @@ class ProjectRepository(BaseRepository[Project]):
     async def find_or_create_by_gitlab_key(
         self, gitlab_instance_id: str, gitlab_project_id: int, project: Project
     ) -> tuple[Project, bool]:
-        """Atomic find-or-create by GitLab composite key ($setOnInsert leaves existing projects untouched); returns (project, created)."""
-        result = await self.collection.find_one_and_update(
-            {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id},
-            {"$setOnInsert": project.model_dump(by_alias=True)},
-            upsert=True,
-            return_document=ReturnDocument.AFTER,
-        )
-        created = result["_id"] == project.id
-        return Project(**result), created
+        return await self._find_or_create(_gitlab_key(gitlab_instance_id, gitlab_project_id), project)
 
     async def find_or_create_by_github_key(
         self, github_instance_id: str, github_repository_id: str, project: Project
     ) -> tuple[Project, bool]:
-        """Atomic find-or-create by GitHub composite key ($setOnInsert leaves existing projects untouched); returns (project, created)."""
+        return await self._find_or_create(_github_key(github_instance_id, github_repository_id), project)
+
+    async def _find_or_create(self, key: dict[str, Any], project: Project) -> tuple[Project, bool]:
+        """Atomic find-or-create by a VCS composite key ($setOnInsert leaves existing projects untouched); returns (project, created)."""
         result = await self.collection.find_one_and_update(
-            {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id},
+            key,
             {"$setOnInsert": project.model_dump(by_alias=True)},
             upsert=True,
             return_document=ReturnDocument.AFTER,
         )
-        created = result["_id"] == project.id
-        return Project(**result), created
+        return Project(**result), result["_id"] == project.id
 
     async def find_many_with_scan_id(
         self,
@@ -338,6 +306,20 @@ class ProjectRepository(BaseRepository[Project]):
         cursor = self.collection.find(query, {"_id": 1, "name": 1}).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectMinimal(**doc) for doc in docs]
+
+    async def update_fields_and_owners(
+        self,
+        project_id: str,
+        fields: dict[str, Any],
+        ownership_stages: list[dict[str, Any]],
+        guard: dict[str, Any] | None = None,
+    ) -> bool:
+        """Stored fields and computed ownership as one pipeline, so the project is written once.
+
+        True without a write when there is nothing to write; otherwise whether ``guard`` still held.
+        """
+        stages = ([_literal_set_stage(fields)] if fields else []) + ownership_stages
+        return not stages or await self.update_raw(project_id, stages, guard)
 
     async def update_many_raw(self, query: dict[str, Any], update_ops: UpdateOps) -> int:
         """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.

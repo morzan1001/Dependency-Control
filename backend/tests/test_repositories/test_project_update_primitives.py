@@ -123,3 +123,24 @@ async def test_a_sync_does_not_evict_a_manual_co_owner():
     stored = await db.projects.find_one({"_id": "p1"})
     assert sorted(stored["team_ids"]) == ["gl-fresh", "kept-by-hand"]
     assert stored["team_sources"] == {"kept-by-hand": "manual", "gl-fresh": "gitlab"}
+
+
+@pytest.mark.asyncio
+async def test_fields_and_owners_reach_the_server_as_one_pipeline_under_the_guard():
+    repo, collection = _spy_repo()
+    guard = {"members.role": "admin"}
+
+    assert await repo.update_fields_and_owners("p1", {"name": "$renamed"}, _PIPELINE, guard) is True
+
+    query, stages = collection.update_one.await_args.args
+    assert query == {"_id": "p1", **guard}
+    assert stages == [{"$set": {"name": {"$literal": "$renamed"}}}, *_PIPELINE]
+
+
+@pytest.mark.asyncio
+async def test_nothing_to_write_writes_nothing():
+    repo, collection = _spy_repo()
+
+    assert await repo.update_fields_and_owners("p1", {}, []) is True
+
+    collection.update_one.assert_not_awaited()

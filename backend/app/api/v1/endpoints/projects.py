@@ -72,7 +72,6 @@ from app.repositories.users import UserRepository
 from app.repositories.waivers import WaiverRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.projects import (
-    literal_set_stage,
     ownership_fields,
     set_owners_pipeline,
 )
@@ -751,9 +750,8 @@ async def update_project(
     # Capture the pre-update license policy so we can audit transitions.
     old_license_policy = _resolve_license_policy(project)
 
-    stages = ([literal_set_stage(update_data)] if update_data else []) + ownership_stages
     try:
-        written = not stages or await project_repo.update_raw(project_id, stages, guard)
+        written = await project_repo.update_fields_and_owners(project_id, update_data, ownership_stages, guard)
     except DuplicateKeyError as exc:
         # The GitLab binding is the only unique key an update body can write.
         bound_id = update_data.get("gitlab_project_id", project.gitlab_project_id)

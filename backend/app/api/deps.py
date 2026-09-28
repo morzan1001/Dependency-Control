@@ -30,7 +30,6 @@ from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.users import UserRepository
 from app.repositories.api_keys import ApiKeyRepository
 from app.repositories.projects import (
-    literal_set_stage,
     owners_replaced_by,
     ownership_fields,
     replace_team_subset_pipeline,
@@ -283,20 +282,16 @@ async def _sync_project_name(
     The ownership half is a pipeline, which cannot be merged into the ``$set`` document the rename
     is: both become stages of one pipeline instead, so an ingest still writes the project once.
     """
-    stages: list[dict] = []
     renamed: dict = {}
     current_path = getattr(project, path_field, None)
     if current_path and current_path != new_path:
         renamed[path_field] = new_path
         if project.name == current_path:
             renamed["name"] = new_path
-    if renamed:
-        stages.append(literal_set_stage(renamed))
-    stages.extend(ownership_stages or [])
 
-    if not stages:
+    if not renamed and not ownership_stages:
         return project
-    await project_repo.update_raw(project.id, stages)
+    await project_repo.update_fields_and_owners(project.id, renamed, ownership_stages or [])
     # The owners are computed server-side, so the caller is handed what was stored, not a guess.
     return await project_repo.get_by_id(project.id) or project
 
