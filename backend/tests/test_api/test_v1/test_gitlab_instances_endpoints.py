@@ -118,7 +118,7 @@ class TestListInstances:
             make_gitlab_instance(id="i1", name="A"),
             make_gitlab_instance(id="i2", name="B"),
         ]
-        mock_repo = _make_repo_mock(list_all=instances, count_all=2)
+        mock_repo = _make_repo_mock(find_many=instances, count=2)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             result = asyncio.run(
@@ -133,13 +133,13 @@ class TestListInstances:
 
         assert result["total"] == 2
         assert len(result["items"]) == 2
-        mock_repo.list_all.assert_called_once_with(skip=0, limit=100)
+        mock_repo.find_many.assert_called_once_with({}, skip=0, limit=100)
 
     def test_list_active_only(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import list_instances
 
         active = [make_gitlab_instance(id="i1", name="Active")]
-        mock_repo = _make_repo_mock(list_active=active, count_active=1)
+        mock_repo = _make_repo_mock(find_many=active, count=1)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             result = asyncio.run(
@@ -153,13 +153,12 @@ class TestListInstances:
             )
 
         assert result["total"] == 1
-        mock_repo.list_active.assert_called_once()
-        mock_repo.list_all.assert_not_called()
+        mock_repo.find_many.assert_called_once_with({"is_active": True}, skip=0, limit=100)
 
     def test_pagination_offset(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import list_instances
 
-        mock_repo = _make_repo_mock(list_all=[], count_all=50)
+        mock_repo = _make_repo_mock(find_many=[], count=50)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             result = asyncio.run(
@@ -172,14 +171,14 @@ class TestListInstances:
                 )
             )
 
-        mock_repo.list_all.assert_called_once_with(skip=20, limit=10)
+        mock_repo.find_many.assert_called_once_with({}, skip=20, limit=10)
         assert result["total"] == 50
 
     def test_pagination_response_page_reflects_requested_page(self, admin_user):
         """build_pagination_response must receive skip, not the 1-based page (else page=2/size=100 collapses to 1)."""
         from app.api.v1.endpoints.gitlab_instances import list_instances
 
-        mock_repo = _make_repo_mock(list_all=[], count_all=250)
+        mock_repo = _make_repo_mock(find_many=[], count=250)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             result = asyncio.run(
@@ -199,7 +198,7 @@ class TestListInstances:
     def test_empty_list(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import list_instances
 
-        mock_repo = _make_repo_mock(list_all=[], count_all=0)
+        mock_repo = _make_repo_mock(find_many=[], count=0)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             result = asyncio.run(
@@ -553,9 +552,9 @@ class TestUpdateInstance:
 
         existing = make_gitlab_instance(id="inst-1", name="Old")
         updated = make_gitlab_instance(id="inst-1", name="New Name")
-        mock_repo = _make_repo_mock(update=True, exists_by_name=False)
-        # get_by_id called twice: first for existence check, then for refresh
-        mock_repo.get_by_id = AsyncMock(side_effect=[existing, updated])
+        mock_repo = _make_repo_mock(exists_by_name=False)
+        mock_repo.get_by_id = AsyncMock(return_value=existing)
+        mock_repo.update = AsyncMock(return_value=updated)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             result = asyncio.run(
@@ -575,8 +574,9 @@ class TestUpdateInstance:
 
         existing = make_gitlab_instance(id="inst-1", is_default=False)
         updated = make_gitlab_instance(id="inst-1", is_default=True)
-        mock_repo = _make_repo_mock(update=True, set_as_default=True)
-        mock_repo.get_by_id = AsyncMock(side_effect=[existing, updated])
+        mock_repo = _make_repo_mock(set_as_default=True)
+        mock_repo.get_by_id = AsyncMock(return_value=existing)
+        mock_repo.update = AsyncMock(return_value=updated)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             result = asyncio.run(
@@ -596,8 +596,9 @@ class TestUpdateInstance:
 
         existing = make_gitlab_instance(id="inst-1", team_sync_depth=1)
         updated = make_gitlab_instance(id="inst-1", team_sync_depth=2)
-        mock_repo = _make_repo_mock(update=True)
-        mock_repo.get_by_id = AsyncMock(side_effect=[existing, updated])
+        mock_repo = _make_repo_mock()
+        mock_repo.get_by_id = AsyncMock(return_value=existing)
+        mock_repo.update = AsyncMock(return_value=updated)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             result = asyncio.run(
@@ -640,7 +641,7 @@ class TestDeleteInstance:
         mock_repo = _make_repo_mock(get_by_id=existing)
 
         mock_proj_repo = MagicMock()
-        mock_proj_repo.count_by_instance = AsyncMock(return_value=3)
+        mock_proj_repo.count = AsyncMock(return_value=3)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
@@ -664,7 +665,7 @@ class TestDeleteInstance:
         mock_repo = _make_repo_mock(get_by_id=make_gitlab_instance(id="inst-1", name="GL"), delete=True)
 
         mock_proj_repo = MagicMock()
-        mock_proj_repo.count_by_instance = AsyncMock(return_value=1)
+        mock_proj_repo.count = AsyncMock(return_value=1)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
@@ -689,7 +690,7 @@ class TestDeleteInstance:
         mock_repo = _make_repo_mock(get_by_id=existing, delete=True)
 
         mock_proj_repo = MagicMock()
-        mock_proj_repo.count_by_instance = AsyncMock(return_value=3)
+        mock_proj_repo.count = AsyncMock(return_value=3)
 
         with _patch_response(), patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
@@ -710,7 +711,7 @@ class TestDeleteInstance:
         mock_repo = _make_repo_mock(get_by_id=existing, delete=True)
 
         mock_proj_repo = MagicMock()
-        mock_proj_repo.count_by_instance = AsyncMock(return_value=0)
+        mock_proj_repo.count = AsyncMock(return_value=0)
 
         with _patch_response(), patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
@@ -932,7 +933,7 @@ def _run_gitlab_update(instance, current_user, **fields):
     from app.api.v1.endpoints.gitlab_instances import update_instance
     from app.schemas.gitlab_instance import GitLabInstanceUpdate
 
-    mock_repo = _make_repo_mock(get_by_id=instance, exists_by_url=False, exists_by_name=False, update=True)
+    mock_repo = _make_repo_mock(get_by_id=instance, exists_by_url=False, exists_by_name=False, update=instance)
     with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
         asyncio.run(
             update_instance(

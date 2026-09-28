@@ -73,10 +73,3 @@ class TestInstanceQueries:
         page = await repo.list_by_instance(_INSTANCE_A, skip=1, limit=1)
 
         assert [project.id for project in page] == ["a-1"]
-
-    @pytest.mark.asyncio
-    async def test_count_by_instance_counts_that_instance_only(self, db):
-        repo = ProjectRepository(db)
-
-        assert await repo.count_by_instance(_INSTANCE_A) == _INSTANCE_A_PROJECTS
-        assert await repo.count_by_instance(_INSTANCE_B) == 1

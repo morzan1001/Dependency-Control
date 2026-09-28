@@ -7,3 +7,4 @@ from app.repositories.vcs_instances import VcsInstanceRepository
 class GitHubInstanceRepository(VcsInstanceRepository[GitHubInstance]):
     collection_name = "github_instances"
     model_class = GitHubInstance
+    project_link_field = "github_instance_id"

@@ -250,16 +250,10 @@ class ProjectRepository(BaseRepository[Project]):
         docs = await cursor.to_list(length=limit)
         return [Project(**doc) for doc in docs]
 
-    async def count_by_instance(self, gitlab_instance_id: str) -> int:
-        return await self.collection.count_documents({"gitlab_instance_id": gitlab_instance_id})
-
     async def get_raw_by_github_composite_key(
         self, github_instance_id: str, github_repository_id: str
     ) -> dict[str, Any] | None:
         return await self.find_one_raw(_github_key(github_instance_id, github_repository_id))
-
-    async def count_by_github_instance(self, github_instance_id: str) -> int:
-        return await self.collection.count_documents({"github_instance_id": github_instance_id})
 
     async def find_or_create_by_gitlab_key(
         self, gitlab_instance_id: str, gitlab_project_id: int, project: Project
