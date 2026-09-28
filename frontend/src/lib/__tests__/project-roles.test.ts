@@ -73,7 +73,10 @@ describe('hasProjectRole — WRITE superuser (project:update); project:delete de
     expect(isProjectAdmin(project, STRANGER, perms)).toBe(true)
     // member management gate (admin-only) must open for the write superuser
     expect(canManageProjectMembers(project, STRANGER, perms)).toBe(true)
-    expect(canDeleteProject(project, STRANGER, perms)).toBe(true)
+  })
+
+  it('project:update does not open the deletion', () => {
+    expect(canDeleteProject(project, STRANGER, ['project:update'])).toBe(false)
   })
 
   it('project:delete opens the deletion and nothing else', () => {
@@ -91,6 +94,7 @@ describe('getUserProjectRole / role hierarchy', () => {
     const project = makeProject([], 'owner-1')
     expect(getUserProjectRole(project, 'owner-1')).toBe('owner')
     expect(isProjectAdmin(project, 'owner-1', [])).toBe(true)
+    expect(canDeleteProject(project, 'owner-1', [])).toBe(true)
   })
 
   it('direct member roles resolve and respect the hierarchy', () => {
@@ -117,6 +121,7 @@ describe('getUserProjectRole / role hierarchy', () => {
     const project = makeProject([{ user_id: 'v', role: 'viewer', effective_role: 'admin' }])
     expect(getUserProjectRole(project, 'v')).toBe('admin')
     expect(canManageProjectMembers(project, 'v', [])).toBe(true)
+    expect(canDeleteProject(project, 'v', ['project:update'])).toBe(true)
   })
 
   it('team-derived members are already merged into project.members by the API (team admin -> admin)', () => {

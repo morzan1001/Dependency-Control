@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
+    authorize_waiver_read,
     build_pagination_response,
     check_project_access,
     get_user_project_ids,
@@ -98,14 +99,6 @@ _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 _MSG_WAIVER_NOT_FOUND = "Waiver not found"
 
 
-async def _authorize_waiver_read(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> None:
-    """waiver:read or read_all opens global waivers, read_all every project's, read the viewable projects'."""
-    if not has_permission(user.permissions, [Permissions.WAIVER_READ, Permissions.WAIVER_READ_ALL]):
-        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
-    if project_id and not has_permission(user.permissions, Permissions.WAIVER_READ_ALL):
-        await check_project_access(project_id, user, db)
-
-
 async def _authorize_waiver_write(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> None:
     """A project waiver is written by a project editor, a global one by a waiver:manage holder."""
     if project_id:
@@ -176,7 +169,7 @@ async def list_waivers(
     query: dict[str, Any] = {}
 
     scoped_project = None if global_only else project_id
-    await _authorize_waiver_read(scoped_project, current_user, db)
+    await authorize_waiver_read(scoped_project, current_user, db)
 
     if global_only or project_id:
         query["project_id"] = scoped_project
@@ -239,13 +232,13 @@ async def get_waiver(
 ) -> Waiver:
     """Retrieve a single waiver by ID."""
     # Refused before the read, so a caller with no waiver permission cannot probe which ids exist.
-    await _authorize_waiver_read(None, current_user, db)
+    await authorize_waiver_read(None, current_user, db)
 
     waiver = await WaiverRepository(db).get_by_id(waiver_id)
     if not waiver:
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
 
-    await _authorize_waiver_read(waiver.project_id, current_user, db)
+    await authorize_waiver_read(waiver.project_id, current_user, db)
     return waiver
 
 

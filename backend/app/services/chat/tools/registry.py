@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
-from app.api.v1.helpers.projects import build_user_project_query
+from app.api.v1.helpers.projects import authorize_waiver_read, build_user_project_query
 from app.api.v1.helpers.teams import check_team_access, resolve_team_names, team_refs, visible_teams_filter
 from app.api.v1.helpers.webhooks import check_webhook_list_permission
 from app.core.constants import (
@@ -744,8 +744,12 @@ class ChatToolRegistry:
         return {"waived": False, "expired_waiver": _serialize_doc(waiver)}
 
     async def _tool_list_project_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
+        project = await ctx.db["projects"].find_one({"_id": ctx.args["project_id"]}, {"_id": 1})
         if not project:
+            return {"error": _ERR_PROJECT_NOT_FOUND}
+        try:
+            await authorize_waiver_read(project["_id"], ctx.user, ctx.db)
+        except HTTPException:
             return {"error": _ERR_PROJECT_NOT_FOUND}
         now = datetime.now(timezone.utc)
         waivers, waivers_total = await bounded_read(

@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from app.api.v1.endpoints import waivers
 from app.core.permissions import Permissions
 from app.models.user import User
+from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools.definitions import TOOL_PERMISSIONS
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -89,3 +90,21 @@ class TestChatWaiverTools:
     )
     def test_follow_rests_waiver_read_permissions(self, tool):
         assert TOOL_PERMISSIONS[tool] == [Permissions.WAIVER_READ, Permissions.WAIVER_READ_ALL]
+
+    @pytest.mark.asyncio
+    async def test_read_all_lists_a_foreign_projects_waivers_as_rest_does(self):
+        result = await ChatToolRegistry().execute_tool(
+            "list_project_waivers", {"project_id": "p-foreign"}, _user(Permissions.WAIVER_READ_ALL), await _db()
+        )
+        assert [w["id"] for w in result["waivers"]] == ["w-project"]
+
+    @pytest.mark.asyncio
+    async def test_read_alone_cannot_list_a_project_it_cannot_view(self):
+        result = await ChatToolRegistry().execute_tool(
+            "list_project_waivers",
+            {"project_id": "p-foreign"},
+            _user(Permissions.WAIVER_READ, Permissions.PROJECT_READ),
+            await _db(),
+        )
+        assert "waivers" not in result
+        assert result["error"]

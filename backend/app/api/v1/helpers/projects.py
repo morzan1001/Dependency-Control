@@ -194,6 +194,14 @@ async def check_project_access(
     return project
 
 
+async def authorize_waiver_read(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> None:
+    """waiver:read or read_all opens global waivers, read_all every project's, read the viewable projects'."""
+    if not has_permission(user.permissions, [Permissions.WAIVER_READ, Permissions.WAIVER_READ_ALL]):
+        raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
+    if project_id and not has_permission(user.permissions, Permissions.WAIVER_READ_ALL):
+        await check_project_access(project_id, user, db)
+
+
 def generate_project_api_key(project_id: str) -> tuple[str, str]:
     """Generate a project API key, returning (api_key "project_id.secret", api_key_hash)."""
     secret = secrets.token_urlsafe(32)

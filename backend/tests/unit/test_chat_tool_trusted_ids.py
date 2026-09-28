@@ -32,7 +32,11 @@ def _caller() -> User:
         id=_CALLER,
         username="caller",
         email="caller@test.com",
-        permissions=[p for p in PRESET_ADMIN if p not in {"project:read_all", "team:read_all"}],
+        permissions=[
+            p
+            for p in PRESET_ADMIN
+            if p not in {"project:read_all", "project:update", "team:read_all", "waiver:read_all"}
+        ],
     )
 
 

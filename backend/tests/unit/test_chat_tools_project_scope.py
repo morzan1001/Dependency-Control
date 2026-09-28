@@ -190,11 +190,12 @@ def _seeded(member_ids: list[str]) -> FakeDatabase:
 @pytest.fixture
 def caller() -> User:
     """Every tool-level permission, so only the per-project membership check can refuse."""
+    membership_bypasses = {"project:read_all", "project:update", "waiver:read_all"}
     return User(
         id=_CALLER,
         username="u",
         email="u@test.com",
-        permissions=[p for p in PRESET_ADMIN if p != "project:read_all"],
+        permissions=[p for p in PRESET_ADMIN if p not in membership_bypasses],
     )
 
 

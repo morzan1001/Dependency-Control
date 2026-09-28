@@ -102,6 +102,21 @@ async def test_two_admins_removing_each_other_leave_the_team_one_admin() -> None
 
 
 @pytest.mark.asyncio
+async def test_two_admins_demoting_each_other_leave_the_team_one_admin() -> None:
+    db = FakeDatabase()
+    await db.teams.insert_one(_team_doc([(_ADMIN_A, TEAM_ROLE_ADMIN), (_ADMIN_B, TEAM_ROLE_ADMIN)]))
+    repo = TeamRepository(db)
+
+    accepted = await asyncio.gather(
+        repo.update_member_role(_TEAM_ID, _ADMIN_B, TEAM_ROLE_MEMBER, _NOW),
+        repo.update_member_role(_TEAM_ID, _ADMIN_A, TEAM_ROLE_MEMBER, _NOW),
+    )
+
+    assert accepted.count(True) == 1
+    assert len(_admins(await db.teams.find_one({"_id": _TEAM_ID}), TEAM_ROLE_ADMIN)) == 1
+
+
+@pytest.mark.asyncio
 async def test_removing_a_plain_member_needs_no_second_admin() -> None:
     db = FakeDatabase()
     await db.teams.insert_one(_team_doc([(_ADMIN_A, TEAM_ROLE_ADMIN), (_NEWCOMER, TEAM_ROLE_MEMBER)]))

@@ -44,6 +44,7 @@ from app.api.v1.helpers.integrations import (
 from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.projects import (
     apply_system_settings_enforcement,
+    authorize_waiver_read,
     build_user_project_query,
     check_project_access,
     generate_project_api_key,
@@ -121,6 +122,7 @@ __all__ = [
     # Project helpers
     "aggregate_stats_by_category",
     "apply_system_settings_enforcement",
+    "authorize_waiver_read",
     "build_findings_severity_map",
     "build_hotspot_priority_reasons",
     # Pagination helpers

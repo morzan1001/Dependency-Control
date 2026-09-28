@@ -93,14 +93,13 @@ export function canManageProjectMembers(
   return isProjectAdmin(project, userId, globalPermissions);
 }
 
-/** Delete project: project admin OR global project:delete */
+/** Delete project: project admin by role OR global project:delete (project:update does not delete) */
 export function canDeleteProject(
   project: Project,
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isProjectAdmin(project, userId, globalPermissions)
-    || globalPermissions.includes('project:delete');
+  return isProjectAdmin(project, userId) || globalPermissions.includes('project:delete');
 }
 
 /** Toggle enforce notification settings: project admin OR global project:update */
