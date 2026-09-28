@@ -1,5 +1,6 @@
 """Crypto policy rule analyzer, registered once per FindingType."""
 
+import asyncio
 import logging
 from collections.abc import Sequence
 from typing import Any
@@ -54,7 +55,8 @@ class CryptoRuleAnalyzer(Analyzer):
             assets = await CryptoAssetRepository(db).list_by_scan(project_id, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
             effective = await CryptoPolicyResolver(db).resolve(project_id)
             rules = [r for r in effective.rules if r.enabled and r.finding_type in self.finding_types]
-            return {"findings": crypto_findings_for_assets(assets, rules)}
+            # assets x rules matching; off the event loop every tenant shares.
+            return {"findings": await asyncio.to_thread(crypto_findings_for_assets, assets, rules)}
         except Exception as e:
             logger.exception("crypto analyzer %s failed: %s", self.name, e)
             return {"error": str(e), "findings": []}

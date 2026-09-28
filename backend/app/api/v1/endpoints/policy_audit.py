@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import ValidationError
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -26,7 +27,7 @@ from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.schemas.crypto_policy import CryptoRule
+from app.schemas.crypto_policy import CryptoPolicyPutRequest
 from app.schemas.policy_audit import PolicyAuditAction, PolicyRevertRequest
 from app.services.audit.history import record_policy_change
 
@@ -279,8 +280,13 @@ async def _revert_policy(
     if target_entry is None:
         raise HTTPException(status_code=404, detail=f"Version {target_version} not found")
 
-    snapshot = target_entry.snapshot
-    rules = [CryptoRule.model_validate(r) for r in snapshot.get("rules", [])]
+    try:
+        rules = CryptoPolicyPutRequest(rules=target_entry.snapshot.get("rules", [])).rules
+    except ValidationError as exc:
+        reasons = "; ".join(error["msg"] for error in exc.errors())
+        raise HTTPException(
+            status_code=422, detail=f"Version {target_version} holds rules a write would refuse: {reasons}"
+        ) from exc
 
     policy_repo = CryptoPolicyRepository(db)
     current: CryptoPolicy | None

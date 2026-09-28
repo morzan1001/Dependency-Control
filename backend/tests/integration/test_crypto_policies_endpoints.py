@@ -236,3 +236,45 @@ async def test_put_project_policy_bumps_the_stored_version(client, db, owner_aut
     stored = await CryptoPolicyRepository(db).get_project_policy("p")
     assert stored is not None
     assert stored.version == 2
+
+
+@pytest.mark.asyncio
+async def test_put_system_policy_refuses_a_misspelled_rule_key(client, db, admin_auth_headers):
+    await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=[]))
+
+    resp = await client.put(
+        "/api/v1/crypto-policies/system",
+        json={"rules": [{**_rule_dict("typo"), "match_name_pattern": ["md5"]}]},
+        headers=admin_auth_headers,
+    )
+
+    assert resp.status_code == 422
+    assert "match_name_pattern" in resp.text
+    assert (await CryptoPolicyRepository(db).get_system_policy()).version == 1
+
+
+@pytest.mark.asyncio
+async def test_a_revert_refuses_a_snapshot_holding_a_rule_a_write_would_refuse(client, db, admin_auth_headers):
+    from app.models.policy_audit_entry import PolicyAuditEntry
+    from app.repositories.policy_audit_entry import PolicyAuditRepository
+    from app.schemas.policy_audit import PolicyAuditAction
+
+    await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=2, rules=[]))
+    unscoped = {**_rule_dict("fires-on-everything"), "match_name_patterns": []}
+    await PolicyAuditRepository(db).create(
+        PolicyAuditEntry(
+            policy_scope="system",
+            version=1,
+            action=PolicyAuditAction.UPDATE,
+            snapshot={"rules": [unscoped]},
+            change_summary="",
+        )
+    )
+
+    resp = await client.post(
+        "/api/v1/crypto-policies/system/revert", json={"target_version": 1}, headers=admin_auth_headers
+    )
+
+    assert resp.status_code == 422
+    assert "fires-on-everything" in resp.text
+    assert (await CryptoPolicyRepository(db).get_system_policy()).version == 2

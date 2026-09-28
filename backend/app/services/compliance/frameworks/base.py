@@ -161,11 +161,10 @@ def _finding_rule_ids(finding: dict) -> set:
 
 
 def _finding_matches_control(finding: dict, control: ControlDefinition) -> bool:
-    if finding.get("type") not in control.maps_to_finding_types:
-        return False
+    # The control's finding types come from the seed; its rule_ids survive an admin retyping the rule.
     if control.maps_to_rule_ids:
         return bool(_finding_rule_ids(finding) & set(control.maps_to_rule_ids))
-    return True
+    return finding.get("type") in control.maps_to_finding_types
 
 
 def _rules_for_control(
