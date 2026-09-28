@@ -2,11 +2,13 @@
 
 import hashlib
 import json
+import zlib
 from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pymongo.errors import AutoReconnect
 
 from app.models.archive import ArchiveMetadata
 from app.services.archive import archive_scan, restore_scan
@@ -82,6 +84,7 @@ def _make_mock_db(
     db.scans.find_one = AsyncMock(return_value=scan_doc)
     db.scans.find = MagicMock(return_value=_AsyncCursorMock([scan_doc] if scan_doc else []))
     db.scans.insert_one = AsyncMock()
+    db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
     # Nothing in these fixtures is released, so the release-chain guard finds no protection.
     db.scans.distinct = AsyncMock(return_value=_NO_IDS)
     db.releases.distinct = AsyncMock(return_value=_NO_IDS)
@@ -328,6 +331,7 @@ async def test_restore_scan_roundtrip(archive_env):
         RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -472,6 +476,7 @@ async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
         RepoCls.return_value.delete_by_scan_id = delete_metadata
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -491,6 +496,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
     db.dependencies.delete_many = AsyncMock()
     db.analysis_results.delete_many = AsyncMock()
     db.callgraphs.delete_many = AsyncMock()
+    db.crypto_assets.delete_many = AsyncMock()
 
     # Force _replay_bundle to return a failure reason
     monkeypatch.setattr(
@@ -498,7 +504,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
         AsyncMock(return_value=("integrity", ["scans"], [])),
     )
     # Bypass the S3 stream construction
-    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
     with (
         patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
@@ -507,6 +513,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -566,6 +573,7 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
     db.dependencies.delete_many = AsyncMock()
     db.analysis_results.delete_many = AsyncMock()
     db.callgraphs.delete_many = AsyncMock()
+    db.crypto_assets.delete_many = AsyncMock()
 
     # Replay succeeds and returns gridfs entries
     monkeypatch.setattr(
@@ -580,7 +588,7 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
     )
     # GridFS restore returns False (failure)
     monkeypatch.setattr(f"{MODULE}._restore_gridfs", AsyncMock(return_value=False))
-    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
     with (
         patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
@@ -589,14 +597,52 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
         RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
     assert result is None
+    db.scans.update_one.assert_not_awaited()
     # Rollback must run even though replay succeeded — GridFS failed
     db.scans.delete_one.assert_awaited_once_with({"_id": "scan-1"})
     db.findings.delete_many.assert_awaited()
     db.dependencies.delete_many.assert_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "renewal",
+    [{"return_value": False}, {"side_effect": AutoReconnect("primary stepped down")}],
+    ids=["lock-taken-over", "renewal-failed"],
+)
+async def test_a_failed_gridfs_restore_rolls_back_only_while_holding_its_lock(archive_env, monkeypatch, renewal):
+    renew_lock = AsyncMock(**renewal)
+    db = _make_mock_db()
+    db.scans.find_one = AsyncMock(return_value=None)
+    db.scans.delete_one = AsyncMock()
+    db.dependencies.delete_many = AsyncMock()
+    monkeypatch.setattr(
+        f"{MODULE}._replay_bundle",
+        AsyncMock(return_value=(None, ["scans"], [{"gridfs_id": "abc", "filename": "x.json", "data": {}}])),
+    )
+    monkeypatch.setattr(f"{MODULE}._restore_gridfs", AsyncMock(return_value=False))
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
+
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=_make_archive_metadata())
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = renew_lock
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is None
+    renew_lock.assert_awaited()
+    db.scans.delete_one.assert_not_awaited()
+    db.dependencies.delete_many.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -610,7 +656,7 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
         f"{MODULE}._replay_bundle",
         AsyncMock(return_value=(None, ["scans"], [])),
     )
-    monkeypatch.setattr(f"{MODULE}._open_restore_stream", lambda _: None)
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
 
     # delete_object succeeds, but delete_by_scan_id raises
     monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
@@ -623,6 +669,7 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
         RepoCls.return_value.delete_by_scan_id = AsyncMock(side_effect=RuntimeError("Mongo hiccup"))
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -693,6 +740,7 @@ async def test_restore_succeeds_when_encryption_flag_toggled_after_plaintext_arc
         RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
         LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
         LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
 
         result = await restore_scan(db, "scan-1")
 
@@ -773,25 +821,194 @@ async def test_replay_hashes_the_plaintext_secret_of_a_legacy_trufflehog_result(
 
 
 @pytest.mark.asyncio
-async def test_replay_stamps_the_restored_scan_with_its_restore_time():
-    """Only this stamp shows that archive metadata written before the restore is stale."""
+async def test_archive_hashes_the_plaintext_secret_of_a_legacy_trufflehog_row(archive_env):
+    """A Mongo row from before ingest hashed Raw must not carry the plaintext into a new bundle."""
+    from app.services.archive_bundle import read_bundle_frames
+
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    legacy_row = {
+        "_id": "r1",
+        "scan_id": "scan-1",
+        "analyzer_name": "trufflehog",
+        "result": {"findings": [{"DetectorType": "2", "Raw": secret}]},
+    }
+    db = _make_mock_db(scan_doc=_make_scan_doc(), analysis_results=[legacy_row])
+
+    with _patch_repos()():
+        result = await archive_scan(db, "scan-1")
+
+    assert result is not None
+    bundle = zlib.decompress(archive_env.objects[result.s3_key], wbits=31)
+    assert secret.encode() not in bundle
+    events = [event async for event in read_bundle_frames(_aiter([bundle]))]
+    (archived,) = [e["data"] for e in events if e.get("collection") == "analysis_results"]
+    assert archived["result"]["findings"][0]["RawHash"] == hashlib.md5(secret.encode()).hexdigest()[:8]
+
+
+@pytest.mark.asyncio
+async def test_replay_inserts_the_scan_as_a_restore_in_progress():
+    """restored_at tells the reaper the restore finished, so the header must not carry one, not even the bundle's own."""
     from app.services.archive import _replay_bundle
     from app.services.archive_bundle import BundleFrames, BundleStats
 
+    earlier_restore = datetime(2025, 6, 1, tzinfo=timezone.utc)
+
     async def bundle():
         async for chunk in BundleFrames.write(
-            scan_doc={"_id": "scan-1", "project_id": "p"},
+            scan_doc={"_id": "scan-1", "project_id": "p", "restored_at": earlier_restore},
             collections={},
             stats=BundleStats(),
         ):
             yield chunk
 
     db = _make_mock_db()
-    before = datetime.now(timezone.utc)
 
     reason, _, _ = await _replay_bundle(db, "scan-1", bundle())
 
     assert reason is None
-    restored_at = db.scans.insert_one.await_args.args[0]["restored_at"]
+    inserted = db.scans.insert_one.await_args.args[0]
+    assert inserted["restore_in_progress"] is True
+    assert inserted["pinned"] is True
+    assert "restored_at" not in inserted
+
+
+@pytest.mark.asyncio
+async def test_restore_stamps_completion_only_after_the_gridfs_restore(archive_env, monkeypatch):
+    meta = _make_archive_metadata()
+    db = _make_mock_db()
+    db.scans.find_one = AsyncMock(return_value=None)
+    calls: list[str] = []
+
+    async def restore_gridfs(*_args):
+        calls.append("gridfs")
+        return True
+
+    monkeypatch.setattr(
+        f"{MODULE}._replay_bundle",
+        AsyncMock(return_value=(None, ["scans"], [{"gridfs_id": "abc", "filename": "x.json", "data": {}}])),
+    )
+    monkeypatch.setattr(f"{MODULE}._open_bundle_stream", lambda _: None)
+    monkeypatch.setattr(f"{MODULE}._restore_gridfs", restore_gridfs)
+    monkeypatch.setattr(f"{MODULE}.delete_object", AsyncMock(return_value=None))
+
+    async def complete(*_args):
+        calls.append("complete")
+        return MagicMock(matched_count=1)
+
+    db.scans.update_one = AsyncMock(side_effect=complete)
+    before = datetime.now(timezone.utc)
+
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+        LockCls.return_value.renew_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is not None
+    assert calls == ["gridfs", "complete"]
+    query, update = db.scans.update_one.await_args.args
+    assert query == {"_id": "scan-1", "restore_in_progress": True}
+    assert update["$unset"] == {"restore_in_progress": ""}
+    restored_at = update["$set"]["restored_at"]
     assert restored_at.tzinfo == timezone.utc
     assert before <= restored_at <= datetime.now(timezone.utc)
+
+
+@pytest.mark.asyncio
+async def test_download_hashes_trufflehog_secrets_and_passes_sbom_lines_through_undecoded(archive_env, monkeypatch):
+    from bson import json_util
+
+    from app.services.archive import _gzip_compress_stream, stream_bundle_for_download
+    from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
+
+    secret = "AKIAIOSFODNN7EXAMPLE"
+    original = b"".join(
+        [
+            chunk
+            async for chunk in BundleFrames.write(
+                scan_doc={"_id": "scan-1", "project_id": "proj-1"},
+                collections={
+                    "analysis_results": _aiter(
+                        [
+                            {"_id": "r0", "scan_id": "scan-1", "analyzer_name": "grype", "result": {}},
+                            {
+                                "_id": "r1",
+                                "scan_id": "scan-1",
+                                "analyzer_name": "trufflehog",
+                                "result": {"findings": [{"DetectorType": "2", "Raw": secret}]},
+                            },
+                        ]
+                    ),
+                    "gridfs_sboms": _aiter(
+                        [
+                            {
+                                "gridfs_id": "507f1f77bcf86cd799439011",
+                                "filename": "sbom.json",
+                                "data": {"components": [{"name": f"sbom-component-{i}"} for i in range(5000)]},
+                            }
+                        ]
+                    ),
+                },
+                stats=BundleStats(),
+            )
+        ]
+    )
+    archive_env.objects["proj-1/scan-1.bundle"] = b"".join(
+        [chunk async for chunk in _gzip_compress_stream(_aiter([original]))]
+    )
+    decoded: list[str | bytes] = []
+    loads = json_util.loads
+
+    def recording_loads(s, *args, **kwargs):
+        decoded.append(s)
+        return loads(s, *args, **kwargs)
+
+    monkeypatch.setattr(json_util, "loads", recording_loads)
+    metadata = _make_archive_metadata(s3_key="proj-1/scan-1.bundle", s3_bucket="test-bucket")
+
+    downloaded = zlib.decompress(
+        b"".join([chunk async for chunk in stream_bundle_for_download(metadata)]),
+        wbits=31,
+    )
+
+    assert decoded, "the header, markers and the trufflehog result still need decoding"
+    assert not any("sbom-component" in (s.decode() if isinstance(s, bytes) else s) for s in decoded)
+    (sbom_line,) = [line for line in original.splitlines(keepends=True) if b"sbom-component" in line]
+    assert sbom_line in downloaded
+    assert secret.encode() not in downloaded
+    events = [event async for event in read_bundle_frames(_aiter([downloaded]))]
+    results = {e["data"]["_id"]: e["data"] for e in events if e.get("collection") == "analysis_results"}
+    assert results["r0"] == {"_id": "r0", "scan_id": "scan-1", "analyzer_name": "grype", "result": {}}
+    assert results["r1"]["result"]["findings"][0]["RawHash"] == hashlib.md5(secret.encode()).hexdigest()[:8]
+    assert events[-1]["type"] == "footer"
+
+
+@pytest.mark.asyncio
+async def test_gzip_compression_of_a_large_chunk_leaves_the_event_loop_running():
+    import asyncio
+
+    from app.services.archive import _gzip_compress_stream
+
+    chunk = b"sbom-component " * (1 << 17)
+    ticks = 0
+
+    async def tick():
+        nonlocal ticks
+        while True:
+            ticks += 1
+            await asyncio.sleep(0)
+
+    ticker = asyncio.create_task(tick())
+    try:
+        compressed = b"".join([out async for out in _gzip_compress_stream(_aiter([chunk]))])
+    finally:
+        ticker.cancel()
+
+    assert ticks > 0
+    assert zlib.decompress(compressed, wbits=31) == chunk

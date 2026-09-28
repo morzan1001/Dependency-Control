@@ -26,6 +26,8 @@ logger = logging.getLogger(__name__)
 # and the format handler degrades the whole SBOM to zero components.
 MAX_COMPONENT_NESTING_DEPTH = 100
 
+_MERGED_LIST_FIELDS = ("locations", "parent_components", "cpes")
+
 
 def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[list[ParsedDependency], int]:
     """Collapse (name, version, purl) duplicates so the unique DB index doesn't silently drop them.
@@ -33,6 +35,8 @@ def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[
     Applied across every SBOM of a payload, not just within one: the index is per scan.
     """
     by_key: dict[tuple[str, str, str | None], ParsedDependency] = {}
+    # Built on a key's first merge and kept: rebuilding per duplicate is quadratic again.
+    seen_by_key: dict[tuple[str, str, str | None], dict[str, set[str]]] = {}
     merged = 0
     for dep in dependencies:
         key = (dep.name, dep.version, dep.purl)
@@ -40,9 +44,15 @@ def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[
         if kept is None:
             by_key[key] = dep
             continue
-        for attr in ("locations", "parent_components", "cpes"):
-            kept_values = getattr(kept, attr)
-            kept_values.extend(v for v in getattr(dep, attr) if v not in kept_values)
+        seen = seen_by_key.get(key)
+        if seen is None:
+            seen = seen_by_key[key] = {attr: set(getattr(kept, attr)) for attr in _MERGED_LIST_FIELDS}
+        for attr in _MERGED_LIST_FIELDS:
+            kept_values, kept_seen = getattr(kept, attr), seen[attr]
+            for value in getattr(dep, attr):
+                if value not in kept_seen:
+                    kept_seen.add(value)
+                    kept_values.append(value)
         for alg, digest in dep.hashes.items():
             kept.hashes.setdefault(alg, digest)
         kept.layer_digest = kept.layer_digest or dep.layer_digest
@@ -54,6 +64,14 @@ def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[
             kept.direct = kept.direct or dep.direct
         merged += 1
     return list(by_key.values()), merged
+
+
+def _parent_refs(parent_ids: list[str], parsed_by_id: dict[str, ParsedDependency]) -> list[str]:
+    """The parsed parents' purl/name@version refs, deduplicated in first-seen order."""
+    parents = (parsed_by_id.get(parent_id) for parent_id in parent_ids)
+    return list(
+        dict.fromkeys(parent.purl or f"{parent.name}@{parent.version}" for parent in parents if parent is not None)
+    )
 
 
 def is_url(value: str) -> bool:
@@ -556,7 +574,7 @@ class SBOMParser:
 
             # Repeated syft:cpe23 properties collapse in the dict above, so CPEs
             # must be collected while iterating.
-            if prop_name in cls._CPE_PROPS and prop_value and prop_value not in cpes:
+            if prop_name in cls._CPE_PROPS and prop_value:
                 cpes.append(prop_value)
                 continue
 
@@ -567,17 +585,17 @@ class SBOMParser:
                 layer_digest = new_layer
             if new_found_by is not None:
                 found_by = new_found_by
-            if new_location is not None and new_location not in locations:
+            if new_location is not None:
                 locations.append(new_location)
 
         evidence = comp.get("evidence")
         occurrences = evidence.get("occurrences") if isinstance(evidence, dict) else None
         for occ in occurrences if isinstance(occurrences, list) else []:
             loc = occ.get("location") if isinstance(occ, dict) else None
-            if loc and loc not in locations:
+            if loc:
                 locations.append(loc)
 
-        return layer_digest, found_by, locations, properties, cpes
+        return layer_digest, found_by, list(dict.fromkeys(locations)), properties, list(dict.fromkeys(cpes))
 
     @staticmethod
     def _normalize_vcs_url(raw: str) -> str | None:
@@ -645,12 +663,8 @@ class SBOMParser:
         # the 1.4-1.6 spec). Read the spec field; also accept a non-standard `cpes`
         # list (dict- or string-form) as a defensive fallback, plus the syft:cpe23
         # property form syft-generated SBOMs use for their full CPE list.
-        cpe = comp.get("cpe")
-        cpes = [cpe] if cpe else []
-        for c in list(comp.get("cpes") or []) + prop_cpes:
-            val = c.get("cpe") if isinstance(c, dict) else c
-            if val and val not in cpes:
-                cpes.append(val)
+        listed = [c.get("cpe") if isinstance(c, dict) else c for c in [*(comp.get("cpes") or []), *prop_cpes]]
+        cpes = list(dict.fromkeys(val for val in [comp.get("cpe"), *listed] if val))
 
         if not purl:
             if component_type == "operating-system":
@@ -945,15 +959,7 @@ class SBOMParser:
         # Second pass: parent ids only resolve once every artifact is parsed, and
         # they must be stored as purl/name@version so tree nodes can match them.
         for artifact_id, parsed in parsed_by_id.items():
-            refs: list[str] = []
-            for parent_id in parents_by_id.get(artifact_id, []):
-                parent = parsed_by_id.get(parent_id)
-                if parent is None:
-                    continue
-                ref = parent.purl or f"{parent.name}@{parent.version}"
-                if ref not in refs:
-                    refs.append(ref)
-            parsed.parent_components = refs
+            parsed.parent_components = _parent_refs(parents_by_id.get(artifact_id, []), parsed_by_id)
 
     @staticmethod
     def _extract_syft_locations(
@@ -966,12 +972,12 @@ class SBOMParser:
             path = loc.get("path", "")
             access_path = loc.get("accessPath", "")
             effective_path = access_path if access_path and access_path != path else path
-            if effective_path and effective_path not in locations:
+            if effective_path:
                 locations.append(effective_path)
             layer_id = loc.get("layerID", "")
             if layer_id and not layer_digest:
                 layer_digest = layer_id
-        return locations, layer_digest
+        return list(dict.fromkeys(locations)), layer_digest
 
     @staticmethod
     def _extract_syft_author(metadata: dict[str, Any]) -> str | None:
@@ -1266,15 +1272,7 @@ class SBOMParser:
         # purl/name@version so tree nodes can match them. Refs to the skipped
         # root drop out here, leaving direct dependencies parentless as expected.
         for pkg_spdx_id, parsed in parsed_by_id.items():
-            refs: list[str] = []
-            for parent_id in reverse_deps_graph.get(pkg_spdx_id, []):
-                parent = parsed_by_id.get(parent_id)
-                if parent is None:
-                    continue
-                ref = parent.purl or f"{parent.name}@{parent.version}"
-                if ref not in refs:
-                    refs.append(ref)
-            parsed.parent_components = refs
+            parsed.parent_components = _parent_refs(reverse_deps_graph.get(pkg_spdx_id, []), parsed_by_id)
 
     _SPDX_DOWNLOAD_LOC_TYPE_MAP = (
         (("npmjs.org", "registry.npmjs"), "npm"),

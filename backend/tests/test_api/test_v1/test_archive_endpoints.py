@@ -1,13 +1,17 @@
 """Tests for archive API endpoints (list, restore, download, pin/unpin, branches, admin list, permissions)."""
 
 import asyncio
+import hashlib
+import zlib
 from datetime import datetime, timezone
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
 from app.models.archive import ArchiveMetadata
+from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.archives"
@@ -400,15 +404,11 @@ class TestDownloadArchive:
         mock_repo = MagicMock()
         mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
 
-        async def fake_stream(key, *, bucket=None):
-            yield b"compressed-data"
-
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
             patch(f"{MODULE}.is_encryption_enabled", return_value=False),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_stream", fake_stream),
         ):
             result = asyncio.run(
                 download_archive(
@@ -836,51 +836,109 @@ class TestRestoreArchivePermissions:
         assert exc_info.value.status_code == 403
 
 
-class TestDownloadStreamChunks:
-    def test_download_stream_passes_bucket_and_yields_chunks(self, admin_user):
-        from app.api.v1.endpoints.archives import download_archive
+_LEGACY_SECRET = "AKIAIOSFODNN7EXAMPLE"
+_LEGACY_RAW_HASH = hashlib.md5(_LEGACY_SECRET.encode()).hexdigest()[:8]
 
-        metadata = _make_archive_metadata(
-            s3_key="proj-1/scan-1-1.bundle",
-            s3_bucket="dc-archives",
-        )
+
+async def _aiter(items):
+    for item in items:
+        yield item
+
+
+async def _legacy_bundle(*, encrypted: bool) -> bytes:
+    """A bundle as archived before ingest hashed TruffleHog's Raw."""
+    from app.core.encryption import EncryptionStreamWriter
+    from app.services.archive import _gzip_compress_stream
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    frames = BundleFrames.write(
+        scan_doc={"_id": "scan-1", "project_id": "proj-1"},
+        collections={
+            "findings": _aiter([{"_id": f"SECRET-2-{_LEGACY_RAW_HASH}", "scan_id": "scan-1", "severity": "HIGH"}]),
+            "analysis_results": _aiter(
+                [
+                    {
+                        "_id": "r1",
+                        "scan_id": "scan-1",
+                        "analyzer_name": "trufflehog",
+                        "result": {"findings": [{"DetectorType": "2", "Raw": _LEGACY_SECRET}]},
+                    }
+                ]
+            ),
+        },
+        stats=BundleStats(),
+    )
+    gzipped = b"".join([chunk async for chunk in _gzip_compress_stream(frames)])
+    if not encrypted:
+        return gzipped
+    collected: list[bytes] = []
+
+    async def sink(chunk: bytes) -> None:
+        collected.append(chunk)
+
+    writer = EncryptionStreamWriter(sink)
+    await writer.start()
+    await writer.write(gzipped)
+    await writer.aclose()
+    return b"".join(collected)
+
+
+class _BucketRecordingS3(FakeS3Client):
+    def __init__(self) -> None:
+        super().__init__()
+        self.buckets_read: list[str] = []
+
+    async def get_object(self, Bucket: str, Key: str) -> dict[str, Any]:
+        self.buckets_read.append(Bucket)
+        return await super().get_object(Bucket, Key)
+
+
+class TestDownloadStripsPlaintextSecrets:
+    @pytest.mark.parametrize("encrypted", [False, True])
+    def test_legacy_bundle_downloads_hashed_and_still_restores(self, admin_user, encrypted):
+        from app.api.v1.endpoints.archives import download_archive
+        from app.services.archive import _replay_bundle
+
+        metadata = _make_archive_metadata(s3_key="proj-1/scan-1-1.bundle", s3_bucket="dc-archives")
         mock_repo = MagicMock()
         mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
+        s3 = _BucketRecordingS3()
 
-        captured_args: dict = {}
-
-        async def fake_stream(key, *, bucket=None):
-            captured_args["key"] = key
-            captured_args["bucket"] = bucket
-            yield b"AAA"
-            yield b"BBB"
-
-        async def run_download():
-            # build the response and consume the stream in the same event loop
+        async def run_download_and_restore():
+            s3.objects["proj-1/scan-1-1.bundle"] = await _legacy_bundle(encrypted=encrypted)
             response = await download_archive(
                 project_id="proj-1",
                 scan_id="scan-1",
                 current_user=admin_user,
                 db=MagicMock(),
             )
-            body = b""
-            async for chunk in response.body_iterator:
-                body += chunk
-            return response, body
+            body = b"".join([chunk async for chunk in response.body_iterator])
+            bundle = zlib.decompress(body, wbits=31)
+            db = MagicMock()
+            db.scans.insert_one = AsyncMock()
+            db.findings.insert_many = AsyncMock()
+            db.analysis_results.insert_many = AsyncMock()
+            reason, _, _ = await _replay_bundle(db, "scan-1", _aiter([bundle]))
+            return bundle, reason, db
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
+            patch(f"{MODULE}.is_encryption_enabled", return_value=encrypted),
             patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_stream", fake_stream),
+            patch("app.core.s3.get_s3_client", lambda: fake_get_s3_client(s3)),
+            patch("app.core.encryption.settings") as encryption_settings,
         ):
-            result, body = asyncio.run(run_download())
+            encryption_settings.ARCHIVE_ENCRYPTION_KEY = "0" * 64
+            bundle, reason, db = asyncio.run(run_download_and_restore())
 
-        assert result.media_type == "application/gzip"
-        assert body == b"AAABBB"
-        assert captured_args["key"] == "proj-1/scan-1-1.bundle"
-        assert captured_args["bucket"] == "dc-archives"
+        assert s3.buckets_read == ["dc-archives"]
+        assert _LEGACY_SECRET.encode() not in bundle
+        assert reason is None
+        (restored_finding,) = db.findings.insert_many.await_args.args[0]
+        assert restored_finding["_id"] == f"SECRET-2-{_LEGACY_RAW_HASH}"
+        (restored_result,) = db.analysis_results.insert_many.await_args.args[0]
+        assert restored_result["result"]["findings"][0]["RawHash"] == _LEGACY_RAW_HASH
 
 
 class TestRestoreReturns409WhenScanAlreadyExists:

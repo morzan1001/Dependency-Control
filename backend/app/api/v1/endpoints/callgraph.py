@@ -1,5 +1,6 @@
 """Endpoints for uploading and querying call graph data for reachability analysis."""
 
+import asyncio
 import logging
 import uuid
 from typing import Any
@@ -9,6 +10,7 @@ from fastapi import HTTPException
 from app.api.deps import CallgraphWriteDep, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.callgraph import (
+    callgraph_entry_count,
     check_callgraph_access,
     detect_format,
     parse_generic_format,
@@ -103,24 +105,26 @@ async def upload_callgraph(
     """Upload call graph data (madge or generic format) for reachability analysis."""
     callgraph_repo = CallgraphRepository(db)
 
-    format_type = _resolve_format(request.format, request.data)
-    language = _resolve_language(request.language, format_type)
-
-    warnings: list[str] = []
-    try:
-        imports, calls, module_usage, analyzed_modules = _parse_callgraph(format_type, request.data, language)
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("Failed to parse callgraph: %s", e)
-        raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}") from e
-
-    entry_count = len(imports) + len(calls)
+    entry_count = callgraph_entry_count(request.data)
     if entry_count > CALLGRAPH_MAX_ENTRIES:
         raise HTTPException(
             status_code=413,
             detail=f"Callgraph too large: {entry_count} entries exceeds the limit of {CALLGRAPH_MAX_ENTRIES}",
         )
+
+    format_type = _resolve_format(request.format, request.data)
+    language = _resolve_language(request.language, format_type)
+
+    warnings: list[str] = []
+    try:
+        imports, calls, module_usage, analyzed_modules = await asyncio.to_thread(
+            _parse_callgraph, format_type, request.data, language
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception("Failed to parse callgraph: %s", e)
+        raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}") from e
 
     scan_id = _resolve_scan_id(project_id, request.pipeline_id, request.commit_hash)
     if not scan_id:

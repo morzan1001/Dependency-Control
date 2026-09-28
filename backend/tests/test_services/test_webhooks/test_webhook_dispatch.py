@@ -8,10 +8,12 @@ the consecutive-failure counter are the only places an operator can see that a h
 from __future__ import annotations
 
 import importlib
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from tests.mocks.fake_mongo import FakeDatabase
@@ -75,27 +77,9 @@ class TestWebhookSelection:
         assert await _selected(db) == {"never-tripped", "no-breaker-field-at-all"}
 
 
-class _FakeResponse:
-    def __init__(self, status_code: int):
-        self.status_code = status_code
-        self.text = ""
-
-
-def _client_returning(status_code: int):
-    class _FakeClient:
-        def __init__(self, *args, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *exc):
-            return False
-
-        async def post(self, *args, **kwargs):
-            return _FakeResponse(status_code)
-
-    return _FakeClient
+async def _streamed(body: bytes) -> AsyncIterator[bytes]:
+    # MockTransport pre-reads bytes content; a real receiver's answer arrives as a stream.
+    yield body
 
 
 async def _deliver(status_code: int) -> tuple[bool, AsyncMock, AsyncMock]:
@@ -104,9 +88,10 @@ async def _deliver(status_code: int) -> tuple[bool, AsyncMock, AsyncMock]:
     status = AsyncMock()
     log = AsyncMock()
 
+    transport = httpx.MockTransport(lambda request: httpx.Response(status_code, content=_streamed(b"nope")))
+
     with (
-        patch.object(ws_module, "InstrumentedAsyncClient", _client_returning(status_code)),
-        patch.object(ws_module, "build_pinned_transport", new=AsyncMock(return_value=None)),
+        patch.object(ws_module, "build_pinned_transport", new=AsyncMock(return_value=transport)),
         patch.object(service, "_format_payload", return_value={"ok": True}),
         patch.object(service, "_build_headers", return_value={}),
         patch.object(service, "_update_webhook_status", new=status),
@@ -126,6 +111,7 @@ class TestDeliveryOutcome:
         assert delivered is False
         assert status.await_args.kwargs["success"] is False
         assert log.await_args.kwargs["success"] is False
+        assert log.await_args.kwargs["error"] == f"HTTP {status_code}: nope"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("status_code", [200, 202, 204])

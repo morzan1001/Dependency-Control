@@ -1,8 +1,10 @@
 """Unit tests for WebhookService._format_payload and test_webhook."""
 
 import json
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from app.models.webhook import Webhook
@@ -248,14 +250,19 @@ class TestNonBlockingSemantics:
             await service.safe_trigger_webhooks(MagicMock(), "scan.completed", {}, "p1", context="test")
 
 
-def _make_mock_http_client(status_code: int = 200):
-    mock_response = MagicMock()
-    mock_response.status_code = status_code
-    mock_client = AsyncMock()
-    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-    mock_client.__aexit__ = AsyncMock(return_value=False)
-    mock_client.post = AsyncMock(return_value=mock_response)
-    return mock_client
+async def _streamed(body: bytes) -> AsyncIterator[bytes]:
+    # MockTransport pre-reads bytes content; a real receiver's answer arrives as a stream.
+    yield body
+
+
+def _recording_transport(status_code: int = 200, body: bytes = b"") -> tuple[httpx.MockTransport, list[httpx.Request]]:
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return httpx.Response(status_code, content=_streamed(body))
+
+    return httpx.MockTransport(handler), sent
 
 
 class TestTestWebhookForTeams:
@@ -264,17 +271,15 @@ class TestTestWebhookForTeams:
         webhook = make_webhook("teams")
         webhook.url = "https://example.test/teams-hook"
 
-        mock_client = _make_mock_http_client()
+        transport, requests = _recording_transport()
 
-        with (
-            patch("app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=None)),
-            patch("app.services.webhooks.webhook_service.InstrumentedAsyncClient", return_value=mock_client),
+        with patch(
+            "app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=transport)
         ):
-            service = WebhookService()
-            result = await service.test_webhook(webhook)
+            result = await WebhookService().test_webhook(webhook)
 
         assert result["success"] is True
-        sent = json.loads(mock_client.post.call_args.kwargs["content"])
+        sent = json.loads(requests[0].content)
         assert sent["type"] == "message"
         card = sent["attachments"][0]["content"]
         container = next(b for b in card["body"] if b["type"] == "Container")
@@ -285,17 +290,15 @@ class TestTestWebhookForTeams:
         webhook = make_webhook("generic")
         webhook.url = "https://example.test/generic-hook"
 
-        mock_client = _make_mock_http_client()
+        transport, requests = _recording_transport()
 
-        with (
-            patch("app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=None)),
-            patch("app.services.webhooks.webhook_service.InstrumentedAsyncClient", return_value=mock_client),
+        with patch(
+            "app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=transport)
         ):
-            service = WebhookService()
-            result = await service.test_webhook(webhook)
+            result = await WebhookService().test_webhook(webhook)
 
         assert result["success"] is True
-        sent = json.loads(mock_client.post.call_args.kwargs["content"])
+        sent = json.loads(requests[0].content)
         assert sent.get("event") == "scan.completed"
         assert "attachments" not in sent
 
@@ -304,12 +307,10 @@ class TestTestWebhookForTeams:
         webhook = make_webhook("generic")
         webhook.url = "https://example.test/generic-hook"
 
-        mock_client = _make_mock_http_client(status_code=503)
-        mock_client.post.return_value.text = "down for maintenance"
+        transport, _ = _recording_transport(status_code=503, body=b"down for maintenance")
 
-        with (
-            patch("app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=None)),
-            patch("app.services.webhooks.webhook_service.InstrumentedAsyncClient", return_value=mock_client),
+        with patch(
+            "app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=transport)
         ):
             result = await WebhookService().test_webhook(webhook)
 
