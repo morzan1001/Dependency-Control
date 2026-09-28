@@ -14,9 +14,11 @@ Before the rollout, resolve each gate before the first new pod starts:
 
 Deploy blocker, also before the rollout: fill the allowlists of the github.com and gitlab.com instances, or switch their auto-create off.
 
+Last, right before the rollout starts: rotate `SECRET_KEY` (recommended), or end every session. Either way, snapshot the accounts.
+
 After the rollout, once the last pod on the previous image has terminated:
 
-1. End every session. Mandatory on every installation.
+1. End every session, and review what was created during the rollout if needed. Mandatory on every installation.
 2. Remove TruffleHog plaintext secrets from `analysis_results`.
 3. Rewrite archive bundles that still hold TruffleHog plaintext.
 4. Backfill `first_seen_at`.
@@ -246,7 +248,13 @@ db.projects.aggregate([
 ])
 ```
 
-Look up each legitimate owner's numeric id with `curl -s https://api.github.com/orgs/<org> | jq .id`, or `/users/<login>` for a user account. Then set the list:
+Look up each legitimate owner's numeric id; for a user account, replace `orgs/<org>` with `users/<login>`:
+
+```bash
+curl -s https://api.github.com/orgs/<org> | jq .id
+```
+
+Then set the list:
 
 ```js
 db.github_instances.updateOne(
@@ -263,17 +271,80 @@ db.gitlab_instances.updateOne({ url: "https://gitlab.com" }, { $set: { allowed_n
 
 Both updates must report `matchedCount: 1`; 0 means the filter did not match the stored `_id` or `url`, for example a URL stored with a trailing slash. Once a list is set, tokens from other owners or namespaces get 403 even for projects already bound, and so does a GitHub token without the `repository_owner_id` claim. Projects the aggregation shows under owners that are not yours were created by outsiders: review and delete them. After the rollout both lists can also be edited in Settings > CI/CD Instances.
 
-## After the rollout (mandatory): end every session
+## Right before the rollout (gate): rotate `SECRET_KEY`, or end every session
 
-Run this on every installation, once the last pod on the previous image has terminated:
+Tokens now name the user id as their subject, and `/login/refresh-token` resolves it by id. Before 1.9.41, self-service username changes let any user obtain a refresh token that names another account's id. It stays valid for 7 days, and from the first new pod on it resolves to that account. Until the token is refused, its holder can do three things that outlive any session reset: create a `dck_` API key, change a local account's email through the confirmation link and then reset its password, or set a password on an SSO account (`POST /users/me/migrate`). The backend rolls out pod by pod, and old pods hand out such tokens until the last one terminates. A session reset after the rollout alone leaves that window open.
+
+Recommended: rotate `SECRET_KEY` with the deploy. Only this closes the window. Each pod keeps the key it started with, so new pods refuse every token an old pod mints. Right before `helm upgrade`, write a new key into `<fullname>-secrets`, the Secret the backend's `SECRET_KEY` reads. The chart keeps an existing Secret's key and ignores `backend.secrets.secretKey`, so patch the Secret itself:
+
+```bash
+kubectl -n <namespace> patch secret <fullname>-secrets --type merge \
+  -p "{\"stringData\":{\"secret-key\":\"$(openssl rand -hex 32)\"}}"
+```
+
+With `secrets.provider: external-secrets`, change `backendSecretKey` in the store and wait until the Secret shows the new value. The key signs only tokens and links: everyone logs in again, a user may have to log in more than once while requests alternate between old and new pods, and open email-verification and password-reset links stop working. An old-image container that starts after the key change, after a crash or a scale-up during the rollout, reads the new key and reopens the window. The review after the rollout covers that case.
+
+Otherwise, end every session right before the rollout. 1.9.40 honours `last_logout_at` too, so this refuses every token obtained before it. A token obtained on an old pod during the rollout stays valid until the reset after the rollout, so the review after the rollout is then mandatory:
 
 ```js
 db.users.updateMany({}, { $set: { last_logout_at: new Date() } })
 ```
 
-Tokens now name the user id as their subject, and `/login/refresh-token` resolves it by id. Before 1.9.41, `PATCH /users/me` let anyone rename themselves to another account's id, log in and rename back. Ids appear in team and project member lists. The refresh token they kept names the victim's id, and the new image resolves it to the victim and keeps re-minting tokens until this command runs. Current usernames show no trace of it, so this step cannot depend on a collision check. An old pod that still serves keeps minting username tokens, hence after the last old pod.
+In both cases, at the moment of the key change or the reset, snapshot the accounts and note the printed time:
 
-Afterwards every earlier token has an `iat` before every account's `last_logout_at` and is refused (bearer 401, refresh 403), and everyone logs in again. The alternative is to rotate `SECRET_KEY` with the deploy. That also invalidates every earlier token, and in addition every open email-verification and password-reset link, all signed with the same key.
+```js
+print(new Date().toISOString())
+db.users.aggregate([{ $project: { email: 1, pending_email: 1, auth_provider: 1 } }, { $out: "tmp_account_snapshot" }])
+```
+
+## After the rollout (mandatory): end every session and review the rollout window
+
+Run this on every installation, once the last pod on the previous image has terminated. An old pod that still serves keeps minting tokens by username, hence after the last old pod:
+
+```js
+db.users.updateMany({}, { $set: { last_logout_at: new Date() } })
+```
+
+Afterwards every earlier token has an `iat` before every account's `last_logout_at` and is refused (bearer 401, refresh 403), and everyone logs in again. Current usernames show no trace of the rename, so this step cannot depend on a collision check.
+
+The reset does not revoke API keys, emails or passwords set during the window. Review them if you ended sessions before the rollout instead of rotating `SECRET_KEY`, or if an old-image container started after the key change: `kubectl -n <namespace> get pods` shows restarts and ages. Replace `<T0>` with the time printed before the rollout.
+
+API keys created since then, with their owners:
+
+```js
+db.api_keys.aggregate([
+  { $match: { created_at: { $gte: ISODate("<T0>") }, revoked_at: null } },
+  { $lookup: { from: "users", localField: "user_id", foreignField: "_id", as: "u" } },
+  { $project: { name: 1, prefix: 1, surfaces: 1, created_at: 1, user: { $first: "$u.username" } } }
+])
+```
+
+Accounts whose email, pending email or auth provider changed since the snapshot. Accounts created since then show up too, without a `before`:
+
+```js
+db.users.aggregate([
+  { $lookup: { from: "tmp_account_snapshot", localField: "_id", foreignField: "_id", as: "before" } },
+  { $set: { before: { $first: "$before" } } },
+  { $match: { $expr: { $or: [
+      { $ne: [{ $ifNull: ["$email", null] }, { $ifNull: ["$before.email", null] }] },
+      { $ne: [{ $ifNull: ["$pending_email", null] }, { $ifNull: ["$before.pending_email", null] }] },
+      { $ne: [{ $ifNull: ["$auth_provider", null] }, { $ifNull: ["$before.auth_provider", null] }] } ] } } },
+  { $project: { username: 1, email: 1, pending_email: 1, auth_provider: 1, before: 1 } }
+])
+```
+
+Ask each listed owner whether the change was theirs. For each change that was not:
+
+- API key: revoke it with `db.api_keys.updateOne({ _id: "<id>" }, { $set: { revoked_at: new Date() } })`.
+- Pending email: unset `pending_email`, which voids its confirmation link.
+- Changed email: set the snapshot's address back first, then send the owner a password reset, since the new address could have reset the password.
+- Auth provider changed to local: set `auth_provider` back to the snapshot value and unset `hashed_password`.
+
+Changes made through the account's roles persist too, such as team or project members and webhooks it added; when the review applies, check those from the same period. Drop the snapshot after the review, or right away when no review is needed:
+
+```js
+db.tmp_account_snapshot.drop()
+```
 
 ## After the rollout: remove TruffleHog plaintext secrets
 
@@ -359,7 +430,7 @@ async def main():
         meta = ArchiveMetadata.model_validate(doc)
         if not await has_plaintext(meta):
             continue
-        print("plaintext:", meta.scan_id, meta.s3_key)
+        print("plaintext:", meta.scan_id, meta.s3_bucket, meta.s3_key)
         if DRY_RUN:
             continue
         payload, ctype = stream_bundle_for_download(meta), "application/gzip"
@@ -382,7 +453,51 @@ asyncio.run(main())
 - A second dry run afterwards lists nothing once every bundle is clean. The snippet has only run against the test fakes, not against real S3 and MongoDB, so compare the dry-run list with the rewritten lines.
 - It uploads the new object and swaps the metadata before it deletes the old object, so a crash midway leaves the old bundle referenced. The orphan reaper removes an unreferenced new object after `ARCHIVE_ORPHAN_MIN_AGE_HOURS`.
 - New bundles are encrypted with the live key, the same rule as archiving.
-- Versioning and backups: check the bucket for object versioning (`aws s3api get-bucket-versioning --bucket <bucket>`, or on GCS `gcloud storage buckets describe gs://<bucket> --format="value(versioning)"`) and for backups or replicas. With versioning on, `delete_object` only adds a delete marker, and the old plaintext versions stay. Remove them explicitly: list them with `list-object-versions` and delete each `VersionId` of the old keys. Backups of the bucket hold the plaintext too.
+- `delete_object` removes only the live object. Object versioning and GCS soft delete keep the old plaintext; check the bucket before the rewrite and purge the old versions after it, as described below. Backups and replicas of the bucket hold the plaintext too.
+
+### Purge the old plaintext versions
+
+Before the first run with `DRY_RUN = False`, check each bucket the dry run printed. On GCS:
+
+```bash
+gcloud storage buckets describe gs://<bucket> --format="default(versioning_enabled,soft_delete_policy)"
+```
+
+- `versioning_enabled: true`: each deleted old bundle stays as a noncurrent version.
+- `soft_delete_policy` with `retentionDurationSeconds` above 0 (7 days by default): every deleted object and version stays restorable for that long, and nothing removes it earlier. Clearing soft delete does not shorten it for objects already deleted. To remove the plaintext at once, clear soft delete before the rewrite and set the previous duration back after the purge. Objects deleted in between cannot be restored:
+
+```bash
+gcloud storage buckets update gs://<bucket> --clear-soft-delete
+gcloud storage buckets update gs://<bucket> --soft-delete-duration=<previous duration, e.g. 7d>
+```
+
+On S3, `"Status": "Enabled"` or `"Suspended"` means old versions can exist, and an empty answer means versioning was never on. Add `--endpoint-url` for S3-compatible storage:
+
+```bash
+aws s3api get-bucket-versioning --bucket <bucket>
+```
+
+After the rewrite, take each old key from a `plaintext:` line and make sure no metadata references it any more. A failed metadata swap leaves the old key live:
+
+```js
+db.archive_metadata.countDocuments({ s3_key: "<old s3_key>" })  // must be 0
+```
+
+Then list its remaining versions and delete each one; use the exact old key, never a prefix that also matches the new bundle. On GCS, run `rm` once per listed `#<generation>`:
+
+```bash
+gcloud storage ls --all-versions gs://<bucket>/<old s3_key>
+gcloud storage rm gs://<bucket>/<old s3_key>#<generation>
+```
+
+On S3, run `delete-object` once per listed version id:
+
+```bash
+aws s3api list-object-versions --bucket <bucket> --prefix "<old s3_key>" --query 'Versions[].[Key,VersionId]' --output text
+aws s3api delete-object --bucket <bucket> --key "<old s3_key>" --version-id <VersionId>
+```
+
+The purge is complete when the listing matches nothing for every old key and, on GCS with soft delete left on, `gcloud storage ls --soft-deleted gs://<bucket>/<old s3_key>` matches nothing after the retention has passed.
 
 ## After the rollout: backfill `first_seen_at`
 
@@ -559,7 +674,7 @@ db.chat_messages.aggregate([
 
 - Bearer authentication accepts only access tokens. A refresh token, or a token without a `type` claim, sent as `Authorization: Bearer` now gets 401. A bearer token blacklisted at logout still gets 401, now with the detail "Could not validate credentials" instead of "Token has been revoked".
 - `/login/refresh-token` answers every refused token with 403 "Could not validate credentials". A wrongly typed, subject-less or logout-revoked token used to get the detail "Invalid token type", "Invalid token" or "Token revoked".
-- Everyone must log in again once. Tokens now carry the user id as their subject, and the mandatory session step above refuses every earlier token. Afterwards, renaming a user no longer logs them out.
+- Everyone must log in again after the rollout. Tokens now carry the user id as their subject, and the mandatory session step above refuses every earlier token. With a rotated `SECRET_KEY`, users may also have to log in more than once during the rollout. Afterwards, renaming a user no longer logs them out.
 - Usernames can no longer be changed in self-service. `PATCH /users/me` answers 422 when the body contains `username`, `email` or any unknown field, and `PUT /users/{own id}` with either answers 403, for administrators too. The profile shows both read-only.
 - Local accounts change their email through a confirmation link. `POST /api/v1/users/me/email` stores `pending_email` and mails a link to the new address; `POST /api/v1/confirm-email-change` (frontend route `/confirm-email`) swaps it in and marks it verified. It needs SMTP in the database settings (501 without it). User responses carry `pending_email`.
 - An admin can no longer change the email of an account from an identity provider (400). On a local account the new address is stored lowercased and marks the account unverified; with `enforce_email_verification` on, the user must verify again. A blank username and a null username or email answer 422.
