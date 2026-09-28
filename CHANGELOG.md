@@ -5,7 +5,7 @@ These notes cover the upgrade to 1.9.41. Run the steps in this order. Run mongos
 Before the rollout, resolve each gate before the first new pod starts:
 
 1. Build the findings index.
-2. Check partial restores made before the restore fix.
+2. Check partial restores made by a pre-release 1.9.41 build.
 3. Resolve email addresses that differ only in case, then add the case-insensitive unique index.
 4. Check what each team-syncing GitLab token can see, and decide per instance.
 5. Check SMTP in the database settings.
@@ -35,11 +35,11 @@ The `(project_id, component, type)` findings index grows into a covering index f
 db.findings.createIndex({ project_id: 1, component: 1, type: 1, finding_id: 1, version: 1, first_seen_at: 1, scan_created_at: 1 })
 ```
 
-## Before the rollout (gate): check partial restores made before the restore fix
+## Before the rollout (gate): check partial restores made by a pre-release 1.9.41 build
 
-A restore now marks its scan `restore_in_progress` until its last write, and housekeeping keeps the archive metadata and bundle of an unfinished restore. A partial restore from before 1.9.41 carries `restored_at` without the flag, so it looks complete, and the next housekeeping pass would drop its metadata and orphan its bundle. Completed restores need nothing.
+A restore now marks its scan `restore_in_progress` until its last write and only then sets `restored_at`. Housekeeping drops the archive metadata, and with it the bundle, only of a scan without the flag whose `restored_at` is later than its archiving. Restores made by 1.9.40 carry no `restored_at`, so 1.9.41 keeps their metadata and they need nothing. Only an installation that ran a pre-release 1.9.41 build can hold a partial restore with `restored_at` and no flag. It looks complete, and the next housekeeping pass would drop its metadata and orphan its bundle. On every other installation the query below returns nothing.
 
-Run this right before the rollout, and at the latest before the first housekeeping pass on the new image. It lists restored scans whose archive metadata still exists, with the expected and found counts:
+Run this right before the rollout, in a window with no restore running, and at the latest before the first housekeeping pass on the new image. A restore still running on a pre-release build can show the same low counts. The query lists restored scans whose archive metadata still exists, with the expected and found counts:
 
 ```js
 db.archive_metadata.aggregate([
@@ -61,7 +61,7 @@ For every row where a found count is below its expected count, mark the scan unf
 db.scans.updateOne({_id: "<scan_id>"}, {$set: {restore_in_progress: true}, $unset: {restored_at: ""}})
 ```
 
-Marking a scan is safe under the old image too: its housekeeping and retention skip a pinned scan without `restored_at`, and restoring it answers 409 until the new image runs. Rows whose counts match are completed restores whose metadata cleanup failed; leave them to housekeeping. An empty result means there is nothing to do.
+Marking is safe before the rollout: every build that writes `restored_at` keeps the metadata of a scan without it, and retention skips the scan because a restore pins it. Rows whose counts match are completed restores whose metadata cleanup failed; leave them to housekeeping. An empty result means there is nothing to do.
 
 ## Before the rollout (gate): resolve email addresses that differ only in case
 
@@ -90,7 +90,7 @@ db.users.updateMany({ email: { $regex: "[A-Z]" } }, [{ $set: { email: { $toLower
 
 ## Before the rollout (gate): check what each team-syncing GitLab token can see
 
-Team sync now matches a member only by an email GitLab vouches for, and only against verified DC accounts. With an administrator's token that is the address in the members listing. With any other token the listing carries no emails, so each member costs one `GET /users/:id` lookup of the public profile email. GitLab rate-limits that lookup per token user, to 300 per 10 minutes by default. Synced teams then shrink to the members whose public email matches a verified account, and where the limit is hit they freeze. Users lose the project access those teams gave them.
+Team sync now matches a member only by an email GitLab vouches for, and only against verified DC accounts. With an administrator's token that is the address in the members listing. With any other token the listing carries no emails, so each member costs one `GET /users/:id` lookup of the public profile email. GitLab rate-limits that lookup per token user, to 300 per 10 minutes by default. Synced teams then shrink to the members whose public email matches a verified account, and where the limit is hit they freeze, for good once a token needs more lookups than its daily budget. Users lose the project access those teams gave them.
 
 Run this script in a backend pod before the rollout. It reads each instance's stored token and pages through every group bound to a team. A group the token cannot read is reported and skipped, not counted:
 
@@ -172,14 +172,15 @@ PY
 Read the output per instance:
 
 - `needing GET /users/:id=0`: the listing carries the emails, so the token reads as an administrator. No lookups, no limit.
-- Any other count: the token is not an effective administrator and `users_get_by_id_limit` applies. Get the limit and the "Excluded users" list with the printed curl, or in Admin > Settings > Network > Users API rate limits. The token user is unlimited when the limit is 0 or when the printed username is in "Excluded users". For a group access token that username is its `group_<id>_bot_...` user. Without either, a group of M members that need a lookup stays frozen for about M / limit x 10 minutes of ingests, when its entries are first filled and again when they are refilled a day later.
+- Any other count: the token is not an effective administrator and `users_get_by_id_limit` applies, 300 per 10 minutes by default, about 43,200 a day. Get the limit and the "Excluded users" list with the printed curl, or in Admin > Settings > Network > Users API rate limits. The token user is unlimited when the limit is 0 or when the printed username is in "Excluded users". For a group access token that username is its `group_<id>_bot_...` user.
+- If neither applies, the instance works only while the "needing" count times the jobs that sync the same group concurrently stays well below the daily budget, `users_get_by_id_limit` x 144. Concurrent jobs read the same members and split the budget. Above it, cached answers expire before the rest are filled, and the affected groups stay frozen for good. Below it, a group of M members that need a lookup still stays frozen for about M / limit x 10 minutes of ingests, longer with concurrent jobs, when its entries are first filled and again when they are refilled a day later.
 - Admin Mode: where GitLab's Admin Mode is on, an administrator's token acts as an administrator only with the `admin_mode` scope. `is_admin=True` alone does not show that; the "needing" count does.
 - `UNREADABLE group ...`: the token cannot read that bound group, and team sync cannot either. Fix the token's access or the binding before the rollout.
 - `no access token stored` or `GET /user answered HTTP 401`: team sync on that instance cannot work at all. Fix the token first.
 - Independent of the limit, a non-admin token keeps only the members whose public GitLab email matches a verified DC account.
 - On gitlab.com neither remedy exists: customers get no administrator tokens and cannot change the limit. There the listing carries emails only for enterprise users, and only when the token user may read them.
 
-Decide per instance before the rollout: switch to an administrator's token, have a GitLab administrator add the token user to "Excluded users", or accept the shrink.
+Decide per instance before the rollout: switch to an administrator's token, have a GitLab administrator add the token user to "Excluded users", or accept the shrink. Accept it only where the needing count times the concurrent jobs stays well below the daily budget; above it, groups stay frozen for good.
 
 ## Before the rollout (gate): check SMTP in the database settings
 
@@ -583,7 +584,7 @@ db.chat_messages.aggregate([
 - The instance admin API answers 422 on create and 400 on update for a shared issuer with auto-create on and an empty list. It refuses an explicit `null` list, non-numeric owner ids and namespaces with a `/`. Settings > CI/CD Instances has the new inputs.
 - CI auto-create makes the GitLab job's `user_email` project admin only if a verified account holds it, and the GitHub `actor` only if its public GitHub email belongs to a verified account. That costs one GitHub API read per auto-created project.
 - Team sync (GitLab and GitHub) matches members only by their provider email against verified accounts, never by username. Members matched by username so far drop out at the next sync, with the project roles the team gave them. GitHub sync reads `GET /users/{login}` for every member (cached 5 minutes).
-- GitLab team sync with a non-admin token looks up each member's public email with `GET /users/:id`, which GitLab rate-limits. On 429 the group's stored members stay as they are until the next window, logged as WARNING "GitLab API GET /users/<id> answered 429". Answers are cached for 24 hours, so a member who sets or changes a public email is matched up to a day later. A group where no member resolves freezes, logged as WARNING "Resolved 0 of N members of GitLab group ...".
+- GitLab team sync with a non-admin token looks up each member's public email with `GET /users/:id`, which GitLab rate-limits. On 429 the group's stored members stay as they are until the next window, logged as WARNING "GitLab API GET /users/<id> answered 429". Answers are cached for 24 hours, so a member who sets or changes a public email is matched up to a day later. Jobs that read the same group concurrently split the budget. When the distinct members of one token's synced groups, times the jobs reading them concurrently, exceed the daily budget (about 43,200 at the default limit), cached answers expire before the rest are filled and the affected groups stay frozen for good; the 429 WARNING is the only signal. A group where no member resolves freezes, logged as WARNING "Resolved 0 of N members of GitLab group ...".
 - GitHub tokens are sent only to github.com, so a GHES token never reaches api.github.com. Without `system_settings.github_token`, GHSA enrichment takes the token of the oldest active github.com instance, and an installation with only GHES instances runs GHSA unauthenticated (60 requests per hour). Removing or deactivating a token takes effect on the next scan.
 - A GHES instance without a base URL makes no GitHub API calls: team sync, PR decoration, branch listing and pickers get no answer, as with no token. The settings field is now "GitHub Base URL".
 
