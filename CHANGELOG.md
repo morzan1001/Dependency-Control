@@ -361,7 +361,7 @@ Ask each listed owner whether the key or change was theirs. For each account wit
   db.users.updateOne({ _id: "<user_id>" }, { $set: { last_logout_at: new Date() } })
   ```
 
-- Every such account: revoke its keys created since `<T0>`, after its sessions end so none can create another, then run the API-key query again. It must list no key of the account.
+- Every account with an unrecognised key (repaired or not): revoke its keys created since `<T0>`, after its sessions end so none can create another, then run the API-key query again. It must list no key of the account.
 
   ```js
   db.api_keys.updateMany({ user_id: "<user_id>", created_at: { $gte: ISODate("<T0>") }, revoked_at: null }, { $set: { revoked_at: new Date() } })
