@@ -312,8 +312,9 @@ class RecommendationsResponse(BaseModel):
     total_vulnerabilities: int
     recommendations: list[RecommendationResponse]
     summary: dict[str, Any]
-    # Dependency rows the engine reasoned over against what the scan holds; equal unless the
-    # read saturated, in which case component-wide advice is scoped to the rows that were read.
+    # Rows the engine reasoned over (total_findings, dependencies_read) against what the scan holds;
+    # each pair is equal unless its read saturated, and then the advice is scoped to the rows read.
+    findings_total: int = 0
     dependencies_read: int = 0
     dependencies_total: int = 0
 

@@ -8,7 +8,7 @@ from pymongo import UpdateOne
 
 from app.core.constants import get_severity_value
 from app.models.finding_record import FindingRecord
-from app.repositories.base import BaseRepository
+from app.repositories.base import BaseRepository, find_window
 from app.services.aggregation.components import build_component_index
 
 # What names a CVE, plus the fields a recurrence row reports back.
@@ -137,18 +137,11 @@ class FindingRepository(BaseRepository[FindingRecord]):
         # modification, and counting that as 0 badges a working waiver as matching nothing.
         return result.matched_count
 
-    async def find_by_scan(
-        self,
-        scan_id: str,
-        limit: int,
-        skip: int = 0,
-        query_filter: dict[str, Any] | None = None,
-    ) -> list[FindingRecord]:
-        """``limit`` is required: a default here is a cap the caller never chose and cannot see."""
-        query: dict[str, Any] = {"scan_id": scan_id}
-        if query_filter:
-            query.update(query_filter)
-        return await self.find_many(query, skip=skip, limit=limit)
+    async def find_by_scan(self, scan_id: str, limit: int) -> tuple[list[FindingRecord], int]:
+        """The scan's findings up to ``limit``, and how many it holds. ``limit`` is required: a default
+        here is a cap the caller never chose and cannot see."""
+        rows, total = await find_window(self.collection, {"scan_id": scan_id}, limit)
+        return self._to_model_list(rows), total
 
     async def iter_vulnerability_identities(self, scan_ids: Sequence[str]) -> AsyncGenerator[dict[str, Any], None]:
         """Every vulnerability finding of these scans, projected to what names a CVE.

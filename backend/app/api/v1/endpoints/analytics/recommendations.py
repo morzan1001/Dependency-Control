@@ -146,7 +146,7 @@ async def get_project_recommendations(
     if cached:
         return RecommendationsResponse(**cached)
 
-    findings = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
+    findings, findings_total = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
     await _apply_live_threat_intel(findings)
 
     dependencies, dependencies_total = await dep_repo.find_by_scan(
@@ -157,7 +157,7 @@ async def get_project_recommendations(
     previous_scan_findings = None
     previous_scan = await scan_repo.get_preceding_scan(scan_id)
     if previous_scan:
-        previous_scan_findings = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
+        previous_scan_findings, _ = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
 
     recent_scan_ids = [
         recent.id
@@ -187,6 +187,7 @@ async def get_project_recommendations(
         project_name=project.get("name", "Unknown"),
         scan_id=scan_id,
         total_findings=len(findings),
+        findings_total=findings_total,
         total_vulnerabilities=finding_counts["vulnerabilities"],
         recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
         summary=_summarize(recommendations, finding_counts),

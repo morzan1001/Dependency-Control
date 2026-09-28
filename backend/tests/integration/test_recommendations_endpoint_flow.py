@@ -216,3 +216,18 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
             "crypto": 1,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_a_saturated_findings_read_reports_what_the_scan_holds(client, db, owner_auth_headers_proj, monkeypatch):
+    await _insert_scan(db, "s")
+    for index in range(3):
+        await db.findings.insert_one(_finding(f"f{index}", "vulnerability"))
+    monkeypatch.setattr(rec_module, "ANALYTICS_MAX_QUERY_LIMIT", 2)
+    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], {}))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_findings"] == 2
+    assert resp.json()["findings_total"] == 3

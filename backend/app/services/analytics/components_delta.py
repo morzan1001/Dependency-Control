@@ -9,6 +9,7 @@ from urllib.parse import unquote
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.repositories.base import find_window
 from app.schemas.scan_delta import (
     ComponentDeltaItem,
     DeltaCategory,
@@ -59,15 +60,8 @@ async def _fetch_components(
     project_id: str,
     scan_id: str,
 ) -> tuple[list[dict], int]:
-    """The side's components and how many it holds. The count costs a round trip only once the
-    fetch has saturated, which is the only case in which the two numbers differ."""
     query = {"project_id": project_id, "scan_id": scan_id}
-    cursor = db["dependencies"].find(query).sort(_SIDE_SORT).limit(MAX_FETCH)
-    docs = [doc async for doc in cursor]
-    if len(docs) < MAX_FETCH:
-        return docs, len(docs)
-    total: int = await db["dependencies"].count_documents(query)
-    return docs, total
+    return await find_window(db["dependencies"], query, MAX_FETCH, sort=_SIDE_SORT)
 
 
 def _to_added_or_removed(doc: dict, change: str) -> ComponentDeltaItem:

@@ -12,6 +12,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.repositories.base import find_window
 from app.schemas.scan_delta import (
     DeltaCategory,
     FindingDeltaItem,
@@ -197,17 +198,10 @@ async def _fetch_scan_findings(
     finding_type: Iterable[str] | None,
     severity: Iterable[str] | None,
 ) -> tuple[list[dict], int]:
-    """The side's live findings and how many it holds. The count costs a round trip only once the
-    fetch has saturated, which is the only case in which the two numbers differ."""
     # Waived risk is excluded from every other metric in the product; the delta answers what is
     # delivered, so it has to agree. Documents predating the flag carry no key and are not waived.
     query = _side_query(project_id, scan_id, finding_type, severity) | {"waived": {"$ne": True}}
-    cursor = db["findings"].find(query, projection=_FETCH_PROJECTION).sort(_SIDE_SORT).limit(MAX_FETCH)
-    docs = [doc async for doc in cursor]
-    if len(docs) < MAX_FETCH:
-        return docs, len(docs)
-    total: int = await db["findings"].count_documents(query)
-    return docs, total
+    return await find_window(db["findings"], query, MAX_FETCH, projection=_FETCH_PROJECTION, sort=_SIDE_SORT)
 
 
 def _waiver_touched_query(
