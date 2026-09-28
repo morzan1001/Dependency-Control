@@ -38,16 +38,12 @@ from app.services.component_identity import (
     lookup_component,
     normalize_component,
 )
+from app.services.purl_utils import dependency_node_key
 from app.services.recommendation.common import get_attr
 
 from ._shared import _get_enrichment_info, _resolve_scan_id
 
 router = CustomAPIRouter()
-
-
-def _dep_key(dep: Any) -> str:
-    """Node identity for parent matching: PURL (parent_components hold PURLs, as in graph.py), else name@version."""
-    return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
 async def _package_finding_query(
@@ -117,7 +113,7 @@ def _build_dependency_graph(
     # parent_components; merge every doc's parents so no parent -> child edge is lost.
     parents_by_key: dict[str, list[str]] = {}
     for dep in dependencies:
-        key = _dep_key(dep)
+        key = dependency_node_key(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "version"))
         if key not in node_by_key:
             node_by_key[key] = _build_tree_node(dep, findings_map)
             order.append(key)

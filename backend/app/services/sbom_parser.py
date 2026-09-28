@@ -17,7 +17,7 @@ from app.core.constants import (
     SPDX_ORGANIZATION_PREFIX,
 )
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
-from app.services.purl_utils import get_purl_type, parse_purl
+from app.services.purl_utils import dependency_node_key, get_purl_type, parse_purl
 from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
@@ -67,10 +67,12 @@ def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[
 
 
 def _parent_refs(parent_ids: list[str], parsed_by_id: dict[str, ParsedDependency]) -> list[str]:
-    """The parsed parents' purl/name@version refs, deduplicated in first-seen order."""
+    """The parsed parents' node keys, deduplicated in first-seen order; ids of skipped components drop out."""
     parents = (parsed_by_id.get(parent_id) for parent_id in parent_ids)
     return list(
-        dict.fromkeys(parent.purl or f"{parent.name}@{parent.version}" for parent in parents if parent is not None)
+        dict.fromkeys(
+            dependency_node_key(parent.purl, parent.name, parent.version) for parent in parents if parent is not None
+        )
     )
 
 
@@ -382,6 +384,8 @@ class SBOMParser:
         main_component = metadata.get("component") if isinstance(metadata.get("component"), dict) else {}
         main_refs = {ref for ref in (main_component.get("bom-ref"), main_component.get("purl")) if ref}
 
+        parsed_by_ref: dict[str, ParsedDependency] = {}
+        parsed_here: list[ParsedDependency] = []
         for comp in components:
             comp_type = comp.get("type")
             if comp_type == "cryptographic-asset":
@@ -415,8 +419,15 @@ class SBOMParser:
                 continue
             if parsed:
                 result.dependencies.append(parsed)
+                parsed_here.append(parsed)
+                if ref := comp.get("bom-ref") or parsed.purl:
+                    parsed_by_ref[ref] = parsed
             else:
                 self._count_skipped(result, "unidentifiable")
+
+        # Graph refs are bom-refs; tree readers match node keys, so translate once all are parsed.
+        for parsed in parsed_here:
+            parsed.parent_components = _parent_refs(parsed.parent_components, parsed_by_ref)
 
     def _extract_cyclonedx_source(self, metadata: dict[str, Any]) -> tuple[str | None, str | None]:
         """Extract source information from CycloneDX metadata."""

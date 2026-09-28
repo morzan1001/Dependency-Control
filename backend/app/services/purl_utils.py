@@ -183,6 +183,11 @@ def package_identity_expr() -> dict[str, Any]:
     }
 
 
+def dependency_node_key(purl: str | None, name: str, version: str) -> str:
+    """Versioned node key of the dependency graph: what parent_components store and tree readers match."""
+    return purl or f"{name}@{version}"
+
+
 def canonical_purl(purl: str) -> str:
     """Cross-scan join key: qualifiers/subpath only describe packaging variants of the same artifact."""
     if not purl:

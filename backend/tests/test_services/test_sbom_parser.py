@@ -604,7 +604,7 @@ class TestCycloneDXNestedComponents:
     def test_nested_component_parents_resolved_from_graph(self):
         result = self.parser.parse(_nested_npm_sbom())
         deps = {d.name: d for d in result.dependencies}
-        assert deps["entities"].parent_components == ["web-frontend@0.0.0|parse5@8.0.1"]
+        assert deps["entities"].parent_components == ["pkg:npm/parse5@8.0.1"]
 
     def test_deeply_nested_components_are_parsed(self):
         sbom = _nested_npm_sbom()
@@ -769,6 +769,8 @@ class TestDuplicateComponentMerge:
             "specVersion": "1.5",
             "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "root"}},
             "components": [
+                {"type": "library", "name": "parent-x", "version": "1.0", "bom-ref": "parent-x"},
+                {"type": "library", "name": "parent-y", "version": "1.0", "bom-ref": "parent-y"},
                 {
                     "type": "library",
                     "name": "lib-a",
@@ -795,14 +797,13 @@ class TestDuplicateComponentMerge:
             ],
         }
         result = self.parser.parse(sbom)
-        assert len(result.dependencies) == 1
-        dep = result.dependencies[0]
+        [dep] = [d for d in result.dependencies if d.name == "lib-a"]
         assert set(dep.cpes) == {
             "cpe:2.3:a:lib-a:lib-a:1.0:*:*:*:*:*:*:*",
             "cpe:2.3:a:liba:liba:1.0:*:*:*:*:*:*:*",
         }
         assert dep.hashes == {"sha-1": "aaa", "sha-256": "bbb"}
-        assert set(dep.parent_components) == {"parent-x", "parent-y"}
+        assert set(dep.parent_components) == {"pkg:generic/parent-x@1.0", "pkg:generic/parent-y@1.0"}
 
     def test_merge_direct_anywhere_wins_over_transitive(self):
         sbom = {
@@ -2067,26 +2068,30 @@ class TestDuplicateMergeIsLinear:
         counted = counted_str_type()
         original = SBOMParser._parse_cyclonedx_component
 
-        def _counted_parents(self, *args, **kwargs):
+        def _counted_purl(self, *args, **kwargs):
             parsed = original(self, *args, **kwargs)
-            parsed.parent_components = [counted(ref) for ref in parsed.parent_components]
+            parsed.purl = counted(parsed.purl)
             return parsed
 
-        monkeypatch.setattr(SBOMParser, "_parse_cyclonedx_component", _counted_parents)
+        monkeypatch.setattr(SBOMParser, "_parse_cyclonedx_component", _counted_purl)
         component = {"type": "library", "name": "lodash", "version": "4.17.21", "purl": _LODASH_PURL}
+        parents = [
+            {"type": "library", "name": f"p{i}", "version": "1.0.0", "bom-ref": f"p{i}", "purl": f"pkg:npm/p{i}@1.0.0"}
+            for i in range(_DISTINCT)
+        ]
         sbom = {
             "bomFormat": "CycloneDX",
             "specVersion": "1.5",
-            "components": [{**component, "bom-ref": "A"}, {**component, "bom-ref": "B"}],
+            "components": [{**component, "bom-ref": "A"}, {**component, "bom-ref": "B"}, *parents],
             "dependencies": [{"ref": f"p{i}", "dependsOn": ["A", "B"]} for i in range(_DISTINCT)],
         }
 
         result = parse_sbom(sbom)
 
-        # Each of B's parents matches its twin in A's list once.
-        assert counted.comparisons == _DISTINCT
+        # B's parent refs are the very key objects in A's list, so only the merge key compares.
+        assert counted.comparisons == 1
         assert result.merged_components == 1
-        assert result.dependencies[0].parent_components == [f"p{i}" for i in range(_DISTINCT)]
+        assert result.dependencies[0].parent_components == [f"pkg:npm/p{i}@1.0.0" for i in range(_DISTINCT)]
 
 
 class TestParserDedupeIsLinear:
@@ -2239,3 +2244,54 @@ class TestCycloneDXNpmScope:
 
         [dep] = result.dependencies
         assert (dep.name, dep.group) == ("annotations", "org.jetbrains")
+
+
+def _syft_cyclonedx() -> dict:
+    """syft's CycloneDX output: bom-refs are purls carrying a package-id qualifier."""
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "metadata": {"component": {"type": "container", "name": "app", "bom-ref": "root-ref"}},
+        "components": [
+            {
+                "type": "library",
+                "name": "express",
+                "version": "4.18.2",
+                "bom-ref": "pkg:npm/express@4.18.2?package-id=aaa",
+                "purl": "pkg:npm/express@4.18.2",
+            },
+            {
+                "type": "library",
+                "name": "body-parser",
+                "version": "1.20.1",
+                "bom-ref": "pkg:npm/body-parser@1.20.1?package-id=bbb",
+                "purl": "pkg:npm/body-parser@1.20.1",
+            },
+        ],
+        "dependencies": [
+            {"ref": "root-ref", "dependsOn": ["pkg:npm/express@4.18.2?package-id=aaa"]},
+            {
+                "ref": "pkg:npm/express@4.18.2?package-id=aaa",
+                "dependsOn": ["pkg:npm/body-parser@1.20.1?package-id=bbb"],
+            },
+            {"ref": "0b9c3e2a-lockfile-uuid", "dependsOn": ["pkg:npm/body-parser@1.20.1?package-id=bbb"]},
+        ],
+    }
+
+
+class TestCycloneDXParentRefs:
+    def test_parents_are_stored_as_the_parent_s_node_key(self):
+        deps = {d.name: d for d in parse_sbom(_syft_cyclonedx()).dependencies}
+
+        assert deps["body-parser"].parent_components == ["pkg:npm/express@4.18.2"]
+        assert deps["express"].parent_components == []
+
+    def test_the_dependency_tree_nests_a_syft_cyclonedx_sbom(self):
+        from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
+
+        dependencies = [d.to_dict() for d in parse_sbom(_syft_cyclonedx()).dependencies]
+        graph = _build_dependency_graph(dependencies, {}, len(dependencies))
+
+        nodes = {node.name: node for node in graph.nodes}
+        assert nodes["express"].child_ids == [nodes["body-parser"].id]
+        assert graph.roots == [nodes["express"].id]

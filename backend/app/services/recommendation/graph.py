@@ -6,6 +6,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.purl_utils import dependency_node_key
 from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
 
 # Chains detailed in the action, and parents previewed per chain; each is paired with the
@@ -36,7 +37,7 @@ def analyze_deep_dependency_chains(
 
 
 def _dep_key(dep: ModelOrDict) -> str:
-    return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+    return dependency_node_key(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "version"))
 
 
 def _children_by_parent(dependencies: list[ModelOrDict]) -> dict[str, list[str]]:
