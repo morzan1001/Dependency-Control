@@ -88,6 +88,7 @@ _ERR_FINDING_NOT_FOUND = "Finding not found"
 _ERR_TEAM_NOT_FOUND = "Team not found"
 _ERR_ACCESS_DENIED = "Access denied"
 _ERR_WEBHOOK_NOT_FOUND = "Webhook not found or access denied"
+_ERR_ARCHIVE_NOT_FOUND = "Archive not found or access denied"
 _ERR_NO_SCAN_DATA = "No scan data available"
 _ERR_NEED_TWO_SCANS = "Need at least two builds on the head branch to compare"
 _FIELD_VULN_ID = "details.vulnerabilities.id"
@@ -162,11 +163,6 @@ _CALLGRAPH_SUMMARY_PROJECTION = {
     "total_imports": 1,
     "total_calls": 1,
 }
-
-
-def _scan_lookup_error(requested_scan_id: str | None) -> str:
-    """A named scan the project does not have is a bad argument; an absent one means nothing built yet."""
-    return _ERR_SCAN_NOT_FOUND_IN_PROJECT if requested_scan_id else _ERR_NO_SCAN_DATA
 
 
 def _stat(stats: dict[str, Any] | None, severity: str) -> int:
@@ -260,6 +256,18 @@ async def _ranked_findings(
     return out, note
 
 
+class _ToolRefusal(Exception):
+    """The answer a handler stops with; `_dispatch` returns it as the tool's error."""
+
+
+async def _gated[T](check: Awaitable[T], refusal: str) -> T:
+    """REST's access check, its HTTP refusal turned into the tool's own answer."""
+    try:
+        return await check
+    except HTTPException:
+        raise _ToolRefusal(refusal) from None
+
+
 @dataclass(frozen=True, slots=True)
 class _ToolContext:
     """Resolved once in `_dispatch` so no handler re-derives the caller's visibility query."""
@@ -267,7 +275,6 @@ class _ToolContext:
     args: dict[str, Any]
     user: User
     db: AsyncIOMotorDatabase
-    team_repo: TeamRepository
     user_project_query: dict[str, Any]
 
 
@@ -343,15 +350,13 @@ class ChatToolRegistry:
         user: User,
         db: AsyncIOMotorDatabase,
     ) -> dict[str, Any]:
-        team_repo = TeamRepository(db)
         ctx = _ToolContext(
-            args=args,
-            user=user,
-            db=db,
-            team_repo=team_repo,
-            user_project_query=await build_user_project_query(user, team_repo),
+            args=args, user=user, db=db, user_project_query=await build_user_project_query(user, TeamRepository(db))
         )
-        return await self._HANDLERS[tool_name](self, ctx)
+        try:
+            return await self._HANDLERS[tool_name](self, ctx)
+        except _ToolRefusal as refusal:
+            return {"error": str(refusal)}
 
     async def _tool_list_projects(self, ctx: _ToolContext) -> dict[str, Any]:
         search = ctx.args.get("search")
@@ -369,21 +374,15 @@ class ChatToolRegistry:
         return {"projects": rows, "count": len(rows)}
 
     async def _tool_get_project_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return {"project": _serialize_doc(project, _PROJECT_FIELDS)}
 
     async def _tool_get_project_members(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return {"members": project.get("members", [])}
 
     async def _tool_get_project_settings(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return {
             "settings": _serialize_doc(
                 project,
@@ -399,9 +398,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_scan_history(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
         # Newest-first across every branch and status, so the first row is a queued run on a
         # branch nobody ships as often as it is the build the project stands on.
@@ -426,24 +423,14 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_scan_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         scan = await ctx.db["scans"].find_one({"_id": scan_id, "project_id": project["_id"]})
         return {"scan": {**_serialize_doc(scan), "is_head": build["is_head"]}}
 
     async def _tool_get_scan_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         query = {"scan_id": scan_id, "project_id": project["_id"]}
         if ctx.args.get("severity"):
             query["severity"] = ctx.args["severity"].upper()
@@ -459,9 +446,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_project_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"findings": [], "count": 0, "message": "No scans found for this project"}
@@ -480,9 +465,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_vulnerability_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         finding = await ctx.db["findings"].find_one({"_id": ctx.args["finding_id"], "project_id": project["_id"]})
         if not finding:
             return {"error": _ERR_FINDING_NOT_FOUND}
@@ -534,9 +517,7 @@ class ChatToolRegistry:
         return {"findings": out, "count": len(out)}
 
     async def _tool_get_findings_by_severity(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"breakdown": {}}
@@ -548,9 +529,7 @@ class ChatToolRegistry:
         return {"breakdown": {r["_id"]: r["count"] for r in results}}
 
     async def _tool_get_findings_by_type(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"breakdown": {}}
@@ -618,9 +597,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_dependency_tree(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"dependencies": []}
@@ -713,9 +690,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_waiver_status(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         finding = None
         if head_scan_id:
@@ -750,13 +725,10 @@ class ChatToolRegistry:
         return {"waived": False, "expired_waiver": _serialize_doc(waiver)}
 
     async def _tool_list_project_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await ctx.db["projects"].find_one({"_id": ctx.args["project_id"]}, {"_id": 1})
+        project = await ctx.db["projects"].find_one({"_id": ctx.args.get("project_id")}, {"_id": 1})
         if not project:
             return {"error": _ERR_PROJECT_NOT_FOUND}
-        try:
-            await authorize_waiver_read(project["_id"], ctx.user, ctx.db)
-        except HTTPException:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        await _gated(authorize_waiver_read(project["_id"], ctx.user, ctx.db), _ERR_PROJECT_NOT_FOUND)
         now = datetime.now(timezone.utc)
         waivers, waivers_total = await bounded_read(
             ctx.db["waivers"], {"project_id": project["_id"]}, subject="waivers", limit=_WAIVER_READ
@@ -780,9 +752,7 @@ class ChatToolRegistry:
         limit = _clamp_limit(ctx.args.get("limit"), 5, maximum=MAX_FINDING_ROWS)
         match: dict[str, Any] = {}
         if ctx.args.get("project_id"):
-            proj = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-            if not proj:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
+            proj = await self._require_project(ctx)
             head_scan_id = await self._head_scan_id(proj, ctx.db)
             if not head_scan_id:
                 return {"findings": [], "message": "No scan data available for this project"}
@@ -825,9 +795,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_generate_remediation_plan(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"plan": [], "message": _ERR_NO_SCAN_DATA}
@@ -1017,9 +985,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_suggest_waiver_for_finding(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         finding = await ctx.db["findings"].find_one(
             {"finding_id": ctx.args["finding_id"], "project_id": project["_id"]}
         )
@@ -1070,9 +1036,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_compare_scans(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         scan_a_id = ctx.args.get("scan_id_a")
         scan_b_id = ctx.args.get("scan_id_b")
         if not scan_a_id or not scan_b_id:
@@ -1426,9 +1390,7 @@ class ChatToolRegistry:
         return {"projects": out, "count": len(out), "threshold_days": days}
 
     async def _tool_get_callgraph(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args.get("project_id", ""), ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         # The newest graph the project has, not head's: uploading one is a separate opt-in
         # CI step, so scoping to head would blank the tool out for most projects. The
         # response carries scan_id and created_at so the answer can say which build it is.
@@ -1440,9 +1402,7 @@ class ChatToolRegistry:
         return {"callgraph": _serialize_doc(doc) if doc else None}
 
     async def _tool_check_reachability(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args.get("project_id", ""), ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         finding = await ctx.db["findings"].find_one({"_id": ctx.args["finding_id"], "project_id": project["_id"]})
         if not finding:
             return {"error": _ERR_FINDING_NOT_FOUND}
@@ -1463,10 +1423,7 @@ class ChatToolRegistry:
         if ctx.args.get("project_id") and read_all:
             query["project_id"] = ctx.args["project_id"]
         elif ctx.args.get("project_id"):
-            project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
-            query["project_id"] = project["_id"]
+            query["project_id"] = (await self._require_project(ctx))["_id"]
         elif not read_all:
             project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
             query["project_id"] = {"$in": project_ids}
@@ -1478,25 +1435,14 @@ class ChatToolRegistry:
     async def _tool_get_archive_details(self, ctx: _ToolContext) -> dict[str, Any]:
         archive = await ctx.db["archive_metadata"].find_one({"_id": ctx.args["archive_id"]})
         if not archive:
-            return {"error": "Archive not found or access denied"}
+            return {"error": _ERR_ARCHIVE_NOT_FOUND}
         if not has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL):
-            project = await self._get_authorized_project(archive.get("project_id", ""), ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": "Archive not found or access denied"}
+            await self._require_project(ctx, archive.get("project_id") or "", refusal=_ERR_ARCHIVE_NOT_FOUND)
         return {"archive": _serialize_doc(archive)}
 
-    async def _may_read_webhooks(self, project_id: str, ctx: _ToolContext) -> bool:
-        """In the handler because TOOL_PERMISSIONS is any-of and would refuse the project admins REST admits."""
-        try:
-            await check_webhook_list_permission(project_id, ctx.user, ctx.db)
-        except HTTPException:
-            return False
-        return True
-
     async def _tool_list_project_webhooks(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project or not await self._may_read_webhooks(project["_id"], ctx):
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
+        await _gated(check_webhook_list_permission(project["_id"], ctx.user, ctx.db), _ERR_PROJECT_NOT_FOUND)
         webhooks, webhooks_total = await bounded_read(
             ctx.db["webhooks"], {"project_id": project["_id"]}, subject="webhooks", limit=_WEBHOOK_READ
         )
@@ -1509,9 +1455,8 @@ class ChatToolRegistry:
         webhook = await ctx.db["webhooks"].find_one({"_id": ctx.args["webhook_id"]})
         if not webhook:
             return {"error": _ERR_WEBHOOK_NOT_FOUND}
-        project = await self._get_authorized_project(webhook.get("project_id", ""), ctx.user_project_query, ctx.db)
-        if not project or not await self._may_read_webhooks(project["_id"], ctx):
-            return {"error": _ERR_WEBHOOK_NOT_FOUND}
+        project = await self._require_project(ctx, webhook.get("project_id") or "", refusal=_ERR_WEBHOOK_NOT_FOUND)
+        await _gated(check_webhook_list_permission(project["_id"], ctx.user, ctx.db), _ERR_WEBHOOK_NOT_FOUND)
         deliveries, deliveries_total = await bounded_read(
             ctx.db["webhook_deliveries"],
             {"webhook_id": webhook["_id"]},
@@ -1535,13 +1480,8 @@ class ChatToolRegistry:
         return {"database": "connected", "cache": cache_health}
 
     async def _tool_list_crypto_assets(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         assets = await list_crypto_assets(
             ctx.db,
             project_id=project["_id"],
@@ -1555,44 +1495,28 @@ class ChatToolRegistry:
         return {**assets, "scan": build}
 
     async def _tool_get_crypto_asset_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         result = await get_crypto_asset_details(ctx.db, project_id=project["_id"], asset_id=ctx.args["asset_id"])
         return result if result is not None else {"error": "Crypto asset not found"}
 
     async def _tool_get_crypto_summary(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         summary = await get_crypto_summary(ctx.db, project_id=project["_id"], scan_id=scan_id)
         return {**summary, "scan": build}
 
     async def _tool_get_project_crypto_policy(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return await get_project_crypto_policy(ctx.db, project_id=project["_id"])
 
     async def _tool_suggest_crypto_policy_override(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         advice = await suggest_crypto_policy_override(ctx.db, project_id=project["_id"], scan_id=scan_id)
         return {**advice, "scan": build}
 
     async def _tool_get_crypto_hotspots(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return await get_crypto_hotspots(
             ctx.db,
             project_id=project["_id"],
@@ -1601,9 +1525,7 @@ class ChatToolRegistry:
         )
 
     async def _tool_get_crypto_trends(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return await get_crypto_trends(
             ctx.db,
             project_id=project["_id"],
@@ -1612,9 +1534,7 @@ class ChatToolRegistry:
         )
 
     async def _tool_get_scan_delta(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         scan_a = await ctx.db["scans"].find_one({"_id": ctx.args["from_scan_id"], "project_id": project["_id"]})
         scan_b = await ctx.db["scans"].find_one({"_id": ctx.args["to_scan_id"], "project_id": project["_id"]})
         if not scan_a or not scan_b:
@@ -1631,9 +1551,7 @@ class ChatToolRegistry:
         return crypto_response.model_dump(mode="json")
 
     async def _tool_generate_pqc_migration_plan(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return await generate_pqc_migration_plan(
             ctx.db,
             user=ctx.user,
@@ -1644,9 +1562,7 @@ class ChatToolRegistry:
     async def _tool_list_compliance_reports(self, ctx: _ToolContext) -> dict[str, Any]:
         project_id = ctx.args.get("project_id")
         if project_id:
-            project = await self._get_authorized_project(project_id, ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
+            project = await self._require_project(ctx)
             visibility: dict[str, Any] = {"scope": "project", "scope_id": project["_id"]}
         else:
             visibility = await report_visibility_filter(ctx.db, ctx.user)
@@ -1664,10 +1580,7 @@ class ChatToolRegistry:
             if not has_permission(ctx.user.permissions, Permissions.SYSTEM_MANAGE):
                 return {"error": _ERR_ACCESS_DENIED}
         elif project_id:
-            project = await self._get_authorized_project(project_id, ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
-            project_id = project["_id"]
+            project_id = (await self._require_project(ctx))["_id"]
         return await list_policy_audit_entries(
             ctx.db,
             policy_scope=ctx.args["policy_scope"],
@@ -1679,10 +1592,7 @@ class ChatToolRegistry:
         scope = ctx.args["scope"]
         scope_id = ctx.args.get("scope_id")
         if scope == "project" and scope_id:
-            project = await self._get_authorized_project(scope_id, ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
-            scope_id = project["_id"]
+            scope_id = (await self._require_project(ctx, scope_id))["_id"]
         return await get_framework_evaluation_summary(
             ctx.db,
             user=ctx.user,
@@ -1751,15 +1661,17 @@ class ChatToolRegistry:
         "get_framework_evaluation_summary": _tool_get_framework_evaluation_summary,
     }
 
-    async def _get_authorized_project(
-        self, project_id: str, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
-    ) -> dict[str, Any] | None:
-        """Fetch a project only if the user has access.
-
-        `user_project_query` MUST come from build_user_project_query (returns {}
-        only for PROJECT_READ_ALL users).
-        """
-        return await db["projects"].find_one(and_filters({"_id": project_id}, user_project_query))
+    async def _require_project(
+        self, ctx: _ToolContext, project_id: str | None = None, *, refusal: str = _ERR_PROJECT_NOT_FOUND
+    ) -> dict[str, Any]:
+        """The project (the `project_id` argument unless one is named) if the caller's visibility query admits it."""
+        wanted = ctx.args.get("project_id") if project_id is None else project_id
+        project: dict[str, Any] | None = await ctx.db["projects"].find_one(
+            and_filters({"_id": wanted}, ctx.user_project_query)
+        )
+        if not project:
+            raise _ToolRefusal(refusal)
+        return project
 
     async def _get_authorized_project_ids(
         self, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
@@ -1770,19 +1682,21 @@ class ChatToolRegistry:
         """The scan representing the head of a project the caller already read and authorised."""
         return await ScanRepository(db).get_latest_active_scan_id(project)
 
-    async def _scan_under_answer(
-        self, project: dict[str, Any], requested_scan_id: str | None, db: AsyncIOMotorDatabase
-    ) -> tuple[str, dict[str, Any]] | None:
+    async def _scan_under_answer(self, ctx: _ToolContext, project: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """The build a scan-scoped tool answers about, with the block that names it. No scan_id means
         head; a caller that names one gets it, labelled against head, because a relayed answer carries
         no chart beside it against which a reader could notice the wrong build."""
-        head_scan_id = await self._head_scan_id(project, db)
-        wanted = requested_scan_id or head_scan_id
-        if not wanted:
-            return None
-        doc = await db["scans"].find_one({"_id": wanted, "project_id": project["_id"]}, _BUILD_PROJECTION)
+        requested = ctx.args.get("scan_id")
+        head_scan_id = await self._head_scan_id(project, ctx.db)
+        wanted = requested or head_scan_id
+        doc = (
+            await ctx.db["scans"].find_one({"_id": wanted, "project_id": project["_id"]}, _BUILD_PROJECTION)
+            if wanted
+            else None
+        )
         if not doc:
-            return None
+            # A named scan the project does not have is a bad argument; an absent one means nothing built yet.
+            raise _ToolRefusal(_ERR_SCAN_NOT_FOUND_IN_PROJECT if requested else _ERR_NO_SCAN_DATA)
         scan_id: str = doc["_id"]
         return scan_id, {
             "scan_id": scan_id,
@@ -1815,7 +1729,7 @@ class ChatToolRegistry:
         from app.services.releases import resolve_scan_ids
 
         if restrict_to_project_id:
-            project = await self._get_authorized_project(restrict_to_project_id, user_project_query, db)
+            project = await db["projects"].find_one(and_filters({"_id": restrict_to_project_id}, user_project_query))
             if not project:
                 return {}
             scan_id = await self._head_scan_id(project, db)

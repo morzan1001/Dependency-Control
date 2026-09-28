@@ -228,3 +228,25 @@ async def test_the_sweep_can_tell_an_authorised_answer_apart(tool_name: str, cal
 def test_the_registry_walk_still_finds_the_project_scoped_tools() -> None:
     """The sweep is driven off the schema, so a change to its shape would silently empty it."""
     assert set(_PROJECT_SCOPED_TOOLS) >= _ALWAYS_PROJECT_SCOPED
+
+
+def _project_required_tools() -> list[str]:
+    return sorted(
+        d["function"]["name"]
+        for d in TOOL_DEFINITIONS
+        if _PROJECT_ID_PARAM in d["function"].get("parameters", {}).get("required", [])
+    )
+
+
+@pytest.mark.parametrize("tool_name", _project_required_tools())
+@pytest.mark.asyncio
+async def test_a_call_missing_its_required_project_id_is_answered_as_an_unknown_project(
+    tool_name: str, caller: User
+) -> None:
+    arguments = _arguments(tool_name, _ABSENT)
+    del arguments[_PROJECT_ID_PARAM]
+    db = _seeded([_CALLER])
+
+    missing = await ChatToolRegistry().execute_tool(tool_name, arguments, caller, db)
+
+    assert missing == await ChatToolRegistry().execute_tool(tool_name, _arguments(tool_name, _ABSENT), caller, db)
