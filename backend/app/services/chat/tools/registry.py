@@ -1522,7 +1522,6 @@ class ChatToolRegistry:
         project = await self._require_project(ctx)
         return await generate_pqc_migration_plan(
             ctx.db,
-            user=ctx.user,
             project_id=project["_id"],
             limit=_clamp_limit(ctx.args.get("limit"), 500, MAX_PQC_PLAN_ITEMS),
         )

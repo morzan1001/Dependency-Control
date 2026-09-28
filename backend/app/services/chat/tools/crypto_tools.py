@@ -193,13 +193,12 @@ async def get_crypto_trends(
 async def generate_pqc_migration_plan(
     db: AsyncIOMotorDatabase,
     *,
-    user: User,
     project_id: str,
     limit: int = 500,
 ) -> dict[str, Any]:
-    """Generate the PQC migration plan for one project; ScopeResolver re-runs the project-member check."""
+    """Generate the PQC migration plan for one project the caller already authorised."""
     pkg = _pkg()
-    resolved = await pkg.ScopeResolver(db, user).resolve(scope="project", scope_id=project_id)
+    resolved = pkg.ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     gen = pkg.PQCMigrationPlanGenerator(db)
     resp = await gen.generate(resolved=resolved, limit=limit)
     dumped: dict[str, Any] = resp.model_dump()
