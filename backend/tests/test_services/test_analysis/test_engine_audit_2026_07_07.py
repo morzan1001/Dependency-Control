@@ -178,16 +178,16 @@ class TestCarryOverExcludesPostProcessors:
             def __init__(self, _db):
                 pass
 
-            async def find_many(self, query, limit=0):
-                captured["query"] = query
-                return []
+            async def carry_over(self, from_scan_id, to_scan_id, exclude_names):
+                captured["exclude_names"] = exclude_names
+                return 0
 
-        monkeypatch.setattr("app.repositories.analysis_results.AnalysisResultRepository", _FakeRepo)
+        monkeypatch.setattr("app.services.analysis.engine.AnalysisResultRepository", _FakeRepo)
 
         scan_doc = SimpleNamespace(is_rescan=True, original_scan_id="orig-1")
         asyncio.run(_carry_over_external_results("scan-2", scan_doc, SimpleNamespace()))
 
-        nin = captured["query"]["analyzer_name"]["$nin"]
+        nin = captured["exclude_names"]
         assert "epss_kev" in nin
         assert "reachability" in nin
 

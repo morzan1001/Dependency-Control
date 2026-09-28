@@ -155,23 +155,10 @@ class ScanManager:
 
         return final_findings, waived_count
 
-    async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> str:
-        """Store analysis results in the database using AnalysisResultRepository."""
+    async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> None:
         from app.repositories.analysis_results import AnalysisResultRepository
 
-        result_id = str(uuid.uuid4())
-        result_repo = AnalysisResultRepository(self.db)
-
-        await result_repo.create_raw(
-            {
-                "_id": result_id,
-                "scan_id": scan_id,
-                "analyzer_name": analyzer_name,
-                "result": result,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
-        return result_id
+        await AnalysisResultRepository(self.db).insert_result(scan_id, analyzer_name, result)
 
     async def trigger_aggregation(self, scan_id: str) -> None:
         """Add scan to worker queue for aggregation."""

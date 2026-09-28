@@ -76,7 +76,7 @@ from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.github import is_public_github
-from app.services.reachability_enrichment import enrich_findings_with_reachability, persist_reachability_result
+from app.services.reachability_enrichment import enrich_findings_with_reachability
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.update_frequency_rollup import record_scan_update_delta
 
@@ -123,45 +123,13 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
 
     # Internal analyzers and post-processors are regenerated per run, never carried over.
     excluded_names = list(analyzer_factories) + list(_POST_PROCESSOR_ANALYZERS)
-
-    from app.repositories.analysis_results import AnalysisResultRepository
-
-    result_repo = AnalysisResultRepository(db)
-    old_results = await result_repo.find_many(
-        {
-            "scan_id": original_scan_id,
-            "analyzer_name": {"$nin": excluded_names},
-        },
-        limit=10000,
-    )
-
-    if not old_results:
-        return
-
-    bulk_ops = []
-    for old_result in old_results:
-        new_result = old_result.model_dump(by_alias=True).copy()
-        new_result["_id"] = str(uuid.uuid4())
-        new_result["scan_id"] = scan_id
-        new_result["created_at"] = datetime.now(timezone.utc)
-
-        bulk_ops.append(
-            UpdateOne(
-                {
-                    "scan_id": scan_id,
-                    "analyzer_name": old_result.analyzer_name,
-                    "result": old_result.result,
-                },
-                {"$setOnInsert": new_result},
-                upsert=True,
-            )
-        )
-
     try:
-        await db.analysis_results.bulk_write(bulk_ops, ordered=False)
-        logger.info(f"Carried over {len(bulk_ops)} external results to rescan {scan_id}")
+        carried = await AnalysisResultRepository(db).carry_over(original_scan_id, scan_id, excluded_names)
     except Exception as e:
         logger.exception("Failed to bulk carry over external results: %s", e)
+        return
+    if carried:
+        logger.info(f"Carried over {carried} external results to rescan {scan_id}")
 
 
 async def _carry_over_crypto_assets(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:
@@ -236,16 +204,7 @@ async def process_analyzer(
             duration = time.time() - analyzer_start_time
             analysis_duration_seconds.labels(analyzer=analyzer_name).observe(duration)
 
-        result_repo = AnalysisResultRepository(db)
-        await result_repo.create_raw(
-            {
-                "_id": str(uuid.uuid4()),
-                "scan_id": scan_id,
-                "analyzer_name": analyzer_name,
-                "result": result,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
+        await AnalysisResultRepository(db).insert_result(scan_id, analyzer_name, result)
 
         source: str = fallback_source
         if sbom.get("metadata") and sbom["metadata"].get("component"):
@@ -611,15 +570,7 @@ async def _run_epss_kev_enrichment(
     try:
         await enrich_vulnerability_findings(vulnerability_findings, github_token=github_token)
         epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
-        await result_repo.create_raw(
-            {
-                "_id": str(uuid.uuid4()),
-                "scan_id": scan_id,
-                "analyzer_name": "epss_kev",
-                "result": epss_kev_summary,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
+        await result_repo.insert_result(scan_id, "epss_kev", epss_kev_summary)
         results_summary.append(f"epss_kev: Success ({len(vulnerability_findings)} enriched)")
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
@@ -679,7 +630,7 @@ async def _run_reachability_enrichment(
             [cg.model_dump(by_alias=True) for cg in callgraphs],
             enriched_count,
         )
-        await persist_reachability_result(result_repo, scan_id, reachability_summary)
+        await result_repo.replace_result(scan_id, "reachability", reachability_summary)
         results_summary.append(f"reachability: Success ({enriched_count} enriched)")
         logger.info(f"[reachability] Enriched {enriched_count} findings for scan {scan_id}")
 
