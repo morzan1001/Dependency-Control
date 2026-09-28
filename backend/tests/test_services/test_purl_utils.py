@@ -16,10 +16,10 @@ from app.services.purl_utils import (
     is_nuget,
     is_purl_type,
     is_pypi,
-    normalize_hash_algorithm,
     package_identity,
     package_identity_expr,
     parse_purl,
+    pep503_normalize,
 )
 from tests.mocks.fake_mongo import FakeCollection
 
@@ -51,7 +51,7 @@ class TestParsePurl:
                 {"qualifiers": {"repository_url": "https://pypi.org"}, "version": "2.31.0"},
                 id="with_qualifiers",
             ),
-            pytest.param("with_subpath", {"subpath": "dist/lodash.min.js"}, id="with_subpath"),
+            pytest.param("with_subpath", {"name": "lodash", "version": "4.17.21"}, id="with_subpath"),
         ],
     )
     def test_parse_reads_the_coordinates_of(self, sample_purls, purl_key, expected_fields):
@@ -75,6 +75,17 @@ class TestParsePurl:
         result = parse_purl("pkg:npm/@angular/core")
         assert result is not None
         assert (result.namespace, result.name, result.version) == ("@angular", "core", None)
+
+    def test_a_version_may_contain_a_slash(self):
+        result = parse_purl("pkg:github/actions/cache@releases/v3")
+        assert result is not None
+        assert (result.namespace, result.name, result.version) == ("actions", "cache", "releases/v3")
+
+    def test_the_first_question_mark_starts_the_qualifiers(self):
+        result = parse_purl("pkg:pypi/requests@1?vcs_url=https://x/?ref=main#src")
+        assert result is not None
+        assert (result.name, result.version) == ("requests", "1")
+        assert result.qualifiers == {"vcs_url": "https://x/?ref=main"}
 
     @pytest.mark.parametrize(
         "malformed",
@@ -105,8 +116,8 @@ class TestParsePurl:
     def test_parse_with_qualifiers_and_subpath(self):
         result = parse_purl("pkg:pypi/requests@2.31.0?vcs_url=https://github.com#src")
         assert result is not None
+        assert (result.type, result.name, result.version) == ("pypi", "requests", "2.31.0")
         assert result.qualifiers == {"vcs_url": "https://github.com"}
-        assert result.subpath == "src"
 
 
 class TestParsedPURLProperties:
@@ -115,6 +126,10 @@ class TestParsedPURLProperties:
         [
             pytest.param("pkg:maven/org.apache/commons@1.0", "org.apache/commons", id="with_namespace"),
             pytest.param("pkg:pypi/requests@1.0", "requests", id="without_namespace"),
+            pytest.param(
+                "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0", "github.com/cespare/xxhash/v2", id="go_module_path"
+            ),
+            pytest.param("pkg:npm/@angular/core", "@angular/core", id="versionless_unencoded_npm_scope"),
         ],
     )
     def test_full_name(self, purl, expected):
@@ -135,6 +150,20 @@ class TestParsedPURLProperties:
         result = parse_purl(purl)
         assert result is not None
         assert result.registry_system == expected
+
+    @pytest.mark.parametrize(
+        ("purl", "ecosystem", "deps_dev_system"),
+        [
+            pytest.param("pkg:gem/rails@7.0", "rubygems", "rubygems", id="gem"),
+            pytest.param("pkg:golang/github.com/gin-gonic/gin@1.0", "go", "go", id="golang"),
+            pytest.param("pkg:composer/laravel/framework@10.0", "packagist", None, id="composer_not_on_deps_dev"),
+            pytest.param("pkg:hex/phoenix@1.7.0", "hex", None, id="hex_not_on_deps_dev"),
+        ],
+    )
+    def test_deps_dev_system_names_only_systems_deps_dev_serves(self, purl, ecosystem, deps_dev_system):
+        result = parse_purl(purl)
+        assert result is not None
+        assert (result.registry_system, result.deps_dev_system) == (ecosystem, deps_dev_system)
 
     @pytest.mark.parametrize(
         ("purl", "expected"),
@@ -219,6 +248,9 @@ _IDENTITY_TABLE = [
     ),
     pytest.param(
         "pkg:npm/lodash@4.17.21#dist/lodash.min.js", "lodash", "library", ("npm", "lodash"), id="subpath_dropped"
+    ),
+    pytest.param(
+        "pkg:github/actions/cache@releases/v3", "cache", "library", ("github", "actions/cache"), id="slash_in_version"
     ),
     pytest.param(None, " Debian ", "operating-system", ("operating-system", "debian"), id="no_purl_keys_type_and_name"),
     pytest.param(None, "Debian", "application", ("application", "debian"), id="no_purl_other_type_other_package"),
@@ -307,17 +339,13 @@ class TestConvenienceFunctions:
         assert is_go(purl) is expected
 
 
-class TestNormalizeHashAlgorithm:
-    @pytest.mark.parametrize(
-        ("algorithm", "expected"),
-        [
-            pytest.param("SHA-256", "sha256", id="sha256_uppercase_with_hyphen"),
-            pytest.param("sha512", "sha512", id="sha512_lowercase_no_hyphen"),
-            pytest.param("MD5", "md5", id="md5"),
-            pytest.param("SHA-1", "sha1", id="sha1_with_hyphen"),
-            pytest.param("", "", id="empty_string"),
-            pytest.param(None, "", id="none"),
-        ],
-    )
-    def test_normalize_hash_algorithm(self, algorithm, expected):
-        assert normalize_hash_algorithm(algorithm) == expected
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [
+        pytest.param("My_Package.Name", "my-package-name", id="mixed_separators_and_case"),
+        pytest.param("typing__extensions", "typing-extensions", id="separator_run"),
+        pytest.param("requests", "requests", id="already_normal"),
+    ],
+)
+def test_pep503_normalize(name, expected):
+    assert pep503_normalize(name) == expected

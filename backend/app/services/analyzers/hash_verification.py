@@ -12,8 +12,8 @@ from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, NPM_REGI
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
-from .base import Analyzer
-from app.services.purl_utils import is_npm, is_pypi, normalize_hash_algorithm
+from .base import Analyzer, normalize_hash_algorithm
+from app.services.purl_utils import is_npm, is_pypi
 
 logger = logging.getLogger(__name__)
 

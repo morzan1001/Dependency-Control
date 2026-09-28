@@ -21,7 +21,6 @@ class ParsedPURL(NamedTuple):
     name: str  # package name
     version: str | None  # version
     qualifiers: dict[str, str]  # optional qualifiers
-    subpath: str | None  # optional subpath
 
     @property
     def full_name(self) -> str:
@@ -32,8 +31,14 @@ class ParsedPURL(NamedTuple):
 
     @property
     def registry_system(self) -> str | None:
-        """Get the registry system name for deps.dev API."""
+        """Ecosystem label of the purl type, whether or not deps.dev serves it."""
         return PURL_TYPE_TO_SYSTEM.get(self.type)
+
+    @property
+    def deps_dev_system(self) -> str | None:
+        """The deps.dev system serving this package, or None where deps.dev has no data."""
+        system = PURL_TYPE_TO_SYSTEM.get(self.type)
+        return system if system in _DEPS_DEV_SYSTEMS else None
 
     @property
     def deps_dev_name(self) -> str:
@@ -42,10 +47,15 @@ class ParsedPURL(NamedTuple):
             return f"{self.namespace}:{self.name}"
         if self.type == "pypi":
             # deps.dev serves PyPI packages under their PEP 503 normalized name.
-            return _PYPI_NORMALIZE_RE.sub("-", self.name).lower()
+            return pep503_normalize(self.name)
         if self.namespace:
             return f"{self.namespace}/{self.name}"
         return self.name
+
+
+def pep503_normalize(name: str) -> str:
+    """PyPI project name in PEP 503 normal form: separator runs become '-', lowercased."""
+    return _PYPI_NORMALIZE_RE.sub("-", name).lower()
 
 
 PURL_TYPE_TO_SYSTEM = {
@@ -64,74 +74,55 @@ PURL_TYPE_TO_SYSTEM = {
     "hex": "hex",  # Erlang/Elixir
     "cran": "cran",  # R
 }
+_DEPS_DEV_SYSTEMS = frozenset({"npm", "pypi", "maven", "go", "cargo", "nuget", "rubygems"})
 
 
 def parse_purl(purl: str) -> ParsedPURL | None:
-    """Parse a PURL string into its components, or None if parsing fails."""
-    if not purl or not purl.startswith("pkg:"):
+    """Parse a PURL string into its components, or None if it is not one."""
+    if not purl or not purl.startswith("pkg:") or len(purl) > MAX_PURL_LENGTH:
         return None
 
-    # Bound total length to prevent DoS.
-    if len(purl) > MAX_PURL_LENGTH:
+    # The first '?' or '#' ends the coordinates, as in canonical_purl.
+    rest, _, qualifier_str = purl[4:].split("#", 1)[0].partition("?")
+    qualifiers: dict[str, str] = {}
+    for pair in qualifier_str.split("&"):
+        key, separator, value = pair.partition("=")
+        if separator:
+            qualifiers[unquote(key)] = unquote(value)
+
+    version = None
+    at = rest.rfind("@")
+    # An '@' opening a path segment is an unencoded npm scope; a name is never empty.
+    if at > 0 and rest[at - 1] != "/":
+        rest, version = rest[:at], unquote(rest[at + 1 :])
+
+    purl_type, slash, path = rest.partition("/")
+    if not slash:
+        return None
+    namespace, _, name = path.rpartition("/")
+    final_namespace = unquote(namespace) or None
+    final_name = unquote(name)
+
+    # Validate lengths after unquoting, since URL decoding can expand strings.
+    if (
+        len(final_name) > MAX_NAME_LENGTH
+        or len(final_namespace or "") > MAX_NAMESPACE_LENGTH
+        or len(version or "") > MAX_VERSION_LENGTH
+    ):
         return None
 
-    try:
-        rest = purl[4:]
-
-        subpath = None
-        if "#" in rest:
-            rest, subpath = rest.rsplit("#", 1)
-            subpath = unquote(subpath)
-
-        qualifiers = {}
-        if "?" in rest:
-            rest, qualifier_str = rest.rsplit("?", 1)
-            for pair in qualifier_str.split("&"):
-                if "=" in pair:
-                    key, value = pair.split("=", 1)
-                    qualifiers[unquote(key)] = unquote(value)
-
-        version = None
-        # Only an '@' after the last '/' starts the version; the one in '@scope' does not.
-        if "@" in rest.rsplit("/", 1)[-1]:
-            rest, version = rest.rsplit("@", 1)
-            version = unquote(version)
-
-        if "/" not in rest:
-            return None
-
-        purl_type, rest = rest.split("/", 1)
-        purl_type = purl_type.lower()
-
-        namespace, _, name = rest.rpartition("/")
-
-        final_namespace = unquote(namespace) if namespace else None
-        final_name = unquote(name)
-
-        # Validate lengths after unquoting, since URL decoding can expand strings.
-        if len(final_name) > MAX_NAME_LENGTH:
-            return None
-        if final_namespace and len(final_namespace) > MAX_NAMESPACE_LENGTH:
-            return None
-        if version and len(version) > MAX_VERSION_LENGTH:
-            return None
-
-        return ParsedPURL(
-            type=purl_type,
-            namespace=final_namespace,
-            name=final_name,
-            version=version,
-            qualifiers=qualifiers,
-            subpath=subpath,
-        )
-
-    except (ValueError, IndexError, AttributeError):
-        return None
+    return ParsedPURL(
+        type=purl_type.lower(),
+        namespace=final_namespace,
+        name=final_name,
+        version=version,
+        qualifiers=qualifiers,
+    )
 
 
 # Types whose namespace and name the purl spec declares case-insensitive.
 _CASE_INSENSITIVE_TYPES = ("alpm", "apk", "bitbucket", "composer", "deb", "github", "hex", "oci", "pub", "pypi")
-_IDENTITY_PATTERN = r"^pkg:([^/]+)/([^?#]*?)(?:@[^/?#]*)?(?:[?#].*)?$"
+_IDENTITY_PATTERN = r"^pkg:([^/]+)/([^?#]*?)(?:(?<!/)@[^@?#]*)?(?:[?#].*)?$"
 
 
 def package_identity(purl: str | None, name: str, component_type: str | None) -> tuple[str, str]:
@@ -204,11 +195,7 @@ def get_purl_type(purl: str | None) -> str | None:
     """Extract just the type from a PURL string."""
     if not purl or not purl.startswith("pkg:"):
         return None
-
-    try:
-        return purl[4:].split("/")[0].lower()
-    except (IndexError, AttributeError):
-        return None
+    return purl[4:].split("/")[0].lower()
 
 
 def is_purl_type(purl: str, expected_type: str | tuple[str, ...]) -> bool:
@@ -241,10 +228,3 @@ def is_cargo(purl: str) -> bool:
 
 def is_nuget(purl: str) -> bool:
     return is_purl_type(purl, "nuget")
-
-
-def normalize_hash_algorithm(alg: str) -> str:
-    """Normalize a hash algorithm name (lowercase, no hyphens): "SHA-256" -> "sha256"."""
-    if not alg:
-        return ""
-    return alg.lower().replace("-", "")
