@@ -201,6 +201,9 @@ _IDENTITY_TABLE = [
         ("pypi", "typing-extensions"),
         id="pypi_underscore",
     ),
+    pytest.param("pkg:pypi/zope.interface@5.0", "zope.interface", "library", ("pypi", "zope-interface"), id="pypi_dot"),
+    pytest.param("pkg:pypi/Foo._-Bar@1.0", "Foo._-Bar", "library", ("pypi", "foo-bar"), id="pypi_separator_run"),
+    pytest.param("pkg:pypi/._odd-@1.0", "._odd-", "library", ("pypi", "-odd-"), id="pypi_separators_at_the_ends"),
     pytest.param(
         "pkg:maven/org.jetbrains/annotations@24.0.1?type=jar",
         "annotations",

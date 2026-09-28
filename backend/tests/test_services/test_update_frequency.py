@@ -10,7 +10,7 @@ from unittest.mock import patch
 import pytest
 
 import app.services.update_frequency as update_frequency_module
-from app.core.purl import package_identity, parse_purl
+from app.core.purl import parse_purl
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
 from app.repositories.update_frequency import (
@@ -32,7 +32,6 @@ from app.services.update_frequency import (
     compute_trend,
     compute_update_frequency,
     compute_update_frequency_comparison,
-    fold_scan_deps,
     load_outdated_entries,
     rank_summaries,
     select_primary_branch,
@@ -857,21 +856,22 @@ class TestIdentityKeying:
         assert m.recent_updates[0].update_type == "minor"
 
     @pytest.mark.parametrize(
-        ("before", "after"),
+        ("before", "after", "updates"),
         [
-            ("pkg:pypi/PyYAML@6.0", "pkg:pypi/pyyaml@6.0.1"),
-            ("pkg:pypi/zope.interface@5.0", "pkg:pypi/zope-interface@5.1"),
-            ("pkg:NPM/x@1.0.0", "pkg:npm/x@1.0.1"),
-            ("pkg:maven/g1/core@1.0", "pkg:maven/g2/core@1.1"),
+            ("pkg:pypi/PyYAML@6.0", "pkg:pypi/pyyaml@6.0.1", 1),
+            ("pkg:pypi/zope.interface@5.0", "pkg:pypi/zope-interface@5.1", 1),
+            ("pkg:NPM/x@1.0.0", "pkg:npm/x@1.0.1", 1),
+            ("pkg:maven/g1/core@1.0", "pkg:maven/g2/core@1.1", 0),
         ],
     )
-    def test_same_package_means_what_the_components_delta_means(self, before, after):
-        docs = [{"name": parse_purl(p).name, "version": parse_purl(p).version, "purl": p} for p in (before, after)]
+    @pytest.mark.asyncio
+    async def test_a_respelled_package_is_a_version_bump(self, before, after, updates):
+        def dep(scan_id: str, purl: str) -> dict[str, Any]:
+            return self._raw_dep(scan_id, parse_purl(purl).name, parse_purl(purl).version, purl)
 
-        one_package_here = len(fold_scan_deps(docs)) == 1
-        one_package_in_delta = package_identity(before, "", None) == package_identity(after, "", None)
+        m = await self._compute({"s1": [dep("s1", before)], "s2": [dep("s2", after)]})
 
-        assert one_package_here == one_package_in_delta
+        assert m.total_updates == updates
 
     @pytest.mark.asyncio
     async def test_deps_without_purl_key_by_name_and_type(self):

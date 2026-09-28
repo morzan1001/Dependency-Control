@@ -26,6 +26,7 @@ def _dependency(project_id: str, name: str, version: str, purl: str | None, type
 
 _INVENTORY = {
     "py": [_dependency("py", "PyYAML", "5.1", "pkg:pypi/PyYAML@5.1", "pypi")],
+    "zope": [_dependency("zope", "zope-interface", "5.0", "pkg:pypi/zope-interface@5.0", "pypi")],
     "java": [
         _dependency("java", "log4j-core", "2.12.0", "pkg:maven/org.apache.logging.log4j/log4j-core@2.12.0", "maven"),
         _dependency("java", "core", "3.4.0", "pkg:maven/com.google.zxing/core@3.4.0", "maven"),
@@ -94,6 +95,13 @@ async def _affected(client, headers, *packages: dict) -> int:
 @pytest.mark.asyncio
 async def test_a_pip_typed_advisory_reaches_a_differently_spelled_pypi_package(client, headers):
     assert await _affected(client, headers, {"name": "pyyaml", "version": "5.3", "type": "pip"}) == 1
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["zope.interface", "Zope_Interface"])
+async def test_a_pypi_rule_folds_every_separator(client, headers, name):
+    assert await _affected(client, headers, {"name": name, "version": "5.1", "type": "pypi"}) == 1
 
 
 @pytest.mark.live_mongo

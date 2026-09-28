@@ -207,8 +207,8 @@ async def _handle_teams_broadcast(
 
 
 def _segment_key(name: str) -> str:
-    """Lookup key a rule and a dependency share: the last name segment, blind to case and -/_."""
-    return re.split(r"[/:]", name)[-1].lower().replace("_", "-")
+    """Lookup key a rule and a dependency share: the last name segment, blind to case and separators."""
+    return re.sub(r"[-_.]+", "-", re.split(r"[/:]", name)[-1].lower())
 
 
 def _rule_matches(rule: AdvisoryPackage, dep_type: str, dep_path: str) -> bool:
@@ -232,7 +232,7 @@ async def _find_affected_projects(db: Any, rules: list[AdvisoryPackage]) -> dict
     for rule in rules:
         rules_by_segment[_segment_key(rule.name.strip())].append(rule)
     # A case- and separator-blind prefilter; the package identity decides below.
-    names = "|".join("[-_]".join(map(re.escape, key.split("-"))) for key in rules_by_segment)
+    names = "|".join("[-_.]+".join(map(re.escape, key.split("-"))) for key in rules_by_segment)
     query = {"scan_id": {"$in": list(project_by_scan)}, "name": {"$regex": f"(^|[/:])({names})$", "$options": "i"}}
 
     affected: dict[str, dict[str, None]] = {}

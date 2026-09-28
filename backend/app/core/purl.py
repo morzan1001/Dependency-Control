@@ -137,8 +137,18 @@ def package_identity(purl: str | None, name: str, component_type: str | None) ->
     if parsed.type in _CASE_INSENSITIVE_TYPES:
         path = path.lower()
     if parsed.type == "pypi":
-        path = path.replace("_", "-")
+        path = pep503_normalize(path)
     return parsed.type, path
+
+
+def _pep503_expr(name: dict[str, Any]) -> dict[str, Any]:
+    """:func:`pep503_normalize` of a lowercased name as an aggregation expression."""
+    dashed: dict[str, Any] = {"$replaceAll": {"input": name, "find": "_", "replacement": "-"}}
+    dashed = {"$replaceAll": {"input": dashed, "find": ".", "replacement": "-"}}
+    # Mongo has no regex replace; each pass halves a separator run, and parse_purl caps a path segment's length.
+    for _ in range(max(MAX_NAME_LENGTH, MAX_NAMESPACE_LENGTH).bit_length()):
+        dashed = {"$replaceAll": {"input": dashed, "find": "--", "replacement": "-"}}
+    return dashed
 
 
 def package_identity_expr() -> dict[str, Any]:
@@ -161,13 +171,7 @@ def package_identity_expr() -> dict[str, Any]:
                             "vars": {"type": {"$toLower": {"$arrayElemAt": ["$$m.captures", 0]}}},
                             "in": {
                                 "type": "$$type",
-                                "path": {
-                                    "$cond": [
-                                        {"$eq": ["$$type", "pypi"]},
-                                        {"$replaceAll": {"input": folded, "find": "_", "replacement": "-"}},
-                                        folded,
-                                    ]
-                                },
+                                "path": {"$cond": [{"$eq": ["$$type", "pypi"]}, _pep503_expr(folded), folded]},
                             },
                         }
                     },

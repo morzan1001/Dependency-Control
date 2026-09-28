@@ -212,3 +212,29 @@ async def test_components_change_filter_only_added(db):
     )
     assert all(i.change == "added" for i in resp.items)
     assert len(resp.items) == 1
+
+
+@pytest.mark.parametrize(
+    ("before", "after", "totals"),
+    [
+        ("pkg:pypi/PyYAML@6.0", "pkg:pypi/pyyaml@6.0.1", (0, 0, 1)),
+        ("pkg:pypi/zope.interface@5.0", "pkg:pypi/zope-interface@5.1", (0, 0, 1)),
+        ("pkg:NPM/x@1.0.0", "pkg:npm/x@1.0.1", (0, 0, 1)),
+        ("pkg:maven/g1/core@1.0", "pkg:maven/g2/core@1.1", (1, 1, 0)),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_respelled_package_is_one_version_change(db, before, after, totals):
+    await db["dependencies"].insert_many(
+        [
+            {"_id": scan, "project_id": "p1", "scan_id": scan, "name": purl.split("/")[-1].split("@")[0], "purl": purl}
+            | {"version": purl.rsplit("@", 1)[1]}
+            for scan, purl in (("sa", before), ("sb", after))
+        ]
+    )
+
+    resp = await compute_components_delta(
+        db, project_id="p1", from_scan="sa", to_scan="sb", page=1, page_size=50, change=None
+    )
+
+    assert (resp.totals.added, resp.totals.removed, resp.totals.changed) == totals
