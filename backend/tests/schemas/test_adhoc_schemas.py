@@ -15,7 +15,7 @@ from app.schemas.project import LicensePolicySchema
 _SBOM = {"bomFormat": "CycloneDX"}
 _TRUFFLEHOG_PAYLOAD = {"findings": []}
 _ANALYZER = "osv"
-_SBOM_LABEL = "sbom#1"
+_SBOM_LABEL = "SBOM #1"
 _SKIP_REASON = "could not be parsed"
 _EXTRA_FORBIDDEN = "extra_forbidden"
 _ENUM_ERROR = "enum"

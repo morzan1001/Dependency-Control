@@ -97,12 +97,12 @@ def test_an_input_the_parser_could_not_read_is_visible():
     """An unreadable SBOM absent from the report reads as a clean bill of health for it."""
     result = _result(
         findings=[],
-        analyzers=AnalyzerReport(ran=["osv"], skipped_inputs={"sbom#1": _PARSE_FAILURE}),
+        analyzers=AnalyzerReport(ran=["osv"], skipped_inputs={"SBOM #1": _PARSE_FAILURE}),
     )
 
     html = render_adhoc_html(result)
 
-    assert "sbom#1" in html
+    assert "SBOM #1" in html
     assert _PARSE_FAILURE in html
 
 

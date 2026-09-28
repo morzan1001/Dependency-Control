@@ -22,7 +22,7 @@ from tests.helpers.analyzers import serve_analyzer
 from tests.mocks.fake_mongo import FakeDatabase
 
 _OSV = "osv"
-_FIRST_SBOM_LABEL = "sbom#1"
+_FIRST_SBOM_LABEL = "SBOM #1"
 _DROPPED_BY_DEPTH = "nesting-depth"
 _CVE = "CVE-2024-99999"
 _CRITICAL = "CRITICAL"

@@ -622,7 +622,7 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
     parsed_inputs: list[_ParsedInput] = []
     for index, sbom in enumerate(request.sboms):
         position = index + 1
-        label = f"sbom#{position}"
+        label = _SBOM_POSITION.format(position=position)
         try:
             parsed = parse_sbom(sbom)
         except Exception as exc:
