@@ -49,6 +49,7 @@ from app.services.analysis.stats import build_epss_kev_summary, build_reachabili
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.analyzers.crypto.base import CryptoRuleAnalyzer, crypto_findings_for_assets
+from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import VulnerabilityEnrichmentService
 from app.services.reachability_enrichment import (
@@ -731,21 +732,22 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     if resolved_format == "unknown":
         raise ValueError(_UNDETECTABLE_FORMAT)
 
-    language = payload.get("language") or (_MADGE_LANGUAGE if resolved_format == _MADGE_FORMAT else None)
-    if not language:
+    raw_language = payload.get("language") or (_MADGE_LANGUAGE if resolved_format == _MADGE_FORMAT else None)
+    if not raw_language:
         raise ValueError(_LANGUAGE_REQUIRED.format(callgraph_format=resolved_format))
+    language = canonical_callgraph_language(str(raw_language))
 
     parser = {_MADGE_FORMAT: parse_madge_format, "generic": parse_generic_format}.get(resolved_format)
     if parser is None:
         raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
 
-    imports, _calls, module_usage, analyzed_modules = parser(data, str(language))
+    imports, _calls, module_usage, analyzed_modules = parser(data, language)
     # The model derives ``import_map`` from ``module_usage``, which is what the enrichment reads.
     minimal = CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,
         module_usage={key: usage.model_dump() for key, usage in module_usage.items()},
         analyzed_modules=analyzed_modules,
-        language=str(language),
+        language=language,
     )
     as_dict = {
         "language": minimal.language,

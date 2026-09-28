@@ -7,7 +7,16 @@ from collections.abc import Iterable, Mapping
 from typing import Any, TypeVar
 
 _QUALIFIER_SEPARATORS = (":", "/")
-_JVM_LANGUAGES = frozenset({"java", "kotlin", "scala", "groovy"})
+JVM_LANGUAGES = frozenset({"java", "kotlin", "scala", "groovy"})
+_CALLGRAPH_LANGUAGES = frozenset({"python", "go", "javascript", "typescript", *JVM_LANGUAGES})
+_CALLGRAPH_LANGUAGE_ALIASES = {
+    "golang": "go",
+    "js": "javascript",
+    "node": "javascript",
+    "nodejs": "javascript",
+    "ts": "typescript",
+    "py": "python",
+}
 
 _T = TypeVar("_T")
 
@@ -18,6 +27,16 @@ def npm_package_key(name: str) -> str:
     if name.startswith("@") and len(parts) >= 2:
         return f"{parts[0]}/{parts[1]}".lower()
     return parts[0].lower()
+
+
+def canonical_callgraph_language(raw: str) -> str:
+    """Canonical spelling of an uploaded callgraph language; ValueError for one without callgraph support."""
+    language = raw.strip().lower()
+    language = _CALLGRAPH_LANGUAGE_ALIASES.get(language, language)
+    if language not in _CALLGRAPH_LANGUAGES:
+        supported = ", ".join(sorted(_CALLGRAPH_LANGUAGES))
+        raise ValueError(f"unsupported callgraph language '{raw}'; supported: {supported}")
+    return language
 
 
 def canonical_module_key(name: str, language: str) -> str:
@@ -38,7 +57,7 @@ def canonical_module_key(name: str, language: str) -> str:
     if language == "go":
         return name.lower()
 
-    if language in _JVM_LANGUAGES:
+    if language in JVM_LANGUAGES:
         return name.strip().lower()
 
     return npm_package_key(name)

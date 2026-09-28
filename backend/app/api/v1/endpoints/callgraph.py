@@ -27,6 +27,7 @@ from app.schemas.callgraph import (
     DeleteCallgraphResponse,
     ModuleUsageResponse,
 )
+from app.services.component_identity import canonical_callgraph_language
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
 
 router = CustomAPIRouter()
@@ -55,14 +56,17 @@ def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
 
 
 def _resolve_language(request_language: str | None, format_type: str) -> str:
-    """Resolve the callgraph language; only madge implies one."""
+    """Resolve the callgraph language in its canonical spelling; only madge implies one."""
     language = request_language or _FORMAT_LANGUAGE_MAP.get(format_type)
     if not language:
         raise HTTPException(
             status_code=400,
             detail=f"'language' is required for '{format_type}' callgraph payloads",
         )
-    return language
+    try:
+        return canonical_callgraph_language(language)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def _resolve_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:

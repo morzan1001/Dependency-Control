@@ -311,6 +311,32 @@ class TestPayloadValidation:
         assert await db.callgraphs.count_documents({}) == 0
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("sent", "stored"), [("golang", "go"), ("Python", "python"), (" JS ", "javascript"), ("ts", "typescript")]
+    )
+    async def test_the_language_is_stored_in_its_canonical_spelling(self, client, db, sent, stored):
+        response = await _upload(client, _envelope("generic", sent, _GO_DATA))
+
+        assert response.status_code == 200, response.text
+        [document] = await db.callgraphs.find({"project_id": _PROJECT_ID}).to_list(None)
+        assert document["language"] == stored
+
+    @pytest.mark.asyncio
+    async def test_a_golang_upload_keeps_whole_module_paths(self, client, db):
+        await _upload(client, _envelope("generic", "golang", _GO_DATA))
+
+        stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        assert set(stored["module_usage"]) == {"github.com/gin-gonic/gin", "github.com/sirupsen/logrus"}
+
+    @pytest.mark.asyncio
+    async def test_a_language_without_callgraph_support_is_rejected(self, client, db):
+        response = await _upload(client, _envelope("generic", "rust", _GO_DATA))
+
+        assert response.status_code == 400
+        assert "rust" in response.json()["detail"]
+        assert await db.callgraphs.count_documents({}) == 0
+
+    @pytest.mark.asyncio
     async def test_payload_over_the_entry_limit_is_rejected(self, client, db):
         oversized = {
             "imports": [

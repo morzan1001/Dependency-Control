@@ -208,3 +208,34 @@ async def test_unparseable_callgraph_is_reported_not_fatal(_osv):
     assert response.analyzers.errored[_REACHABILITY]
     assert _REACHABILITY not in response.analyzers.ran
     assert response.findings
+
+
+@pytest.mark.asyncio
+async def test_a_language_alias_is_read_as_its_canonical_language(_osv_on_the_unused_package):
+    request = AdhocAnalyzeRequest(
+        sboms=[_sbom(_IMPORTED_PACKAGE, _ANALYZED_BUT_UNUSED_PACKAGE)],
+        analyzers=[_OSV],
+        callgraph={**_CALLGRAPH, "language": "Py"},
+        apply_global_waivers=False,
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.reachability_summary["languages"] == [_PYTHON]
+    assert [f["reachable"] for f in _vulnerabilities(response)] == [False]
+
+
+@pytest.mark.asyncio
+async def test_a_language_without_callgraph_support_is_rejected(_osv):
+    request = AdhocAnalyzeRequest(
+        sboms=[_sbom(_IMPORTED_PACKAGE)],
+        analyzers=[_OSV],
+        callgraph={**_CALLGRAPH, "language": "rust"},
+        apply_global_waivers=False,
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.reachability_summary is None
+    [error] = response.analyzers.errored[_REACHABILITY]
+    assert "rust" in error
