@@ -1,11 +1,9 @@
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, DEFAULT_RETENTION_DAYS, SETTINGS_MODE_PROJECT
 
 
-class SystemSettings(BaseModel):
-    id: str = Field(default="current", validation_alias="_id", serialization_alias="_id")
-
+class SystemSettingsFields(BaseModel):
     # General
     instance_name: str = "Dependency Control"
 
@@ -72,7 +70,7 @@ class SystemSettings(BaseModel):
     )
 
     # Periodic Scanning Defaults
-    rescan_mode: str = "project"  # "project" or "global"
+    rescan_mode: str = SETTINGS_MODE_PROJECT
     global_rescan_enabled: bool = False
     global_rescan_interval: int = 24  # Hours
 
@@ -80,8 +78,8 @@ class SystemSettings(BaseModel):
     default_active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
 
     # Retention
-    retention_mode: str = "project"  # "project" or "global"
-    global_retention_days: int = 90  # 0 means keep forever
+    retention_mode: str = SETTINGS_MODE_PROJECT
+    global_retention_days: int = DEFAULT_RETENTION_DAYS  # 0 means keep forever
     global_retention_action: str = "delete"  # "delete", "archive", or "none"
 
     # Crypto policy enforcement
@@ -89,11 +87,15 @@ class SystemSettings(BaseModel):
     # "global": the system policy is enforced and project overrides are ignored
     # at resolve-time and rejected on write. Existing override docs are preserved
     # so they re-apply if the mode is switched back to "project".
-    crypto_policy_mode: str = "project"
+    crypto_policy_mode: str = SETTINGS_MODE_PROJECT
 
     # Chat / AI Assistant — feature flag is deployment-time (settings.CHAT_ENABLED)
     chat_rate_limit_per_minute: int = 10
     chat_rate_limit_per_hour: int = 60
     chat_max_tool_rounds: int = 20
+
+
+class SystemSettings(SystemSettingsFields):
+    id: str = Field(default="current", validation_alias="_id", serialization_alias="_id")
 
     model_config = ConfigDict(populate_by_name=True)

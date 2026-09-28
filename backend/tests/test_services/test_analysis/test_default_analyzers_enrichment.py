@@ -16,7 +16,6 @@ from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.schemas.project import ProjectCreate
-from app.schemas.system import SystemSettingsBase
 from app.services.analysis.engine import _run_vuln_enrichments
 
 _SCAN_ID = "scan-1"
@@ -67,7 +66,6 @@ def test_a_set_without_the_enrichment_writes_nothing(monkeypatch):
     [
         Project(name="p").active_analyzers,
         SystemSettings().default_active_analyzers,
-        SystemSettingsBase().default_active_analyzers,
         ProjectCreate(name="p").active_analyzers,
     ],
 )

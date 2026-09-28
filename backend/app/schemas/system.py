@@ -1,92 +1,30 @@
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, RETENTION_ACTION_DELETE, RetentionAction
+from app.core.constants import (
+    DEFAULT_RETENTION_DAYS,
+    MAX_RETENTION_DAYS,
+    RETENTION_ACTION_DELETE,
+    SETTINGS_MODE_PROJECT,
+    RetentionAction,
+    SettingsMode,
+)
+from app.models.system import SystemSettingsFields
 
 
-class SystemSettingsBase(BaseModel):
-    instance_name: str | None = "Dependency Control"
-
-    # Limits
-    project_limit_per_user: int = 0  # 0 means unlimited
-
-    allow_public_registration: bool = False
-    enforce_2fa: bool = False
-    enforce_email_verification: bool = False
-
-    # Integrations
-    github_token: str | None = None
-
-    smtp_host: str | None = None
-    smtp_port: int = 587
-    smtp_user: str | None = None
-    smtp_password: str | None = None
-    smtp_encryption: str = "starttls"
-    emails_from_email: str | None = "info@dependencycontrol.local"
-    emails_from_name: str | None = "Dependency Control"
-
-    open_source_malware_api_key: str | None = None
-    slack_bot_token: str | None = None
-    slack_client_id: str | None = None
-    slack_client_secret: str | None = None
-    slack_oauth_scopes: str = "channels:read,chat:write,chat:write.customize,files:write"
-    slack_refresh_token: str | None = None
-    slack_token_expires_at: float | None = None
-    mattermost_bot_token: str | None = None
-    mattermost_url: str | None = None
-
-    # OIDC / SSO
-    oidc_enabled: bool = False
-    oidc_provider_name: str = "GitLab"
-    oidc_client_id: str | None = None
-    oidc_client_secret: str | None = None
-    oidc_issuer: str | None = None
-    oidc_authorization_endpoint: str | None = None
-    oidc_token_endpoint: str | None = None
-    oidc_userinfo_endpoint: str | None = None
-    oidc_scopes: str = "openid profile email"
-
-    # GitLab Integration
-    gitlab_integration_enabled: bool = False
-    gitlab_url: str = "https://gitlab.com"
-    gitlab_access_token: str | None = None
-    gitlab_auto_create_projects: bool = False
-    gitlab_sync_teams: bool = False
-    gitlab_oidc_audience: str | None = None
-
-    # Default Analyzers for auto-created projects
-    default_active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
-
-    # Retention
-    retention_mode: str = "project"
-    global_retention_days: int = 90
-    global_retention_action: str = "delete"  # "delete", "archive", or "none"
-
-    # Periodic Scanning
-    rescan_mode: str = "project"  # "project" or "global"
-    global_rescan_enabled: bool = False
-    global_rescan_interval: int = 24  # Hours
-
-    # Crypto policy enforcement: "project" (allow project overrides) or "global"
-    # (enforce system policy for every project, ignoring overrides at scan time
-    # and rejecting writes).
-    crypto_policy_mode: str = "project"
-
-    # Chat / AI Assistant — feature flag is deployment-time (settings.CHAT_ENABLED)
-    chat_rate_limit_per_minute: int = 10
-    chat_rate_limit_per_hour: int = 60
-    chat_max_tool_rounds: int = 20
-
-
-class SystemSettingsUpdate(SystemSettingsBase):
-    # Narrowed only on the way in: the response shares this base and must stay able to render a
+class SystemSettingsUpdate(SystemSettingsFields):
+    # Narrowed only on the way in: the response shares these fields and must stay able to render a
     # setting that predates this constraint.
+    retention_mode: SettingsMode = SETTINGS_MODE_PROJECT
+    global_retention_days: int = Field(DEFAULT_RETENTION_DAYS, ge=0, le=MAX_RETENTION_DAYS)
     global_retention_action: RetentionAction = RETENTION_ACTION_DELETE
+    rescan_mode: SettingsMode = SETTINGS_MODE_PROJECT
+    crypto_policy_mode: SettingsMode = SETTINGS_MODE_PROJECT
     chat_rate_limit_per_minute: int = Field(10, ge=1)
     chat_rate_limit_per_hour: int = Field(60, ge=1)
     chat_max_tool_rounds: int = Field(20, ge=1, le=50)
 
 
-class SystemSettingsResponse(SystemSettingsBase):
+class SystemSettingsResponse(SystemSettingsFields):
     """Response schema for GET/PUT /system/settings.
 
     Secret credentials are never echoed back: each is redeclared with
@@ -180,28 +118,16 @@ class AppConfig(BaseModel):
     Contains only non-sensitive data needed by various frontend components.
     """
 
-    # Feature flags
-    archive_enabled: bool = False
-
-    # Limits
-    project_limit_per_user: int = 0
-
-    # Retention settings
-    retention_mode: str = "project"
-    global_retention_days: int = 90
-    global_retention_action: str = "delete"
-
-    # Rescan settings
-    rescan_mode: str = "project"
-    global_rescan_enabled: bool = False
-    global_rescan_interval: int = 24
-
-    # Available notification channels
-    notifications: NotificationChannels = NotificationChannels()
-
+    archive_enabled: bool
+    project_limit_per_user: int
+    retention_mode: str
+    global_retention_days: int
+    global_retention_action: str
+    rescan_mode: str
+    global_rescan_enabled: bool
+    global_rescan_interval: int
+    notifications: NotificationChannels
     # Slack OAuth (non-sensitive, needed for "Add to Slack" button)
-    slack_client_id: str | None = None
-    slack_oauth_scopes: str | None = None
-
-    # Chat / AI Assistant feature flag
-    chat_enabled: bool = False
+    slack_client_id: str | None
+    slack_oauth_scopes: str | None
+    chat_enabled: bool

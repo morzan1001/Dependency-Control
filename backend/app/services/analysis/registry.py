@@ -8,6 +8,7 @@ two scans overlap.
 from collections.abc import Callable
 from functools import partial
 
+from app.core.constants import CI_SCANNER_ANALYZERS
 from app.models.finding import FindingType
 from app.services.analyzers import (
     Analyzer,
@@ -78,6 +79,12 @@ CRYPTO_ANALYZERS: set[str] = {
     "crypto_certificate_lifecycle",
     "crypto_protocol_cipher",
 }
+
+
+# Names a project may list; crypto analyzers are left out because CBOM presence decides them.
+SELECTABLE_ANALYZERS: frozenset[str] = frozenset(
+    (analyzer_factories.keys() - CRYPTO_ANALYZERS) | post_processor_factories.keys() | CI_SCANNER_ANALYZERS
+)
 
 
 def is_crypto_analyzer(name: str) -> bool:

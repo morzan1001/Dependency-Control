@@ -15,7 +15,6 @@ from app.services.analysis.types import (
     FindingDict,
     ReachabilitySummary,
     ScanDict,
-    SystemSettingsDict,
     WaiverDict,
 )
 
@@ -26,7 +25,6 @@ __all__ = [
     "FindingDict",
     "ReachabilitySummary",
     "ScanDict",
-    "SystemSettingsDict",
     "WaiverDict",
     "analyzer_factories",
     "build_epss_kev_summary",

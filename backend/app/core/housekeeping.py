@@ -27,6 +27,7 @@ from app.core.constants import (
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
     SCAN_USABLE_STATUSES,
+    SETTINGS_MODE_GLOBAL,
 )
 from app.core.init_db import SCANS_TIP_SORT
 from app.core.metrics import (
@@ -512,7 +513,7 @@ async def run_housekeeping() -> None:
         repo = SystemSettingsRepository(db)
         system_settings = await repo.get()
 
-        if system_settings.retention_mode == "global":
+        if system_settings.retention_mode == SETTINGS_MODE_GLOBAL:
             retention_days = system_settings.global_retention_days
             retention_action = system_settings.global_retention_action
 

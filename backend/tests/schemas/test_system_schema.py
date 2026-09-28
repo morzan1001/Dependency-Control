@@ -79,3 +79,49 @@ def test_response_still_exposes_non_secret_fields():
     assert dumped["slack_client_id"] == "client-123"
     assert dumped["gitlab_url"] == "https://gitlab.example.com"
     assert dumped["oidc_enabled"] is True
+
+
+def test_a_setting_the_stored_model_requires_cannot_be_written_as_null():
+    """A stored null makes every settings read raise, and login reads the settings."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas.system import SystemSettingsUpdate
+
+    for field in ("instance_name", "emails_from_email"):
+        with pytest.raises(ValidationError):
+            SystemSettingsUpdate(**{field: None})
+
+
+def test_a_nullable_setting_can_still_be_cleared():
+    from app.schemas.system import SystemSettingsUpdate
+
+    assert SystemSettingsUpdate(smtp_host=None).model_dump(exclude_unset=True) == {"smtp_host": None}
+
+
+def test_the_mode_settings_accept_only_project_or_global():
+    """Every reader compares against "global", so any other spelling silently means "project"."""
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas.system import SystemSettingsUpdate
+
+    for field in ("retention_mode", "rescan_mode", "crypto_policy_mode"):
+        for rejected in ("Global", "globl", ""):
+            with pytest.raises(ValidationError):
+                SystemSettingsUpdate(**{field: rejected})
+        for accepted in ("project", "global"):
+            assert getattr(SystemSettingsUpdate(**{field: accepted}), field) == accepted
+
+
+def test_global_retention_days_is_bounded_where_housekeeping_can_compute_a_cutoff():
+    import pytest
+    from pydantic import ValidationError
+
+    from app.schemas.system import SystemSettingsUpdate
+
+    for accepted in (0, 36500):
+        assert SystemSettingsUpdate(global_retention_days=accepted).global_retention_days == accepted
+    for rejected in (-1, 36501, 740000):
+        with pytest.raises(ValidationError):
+            SystemSettingsUpdate(global_retention_days=rejected)

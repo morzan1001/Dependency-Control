@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import SETTINGS_MODE_GLOBAL
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.crypto_policy import CryptoRule
@@ -29,7 +30,7 @@ class CryptoPolicyResolver:
             return EffectivePolicy(rules=[], system_rules=[], system_version=0, override_version=None)
 
         settings = await self._settings_repo.get()
-        override_locked = settings.crypto_policy_mode == "global"
+        override_locked = settings.crypto_policy_mode == SETTINGS_MODE_GLOBAL
 
         override = None if override_locked else await self._repo.get_project_policy(project_id)
         override_version = override.version if override else None

@@ -422,6 +422,9 @@ DEFAULT_ACTIVE_ANALYZERS: tuple[str, ...] = (
     "epss_kev",
 )
 
+# Scanners that run in the CI pipeline; the pipeline reads their switch from the project's analyzers.
+CI_SCANNER_ANALYZERS: frozenset[str] = frozenset({"trufflehog", "opengrep", "kics", "bearer"})
+
 # Analyzer batch sizes for API rate limiting
 ANALYZER_BATCH_SIZES: dict[str, int] = {
     "osv": 500,
@@ -1105,6 +1108,15 @@ RETENTION_ACTION_ARCHIVE: RetentionAction = "archive"
 RETENTION_ACTION_NONE: RetentionAction = "none"
 
 RETENTION_ACTIONS: list[str] = list(get_args(RetentionAction))
+
+DEFAULT_RETENTION_DAYS: int = 90
+# timedelta overflows near 740 000 days, and a cutoff housekeeping cannot compute stops the sweep.
+MAX_RETENTION_DAYS: int = 36500
+
+# Whether a system setting is enforced for every project or left to each project.
+SettingsMode = Literal["project", "global"]
+SETTINGS_MODE_PROJECT: SettingsMode = "project"
+SETTINGS_MODE_GLOBAL: SettingsMode = "global"
 
 # Archive bundle wire format
 ARCHIVE_BUNDLE_VERSION = 2

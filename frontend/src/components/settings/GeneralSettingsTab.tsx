@@ -106,6 +106,7 @@ export function GeneralSettingsTab({
                   id="global-retention"
                   type="number"
                   min="0"
+                  max="36500"
                   value={formData.global_retention_days ?? 90}
                   onChange={(e) => handleInputChange('global_retention_days', Number.parseInt(e.target.value) || 0)}
                 />

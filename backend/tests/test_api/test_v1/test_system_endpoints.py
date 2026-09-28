@@ -264,3 +264,28 @@ class TestGetNotificationChannels:
             )
 
         assert result == []
+
+
+class TestUpdateSettingsAnalyzerVocabulary:
+    def test_an_unknown_default_analyzer_is_refused_before_anything_is_written(self, admin_user):
+        import pytest
+        from fastapi import HTTPException
+
+        from app.api.v1.endpoints.system import update_settings
+        from app.schemas.system import SystemSettingsUpdate
+
+        mock_repo = MagicMock()
+        mock_repo.update = AsyncMock()
+
+        with patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo), pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                update_settings(
+                    settings_in=SystemSettingsUpdate(default_active_analyzers=["trivy", "Trivy"]),
+                    current_user=admin_user,
+                    db=MagicMock(),
+                )
+            )
+
+        assert exc.value.status_code == 422
+        assert "Trivy" in exc.value.detail
+        mock_repo.update.assert_not_awaited()
