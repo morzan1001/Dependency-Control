@@ -90,7 +90,8 @@ async def _assert_a_member_added_mid_sync_whom_the_group_also_holds_is_not_dupli
 
     await _sync_with_an_add_in_flight(db, TeamMember(user_id="u-ada", role="member"))
 
-    assert await _stored_members(db) == {"u-ada": {"user_id": "u-ada", "role": "admin", "source": _OWN}}
+    team = await TeamRepository(db).get_raw_by_id(_TEAM_ID)
+    assert team["members"] == [{"user_id": "u-ada", "role": "admin", "source": _OWN}]
 
 
 async def _assert_the_departed_still_go_while_the_added_stay(db) -> None:
