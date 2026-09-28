@@ -564,8 +564,6 @@ def test_a_large_valid_callgraph_prepares_to_the_pinned_result():
         extra_symbols = {"post", "get"} if module == "requests" else set()
         assert sorted(folded["import_locations"]) == sorted(every_file)
         assert set(folded["used_symbols"]) == {*_SHARED_SYMBOLS, *extra_symbols}
-    assert len(prepared.import_map) == _LARGE_CALLGRAPH_FILES
-    assert prepared.import_map["app/f1999.py"] == [f"{module}.sub1" for module in _LARGE_CALLGRAPH_MODULES]
 
 
 @pytest.mark.asyncio

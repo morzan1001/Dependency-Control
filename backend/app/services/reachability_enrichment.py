@@ -103,7 +103,6 @@ class _PreparedCallgraph:
 
     language: str
     usage_index: dict[str, Any]
-    import_map: dict[str, list[str]]
     analyzed_index: dict[str, bool]
 
 
@@ -135,7 +134,6 @@ def _prepare_callgraph(callgraph: Any) -> _PreparedCallgraph:
     return _PreparedCallgraph(
         language=language,
         usage_index=build_component_index(module_usage),
-        import_map=callgraph.import_map or {},
         analyzed_index=build_component_index(dict.fromkeys(analyzed_modules, True)),
     )
 
@@ -148,10 +146,6 @@ def _find_usage(prepared: _PreparedCallgraph, component: str) -> Any | None:
     """
     normalized = _normalize_component(component, prepared.language)
     return lookup_component(prepared.usage_index, component) or lookup_component(prepared.usage_index, normalized)
-
-
-def _find_import_locations(prepared: _PreparedCallgraph, component: str) -> list[str]:
-    return _check_package_in_imports(_normalize_component(component, prepared.language), prepared.import_map)
 
 
 def _callgraph_can_falsify(
@@ -304,8 +298,11 @@ def _enrich_single_finding(finding: dict[str, Any], prepared: _PreparedCallgraph
 
 
 def _is_package_in_callgraph(prepared: _PreparedCallgraph, component: str) -> bool:
-    """Check whether a package appears in a callgraph's module usage or imports."""
-    return bool(_find_usage(prepared, component) or _find_import_locations(prepared, component))
+    """Whether the callgraph records usage of the package under its canonical module key.
+
+    Keys are whole packages, so a key merely starting with the package name is a different package.
+    """
+    return _find_usage(prepared, component) is not None
 
 
 def _unknown_verdict(
@@ -463,8 +460,8 @@ def _analyze_reachability(
     Callers establish presence with :func:`_is_package_in_callgraph` first, so the
     package is known to be imported here.
     """
-    usage = _find_usage(prepared, component)
-    locations = usage.get("import_locations") or [] if usage else _find_import_locations(prepared, component)
+    usage = _find_usage(prepared, component) or {}
+    locations = usage.get("import_locations") or []
     import_count = len(locations)
 
     result: ReachabilityResult = {
@@ -486,7 +483,7 @@ def _analyze_reachability(
     # get_symbols_for_finding unions across vulnerabilities through a set, so impose an order
     # before any sample is taken from it.
     vulnerable_symbols = sorted(extracted.symbols)
-    used_symbols = usage.get("used_symbols", []) if usage else []
+    used_symbols = usage.get("used_symbols", [])
     matched_symbols = _match_symbols(vulnerable_symbols, used_symbols)
 
     if matched_symbols:
@@ -528,33 +525,6 @@ def _normalize_component(component: str, language: str) -> str:
         component = component.rsplit("@", 1)[0]
 
     return canonical_module_key(component, language)
-
-
-def _check_package_in_imports(package: str, import_map: dict[str, list[str]]) -> list[str]:
-    """
-    Check if a package appears anywhere in the import map.
-    Returns list of files that import it.
-    """
-    files_importing = []
-    package_lower = package.lower()
-
-    for file_path, imports in import_map.items():
-        for imp in imports:
-            imp_lower = imp.lower()
-
-            # Direct match
-            if package_lower == imp_lower:
-                files_importing.append(file_path)
-                break
-
-            # Boundary-anchored subpath/submodule match only: a bare substring test
-            # spuriously matches unrelated packages (npm "ms" -> "forms"), inflating
-            # reachability. Require a real path ("/") or module (".") boundary.
-            if imp_lower.startswith((package_lower + "/", package_lower + ".")):
-                files_importing.append(file_path)
-                break
-
-    return files_importing
 
 
 def _match_symbols(vulnerable_symbols: list[str], used_symbols: list[str]) -> list[str]:

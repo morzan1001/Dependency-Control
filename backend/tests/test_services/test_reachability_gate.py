@@ -16,11 +16,7 @@ _BASE_RISK = 80.0
 
 
 def _prepared(language="python", module_usage=None, analyzed_modules=None):
-    """A prepared callgraph built through the same projection production reads.
-
-    ``import_map`` is derived from ``module_usage``; hand-seeding it would test a
-    field the minimal projection never loads.
-    """
+    """A prepared callgraph built through the same projection production reads."""
     return _prepare_callgraph(
         CallgraphMinimal(
             _id="cg-1",

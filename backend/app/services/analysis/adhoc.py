@@ -742,7 +742,6 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
         raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
 
     imports, _calls, module_usage, analyzed_modules = parser(data, language)
-    # The model derives ``import_map`` from ``module_usage``, which is what the enrichment reads.
     minimal = CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,
         module_usage={key: usage.model_dump() for key, usage in module_usage.items()},

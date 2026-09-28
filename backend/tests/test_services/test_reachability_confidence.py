@@ -2,12 +2,12 @@
 
 import pytest
 
+from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABILITY_LEVEL_IMPORT
 from app.schemas.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
     _calculate_confidence,
-    _check_package_in_imports,
     _enrich_finding_from_callgraphs,
     _enrich_single_finding,
     _match_symbols,
@@ -87,32 +87,41 @@ class TestPendingSummaryTiers:
         assert "is_high_confidence" in summary["reachable_vulnerabilities"][0]
 
 
-class TestCheckPackageInImports:
-    """Import matching must be boundary-anchored; a bare substring test spuriously marks unrelated packages as imported."""
+class TestImportMatchingUsesWholePackageKeys:
+    """Stored module keys are whole packages, so a key that only starts with the package name is another package."""
 
-    def test_exact_match(self):
-        assert _check_package_in_imports("lodash", {"a.js": ["lodash"]}) == ["a.js"]
+    @pytest.mark.parametrize(
+        ("component", "imported", "language"),
+        [
+            pytest.param("lodash", "lodash.debounce", "javascript", id="npm_dotted_sibling"),
+            pytest.param("underscore", "underscore.string", "javascript", id="npm_dotted_sibling_2"),
+            pytest.param("github.com/golang-jwt/jwt", "github.com/golang-jwt/jwt/v4", "go", id="go_major_version"),
+            pytest.param("cloud.google.com/go", "cloud.google.com/go/storage", "go", id="go_nested_module"),
+        ],
+    )
+    def test_a_sibling_package_import_leaves_the_package_unreachable(self, component, imported, language):
+        finding = _vuln_finding(component=component)
+        prepared = _prepared(_usage(imported, "a.src"), language=language, analyzed_modules=[component, imported])
 
-    def test_subpath_match(self):
-        # npm subpath import: "lodash/merge" belongs to package "lodash".
-        assert _check_package_in_imports("lodash", {"a.js": ["lodash/merge"]}) == ["a.js"]
+        _enrich_finding_from_callgraphs(finding, [prepared], {component: frozenset({language})})
 
-    def test_python_submodule_match(self):
-        # `from requests.sessions import Session` -> import "requests.sessions".
-        assert _check_package_in_imports("requests", {"a.py": ["requests.sessions"]}) == ["a.py"]
+        assert finding["details"]["reachability"]["is_reachable"] is False
 
-    def test_substring_does_not_match_npm(self):
-        # "ms" must NOT match "forms" or a submodule of another scope.
-        assert _check_package_in_imports("ms", {"a.js": ["forms"]}) == []
-        assert _check_package_in_imports("ms", {"a.js": ["aws-sdk/clients/sms"]}) == []
+    @pytest.mark.parametrize(
+        ("component", "imported", "language"),
+        [
+            pytest.param("lodash", "lodash/merge", "javascript", id="npm_subpath"),
+            pytest.param("requests", "requests.sessions", "python", id="python_submodule"),
+        ],
+    )
+    def test_a_subpath_import_counts_for_its_package(self, component, imported, language):
+        _, _, module_usage, _ = parse_generic_format({"imports": [{"module": imported, "file": "a.src"}]}, language)
+        prepared = _prepared({key: usage.model_dump() for key, usage in module_usage.items()}, language=language)
+        finding = _vuln_finding(component=component)
 
-    def test_substring_does_not_match_python(self):
-        # "requests" must NOT match the unrelated "requests_oauthlib".
-        assert _check_package_in_imports("requests", {"a.py": ["requests_oauthlib"]}) == []
+        _enrich_finding_from_callgraphs(finding, [prepared])
 
-    def test_prefix_substring_does_not_match(self):
-        # "form" is a prefix of "forms" but not a boundary match.
-        assert _check_package_in_imports("form", {"a.js": ["forms"]}) == []
+        assert finding["details"]["reachability"]["import_locations"] == ["a.src"]
 
 
 class TestEcosystemFromDependencyMap:
@@ -195,7 +204,7 @@ class TestMatchSymbols:
 
 
 def _prepared(module_usage=None, language="python", analyzed_modules=None):
-    """Prepared callgraph built through the projection production reads; ``import_map`` is derived."""
+    """Prepared callgraph built through the projection production reads."""
     return _prepare_callgraph(
         CallgraphMinimal(
             _id="cg-1",

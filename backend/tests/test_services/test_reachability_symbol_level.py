@@ -9,7 +9,6 @@ from app.services.reachability_enrichment import _analyze_reachability, _prepare
 class _FakeCallgraph:
     def __init__(self, module_usage, language):
         self.module_usage = module_usage
-        self.import_map = {}
         self.language = language
         self.analyzed_modules = list(module_usage)
 
