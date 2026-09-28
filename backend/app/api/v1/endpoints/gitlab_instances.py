@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Query, status
 
 from app.api import deps
 from app.api.deps import DatabaseDep
@@ -62,8 +62,8 @@ def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
 async def list_instances(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-    page: int = 1,
-    size: int = 100,
+    page: Annotated[int, Query(ge=1)] = 1,
+    size: Annotated[int, Query(ge=1, le=100)] = 100,
     active_only: bool = False,
 ) -> dict[str, Any]:
     """List all GitLab instances."""

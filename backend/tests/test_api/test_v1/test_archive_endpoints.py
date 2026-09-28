@@ -535,8 +535,7 @@ class TestPinScan:
         from app.api.v1.endpoints.archives import pin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1", "project_id": "proj-1"})
-        mock_db.scans.update_one = AsyncMock()
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -552,13 +551,15 @@ class TestPinScan:
 
         assert result.scan_id == "scan-1"
         assert result.pinned is True
-        mock_db.scans.update_one.assert_called_once_with({"_id": "scan-1"}, {"$set": {"pinned": True}})
+        mock_db.scans.update_one.assert_called_once_with(
+            {"_id": "scan-1", "project_id": "proj-1"}, {"$set": {"pinned": True}}
+        )
 
     def test_raises_404_when_scan_not_found(self, admin_user):
         from app.api.v1.endpoints.archives import pin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value=None)
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=0))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -614,8 +615,7 @@ class TestUnpinScan:
         from app.api.v1.endpoints.archives import unpin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1", "project_id": "proj-1"})
-        mock_db.scans.update_one = AsyncMock()
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -631,13 +631,15 @@ class TestUnpinScan:
 
         assert result.scan_id == "scan-1"
         assert result.pinned is False
-        mock_db.scans.update_one.assert_called_once_with({"_id": "scan-1"}, {"$set": {"pinned": False}})
+        mock_db.scans.update_one.assert_called_once_with(
+            {"_id": "scan-1", "project_id": "proj-1"}, {"$set": {"pinned": False}}
+        )
 
     def test_raises_404_when_scan_not_found(self, admin_user):
         from app.api.v1.endpoints.archives import unpin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value=None)
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=0))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -673,19 +675,9 @@ class TestListAllArchives:
         mock_repo.count_all = AsyncMock(return_value=2)
         mock_repo.find_all = AsyncMock(return_value=archives)
 
-        mock_db = MagicMock()
-        project_docs = [
-            {"_id": "proj-1", "name": "Project Alpha"},
-            {"_id": "proj-2", "name": "Project Beta"},
-        ]
-
-        async def async_iter():
-            for doc in project_docs:
-                yield doc
-
-        mock_cursor = MagicMock()
-        mock_cursor.__aiter__ = lambda self: async_iter()
-        mock_db.projects.find = MagicMock(return_value=mock_cursor)
+        db = FakeDatabase()
+        asyncio.run(db.projects.insert_one({"_id": "proj-1", "name": "Project Alpha"}))
+        asyncio.run(db.projects.insert_one({"_id": "proj-2", "name": "Project Beta"}))
 
         with (
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
@@ -694,7 +686,7 @@ class TestListAllArchives:
             result = asyncio.run(
                 list_all_archives(
                     current_user=admin_user,
-                    db=mock_db,
+                    db=db,
                     page=1,
                     size=20,
                 )
@@ -979,8 +971,7 @@ class TestPinEmitsAuditLog:
         from app.api.v1.endpoints.archives import pin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1", "project_id": "proj-1"})
-        mock_db.scans.update_one = AsyncMock()
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),

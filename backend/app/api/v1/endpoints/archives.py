@@ -1,7 +1,6 @@
 """Endpoints for listing, downloading, restoring, and managing archived scan data."""
 
 import logging
-import math
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime
@@ -9,9 +8,11 @@ from typing import Annotated
 
 from fastapi import HTTPException, Query
 from fastapi.responses import StreamingResponse
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
 from app.core.constants import PROJECT_ROLE_ADMIN
@@ -24,7 +25,9 @@ from app.core.metrics import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.core.s3 import is_archive_enabled
+from app.models.user import User
 from app.repositories.archive_metadata import ArchiveMetadataRepository
+from app.repositories.projects import ProjectRepository
 from app.schemas.archive import (
     AdminArchiveListItem,
     AdminArchiveListResponse,
@@ -88,31 +91,8 @@ async def list_archives(
         date_to=date_to,
     )
 
-    items = [
-        ArchiveListItem(
-            id=a.id,
-            scan_id=a.scan_id,
-            branch=a.branch,
-            commit_hash=a.commit_hash,
-            scan_created_at=a.scan_created_at,
-            archived_at=a.archived_at,
-            compressed_size_bytes=a.compressed_size_bytes,
-            findings_count=a.findings_count,
-            critical_findings_count=a.critical_findings_count,
-            high_findings_count=a.high_findings_count,
-            dependencies_count=a.dependencies_count,
-            sbom_filenames=a.sbom_filenames,
-        )
-        for a in archives
-    ]
-
-    return ArchiveListResponse(
-        items=items,
-        total=total,
-        page=page,
-        size=size,
-        pages=max(1, math.ceil(total / size)) if total > 0 else 1,
-    )
+    items = [ArchiveListItem.model_validate(a, from_attributes=True) for a in archives]
+    return ArchiveListResponse(items=items, **page_meta(total, skip, size))
 
 
 @router.get(
@@ -170,7 +150,7 @@ async def restore_archive(
     logger.info(
         "archive.restore",
         extra={
-            "user_id": getattr(current_user, "id", None),
+            "user_id": current_user.id,
             "scan_id": scan_id,
             "project_id": project_id,
             "collections_restored": result.collections_restored,
@@ -203,7 +183,7 @@ async def download_archive(
     logger.info(
         "archive.download.initiated",
         extra={
-            "user_id": getattr(current_user, "id", None),
+            "user_id": current_user.id,
             "scan_id": scan_id,
             "project_id": project_id,
             "s3_key": metadata.s3_key,
@@ -242,6 +222,22 @@ async def download_archive(
     )
 
 
+async def _set_pinned(
+    project_id: str, scan_id: str, current_user: User, db: AsyncIOMotorDatabase, pinned: bool
+) -> ScanPinResponse:
+    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_RESTORE)
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
+
+    result = await db.scans.update_one({"_id": scan_id, "project_id": project_id}, {"$set": {"pinned": pinned}})
+    if not result.matched_count:
+        raise HTTPException(status_code=404, detail="Scan not found")
+    logger.info(
+        "archive.pin" if pinned else "archive.unpin",
+        extra={"user_id": current_user.id, "scan_id": scan_id, "project_id": project_id},
+    )
+    return ScanPinResponse(scan_id=scan_id, pinned=pinned)
+
+
 @router.post(
     "/{project_id}/scans/{scan_id}/pin",
     summary="Pin a scan to prevent archival by housekeeping",
@@ -254,23 +250,7 @@ async def pin_scan(
     db: DatabaseDep,
 ) -> ScanPinResponse:
     """Pin a scan so housekeeping will not archive or delete it. Requires archive:restore + project admin."""
-    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_RESTORE)
-    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
-
-    scan = await db.scans.find_one({"_id": scan_id, "project_id": project_id})
-    if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
-
-    await db.scans.update_one({"_id": scan_id}, {"$set": {"pinned": True}})
-    logger.info(
-        "archive.pin",
-        extra={
-            "user_id": getattr(current_user, "id", None),
-            "scan_id": scan_id,
-            "project_id": project_id,
-        },
-    )
-    return ScanPinResponse(scan_id=scan_id, pinned=True)
+    return await _set_pinned(project_id, scan_id, current_user, db, pinned=True)
 
 
 @router.post(
@@ -285,23 +265,7 @@ async def unpin_scan(
     db: DatabaseDep,
 ) -> ScanPinResponse:
     """Unpin a scan so housekeeping can archive or delete it again. Requires archive:restore + project admin."""
-    _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_RESTORE)
-    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
-
-    scan = await db.scans.find_one({"_id": scan_id, "project_id": project_id})
-    if not scan:
-        raise HTTPException(status_code=404, detail="Scan not found")
-
-    await db.scans.update_one({"_id": scan_id}, {"$set": {"pinned": False}})
-    logger.info(
-        "archive.unpin",
-        extra={
-            "user_id": getattr(current_user, "id", None),
-            "scan_id": scan_id,
-            "project_id": project_id,
-        },
-    )
-    return ScanPinResponse(scan_id=scan_id, pinned=False)
+    return await _set_pinned(project_id, scan_id, current_user, db, pinned=False)
 
 
 @admin_router.get(
@@ -341,37 +305,11 @@ async def list_all_archives(
         project_id=project_id,
     )
 
-    unique_project_ids = list({a.project_id for a in archives})
-    project_names: dict = {}
-    if unique_project_ids:
-        cursor = db.projects.find({"_id": {"$in": unique_project_ids}}, {"_id": 1, "name": 1})
-        async for doc in cursor:
-            project_names[doc["_id"]] = doc.get("name", doc["_id"])
-
+    project_names = await ProjectRepository(db).names_by_ids(a.project_id for a in archives)
     items = [
-        AdminArchiveListItem(
-            id=a.id,
-            scan_id=a.scan_id,
-            project_id=a.project_id,
-            project_name=project_names.get(a.project_id),
-            branch=a.branch,
-            commit_hash=a.commit_hash,
-            scan_created_at=a.scan_created_at,
-            archived_at=a.archived_at,
-            compressed_size_bytes=a.compressed_size_bytes,
-            findings_count=a.findings_count,
-            critical_findings_count=a.critical_findings_count,
-            high_findings_count=a.high_findings_count,
-            dependencies_count=a.dependencies_count,
-            sbom_filenames=a.sbom_filenames,
+        AdminArchiveListItem.model_validate(a, from_attributes=True).model_copy(
+            update={"project_name": project_names.get(a.project_id)}
         )
         for a in archives
     ]
-
-    return AdminArchiveListResponse(
-        items=items,
-        total=total,
-        page=page,
-        size=size,
-        pages=max(1, math.ceil(total / size)) if total > 0 else 1,
-    )
+    return AdminArchiveListResponse(items=items, **page_meta(total, skip, size))

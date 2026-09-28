@@ -14,6 +14,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
     scope_resolution_counts,
 )
+from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
@@ -123,7 +124,7 @@ async def search_dependencies_advanced(
 
     if not accessible_project_ids:
         return DependencySearchResponse(
-            items=[], total=0, page=0, size=limit, resolved_projects=0, projects_without_release=0
+            items=[], **page_meta(0, skip, limit), resolved_projects=0, projects_without_release=0
         )
 
     dep_repo = DependencyRepository(db)
@@ -137,9 +138,7 @@ async def search_dependencies_advanced(
     if not scan_ids:
         return DependencySearchResponse(
             items=[],
-            total=0,
-            page=0,
-            size=limit,
+            **page_meta(0, skip, limit),
             resolved_projects=resolved_projects,
             projects_without_release=projects_without_release,
         )
@@ -200,9 +199,7 @@ async def search_dependencies_advanced(
 
     return DependencySearchResponse(
         items=results,
-        total=total_count,
-        page=(skip // limit) + 1 if limit > 0 else 1,
-        size=limit,
+        **page_meta(total_count, skip, limit),
         resolved_projects=resolved_projects,
         projects_without_release=projects_without_release,
     )
@@ -437,7 +434,7 @@ async def search_vulnerabilities(
 
     if not accessible_project_ids:
         return VulnerabilitySearchResponse(
-            items=[], total=0, page=0, size=limit, resolved_projects=0, projects_without_release=0
+            items=[], **page_meta(0, skip, limit), resolved_projects=0, projects_without_release=0
         )
 
     finding_repo = FindingRepository(db)
@@ -450,9 +447,7 @@ async def search_vulnerabilities(
     if not scan_ids:
         return VulnerabilitySearchResponse(
             items=[],
-            total=0,
-            page=0,
-            size=limit,
+            **page_meta(0, skip, limit),
             resolved_projects=resolved_projects,
             projects_without_release=projects_without_release,
         )
@@ -486,9 +481,7 @@ async def search_vulnerabilities(
 
     return VulnerabilitySearchResponse(
         items=results,
-        total=total_count,
-        page=(skip // limit) + 1 if limit > 0 else 1,
-        size=limit,
+        **page_meta(total_count, skip, limit),
         resolved_projects=resolved_projects,
         projects_without_release=projects_without_release,
     )

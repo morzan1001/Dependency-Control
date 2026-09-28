@@ -1,5 +1,6 @@
 """Repository for projects."""
 
+from collections.abc import Iterable
 from typing import Any
 
 from pymongo import ReturnDocument
@@ -300,6 +301,11 @@ class ProjectRepository(BaseRepository[Project]):
         cursor = self.collection.find(query, {"_id": 1, "name": 1}).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectMinimal(**doc) for doc in docs]
+
+    async def names_by_ids(self, project_ids: Iterable[str | None]) -> dict[str, str]:
+        """Only projects that exist; each caller names a missing one its own way."""
+        wanted = list({project_id for project_id in project_ids if project_id})
+        return {p.id: p.name for p in await self.find_many_minimal({"_id": {"$in": wanted}}, limit=len(wanted))}
 
     async def update_fields_and_owners(
         self,

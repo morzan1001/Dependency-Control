@@ -266,3 +266,21 @@ class TestReadUsersPaginationBounds:
 
     def test_skip_cannot_go_negative(self, endpoint):
         assert _bound(endpoint, "skip", "ge") == 0
+
+
+@pytest.mark.parametrize("module", ["gitlab_instances", "github_instances"])
+class TestVcsInstanceListPaginationBounds:
+    @pytest.fixture
+    def endpoint(self, module):
+        import importlib
+
+        return importlib.import_module(f"app.api.v1.endpoints.{module}").list_instances
+
+    def test_page_starts_at_one(self, endpoint):
+        assert _bound(endpoint, "page", "ge") == 1
+
+    def test_a_zero_size_is_refused(self, endpoint):
+        assert _bound(endpoint, "size", "ge") == 1
+
+    def test_size_has_le_cap(self, endpoint):
+        assert _bound(endpoint, "size", "le") == 100

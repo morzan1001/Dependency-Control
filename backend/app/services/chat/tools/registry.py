@@ -28,6 +28,7 @@ from app.models.finding import FindingType, Severity
 from app.models.project import Project
 from app.models.user import User
 from app.models.waiver import is_waiver_active
+from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
@@ -523,7 +524,7 @@ class ChatToolRegistry:
         limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
         cursor = ctx.db["findings"].find(query, limit=limit)
         findings = await cursor.to_list(length=limit)
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in findings}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in findings)
         out = []
         for f in findings:
             slim = _serialize_finding_for_llm(f)
@@ -571,7 +572,7 @@ class ChatToolRegistry:
         ]
         sev_results = await ctx.db["findings"].aggregate(sev_pipeline).to_list(length=_SEVERITY_BUCKETS)
         ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:_TOP_RISKY]
-        project_names_map = await self._project_names(ctx.db, ranked)
+        project_names_map = await ProjectRepository(ctx.db).names_by_ids(ranked)
         top3 = [
             {
                 "project_id": pid,
@@ -638,7 +639,7 @@ class ChatToolRegistry:
         head = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
         stats_by_project = await self._head_scan_stats(ctx.db, head)
         ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:limit]
-        names = await self._project_names(ctx.db, ranked)
+        names = await ProjectRepository(ctx.db).names_by_ids(ranked)
         hotspots = [
             {
                 "project_id": pid,
@@ -786,11 +787,7 @@ class ChatToolRegistry:
         match.setdefault("severity", {"$in": ["CRITICAL", "HIGH"]})
         findings, ranking_note = await _ranked_findings(ctx.db, match, limit)
 
-        project_ids_hit = list({f.get("project_id") for f in findings if f.get("project_id")})
-        project_names: dict[str, str] = {}
-        if project_ids_hit:
-            async for p in ctx.db["projects"].find({"_id": {"$in": project_ids_hit}}, {"name": 1}):
-                project_names[p["_id"]] = p.get("name", "")
+        project_names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in findings)
 
         trimmed = []
         for f in findings:
@@ -989,7 +986,7 @@ class ChatToolRegistry:
             },
             limit,
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in rows}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in rows)
         out = []
         for f in rows:
             slim = _serialize_finding_for_llm(f)
@@ -1101,7 +1098,7 @@ class ChatToolRegistry:
             },
             limit,
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in rows}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in rows)
         out = []
         for f in rows:
             slim = _serialize_finding_for_llm(f)
@@ -1145,7 +1142,7 @@ class ChatToolRegistry:
                 "license": 1,
             },
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(r) for r in rows}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(r) for r in rows)
         matches = [
             {
                 "project_id": r.get("project_id"),
@@ -1175,7 +1172,7 @@ class ChatToolRegistry:
             subject=f"findings naming {cve}",
             limit=_CVE_OCCURRENCE_READ,
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in rows}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in rows)
         by_project: dict[str, dict[str, Any]] = {}
         for f in rows:
             pid = _row_project_id(f)
@@ -1264,7 +1261,7 @@ class ChatToolRegistry:
             limit,
             keep=lambda f: any((_row_project_id(f), identity) in old_keys for identity in staleness_identities(f)),
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in stale}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in stale)
         out = []
         for f in stale:
             slim = _serialize_finding_for_llm(f)
@@ -1291,7 +1288,7 @@ class ChatToolRegistry:
             {"scan_id": {"$in": list(latest.values())}, "type": "license"},
             limit,
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in rows}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in rows)
         out = []
         for f in rows:
             slim = _serialize_finding_for_llm(f)
@@ -1325,7 +1322,7 @@ class ChatToolRegistry:
             limit=_EXPIRING_WAIVER_READ,
             sort=[("expiration_date", 1)],
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(r) for r in rows}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(r) for r in rows)
         out = []
         for w in rows:
             expires = w.get("expiration_date")
@@ -1859,13 +1856,3 @@ class ChatToolRegistry:
             return {}
 
         return await resolve_scan_ids(db, project_ids)
-
-    @staticmethod
-    async def _project_names(db: AsyncIOMotorDatabase, project_ids: list[str]) -> dict[str, str]:
-        cleaned = [pid for pid in project_ids if pid]
-        if not cleaned:
-            return {}
-        names: dict[str, str] = {}
-        async for p in db["projects"].find({"_id": {"$in": cleaned}}, {"name": 1}):
-            names[p["_id"]] = p.get("name", "")
-        return names

@@ -26,13 +26,8 @@ class TestBuildPaginationResponse:
     def test_empty_results(self):
         result = build_pagination_response([], total=0, skip=0, limit=10)
         assert result["page"] == 1
-        assert result["pages"] == 0
+        assert result["pages"] == 1
         assert result["items"] == []
-
-    def test_limit_zero_safe(self):
-        result = build_pagination_response([], total=10, skip=0, limit=0)
-        assert result["page"] == 1
-        assert result["pages"] == 0
 
     def test_items_preserved(self):
         items = [{"id": 1}, {"id": 2}]
