@@ -416,3 +416,28 @@ async def test_a_rescan_of_a_source_without_sboms_is_refused(client, db, editor_
 
     assert resp.status_code == 400, resp.text
     assert resp.json()["detail"] == _MSG_NO_SBOMS
+
+
+@pytest.mark.asyncio
+async def test_a_manual_rescan_restarts_the_schedule_clock_of_the_original(client, db, editor_headers):
+    await _seed(db)
+
+    resp = await _rescan(client, editor_headers)
+
+    assert resp.status_code == 200, resp.text
+    original = await db.scans.find_one({"_id": _RELEASE_SCAN})
+    assert original["last_rescanned_at"].replace(tzinfo=timezone.utc) > _NOW
+    assert original["latest_rescan_id"] == resp.json()["id"]
+    assert original["latest_run"]["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_manual_rescan_while_one_is_pending_returns_that_one(client, db, editor_headers):
+    await _seed(db)
+    first = await _rescan(client, editor_headers)
+
+    second = await _rescan(client, editor_headers)
+
+    assert second.status_code == 200, second.text
+    assert second.json()["id"] == first.json()["id"]
+    assert await db.scans.count_documents({"original_scan_id": _RELEASE_SCAN}) == 1

@@ -17,8 +17,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
-from app.models.release import Release
-from app.repositories import DependencyRepository, DistributedLocksRepository, ReleaseRepository
+from app.repositories import DependencyRepository, DistributedLocksRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,
@@ -56,11 +55,11 @@ async def ingest_trufflehog(
 ) -> SecretScanResponse:
     """Ingest TruffleHog secret scan results; returns findings summary and pipeline failure status."""
     manager = ScanManager(db, project)
-    ctx = await manager.find_or_create_scan(data)
+    scan_id = await manager.find_or_create_scan(data)
 
     result_dict = {"findings": [f.model_dump() for f in data.findings]}
 
-    response = await process_findings_ingest(manager, "trufflehog", result_dict, ctx.scan_id)
+    response = await process_findings_ingest(manager, "trufflehog", result_dict, scan_id)
 
     # Any secret found fails the pipeline.
     failed = response["findings_count"] > 0
@@ -87,11 +86,11 @@ async def ingest_opengrep(
 ) -> FindingsIngestResponse:
     """Ingest OpenGrep SAST scan results; returns a findings summary."""
     manager = ScanManager(db, project)
-    ctx = await manager.find_or_create_scan(data)
+    scan_id = await manager.find_or_create_scan(data)
 
     result_dict = {"findings": [f.model_dump() for f in data.findings]}
 
-    response = await process_findings_ingest(manager, "opengrep", result_dict, ctx.scan_id)
+    response = await process_findings_ingest(manager, "opengrep", result_dict, scan_id)
     return FindingsIngestResponse(**response)
 
 
@@ -108,12 +107,12 @@ async def ingest_kics(
 ) -> FindingsIngestResponse:
     """Ingest KICS IaC scan results."""
     manager = ScanManager(db, project)
-    ctx = await manager.find_or_create_scan(data)
+    scan_id = await manager.find_or_create_scan(data)
 
     # KICS uses the full model
     result_dict = data.model_dump()
 
-    response = await process_findings_ingest(manager, "kics", result_dict, ctx.scan_id)
+    response = await process_findings_ingest(manager, "kics", result_dict, scan_id)
     return FindingsIngestResponse(**response)
 
 
@@ -130,24 +129,13 @@ async def ingest_bearer(
 ) -> FindingsIngestResponse:
     """Ingest Bearer SAST/Data Security scan results."""
     manager = ScanManager(db, project)
-    ctx = await manager.find_or_create_scan(data)
+    scan_id = await manager.find_or_create_scan(data)
 
     # Bearer uses the full model
     result_dict = data.model_dump()
 
-    response = await process_findings_ingest(manager, "bearer", result_dict, ctx.scan_id)
+    response = await process_findings_ingest(manager, "bearer", result_dict, scan_id)
     return FindingsIngestResponse(**response)
-
-
-def _generate_scan_id(project_id: str, pipeline_id: int | str | None, commit_hash: str | None) -> str:
-    """Generate a deterministic or random scan ID based on available pipeline context."""
-    if pipeline_id and commit_hash:
-        scan_id_seed = f"{project_id}-{pipeline_id}-{commit_hash}"
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-    if pipeline_id:
-        scan_id_seed = f"{project_id}-{pipeline_id}"
-        return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-    return str(uuid.uuid4())
 
 
 async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_id: str) -> dict[str, Any]:
@@ -259,8 +247,7 @@ async def ingest_sbom(
     if not data.sboms:
         raise HTTPException(status_code=400, detail="No SBOM provided")
 
-    pipeline_url = manager.build_pipeline_url(data)
-    scan_id = _generate_scan_id(str(project.id), data.pipeline_id, data.commit_hash)
+    scan_id = manager.run_scan_id(data)
 
     # Serialise concurrent ingests of the same scan_id (CI retries) best-effort.
     lock_repo = DistributedLocksRepository(db)
@@ -297,39 +284,7 @@ async def ingest_sbom(
         if total_deps_inserted:
             logger.info(f"Inserted {total_deps_inserted} dependencies for scan {scan_id}")
 
-        now = datetime.now(timezone.utc)
-
-        scan_update: dict[str, Any] = {
-            "$set": {
-                "branch": data.branch or "unknown",
-                "commit_hash": data.commit_hash,
-                "project_url": data.project_url,
-                "pipeline_url": pipeline_url,
-                "job_id": data.job_id,
-                "job_started_at": data.job_started_at,
-                "project_name": data.project_name,
-                "commit_message": data.commit_message,
-                "commit_tag": data.commit_tag,
-                "pipeline_user": data.pipeline_user,
-                "updated_at": now,
-            },
-            "$setOnInsert": {
-                "_id": scan_id,
-                "project_id": str(project.id),
-                "pipeline_id": data.pipeline_id,
-                "pipeline_iid": data.pipeline_iid,
-                "status": "pending",
-                "created_at": now,
-            },
-        }
-
-        release = data.release_fields(now)
-        if release:
-            # The row before the flag: the backfill sweeps the release rows and repairs a missing
-            # flag, while a flag whose row is missing shows a release that is not there.
-            release_repo = ReleaseRepository(db)
-            await release_repo.record(Release(project_id=str(project.id), scan_id=scan_id, **release))
-            scan_update["$set"]["is_release"] = True
+        scan_update = await manager.scan_upsert(data, scan_id, datetime.now(timezone.utc))
 
         # Replace (never append) so a CI retry cannot pile up duplicate SBOMs that get
         # stored and re-analysed forever; superseded GridFS uploads are deleted below.

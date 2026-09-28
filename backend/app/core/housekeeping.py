@@ -25,8 +25,6 @@ from app.core.constants import (
     RETENTION_ACTION_NONE,
     RETENTION_ACTIONS,
     RETENTION_PROTECTED_FLAG_VALUES,
-    SCAN_STATUS_PENDING,
-    SCAN_STATUS_PROCESSING,
     SCAN_USABLE_STATUSES,
 )
 from app.core.init_db import SCANS_TIP_SORT
@@ -38,7 +36,7 @@ from app.core.metrics import (
 )
 from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
-from app.models.project import Project, Scan
+from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
@@ -151,30 +149,6 @@ def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
     return datetime.now(timezone.utc) >= next_rescan_due
 
 
-def _build_rescan(project: Project, source_scan: dict) -> Scan:
-    return Scan(
-        project_id=project.id,
-        branch=source_scan.get("branch", "unknown"),
-        commit_hash=source_scan.get("commit_hash"),
-        pipeline_id=None,
-        pipeline_iid=source_scan.get("pipeline_iid"),
-        project_url=source_scan.get("project_url"),
-        pipeline_url=source_scan.get("pipeline_url"),
-        job_id=source_scan.get("job_id"),
-        job_started_at=source_scan.get("job_started_at"),
-        project_name=source_scan.get("project_name"),
-        commit_message=source_scan.get("commit_message"),
-        commit_tag=source_scan.get("commit_tag"),
-        sbom_refs=source_scan.get("sbom_refs", []),
-        # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
-        scan_type=source_scan.get("scan_type"),
-        status="pending",
-        created_at=datetime.now(timezone.utc),
-        is_rescan=True,
-        original_scan_id=str(source_scan["_id"]),
-    )
-
-
 async def _create_rescan_for_project(
     project: Project, source_scan: dict, db: Any, worker_manager: "WorkerManager"
 ) -> None:
@@ -182,6 +156,7 @@ async def _create_rescan_for_project(
     import os
 
     from app.repositories import DistributedLocksRepository
+    from app.services.scan_manager import queue_rescan  # scan_manager imports the worker, which imports this module
 
     source_scan_id = str(source_scan["_id"])
     lock_repo = DistributedLocksRepository(db)
@@ -193,33 +168,8 @@ async def _create_rescan_for_project(
         return
 
     try:
-        # TOCTOU re-check inside lock — strong read. Scoped to this source so unrelated CI
-        # traffic on the project cannot cancel a rescan that is genuinely due.
-        scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-        active_rescan = await scans_primary.find_one(
-            {
-                "project_id": project.id,
-                "original_scan_id": source_scan_id,
-                "status": {"$in": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
-            }
-        )
-        if active_rescan:
-            logger.debug(f"Project {project.name} already has an active rescan of {source_scan_id}")
-            return
-
-        logger.info(
-            f"Triggering re-scan for project {project.name} from source scan {source_scan_id} "
-            f"(rescan clock: {_rescan_clock(source_scan)})"
-        )
-        new_scan = _build_rescan(project, source_scan)
-
-        await db.scans.insert_one(new_scan.model_dump(by_alias=True))
-        await db.scans.update_one(
-            {"_id": source_scan_id},
-            {"$set": {"latest_rescan_id": new_scan.id, "last_rescanned_at": datetime.now(timezone.utc)}},
-        )
-        await worker_manager.add_job(new_scan.id)
-        logger.info(f"Rescan {new_scan.id} created for project {project.name}")
+        rescan = await queue_rescan(db, source_scan, project.id, worker_manager)
+        logger.info(f"Rescan {rescan.id} of {source_scan_id} is queued for project {project.name}")
     finally:
         await lock_repo.release_lock(lock_name, holder_id)
 

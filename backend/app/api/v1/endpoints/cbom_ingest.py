@@ -125,8 +125,7 @@ async def ingest_cbom(
 
     # Route through ScanManager so the scan lifecycle matches other ingest paths.
     manager = ScanManager(db, project)
-    scan_ctx = await manager.find_or_create_scan(payload)
-    scan_id = scan_ctx.scan_id
+    scan_id = await manager.find_or_create_scan(payload)
 
     # Tag as CBOM so the analysis engine forces crypto analyzers even without an SBOM.
     from app.repositories.scans import ScanRepository

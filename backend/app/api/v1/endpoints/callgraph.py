@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import uuid
 from typing import Any
 
 from fastapi import HTTPException
@@ -28,6 +27,7 @@ from app.schemas.callgraph import (
     ModuleUsageResponse,
 )
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
+from app.services.scan_manager import derive_pipeline_scan_id
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -63,14 +63,6 @@ def _resolve_language(request_language: str | None, format_type: str) -> str:
             detail=f"'language' is required for '{format_type}' callgraph payloads",
         )
     return language
-
-
-def _resolve_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
-    """The scan the CI run produced, derived from the authorized project so it cannot name another's."""
-    if not pipeline_id:
-        return None
-    scan_id_seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
 
 
 def _build_upsert_filter(project_id: str, language: str, scan_id: str | None) -> tuple[dict[str, Any], str]:
@@ -126,7 +118,7 @@ async def upload_callgraph(
         logger.exception("Failed to parse callgraph: %s", e)
         raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}") from e
 
-    scan_id = _resolve_scan_id(project_id, request.pipeline_id, request.commit_hash)
+    scan_id = derive_pipeline_scan_id(project_id, request.pipeline_id, request.commit_hash)
     if not scan_id:
         warnings.append("No pipeline_id provided - callgraph may not match scans correctly")
     else:

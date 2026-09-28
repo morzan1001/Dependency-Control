@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, validate_release_environment
 
@@ -48,16 +48,6 @@ class BaseIngest(BaseModel):
             "version": self.release_version or self.commit_tag or None,
             "released_at": released_at,
         }
-
-
-class ScanContext(BaseModel):
-    """Context returned after finding or creating a scan."""
-
-    scan_id: str = Field(..., description=_DESC_SCAN_ID)
-    is_new: bool = Field(..., description="Whether this is a newly created scan")
-    pipeline_url: str | None = Field(None, description="URL to the pipeline")
-
-    model_config = ConfigDict(frozen=True)
 
 
 class SBOMIngest(BaseIngest):

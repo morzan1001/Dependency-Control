@@ -4,7 +4,6 @@ import logging
 import re
 import uuid
 import zipfile
-from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Response, status
@@ -115,6 +114,7 @@ from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
 from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
 from app.services.scan_cascade import delete_scans_and_related_data
+from app.services.scan_manager import queue_rescan
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -906,66 +906,19 @@ async def trigger_rescan(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Scan:
-    """Manually trigger a re-scan: a new scan entry with the same SBOMs, re-analysed."""
+    """Re-analyse the scan's SBOMs as a new scan, or return the rescan of its lineage already queued."""
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
 
-    scan_repo = ScanRepository(db)
-
-    scan = await scan_repo.find_one({"_id": scan_id, "project_id": project_id})
+    scan = await ScanRepository(db).find_one({"_id": scan_id, "project_id": project_id})
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     if not scan.get("sbom_refs"):
         raise HTTPException(status_code=400, detail="Cannot re-scan: No SBOMs found in the source scan.")
 
-    # Trace back to the original scan so lineage stays intact.
-    original_scan_id = scan.get("original_scan_id") or scan_id
-
-    new_scan = Scan(
-        project_id=project_id,
-        branch=scan.get("branch", "unknown"),
-        commit_hash=scan.get("commit_hash"),
-        pipeline_id=None,  # Don't collide with ingest
-        pipeline_iid=scan.get("pipeline_iid"),
-        project_url=scan.get("project_url"),
-        pipeline_url=scan.get("pipeline_url"),
-        job_id=scan.get("job_id"),
-        job_started_at=scan.get("job_started_at"),
-        project_name=scan.get("project_name"),
-        commit_message=scan.get("commit_message"),
-        commit_tag=scan.get("commit_tag"),
-        sbom_refs=scan.get("sbom_refs", []),
-        # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
-        scan_type=scan.get("scan_type"),
-        status="pending",
-        created_at=datetime.now(timezone.utc),
-        is_rescan=True,
-        original_scan_id=original_scan_id,
-    )
-
-    await scan_repo.create(new_scan)
-
-    # Update original scan to point to this new pending rescan
-    await scan_repo.update_raw(
-        original_scan_id,
-        {
-            "$set": {
-                "latest_rescan_id": new_scan.id,
-                "latest_run": {
-                    "scan_id": new_scan.id,
-                    "status": "pending",
-                    "created_at": datetime.now(timezone.utc),
-                },
-            }
-        },
-    )
-
-    if worker_manager:
-        await worker_manager.add_job(new_scan.id)
-    else:
+    if not worker_manager:
         raise HTTPException(status_code=500, detail="Worker manager not available")
-
-    return new_scan
+    return await queue_rescan(db, scan, project_id, worker_manager)
 
 
 @router.get(

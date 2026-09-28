@@ -7,15 +7,83 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import SCAN_USABLE_STATUSES
-from app.core.worker import worker_manager
+from app.core.constants import SCAN_STATUS_PENDING, SCAN_USABLE_STATUSES
+from app.core.worker import AnalysisWorkerManager, worker_manager
 from app.models.finding import Finding
-from app.models.project import Project
+from app.models.project import Project, Scan
 from app.models.release import Release
 from app.models.waiver import Waiver
-from app.schemas.ingest import BaseIngest, ScanContext
+from app.repositories import ReleaseRepository, ScanRepository
+from app.schemas.ingest import BaseIngest
 
 logger = logging.getLogger(__name__)
+
+
+def derive_pipeline_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
+    """The scan every job of one CI run writes to, so SBOM, scanner results and callgraph meet; None without a run."""
+    if not pipeline_id:
+        return None
+    seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))
+
+
+def _lineage_root(scan: dict[str, Any]) -> str:
+    return scan.get("original_scan_id") or str(scan["_id"])
+
+
+def build_rescan(source_scan: dict[str, Any], project_id: str) -> Scan:
+    """A pending re-analysis of the source's SBOMs, rooted at the original scan of its lineage."""
+    return Scan(
+        project_id=project_id,
+        branch=source_scan.get("branch", "unknown"),
+        commit_hash=source_scan.get("commit_hash"),
+        pipeline_id=None,  # Don't collide with ingest
+        pipeline_iid=source_scan.get("pipeline_iid"),
+        project_url=source_scan.get("project_url"),
+        pipeline_url=source_scan.get("pipeline_url"),
+        job_id=source_scan.get("job_id"),
+        job_started_at=source_scan.get("job_started_at"),
+        project_name=source_scan.get("project_name"),
+        commit_message=source_scan.get("commit_message"),
+        commit_tag=source_scan.get("commit_tag"),
+        sbom_refs=source_scan.get("sbom_refs", []),
+        # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
+        scan_type=source_scan.get("scan_type"),
+        status=SCAN_STATUS_PENDING,
+        created_at=datetime.now(timezone.utc),
+        is_rescan=True,
+        original_scan_id=_lineage_root(source_scan),
+    )
+
+
+async def queue_rescan(
+    db: AsyncIOMotorDatabase, source_scan: dict[str, Any], project_id: str, queue: AnalysisWorkerManager
+) -> Scan:
+    """Queue a rescan of the source's lineage, or return the one already pending or running.
+
+    The original shows the pending run and restarts its schedule clock, whoever asked for the rescan.
+    """
+    scan_repo = ScanRepository(db)
+    root = _lineage_root(source_scan)
+    active = await scan_repo.find_active_rescan(project_id, root)
+    if active:
+        return Scan(**active)
+
+    rescan = build_rescan(source_scan, project_id)
+    await scan_repo.create(rescan)
+    now = datetime.now(timezone.utc)
+    await scan_repo.update_raw(
+        root,
+        {
+            "$set": {
+                "latest_rescan_id": rescan.id,
+                "latest_run": {"scan_id": rescan.id, "status": SCAN_STATUS_PENDING, "created_at": now},
+                "last_rescanned_at": now,
+            }
+        },
+    )
+    await queue.add_job(rescan.id)
+    return rescan
 
 
 class ScanManager:
@@ -37,31 +105,14 @@ class ScanManager:
             return f"{data.project_url}/-/pipelines/{data.pipeline_id}"
         return None
 
-    async def find_or_create_scan(self, data: BaseIngest) -> ScanContext:
-        """Find or create the scan for this pipeline, keyed by a deterministic UUID5 so all
-        scanners for the same commit+pipeline share one scan across pods."""
-        pipeline_url = self.build_pipeline_url(data)
-
-        if data.pipeline_id and data.commit_hash:
-            scan_id_seed = f"{self.project.id}-{data.pipeline_id}-{data.commit_hash}"
-            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-        elif data.pipeline_id:
-            # No commit_hash: pipeline_id only (less precise).
-            scan_id_seed = f"{self.project.id}-{data.pipeline_id}"
-            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-        else:
-            # Manual upload: random UUID.
-            scan_id = str(uuid.uuid4())
-
-        # Atomic upsert to avoid races between concurrent scanners.
-        now = datetime.now(timezone.utc)
-
-        scan_update: dict[str, Any] = {
+    async def scan_upsert(self, data: BaseIngest, scan_id: str, now: datetime) -> dict[str, Any]:
+        """The scan document every ingest of the run writes, sbom_refs aside; records the release the payload marks."""
+        update: dict[str, Any] = {
             "$set": {
                 "branch": data.branch or "unknown",
                 "commit_hash": data.commit_hash,
                 "project_url": data.project_url,
-                "pipeline_url": pipeline_url,
+                "pipeline_url": self.build_pipeline_url(data),
                 "job_id": data.job_id,
                 "job_started_at": data.job_started_at,
                 "project_name": data.project_name,
@@ -77,29 +128,29 @@ class ScanManager:
                 "pipeline_iid": data.pipeline_iid,
                 "status": "pending",
                 "created_at": now,
-                "sbom_refs": [],
             },
         }
-
-        from app.core.metrics import track_db_operation
-        from app.repositories import ReleaseRepository, ScanRepository
-
         release = data.release_fields(now)
         if release:
             # The row before the flag: the backfill sweeps the release rows and repairs a missing
             # flag, while a flag whose row is missing shows a release that is not there.
-            release_repo = ReleaseRepository(self.db)
-            await release_repo.record(Release(project_id=str(self.project.id), scan_id=scan_id, **release))
-            scan_update["$set"]["is_release"] = True
+            await ReleaseRepository(self.db).record(
+                Release(project_id=str(self.project.id), scan_id=scan_id, **release)
+            )
+            update["$set"]["is_release"] = True
+        return update
 
-        # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
-        scan_repo = ScanRepository(self.db)
-        with track_db_operation("scans", "update_one"):
-            upsert_result = await scan_repo.collection.update_one({"_id": scan_id}, scan_update, upsert=True)
+    def run_scan_id(self, data: BaseIngest) -> str:
+        # pipeline_id 0 derives nothing and still needs a scan of its own.
+        return derive_pipeline_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
-        is_new = upsert_result.upserted_id is not None
-
-        return ScanContext(scan_id=scan_id, is_new=is_new, pipeline_url=pipeline_url)
+    async def find_or_create_scan(self, data: BaseIngest) -> str:
+        """The run's scan id; the upsert lets concurrent scanners of one run share it across pods."""
+        scan_id = self.run_scan_id(data)
+        update = await self.scan_upsert(data, scan_id, datetime.now(timezone.utc))
+        update["$setOnInsert"]["sbom_refs"] = []
+        await ScanRepository(self.db).upsert({"_id": scan_id}, update)
+        return scan_id
 
     async def _get_waivers(self) -> list[Waiver]:
         """Fetch active waivers for this project, memoized for this request-scoped instance."""
@@ -193,8 +244,6 @@ class ScanManager:
             },
             "$addToSet": {"received_results": analyzer_name},
         }
-
-        from app.repositories import ScanRepository
 
         scan_repo = ScanRepository(self.db)
 

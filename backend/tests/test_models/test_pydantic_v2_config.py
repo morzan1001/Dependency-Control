@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import ClassVar
 
 import pytest
-from pydantic import ValidationError
 
 
 class TestModelIdAlias:
@@ -128,25 +127,6 @@ class TestDatetimeSerialization:
         data = p.model_dump(mode="json")
         assert isinstance(data["created_at"], str)
         datetime.fromisoformat(data["created_at"])
-
-
-class TestFrozenConfig:
-    """ScanContext with frozen=True should be immutable."""
-
-    def test_scan_context_is_immutable(self):
-        from app.schemas.ingest import ScanContext
-
-        ctx = ScanContext(scan_id="s1", is_new=True, pipeline_url="https://example.com")
-        with pytest.raises(ValidationError):
-            ctx.scan_id = "s2"
-
-    def test_scan_context_values_accessible(self):
-        from app.schemas.ingest import ScanContext
-
-        ctx = ScanContext(scan_id="s1", is_new=False)
-        assert ctx.scan_id == "s1"
-        assert ctx.is_new is False
-        assert ctx.pipeline_url is None
 
 
 class TestFromAttributes:

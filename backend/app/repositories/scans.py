@@ -23,7 +23,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
 from app.core import ensure_utc
-from app.core.constants import MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
+from app.core.constants import MAX_RESCAN_HOPS, SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING, SCAN_USABLE_STATUSES
 from app.core.metrics import track_db_operation
 from app.models.project import Scan
 from app.schemas.projections import ScanMinimal, ScanWithStats
@@ -342,6 +342,17 @@ class ScanRepository:
         return (
             await self.count({"_id": {"$in": list(scan_ids)}, "project_id": project_id}, limit=len(scan_ids))
         ) == len(scan_ids)
+
+    async def find_active_rescan(self, project_id: str, original_scan_id: str) -> dict[str, Any] | None:
+        """The lineage's pending or processing rescan, read from the primary so one queued a moment ago counts."""
+        with track_db_operation(_COL, "find_one"):
+            return await self._primary().find_one(
+                {
+                    "project_id": project_id,
+                    "original_scan_id": original_scan_id,
+                    "status": {"$in": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
+                }
+            )
 
     async def get_preceding_scan(self, scan_id: str) -> Scan | None:
         """The build the given scan succeeded: the newest usable build on its own branch that

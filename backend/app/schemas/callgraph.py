@@ -13,9 +13,9 @@ class CallgraphUploadRequest(BaseModel):
     # Required if format is generic or auto-detection fails.
     language: str | None = None  # javascript, typescript, python, go, java
 
-    # pipeline_id is the primary key for matching a callgraph to a CI/CD run.
+    # scan_id (uuid5 of project+pipeline+commit) is the match key; pipeline_id (GitLab pipeline or GitHub run id) is the fallback.
     pipeline_id: int | None = None
-    branch: str | None = None  # fallback when no pipeline_id
+    branch: str | None = None
     commit_hash: str | None = None
 
     tool: str | None = None
