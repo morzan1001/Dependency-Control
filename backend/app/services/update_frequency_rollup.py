@@ -19,9 +19,8 @@ from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
 from app.services.update_frequency import (
-    DEP_PROJECTION,
     classify_version_change,
-    fold_scan_deps,
+    load_scan_deps,
     load_outdated_entries,
 )
 
@@ -144,7 +143,7 @@ async def _load_scan(db: Any, scan_id: str) -> _ScanRef | None:
 
 
 async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[str] | None]:
-    deps = await _load_deps(db, scan.scan_id)
+    deps = await load_scan_deps(DependencyRepository(db), scan.scan_id)
     outdated = await _load_outdated(db, scan.scan_id)
 
     prev, prev_deps = await _resolve_predecessor(db, scan)
@@ -188,7 +187,7 @@ async def _resolve_predecessor(db: Any, scan: _ScanRef) -> tuple[dict[str, Any] 
         prev = await repo.find_predecessor(scan.project_id, scan.branch, scan.created_at, scan.scan_id)
         if prev is None:
             return None, {}
-        prev_deps = await _load_deps(db, prev["_id"])
+        prev_deps = await load_scan_deps(DependencyRepository(db), prev["_id"])
         if len(prev_deps) == prev.get("dep_count"):
             return prev, prev_deps
         logger.warning(
@@ -280,11 +279,6 @@ def _diff_scans(
 
 def _eco_counts(deps: dict[str, dict[str, str]]) -> dict[str, int]:
     return dict(Counter(info["type"] for info in deps.values()))
-
-
-async def _load_deps(db: Any, scan_id: str) -> dict[str, dict[str, str]]:
-    docs = await DependencyRepository(db).find_all({"scan_id": scan_id}, projection=DEP_PROJECTION)
-    return fold_scan_deps(docs)
 
 
 async def _load_outdated(db: Any, scan_id: str) -> set[str] | None:

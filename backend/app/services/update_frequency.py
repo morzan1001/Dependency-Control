@@ -171,6 +171,10 @@ def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
     return {identity: _resolve_duplicate(infos) for identity, infos in candidates.items()}
 
 
+async def load_scan_deps(dep_repo: DependencyRepository, scan_id: str) -> dict[str, dict[str, str]]:
+    return fold_scan_deps(await dep_repo.find_raw_by_scan(scan_id, DEP_PROJECTION))
+
+
 async def load_outdated_entries(
     analysis_repo: AnalysisResultRepository,
     scan_id: str,
@@ -845,10 +849,6 @@ async def compute_update_frequency(
 
     state = _AccumulatorState()
 
-    async def _load_scan_deps(scan_id: str) -> dict[str, dict[str, str]]:
-        docs = await dep_repo.find_all({"scan_id": scan_id}, projection=DEP_PROJECTION)
-        return fold_scan_deps(docs)
-
     analysed: list[dict[str, Any]] = []
     prev_deps: dict[str, dict[str, str]] = {}
     prev_outdated: set[str] | None = None
@@ -862,7 +862,7 @@ async def compute_update_frequency(
             latest_outdated = prev_outdated
 
     for curr_scan in completed_scans:
-        curr_deps = await _load_scan_deps(curr_scan["_id"])
+        curr_deps = await load_scan_deps(dep_repo, curr_scan["_id"])
         # A scan that produced no SBOM measured nothing, so the delta ledger drops it.
         # Keeping it here would frame the update that happened across it as two quiet
         # intervals and put a structural zero-update bar on the timeline.

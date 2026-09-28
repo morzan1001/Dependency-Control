@@ -22,14 +22,9 @@ class DependencyRepository(BaseRepository[Dependency]):
             return rows, len(rows)
         return rows, await self.count_by_scan(project_id, scan_id)
 
-    async def find_all(
-        self,
-        query: dict[str, Any] | None = None,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Returns raw dicts unbounded; use iterate() for large result sets."""
-        cursor = self.collection.find(query or {}, projection)
-        return await cursor.to_list(None)
+    async def find_raw_by_scan(self, scan_id: str, projection: dict[str, int]) -> list[dict[str, Any]]:
+        """Every dependency of one scan, unbounded: a scan's inventory is read whole to be folded."""
+        return await self.collection.find({"scan_id": scan_id}, projection).to_list(None)
 
     async def delete_by_scan(self, scan_id: str) -> int:
         return await self.delete_many({"scan_id": scan_id})

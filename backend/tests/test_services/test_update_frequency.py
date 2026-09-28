@@ -356,14 +356,9 @@ class FakeScanRepo:
 class FakeDepRepo:
     def __init__(self, deps_by_scan: dict[str, list[dict[str, Any]]]):
         self._deps_by_scan = deps_by_scan
-        self.calls: list[str] = []  # tracks every find_all query for assertions
+        self.calls: list[str] = []
 
-    async def find_all(
-        self,
-        query: dict[str, Any],
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        scan_id = query.get("scan_id")
+    async def find_raw_by_scan(self, scan_id: str, projection: dict[str, int]) -> list[dict[str, Any]]:
         self.calls.append(scan_id)
         return [_apply_projection(d, projection) for d in self._deps_by_scan.get(scan_id, [])]
 
@@ -1695,9 +1690,9 @@ class TestStreamingOrchestrator:
                 return await super().find_many_raw(*args, **kwargs)
 
         class _SuspendingDepRepo(FakeDepRepo):
-            async def find_all(self, *args, **kwargs):
+            async def find_raw_by_scan(self, *args, **kwargs):
                 await asyncio.sleep(0)
-                return await super().find_all(*args, **kwargs)
+                return await super().find_raw_by_scan(*args, **kwargs)
 
         projects = [{"_id": f"proj-{i}", "name": f"Project {i}"} for i in range(n_projects)]
         all_scans: list[dict[str, Any]] = []

@@ -12,7 +12,7 @@ from typing import Any, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from pymongo import UpdateMany, UpdateOne
+from pymongo import UpdateMany
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
@@ -49,10 +49,10 @@ from app.models.waiver import Waiver
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependencies import DependencyRepository
-from app.repositories.findings import FindingRepository
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
+from app.repositories.findings import FindingRepository, finding_identity
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
-from app.repositories.findings import finding_identity
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
 from app.schemas.sbom import ParsedDependency
@@ -505,25 +505,13 @@ async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id
     logger.info(f"Enriching {len(enrichment_entries)} dependencies with aggregated metadata")
 
     bulk_ops: list[UpdateMany] = []
-    enrichment_ops: list[UpdateOne] = []
     total_updated = 0
-    total_enrichments_persisted = 0
 
     for entry in enrichment_entries:
         if not entry["data"]:
             continue
 
         bulk_ops.extend(_dependency_update_ops(scan_id, entry))
-
-        purl = entry["purl"]
-        if purl:
-            enrichment_ops.append(
-                UpdateOne(
-                    {"purl": purl},
-                    {"$set": {**entry["data"], "purl": purl, "name": entry["name"], "version": entry["version"]}},
-                    upsert=True,
-                )
-            )
 
         if len(bulk_ops) >= _BULK_CHUNK_SIZE:
             try:
@@ -533,14 +521,6 @@ async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id
                 logger.exception("Failed to bulk update dependencies: %s", e)
             bulk_ops.clear()
 
-        if len(enrichment_ops) >= _BULK_CHUNK_SIZE:
-            try:
-                await db.dependency_enrichments.bulk_write(enrichment_ops, ordered=False)
-                total_enrichments_persisted += len(enrichment_ops)
-            except Exception as e:
-                logger.exception("Failed to bulk upsert dependency enrichments: %s", e)
-            enrichment_ops.clear()
-
     if bulk_ops:
         try:
             await db.dependencies.bulk_write(bulk_ops, ordered=False)
@@ -548,15 +528,9 @@ async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id
         except Exception as e:
             logger.exception("Failed to bulk update dependencies: %s", e)
 
-    if enrichment_ops:
-        try:
-            await db.dependency_enrichments.bulk_write(enrichment_ops, ordered=False)
-            total_enrichments_persisted += len(enrichment_ops)
-        except Exception as e:
-            logger.exception("Failed to bulk upsert dependency enrichments: %s", e)
-
+    persisted = await DependencyEnrichmentRepository(db).upsert_many(enrichment_entries)
     logger.info(f"Bulk updated {total_updated} dependencies.")
-    logger.info(f"Upserted {total_enrichments_persisted} dependency enrichments.")
+    logger.info(f"Upserted {persisted} dependency enrichments.")
 
 
 async def _run_epss_kev_enrichment(

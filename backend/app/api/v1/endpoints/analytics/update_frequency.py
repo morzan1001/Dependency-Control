@@ -49,10 +49,9 @@ from app.services.release_history import (
     ReleaseHistoryFetcher,
 )
 from app.services.update_frequency import (
-    DEP_PROJECTION,
     compute_update_frequency,
     compute_update_frequency_comparison,
-    fold_scan_deps,
+    load_scan_deps,
     load_outdated_entries,
     rank_summaries,
     select_primary_branch,
@@ -439,10 +438,6 @@ async def _compute_comparison_from_rollup(
     return rank_summaries(summaries).model_dump()
 
 
-async def _scan_deps(db: DatabaseDep, scan_id: str) -> dict[str, dict[str, str]]:
-    return fold_scan_deps(await DependencyRepository(db).find_all({"scan_id": scan_id}, projection=DEP_PROJECTION))
-
-
 async def _rollup_slowest_packages(
     db: DatabaseDep, bars: Sequence[Sequence[dict[str, Any]]]
 ) -> tuple[list[SlowPackage], int]:
@@ -459,11 +454,11 @@ async def _rollup_slowest_packages(
 
     entries = await load_outdated_entries(AnalysisResultRepository(db), latest_id) or []
     analyzer_info = {component: e for e in entries if (component := e.get("component"))}
-    deps = await _scan_deps(db, latest_id)
+    deps = await load_scan_deps(DependencyRepository(db), latest_id)
     types = {info["name"]: info["type"] for info in deps.values()}
     # current_version describes what the project holds now, so it comes from the newest bar
     # even when the backlog was last measured on an older one.
-    newest_deps = deps if scan_ids[-1] == latest_id else await _scan_deps(db, scan_ids[-1])
+    newest_deps = deps if scan_ids[-1] == latest_id else await load_scan_deps(DependencyRepository(db), scan_ids[-1])
     # An ambiguous bare name would show one purl sibling's version for the other.
     per_name = Counter(info["name"] for info in newest_deps.values())
     versions = {info["name"]: info["version"] for info in newest_deps.values() if per_name[info["name"]] == 1}
