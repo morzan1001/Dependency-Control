@@ -947,7 +947,8 @@ def _run_group(docs: list, group_spec: dict) -> list:
 
     for doc in docs:
         key = _resolve_group_key(doc, id_expr)
-        hashable = key if not isinstance(key, dict) else str(key)
+        # A key holding a sub-document (an _id of nested expressions) groups by its rendering.
+        hashable = key if isinstance(key, (str, int, float, type(None))) else str(key)
         is_new = hashable not in groups
         if is_new:
             groups[hashable] = {"_id_val": key}

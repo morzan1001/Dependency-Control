@@ -183,6 +183,7 @@ async def get_top_dependencies(
                 "_id": package_identity_expr(),
                 "name": {"$first": "$name"},
                 "type": {"$first": "$type"},
+                "group": {"$max": "$group"},
                 "versions": {"$addToSet": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
                 "total_occurrences": {"$sum": 1},
@@ -192,6 +193,7 @@ async def get_top_dependencies(
             "$project": {
                 "name": 1,
                 "type": 1,
+                "group": 1,
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
                 "project_count": {"$size": "$project_ids"},
@@ -216,6 +218,7 @@ async def get_top_dependencies(
             DependencyUsage(
                 name=dep["name"],
                 type=dep.get("type", "unknown"),
+                group=dep.get("group"),
                 # $addToSet has no order, so rank before sampling.
                 versions=sorted(dep["versions"], key=parse_version_tuple, reverse=True)[:_VERSION_SAMPLE],
                 version_count=dep["version_count"],

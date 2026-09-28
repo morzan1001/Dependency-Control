@@ -31,14 +31,16 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
+from app.core.purl import package_identity, package_identity_expr
 from app.services.component_identity import (
     artifact_segment,
     cluster_by_package_identity,
     component_match_query,
+    component_name_candidates,
     lookup_component,
     normalize_component,
 )
-from app.services.recommendation.common import get_attr
+from app.services.recommendation.common import get_attr, parse_version_tuple
 from app.services.recommendation.graph import build_dependency_edges
 
 from ._shared import _get_enrichment_info, _resolve_scan_id
@@ -239,9 +241,7 @@ def _build_dep_query(scan_ids: list[str], component: str, version: str | None, t
     The Hotspots and Impact tabs hand this endpoint a finding component, which the inventory
     stores under its bare artifact name, so both spellings are candidates.
     """
-    artifact = artifact_segment(component)
-    names = [component] if artifact == component else [component, artifact]
-    dep_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": {"$in": names}}
+    dep_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": {"$in": component_name_candidates(component)}}
     if version:
         dep_query["version"] = version
     if type:
@@ -249,22 +249,49 @@ def _build_dep_query(scan_ids: list[str], component: str, version: str | None, t
     return dep_query
 
 
-def _resolve_single_dependency_package(dependencies: list[Any], component: str) -> list[Any]:
-    """Keep one package's rows: the exact spelling if the inventory has it, else the artifact rows."""
-    return [d for d in dependencies if get_attr(d, "name", "") == component] or dependencies
+async def _package_projects_by_version(
+    dep_repo: DependencyRepository, dep_query: dict[str, Any], component: str
+) -> tuple[tuple[str, str], dict[str, list[dict[str, Any]]]] | None:
+    """The one package ``component`` names in the inventory, with the projects using each version.
+
+    A qualified component keeps the package whose identity is ``qualifier/artifact``; a name that
+    still spans several packages yields None rather than one package's data under another's name.
+    """
+    artifact = artifact_segment(component)
+    wanted = None if artifact == component else f"{component[: -len(artifact) - 1]}/{artifact}".lower()
+    rows = await dep_repo.aggregate(
+        [
+            {"$match": dep_query},
+            {
+                "$group": {
+                    "_id": {"package": package_identity_expr(), "version": "$version"},
+                    "projects": {"$addToSet": {"id": "$project_id", "direct": "$direct"}},
+                }
+            },
+        ]
+    )
+    by_package: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
+    for row in rows:
+        package = (row["_id"]["package"]["type"], row["_id"]["package"]["path"])
+        if wanted is None or package[1].lower() == wanted:
+            by_package.setdefault(package, {})[row["_id"].get("version")] = row["projects"]
+    return next(iter(by_package.items())) if len(by_package) == 1 else None
 
 
-def _collect_affected_projects(dependencies: list[Any], project_name_map: dict[str, str]) -> dict[str, dict[str, Any]]:
-    affected_projects: dict[str, dict[str, Any]] = {}
-    for dep in dependencies:
-        proj_id = get_attr(dep, "project_id")
-        if proj_id and proj_id not in affected_projects:
-            affected_projects[proj_id] = {
-                "id": proj_id,
-                "name": project_name_map.get(proj_id, "Unknown"),
-                "direct": get_attr(dep, "direct", False),
-            }
-    return affected_projects
+def _affected_projects(
+    projects_by_version: dict[str, list[dict[str, Any]]], project_name_map: dict[str, str]
+) -> dict[str, dict[str, Any]]:
+    affected: dict[str, dict[str, Any]] = {}
+    for projects in projects_by_version.values():
+        for project in projects:
+            if not project.get("id"):
+                continue
+            entry = affected.setdefault(
+                project["id"],
+                {"id": project["id"], "name": project_name_map.get(project["id"], "Unknown"), "direct": False},
+            )
+            entry["direct"] = entry["direct"] or bool(project.get("direct"))
+    return affected
 
 
 def _first_dep_value(dependencies: list[Any], key: str) -> Any | None:
@@ -301,7 +328,20 @@ async def get_dependency_metadata_endpoint(
     enrichment_repo = DependencyEnrichmentRepository(db)
 
     dep_query = _build_dep_query(scan_ids, component, version, type)
-    dependencies = _resolve_single_dependency_package(await dep_repo.find_many(dep_query, limit=100), component)
+    usage = await _package_projects_by_version(dep_repo, dep_query, component)
+    if usage is None:
+        return None
+    package, projects_by_version = usage
+    # Without a version, describe the version most projects run rather than whichever row came first.
+    shown_version = version or max(
+        projects_by_version,
+        key=lambda v: (len({p.get("id") for p in projects_by_version[v]}), parse_version_tuple(v or ""), v or ""),
+    )
+    dependencies = [
+        dep
+        for dep in await dep_repo.find_many({**dep_query, "version": shown_version}, limit=100)
+        if package_identity(get_attr(dep, "purl"), get_attr(dep, "name", ""), get_attr(dep, "type")) == package
+    ]
     if not dependencies:
         return None
 
@@ -312,7 +352,7 @@ async def get_dependency_metadata_endpoint(
     project_name_map = {p.id: p.name for p in projects}
 
     first_dep = dependencies[0]
-    affected_projects = _collect_affected_projects(dependencies, project_name_map)
+    affected_projects = _affected_projects(projects_by_version, project_name_map)
 
     dep_purl = get_attr(first_dep, "purl")
     enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)

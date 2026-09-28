@@ -37,8 +37,8 @@ from app.schemas.analytics import (
     VulnerabilityHotspot,
 )
 from app.services.component_identity import (
-    artifact_segment,
     build_component_index,
+    component_name_candidates,
     lookup_component,
 )
 from app.services.analytics.cache import get_analytics_cache
@@ -283,7 +283,8 @@ def _format_first_seen(first_seen: Any) -> str:
 def _build_hotspot(
     r: dict[str, Any],
     enrichments: dict[str, Any],
-    dep_type_map: dict[str, str],
+    version_type_index: dict[str, set[str]],
+    type_index: dict[str, set[str]],
     project_name_map: dict[str, str],
     project_ids: list[str],
 ) -> VulnerabilityHotspot:
@@ -291,7 +292,10 @@ def _build_hotspot(
     severity_counts = _severity_counts_from_details(details_list)
     fix_versions = extract_fix_versions(details_list)
     has_fix = len(fix_versions) > 0
-    dep_type = lookup_component(dep_type_map, r["_id"]["component"], "unknown")
+    component = r["_id"]["component"]
+    # One name at one version can ship in several ecosystems (a deb and an apk openssl); name them all.
+    types = lookup_component(version_type_index, component) or lookup_component(type_index, component)
+    dep_type = "/".join(sorted(types)) if types else "unknown"
 
     first_seen_str = _format_first_seen(r.get("first_seen"))
     days_known = calculate_days_known(r.get("first_seen"))
@@ -415,17 +419,36 @@ async def get_vulnerability_hotspots(
 
     # A component can be group-qualified while the inventory keeps the bare artifact name,
     # so both spellings go into the filter and the index resolves either way.
-    components = {r["_id"]["component"] for r in results}
-    # Stored names are case-sensitive, so the candidate must keep the component's own case.
-    candidates = list(components | {artifact_segment(c) for c in components})
+    candidates = list({name for r in results for name in component_name_candidates(r["_id"]["component"])})
     type_pipeline: list[dict[str, Any]] = [
-        {"$match": {"name": {"$in": candidates}}},
-        {"$group": {"_id": "$name", "type": {"$first": "$type"}}},
+        {"$match": {"scan_id": {"$in": scan_ids}, "name": {"$in": candidates}}},
+        {
+            "$group": {
+                "_id": {"name": "$name", "version": {"$ifNull": ["$version", "unknown"]}},
+                "types": {"$addToSet": {"$ifNull": ["$type", "unknown"]}},
+            }
+        },
     ]
-    type_results = await dep_repo.aggregate(type_pipeline, limit=len(candidates) + 1)
-    dep_type_map = build_component_index({d["_id"]: d.get("type", "unknown") for d in type_results})
+    types_by_version: dict[str, dict[str, set[str]]] = {}
+    types_by_name: dict[str, set[str]] = {}
+    for row in await dep_repo.aggregate(type_pipeline):
+        name, version = row["_id"]["name"], row["_id"]["version"]
+        types_by_version.setdefault(version, {})[name] = set(row["types"])
+        types_by_name.setdefault(name, set()).update(row["types"])
+    type_index_by_version = {version: build_component_index(types) for version, types in types_by_version.items()}
+    type_index = build_component_index(types_by_name)
 
-    hotspots = [_build_hotspot(r, enrichments, dep_type_map, project_name_map, project_ids) for r in results]
+    hotspots = [
+        _build_hotspot(
+            r,
+            enrichments,
+            type_index_by_version.get(r["_id"].get("version") or "unknown", {}),
+            type_index,
+            project_name_map,
+            project_ids,
+        )
+        for r in results
+    ]
 
     _post_sort_keys = {
         "finding_count": lambda x: x.finding_count,

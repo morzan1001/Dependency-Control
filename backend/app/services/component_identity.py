@@ -83,6 +83,11 @@ def artifact_segment(component: str) -> str:
     return name
 
 
+def component_name_candidates(component: str) -> list[str]:
+    """Inventory names a finding component can be stored under: itself and its bare artifact."""
+    return list(dict.fromkeys((component, artifact_segment(component))))
+
+
 def extract_artifact_name(component: str) -> str:
     """Bare artifact name, lowercased, for grouping and index keys."""
     return artifact_segment(component).lower() or "unknown"

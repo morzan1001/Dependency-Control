@@ -27,6 +27,7 @@ from app.schemas.analytics import (
     VulnerabilitySearchResponse,
     VulnerabilitySearchResult,
 )
+from app.services.aggregation.versions import normalize_version
 from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import get_attr
 
@@ -34,14 +35,13 @@ router = CustomAPIRouter()
 
 
 def _passes_vuln_filter(
-    dep_project_id: str,
-    dep_name: str,
-    has_vulnerabilities: bool | None,
-    vuln_status_map: dict[str, dict[str, bool]],
+    dep: Any, has_vulnerabilities: bool | None, vuln_versions: dict[str, dict[str, set[str]]]
 ) -> bool:
     if has_vulnerabilities is None:
         return True
-    has_vulns = bool(lookup_component(vuln_status_map.get(dep_project_id, {}), dep_name, False))
+    versions = lookup_component(vuln_versions.get(get_attr(dep, "project_id"), {}), get_attr(dep, "name")) or set()
+    # A finding without a version cannot tell the package's versions apart, so it covers them all.
+    has_vulns = "unknown" in versions or normalize_version(get_attr(dep, "version")) in versions
     return has_vulnerabilities == has_vulns
 
 
@@ -78,17 +78,14 @@ def _dep_to_search_result(dep: Any, project_name_map: dict[str, str]) -> Depende
 def _build_search_results(
     dependencies: list[Any],
     has_vulnerabilities: bool | None,
-    vuln_status_map: dict[str, dict[str, bool]],
+    vuln_versions: dict[str, dict[str, set[str]]],
     project_name_map: dict[str, str],
 ) -> list[DependencySearchResult]:
-    results = []
-    for dep in dependencies:
-        dep_project_id = get_attr(dep, "project_id")
-        dep_name = get_attr(dep, "name")
-        if not _passes_vuln_filter(dep_project_id, dep_name, has_vulnerabilities, vuln_status_map):
-            continue
-        results.append(_dep_to_search_result(dep, project_name_map))
-    return results
+    return [
+        _dep_to_search_result(dep, project_name_map)
+        for dep in dependencies
+        if _passes_vuln_filter(dep, has_vulnerabilities, vuln_versions)
+    ]
 
 
 @router.get("/search", responses=RESP_AUTH)
@@ -174,7 +171,7 @@ async def search_dependencies_advanced(
         sort_order=sort_direction,
     )
 
-    vuln_status_map: dict[str, dict[str, bool]] = {}
+    vuln_versions: dict[str, dict[str, set[str]]] = {}
     if has_vulnerabilities is not None and dependencies:
         dep_keys = list({(get_attr(dep, "project_id"), get_attr(dep, "name")) for dep in dependencies})
 
@@ -189,15 +186,21 @@ async def search_dependencies_advanced(
                     "waived": {"$ne": True},
                 }
             },
-            {"$group": {"_id": {"project_id": "$project_id", "component": "$component"}}},
+            {
+                "$group": {
+                    "_id": {"project_id": "$project_id", "component": "$component"},
+                    "versions": {"$addToSet": {"$ifNull": ["$version", ""]}},
+                }
+            },
         ]
         vuln_results = await finding_repo.aggregate(vuln_pipeline)
-        by_project: dict[str, dict[str, bool]] = {}
+        by_project: dict[str, dict[str, set[str]]] = {}
         for r in vuln_results:
-            by_project.setdefault(r["_id"]["project_id"], {})[r["_id"]["component"]] = True
-        vuln_status_map = {pid: build_component_index(components) for pid, components in by_project.items()}
+            versions = {normalize_version(v) for v in r["versions"]}
+            by_project.setdefault(r["_id"]["project_id"], {})[r["_id"]["component"]] = versions
+        vuln_versions = {pid: build_component_index(components) for pid, components in by_project.items()}
 
-    results = _build_search_results(dependencies, has_vulnerabilities, vuln_status_map, project_name_map)
+    results = _build_search_results(dependencies, has_vulnerabilities, vuln_versions, project_name_map)
 
     return DependencySearchResponse(
         items=results,
