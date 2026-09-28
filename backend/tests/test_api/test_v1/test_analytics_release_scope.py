@@ -15,6 +15,7 @@ from app.models.release import Release
 from app.models.user import User
 from app.repositories.releases import ReleaseRepository
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.helpers.analytics_scope import projections
 
 _SUMMARY = "app.api.v1.endpoints.analytics.summary"
 _SEARCH = "app.api.v1.endpoints.analytics.search"
@@ -108,7 +109,7 @@ async def test_summary_counts_a_mixed_scope_through_the_real_resolver():
     db = FakeDatabase()
     await _seed_mixed_release_scope(db)
 
-    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_THREE_PROJECTS)):
+    with patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_THREE_PROJECTS))):
         result = await get_analytics_summary(
             current_user=_user(), db=db, release_environment=DEFAULT_RELEASE_ENVIRONMENT
         )
@@ -121,7 +122,7 @@ async def test_summary_counts_a_mixed_scope_through_the_real_resolver():
 async def test_summary_reports_the_same_counters_without_a_release_filter():
     db = FakeDatabase()
     with (
-        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)),
+        patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_TWO_PROJECTS))),
         patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_TWO_SCANS)) as scan_ids,
     ):
         result = await get_analytics_summary(current_user=_user(), db=db, release_environment=None)
@@ -134,7 +135,7 @@ async def test_summary_reports_the_same_counters_without_a_release_filter():
 @pytest.mark.asyncio
 async def test_summary_with_no_accessible_projects_reports_zeroes():
     db = FakeDatabase()
-    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_NO_PROJECTS)):
+    with patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_NO_PROJECTS))):
         result = await get_analytics_summary(
             current_user=_user(), db=db, release_environment=DEFAULT_RELEASE_ENVIRONMENT
         )
@@ -149,7 +150,7 @@ async def test_summary_with_no_resolvable_scan_still_names_the_scope():
     to carry them itself or a fully uncovered environment reports an empty, uncounted fleet."""
     db = FakeDatabase()
     with (
-        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)),
+        patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_TWO_PROJECTS))),
         patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_NO_SCANS)),
     ):
         result = await get_analytics_summary(
@@ -165,7 +166,7 @@ async def test_summary_with_no_resolvable_scan_still_names_the_scope():
 async def test_dependency_search_counts_the_projects_without_a_release():
     db = FakeDatabase()
     with (
-        patch(f"{_SEARCH}.get_user_project_ids", new=AsyncMock(return_value=_THREE_PROJECTS)),
+        patch(f"{_SEARCH}.get_user_projects", new=AsyncMock(return_value=projections(_THREE_PROJECTS))),
         patch(f"{_SEARCH}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _ONE_SCAN))) as resolve,
     ):
         result = await search_dependencies_advanced(
@@ -181,7 +182,7 @@ async def test_dependency_search_counts_the_projects_without_a_release():
 async def test_dependency_search_with_no_resolvable_scan_still_names_the_scope():
     db = FakeDatabase()
     with (
-        patch(f"{_SEARCH}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)),
+        patch(f"{_SEARCH}.get_user_projects", new=AsyncMock(return_value=projections(_TWO_PROJECTS))),
         patch(f"{_SEARCH}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS))),
     ):
         result = await search_dependencies_advanced(
@@ -196,7 +197,7 @@ async def test_dependency_search_with_no_resolvable_scan_still_names_the_scope()
 @pytest.mark.asyncio
 async def test_dependency_search_with_no_accessible_projects_reports_zeroes():
     db = FakeDatabase()
-    with patch(f"{_SEARCH}.get_user_project_ids", new=AsyncMock(return_value=_NO_PROJECTS)):
+    with patch(f"{_SEARCH}.get_user_projects", new=AsyncMock(return_value=projections(_NO_PROJECTS))):
         result = await search_dependencies_advanced(
             current_user=_user(), db=db, q=_SEARCH_TERM, release_environment=DEFAULT_RELEASE_ENVIRONMENT
         )
@@ -210,7 +211,7 @@ async def test_dependency_search_with_no_accessible_projects_reports_zeroes():
 async def test_vulnerability_search_counts_the_projects_without_a_release():
     db = FakeDatabase()
     with (
-        patch(f"{_SEARCH}.get_user_project_ids", new=AsyncMock(return_value=_THREE_PROJECTS)),
+        patch(f"{_SEARCH}.get_user_projects", new=AsyncMock(return_value=projections(_THREE_PROJECTS))),
         patch(f"{_SEARCH}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _ONE_SCAN))) as resolve,
     ):
         result = await search_vulnerabilities(
@@ -226,7 +227,7 @@ async def test_vulnerability_search_counts_the_projects_without_a_release():
 async def test_vulnerability_search_with_no_resolvable_scan_still_names_the_scope():
     db = FakeDatabase()
     with (
-        patch(f"{_SEARCH}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)),
+        patch(f"{_SEARCH}.get_user_projects", new=AsyncMock(return_value=projections(_TWO_PROJECTS))),
         patch(f"{_SEARCH}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS))),
     ):
         result = await search_vulnerabilities(
@@ -241,7 +242,7 @@ async def test_vulnerability_search_with_no_resolvable_scan_still_names_the_scop
 @pytest.mark.asyncio
 async def test_vulnerability_search_with_no_accessible_projects_reports_zeroes():
     db = FakeDatabase()
-    with patch(f"{_SEARCH}.get_user_project_ids", new=AsyncMock(return_value=_NO_PROJECTS)):
+    with patch(f"{_SEARCH}.get_user_projects", new=AsyncMock(return_value=projections(_NO_PROJECTS))):
         result = await search_vulnerabilities(
             current_user=_user(), db=db, q=_SEARCH_TERM, release_environment=DEFAULT_RELEASE_ENVIRONMENT
         )
@@ -256,7 +257,7 @@ async def test_both_searches_default_to_the_branch_tip():
     db = FakeDatabase()
     for endpoint in (search_dependencies_advanced, search_vulnerabilities):
         with (
-            patch(f"{_SEARCH}.get_user_project_ids", new=AsyncMock(return_value=_ONE_PROJECT)),
+            patch(f"{_SEARCH}.get_user_projects", new=AsyncMock(return_value=projections(_ONE_PROJECT))),
             patch(f"{_SEARCH}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS))) as resolve,
         ):
             await endpoint(current_user=_user(), db=db, q=_SEARCH_TERM)
@@ -279,7 +280,7 @@ async def test_scope_offers_the_environments_of_the_accessible_projects_only():
     db = FakeDatabase()
     await _seed_environments(db)
 
-    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)):
+    with patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_TWO_PROJECTS))):
         result = await get_analytics_scope(current_user=_user(), db=db)
 
     assert result.release_environments == _ENVIRONMENTS_IN_SCOPE
@@ -290,7 +291,7 @@ async def test_scope_counts_the_projects_the_requested_mode_resolved():
     db = FakeDatabase()
     await _seed_mixed_release_scope(db)
 
-    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_THREE_PROJECTS)):
+    with patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_THREE_PROJECTS))):
         result = await get_analytics_scope(current_user=_user(), db=db, release_environment=DEFAULT_RELEASE_ENVIRONMENT)
 
     assert result.resolved_projects == _EXPECTED_RESOLVED
@@ -301,7 +302,7 @@ async def test_scope_counts_the_projects_the_requested_mode_resolved():
 async def test_scope_defaults_to_the_branch_tip():
     db = FakeDatabase()
     with (
-        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)),
+        patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_TWO_PROJECTS))),
         patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_TWO_SCANS)) as scan_ids,
     ):
         result = await get_analytics_scope(current_user=_user(), db=db)
@@ -315,7 +316,7 @@ async def test_scope_with_no_accessible_projects_offers_nothing():
     db = FakeDatabase()
     await _seed_environments(db)
 
-    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_NO_PROJECTS)):
+    with patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_NO_PROJECTS))):
         result = await get_analytics_scope(current_user=_user(), db=db)
 
     assert result.release_environments == _NO_ENVIRONMENTS
@@ -340,7 +341,7 @@ async def test_scope_dates_the_oldest_analysis_the_numbers_rest_on():
     db = FakeDatabase()
     await _seed_release_scope_with_one_stale_analysis(db)
 
-    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_RELEASED_PROJECTS)):
+    with patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_RELEASED_PROJECTS))):
         result = await get_analytics_scope(current_user=_user(), db=db, release_environment=DEFAULT_RELEASE_ENVIRONMENT)
 
     assert result.oldest_analysis_at == _STALE_ANALYSIS_AT
@@ -354,7 +355,7 @@ async def test_scope_dates_the_branch_tip_too():
     await db.projects.update_one({"_id": "p1"}, {"$set": {"latest_scan_id": "scan-p1"}})
     await db.projects.update_one({"_id": "p2"}, {"$set": {"latest_scan_id": "scan-p2"}})
 
-    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_RELEASED_PROJECTS)):
+    with patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_RELEASED_PROJECTS))):
         result = await get_analytics_scope(current_user=_user(), db=db)
 
     assert result.oldest_analysis_at == _STALE_ANALYSIS_AT
@@ -367,7 +368,7 @@ async def test_scope_answers_a_role_that_holds_no_summary_permission():
     db = FakeDatabase()
     await _seed_environments(db)
 
-    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)):
+    with patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_TWO_PROJECTS))):
         result = await get_analytics_scope(current_user=_user([Permissions.ANALYTICS_HOTSPOTS]), db=db)
 
     assert result.release_environments == _ENVIRONMENTS_IN_SCOPE

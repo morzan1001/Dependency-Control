@@ -95,14 +95,14 @@ class TestUpdateNotificationSettingsAdmin:
             enforce_notification_settings=True,
         )
         project_repo = MagicMock()
-        project_repo.update = AsyncMock()
+        project_repo.update_raw = AsyncMock()
         project_repo.update_member = AsyncMock()
         project_repo.get_by_id = AsyncMock(return_value=project)
 
         self._run(user, project, settings, project_repo)
 
-        project_repo.update.assert_awaited_once()
-        assert project_repo.update.await_args.args[1] == {"enforce_notification_settings": True}
+        project_repo.update_raw.assert_awaited_once()
+        assert project_repo.update_raw.await_args.args[1] == {"$set": {"enforce_notification_settings": True}}
         project_repo.update_member.assert_awaited_once()
 
 

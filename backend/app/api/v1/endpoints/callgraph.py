@@ -11,13 +11,13 @@ from app.api.deps import CallgraphWriteDep, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.callgraph import (
     callgraph_entry_count,
-    check_callgraph_access,
     detect_format,
     parse_generic_format,
     parse_madge_format,
 )
+from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
-from app.core.constants import CALLGRAPH_MAX_ENTRIES
+from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR
 from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
 from app.repositories import CallgraphRepository
 from app.schemas.callgraph import (
@@ -203,7 +203,7 @@ async def get_callgraph(
     language: str | None = None,
 ) -> CallgraphResponse:
     """Get the current callgraph for a project, optionally filtered by language."""
-    await check_callgraph_access(project_id, current_user, db)
+    await check_project_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
     query: dict[str, Any] = {"project_id": project_id}
@@ -225,7 +225,7 @@ async def get_module_usage(
     language: str | None = None,
 ) -> ModuleUsageResponse:
     """Get external module usage (import counts and locations) from the callgraph, optionally filtered by language."""
-    await check_callgraph_access(project_id, current_user, db)
+    await check_project_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
     query: dict[str, Any] = {"project_id": project_id}
@@ -257,7 +257,7 @@ async def delete_callgraph(
     current_user: CurrentUserDep,
 ) -> DeleteCallgraphResponse:
     """Delete the callgraph for a project."""
-    await check_callgraph_access(project_id, current_user, db, require_write=True)
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
 
     callgraph_repo = CallgraphRepository(db)
     deleted_count = await callgraph_repo.delete_by_project(project_id)

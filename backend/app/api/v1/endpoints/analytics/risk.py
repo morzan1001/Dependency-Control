@@ -18,7 +18,7 @@ from app.api.v1.helpers.analytics import (
     calculate_impact_score,
     extract_fix_versions,
     get_projects_with_scans,
-    get_user_project_ids,
+    get_user_projects,
     historical_first_seen,
     process_cve_enrichments,
     require_analytics_permission,
@@ -132,11 +132,12 @@ async def get_impact_analysis(
 
     finding_repo = FindingRepository(db)
 
-    project_ids = await get_user_project_ids(current_user, db)
-    if not project_ids:
+    projects = await get_user_projects(current_user, db)
+    if not projects:
         return []
+    project_ids = [p.id for p in projects]
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
+    project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
 
@@ -354,11 +355,12 @@ async def get_vulnerability_hotspots(
     finding_repo = FindingRepository(db)
     dep_repo = DependencyRepository(db)
 
-    project_ids = await get_user_project_ids(current_user, db)
-    if not project_ids:
+    projects = await get_user_projects(current_user, db)
+    if not projects:
         return []
+    project_ids = [p.id for p in projects]
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
+    project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
 

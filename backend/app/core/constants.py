@@ -167,11 +167,12 @@ UNKNOWN_LICENSE_PATTERNS = {
     "PROPRIETARY",
 }
 
-# Project Roles
-PROJECT_ROLE_ADMIN = "admin"
-PROJECT_ROLE_EDITOR = "editor"
-PROJECT_ROLE_VIEWER = "viewer"
-PROJECT_ROLES = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN]
+# Project roles, weakest first: the order is the hierarchy.
+ProjectRole = Literal["viewer", "editor", "admin"]
+PROJECT_ROLE_ADMIN: ProjectRole = "admin"
+PROJECT_ROLE_EDITOR: ProjectRole = "editor"
+PROJECT_ROLE_VIEWER: ProjectRole = "viewer"
+PROJECT_ROLES: list[str] = list(get_args(ProjectRole))
 
 # Owning teams per project. Every project access resolves each owner's document to derive the
 # caller's role, so the list is a per-request cost, and a sync resolving past this many teams has

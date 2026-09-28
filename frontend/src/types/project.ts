@@ -15,7 +15,10 @@ export interface LicensePolicy {
 export interface ProjectMember {
   user_id: string;
   username?: string;
+  // The stored direct role, which member editing targets.
   role: string;
+  // The role access is checked at: the stronger of the direct role and any owning team's grant.
+  effective_role?: string;
   notification_preferences?: Record<string, string[]>;
   inherited_from?: string;
 }

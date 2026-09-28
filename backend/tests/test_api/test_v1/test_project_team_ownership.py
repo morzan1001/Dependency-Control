@@ -60,7 +60,7 @@ def _project(**ownership) -> Project:
 async def _put(db, project, user, **body):
     settings = MagicMock(retention_mode=None, rescan_mode=None)
     with (
-        patch(f"{MODULE}._load_project_for_update", AsyncMock(return_value=project)),
+        patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)),
         patch(f"{MODULE}.deps.get_system_settings", AsyncMock(return_value=settings)),
         patch(f"{MODULE}._audit_license_policy_change", AsyncMock()),
     ):

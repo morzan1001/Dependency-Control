@@ -353,10 +353,9 @@ class ChatToolRegistry:
         return await handler(self, ctx)
 
     async def _tool_list_projects(self, ctx: _ToolContext) -> dict[str, Any]:
-        query = {**ctx.user_project_query}
         search = ctx.args.get("search")
-        if search:
-            query["name"] = {"$regex": re.escape(search), "$options": "i"}
+        name_filter = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
+        query = and_filters(ctx.user_project_query, name_filter)
         limit = _clamp_limit(ctx.args.get("limit"), 15, maximum=MAX_SUMMARY_ROWS)
         cursor = ctx.db["projects"].find(query, sort=[("last_scan_at", -1)], limit=limit)
         projects = await cursor.to_list(length=limit)
@@ -1400,8 +1399,7 @@ class ChatToolRegistry:
                 {"last_scan_at": {"$exists": False}},
             ],
         }
-        if ctx.user_project_query:
-            query = {"$and": [query, ctx.user_project_query]}
+        query = and_filters(query, ctx.user_project_query)
         cursor = ctx.db["projects"].find(query, {"_id": 1, "name": 1, "last_scan_at": 1}, limit=limit)
         rows = await cursor.to_list(length=limit)
         out = []
@@ -1762,12 +1760,9 @@ class ChatToolRegistry:
         """Fetch a project only if the user has access.
 
         `user_project_query` MUST come from build_user_project_query (returns {}
-        only for PROJECT_READ_ALL users). $and, not .update(), avoids a silent
-        authorization bypass if that query ever carried an `_id` key.
+        only for PROJECT_READ_ALL users).
         """
-        if not user_project_query:
-            return await db["projects"].find_one({"_id": project_id})
-        return await db["projects"].find_one({"$and": [{"_id": project_id}, user_project_query]})
+        return await db["projects"].find_one(and_filters({"_id": project_id}, user_project_query))
 
     async def _compliance_visibility_filter(
         self,
@@ -1789,8 +1784,7 @@ class ChatToolRegistry:
         if authorized_project_ids:
             branches.append({"scope": "project", "scope_id": {"$in": authorized_project_ids}})
 
-        user_teams = await team_repo.find_by_member(user_id)
-        team_ids = [str(t.id) for t in user_teams]
+        team_ids = await team_repo.find_ids_by_member(user_id)
         if team_ids:
             branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
 

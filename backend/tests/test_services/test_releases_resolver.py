@@ -137,6 +137,22 @@ async def _seed_a_dangling_pointer(db: FakeDatabase) -> None:
     )
 
 
+async def _scope(db: FakeDatabase, project_ids: list[str]) -> list:
+    """What get_user_projects hands the analytics helpers for a caller who reads these projects."""
+    from app.repositories.projects import ProjectRepository
+
+    return await ProjectRepository(db).find_many_with_scan_id({"_id": {"$in": project_ids}}, limit=len(project_ids))
+
+
+async def _everything(db: FakeDatabase) -> list:
+    from app.api.v1.helpers.analytics import get_user_projects
+    from app.core.permissions import Permissions
+    from app.models.user import User
+
+    reader = User(id="u-reader", username="r", email="r@corp.com", permissions=[Permissions.PROJECT_READ_ALL])
+    return await get_user_projects(reader, db)
+
+
 def _count_queries(db: FakeDatabase) -> Counter:
     """Wraps every read the resolver can reach so a per-project query shows up as a rising count."""
     counts: Counter = Counter()
@@ -708,7 +724,7 @@ async def test_every_consumer_falls_back_when_the_pointer_names_a_deleted_scan(d
     scope = ResolvedScope(scope="user", scope_id=None, project_ids=[_PROJECT_A])
 
     assert await resolve_scan_ids(db, [_PROJECT_A]) == {_PROJECT_A: _EXEMPTED_RELEASE}
-    assert await get_latest_scan_ids([_PROJECT_A], db) == [_EXEMPTED_RELEASE]
+    assert await get_latest_scan_ids(await _scope(db, [_PROJECT_A]), db) == [_EXEMPTED_RELEASE]
     assert await CryptoHotspotService(db)._pick_scan_ids(scope, None) == [_EXEMPTED_RELEASE]
     assert await ComplianceReportEngine()._pick_scan_ids(db, scope) == [(_PROJECT_A, _EXEMPTED_RELEASE)]
     assert await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": [_PROJECT_A]}}, None, db) == {
@@ -771,7 +787,7 @@ async def test_analytics_get_latest_scan_ids_uses_the_resolver(db):
     await db.scans.insert_one({**_scan("on-a-dead-branch", _PROJECT_A, created_delta=5), "branch": _GONE_BRANCH})
     await db.scans.insert_one(_scan("still-alive", _PROJECT_A))
 
-    assert await get_latest_scan_ids([_PROJECT_A], db) == ["still-alive"]
+    assert await get_latest_scan_ids(await _scope(db, [_PROJECT_A]), db) == ["still-alive"]
 
 
 @pytest.mark.asyncio
@@ -783,7 +799,7 @@ async def test_analytics_get_projects_with_scans_names_every_project_in_scope(db
     await db.projects.insert_one({"_id": _PROJECT_B, "name": "beta"})
     await db.scans.insert_one(_scan("head-a", _PROJECT_A))
 
-    names, scan_ids = await get_projects_with_scans([_PROJECT_A, _PROJECT_B], db)
+    names, scan_ids = await get_projects_with_scans(await _scope(db, [_PROJECT_A, _PROJECT_B]), db)
 
     assert names == {_PROJECT_A: "alpha", _PROJECT_B: "beta"}
     assert scan_ids == ["head-a"]
@@ -798,21 +814,22 @@ async def test_analytics_helpers_select_the_release_when_asked(db):
     await db.scans.insert_one(_scan("released-a", _PROJECT_A))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released-a"))
 
-    assert await get_latest_scan_ids([_PROJECT_A], db, release_environment=_PRODUCTION) == ["released-a"]
-    _, scan_ids = await get_projects_with_scans([_PROJECT_A], db, release_environment=_PRODUCTION)
+    scope = await _scope(db, [_PROJECT_A])
+    assert await get_latest_scan_ids(scope, db, release_environment=_PRODUCTION) == ["released-a"]
+    _, scan_ids = await get_projects_with_scans(scope, db, release_environment=_PRODUCTION)
     assert scan_ids == ["released-a"]
 
 
 @pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])
 @pytest.mark.asyncio
 async def test_get_projects_with_scans_reads_the_projects_once(db, project_count):
-    """The name map and the resolver's scope are the same read, not one each."""
+    """The caller's scope, the name map and the resolver's input are the same read, not one each."""
     from app.api.v1.helpers.analytics import get_projects_with_scans
 
-    project_ids = await _seed_one_pointed_scan_each(db, project_count)
+    await _seed_one_pointed_scan_each(db, project_count)
     counts = _count_queries(db)
 
-    await get_projects_with_scans(project_ids, db)
+    await get_projects_with_scans(await _everything(db), db)
 
     assert dict(counts) == _NAMES_AND_HEAD_QUERIES
 
@@ -822,10 +839,10 @@ async def test_get_projects_with_scans_reads_the_projects_once(db, project_count
 async def test_get_projects_with_scans_release_mode_reads_the_projects_once(db, project_count):
     from app.api.v1.helpers.analytics import get_projects_with_scans
 
-    project_ids = await _seed_one_scan_each(db, project_count)
+    await _seed_one_scan_each(db, project_count)
     counts = _count_queries(db)
 
-    await get_projects_with_scans(project_ids, db, release_environment=_PRODUCTION)
+    await get_projects_with_scans(await _everything(db), db, release_environment=_PRODUCTION)
 
     assert dict(counts) == _NAMES_AND_RELEASE_QUERIES
 

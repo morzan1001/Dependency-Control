@@ -13,7 +13,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_409
 from app.core import ensure_utc
-from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, PROJECT_ROLE_VIEWER, RELEASE_ENVIRONMENT_PATTERN
+from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, RELEASE_ENVIRONMENT_PATTERN
 from app.core.init_db import RELEASES_LATEST_SORT
 from app.models.release import Release
 from app.repositories import ReleaseRepository, ScanRepository
@@ -177,7 +177,7 @@ async def list_releases(
 ) -> ReleaseListResponse:
     """Every release of a project, newest first — one entry per environment a scan was deployed to,
     so an environment's current release is its first entry."""
-    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
+    await check_project_access(project_id, current_user, db)
 
     query: dict[str, Any] = {"project_id": project_id}
     if environment:

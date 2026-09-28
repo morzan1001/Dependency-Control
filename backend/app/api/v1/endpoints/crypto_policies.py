@@ -8,6 +8,7 @@ from app.api.deps import CurrentUserDep, DatabaseDep, PermissionChecker
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_500
+from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
@@ -83,7 +84,7 @@ async def get_project_policy(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get the project override policy. Returns a stub with empty rules if none exists."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     policy = await CryptoPolicyRepository(db).get_project_policy(project_id)
     if policy is None:
         return {"scope": "project", "project_id": project_id, "rules": [], "version": 0}
@@ -98,7 +99,7 @@ async def put_project_policy(
     body: CryptoPolicyPutRequest,
 ) -> dict[str, Any]:
     """Create or replace the project override policy. Project owner or admin only."""
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     settings = await SystemSettingsRepository(db).get()
     if settings.crypto_policy_mode == "global":
         raise HTTPException(
@@ -145,7 +146,7 @@ async def delete_project_policy(
     db: DatabaseDep,
 ) -> None:
     """Delete the project override policy. Project owner or admin only."""
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     repo = CryptoPolicyRepository(db)
     old_policy = await repo.get_project_policy(project_id)
     new_policy = CryptoPolicy(
@@ -174,7 +175,7 @@ async def get_effective_policy(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get the effective merged policy for a project (system defaults merged with overrides)."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     effective = await CryptoPolicyResolver(db).resolve(project_id)
     return {
         "system_version": effective.system_version,

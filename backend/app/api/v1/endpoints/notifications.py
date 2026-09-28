@@ -13,6 +13,7 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from app.core.config import settings
+from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.permissions import Permissions
 from app.models.broadcast import Broadcast
 from app.models.project import Project
@@ -319,7 +320,7 @@ def _collect_admin_ids(affected_projects_map: dict[str, Project]) -> set[str]:
     admin_ids: set[str] = set()
     for project in affected_projects_map.values():
         for member in project.members:
-            if member.role == "admin":
+            if member.role == PROJECT_ROLE_ADMIN:
                 admin_ids.add(member.user_id)
     return admin_ids
 
@@ -333,7 +334,7 @@ def _group_projects_by_admin(
     user_notification_map: dict[str, dict] = {}
     for pid, project in affected_projects_map.items():
         for member in project.members:
-            if member.role != "admin" or member.user_id not in users_dict:
+            if member.role != PROJECT_ROLE_ADMIN or member.user_id not in users_dict:
                 continue
             uid = member.user_id
             if uid not in user_notification_map:

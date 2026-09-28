@@ -211,7 +211,7 @@ async def _assert_two_concurrent_saves_cannot_both_take_the_last_admin(db) -> No
     settings = MagicMock(retention_mode=None, rescan_mode=None)
 
     with (
-        patch("app.api.v1.endpoints.projects._load_project_for_update", AsyncMock(return_value=project)),
+        patch("app.api.v1.endpoints.projects.check_project_access", AsyncMock(return_value=project)),
         patch("app.api.v1.endpoints.projects.deps.get_system_settings", AsyncMock(return_value=settings)),
         patch("app.api.v1.endpoints.projects._audit_license_policy_change", AsyncMock()),
     ):

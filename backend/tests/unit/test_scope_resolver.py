@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from tests.helpers.analytics_scope import projections
 from app.services.analytics.scopes import (
     ScopeResolutionError,
     ScopeResolver,
@@ -82,7 +83,7 @@ async def test_user_scope_expands_to_accessible_projects():
     db = MagicMock()
     user = MagicMock(id="u1", permissions=frozenset())
     resolver = ScopeResolver(db, user)
-    resolver._list_user_project_ids = AsyncMock(return_value=["p1", "p2", "p3"])
+    resolver.list_user_projects = AsyncMock(return_value=projections(["p1", "p2", "p3"]))
     result = await resolver.resolve(scope="user", scope_id=None)
     assert result.scope == "user"
     assert result.project_ids == ["p1", "p2", "p3"]

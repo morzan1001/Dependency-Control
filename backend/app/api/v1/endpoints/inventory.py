@@ -52,7 +52,7 @@ async def inventory_stats(
     db: DatabaseDep,
     branch: str | None = Query(None),
 ) -> InventoryStatsResponse:
-    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
     scan = await _resolve_scan_or_404(db, project, branch)
     return await build_inventory_stats(db, project, scan)
 
@@ -69,7 +69,7 @@ async def inventory_components(
     sort_by: str = Query("name"),
     sort_order: str = Query("asc"),
 ) -> ComponentsPageResponse:
-    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
     scan = await _resolve_scan_or_404(db, project, branch)
     items, total = await get_components_page(
         db, scan, page=page, page_size=page_size, search=search, sort_by=sort_by, sort_order=sort_order
@@ -84,7 +84,7 @@ async def inventory_components_export(
     db: DatabaseDep,
     branch: str | None = Query(None),
 ) -> StreamingResponse:
-    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
     scan = await _resolve_scan_or_404(db, project, branch)
     filename = export_filename(project.name, "components", scan.branch)
     return csv_response(filename, COMPONENT_COLUMNS, iter_component_rows(db, scan))
@@ -97,7 +97,7 @@ async def inventory_licenses(
     db: DatabaseDep,
     branch: str | None = Query(None),
 ) -> LicensesResponse:
-    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
     scan = await _resolve_scan_or_404(db, project, branch)
     return LicensesResponse(scan=scan_context(scan), items=await build_license_rows(db, scan))
 
@@ -109,7 +109,7 @@ async def inventory_licenses_export(
     db: DatabaseDep,
     branch: str | None = Query(None),
 ) -> StreamingResponse:
-    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
     scan = await _resolve_scan_or_404(db, project, branch)
     filename = export_filename(project.name, "licenses", scan.branch)
     return csv_response(filename, LICENSE_COLUMNS, iter_license_rows(db, scan))
@@ -125,7 +125,7 @@ async def inventory_crypto(
     page_size: int = Query(25, ge=1, le=200),
     search: str | None = Query(None),
 ) -> CryptoPageResponse:
-    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
     scan = await _resolve_scan_or_404(db, project, branch)
     items, total = await get_crypto_page(db, project.id, scan.id, page=page, page_size=page_size, search=search)
     return CryptoPageResponse(scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size)
@@ -138,7 +138,7 @@ async def inventory_crypto_export(
     db: DatabaseDep,
     branch: str | None = Query(None),
 ) -> StreamingResponse:
-    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
     scan = await _resolve_scan_or_404(db, project, branch)
     filename = export_filename(project.name, "crypto", scan.branch)
     return csv_response(filename, CRYPTO_COLUMNS, iter_crypto_rows(db, project.id, scan.id))

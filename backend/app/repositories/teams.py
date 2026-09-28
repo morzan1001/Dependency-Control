@@ -226,10 +226,15 @@ class TeamRepository:
     async def count(self, query: dict[str, Any] | None = None) -> int:
         return await self.collection.count_documents(query or {})
 
-    async def find_by_member(self, user_id: str) -> list[Team]:
-        cursor = self.collection.find({_MEMBERS_USER_ID: user_id})
-        docs = await cursor.to_list(None)
-        return [Team(**doc) for doc in docs]
+    async def find_ids_by_member(self, user_id: str) -> list[str]:
+        return [str(doc["_id"]) async for doc in self.collection.find({_MEMBERS_USER_ID: user_id}, {"_id": 1})]
+
+    async def members_by_team(self, team_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Each existing team's member entries (user_id and role), in one read."""
+        if not team_ids:
+            return {}
+        cursor = self.collection.find({"_id": {"$in": list(team_ids)}}, {"members.user_id": 1, "members.role": 1})
+        return {str(doc["_id"]): doc.get(_MEMBERS) or [] async for doc in cursor}
 
     async def add_member(self, team_id: str, member_data: dict[str, Any], updated_at: datetime) -> bool:
         """False when the user is already a member; the filter decides, not an earlier read."""
@@ -269,10 +274,6 @@ class TeamRepository:
             array_filters=[{f"m.{_USER_ID}": user_id}],
         )
         return bool(result.matched_count)
-
-    async def is_member(self, team_id: str, user_id: str) -> bool:
-        result = await self.collection.find_one({"_id": team_id, _MEMBERS_USER_ID: user_id}, {"_id": 1})
-        return result is not None
 
     async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
         return await self.collection.aggregate(pipeline).to_list(limit)

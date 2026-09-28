@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.api.v1.endpoints.analytics.summary import get_analytics_summary
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
+from tests.helpers.analytics_scope import projections
 
 MODULE = "app.api.v1.endpoints.analytics.summary"
 
@@ -21,7 +22,7 @@ def _admin_user():
 
 def _run_summary(severity_counts):
     with (
-        patch(f"{MODULE}.get_user_project_ids", new=AsyncMock(return_value=["p1"])),
+        patch(f"{MODULE}.get_user_projects", new=AsyncMock(return_value=projections(["p1"]))),
         patch(f"{MODULE}.get_latest_scan_ids", new=AsyncMock(return_value=["s1"])),
         patch(f"{MODULE}.DependencyRepository") as dep_repo_cls,
         patch(f"{MODULE}.FindingRepository") as finding_repo_cls,

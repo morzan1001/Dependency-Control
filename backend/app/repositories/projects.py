@@ -242,28 +242,17 @@ def ownership_fields(team_ids: list[str], source: str) -> dict[str, Any]:
     }
 
 
-def _surviving_admin_filter(user_id: str, required: bool) -> dict[str, Any]:
-    """Match only while a member other than ``user_id`` is an admin, so a write that would take
-    the last one finds nothing to write to instead of racing a count from an earlier read."""
-    if not required:
-        return {}
-    return {"members": {"$elemMatch": {"user_id": {"$ne": user_id}, "role": PROJECT_ROLE_ADMIN}}}
+def surviving_admin_filter(admin_owners: list[str], leaving_member: str | None = None) -> dict[str, Any]:
+    """Match only while the project still holds an admin: a member other than ``leaving_member``,
+    or one of the admin-supplying owners it still holds.
 
-
-def surviving_owner_admin_filter(incumbent_admin_owners: list[str]) -> dict[str, Any]:
-    """Match only while the project still holds an admin — a direct member, or one of the owners
-    that supplies one and the write leaves in place.
-
-    The same shape as ``_surviving_admin_filter`` and for the same reason: two concurrent writes
-    each taking one of the last two admin-supplying owners both pass a check made beforehand, and
-    the project ends up with nobody who can administer it.
+    Part of the write's own filter, so two concurrent writes each taking one of the last two admins
+    cannot both pass a check made beforehand and leave nobody who can administer the project.
     """
-    return {
-        "$or": [
-            {"members": {"$elemMatch": {"role": PROJECT_ROLE_ADMIN}}},
-            {"team_ids": {"$in": incumbent_admin_owners}},
-        ]
-    }
+    other_admin: dict[str, Any] = {"role": PROJECT_ROLE_ADMIN}
+    if leaving_member is not None:
+        other_admin["user_id"] = {"$ne": leaving_member}
+    return {"$or": [{"members": {"$elemMatch": other_admin}}, {"team_ids": {"$in": admin_owners}}]}
 
 
 class ProjectRepository:
@@ -459,10 +448,10 @@ class ProjectRepository:
         )
         return bool(result.matched_count)
 
-    async def remove_member(self, project_id: str, user_id: str, *, require_another_admin: bool = False) -> bool:
-        """False when require_another_admin holds and no other member is an admin."""
+    async def remove_member(self, project_id: str, user_id: str, guard: dict[str, Any] | None = None) -> bool:
+        """False when ``guard`` no longer holds, e.g. ``surviving_admin_filter``."""
         result = await self.collection.update_one(
-            {"_id": project_id, **_surviving_admin_filter(user_id, require_another_admin)},
+            {"_id": project_id, **(guard or {})},
             {"$pull": {"members": {"user_id": user_id}}},
         )
         return bool(result.matched_count)
@@ -475,16 +464,15 @@ class ProjectRepository:
         project_id: str,
         user_id: str,
         member_fields: dict[str, Any],
-        *,
-        require_another_admin: bool = False,
+        guard: dict[str, Any] | None = None,
     ) -> bool:
         """member_fields are plain member field names, e.g. {'role': 'admin'}.
 
         The member is addressed by identity because a concurrent $pull shifts array indices.
-        False when require_another_admin holds and no other member is an admin.
+        False when ``guard`` no longer holds.
         """
         result = await self.collection.update_one(
-            {"_id": project_id, **_surviving_admin_filter(user_id, require_another_admin)},
+            {"_id": project_id, **(guard or {})},
             {"$set": {f"members.$[m].{field}": value for field, value in member_fields.items()}},
             array_filters=[{"m.user_id": user_id}],
         )

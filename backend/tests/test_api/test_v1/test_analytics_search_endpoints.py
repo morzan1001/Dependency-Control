@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
+from tests.helpers.analytics_scope import projections
 
 MODULE = "app.api.v1.endpoints.analytics.search"
 
@@ -64,8 +65,8 @@ class TestSearchDependenciesVulnScanScope:
         db = MagicMock()
         captured_pipelines: list[list[dict[str, Any]]] = []
 
-        async def _fake_get_user_project_ids(_u, _d):
-            return ["proj-1"]
+        async def _fake_get_user_projects(_u, _d):
+            return projections(["proj-1"])
 
         async def _fake_get_projects_with_scans(_project_ids, _d, **_kw):
             return {"proj-1": "Project 1"}, ["scan-latest"]
@@ -82,7 +83,7 @@ class TestSearchDependenciesVulnScanScope:
         mock_finding_repo.aggregate = _fake_aggregate
 
         with (
-            patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+            patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
             patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
             patch(f"{MODULE}.DependencyRepository", return_value=mock_dep_repo),
             patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),

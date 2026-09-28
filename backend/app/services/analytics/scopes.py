@@ -27,6 +27,7 @@ _T = TypeVar("_T")
 
 if TYPE_CHECKING:
     from app.models.user import User
+    from app.schemas.projections import ProjectWithScanId
 
 Scope = Literal["project", "team", "global", "user"]
 
@@ -103,14 +104,14 @@ class ScopeResolver:
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
 
     async def _resolve_user(self) -> ResolvedScope:
-        project_ids = await self._list_user_project_ids()
+        project_ids = [str(p.id) for p in await self.list_user_projects()]
         return ResolvedScope(scope="user", scope_id=None, project_ids=project_ids)
 
     async def _check_project_member(self, project_id: str) -> bool:
         from app.api.v1.helpers.projects import check_project_access
 
         try:
-            await check_project_access(project_id, self.user, self.db, required_role="viewer")
+            await check_project_access(project_id, self.user, self.db)
             return True
         except HTTPException:
             return False  # legitimate 403/404 access denial
@@ -139,17 +140,18 @@ class ScopeResolver:
         )
         return [str(p.id) for p in ensure_whole_scope(projects)]
 
-    async def _list_user_project_ids(self) -> list[str]:
-        """Every project the user may see, under the same query the project routes are filtered by.
+    async def list_user_projects(self) -> list["ProjectWithScanId"]:
+        """Every project the user may see, under the same query the project routes are filtered by,
+        with the fields scan resolution and a name map need, so no caller reads them again.
 
         Shared rather than restated: two spellings of one access rule drift, and the half that
         drifts is invisible until someone is shown a project the other spelling would have hidden.
         A read-all user gets an empty filter, which is the whole collection.
         """
         from app.api.v1.helpers.projects import build_user_project_query
+        from app.repositories.projects import ProjectRepository
         from app.repositories.teams import TeamRepository
 
         query = await build_user_project_query(self.user, TeamRepository(self.db))
-        cursor = self.db.projects.find(query, {"_id": 1}).limit(scope_probe_limit())
-        docs = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
-        return [str(d["_id"]) for d in docs]
+        projects = await ProjectRepository(self.db).find_many_with_scan_id(query, limit=scope_probe_limit())
+        return ensure_whole_scope(projects)

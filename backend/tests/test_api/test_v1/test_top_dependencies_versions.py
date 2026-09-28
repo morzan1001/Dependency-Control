@@ -9,6 +9,7 @@ import pytest
 from app.api.v1.endpoints.analytics.summary import _VERSION_SAMPLE, get_top_dependencies
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
+from tests.helpers.analytics_scope import projections
 
 _SUMMARY = "app.api.v1.endpoints.analytics.summary"
 _PROJECT_IDS = ["p1"]
@@ -42,7 +43,7 @@ async def _top_dependencies() -> list:
     finding_repo = MagicMock()
     finding_repo.get_vuln_counts_by_components = AsyncMock(return_value={})
     with (
-        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_SCANS)),
         patch(f"{_SUMMARY}.DependencyRepository", return_value=dep_repo),
         patch(f"{_SUMMARY}.FindingRepository", return_value=finding_repo),

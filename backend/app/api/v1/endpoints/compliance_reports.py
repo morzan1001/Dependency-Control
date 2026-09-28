@@ -132,13 +132,11 @@ async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict
         user_branch["requested_by"] = user_id
     branches.append(user_branch)
 
-    project_ids = await ScopeResolver(db, user)._list_user_project_ids()
+    project_ids = [p.id for p in await ScopeResolver(db, user).list_user_projects()]
     if project_ids:
         branches.append({"scope": "project", "scope_id": {"$in": project_ids}})
 
-    team_repo = TeamRepository(db)
-    user_teams = await team_repo.find_by_member(user_id)
-    team_ids = [str(t.id) for t in user_teams]
+    team_ids = await TeamRepository(db).find_ids_by_member(user_id)
     if team_ids:
         branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
 

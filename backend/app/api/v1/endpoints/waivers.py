@@ -18,6 +18,7 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
+from app.repositories.base import and_filters
 from app.models.waiver import Waiver
 from app.repositories import ScanRepository, WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
@@ -218,7 +219,7 @@ async def list_waivers(
                 {"expiration_date": {"$gt": now}},
             ],
         }
-        query = {"$and": [query, orphaned_clause]} if query else orphaned_clause
+        query = and_filters(query, orphaned_clause)
 
     waiver_repo = WaiverRepository(db)
 

@@ -14,6 +14,8 @@ from app.core.constants import (
     API_KEY_SURFACE_ADHOC,
     API_KEY_SURFACE_MCP,
     MAX_PROJECT_TEAMS,
+    PROJECT_ROLE_ADMIN,
+    PROJECT_ROLE_EDITOR,
     TEAM_SOURCE_GITHUB,
     TEAM_SOURCE_GITLAB,
     team_source,
@@ -371,7 +373,7 @@ async def _handle_gitlab_oidc(
         )
 
     initial_member_id = await _resolve_initial_member_id(user_repo, payload.user_email)
-    members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
+    members = [ProjectMember(user_id=initial_member_id, role=PROJECT_ROLE_ADMIN)] if initial_member_id else []
 
     owners: list[str] = []
     gitlab_source = team_source(TEAM_SOURCE_GITLAB, instance_id)
@@ -470,7 +472,7 @@ async def _handle_github_oidc(
         )
 
     actor = (await github_service.resolve_login(gh_payload.actor, user_repo)).user
-    members = [ProjectMember(user_id=str(actor["_id"]), role="admin")] if actor else []
+    members = [ProjectMember(user_id=str(actor["_id"]), role=PROJECT_ROLE_ADMIN)] if actor else []
 
     owners: list[str] = []
     github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)
@@ -595,7 +597,7 @@ async def authorize_callgraph_write(
     settings_: SystemSettings = Depends(get_system_settings),
 ) -> str:
     """Authorize a callgraph write for CI credentials or a logged-in user; returns the project id."""
-    from app.api.v1.helpers.callgraph import check_callgraph_access
+    from app.api.v1.helpers.projects import check_project_access
 
     if x_api_key or oidc_token:
         project = await get_project_for_ingest(x_api_key=x_api_key, oidc_token=oidc_token, db=db, settings=settings_)
@@ -605,7 +607,9 @@ async def authorize_callgraph_write(
 
     if token:
         user = await get_current_user(db=db, token=token)
-        await check_callgraph_access(project_id, await get_current_active_user(user), db, require_write=True)
+        await check_project_access(
+            project_id, await get_current_active_user(user), db, required_role=PROJECT_ROLE_EDITOR
+        )
         return project_id
 
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
@@ -625,7 +629,6 @@ async def authorize_release_write(
     ingested with, while a human correcting a mistake has only a session.
     """
     from app.api.v1.helpers.projects import check_project_access
-    from app.core.constants import PROJECT_ROLE_EDITOR
 
     if x_api_key or oidc_token:
         project = await get_project_for_ingest(x_api_key=x_api_key, oidc_token=oidc_token, db=db, settings=settings_)

@@ -9,20 +9,18 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
     ReleaseEnvironmentQuery,
     build_findings_severity_map,
-    get_latest_scan_ids,
     get_projects_with_scans,
-    get_user_project_ids,
+    get_user_projects,
     require_analytics_permission,
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PROJECT_ROLE_VIEWER, SCAN_DEPENDENCY_READ_LIMIT
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
 from app.repositories import (
     DependencyEnrichmentRepository,
     DependencyRepository,
     FindingRepository,
-    ProjectRepository,
     ScanRepository,
 )
 from app.schemas.analytics import (
@@ -192,7 +190,7 @@ async def get_dependency_tree(
 ) -> DependencyGraph:
     """Get the dependency graph for a project as flat nodes + roots (client nests lazily)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_TREE)
-    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
+    await check_project_access(project_id, current_user, db)
 
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
@@ -233,14 +231,14 @@ async def get_component_findings(
     """Get all findings for a specific component across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
-    project_ids = await get_user_project_ids(current_user, db)
+    projects = await get_user_projects(current_user, db)
 
-    if not project_ids:
+    if not projects:
         return []
 
     # Same scope resolution as the tables that link here, or a component the hotspot ranking
     # found in the release is looked up against the branch tip and reads as having no findings.
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
+    project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
 
     if not scan_ids:
         return []
@@ -327,29 +325,22 @@ async def get_dependency_metadata_endpoint(
     """Aggregated dependency metadata across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
-    project_ids = await get_user_project_ids(current_user, db)
-    if not project_ids:
+    projects = await get_user_projects(current_user, db)
+    if not projects:
         return None
 
-    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
+    project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
     if not scan_ids:
         return None
 
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
-    project_repo = ProjectRepository(db)
     enrichment_repo = DependencyEnrichmentRepository(db)
 
     dep_query = _build_dep_query(scan_ids, component, version, type)
     dependencies = _resolve_single_dependency_package(await dep_repo.find_many(dep_query, limit=100), component)
     if not dependencies:
         return None
-
-    projects = await project_repo.find_many_minimal(
-        {"_id": {"$in": project_ids}},
-        limit=ANALYTICS_MAX_QUERY_LIMIT,
-    )
-    project_name_map = {p.id: p.name for p in projects}
 
     first_dep = dependencies[0]
     affected_projects = _collect_affected_projects(dependencies, project_name_map)

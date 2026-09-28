@@ -10,7 +10,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
     ReleaseEnvironmentQuery,
     get_projects_with_scans,
-    get_user_project_ids,
+    get_user_projects,
     require_analytics_permission,
     scope_resolution_counts,
 )
@@ -116,11 +116,12 @@ async def search_dependencies_advanced(
     """Advanced dependency search with multiple filters and pagination."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
-    accessible_project_ids = await get_user_project_ids(current_user, db)
+    accessible_projects = await get_user_projects(current_user, db)
 
     if project_ids:
         requested_ids = [pid.strip() for pid in project_ids.split(",")]
-        accessible_project_ids = [pid for pid in accessible_project_ids if pid in requested_ids]
+        accessible_projects = [p for p in accessible_projects if p.id in requested_ids]
+    accessible_project_ids = [p.id for p in accessible_projects]
 
     if not accessible_project_ids:
         return DependencySearchResponse(
@@ -131,7 +132,7 @@ async def search_dependencies_advanced(
     finding_repo = FindingRepository(db)
 
     project_name_map, scan_ids = await get_projects_with_scans(
-        accessible_project_ids, db, release_environment=release_environment
+        accessible_projects, db, release_environment=release_environment
     )
     resolved_projects, projects_without_release = scope_resolution_counts(accessible_project_ids, scan_ids)
 
@@ -430,11 +431,12 @@ async def search_vulnerabilities(
     """Search vulnerabilities across accessible projects by id, aliases, nested ids, and description."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
-    accessible_project_ids = await get_user_project_ids(current_user, db)
+    accessible_projects = await get_user_projects(current_user, db)
 
     if project_ids:
         requested_ids = [pid.strip() for pid in project_ids.split(",")]
-        accessible_project_ids = [pid for pid in accessible_project_ids if pid in requested_ids]
+        accessible_projects = [p for p in accessible_projects if p.id in requested_ids]
+    accessible_project_ids = [p.id for p in accessible_projects]
 
     if not accessible_project_ids:
         return VulnerabilitySearchResponse(
@@ -444,7 +446,7 @@ async def search_vulnerabilities(
     finding_repo = FindingRepository(db)
 
     project_name_map, scan_ids = await get_projects_with_scans(
-        accessible_project_ids, db, release_environment=release_environment
+        accessible_projects, db, release_environment=release_environment
     )
     resolved_projects, projects_without_release = scope_resolution_counts(accessible_project_ids, scan_ids)
 

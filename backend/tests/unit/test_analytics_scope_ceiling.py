@@ -55,9 +55,9 @@ def test_a_scope_past_the_ceiling_is_refused_with_the_number(small_ceiling):
 async def test_a_user_scope_at_the_ceiling_still_resolves(db, small_ceiling):
     _seed_projects(db, _CEILING, member=True)
 
-    ids = await _resolver(db)._list_user_project_ids()
+    projects = await _resolver(db).list_user_projects()
 
-    assert len(ids) == _CEILING
+    assert len(projects) == _CEILING
 
 
 @pytest.mark.asyncio
@@ -65,7 +65,7 @@ async def test_a_user_scope_past_the_ceiling_is_refused(db, small_ceiling):
     _seed_projects(db, _PAST_THE_CEILING, member=True)
 
     with pytest.raises(ScopeTooLargeError):
-        await _resolver(db)._list_user_project_ids()
+        await _resolver(db).list_user_projects()
 
 
 @pytest.mark.asyncio

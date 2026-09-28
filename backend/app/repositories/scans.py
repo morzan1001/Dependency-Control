@@ -226,6 +226,27 @@ class ScanRepository:
             return await self.collection.find_one(query, sort=sort)
         return await self.collection.find_one(query)
 
+    async def branch_scan_times(self, project_id: str) -> dict[str, tuple[datetime | None, datetime | None]]:
+        """Per branch: when its newest scan and its newest usable scan were created."""
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"project_id": project_id}},
+            {
+                "$group": {
+                    "_id": "$branch",
+                    "last_scan_at": {"$max": "$created_at"},
+                    # Ranked on separately: a branch whose newest scans all failed renders nothing.
+                    "last_usable_at": {
+                        "$max": {"$cond": [{"$in": ["$status", list(SCAN_USABLE_STATUSES)]}, "$created_at", None]}
+                    },
+                }
+            },
+        ]
+        return {
+            doc["_id"]: (doc["last_scan_at"], doc.get("last_usable_at"))
+            for doc in await self.aggregate(pipeline)
+            if doc["_id"] is not None
+        }
+
     async def branch_tips(
         self, project_id: str, deleted_branches: list[str] | None = None
     ) -> list[tuple[str, int, dict[str, Any] | None]]:
