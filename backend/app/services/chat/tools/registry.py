@@ -36,7 +36,7 @@ from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
-from app.services.analytics.scopes import ScopeTooLargeError, ensure_whole_scope, scope_probe_limit
+from app.services.analytics.scopes import ScopeTooLargeError, read_scope_projects
 from app.services.analyzers.purl_utils import canonical_purl
 from app.services.compliance.visibility import report_visibility_filter
 from app.services.reachability_enrichment import reachability_display_tier
@@ -1761,11 +1761,7 @@ class ChatToolRegistry:
     async def _get_authorized_project_ids(
         self, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
     ) -> list[str]:
-        """Every accessible project id, on the ceiling analytics answers the same question under.
-        A cut here changes which projects an answer covers without changing how the answer reads."""
-        cursor = db["projects"].find(user_project_query, {"_id": 1}, limit=scope_probe_limit())
-        projects = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
-        return [p["_id"] for p in projects]
+        return [p.id for p in await read_scope_projects(db, user_project_query)]
 
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
         """The scan representing the head of a project the caller already read and authorised."""
@@ -1822,11 +1818,8 @@ class ChatToolRegistry:
             scan_id = await self._head_scan_id(project, db)
             return {project["_id"]: scan_id} if scan_id else {}
 
-        project_ids = await self._get_authorized_project_ids(user_project_query, db)
-        if not project_ids:
-            return {}
-
-        return await resolve_scan_ids(db, project_ids)
+        projects = await read_scope_projects(db, user_project_query)
+        return await resolve_scan_ids(db, [p.id for p in projects], projects=projects)
 
     @staticmethod
     async def _project_names(db: AsyncIOMotorDatabase, project_ids: list[str]) -> dict[str, str]:

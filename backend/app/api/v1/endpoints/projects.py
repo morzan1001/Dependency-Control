@@ -22,6 +22,7 @@ from app.api.v1.helpers import (
     generate_project_api_key,
     get_category_type_filter,
     get_sort_field,
+    get_user_project_ids,
     is_write_superuser,
     last_admin_guard,
     load_from_gridfs,
@@ -107,7 +108,6 @@ from app.schemas.project import (
     ScanWithReleases,
 )
 from app.services.aggregation.components import component_match_expr
-from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
 from app.services.branches import resolve_default_branch
 from app.services.gitlab import GitLabService
 from app.services.inventory.csv_stream import csv_response, export_filename
@@ -386,16 +386,12 @@ async def read_all_scans(
     sort_order: str = "desc",
 ) -> list[dict[str, Any]]:
     """Retrieve scans for all projects the user has access to, with pagination and sorting."""
-    project_repo = ProjectRepository(db)
-    team_repo = TeamRepository(db)
     scan_repo = ScanRepository(db)
 
     if not may_read_projects(current_user):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    permission_query = await build_user_project_query(current_user, team_repo)
-    projects = ensure_whole_scope(await project_repo.find_many_minimal(permission_query, limit=scope_probe_limit()))
-    project_ids = [str(p.id) for p in projects]
+    project_ids = await get_user_project_ids(current_user, db)
 
     if not project_ids:
         return []

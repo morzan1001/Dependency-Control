@@ -486,6 +486,9 @@ SCAN_DEPENDENCY_READ_LIMIT: int = 10_000
 # Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000
 
+# Projects one analytics scope may hold; the $in of 120 000 ids encodes to 4.8 MiB against the 16 MB BSON limit.
+ANALYTICS_MAX_SCOPE_PROJECTS: int = 100_000
+
 # Page ceilings for services reachable both through their REST endpoint and through a chat tool.
 # One name per concept, so the two entry points cannot bound the same read at different numbers.
 MAX_CRYPTO_ASSET_PAGE: int = 500

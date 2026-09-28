@@ -21,7 +21,7 @@ _SEARCH_TERM = "openssl"
 
 @pytest.fixture
 def small_ceiling(monkeypatch):
-    monkeypatch.setattr(scopes, "ANALYTICS_MAX_QUERY_LIMIT", _CEILING)
+    monkeypatch.setattr(scopes, "ANALYTICS_MAX_SCOPE_PROJECTS", _CEILING)
 
 
 def _seed_projects(db: FakeDatabase, count: int) -> None:

@@ -10,7 +10,7 @@ import pytest
 
 from app.core.permissions import Permissions
 from app.services.analytics import scopes
-from app.services.analytics.scopes import ScopeResolver, ScopeTooLargeError, ensure_whole_scope
+from app.services.analytics.scopes import ScopeResolver, ScopeTooLargeError
 
 _CEILING = 4
 _PAST_THE_CEILING = _CEILING + 1
@@ -20,7 +20,7 @@ _USER = "u1"
 
 @pytest.fixture
 def small_ceiling(monkeypatch):
-    monkeypatch.setattr(scopes, "ANALYTICS_MAX_QUERY_LIMIT", _CEILING)
+    monkeypatch.setattr(scopes, "ANALYTICS_MAX_SCOPE_PROJECTS", _CEILING)
 
 
 def _seed_projects(db, count: int, *, member: bool = False, team_id: str | None = None) -> None:
@@ -42,15 +42,6 @@ def _resolver(db, *, permissions: frozenset[str] = frozenset({Permissions.PROJEC
     return ScopeResolver(db, user)
 
 
-def test_a_scope_at_the_ceiling_is_answered_whole(small_ceiling):
-    assert len(ensure_whole_scope(list(range(_CEILING)))) == _CEILING
-
-
-def test_a_scope_past_the_ceiling_is_refused_with_the_number(small_ceiling):
-    with pytest.raises(ScopeTooLargeError, match=str(_CEILING)):
-        ensure_whole_scope(list(range(_PAST_THE_CEILING)))
-
-
 @pytest.mark.asyncio
 async def test_a_user_scope_at_the_ceiling_still_resolves(db, small_ceiling):
     _seed_projects(db, _CEILING, member=True)
@@ -64,7 +55,7 @@ async def test_a_user_scope_at_the_ceiling_still_resolves(db, small_ceiling):
 async def test_a_user_scope_past_the_ceiling_is_refused(db, small_ceiling):
     _seed_projects(db, _PAST_THE_CEILING, member=True)
 
-    with pytest.raises(ScopeTooLargeError):
+    with pytest.raises(ScopeTooLargeError, match=str(_CEILING)):
         await _resolver(db).list_user_projects()
 
 

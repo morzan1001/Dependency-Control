@@ -215,16 +215,6 @@ class TestFromAttributes:
 class TestProjectionSchemas:
     """Projection schemas used for MongoDB performance queries."""
 
-    def test_project_minimal_from_mongo(self):
-        from app.schemas.projections import ProjectMinimal
-
-        p = ProjectMinimal(_id="p-1", name="Test Project")
-        assert p.id == "p-1"
-        assert p.name == "Test Project"
-
-        dumped = p.model_dump(by_alias=True)
-        assert dumped["_id"] == "p-1"
-
     def test_project_with_scan_id(self):
         from app.schemas.projections import ProjectWithScanId
 

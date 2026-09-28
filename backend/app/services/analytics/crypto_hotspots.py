@@ -86,7 +86,7 @@ class CryptoHotspotService:
             return [override]
         from app.services.releases import resolve_scan_ids
 
-        return list((await resolve_scan_ids(self.db, resolved.project_ids)).values())
+        return list((await resolve_scan_ids(self.db, resolved.project_ids, projects=resolved.projects)).values())
 
     async def _aggregate(
         self,

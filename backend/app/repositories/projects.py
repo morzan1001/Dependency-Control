@@ -9,7 +9,7 @@ from pymongo import ReadPreference, ReturnDocument
 from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_SOURCE_MANUAL
 from app.core.metrics import track_db_operation
 from app.models.project import Project
-from app.schemas.projections import ProjectMinimal, ProjectWithScanId
+from app.schemas.projections import ProjectWithScanId
 
 _COL = "projects"
 _MEMBERS_USER_ID = "members.user_id"
@@ -406,15 +406,6 @@ class ProjectRepository:
         ).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectWithScanId(**doc) for doc in docs]
-
-    async def find_many_minimal(
-        self,
-        query: dict[str, Any],
-        limit: int,
-    ) -> list[ProjectMinimal]:
-        cursor = self.collection.find(query, {"_id": 1, "name": 1}).limit(limit)
-        docs = await cursor.to_list(limit)
-        return [ProjectMinimal(**doc) for doc in docs]
 
     async def count(self, query: dict[str, Any] | None = None) -> int:
         with track_db_operation(_COL, "count"):

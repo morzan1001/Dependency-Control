@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, MAX_RESCAN_HOPS
+from app.core.constants import MAX_RESCAN_HOPS
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import LineageAnalysis, ScanRepository
 from app.services.releases import (
@@ -433,9 +433,7 @@ async def test_resolve_scan_ids_head_matches_the_repository(db):
     await db.scans.insert_one(_scan("still-alive", "deleted-branch"))
 
     project_ids = ["with-pointer", "no-pointer", "deleted-branch", "no-scans"]
-    projects = await ProjectRepository(db).find_many_with_scan_id(
-        {"_id": {"$in": project_ids}}, limit=ANALYTICS_MAX_QUERY_LIMIT
-    )
+    projects = await ProjectRepository(db).find_many_with_scan_id({"_id": {"$in": project_ids}}, limit=len(project_ids))
     expected = await ScanRepository(db).get_latest_active_scan_ids(projects)
 
     # The pointer names the build; head reports the rescan of it, which is the same commit.
