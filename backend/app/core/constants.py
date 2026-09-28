@@ -883,6 +883,7 @@ WEBHOOK_HEADER_EVENT = "X-Webhook-Event"
 WEBHOOK_HEADER_TIMESTAMP = "X-Webhook-Timestamp"
 WEBHOOK_HEADER_ID = "X-Webhook-ID"
 WEBHOOK_HEADER_SIGNATURE = "X-Webhook-Signature"
+WebhookType = Literal["generic", "teams"]
 WEBHOOK_HEADER_TEST = "X-Webhook-Test"
 WEBHOOK_USER_AGENT_VALUE = "DependencyControl-Webhook/1.0"
 

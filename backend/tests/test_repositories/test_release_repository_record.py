@@ -99,3 +99,14 @@ async def test_the_upsert_filter_is_the_key_triple(db):
 
     rows = await db.releases.find({}).to_list(None)
     assert len(rows) == _ONE_RECORD
+
+
+@pytest.mark.asyncio
+async def test_a_blank_version_keeps_the_name_the_deploy_job_recorded(db):
+    repo = ReleaseRepository(db)
+    first = Release(project_id=_PROJECT, environment=_ENVIRONMENT, scan_id=_SCAN, version=_VERSION, released_at=_NOW)
+    await repo.record(first)
+
+    await repo.record(first.model_copy(update={"version": ""}))
+
+    assert (await db.releases.find_one({"scan_id": _SCAN}))["version"] == _VERSION

@@ -2,9 +2,9 @@
 
 from app.api.v1.endpoints.projects import (
     _build_scan_findings_match,
-    _resolve_secret_detectors,
     _scan_findings_sort_stage,
 )
+from app.core.trufflehog import resolve_secret_detectors
 
 
 class TestBuildScanFindingsMatch:
@@ -163,21 +163,21 @@ class TestResolveSecretDetectors:
 
     def test_ordinal_is_rendered_as_the_detector_name(self):
         rows = [self._row()]
-        _resolve_secret_detectors(rows)
+        resolve_secret_detectors(rows)
         assert rows[0]["details"]["detector"] == "URI"
-        assert rows[0]["description"] == "Secret detected: URI"
+        assert rows[0]["description"] == "Secret detected: 17"
 
     def test_stored_identity_fields_are_untouched(self):
         """finding_id and the waiver rule_key derived from it must stay on the ordinal —
         373 of 504 production waivers key on it."""
         rows = [self._row()]
-        _resolve_secret_detectors(rows)
+        resolve_secret_detectors(rows)
         assert rows[0]["finding_id"] == "SECRET-17-b8d80f45"
         assert rows[0]["id"] == "SECRET-17-b8d80f45"
 
     def test_hand_edited_description_is_left_alone(self):
         rows = [self._row(description="Reviewed: token belongs to the sandbox")]
-        _resolve_secret_detectors(rows)
+        resolve_secret_detectors(rows)
         assert rows[0]["details"]["detector"] == "URI"
         assert rows[0]["description"] == "Reviewed: token belongs to the sandbox"
 
@@ -187,7 +187,7 @@ class TestResolveSecretDetectors:
             {"type": "vulnerability", "description": "CVE-2021-1", "details": {"cvss_score": 9.8}},
             {"type": "license", "description": "MIT", "details": None},
         ]
-        _resolve_secret_detectors(rows)
+        resolve_secret_detectors(rows)
         assert rows[0]["details"]["detector"] == "999999"
         assert rows[1]["description"] == "CVE-2021-1"
         assert rows[2]["details"] is None

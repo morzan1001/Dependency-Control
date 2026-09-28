@@ -6,9 +6,11 @@ from pydantic import ValidationError
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT
 from app.models.project import Scan
 from app.models.release import Release
+from app.repositories.releases import ReleaseRepository
 from app.schemas.ingest import SBOMIngest
 from app.schemas.project import ScanReleaseRef
 from app.schemas.release import ReleaseItem
+from tests.mocks.fake_mongo import FakeDatabase
 
 _MAX_ENVIRONMENT_LENGTH = 32
 _PIPELINE_ID = 1
@@ -97,10 +99,16 @@ def test_release_fields_fall_back_to_commit_tag_and_production():
     ],
     ids=["blank tag", "both blank", "blank version", "neither sent"],
 )
-def test_a_release_off_a_branch_pipeline_is_unnamed_rather_than_named_blank(payload):
-    """ReleaseRepository.record skips a None version but stores an empty one as the release's name."""
+@pytest.mark.asyncio
+async def test_a_release_off_a_branch_pipeline_is_unnamed_rather_than_named_blank(payload):
+    db = FakeDatabase()
     data = SBOMIngest(**_minimal_payload(is_release=True, **payload))
-    assert data.release_fields(datetime.now(timezone.utc))["version"] is None
+
+    await ReleaseRepository(db).record(
+        Release(project_id=_PROJECT_ID, scan_id=_SCAN_ID, **data.release_fields(datetime.now(timezone.utc)))
+    )
+
+    assert "version" not in await db.releases.find_one({"scan_id": _SCAN_ID})
 
 
 def test_a_blank_release_version_still_falls_back_to_the_commit_tag():

@@ -71,7 +71,7 @@ class TestFormatPayloadGenericWebhook:
         service = WebhookService()
         webhook = make_webhook("generic")
         raw = make_scan_payload()
-        result = service._format_payload(webhook, "scan.completed", raw)
+        result = service._format_payload(webhook.webhook_type, "scan.completed", raw)
         assert result is raw
 
     def test_returns_raw_for_all_event_types(self):
@@ -79,7 +79,7 @@ class TestFormatPayloadGenericWebhook:
         webhook = make_webhook("generic")
         for event in ["vulnerability.found", "analysis.failed", "test", "sbom.ingested"]:
             raw = {"event": event, "scan": {}, "project": {}}
-            result = service._format_payload(webhook, event, raw)
+            result = service._format_payload(webhook.webhook_type, event, raw)
             assert result is raw
 
 
@@ -87,46 +87,37 @@ class TestFormatPayloadTeamsWebhook:
     def test_scan_completed_returns_adaptive_card(self):
         service = WebhookService()
         webhook = make_webhook("teams")
-        result = service._format_payload(webhook, "scan.completed", make_scan_payload())
+        result = service._format_payload(webhook.webhook_type, "scan.completed", make_scan_payload())
         assert result["type"] == "message"
         assert result["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive"
 
     def test_vulnerability_found_returns_adaptive_card(self):
         service = WebhookService()
         webhook = make_webhook("teams")
-        result = service._format_payload(webhook, "vulnerability.found", make_vuln_payload())
+        result = service._format_payload(webhook.webhook_type, "vulnerability.found", make_vuln_payload())
         assert result["type"] == "message"
         assert result["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive"
 
     def test_analysis_failed_returns_adaptive_card(self):
         service = WebhookService()
         webhook = make_webhook("teams")
-        result = service._format_payload(webhook, "analysis.failed", make_failed_payload())
+        result = service._format_payload(webhook.webhook_type, "analysis.failed", make_failed_payload())
         assert result["type"] == "message"
         card = result["attachments"][0]["content"]
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "attention"
 
-    def test_test_event_returns_test_card(self):
-        service = WebhookService()
-        webhook = make_webhook("teams")
-        result = service._format_payload(webhook, "test", {"event": "test", "scan": {}, "project": {}})
-        assert result["type"] == "message"
-        card = result["attachments"][0]["content"]
-        container = next(b for b in card["body"] if b["type"] == "Container")
-        assert container["style"] == "accent"
-
     def test_generic_fallback_for_unknown_event(self):
         service = WebhookService()
         webhook = make_webhook("teams")
         raw = {"event": "sbom.ingested", "scan": {"id": "s1", "url": None}, "project": {"id": "p1", "name": "Proj"}}
-        result = service._format_payload(webhook, "sbom.ingested", raw)
+        result = service._format_payload(webhook.webhook_type, "sbom.ingested", raw)
         assert result["type"] == "message"
 
     def test_scan_completed_snake_case_alias_also_works(self):
         service = WebhookService()
         webhook = make_webhook("teams")
-        result = service._format_payload(webhook, "scan_completed", make_scan_payload())
+        result = service._format_payload(webhook.webhook_type, "scan_completed", make_scan_payload())
         assert result["type"] == "message"
         assert result["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive"
 
@@ -142,7 +133,7 @@ class TestFormatPayloadPolicyEvents:
     def test_crypto_policy_changed_card_has_details(self):
         service = WebhookService()
         webhook = make_webhook("teams")
-        result = service._format_payload(webhook, "crypto_policy.changed", make_policy_payload())
+        result = service._format_payload(webhook.webhook_type, "crypto_policy.changed", make_policy_payload())
         text = self._card_text(result)
         assert "Crypto Policy Changed" in text
         assert "Alice" in text
@@ -158,7 +149,7 @@ class TestFormatPayloadPolicyEvents:
         payload["policy_type"] = "license"
         payload["policy_scope"] = "system"
         payload["project_id"] = None
-        result = service._format_payload(webhook, "license_policy.changed", payload)
+        result = service._format_payload(webhook.webhook_type, "license_policy.changed", payload)
         text = self._card_text(result)
         assert "License Policy Changed" in text
         assert "system" in text
@@ -170,7 +161,7 @@ class TestFormatPayloadPolicyEvents:
         payload = make_policy_payload()
         payload["actor"] = None
         payload["change_summary"] = ""
-        result = service._format_payload(webhook, "crypto_policy.changed", payload)
+        result = service._format_payload(webhook.webhook_type, "crypto_policy.changed", payload)
         text = self._card_text(result)
         assert "A user" in text
         assert "Policy updated" in text
@@ -179,7 +170,7 @@ class TestFormatPayloadPolicyEvents:
         service = WebhookService()
         webhook = make_webhook("generic")
         raw = make_policy_payload()
-        result = service._format_payload(webhook, "crypto_policy.changed", raw)
+        result = service._format_payload(webhook.webhook_type, "crypto_policy.changed", raw)
         assert result is raw
 
 
@@ -284,6 +275,39 @@ class TestTestWebhookForTeams:
         card = sent["attachments"][0]["content"]
         container = next(b for b in card["body"] if b["type"] == "Container")
         assert container["style"] == "accent"
+
+    @pytest.mark.asyncio
+    async def test_a_teams_url_stored_as_generic_gets_the_test_card(self):
+        webhook = make_webhook("generic")
+        webhook.url = "https://tenant.webhook.office.com/webhookb2/abc"
+
+        transport, requests = _recording_transport()
+
+        with patch(
+            "app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=transport)
+        ):
+            await WebhookService().test_webhook(webhook)
+
+        card = json.loads(requests[0].content)["attachments"][0]["content"]
+        assert next(b for b in card["body"] if b["type"] == "Container")["style"] == "accent"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("webhook_type", ["teams", "generic"])
+    async def test_the_signature_covers_the_body_that_is_sent(self, webhook_type):
+        webhook = make_webhook(webhook_type)
+        webhook.url = "https://example.test/hook"
+        webhook.secret = "s3cret"
+        service = WebhookService()
+
+        transport, requests = _recording_transport()
+
+        with patch(
+            "app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=transport)
+        ):
+            await service.test_webhook(webhook)
+
+        signed = service._generate_signature("s3cret", requests[0].content.decode())
+        assert requests[0].headers["X-Webhook-Signature"] == f"sha256={signed}"
 
     @pytest.mark.asyncio
     async def test_generic_webhook_sends_raw_scan_payload(self):

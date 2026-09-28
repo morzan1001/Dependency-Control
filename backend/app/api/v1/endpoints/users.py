@@ -161,7 +161,7 @@ async def request_email_change(
         raise HTTPException(status_code=400, detail="Your email is managed by your identity provider")
 
     system_settings = await deps.get_system_settings(db)
-    if not system_settings.smtp_host:
+    if not system_settings.email_configured:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Email server not configured")
 
     if email_in.email == current_user.email.lower():
@@ -302,7 +302,7 @@ async def reset_user_password(
         )
 
     system_settings = await deps.get_system_settings(db)
-    if not system_settings.smtp_host:
+    if not system_settings.email_configured:
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Email server not configured")
 
     await send_password_reset_email(background_tasks, user["email"], user["username"], system_settings=system_settings)

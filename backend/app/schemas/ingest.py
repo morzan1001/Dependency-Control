@@ -4,6 +4,7 @@ from typing import Any
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, validate_release_environment
+from app.models.release import release_identity
 
 _DESC_SCAN_ID = "Unique identifier of the scan"
 
@@ -41,13 +42,8 @@ class BaseIngest(BaseModel):
         pipeline writes the same scan, so only an empty result keeps the mark promote-only."""
         if not self.is_release:
             return {}
-        return {
-            "environment": self.release_environment or DEFAULT_RELEASE_ENVIRONMENT,
-            # A CI producer sends an unset tag as "", and ReleaseRepository.record only skips a
-            # None version, so an empty one would be stored as the release's name.
-            "version": self.release_version or self.commit_tag or None,
-            "released_at": released_at,
-        }
+        environment, version = release_identity(self.release_environment, self.release_version, self.commit_tag)
+        return {"environment": environment, "version": version, "released_at": released_at}
 
 
 class SBOMIngest(BaseIngest):

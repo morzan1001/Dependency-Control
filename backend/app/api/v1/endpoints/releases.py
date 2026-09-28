@@ -15,7 +15,7 @@ from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_409
 from app.core import ensure_utc
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, RELEASE_ENVIRONMENT_PATTERN
 from app.core.init_db import RELEASES_LATEST_SORT
-from app.models.release import Release
+from app.models.release import Release, release_identity
 from app.repositories import ReleaseRepository, ScanRepository
 from app.repositories.scans import LineageAnalysis
 from app.schemas.release import ReleaseItem, ReleaseListResponse, ReleaseMarkRequest, ReleaseUnmarkResponse
@@ -89,16 +89,14 @@ async def mark_release(
         raise HTTPException(status_code=404, detail=f"No scan found for commit {payload.commit_hash}")
 
     scan_id = str(scan["_id"])
-    environment = payload.environment or DEFAULT_RELEASE_ENVIRONMENT
+    environment, version = release_identity(payload.environment, payload.version, scan.get("commit_tag"))
     released_at = ensure_utc(payload.released_at) or datetime.now(timezone.utc)
 
     await ReleaseRepository(db).record(
         Release(
             project_id=project_id,
             environment=environment,
-            # A CI producer sends an unset tag as "", and ReleaseRepository.record only skips a
-            # None version, so an empty one would be stored as the release's name.
-            version=payload.version or scan.get("commit_tag") or None,
+            version=version,
             scan_id=scan_id,
             released_at=released_at,
         )

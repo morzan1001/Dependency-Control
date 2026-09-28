@@ -356,8 +356,7 @@ async def request_verification_email(
             detail="Email already verified",
         )
 
-    # Gate on the DB SMTP config the provider actually uses, not the env var.
-    if not system_config.smtp_host:
+    if not system_config.email_configured:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=_MSG_EMAIL_NOT_CONFIGURED,
@@ -445,8 +444,7 @@ async def resend_verification_email_public(
         message="If an account with this email exists, a verification email has been sent."
     )
 
-    # Gate on the DB SMTP config the provider actually reads.
-    if not system_config.smtp_host:
+    if not system_config.email_configured:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=_MSG_EMAIL_NOT_CONFIGURED,
@@ -782,9 +780,8 @@ async def forgot_password(
         message="If an account with this email exists, a password reset email has been sent."
     )
 
-    # Gate on the DB SMTP config the provider actually reads.
     system_config = await deps.get_system_settings(db)
-    if not system_config.smtp_host:
+    if not system_config.email_configured:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=_MSG_EMAIL_NOT_CONFIGURED,

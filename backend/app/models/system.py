@@ -97,3 +97,8 @@ class SystemSettings(BaseModel):
     chat_max_tool_rounds: int = 20
 
     model_config = ConfigDict(populate_by_name=True)
+
+    @property
+    def email_configured(self) -> bool:
+        """What EmailProvider.send needs; credentials are optional for an unauthenticated relay."""
+        return bool(self.smtp_host and self.emails_from_email)

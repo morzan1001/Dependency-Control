@@ -560,13 +560,15 @@ async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id
 
         purl = entry["purl"]
         if purl:
-            enrichment_ops.append(
-                UpdateOne(
-                    {"purl": purl},
-                    {"$set": {**entry["data"], "purl": purl, "name": entry["name"], "version": entry["version"]}},
-                    upsert=True,
-                )
-            )
+            data = dict(entry["data"])
+            # The document merges every scan's findings, so the list of who supplied them accumulates too.
+            sources = data.pop("enrichment_sources", [])
+            update: dict[str, Any] = {
+                "$set": {**data, "purl": purl, "name": entry["name"], "version": entry["version"]}
+            }
+            if sources:
+                update["$addToSet"] = {"enrichment_sources": {"$each": sources}}
+            enrichment_ops.append(UpdateOne({"purl": purl}, update, upsert=True))
 
         if len(bulk_ops) >= _BULK_CHUNK_SIZE:
             try:

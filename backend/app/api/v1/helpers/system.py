@@ -12,7 +12,7 @@ def get_available_channels(settings: SystemSettings) -> list[str]:
     """Return the notification channels configured in system settings."""
     channels: list[str] = []
 
-    if settings.smtp_host and settings.smtp_user:
+    if settings.email_configured:
         channels.append(NOTIFICATION_CHANNEL_EMAIL)
 
     if settings.slack_bot_token:

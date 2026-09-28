@@ -28,7 +28,7 @@ class TestNormalizeTrufflehog:
         assert f.severity == "CRITICAL"
         assert f.component == "config/aws.env"
         assert "trufflehog" in f.scanners
-        assert f.description == "Secret detected: 2"
+        assert f.description == "Secret detected: AWS"
 
     def test_file_path_from_git_source(self):
         """When no Filesystem source, fall back to Git source."""
@@ -145,7 +145,7 @@ class TestNormalizeTrufflehog:
         f = next(iter(self.agg.findings.values()))
         assert f.details["detector"] == "2"
         assert f.id.startswith("SECRET-2-")
-        assert f.description == "Secret detected: 2"
+        assert f.description == "Secret detected: AWS"
 
     def test_empty_raw_uses_nohash(self):
         result = {
