@@ -8,13 +8,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, team_binding_key
-from app.core.metrics import track_db_operation
 from app.models.team import Team
 
 _USER_ID = "user_id"
 _MEMBERS = "members"
 _MEMBERS_USER_ID = f"{_MEMBERS}.{_USER_ID}"
-_COL = "teams"
 _BINDINGS = "bindings"
 _BINDING_KEY = f"{_BINDINGS}.key"
 _BINDING_INSTANCE = f"{_BINDINGS}.instance_id"
@@ -88,8 +86,7 @@ class TeamRepository:
         self.collection = db.teams
 
     async def get_by_id(self, team_id: str) -> Team | None:
-        with track_db_operation(_COL, "find_one"):
-            data = await self.collection.find_one({"_id": team_id})
+        data = await self.collection.find_one({"_id": team_id})
         if data:
             return Team(**data)
         return None

@@ -81,7 +81,6 @@ class ScanManager:
             },
         }
 
-        from app.core.metrics import track_db_operation
         from app.repositories import ReleaseRepository, ScanRepository
 
         release = data.release_fields(now)
@@ -94,8 +93,7 @@ class ScanManager:
 
         # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
         scan_repo = ScanRepository(self.db)
-        with track_db_operation("scans", "update_one"):
-            upsert_result = await scan_repo.collection.update_one({"_id": scan_id}, scan_update, upsert=True)
+        upsert_result = await scan_repo.collection.update_one({"_id": scan_id}, scan_update, upsert=True)
 
         is_new = upsert_result.upserted_id is not None
 

@@ -7,7 +7,6 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
-from app.core.metrics import track_db_operation
 
 _CONV_COL = "chat_conversations"
 _MSG_COL = "chat_messages"
@@ -29,38 +28,32 @@ class ChatRepository:
             "updated_at": now,
             "message_count": 0,
         }
-        with track_db_operation(_CONV_COL, "insert"):
-            await self.conversations.insert_one(doc)
+        await self.conversations.insert_one(doc)
         return doc
 
     async def list_conversations(self, user_id: str, limit: int = 50) -> list[dict[str, Any]]:
-        with track_db_operation(_CONV_COL, "find"):
-            cursor = self.conversations.find(
-                {"user_id": user_id},
-                sort=[("updated_at", -1)],
-                limit=limit,
-            )
-            return await cursor.to_list(length=limit)
+        cursor = self.conversations.find(
+            {"user_id": user_id},
+            sort=[("updated_at", -1)],
+            limit=limit,
+        )
+        return await cursor.to_list(length=limit)
 
     async def get_conversation(self, conversation_id: str, user_id: str) -> dict[str, Any] | None:
-        with track_db_operation(_CONV_COL, "find_one"):
-            return await self.conversations.find_one({"_id": conversation_id, "user_id": user_id})
+        return await self.conversations.find_one({"_id": conversation_id, "user_id": user_id})
 
     async def delete_conversation(self, conversation_id: str, user_id: str) -> bool:
-        with track_db_operation(_CONV_COL, "delete"):
-            result = await self.conversations.delete_one({"_id": conversation_id, "user_id": user_id})
+        result = await self.conversations.delete_one({"_id": conversation_id, "user_id": user_id})
         if result.deleted_count > 0:
-            with track_db_operation(_MSG_COL, "delete_many"):
-                await self.messages.delete_many({"conversation_id": conversation_id})
+            await self.messages.delete_many({"conversation_id": conversation_id})
             return True
         return False
 
     async def update_conversation_title(self, conversation_id: str, user_id: str, title: str) -> None:
-        with track_db_operation(_CONV_COL, "update"):
-            await self.conversations.update_one(
-                {"_id": conversation_id, "user_id": user_id},
-                {"$set": {"title": title, "updated_at": datetime.now(timezone.utc)}},
-            )
+        await self.conversations.update_one(
+            {"_id": conversation_id, "user_id": user_id},
+            {"$set": {"title": title, "updated_at": datetime.now(timezone.utc)}},
+        )
 
     async def add_message(
         self,
@@ -82,37 +75,33 @@ class ChatRepository:
             "token_count": token_count,
             "created_at": datetime.now(timezone.utc),
         }
-        with track_db_operation(_MSG_COL, "insert"):
-            await self.messages.insert_one(doc)
-        with track_db_operation(_CONV_COL, "update"):
-            conversation = await self.conversations.find_one_and_update(
-                {"_id": conversation_id},
-                {
-                    "$inc": {"message_count": 1},
-                    "$set": {"updated_at": datetime.now(timezone.utc)},
-                },
-                projection={"message_count": 1},
-                return_document=ReturnDocument.AFTER,
-            )
+        await self.messages.insert_one(doc)
+        conversation = await self.conversations.find_one_and_update(
+            {"_id": conversation_id},
+            {
+                "$inc": {"message_count": 1},
+                "$set": {"updated_at": datetime.now(timezone.utc)},
+            },
+            projection={"message_count": 1},
+            return_document=ReturnDocument.AFTER,
+        )
         return int(conversation["message_count"]) if conversation else 0
 
     async def get_messages(self, conversation_id: str, limit: int = 100, skip: int = 0) -> list[dict[str, Any]]:
-        with track_db_operation(_MSG_COL, "find"):
-            cursor = self.messages.find(
-                {"conversation_id": conversation_id},
-                sort=[("created_at", 1)],
-                skip=skip,
-                limit=limit,
-            )
-            return await cursor.to_list(length=limit)
+        cursor = self.messages.find(
+            {"conversation_id": conversation_id},
+            sort=[("created_at", 1)],
+            skip=skip,
+            limit=limit,
+        )
+        return await cursor.to_list(length=limit)
 
     async def get_recent_messages(self, conversation_id: str, limit: int = 20) -> list[dict[str, Any]]:
-        with track_db_operation(_MSG_COL, "find"):
-            cursor = self.messages.find(
-                {"conversation_id": conversation_id},
-                sort=[("created_at", -1)],
-                limit=limit,
-            )
-            messages = await cursor.to_list(length=limit)
+        cursor = self.messages.find(
+            {"conversation_id": conversation_id},
+            sort=[("created_at", -1)],
+            limit=limit,
+        )
+        messages = await cursor.to_list(length=limit)
         messages.reverse()
         return messages

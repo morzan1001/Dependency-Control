@@ -8,7 +8,6 @@ from typing import Any
 
 from app.core import UNDATED
 from app.core.constants import SCAN_USABLE_STATUSES
-from app.core.metrics import track_db_operation
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdatedSet, ScanUpdateDelta
 from app.repositories.base import BaseRepository
 from app.repositories.scans import ScanRepository
@@ -263,10 +262,9 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                 "scan_created_at": {"$gte": since},
                 "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
             }
-            with track_db_operation(self.collection_name, "find"):
-                # Unsorted: an in-memory sort carries the same ceiling as the group did,
-                # and each chain is ordered below anyway.
-                docs = await self.collection.find(query, _WINDOW_PROJECTION).to_list(None)
+            # Unsorted: an in-memory sort carries the same ceiling as the group did,
+            # and each chain is ordered below anyway.
+            docs = await self.collection.find(query, _WINDOW_PROJECTION).to_list(None)
             for doc in docs:
                 chain = _named_branch({"p": doc.get("project_id"), "b": doc.get("branch")})
                 if chain is None:
@@ -303,8 +301,7 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                     }
                 },
             ]
-            with track_db_operation(self.collection_name, "aggregate"):
-                rows = await self.collection.aggregate(pipeline, allowDiskUse=False).to_list(None)
+            rows = await self.collection.aggregate(pipeline, allowDiskUse=False).to_list(None)
             for row in rows:
                 chain = _named_branch(row["_id"])
                 if chain is None:
@@ -316,11 +313,10 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         """Deltas of the branch that were diffed against one of the given scans."""
         if not prev_scan_ids:
             return []
-        with track_db_operation(self.collection_name, "find"):
-            return await self.collection.find(
-                {"project_id": project_id, "branch": branch, "prev_scan_id": {"$in": list(prev_scan_ids)}},
-                _NEIGHBOUR_PROJECTION,
-            ).to_list(None)
+        return await self.collection.find(
+            {"project_id": project_id, "branch": branch, "prev_scan_id": {"$in": list(prev_scan_ids)}},
+            _NEIGHBOUR_PROJECTION,
+        ).to_list(None)
 
     async def find_project_window(
         self, project_id: str, branch: str, since: datetime, limit: int
@@ -330,30 +326,28 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
         The limit is per branch, as the live path's is: spending it across every
         branch of a project would truncate the analysed one behind the others.
         """
-        with track_db_operation(self.collection_name, "find"):
-            docs = (
-                await self.collection.find(
-                    {
-                        "project_id": project_id,
-                        "branch": branch,
-                        "scan_created_at": {"$gte": since},
-                        "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
-                    }
-                )
-                .sort([("scan_created_at", -1), ("_id", -1)])
-                .limit(limit)
-                .to_list(limit)
+        docs = (
+            await self.collection.find(
+                {
+                    "project_id": project_id,
+                    "branch": branch,
+                    "scan_created_at": {"$gte": since},
+                    "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
+                }
             )
+            .sort([("scan_created_at", -1), ("_id", -1)])
+            .limit(limit)
+            .to_list(limit)
+        )
         return sorted(docs, key=_chain_order)
 
     async def _neighbour(self, query: dict[str, Any], direction: int) -> dict[str, Any] | None:
-        with track_db_operation(self.collection_name, "find"):
-            docs = (
-                await self.collection.find(query, _NEIGHBOUR_PROJECTION)
-                .sort([("scan_created_at", direction), ("_id", direction)])
-                .limit(1)
-                .to_list(1)
-            )
+        docs = (
+            await self.collection.find(query, _NEIGHBOUR_PROJECTION)
+            .sort([("scan_created_at", direction), ("_id", direction)])
+            .limit(1)
+            .to_list(1)
+        )
         return docs[0] if docs else None
 
 
@@ -369,6 +363,5 @@ class ScanOutdatedSetRepository(BaseRepository[ScanOutdatedSet]):
         """Outdated package names per scan; scans without a stored set are absent."""
         if not scan_ids:
             return {}
-        with track_db_operation(self.collection_name, "find"):
-            docs = await self.collection.find({"_id": {"$in": list(scan_ids)}}, {"names": 1}).to_list(len(scan_ids))
+        docs = await self.collection.find({"_id": {"$in": list(scan_ids)}}, {"names": 1}).to_list(len(scan_ids))
         return {doc["_id"]: set(doc.get("names") or ()) for doc in docs}

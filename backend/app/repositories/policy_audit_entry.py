@@ -5,7 +5,6 @@ from typing import Any, Literal
 
 from pymongo import DESCENDING
 
-from app.core.metrics import track_db_operation
 from app.models.policy_audit_entry import PolicyAuditEntry
 from app.repositories.base import BaseRepository
 
@@ -24,8 +23,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
     model_class = PolicyAuditEntry
 
     async def insert(self, entry: PolicyAuditEntry) -> None:
-        with track_db_operation(self.collection_name, "insert_one"):
-            await self.collection.insert_one(entry.model_dump(by_alias=True))
+        await self.collection.insert_one(entry.model_dump(by_alias=True))
 
     async def list(
         self,
@@ -41,16 +39,15 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             "project_id": project_id,
             **_policy_type_filter(policy_type),
         }
-        with track_db_operation(self.collection_name, "find"):
-            # Timestamps are stored to the millisecond and two saves can share one, so version —
-            # which only ever grows within a scope — decides which of them is the later change.
-            cursor = (
-                self.collection.find(query)
-                .sort([("timestamp", DESCENDING), ("version", DESCENDING)])
-                .skip(skip)
-                .limit(limit)
-            )
-            docs = await cursor.to_list(length=limit)
+        # Timestamps are stored to the millisecond and two saves can share one, so version —
+        # which only ever grows within a scope — decides which of them is the later change.
+        cursor = (
+            self.collection.find(query)
+            .sort([("timestamp", DESCENDING), ("version", DESCENDING)])
+            .skip(skip)
+            .limit(limit)
+        )
+        docs = await cursor.to_list(length=limit)
         return [PolicyAuditEntry.model_validate(d) for d in docs]
 
     async def get_by_version(
@@ -67,8 +64,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             "version": version,
             **_policy_type_filter(policy_type),
         }
-        with track_db_operation(self.collection_name, "find_one"):
-            doc = await self.collection.find_one(query)
+        doc = await self.collection.find_one(query)
         return PolicyAuditEntry.model_validate(doc) if doc else None
 
     async def count_entries(
@@ -83,8 +79,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             "project_id": project_id,
             **_policy_type_filter(policy_type),
         }
-        with track_db_operation(self.collection_name, "count"):
-            return await self.collection.count_documents(query)
+        return await self.collection.count_documents(query)
 
     async def delete_older_than(
         self,
@@ -100,6 +95,5 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             "timestamp": {"$lt": cutoff},
             **_policy_type_filter(policy_type),
         }
-        with track_db_operation(self.collection_name, "delete_many"):
-            result = await self.collection.delete_many(query)
+        result = await self.collection.delete_many(query)
         return result.deleted_count

@@ -13,7 +13,6 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import API_KEY_SURFACES
-from app.core.metrics import track_db_operation
 
 logger = logging.getLogger(__name__)
 
@@ -83,52 +82,46 @@ class ApiKeyRepository:
             "last_used_at": None,
             "revoked_at": None,
         }
-        with track_db_operation(_COL, "insert"):
-            await self.collection.insert_one(doc)
+        await self.collection.insert_one(doc)
         return doc, token
 
     async def list_for_user(self, user_id: str) -> tuple[list[dict[str, Any]], int]:
         """The newest page of the user's keys and how many they hold; the count costs a round
         trip only once the page saturates, which is the only time the two differ."""
         query = {"user_id": user_id}
-        with track_db_operation(_COL, "find"):
-            cursor = self.collection.find(query, sort=[("created_at", -1)])
-            docs: list[dict[str, Any]] = await cursor.to_list(length=LIST_LIMIT)
+        cursor = self.collection.find(query, sort=[("created_at", -1)])
+        docs: list[dict[str, Any]] = await cursor.to_list(length=LIST_LIMIT)
         if len(docs) < LIST_LIMIT:
             return docs, len(docs)
-        with track_db_operation(_COL, "count"):
-            return docs, await self.collection.count_documents(query)
+        return docs, await self.collection.count_documents(query)
 
     async def get_by_plaintext(self, plaintext: str) -> dict[str, Any] | None:
         if not plaintext.startswith(_TOKEN_PREFIX):
             return None
         now = datetime.now(timezone.utc)
-        with track_db_operation(_COL, "find_one"):
-            doc: dict[str, Any] | None = await self.collection.find_one(
-                {
-                    "token_hash": hash_token(plaintext),
-                    "revoked_at": None,
-                    "expires_at": {"$gt": now},
-                }
-            )
+        doc: dict[str, Any] | None = await self.collection.find_one(
+            {
+                "token_hash": hash_token(plaintext),
+                "revoked_at": None,
+                "expires_at": {"$gt": now},
+            }
+        )
         return doc
 
     async def revoke(self, key_id: str, user_id: str) -> bool:
         """Idempotent revoke of a key the user owns, identified as the listing rendered it."""
-        with track_db_operation(_COL, "update"):
-            result = await self.collection.update_one(
-                {"_id": {"$in": _stored_ids(key_id)}, "user_id": user_id, "revoked_at": None},
-                {"$set": {"revoked_at": datetime.now(timezone.utc)}},
-            )
+        result = await self.collection.update_one(
+            {"_id": {"$in": _stored_ids(key_id)}, "user_id": user_id, "revoked_at": None},
+            {"$set": {"revoked_at": datetime.now(timezone.utc)}},
+        )
         return bool(result.modified_count > 0)
 
     async def touch_last_used(self, key_id: str) -> None:
         """Best-effort; a failed usage stamp must not fail the request it was recording."""
         try:
-            with track_db_operation(_COL, "update"):
-                await self.collection.update_one(
-                    {"_id": key_id},
-                    {"$set": {"last_used_at": datetime.now(timezone.utc)}},
-                )
+            await self.collection.update_one(
+                {"_id": key_id},
+                {"$set": {"last_used_at": datetime.now(timezone.utc)}},
+            )
         except Exception:
             logger.debug("Failed to update last_used_at for API key %s", key_id, exc_info=True)

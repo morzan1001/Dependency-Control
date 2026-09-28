@@ -3,7 +3,6 @@
 import re
 from typing import Any
 
-from app.core.metrics import track_db_operation
 from app.models.user import User
 from app.repositories.base import BaseRepository
 
@@ -28,9 +27,8 @@ class UserRepository(BaseRepository[User]):
         return await self.find_one_raw({**_email_query(email), "is_verified": True})
 
     async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
-        with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find({"_id": {"$in": user_ids}})
-            return await cursor.to_list(None)
+        cursor = self.collection.find({"_id": {"$in": user_ids}})
+        return await cursor.to_list(None)
 
     async def exists_by_username(self, username: str) -> bool:
         return await self.exists({"username": username})

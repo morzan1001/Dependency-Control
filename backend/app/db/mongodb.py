@@ -9,7 +9,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.core.config import settings
-from app.core.metrics import db_connections_active
+from app.core.metrics import DbCommandMetrics, DbHeartbeatFailures, db_connections_active
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,14 @@ async def get_database() -> AsyncIOMotorDatabase[Any]:
 def create_client(url: str, **options: Any) -> AsyncIOMotorClient[Any]:
     """A client whose reads see their own writes and whose datetimes come back aware UTC."""
     # A keyword beats a URI option, so a readPreference in the URL cannot move reads to a lagging secondary.
-    return AsyncIOMotorClient(url, readPreference="primary", tz_aware=True, tzinfo=timezone.utc, **options)
+    return AsyncIOMotorClient(
+        url,
+        readPreference="primary",
+        tz_aware=True,
+        tzinfo=timezone.utc,
+        event_listeners=[DbCommandMetrics(), DbHeartbeatFailures()],
+        **options,
+    )
 
 
 async def connect_to_mongo() -> None:

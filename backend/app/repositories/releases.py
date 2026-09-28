@@ -5,7 +5,6 @@ from typing import Any
 import pymongo
 from pymongo.errors import DuplicateKeyError
 
-from app.core.metrics import track_db_operation
 from app.models.release import Release
 from app.repositories.base import BaseRepository
 
@@ -19,13 +18,12 @@ class ReleaseRepository(BaseRepository[Release]):
         if not scan_ids:
             return {}
         grouped: dict[str, list[Release]] = {}
-        with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find(
-                {"scan_id": {"$in": scan_ids}},
-                sort=[("released_at", pymongo.DESCENDING)],
-            )
-            async for doc in cursor:
-                grouped.setdefault(doc["scan_id"], []).append(Release(**doc))
+        cursor = self.collection.find(
+            {"scan_id": {"$in": scan_ids}},
+            sort=[("released_at", pymongo.DESCENDING)],
+        )
+        async for doc in cursor:
+            grouped.setdefault(doc["scan_id"], []).append(Release(**doc))
         return grouped
 
     async def record(self, release: Release) -> None:
@@ -41,14 +39,13 @@ class ReleaseRepository(BaseRepository[Release]):
         changes: dict[str, Any] = {"released_at": release.released_at}
         if release.version is not None:
             changes["version"] = release.version
-        with track_db_operation(self.collection_name, "update_one"):
-            try:
-                await self.collection.update_one(
-                    key,
-                    {"$set": changes, "$setOnInsert": {"_id": release.id}},
-                    upsert=True,
-                )
-            except DuplicateKeyError:
-                # A concurrent mark inserted the row between this filter miss and its insert;
-                # the update cannot insert, so it cannot race again.
-                await self.collection.update_one(key, {"$set": changes})
+        try:
+            await self.collection.update_one(
+                key,
+                {"$set": changes, "$setOnInsert": {"_id": release.id}},
+                upsert=True,
+            )
+        except DuplicateKeyError:
+            # A concurrent mark inserted the row between this filter miss and its insert;
+            # the update cannot insert, so it cannot race again.
+            await self.collection.update_one(key, {"$set": changes})

@@ -7,11 +7,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
 
 from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_SOURCE_MANUAL
-from app.core.metrics import track_db_operation
 from app.models.project import Project
 from app.schemas.projections import ProjectMinimal, ProjectWithScanId
 
-_COL = "projects"
 _MEMBERS_USER_ID = "members.user_id"
 
 
@@ -261,8 +259,7 @@ class ProjectRepository:
         self.collection = db.projects
 
     async def get_by_id(self, project_id: str) -> Project | None:
-        with track_db_operation(_COL, "find_one"):
-            data = await self.collection.find_one({"_id": project_id})
+        data = await self.collection.find_one({"_id": project_id})
         return Project(**data) if data else None
 
     async def get_raw_by_id(self, project_id: str) -> dict[str, Any] | None:
@@ -328,18 +325,15 @@ class ProjectRepository:
         return Project(**result), created
 
     async def create(self, project: Project) -> Project:
-        with track_db_operation(_COL, "insert_one"):
-            await self.collection.insert_one(project.model_dump(by_alias=True))
+        await self.collection.insert_one(project.model_dump(by_alias=True))
         return project
 
     async def create_raw(self, project_data: dict[str, Any]) -> None:
-        with track_db_operation(_COL, "insert_one"):
-            await self.collection.insert_one(project_data)
+        await self.collection.insert_one(project_data)
 
     async def update(self, project_id: str, update_data: dict[str, Any]) -> Project | None:
         if update_data:
-            with track_db_operation(_COL, "update_one"):
-                await self.collection.update_one({"_id": project_id}, {"$set": update_data})
+            await self.collection.update_one({"_id": project_id}, {"$set": update_data})
         return await self.get_by_id(project_id)
 
     async def update_raw(self, project_id: str, update_ops: UpdateOps, guard: dict[str, Any] | None = None) -> bool:
@@ -348,13 +342,11 @@ class ProjectRepository:
         ``guard`` joins the write's own filter so a condition established beforehand cannot go
         stale in between. False when it no longer held.
         """
-        with track_db_operation(_COL, "update_one"):
-            result = await self.collection.update_one({"_id": project_id, **(guard or {})}, update_ops)
+        result = await self.collection.update_one({"_id": project_id, **(guard or {})}, update_ops)
         return bool(result.matched_count)
 
     async def delete(self, project_id: str) -> bool:
-        with track_db_operation(_COL, "delete_one"):
-            result = await self.collection.delete_one({"_id": project_id})
+        result = await self.collection.delete_one({"_id": project_id})
         return result.deleted_count > 0
 
     async def find_many(
@@ -366,9 +358,8 @@ class ProjectRepository:
         sort_order: int = 1,
         projection: dict[str, int] | None = None,
     ) -> list[Project]:
-        with track_db_operation(_COL, "find"):
-            cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
-            docs = await cursor.to_list(limit)
+        cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
+        docs = await cursor.to_list(limit)
         return [Project(**doc) for doc in docs]
 
     async def find_many_raw(
@@ -380,9 +371,8 @@ class ProjectRepository:
         sort_order: int = 1,
         projection: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
-        with track_db_operation(_COL, "find"):
-            cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
-            return await cursor.to_list(limit)
+        cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
+        return await cursor.to_list(limit)
 
     async def find_many_with_scan_id(
         self,
@@ -409,18 +399,15 @@ class ProjectRepository:
         return [ProjectMinimal(**doc) for doc in docs]
 
     async def count(self, query: dict[str, Any] | None = None) -> int:
-        with track_db_operation(_COL, "count"):
-            return await self.collection.count_documents(query or {})
+        return await self.collection.count_documents(query or {})
 
     async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
         """Prefer $limit inside the pipeline over the limit arg."""
-        with track_db_operation(_COL, "aggregate"):
-            return await self.collection.aggregate(pipeline).to_list(limit)
+        return await self.collection.aggregate(pipeline).to_list(limit)
 
     async def update_many(self, query: dict[str, Any], update_data: dict[str, Any]) -> int:
         """``update_data`` is a document of field values; use ``update_many_raw`` for operators."""
-        with track_db_operation(_COL, "update_many"):
-            result = await self.collection.update_many(query, {"$set": update_data})
+        result = await self.collection.update_many(query, {"$set": update_data})
         return result.modified_count
 
     async def update_many_raw(self, query: dict[str, Any], update_ops: UpdateOps) -> int:
@@ -428,8 +415,7 @@ class ProjectRepository:
 
         Counts modified, not matched: a pipeline that recomputes the value already stored reports 0.
         """
-        with track_db_operation(_COL, "update_many"):
-            result = await self.collection.update_many(query, update_ops)
+        result = await self.collection.update_many(query, update_ops)
         return result.modified_count
 
     async def add_member(self, project_id: str, member_data: dict[str, Any]) -> bool:

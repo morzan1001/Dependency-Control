@@ -23,13 +23,11 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core import UNDATED
 from app.core.constants import MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
-from app.core.metrics import track_db_operation
 from app.models.project import Scan
 from app.schemas.projections import ScanMinimal, ScanWithStats
 
 logger = logging.getLogger(__name__)
 
-_COL = "scans"
 _RESCAN_RANK = "_rescan_rank"
 _USABLE_RANK = "_usable_rank"
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
@@ -154,8 +152,7 @@ class ScanRepository:
         self.collection = db.scans
 
     async def get_by_id(self, scan_id: str) -> Scan | None:
-        with track_db_operation(_COL, "find_one"):
-            data = await self.collection.find_one({"_id": scan_id})
+        data = await self.collection.find_one({"_id": scan_id})
         return Scan(**data) if data else None
 
     async def get_minimal_by_id(self, scan_id: str) -> ScanMinimal | None:
@@ -163,31 +160,25 @@ class ScanRepository:
         return ScanMinimal(**data) if data else None
 
     async def create(self, scan: Scan) -> Scan:
-        with track_db_operation(_COL, "insert_one"):
-            await self.collection.insert_one(scan.model_dump(by_alias=True))
+        await self.collection.insert_one(scan.model_dump(by_alias=True))
         return scan
 
     async def upsert(self, query: dict[str, Any], update: dict[str, Any]) -> None:
-        with track_db_operation(_COL, "update_one"):
-            await self.collection.update_one(query, update, upsert=True)
+        await self.collection.update_one(query, update, upsert=True)
 
     async def update(self, scan_id: str, update_data: dict[str, Any]) -> Scan | None:
-        with track_db_operation(_COL, "update_one"):
-            await self.collection.update_one({"_id": scan_id}, {"$set": update_data})
+        await self.collection.update_one({"_id": scan_id}, {"$set": update_data})
         return await self.get_by_id(scan_id)
 
     async def update_raw(self, scan_id: str, update_ops: dict[str, Any]) -> None:
-        with track_db_operation(_COL, "update_one"):
-            await self.collection.update_one({"_id": scan_id}, update_ops)
+        await self.collection.update_one({"_id": scan_id}, update_ops)
 
     async def delete(self, scan_id: str) -> bool:
-        with track_db_operation(_COL, "delete_one"):
-            result = await self.collection.delete_one({"_id": scan_id})
+        result = await self.collection.delete_one({"_id": scan_id})
         return result.deleted_count > 0
 
     async def delete_many(self, query: dict[str, Any]) -> int:
-        with track_db_operation(_COL, "delete_many"):
-            result = await self.collection.delete_many(query)
+        result = await self.collection.delete_many(query)
         return result.deleted_count
 
     async def find_by_project(
@@ -283,10 +274,9 @@ class ScanRepository:
         return [ScanWithStats(**doc) for doc in docs]
 
     async def count(self, query: dict[str, Any] | None = None, limit: int | None = None) -> int:
-        with track_db_operation(_COL, "count"):
-            if limit is not None:
-                return await self.collection.count_documents(query or {}, limit=limit)
-            return await self.collection.count_documents(query or {})
+        if limit is not None:
+            return await self.collection.count_documents(query or {}, limit=limit)
+        return await self.collection.count_documents(query or {})
 
     async def get_latest_active_scan(self, project: Any, deleted_branches: list[str] | None = None) -> Scan | None:
         """The project's head as a full document. ``project`` may be a model or a raw dict, and
@@ -302,8 +292,7 @@ class ScanRepository:
         """The build the given scan succeeded: the newest usable build on its own branch that
         predates it. A rescan carries today's date over an older commit, so it is not the build
         anything followed; ``$ne`` rather than ``False`` because the flag is often simply absent."""
-        with track_db_operation(_COL, "find_one"):
-            current = await self.collection.find_one({"_id": scan_id}, {"project_id": 1, "branch": 1, "created_at": 1})
+        current = await self.collection.find_one({"_id": scan_id}, {"project_id": 1, "branch": 1, "created_at": 1})
         if not current or current.get("created_at") is None:
             return None
         query = {
@@ -313,19 +302,17 @@ class ScanRepository:
             "is_rescan": {"$ne": True},
             "created_at": {"$lt": current["created_at"]},
         }
-        with track_db_operation(_COL, "find_one"):
-            # Same _id tie-break as head resolution, so two builds stamped inside one millisecond
-            # do not swap places between requests.
-            data = await self.collection.find_one(query, sort=[("created_at", -1), ("_id", 1)])
+        # Same _id tie-break as head resolution, so two builds stamped inside one millisecond
+        # do not swap places between requests.
+        data = await self.collection.find_one(query, sort=[("created_at", -1), ("_id", 1)])
         return Scan(**data) if data else None
 
     async def _readable_scan_branches(self, scan_ids: list[str]) -> dict[str, str | None]:
         """The branch of each of these scans that still exists with a usable status."""
-        with track_db_operation(_COL, "find"):
-            cursor = self.collection.find(
-                {"_id": {"$in": scan_ids}, "status": {"$in": SCAN_USABLE_STATUSES}}, {"branch": 1}
-            )
-            return {doc["_id"]: doc.get("branch") async for doc in cursor}
+        cursor = self.collection.find(
+            {"_id": {"$in": scan_ids}, "status": {"$in": SCAN_USABLE_STATUSES}}, {"branch": 1}
+        )
+        return {doc["_id"]: doc.get("branch") async for doc in cursor}
 
     async def freshest_in_lineage(self, scan_ids: Iterable[str]) -> dict[str, LineageAnalysis]:
         """The freshest readable analysis of each of these scans, following its rescan chain.
@@ -348,16 +335,15 @@ class ScanRepository:
                 break
             visited.update(frontier)
             next_frontier: dict[str, str] = {}
-            with track_db_operation(_COL, "find"):
-                async for doc in self.collection.find({"_id": {"$in": list(frontier)}}, _CHAIN_PROJECTION):
-                    root_id = frontier[doc["_id"]]
-                    if doc.get("status") in SCAN_USABLE_STATUSES:
-                        incumbent = freshest.get(root_id)
-                        if incumbent is None or _is_fresher(doc, incumbent):
-                            freshest[root_id] = doc
-                    rescan_id = doc.get("latest_rescan_id")
-                    if rescan_id and rescan_id not in visited:
-                        next_frontier[rescan_id] = root_id
+            async for doc in self.collection.find({"_id": {"$in": list(frontier)}}, _CHAIN_PROJECTION):
+                root_id = frontier[doc["_id"]]
+                if doc.get("status") in SCAN_USABLE_STATUSES:
+                    incumbent = freshest.get(root_id)
+                    if incumbent is None or _is_fresher(doc, incumbent):
+                        freshest[root_id] = doc
+                rescan_id = doc.get("latest_rescan_id")
+                if rescan_id and rescan_id not in visited:
+                    next_frontier[rescan_id] = root_id
             frontier = next_frontier
 
         if frontier:
@@ -382,10 +368,9 @@ class ScanRepository:
         """
         if not scan_ids:
             return None
-        with track_db_operation(_COL, "find_one"):
-            doc = await self.collection.find_one(
-                {"_id": {"$in": list(scan_ids)}}, {"created_at": 1}, sort=[("created_at", 1)]
-            )
+        doc = await self.collection.find_one(
+            {"_id": {"$in": list(scan_ids)}}, {"created_at": 1}, sort=[("created_at", 1)]
+        )
         return doc.get("created_at") if doc else None
 
     async def _freshest_analysis_docs(self, scan_ids: list[str]) -> dict[str, dict[str, Any]]:
@@ -393,19 +378,17 @@ class ScanRepository:
         if not scan_ids:
             return {}
         resolved = await self.freshest_in_lineage(scan_ids)
-        with track_db_operation(_COL, "find"):
-            docs = {
-                doc["_id"]: doc
-                async for doc in self.collection.find({"_id": {"$in": sorted({a.scan_id for a in resolved.values()})}})
-            }
+        docs = {
+            doc["_id"]: doc
+            async for doc in self.collection.find({"_id": {"$in": sorted({a.scan_id for a in resolved.values()})}})
+        }
         return {scan_id: docs[analysis.scan_id] for scan_id, analysis in resolved.items() if analysis.scan_id in docs}
 
     async def _newest_head_per_project(self, or_conditions: list[dict[str, Any]]) -> dict[str, str]:
         if not or_conditions:
             return {}
-        with track_db_operation(_COL, "aggregate"):
-            cursor = self.collection.aggregate(_head_pipeline(or_conditions))
-            return {doc["_id"]: doc["scan_id"] async for doc in cursor}
+        cursor = self.collection.aggregate(_head_pipeline(or_conditions))
+        return {doc["_id"]: doc["scan_id"] async for doc in cursor}
 
     async def get_latest_active_scan_ids(self, projects: list[Any]) -> dict[str, str]:
         """Maps project_id -> the scan that represents its head, under this module's head rule;
@@ -489,8 +472,7 @@ class ScanRepository:
             yield doc
 
     async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
-        with track_db_operation(_COL, "aggregate"):
-            return await self.collection.aggregate(pipeline).to_list(limit)
+        return await self.collection.aggregate(pipeline).to_list(limit)
 
     async def distinct(self, field: str, query: dict[str, Any] | None = None) -> list[Any]:
         return await self.collection.distinct(field, query or {})
