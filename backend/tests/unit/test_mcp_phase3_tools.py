@@ -49,7 +49,7 @@ async def test_list_compliance_reports_returns_metadata():
                 ]
             )
         )
-        out = await list_compliance_reports(db, project_id="p")
+        out = await list_compliance_reports(db, visibility={"scope": "project", "scope_id": "p"})
     assert len(out["reports"]) == 1
     assert out["reports"][0]["id"] == "r1"
 

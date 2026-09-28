@@ -38,6 +38,7 @@ from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
 from app.services.analytics.scopes import ScopeTooLargeError, ensure_whole_scope, scope_probe_limit
 from app.services.analyzers.purl_utils import canonical_purl
+from app.services.compliance.visibility import report_visibility_filter
 from app.services.reachability_enrichment import reachability_display_tier
 
 from ._arguments import ToolArgumentError, checked_arguments
@@ -666,7 +667,12 @@ class ChatToolRegistry:
         if visible is None:
             return {"error": _ERR_ACCESS_DENIED}
         teams, teams_total = await bounded_read(
-            ctx.db["teams"], visible, subject="teams", limit=_TEAM_LIST_READ, sort=[("name", 1)]
+            ctx.db["teams"],
+            visible,
+            subject="teams",
+            limit=_TEAM_LIST_READ,
+            sort=[("name", 1)],
+            projection={"name": 1, "description": 1},
         )
         return {
             "teams": [{"id": t["_id"], "name": t.get("name"), "description": t.get("description")} for t in teams],
@@ -1638,31 +1644,15 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(project_id, ctx.user_project_query, ctx.db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            return await list_compliance_reports(
-                ctx.db,
-                project_id=project["_id"],
-                framework=ctx.args.get("framework"),
-                limit=_clamp_limit(ctx.args.get("limit"), 10, MAX_COMPLIANCE_REPORT_PAGE),
-            )
-        # No project_id: restrict to the caller's visibility, else the repo
-        # query is unfiltered and leaks every scope's reports org-wide.
-        from app.services.chat import tools as _pkg
-
-        authorized_project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
-        visibility = await self._compliance_visibility_filter(ctx.user, authorized_project_ids, ctx.team_repo)
-        framework = ctx.args.get("framework")
-        fw: Any | None = None
-        if framework:
-            try:
-                fw = _pkg.ReportFramework(framework)
-            except ValueError:
-                fw = None
-        reports = await _pkg.ComplianceReportRepository(ctx.db).list(
-            framework=fw,
+            visibility: dict[str, Any] = {"scope": "project", "scope_id": project["_id"]}
+        else:
+            visibility = await report_visibility_filter(ctx.db, ctx.user)
+        return await list_compliance_reports(
+            ctx.db,
+            visibility=visibility,
+            framework=ctx.args.get("framework"),
             limit=_clamp_limit(ctx.args.get("limit"), 10, MAX_COMPLIANCE_REPORT_PAGE),
-            extra_filter=visibility,
         )
-        return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 
     async def _tool_list_policy_audit_entries(self, ctx: _ToolContext) -> dict[str, Any]:
         project_id = ctx.args.get("project_id")
@@ -1767,35 +1757,6 @@ class ChatToolRegistry:
         only for PROJECT_READ_ALL users).
         """
         return await db["projects"].find_one(and_filters({"_id": project_id}, user_project_query))
-
-    async def _compliance_visibility_filter(
-        self,
-        user: User,
-        authorized_project_ids: list[str],
-        team_repo: TeamRepository,
-    ) -> dict[str, Any]:
-        """Build the ``$or`` visibility filter for compliance reports, mirroring compliance_reports._build_visibility_filter."""
-        perms = getattr(user, "permissions", []) or []
-        is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
-        user_id = str(user.id)
-
-        branches: list[dict[str, Any]] = []
-        user_branch: dict[str, Any] = {"scope": "user"}
-        if not is_super:
-            user_branch["requested_by"] = user_id
-        branches.append(user_branch)
-
-        if authorized_project_ids:
-            branches.append({"scope": "project", "scope_id": {"$in": authorized_project_ids}})
-
-        team_ids = await team_repo.find_ids_by_member(user_id)
-        if team_ids:
-            branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
-
-        if is_super or has_permission(perms, Permissions.ANALYTICS_GLOBAL):
-            branches.append({"scope": "global"})
-
-        return {"$or": branches}
 
     async def _get_authorized_project_ids(
         self, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase

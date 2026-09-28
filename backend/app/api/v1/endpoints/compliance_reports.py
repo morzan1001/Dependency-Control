@@ -25,6 +25,7 @@ from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
+from app.services.compliance.visibility import report_visibility_filter
 
 logger = logging.getLogger(__name__)
 
@@ -116,36 +117,6 @@ async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: Com
         return False
 
 
-async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict[str, Any]:
-    """Build the $or filter capturing every scope a user may see, so list pagination runs on already-filtered results."""
-    from app.core.permissions import Permissions, has_permission
-    from app.repositories.teams import TeamRepository
-
-    perms = getattr(user, "permissions", []) or []
-    is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
-    user_id = str(user.id)
-
-    branches: list[dict[str, Any]] = []
-
-    user_branch: dict[str, Any] = {"scope": "user"}
-    if not is_super:
-        user_branch["requested_by"] = user_id
-    branches.append(user_branch)
-
-    project_ids = [p.id for p in await ScopeResolver(db, user).list_user_projects()]
-    if project_ids:
-        branches.append({"scope": "project", "scope_id": {"$in": project_ids}})
-
-    team_ids = await TeamRepository(db).find_ids_by_member(user_id)
-    if team_ids:
-        branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
-
-    if is_super or has_permission(perms, Permissions.ANALYTICS_GLOBAL):
-        branches.append({"scope": "global"})
-
-    return {"$or": branches}
-
-
 @router.get("/reports")
 async def list_reports(
     current_user: CurrentUserDep,
@@ -157,16 +128,14 @@ async def list_reports(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=MAX_COMPLIANCE_REPORT_PAGE),
 ) -> dict[str, Any]:
-    repo = ComplianceReportRepository(db)
-    visibility = await _build_visibility_filter(db, current_user)
-    reports = await repo.list(
+    reports = await ComplianceReportRepository(db).list(
+        visibility=await report_visibility_filter(db, current_user),
         scope=scope,
         scope_id=scope_id,
         framework=framework,
         status=status,
         skip=skip,
         limit=limit,
-        extra_filter=visibility,
     )
     return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 

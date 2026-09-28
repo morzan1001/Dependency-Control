@@ -208,11 +208,11 @@ async def generate_pqc_migration_plan(
 async def list_compliance_reports(
     db: AsyncIOMotorDatabase,
     *,
-    project_id: str | None = None,
+    visibility: dict[str, Any],
     framework: str | None = None,
     limit: int = 10,
 ) -> dict[str, Any]:
-    """Recent compliance reports (metadata only, no artifacts)."""
+    """Recent compliance reports among those ``visibility`` admits (metadata only, no artifacts)."""
     pkg = _pkg()
     fw: Any | None = None
     if framework:
@@ -220,12 +220,7 @@ async def list_compliance_reports(
             fw = pkg.ReportFramework(framework)
         except ValueError:
             fw = None
-    reports = await pkg.ComplianceReportRepository(db).list(
-        scope="project" if project_id else None,
-        scope_id=project_id,
-        framework=fw,
-        limit=limit,
-    )
+    reports = await pkg.ComplianceReportRepository(db).list(visibility=visibility, framework=fw, limit=limit)
     return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 
 
