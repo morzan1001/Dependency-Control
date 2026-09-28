@@ -17,14 +17,12 @@ from app.core.permissions import Permissions
 from app.models.broadcast import Broadcast
 from app.models.project import Project
 from app.models.user import User
-from app.repositories import (
-    BroadcastRepository,
-    DependencyRepository,
-    ProjectRepository,
-    ScanRepository,
-    TeamRepository,
-    UserRepository,
-)
+from app.repositories.broadcasts import BroadcastRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.schemas.notification import (
     BroadcastHistoryItem,
     BroadcastRequest,

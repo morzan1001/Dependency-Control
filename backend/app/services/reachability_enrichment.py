@@ -238,7 +238,8 @@ async def _fetch_callgraphs(
 
     Returns a list of callgraph objects (may be empty).
     """
-    from app.repositories import CallgraphRepository, ScanRepository
+    from app.repositories.callgraphs import CallgraphRepository
+    from app.repositories.scans import ScanRepository
 
     callgraph_repo = CallgraphRepository(db)
     scan_repo = ScanRepository(db)
@@ -620,7 +621,7 @@ async def _sync_project_stats_if_latest(
     stats: Any,
 ) -> None:
     """Mirror recomputed scan stats onto the project when this scan is still its latest."""
-    from app.repositories import ProjectRepository
+    from app.repositories.projects import ProjectRepository
 
     project_repo = ProjectRepository(db)
     project = await project_repo.get_raw_by_id(project_id)
@@ -659,12 +660,10 @@ async def run_pending_reachability_for_scan(
         "error": None,
     }
 
-    from app.repositories import (
-        AnalysisResultRepository,
-        CallgraphRepository,
-        FindingRepository,
-        ScanRepository,
-    )
+    from app.repositories.analysis_results import AnalysisResultRepository
+    from app.repositories.callgraphs import CallgraphRepository
+    from app.repositories.findings import FindingRepository
+    from app.repositories.scans import ScanRepository
 
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)

@@ -221,7 +221,7 @@ class TestRecalculateReachesTheReleasedBuild:
     @pytest.mark.asyncio
     async def test_a_revoked_waiver_stops_hiding_a_critical_that_is_in_production(self, released_db):
         """Nothing waives this finding any more, so "what is in production" must stop reading zero."""
-        from app.repositories import FindingRepository
+        from app.repositories.findings import FindingRepository
 
         await recalculate_project_stats(PROJECT_ID, released_db)
 
@@ -305,7 +305,7 @@ class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
 class TestLockContentionRetry:
     @pytest.mark.asyncio
     async def test_recalc_retries_lock_then_succeeds(self, seeded_db, monkeypatch):
-        from app.repositories import DistributedLocksRepository
+        from app.repositories.distributed_locks import DistributedLocksRepository
 
         calls = {"n": 0}
         real_acquire = DistributedLocksRepository.acquire_lock
@@ -337,7 +337,7 @@ class TestLockContentionRetry:
 
     @pytest.mark.asyncio
     async def test_recalc_returns_none_after_exhausting_retries(self, seeded_db, monkeypatch):
-        from app.repositories import DistributedLocksRepository
+        from app.repositories.distributed_locks import DistributedLocksRepository
 
         calls = {"n": 0}
 

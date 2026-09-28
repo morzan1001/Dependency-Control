@@ -17,11 +17,9 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.permissions import Permissions
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-    ScanRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.analytics import (
     AnalyticsScope,
     AnalyticsSummary,

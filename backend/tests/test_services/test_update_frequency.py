@@ -11,7 +11,9 @@ import pytest
 
 import app.services.update_frequency as update_frequency_module
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
-from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     BranchWindowActivity,
     ScanOutdatedSetRepository,

@@ -3,11 +3,9 @@
 from typing import Any
 
 from app.api.deps import DatabaseDep
-from app.repositories import (
-    DependencyEnrichmentRepository,
-    ProjectRepository,
-    ScanRepository,
-)
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
 
 _MSG_ACCESS_DENIED = "Access denied to this project"
 

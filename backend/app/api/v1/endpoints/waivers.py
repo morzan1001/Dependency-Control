@@ -22,7 +22,8 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.waiver import Waiver
-from app.repositories import ScanRepository, WaiverRepository
+from app.repositories.scans import ScanRepository
+from app.repositories.waivers import WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
 from app.services.stats import _build_waiver_query, recalculate_all_projects, recalculate_project_stats

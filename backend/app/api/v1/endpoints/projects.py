@@ -59,19 +59,17 @@ from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.release import Release
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.repositories import (
-    AnalysisResultRepository,
-    CallgraphRepository,
-    FindingRepository,
-    GitHubInstanceRepository,
-    InvitationRepository,
-    ProjectRepository,
-    ReleaseRepository,
-    ScanRepository,
-    TeamRepository,
-    UserRepository,
-    WaiverRepository,
-)
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.callgraphs import CallgraphRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.github_instances import GitHubInstanceRepository
+from app.repositories.invitations import InvitationRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.releases import ReleaseRepository
+from app.repositories.scans import ScanRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
+from app.repositories.waivers import WaiverRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.projects import (
     literal_set_stage,

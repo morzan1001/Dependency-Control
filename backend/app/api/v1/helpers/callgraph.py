@@ -18,7 +18,8 @@ from app.core.constants import (
 from app.core.permissions import Permissions, has_permission
 from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
 from app.models.user import User
-from app.repositories import ProjectRepository, TeamRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.teams import TeamRepository
 from app.services.aggregation.components import canonical_module_key, npm_package_key
 
 _MSG_ACCESS_DENIED = "Access denied"

@@ -24,12 +24,10 @@ from app.core.constants import (
 from app.core.permissions import Permissions
 from app.models.finding_record import FindingRecord
 from app.models.project import Scan
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-    ProjectRepository,
-    ScanRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.analytics import (
     RecommendationResponse,
     RecommendationsResponse,

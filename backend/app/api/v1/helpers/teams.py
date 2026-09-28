@@ -13,7 +13,8 @@ from app.core.constants import (
 from app.core.permissions import Permissions, has_permission
 from app.models.team import Team
 from app.models.user import User
-from app.repositories import TeamRepository, UserRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.schemas.team import TeamRef, TeamResponse
 
 _MSG_TEAM_NOT_FOUND = "Team not found"

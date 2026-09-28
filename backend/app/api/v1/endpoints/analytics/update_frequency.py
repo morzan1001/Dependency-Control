@@ -26,12 +26,10 @@ from app.core.config import settings
 from app.core.constants import SCAN_USABLE_STATUSES, SLOWEST_PACKAGES_LIMIT
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
-from app.repositories import (
-    AnalysisResultRepository,
-    DependencyRepository,
-    ProjectRepository,
-    ScanRepository,
-)
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,

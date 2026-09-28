@@ -34,7 +34,7 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import ProjectRepository
+from app.repositories.projects import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
 from app.services.aggregation.components import build_component_index
 from app.services.recommendation.common import get_attr
@@ -495,12 +495,10 @@ async def gather_cross_project_data(
 
     Returns None if the user has one project or fewer.
     """
-    from app.repositories import (
-        DependencyRepository,
-        FindingRepository,
-        ProjectRepository,
-        ScanRepository,
-    )
+    from app.repositories.dependencies import DependencyRepository
+    from app.repositories.findings import FindingRepository
+    from app.repositories.projects import ProjectRepository
+    from app.repositories.scans import ScanRepository
 
     if len(user_project_ids) <= 1:
         return None

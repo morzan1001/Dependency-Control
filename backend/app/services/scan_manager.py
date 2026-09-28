@@ -81,7 +81,8 @@ class ScanManager:
             },
         }
 
-        from app.repositories import ReleaseRepository, ScanRepository
+        from app.repositories.releases import ReleaseRepository
+        from app.repositories.scans import ScanRepository
 
         release = data.release_fields(now)
         if release:
@@ -102,7 +103,7 @@ class ScanManager:
     async def _get_waivers(self) -> list[Waiver]:
         """Fetch active waivers for this project, memoized for this request-scoped instance."""
         if self._waivers is None:
-            from app.repositories import WaiverRepository
+            from app.repositories.waivers import WaiverRepository
 
             waiver_repo = WaiverRepository(self.db)
             self._waivers = await waiver_repo.find_active_for_project(str(self.project.id), include_global=True)
@@ -156,7 +157,7 @@ class ScanManager:
 
     async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> str:
         """Store analysis results in the database using AnalysisResultRepository."""
-        from app.repositories import AnalysisResultRepository
+        from app.repositories.analysis_results import AnalysisResultRepository
 
         result_id = str(uuid.uuid4())
         result_repo = AnalysisResultRepository(self.db)
@@ -192,7 +193,7 @@ class ScanManager:
             "$addToSet": {"received_results": analyzer_name},
         }
 
-        from app.repositories import ScanRepository
+        from app.repositories.scans import ScanRepository
 
         scan_repo = ScanRepository(self.db)
 
@@ -225,7 +226,7 @@ class ScanManager:
 
     async def update_project_last_scan(self) -> None:
         """Update the project's last_scan_at timestamp via repository."""
-        from app.repositories import ProjectRepository
+        from app.repositories.projects import ProjectRepository
 
         project_repo = ProjectRepository(self.db)
         await project_repo.update_raw(str(self.project.id), {"$set": {"last_scan_at": datetime.now(timezone.utc)}})

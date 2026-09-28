@@ -3,7 +3,7 @@
 import logging
 
 from app.models.dependency import Dependency
-from app.repositories import DependencyRepository
+from app.repositories.dependencies import DependencyRepository
 from app.schemas.sbom import ParsedDependency
 
 logger = logging.getLogger(__name__)

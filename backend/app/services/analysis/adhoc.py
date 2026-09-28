@@ -956,7 +956,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     waived_count = 0
     waivers_applied = _WAIVERS_NONE
     if request.apply_global_waivers:
-        from app.repositories import WaiverRepository
+        from app.repositories.waivers import WaiverRepository
 
         waived_count = apply_global_waivers_in_memory(records, await WaiverRepository(db).find_active_global())
         waivers_applied = _WAIVERS_GLOBAL

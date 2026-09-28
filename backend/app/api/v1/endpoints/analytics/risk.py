@@ -27,10 +27,8 @@ from app.api.v1.helpers.analytics import (
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.core.permissions import Permissions
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
 from app.schemas.analytics import (
     ImpactAnalysisResult,
     SeverityBreakdown,

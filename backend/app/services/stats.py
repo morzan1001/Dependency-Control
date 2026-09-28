@@ -361,7 +361,7 @@ async def _restamp_scan(
     stats = await calculate_comprehensive_stats(db, scan_id)
     ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})
 
-    from app.repositories import ScanRepository
+    from app.repositories.scans import ScanRepository
 
     await ScanRepository(db).update_raw(
         scan_id,
@@ -378,7 +378,7 @@ async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> l
     through flags frozen at analysis time and can report zero criticals against a build that has
     one. The scan's own age is disclosed rather than corrected; its waiver flags are corrected.
     """
-    from app.repositories import ScanRepository
+    from app.repositories.scans import ScanRepository
     from app.services.releases import released_scan_ids
 
     marked = set((await released_scan_ids(db, project_id)).values())
@@ -395,13 +395,11 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     Resets ALL waivers for those scans and re-applies them under a distributed lock to
     prevent races when pods modify waivers concurrently. Returns None if project not found.
     """
-    from app.repositories import (
-        DistributedLocksRepository,
-        FindingRepository,
-        ProjectRepository,
-        ScanRepository,
-        WaiverRepository,
-    )
+    from app.repositories.distributed_locks import DistributedLocksRepository
+    from app.repositories.findings import FindingRepository
+    from app.repositories.projects import ProjectRepository
+    from app.repositories.scans import ScanRepository
+    from app.repositories.waivers import WaiverRepository
 
     project_repo = ProjectRepository(db)
     finding_repo = FindingRepository(db)

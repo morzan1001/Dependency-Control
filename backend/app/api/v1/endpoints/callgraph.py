@@ -19,7 +19,7 @@ from app.api.v1.helpers.callgraph import (
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
 from app.core.constants import CALLGRAPH_MAX_ENTRIES
 from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
-from app.repositories import CallgraphRepository
+from app.repositories.callgraphs import CallgraphRepository
 from app.schemas.callgraph import (
     CallgraphResponse,
     CallgraphUploadRequest,

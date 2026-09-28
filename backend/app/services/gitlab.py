@@ -29,7 +29,8 @@ from app.models.gitlab_api import (
 )
 from app.models.gitlab_instance import GitLabInstance
 from app.models.team import GitLabGroupBinding, Team, TeamMember, binding_of
-from app.repositories import TeamRepository, UserRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.repositories.teams import MemberSubset
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 

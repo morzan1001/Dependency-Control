@@ -29,7 +29,8 @@ from app.core.log_utils import sanitize_for_log
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
 from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of
-from app.repositories import TeamRepository, UserRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.repositories.teams import MemberSubset
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 

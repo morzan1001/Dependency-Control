@@ -17,7 +17,8 @@ from app.core.constants import (
 from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
 from app.models.user import User
-from app.repositories import ProjectRepository, TeamRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.teams import TeamRepository
 from app.repositories.projects import surviving_owner_admin_filter
 
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"

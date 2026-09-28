@@ -25,11 +25,9 @@ from app.db.mongodb import get_database
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.repositories import (
-    ProjectRepository,
-    SystemSettingsRepository,
-    UserRepository,
-)
+from app.repositories.projects import ProjectRepository
+from app.repositories.system_settings import SystemSettingsRepository
+from app.repositories.users import UserRepository
 from app.repositories.api_keys import ApiKeyRepository
 from app.repositories.projects import (
     literal_set_stage,
@@ -71,7 +69,7 @@ class TokenRejected(Exception):
 async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabase) -> None:
     if not jti:
         return
-    from app.repositories import TokenBlacklistRepository
+    from app.repositories.token_blacklist import TokenBlacklistRepository
 
     blacklist_repo = TokenBlacklistRepository(db)
     if await blacklist_repo.is_blacklisted(jti):

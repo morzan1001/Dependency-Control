@@ -46,14 +46,12 @@ from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.models.waiver import Waiver
-from app.repositories import (
-    AnalysisResultRepository,
-    CallgraphRepository,
-    DependencyRepository,
-    FindingRepository,
-    ProjectRepository,
-    ScanRepository,
-)
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.callgraphs import CallgraphRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.findings import finding_identity
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
@@ -126,7 +124,7 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
     # Internal analyzers and post-processors are regenerated per run, never carried over.
     excluded_names = list(analyzer_factories) + list(_POST_PROCESSOR_ANALYZERS)
 
-    from app.repositories import AnalysisResultRepository
+    from app.repositories.analysis_results import AnalysisResultRepository
 
     result_repo = AnalysisResultRepository(db)
     old_results = await result_repo.find_many(
@@ -924,7 +922,7 @@ async def _persist_findings_and_waivers(
     for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
         persisted_count += await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
 
-    from app.repositories import WaiverRepository
+    from app.repositories.waivers import WaiverRepository
 
     active_waivers: list[Waiver] = []
     if project_id:

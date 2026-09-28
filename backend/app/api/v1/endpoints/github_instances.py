@@ -20,7 +20,7 @@ from app.api.v1.helpers.responses import (
 from app.core.permissions import Permissions
 from app.models.github_instance import GitHubInstance
 from app.models.user import User
-from app.repositories import ProjectRepository
+from app.repositories.projects import ProjectRepository
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.schemas.github_instance import (
     AUTO_CREATE_NEEDS_OWNERS,

@@ -11,7 +11,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.core.constants import MAX_RESCAN_HOPS, SCAN_STATUS_COMPLETED
-from app.repositories import ProjectRepository, ScanRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
 from app.services.analysis.engine import _should_update_project_latest_scan
 from tests.mocks.fake_mongo import FakeDatabase
 

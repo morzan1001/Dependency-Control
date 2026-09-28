@@ -22,7 +22,9 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _fold_branch,
     _rollup_project_metrics,
 )
-from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import BranchWindowActivity
 from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
 from app.services.update_frequency import (

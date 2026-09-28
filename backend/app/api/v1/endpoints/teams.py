@@ -28,7 +28,8 @@ from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
 from app.models.user import User
-from app.repositories import TeamRepository, UserRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.projects import remove_team_pipeline
@@ -154,7 +155,7 @@ async def delete_team(
     db: DatabaseDep,
 ) -> None:
     """Delete a team (admin role); unassigns it from projects and removes team webhooks."""
-    from app.repositories import ProjectRepository
+    from app.repositories.projects import ProjectRepository
 
     if not has_permission(current_user.permissions, "team:delete"):
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)

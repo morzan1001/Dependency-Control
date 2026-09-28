@@ -15,7 +15,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
 )
 from app.models.release import Release
-from app.repositories import ReleaseRepository
+from app.repositories.releases import ReleaseRepository
 from scripts import backfill_release_flags
 from scripts.backfill_release_flags import (
     NO_LIMIT,

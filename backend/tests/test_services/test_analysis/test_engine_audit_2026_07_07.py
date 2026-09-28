@@ -182,7 +182,7 @@ class TestCarryOverExcludesPostProcessors:
                 captured["query"] = query
                 return []
 
-        monkeypatch.setattr("app.repositories.AnalysisResultRepository", _FakeRepo)
+        monkeypatch.setattr("app.repositories.analysis_results.AnalysisResultRepository", _FakeRepo)
 
         scan_doc = SimpleNamespace(is_rescan=True, original_scan_id="orig-1")
         asyncio.run(_carry_over_external_results("scan-2", scan_doc, SimpleNamespace()))

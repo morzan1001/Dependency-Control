@@ -20,7 +20,9 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
 from app.models.project import Project
 from app.models.release import Release
-from app.repositories import DependencyRepository, DistributedLocksRepository, ReleaseRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.releases import ReleaseRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,

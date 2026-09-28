@@ -34,7 +34,7 @@ from app.core.config import settings
 from app.db.mongodb import create_client
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, SCAN_USABLE_STATUSES
 from app.models.release import Release
-from app.repositories import ReleaseRepository
+from app.repositories.releases import ReleaseRepository
 
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50

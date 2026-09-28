@@ -26,7 +26,7 @@ from app.core.housekeeping import (
 from app.models.project import Project, Scan
 from app.models.release import Release
 from app.models.system import SystemSettings
-from app.repositories import DistributedLocksRepository
+from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from tests.mocks.fake_mongo import FakeDatabase
 

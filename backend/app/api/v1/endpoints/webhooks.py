@@ -20,7 +20,7 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH
 from app.core.permissions import Permissions
 from app.models.user import User
 from app.models.webhook import Webhook
-from app.repositories import WebhookRepository
+from app.repositories.webhooks import WebhookRepository
 from app.schemas.webhook import (
     WebhookCreate,
     WebhookResponse,

@@ -18,7 +18,7 @@ from app.api.v1.helpers.responses import (
 from app.core.permissions import Permissions
 from app.models.gitlab_instance import GitLabInstance
 from app.models.user import User
-from app.repositories import ProjectRepository
+from app.repositories.projects import ProjectRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.schemas.gitlab_instance import (
     AUTO_CREATE_NEEDS_NAMESPACES,

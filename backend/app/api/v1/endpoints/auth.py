@@ -53,7 +53,7 @@ from app.core.metrics import (
 )
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.repositories import UserRepository
+from app.repositories.users import UserRepository
 from app.schemas.auth import (
     EmailVerifyResponse,
     ForgotPasswordResponse,
@@ -323,7 +323,8 @@ async def logout(
     db: DatabaseDep,
 ) -> LogoutResponse:
     """Logout the current user by blacklisting the token JTI and bumping last_logout_at."""
-    from app.repositories import TokenBlacklistRepository, UserRepository
+    from app.repositories.token_blacklist import TokenBlacklistRepository
+    from app.repositories.users import UserRepository
 
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):

@@ -34,7 +34,8 @@ from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import InvitationRepository, UserRepository
+from app.repositories.invitations import InvitationRepository
+from app.repositories.users import UserRepository
 from app.schemas.user import User as UserSchema
 from app.schemas.user import (
     User2FADisable,

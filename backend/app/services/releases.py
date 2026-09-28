@@ -8,7 +8,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import RELEASE_FLAG_RECONCILE_BATCH_SIZE
 from app.core.init_db import RELEASES_LATEST_SORT
-from app.repositories import ProjectRepository, ScanRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.projections import ProjectWithScanId
 from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
 

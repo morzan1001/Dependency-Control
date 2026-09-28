@@ -179,7 +179,7 @@ async def _create_rescan_for_project(
     """Atomically create a rescan after acquiring the distributed lock."""
     import os
 
-    from app.repositories import DistributedLocksRepository
+    from app.repositories.distributed_locks import DistributedLocksRepository
 
     source_scan_id = str(source_scan["_id"])
     lock_repo = DistributedLocksRepository(db)

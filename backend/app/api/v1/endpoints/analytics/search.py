@@ -17,10 +17,8 @@ from app.api.v1.helpers.analytics import (
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
 from app.core.permissions import Permissions
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
 from app.schemas.analytics import (
     DependencySearchResponse,
     DependencySearchResult,

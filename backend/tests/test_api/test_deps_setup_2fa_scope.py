@@ -33,7 +33,7 @@ def _resolve(token: str):
 
     with (
         patch("app.api.deps.UserRepository", return_value=user_repo),
-        patch("app.repositories.TokenBlacklistRepository", return_value=blacklist_repo),
+        patch("app.repositories.token_blacklist.TokenBlacklistRepository", return_value=blacklist_repo),
     ):
         return asyncio.run(get_current_user(db=MagicMock(), token=token))
 

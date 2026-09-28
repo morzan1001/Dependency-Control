@@ -16,7 +16,8 @@ from app.core import ensure_utc
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, PROJECT_ROLE_VIEWER, RELEASE_ENVIRONMENT_PATTERN
 from app.core.init_db import RELEASES_LATEST_SORT
 from app.models.release import Release
-from app.repositories import ReleaseRepository, ScanRepository
+from app.repositories.releases import ReleaseRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.scans import LineageAnalysis
 from app.schemas.release import ReleaseItem, ReleaseListResponse, ReleaseMarkRequest, ReleaseUnmarkResponse
 

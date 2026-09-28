@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import UserRepository
+from app.repositories.users import UserRepository
 
 
 async def get_user_or_404(user_id: str, db: AsyncIOMotorDatabase) -> dict[str, Any]:

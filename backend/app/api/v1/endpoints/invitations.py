@@ -14,7 +14,8 @@ from app.core import security
 from app.core.config import settings
 from app.models.invitation import SystemInvitation
 from app.models.user import User
-from app.repositories import InvitationRepository, UserRepository
+from app.repositories.invitations import InvitationRepository
+from app.repositories.users import UserRepository
 from app.schemas.user import User as UserSchema
 
 router = CustomAPIRouter()

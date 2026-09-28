@@ -18,13 +18,11 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PROJECT_ROLE_VIEWER, SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
-from app.repositories import (
-    DependencyEnrichmentRepository,
-    DependencyRepository,
-    FindingRepository,
-    ProjectRepository,
-    ScanRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.analytics import (
     DependencyGraph,
     DependencyMetadata,
