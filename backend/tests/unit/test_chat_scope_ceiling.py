@@ -9,7 +9,7 @@ import pytest
 from app.models.user import User
 from app.services.analytics import scopes
 from app.services.chat.tools import ChatToolRegistry
-from tests.helpers.permission_presets import PRESET_ADMIN
+from tests.helpers.permission_presets import PRESET_USER
 from tests.mocks.fake_mongo import FakeDatabase
 
 _CEILING = 3
@@ -34,11 +34,12 @@ def _seed_projects(db: FakeDatabase, count: int) -> None:
 
 
 def _caller() -> User:
+    """Reads its projects through membership: a project:read_all caller's search sends no id list to narrow."""
     return User(
         _id=_CALLER,
         username="scope-caller",
         email="scope@example.com",
-        permissions=list(PRESET_ADMIN),
+        permissions=list(PRESET_USER),
     )
 
 

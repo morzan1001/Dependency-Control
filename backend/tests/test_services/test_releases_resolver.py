@@ -683,29 +683,40 @@ async def test_compliance_pick_scan_ids_returns_project_scan_pairs(db):
     assert pairs == [(_PROJECT_A, "head-a")]
 
 
+async def _chat_heads(db, user_project_query: dict, project_id: str | None = None) -> dict[str, str]:
+    from app.models.user import User
+    from app.services.chat.tools.registry import ChatToolRegistry, _ToolContext
+
+    ctx = _ToolContext(
+        args={"project_id": project_id} if project_id else {},
+        user=User(id="u-chat", username="chat", email="chat@test.com"),
+        db=db,
+        user_project_query=user_project_query,
+    )
+    heads, _names = await ChatToolRegistry()._heads_in_scope(ctx)
+    return heads
+
+
 @pytest.mark.asyncio
 async def test_chat_registry_skips_unusable_scans(db):
-    from app.services.chat.tools.registry import ChatToolRegistry
-
     await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": None})
     await db.scans.insert_one(_scan("running", _PROJECT_A, status=_PROCESSING, created_delta=5))
     await db.scans.insert_one(_scan("done", _PROJECT_A))
 
-    resolved = await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": [_PROJECT_A]}}, None, db)
+    resolved = await _chat_heads(db, {"_id": {"$in": [_PROJECT_A]}})
 
     assert resolved == {_PROJECT_A: "done"}
 
 
 @pytest.mark.asyncio
-async def test_chat_registry_resolves_nothing_for_a_project_outside_the_user_scope(db):
-    from app.services.chat.tools.registry import ChatToolRegistry
+async def test_chat_registry_refuses_a_project_outside_the_user_scope(db):
+    from app.services.chat.tools.registry import _ToolRefusal
 
     await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": "head-a"})
     await db.scans.insert_one(_scan("head-a", _PROJECT_A))
 
-    resolved = await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": [_OTHER_PROJECT]}}, _PROJECT_A, db)
-
-    assert resolved == _NO_SCANS
+    with pytest.raises(_ToolRefusal):
+        await _chat_heads(db, {"_id": {"$in": [_OTHER_PROJECT]}}, _PROJECT_A)
 
 
 @pytest.mark.asyncio
@@ -715,7 +726,6 @@ async def test_every_consumer_falls_back_when_the_pointer_names_a_deleted_scan(d
     from app.api.v1.helpers.analytics import get_latest_scan_ids
     from app.services.analytics.crypto_hotspots import CryptoHotspotService
     from app.services.analytics.scopes import ResolvedScope
-    from app.services.chat.tools.registry import ChatToolRegistry
     from app.services.compliance.engine import ComplianceReportEngine
 
     await _seed_a_dangling_pointer(db)
@@ -725,10 +735,8 @@ async def test_every_consumer_falls_back_when_the_pointer_names_a_deleted_scan(d
     assert await get_latest_scan_ids(await _scope(db, [_PROJECT_A]), db) == [_EXEMPTED_RELEASE]
     assert await CryptoHotspotService(db)._pick_scan_ids(scope, None) == [_EXEMPTED_RELEASE]
     assert await ComplianceReportEngine()._pick_scan_ids(db, scope) == [(_PROJECT_A, _EXEMPTED_RELEASE)]
-    assert await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": [_PROJECT_A]}}, None, db) == {
-        _PROJECT_A: _EXEMPTED_RELEASE
-    }
-    assert await ChatToolRegistry()._latest_scan_ids_for_user({}, _PROJECT_A, db) == {_PROJECT_A: _EXEMPTED_RELEASE}
+    assert await _chat_heads(db, {"_id": {"$in": [_PROJECT_A]}}) == {_PROJECT_A: _EXEMPTED_RELEASE}
+    assert await _chat_heads(db, {}, _PROJECT_A) == {_PROJECT_A: _EXEMPTED_RELEASE}
 
 
 @pytest.mark.asyncio
