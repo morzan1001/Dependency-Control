@@ -13,7 +13,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel
 
 from app.api.v1.helpers.projects import build_user_project_query
-from app.api.v1.helpers.teams import resolve_team_names, team_refs
+from app.api.v1.helpers.teams import check_team_access, resolve_team_names, team_refs, visible_teams_filter
 from app.api.v1.helpers.webhooks import check_webhook_list_permission
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
@@ -26,7 +26,9 @@ from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.finding import FindingType, Severity
 from app.models.project import Project
+from app.models.team import Team
 from app.models.user import User
+from app.repositories.base import and_filters
 from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.system import SystemSettingsResponse
@@ -129,6 +131,7 @@ _TOP_RISKY = 3
 # Read ceilings for the tools that answer from a whole collection rather than from a ranked page.
 # Every answer built on one of these carries the population it was cut from.
 _DEPENDENCY_TREE_READ = 200
+_TEAM_LIST_READ = 100
 _TEAM_PROJECT_READ = 50
 _WAIVER_READ = 100
 _WEBHOOK_READ = 20
@@ -660,17 +663,28 @@ class ChatToolRegistry:
         return {"dependency": _serialize_doc(dep)}
 
     async def _tool_list_teams(self, ctx: _ToolContext) -> dict[str, Any]:
-        teams = await ctx.team_repo.find_by_member(str(ctx.user.id))
-        return {"teams": [{"id": t.id, "name": t.name, "description": t.description} for t in teams]}
+        visible = visible_teams_filter(ctx.user)
+        if visible is None:
+            return {"error": _ERR_ACCESS_DENIED}
+        teams, teams_total = await bounded_read(
+            ctx.db["teams"], visible, subject="teams", limit=_TEAM_LIST_READ, sort=[("name", 1)]
+        )
+        return {
+            "teams": [{"id": t["_id"], "name": t.get("name"), "description": t.get("description")} for t in teams],
+            "teams_total": teams_total,
+        }
+
+    async def _readable_team(self, ctx: _ToolContext) -> Team | dict[str, Any]:
+        """The team REST's read rule admits, or the error to answer with."""
+        try:
+            return await check_team_access(ctx.args["team_id"], ctx.user, ctx.db)
+        except HTTPException as exc:
+            return {"error": _ERR_TEAM_NOT_FOUND if exc.status_code == 404 else _ERR_ACCESS_DENIED}
 
     async def _tool_get_team_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await ctx.team_repo.get_by_id(ctx.args["team_id"])
-        if not team:
-            return {"error": _ERR_TEAM_NOT_FOUND}
-        if not await ctx.team_repo.is_member(team.id, str(ctx.user.id)) and not has_permission(
-            ctx.user.permissions, Permissions.TEAM_READ_ALL
-        ):
-            return {"error": _ERR_ACCESS_DENIED}
+        team = await self._readable_team(ctx)
+        if isinstance(team, dict):
+            return team
         return {
             "team": {
                 "id": team.id,
@@ -681,14 +695,10 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_team_projects(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await ctx.team_repo.get_by_id(ctx.args["team_id"])
-        if not team:
-            return {"error": _ERR_TEAM_NOT_FOUND}
-        if not await ctx.team_repo.is_member(team.id, str(ctx.user.id)) and not has_permission(
-            ctx.user.permissions, Permissions.TEAM_READ_ALL
-        ):
-            return {"error": _ERR_ACCESS_DENIED}
-        query = {**ctx.user_project_query, "team_ids": team.id}
+        team = await self._readable_team(ctx)
+        if isinstance(team, dict):
+            return team
+        query = and_filters(ctx.user_project_query, {"team_ids": team.id})
         projects, projects_total = await bounded_read(
             ctx.db["projects"], query, subject="team projects", limit=_TEAM_PROJECT_READ
         )
@@ -1338,16 +1348,12 @@ class ChatToolRegistry:
         return {"waivers": out, "count": len(out), "waivers_total": rows_total, "window_days": days}
 
     async def _tool_get_team_risk_overview(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await ctx.team_repo.get_by_id(ctx.args["team_id"])
-        if not team:
-            return {"error": _ERR_TEAM_NOT_FOUND}
-        if not await ctx.team_repo.is_member(team.id, str(ctx.user.id)) and not has_permission(
-            ctx.user.permissions, Permissions.TEAM_READ_ALL
-        ):
-            return {"error": _ERR_ACCESS_DENIED}
+        team = await self._readable_team(ctx)
+        if isinstance(team, dict):
+            return team
         projects, projects_total = await bounded_read(
             ctx.db["projects"],
-            {"team_ids": team.id},
+            and_filters(ctx.user_project_query, {"team_ids": team.id}),
             subject="team projects",
             limit=_TEAM_RISK_PROJECT_READ,
             projection={"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1},
@@ -1370,7 +1376,7 @@ class ChatToolRegistry:
         top3 = [{"project_id": pid, "project_name": name, "critical": c, "high": h} for c, h, pid, name in risky[:3]]
         return {
             "team_id": team.id,
-            "team_name": getattr(team, "name", ""),
+            "team_name": team.name,
             # Totals are summed over the projects read; project_count is the team's whole
             # holding, so the two disagree exactly when the read saturated.
             "projects_summed": len(projects),

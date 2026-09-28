@@ -227,7 +227,8 @@ def _team_subset_stages(project: Project, source: str, resolved: list[str] | Non
         return []
     # Every CI job of every pipeline arrives here, so an unchanged owner set writes nothing. The
     # second half catches a document whose provenance names an owner the list never gained.
-    if owned_here == set(owners) and owned_here <= set(project.team_ids):
+    stamped = set(owners) - (set(project.team_ids) - owned_here)
+    if owned_here == stamped and owned_here <= set(project.team_ids):
         return []
     return replace_team_subset_pipeline(source, owners)
 

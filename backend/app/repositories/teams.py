@@ -34,27 +34,26 @@ def _member_subset_stage(subset: MemberSubset) -> dict[str, Any]:
 
     Merging a snapshot in Python and writing the whole array back loses a member added between
     that read and the write, and the add has already been reported as done to whoever made it.
-    Everything the sync does not own is carried over untouched, resolved entries winning over a
-    stored one for the same user so a hand-added member the group also holds is not duplicated.
+    Everything the sync does not own is carried over untouched and wins over a resolved entry for
+    the same user, so a hand-added member keeps the role an admin gave them and stays when they
+    leave the group.
     """
-    resolved_ids = [member[_USER_ID] for member in subset.members]
     kept = {
         "$filter": {
             "input": {"$ifNull": [f"${_MEMBERS}", []]},
             "as": "member",
-            "cond": {
-                "$not": [
-                    {
-                        "$or": [
-                            {"$eq": ["$$member.source", subset.source]},
-                            {"$in": [f"$$member.{_USER_ID}", {"$literal": resolved_ids}]},
-                        ]
-                    }
-                ]
-            },
+            "cond": {"$ne": ["$$member.source", subset.source]},
         }
     }
-    return {"$set": {_MEMBERS: {"$concatArrays": [kept, {"$literal": subset.members}]}}}
+    kept_ids = {"$map": {"input": "$$kept", "as": "member", "in": f"$$member.{_USER_ID}"}}
+    added = {
+        "$filter": {
+            "input": {"$literal": subset.members},
+            "as": "resolved",
+            "cond": {"$not": [{"$in": [f"$$resolved.{_USER_ID}", kept_ids]}]},
+        }
+    }
+    return {"$set": {_MEMBERS: {"$let": {"vars": {"kept": kept}, "in": {"$concatArrays": ["$$kept", added]}}}}}
 
 
 def _binding_restamp_stage(key: str, binding_fields: dict[str, Any]) -> dict[str, Any]:
@@ -258,13 +257,18 @@ class TeamRepository:
             {"$pull": {_MEMBERS: {_USER_ID: user_id}}, "$set": {"updated_at": updated_at}},
         )
 
-    async def update_member_role(self, team_id: str, user_id: str, role: str, updated_at: datetime) -> None:
+    async def update_member_role(self, team_id: str, user_id: str, role: str, updated_at: datetime) -> bool:
+        """False when a demotion would leave the team with no admin; the filter decides, as in remove_member."""
+        query: dict[str, Any] = {"_id": team_id}
+        if role != TEAM_ROLE_ADMIN:
+            query[_MEMBERS] = {"$elemMatch": {_USER_ID: {"$ne": user_id}, "role": TEAM_ROLE_ADMIN}}
         # Address the member by identity: a concurrent $pull shifts array indices under a positional write.
-        await self.collection.update_one(
-            {"_id": team_id},
+        result = await self.collection.update_one(
+            query,
             {"$set": {"members.$[m].role": role, "updated_at": updated_at}},
             array_filters=[{f"m.{_USER_ID}": user_id}],
         )
+        return bool(result.matched_count)
 
     async def is_member(self, team_id: str, user_id: str) -> bool:
         result = await self.collection.find_one({"_id": team_id, _MEMBERS_USER_ID: user_id}, {"_id": 1})

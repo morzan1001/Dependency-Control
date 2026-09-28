@@ -34,7 +34,9 @@ async def _seed() -> FakeDatabase:
 
 
 def _user() -> User:
-    return User(id=_USER, username=_USER, email="u1@test.com", permissions=[Permissions.PROJECT_READ])
+    return User(
+        id=_USER, username=_USER, email="u1@test.com", permissions=[Permissions.PROJECT_READ, Permissions.TEAM_READ]
+    )
 
 
 def _reader_of_everything() -> User:

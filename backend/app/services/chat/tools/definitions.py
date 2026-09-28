@@ -1073,9 +1073,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+_TEAM_READ = [Permissions.TEAM_READ, Permissions.TEAM_READ_ALL]
+
 TOOL_PERMISSIONS: dict[str, list[str]] = {
-    # A tool not named here is project-scoped: build_user_project_query is what demands a
-    # project-read permission of the caller and narrows the answer to the projects they hold.
+    # Any-of, checked before the handler runs; the handler still applies the per-resource rule.
+    "list_teams": _TEAM_READ,
+    "get_team_details": _TEAM_READ,
+    "get_team_projects": _TEAM_READ,
+    "get_team_risk_overview": _TEAM_READ,
     "list_global_waivers": [Permissions.WAIVER_READ_ALL],
     "get_system_settings": [Permissions.SYSTEM_MANAGE],
     "get_system_health": [Permissions.SYSTEM_MANAGE],

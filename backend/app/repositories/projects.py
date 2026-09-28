@@ -131,16 +131,27 @@ def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[
     element equality, so the project would drop out of the unassigned view and every ownership
     view at once.
     """
+    held_elsewhere = {"$setDifference": [{"$ifNull": ["$team_ids", []]}, _retired_by(source)]}
     return [
         {
             "$set": {
-                "team_ids": {
-                    "$setUnion": [
-                        {"$setDifference": [{"$ifNull": ["$team_ids", []]}, _retired_by(source)]},
-                        team_ids,
+                "team_ids": {"$setUnion": [held_elsewhere, team_ids]},
+                # Only owners the project holds through no other writer are stamped, so a hand
+                # assignment the provider also resolves stays one the provider never retires.
+                "team_sources": {
+                    "$mergeObjects": [
+                        _sources_except(source),
+                        {
+                            "$arrayToObject": {
+                                "$map": {
+                                    "input": {"$setDifference": [{"$literal": team_ids}, held_elsewhere]},
+                                    "as": "owner",
+                                    "in": {"k": "$$owner", "v": source},
+                                }
+                            }
+                        },
                     ]
                 },
-                "team_sources": {"$mergeObjects": [_sources_except(source), dict.fromkeys(team_ids, source)]},
             }
         },
         *scalar_mirror_stages(),

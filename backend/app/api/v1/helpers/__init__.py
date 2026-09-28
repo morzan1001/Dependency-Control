@@ -79,10 +79,10 @@ from app.api.v1.helpers.teams import (
     check_team_access,
     enrich_team_with_usernames,
     fetch_and_enrich_team,
-    get_member_role,
     get_team_with_access,
     resolve_team_names,
     team_refs,
+    visible_teams_filter,
 )
 from app.api.v1.helpers.users import (
     check_admin_or_self,
@@ -165,7 +165,6 @@ __all__ = [
     "get_latest_scan_ids",
     # Auth helpers
     "get_logo_path",
-    "get_member_role",
     "get_projects_with_scans",
     "get_sort_field",
     "get_team_with_access",
@@ -191,4 +190,5 @@ __all__ = [
     "send_system_invitation_email",
     "send_verification_email",
     "team_refs",
+    "visible_teams_filter",
 ]

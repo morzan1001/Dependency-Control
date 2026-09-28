@@ -2,6 +2,8 @@ export interface TeamMember {
   user_id: string;
   username?: string;
   role: string;
+  // "manual", or the "<provider>:<instance id>" of the sync that owns the entry.
+  source?: string;
 }
 
 // Whoever established a team's ownership of a project. A provider's entry is restored by its next

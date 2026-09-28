@@ -229,6 +229,9 @@ class TestGlobalWriteGrantsWithoutMembership:
         from app.api.v1.endpoints.teams import update_team_member
 
         db = await _seeded()
+        await db.teams.update_one(
+            {"_id": _TEAM}, {"$push": {"members": {"user_id": "second-admin", "role": TEAM_ROLE_ADMIN}}}
+        )
 
         await update_team_member(
             team_id=_TEAM,

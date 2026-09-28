@@ -145,6 +145,8 @@ async def test_the_analytics_scope_is_unfiltered_for_read_all():
 async def test_a_team_scope_holds_every_project_the_team_co_owns():
     db = await _seeded_db()
 
-    resolved = await ScopeResolver(db, _user(Permissions.PROJECT_READ)).resolve(scope="team", scope_id="b")
+    resolved = await ScopeResolver(db, _user(Permissions.PROJECT_READ, Permissions.TEAM_READ)).resolve(
+        scope="team", scope_id="b"
+    )
 
     assert set(resolved.project_ids or []) == {"co-owned", "mine-only"}

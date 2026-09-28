@@ -1112,8 +1112,9 @@ def _run_pipeline(docs: list, pipeline: list, database: Any = None) -> list:
         elif "$addFields" in stage or "$set" in stage:
             spec = stage.get("$addFields") or stage["$set"]
             for d in results:
-                for field, expr in spec.items():
-                    value = _eval_expr(d, expr)
+                # Every field of one stage reads the stage's input, as on the server, not its siblings.
+                values = {field: _eval_expr(d, expr) for field, expr in spec.items()}
+                for field, value in values.items():
                     if value is not _REMOVE:
                         FakeCollection._set_dotted(d, field, value)
         elif "$lookup" in stage:

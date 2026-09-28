@@ -73,7 +73,7 @@ async def test_a_team_scope_past_the_ceiling_is_refused(db, small_ceiling):
     _seed_projects(db, _PAST_THE_CEILING, team_id=_TEAM)
 
     with pytest.raises(ScopeTooLargeError):
-        await _resolver(db)._list_team_project_ids(_TEAM)
+        await _resolver(db, permissions=frozenset({Permissions.PROJECT_READ_ALL}))._list_team_project_ids(_TEAM)
 
 
 @pytest.mark.asyncio

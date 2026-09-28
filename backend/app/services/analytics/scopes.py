@@ -12,6 +12,7 @@ from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL
+from app.repositories.base import and_filters
 
 logger = logging.getLogger(__name__)
 
@@ -118,18 +119,24 @@ class ScopeResolver:
             return False
 
     async def _check_team_member(self, team_id: str) -> bool:
-        from app.repositories.teams import TeamRepository
+        from app.api.v1.helpers.teams import check_team_access
 
-        team = await TeamRepository(self.db).get_by_id(team_id)
-        if team is None:
+        try:
+            await check_team_access(team_id, self.user, self.db)
+        except HTTPException:
             return False
-        members = getattr(team, "members", [])
-        return any(getattr(m, "user_id", None) == self.user.id for m in members)
+        return True
 
     async def _list_team_project_ids(self, team_id: str) -> list[str]:
+        """The team's projects the user may read; reading a team does not open its projects."""
+        from app.api.v1.helpers.projects import build_user_project_query
         from app.repositories.projects import ProjectRepository
+        from app.repositories.teams import TeamRepository
 
-        projects = await ProjectRepository(self.db).find_many_minimal({"team_ids": team_id}, limit=scope_probe_limit())
+        readable = await build_user_project_query(self.user, TeamRepository(self.db))
+        projects = await ProjectRepository(self.db).find_many_minimal(
+            and_filters(readable, {"team_ids": team_id}), limit=scope_probe_limit()
+        )
         return [str(p.id) for p in ensure_whole_scope(projects)]
 
     async def _list_user_project_ids(self) -> list[str]:

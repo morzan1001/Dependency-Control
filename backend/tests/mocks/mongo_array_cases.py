@@ -614,6 +614,30 @@ TEAM_OWNERSHIP_CASES = [
             "team_source": _GITLAB_A,
         },
     ),
+    # The picker is the only writer that may take a hand assignment away, so a provider resolving
+    # an owner the project already holds must not stamp it as its own and retire it later.
+    UpdateCase(
+        "a sync resolving a hand-assigned owner leaves it hand-assigned",
+        {"team_ids": ["platform"], "team_sources": {"platform": "manual"}},
+        replace_team_subset_pipeline(_GITHUB_A, ["platform", "gh-new"]),
+        expected={
+            "team_ids": ["gh-new", "platform"],
+            "team_sources": {"platform": "manual", "gh-new": _GITHUB_A},
+            "team_id": "gh-new",
+            "team_source": _GITHUB_A,
+        },
+    ),
+    UpdateCase(
+        "a sync resolving an owner another instance holds leaves it with that instance",
+        {"team_ids": ["shared"], "team_sources": {"shared": _GITLAB_B}},
+        replace_team_subset_pipeline(_GITLAB_A, ["shared"]),
+        expected={
+            "team_ids": ["shared"],
+            "team_sources": {"shared": _GITLAB_B},
+            "team_id": "shared",
+            "team_source": _GITLAB_B,
+        },
+    ),
     UpdateCase(
         "a provider value naming no instance belongs to no instance's subset",
         {"team_ids": ["legacy-gl"], "team_sources": {"legacy-gl": "gitlab"}},
