@@ -1029,7 +1029,6 @@ MAX_CROSS_LINK_GROUP_SIZE: int = 100
 WaiverStatus = Literal["accepted_risk", "false_positive"]
 WAIVER_STATUS_ACCEPTED_RISK: WaiverStatus = "accepted_risk"
 WAIVER_STATUS_FALSE_POSITIVE: WaiverStatus = "false_positive"
-WAIVER_STATUSES: list[str] = list(get_args(WaiverStatus))
 
 # "finding" = exact match, "file" = same rule in the same file, "rule" = same rule project-wide.
 WaiverScope = Literal["finding", "file", "rule"]

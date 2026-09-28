@@ -552,10 +552,6 @@ async def _run_retention(db: Any) -> None:
         days = group["_id"]["days"]
         action = group["_id"]["action"]
         project_ids = group["project_ids"]
-
-        if not days or days <= 0:
-            continue
-
         label = f"Retention {days}d/{action} ({len(project_ids)} projects)"
         await _expire_older_than(db, days, {"project_id": {"$in": project_ids}}, action, label)
 

@@ -61,7 +61,7 @@ class WaiverResponse(BaseModel):
     package_name: str | None = None
     package_version: str | None = None
     finding_type: FindingType | None = None
-    scope: str = "finding"
+    scope: str = WAIVER_SCOPE_FINDING
     rule_id: str | None = None
     reason: str
     status: str

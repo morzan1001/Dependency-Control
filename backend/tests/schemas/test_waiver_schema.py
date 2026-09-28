@@ -1,9 +1,11 @@
 """WaiverCreate.finding_type validates against the FindingType enum."""
 
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
-from app.core.constants import WAIVER_STATUSES
+from app.core.constants import WaiverStatus
 from app.models.finding import FindingType
 from app.schemas.waiver import WaiverCreate
 
@@ -30,7 +32,7 @@ def test_unknown_status_rejected_at_schema_level():
 
 
 def test_every_known_status_is_accepted():
-    for status in WAIVER_STATUSES:
+    for status in get_args(WaiverStatus):
         assert WaiverCreate(reason="ok", status=status).status == status
 
 
@@ -54,11 +56,3 @@ def test_an_update_can_still_clear_the_expiry():
     from app.schemas.waiver import WaiverUpdate
 
     assert WaiverUpdate(expiration_date=None).model_dump(exclude_unset=True) == {"expiration_date": None}
-
-
-def test_the_status_list_is_derived_from_the_status_type():
-    from typing import get_args
-
-    from app.core.constants import WaiverStatus
-
-    assert list(get_args(WaiverStatus)) == WAIVER_STATUSES
