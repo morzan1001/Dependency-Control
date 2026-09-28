@@ -39,7 +39,9 @@ class TestSharedVcsInstanceBehaviour:
         assert await db[collection_name].find_one({"_id": "i-1"}) is not None
 
     @pytest.mark.asyncio
-    async def test_a_lookup_url_is_matched_with_its_trailing_slash_stripped(self, repo_class, model, collection_name):
+    async def test_an_issuer_claim_is_matched_with_its_trailing_slash_stripped(
+        self, repo_class, model, collection_name
+    ):
         db = FakeDatabase()
         repo = repo_class(db)
         await repo.create(_instance(model))
@@ -48,7 +50,6 @@ class TestSharedVcsInstanceBehaviour:
 
         assert found is not None
         assert found.id == "i-1"
-        assert await repo.exists_by_url(f"{_BASE_URL}/") is True
 
     @pytest.mark.asyncio
     async def test_the_access_token_reaches_mongo_despite_being_excluded_from_the_model_dump(

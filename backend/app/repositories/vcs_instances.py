@@ -68,8 +68,7 @@ class VcsInstanceRepository[T: VcsInstanceModel]:
         return result.deleted_count > 0
 
     async def exists_by_url(self, url: str, exclude_id: str | None = None) -> bool:
-        normalized_url = url.rstrip("/")
-        query: dict[str, Any] = {"url": normalized_url}
+        query: dict[str, Any] = {"url": url}
         if exclude_id:
             query["_id"] = {"$ne": exclude_id}
         return await self.collection.find_one(query, {"_id": 1}) is not None

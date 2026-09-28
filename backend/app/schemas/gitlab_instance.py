@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.gitlab_instance import is_shared_gitlab_issuer
+from app.schemas._instance_url import strip_trailing_slash
 from app.schemas._oidc_audience import (
     validate_audience_not_blank,
     validate_optional_audience_not_blank,
@@ -74,6 +75,7 @@ class GitLabInstanceCreate(GitLabInstanceBase):
 
     _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
     _namespaces_top_level = field_validator("allowed_namespaces")(_validate_namespaces)
+    _url_normalised = field_validator("url")(strip_trailing_slash)
 
     @model_validator(mode="after")
     def validate_token_dependent_features(self) -> "GitLabInstanceCreate":
@@ -107,6 +109,7 @@ class GitLabInstanceUpdate(BaseModel):
 
     _audience_not_blank = field_validator("oidc_audience")(validate_optional_audience_not_blank)
     _namespaces_top_level = field_validator("allowed_namespaces")(_validate_namespaces)
+    _url_normalised = field_validator("url")(strip_trailing_slash)
 
 
 class GitLabInstanceResponse(GitLabInstanceBase):

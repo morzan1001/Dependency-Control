@@ -4,6 +4,7 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.github_instance import is_shared_github_issuer
+from app.schemas._instance_url import strip_trailing_slash
 from app.schemas._oidc_audience import (
     validate_audience_not_blank,
     validate_optional_audience_not_blank,
@@ -64,6 +65,7 @@ class GitHubInstanceCreate(GitHubInstanceBase):
 
     _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
     _owner_ids_numeric = field_validator("allowed_owner_ids")(_validate_owner_ids)
+    _url_normalised = field_validator("url")(strip_trailing_slash)
 
     @model_validator(mode="after")
     def validate_token_dependent_features(self) -> "GitHubInstanceCreate":
@@ -94,6 +96,7 @@ class GitHubInstanceUpdate(BaseModel):
 
     _audience_not_blank = field_validator("oidc_audience")(validate_optional_audience_not_blank)
     _owner_ids_numeric = field_validator("allowed_owner_ids")(_validate_owner_ids)
+    _url_normalised = field_validator("url")(strip_trailing_slash)
 
 
 class GitHubInstanceResponse(GitHubInstanceBase):

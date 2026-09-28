@@ -123,7 +123,7 @@ async def create_instance(
 
     new_instance = GitHubInstance(
         name=instance_data.name,
-        url=instance_data.url.rstrip("/"),
+        url=instance_data.url,
         github_url=instance_data.github_url,
         description=instance_data.description,
         is_active=instance_data.is_active,
@@ -179,13 +179,15 @@ async def update_instance(
 
     update_dict = update_data.model_dump(exclude_unset=True)
 
-    if "url" in update_dict and update_dict["url"] != instance.url:
-        if await instance_repo.exists_by_url(update_dict["url"], exclude_id=instance_id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Another instance with URL '{update_dict['url']}' already exists",
-            )
-        update_dict["url"] = update_dict["url"].rstrip("/")
+    if (
+        "url" in update_dict
+        and update_dict["url"] != instance.url
+        and await instance_repo.exists_by_url(update_dict["url"], exclude_id=instance_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Another instance with URL '{update_dict['url']}' already exists",
+        )
 
     if (
         "name" in update_dict
