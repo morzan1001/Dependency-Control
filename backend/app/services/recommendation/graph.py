@@ -14,6 +14,8 @@ from app.services.recommendation.common import ModelOrDict, get_attr, sample_com
 _DEEPEST_CHAINS_SAMPLED = 5
 _PARENTS_SAMPLED = 3
 
+_KeyedDependencies = list[tuple[str, ModelOrDict]]
+
 
 def analyze_deep_dependency_chains(
     dependencies: list[ModelOrDict], max_dependency_depth: int = 8
@@ -22,34 +24,33 @@ def analyze_deep_dependency_chains(
     if not dependencies:
         return []
 
+    keyed = [
+        (dependency_node_key(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "version")), dep)
+        for dep in dependencies
+    ]
     recommendations = []
-    in_cycle = _find_cycle_members(dependencies, _children_by_parent(dependencies))
-    depth_map = _resolve_depths(dependencies, in_cycle)
+    in_cycle = _find_cycle_members(keyed, _children_by_parent(keyed))
+    depth_map = _resolve_depths(keyed, in_cycle)
 
     if in_cycle:
-        recommendations.append(_circular_dependency_recommendation(dependencies, in_cycle))
+        recommendations.append(_circular_dependency_recommendation(keyed, in_cycle))
 
-    deep_deps = _deep_dependencies(dependencies, depth_map, max_dependency_depth)
+    deep_deps = _deep_dependencies(keyed, depth_map, max_dependency_depth)
     if deep_deps:
         recommendations.append(_deep_chain_recommendation(deep_deps, max_dependency_depth))
 
     return recommendations
 
 
-def _dep_key(dep: ModelOrDict) -> str:
-    return dependency_node_key(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "version"))
-
-
-def _children_by_parent(dependencies: list[ModelOrDict]) -> dict[str, list[str]]:
+def _children_by_parent(keyed: _KeyedDependencies) -> dict[str, list[str]]:
     children_map: dict[str, list[str]] = {}
-    for dep in dependencies:
-        key = _dep_key(dep)
+    for key, dep in keyed:
         for parent in get_attr(dep, "parent_components", []):
             children_map.setdefault(parent, []).append(key)
     return children_map
 
 
-def _find_cycle_members(dependencies: list[ModelOrDict], children_map: dict[str, list[str]]) -> set[str]:
+def _find_cycle_members(keyed: _KeyedDependencies, children_map: dict[str, list[str]]) -> set[str]:
     in_cycle: set[str] = set()
     # DFS coloring: 0=unseen, 1=on stack, 2=done.
     color: dict[str, int] = {}
@@ -74,21 +75,19 @@ def _find_cycle_members(dependencies: list[ModelOrDict], children_map: dict[str,
         on_path.discard(node)
         color[node] = 2
 
-    for dep in dependencies:
-        key = _dep_key(dep)
+    for key, dep in keyed:
         if get_attr(dep, "direct", False) and color.get(key, 0) == 0:
             visit(key, [], set())
     return in_cycle
 
 
-def _resolve_depths(dependencies: list[ModelOrDict], in_cycle: set[str]) -> dict[str, int]:
-    depth_map = {_dep_key(dep): 1 for dep in dependencies if get_attr(dep, "direct", False)}
+def _resolve_depths(keyed: _KeyedDependencies, in_cycle: set[str]) -> dict[str, int]:
+    depth_map = {key: 1 for key, dep in keyed if get_attr(dep, "direct", False)}
 
     # Skip nodes in cycles to avoid infinite loops.
     for _ in range(10):
         changed = False
-        for dep in dependencies:
-            key = _dep_key(dep)
+        for key, dep in keyed:
             if key in depth_map or key in in_cycle:
                 continue
 
@@ -104,11 +103,9 @@ def _resolve_depths(dependencies: list[ModelOrDict], in_cycle: set[str]) -> dict
     return depth_map
 
 
-def _circular_dependency_recommendation(dependencies: list[ModelOrDict], in_cycle: set[str]) -> Recommendation:
+def _circular_dependency_recommendation(keyed: _KeyedDependencies, in_cycle: set[str]) -> Recommendation:
     cycle_packages = [
-        {"name": get_attr(dep, "name"), "version": get_attr(dep, "version")}
-        for dep in dependencies
-        if _dep_key(dep) in in_cycle
+        {"name": get_attr(dep, "name"), "version": get_attr(dep, "version")} for key, dep in keyed if key in in_cycle
     ]
     cycle_shown, cycle_total = sample_components(f"{p['name']}@{p['version']}" for p in cycle_packages)
     return Recommendation(
@@ -141,11 +138,11 @@ def _circular_dependency_recommendation(dependencies: list[ModelOrDict], in_cycl
 
 
 def _deep_dependencies(
-    dependencies: list[ModelOrDict], depth_map: dict[str, int], max_dependency_depth: int
+    keyed: _KeyedDependencies, depth_map: dict[str, int], max_dependency_depth: int
 ) -> list[dict[str, Any]]:
     deep_deps = []
-    for dep in dependencies:
-        depth = depth_map.get(_dep_key(dep), 0)
+    for key, dep in keyed:
+        depth = depth_map.get(key, 0)
         if depth > max_dependency_depth:
             deep_deps.append(
                 {
