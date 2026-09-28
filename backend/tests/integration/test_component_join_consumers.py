@@ -399,6 +399,7 @@ async def test_metadata_without_a_version_describes_the_most_used_version(client
     metadata = await _analytics(client, "dependency-metadata", seeded, component="lib")
 
     assert (metadata["version"], metadata["purl"]) == ("2.0", f"pkg:maven/{group}/lib@2.0")
+    assert metadata["versions"] == ["2.0", "1.0"]
     assert metadata["project_count"] == 3
 
 

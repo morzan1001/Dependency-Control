@@ -367,6 +367,7 @@ async def get_dependency_metadata_endpoint(
     return DependencyMetadata(
         name=get_attr(first_dep, "name", component),
         version=get_attr(first_dep, "version", version or "unknown"),
+        versions=sorted((v for v in projects_by_version if v), key=lambda v: (parse_version_tuple(v), v), reverse=True),
         type=get_attr(first_dep, "type", "unknown"),
         purl=dep_purl,
         description=_first_dep_value(dependencies, "description") or enrichment_info["description"],
