@@ -98,3 +98,41 @@ async def test_a_bare_name_shared_by_two_qualified_packages_counts_neither():
     findings = [_vulnerability("f1", "@angular/core"), _vulnerability("f2", "@angular-devkit/core")]
 
     assert await _vulnerability_counts(findings, "core") == 0
+
+
+def _dependency(doc_id: str, project_id: str, name: str, version: str, purl: str) -> dict:
+    return {
+        "_id": doc_id,
+        "scan_id": f"s-{project_id}",
+        "project_id": project_id,
+        "name": name,
+        "version": version,
+        "purl": purl,
+        "type": purl.split(":")[1].split("/")[0],
+    }
+
+
+_SPELLINGS_OF_ONE_PACKAGE_AND_TWO_CORES = [
+    _dependency("d1", "p1", "PyYAML", "6.0.1", "pkg:pypi/PyYAML@6.0.1"),
+    _dependency("d2", "p2", "pyyaml", "5.4", "pkg:pypi/pyyaml@5.4"),
+    _dependency("d3", "p1", "core", "16.2.0", "pkg:npm/%40angular/core@16.2.0"),
+    _dependency("d4", "p2", "core", "7.23.0", "pkg:npm/%40babel/core@7.23.0"),
+]
+
+
+@pytest.mark.asyncio
+async def test_rows_group_by_package_identity_and_keep_a_stored_spelling():
+    from app.repositories.dependencies import DependencyRepository
+    from tests.mocks.fake_mongo import FakeDatabase
+
+    db = FakeDatabase()
+    await db.dependencies.insert_many(_SPELLINGS_OF_ONE_PACKAGE_AND_TWO_CORES)
+    with (
+        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=["p1", "p2"])),
+        patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=["s-p1", "s-p2"])),
+    ):
+        rows = await get_top_dependencies(current_user=_user(), db=db, limit=_LIMIT, type=None)
+
+    by_name = {(row.name.lower(), row.version_count, row.project_count) for row in rows}
+    assert by_name == {("pyyaml", 2, 2), ("core", 1, 1)} and len(rows) == 3
+    assert await DependencyRepository(db).get_unique_packages(["s-p1", "s-p2"]) == len(rows)

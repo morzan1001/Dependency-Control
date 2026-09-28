@@ -11,6 +11,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.purl_utils import package_identity
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     AFFECTED_COMPONENTS_SHOWN,
@@ -126,21 +127,14 @@ def analyze_version_fragmentation(
     """Detect multiple versions of the same package in the dependency tree."""
     recommendations = []
 
-    deps_by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    deps_by_package: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for dep in dependencies:
-        name = str(get_attr(dep, "name", "")).lower()
-        if name:
-            deps_by_name[name].append(
-                {
-                    "version": get_attr(dep, "version", "unknown"),
-                    "purl": get_attr(dep, "purl"),
-                    "direct": get_attr(dep, "direct", False),
-                    "parent": get_attr(dep, "parent_components", []),
-                }
-            )
+        deps_by_package[package_identity(get_attr(dep, "purl"), get_attr(dep, "name"))].append(
+            {"version": get_attr(dep, "version"), "direct": get_attr(dep, "direct", False)}
+        )
 
     fragmented: list[dict[str, Any]] = []
-    for name, versions in deps_by_name.items():
+    for (_, name), versions in deps_by_package.items():
         unique_versions = {v["version"] for v in versions}
         if len(unique_versions) > 1:
             fragmented.append(

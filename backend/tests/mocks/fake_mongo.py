@@ -84,6 +84,7 @@ Supported aggregation stages
 Supported aggregation expression operators (in ``$project`` / accumulator args)
 ------------------------------------------------------------------------------
 - ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``, ``$toString``
+- Strings: ``$trim``, ``$replaceAll``, ``$regexFind``
 - Arrays and maps: ``$size``, ``$setUnion``, ``$setDifference``, ``$objectToArray``,
   ``$arrayToObject``, ``$arrayElemAt``, ``$split``
 - Comparison: ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``
@@ -771,6 +772,20 @@ def _eval_expr(doc: dict, expr):
     if "$toLower" in expr:
         val = _eval_expr(doc, expr["$toLower"])
         return str(val).lower() if val is not None else None
+    if "$trim" in expr:
+        val = _eval_expr(doc, expr["$trim"]["input"])
+        return val.strip() if isinstance(val, str) else None
+    if "$replaceAll" in expr:
+        spec = expr["$replaceAll"]
+        val = _eval_expr(doc, spec["input"])
+        return val.replace(spec["find"], spec["replacement"]) if isinstance(val, str) else None
+    if "$regexFind" in expr:
+        spec = expr["$regexFind"]
+        val = _eval_expr(doc, spec["input"])
+        found = _re.search(spec["regex"], val) if isinstance(val, str) else None
+        if found is None:
+            return None
+        return {"match": found.group(0), "idx": found.start(), "captures": list(found.groups())}
     if "$cond" in expr:
         cond = expr["$cond"]
         if isinstance(cond, list):
@@ -899,7 +914,7 @@ def _resolve_group_key(doc: dict, id_spec):
     if isinstance(id_spec, str) and id_spec.startswith("$"):
         return _resolve_dotted(doc, id_spec[1:])
     if isinstance(id_spec, dict):
-        if "$dateTrunc" in id_spec:
+        if any(key.startswith("$") for key in id_spec):
             return _eval_expr(doc, id_spec)
         resolved = {}
         for k, v in id_spec.items():

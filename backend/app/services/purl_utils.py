@@ -1,7 +1,7 @@
 """PURL parsing. Format: pkg:type/namespace/name@version?qualifiers#subpath. See package-url/purl-spec."""
 
 import re
-from typing import NamedTuple
+from typing import Any, NamedTuple
 from urllib.parse import unquote
 
 _PYPI_NORMALIZE_RE = re.compile(r"[-_.]+")
@@ -40,9 +40,6 @@ class ParsedPURL(NamedTuple):
         """Get the package name formatted for deps.dev API."""
         if self.type == "maven" and self.namespace:
             return f"{self.namespace}:{self.name}"
-        if self.type in ("golang", "go"):
-            # Go module names already include the full path (e.g. github.com/cespare/xxhash/v2)
-            return self.name
         if self.type == "pypi":
             # deps.dev serves PyPI packages under their PEP 503 normalized name.
             return _PYPI_NORMALIZE_RE.sub("-", self.name).lower()
@@ -95,7 +92,8 @@ def parse_purl(purl: str) -> ParsedPURL | None:
                     qualifiers[unquote(key)] = unquote(value)
 
         version = None
-        if "@" in rest:
+        # Only an '@' after the last '/' starts the version; the one in '@scope' does not.
+        if "@" in rest.rsplit("/", 1)[-1]:
             rest, version = rest.rsplit("@", 1)
             version = unquote(version)
 
@@ -105,24 +103,7 @@ def parse_purl(purl: str) -> ParsedPURL | None:
         purl_type, rest = rest.split("/", 1)
         purl_type = purl_type.lower()
 
-        namespace = None
-        name = rest
-
-        if "/" in rest:
-            parts = rest.rsplit("/", 1)
-            if len(parts) != 2:
-                return None
-            if purl_type in ("npm",) and rest.startswith("@"):
-                split_parts = rest.split("/", 1)
-                if len(split_parts) != 2:
-                    return None
-                namespace, name = split_parts
-            elif purl_type in ("golang", "go"):
-                namespace = rest.split("/")[0]
-                name = rest
-            else:
-                namespace = parts[0]
-                name = parts[1]
+        namespace, _, name = rest.rpartition("/")
 
         final_namespace = unquote(namespace) if namespace else None
         final_name = unquote(name)
@@ -146,6 +127,60 @@ def parse_purl(purl: str) -> ParsedPURL | None:
 
     except (ValueError, IndexError, AttributeError):
         return None
+
+
+# Types whose namespace and name the purl spec declares case-insensitive.
+_CASE_INSENSITIVE_TYPES = ("alpm", "apk", "bitbucket", "composer", "deb", "github", "hex", "oci", "pub", "pypi")
+_IDENTITY_PATTERN = r"^pkg:([^/]+)/([^?#]*?)(?:@[^/?#]*)?(?:[?#].*)?$"
+
+
+def package_identity(purl: str | None, name: str) -> tuple[str, str]:
+    """Version-free package identity ``(type, namespace/name)`` under the purl spec's per-type rules.
+
+    Without a parseable purl the row is keyed by its lowercased name under an empty type.
+    """
+    parsed = parse_purl(purl) if purl else None
+    if parsed is None:
+        return "", name.strip().lower()
+    path = parsed.full_name
+    if parsed.type in _CASE_INSENSITIVE_TYPES:
+        path = path.lower()
+    if parsed.type == "pypi":
+        path = path.replace("_", "-")
+    return parsed.type, path
+
+
+def package_identity_expr() -> dict[str, Any]:
+    """:func:`package_identity` as an aggregation expression over a dependency row's ``purl`` and ``name``."""
+    # Mongo cannot percent-decode; '%40' (the npm scope) is the only escape producers write in a package path.
+    path = {"$replaceAll": {"input": {"$arrayElemAt": ["$$m.captures", 1]}, "find": "%40", "replacement": "@"}}
+    folded = {"$cond": [{"$in": ["$$type", list(_CASE_INSENSITIVE_TYPES)]}, {"$toLower": path}, path]}
+    return {
+        "$let": {
+            "vars": {"m": {"$regexFind": {"input": {"$ifNull": ["$purl", ""]}, "regex": _IDENTITY_PATTERN}}},
+            "in": {
+                "$cond": [
+                    {"$eq": ["$$m", None]},
+                    {"type": "", "path": {"$toLower": {"$trim": {"input": {"$ifNull": ["$name", ""]}}}}},
+                    {
+                        "$let": {
+                            "vars": {"type": {"$toLower": {"$arrayElemAt": ["$$m.captures", 0]}}},
+                            "in": {
+                                "type": "$$type",
+                                "path": {
+                                    "$cond": [
+                                        {"$eq": ["$$type", "pypi"]},
+                                        {"$replaceAll": {"input": folded, "find": "_", "replacement": "-"}},
+                                        folded,
+                                    ]
+                                },
+                            },
+                        }
+                    },
+                ]
+            },
+        }
+    }
 
 
 def canonical_purl(purl: str) -> str:

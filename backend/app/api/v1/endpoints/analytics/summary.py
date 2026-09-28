@@ -30,6 +30,7 @@ from app.schemas.analytics import (
     SeverityBreakdown,
 )
 from app.services.component_identity import build_component_index, lookup_component
+from app.services.purl_utils import package_identity_expr
 from app.services.recommendation.common import parse_version_tuple
 
 router = CustomAPIRouter()
@@ -179,7 +180,8 @@ async def get_top_dependencies(
         {"$match": match_stage},
         {
             "$group": {
-                "_id": "$name",
+                "_id": package_identity_expr(),
+                "name": {"$first": "$name"},
                 "type": {"$first": "$type"},
                 "versions": {"$addToSet": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
@@ -188,7 +190,7 @@ async def get_top_dependencies(
         },
         {
             "$project": {
-                "name": "$_id",
+                "name": 1,
                 "type": 1,
                 "versions": 1,
                 "version_count": {"$size": "$versions"},

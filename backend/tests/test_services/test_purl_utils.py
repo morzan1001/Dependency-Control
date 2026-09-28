@@ -1,5 +1,7 @@
 """Tests for PURL parsing and utility functions."""
 
+import asyncio
+
 import pytest
 
 from app.services.purl_utils import (
@@ -15,8 +17,11 @@ from app.services.purl_utils import (
     is_purl_type,
     is_pypi,
     normalize_hash_algorithm,
+    package_identity,
+    package_identity_expr,
     parse_purl,
 )
+from tests.mocks.fake_mongo import FakeCollection
 
 
 class TestParsePurl:
@@ -55,13 +60,21 @@ class TestParsePurl:
         for field, expected in expected_fields.items():
             assert getattr(result, field) == expected
 
-    def test_parse_go_purl(self, sample_purls):
+    def test_parse_go_purl_splits_the_module_path_at_its_last_segment(self, sample_purls):
         result = parse_purl(sample_purls["go"])
         assert result is not None
-        assert result.type == "golang"
-        assert result.namespace == "github.com"
-        assert "gin" in result.name
-        assert result.version == "1.9.1"
+        assert (result.type, result.namespace, result.name, result.version) == (
+            "golang",
+            "github.com/gin-gonic",
+            "gin",
+            "1.9.1",
+        )
+        assert result.full_name == "github.com/gin-gonic/gin"
+
+    def test_a_versionless_scoped_npm_purl_keeps_its_scope(self):
+        result = parse_purl("pkg:npm/@angular/core")
+        assert result is not None
+        assert (result.namespace, result.name, result.version) == ("@angular", "core", None)
 
     @pytest.mark.parametrize(
         "malformed",
@@ -142,6 +155,67 @@ class TestParsedPURLProperties:
     def test_deps_dev_name(self, purl, expected):
         result = parse_purl(purl)
         assert result.deps_dev_name == expected
+
+
+_IDENTITY_TABLE = [
+    pytest.param("pkg:npm/%40angular/core@16.2.0", "core", ("npm", "@angular/core"), id="npm_encoded_scope"),
+    pytest.param("pkg:npm/@angular/core@16.2.0", "@angular/core", ("npm", "@angular/core"), id="npm_literal_scope"),
+    pytest.param("pkg:npm/@angular/core", "core", ("npm", "@angular/core"), id="npm_scope_without_version"),
+    pytest.param("pkg:npm/JSONStream@1.3.5", "JSONStream", ("npm", "JSONStream"), id="npm_keeps_case"),
+    pytest.param("pkg:pypi/PyYAML@6.0.1", "PyYAML", ("pypi", "pyyaml"), id="pypi_folds_case"),
+    pytest.param(
+        "pkg:pypi/typing_extensions@4.8.0", "typing_extensions", ("pypi", "typing-extensions"), id="pypi_underscore"
+    ),
+    pytest.param(
+        "pkg:maven/org.jetbrains/annotations@24.0.1?type=jar",
+        "annotations",
+        ("maven", "org.jetbrains/annotations"),
+        id="maven_group_kept_qualifiers_dropped",
+    ),
+    pytest.param(
+        "pkg:maven/software.amazon.awssdk/annotations@2.20.0",
+        "annotations",
+        ("maven", "software.amazon.awssdk/annotations"),
+        id="maven_other_group",
+    ),
+    pytest.param(
+        "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
+        "github.com/cespare/xxhash/v2",
+        ("golang", "github.com/cespare/xxhash/v2"),
+        id="golang_module_path",
+    ),
+    pytest.param("pkg:cargo/serde@1.0.188", "serde", ("cargo", "serde"), id="cargo"),
+    pytest.param("pkg:nuget/Newtonsoft.Json@13.0.3", "Newtonsoft.Json", ("nuget", "Newtonsoft.Json"), id="nuget"),
+    pytest.param("pkg:gem/rails@7.0.8", "rails", ("gem", "rails"), id="gem"),
+    pytest.param(
+        "pkg:composer/Laravel/Framework@10.0.0", "framework", ("composer", "laravel/framework"), id="composer_folds"
+    ),
+    pytest.param(
+        "pkg:deb/debian/zlib1g@1.2.13?arch=amd64&distro=debian-12", "zlib1g", ("deb", "debian/zlib1g"), id="deb"
+    ),
+    pytest.param("pkg:apk/alpine/zlib@1.3-r0?arch=x86_64", "zlib", ("apk", "alpine/zlib"), id="apk"),
+    pytest.param("pkg:rpm/redhat/zlib@1.2.11?arch=x86_64", "zlib", ("rpm", "redhat/zlib"), id="rpm"),
+    pytest.param("pkg:github/Actions/Checkout@v4", "checkout", ("github", "actions/checkout"), id="github_folds"),
+    pytest.param("pkg:npm/lodash@4.17.21#dist/lodash.min.js", "lodash", ("npm", "lodash"), id="subpath_dropped"),
+    pytest.param(None, " Debian ", ("", "debian"), id="no_purl_falls_back_to_the_name"),
+    pytest.param("not-a-purl", "Foo", ("", "foo"), id="unparseable_purl_falls_back_to_the_name"),
+]
+
+
+class TestPackageIdentity:
+    @pytest.mark.parametrize(("purl", "name", "expected"), _IDENTITY_TABLE)
+    def test_identity_per_ecosystem(self, purl, name, expected):
+        assert package_identity(purl, name) == expected
+
+    @pytest.mark.parametrize(("purl", "name", "expected"), _IDENTITY_TABLE)
+    def test_the_aggregation_expression_computes_the_same_identity(self, purl, name, expected):
+        collection = FakeCollection()
+        collection._docs = {"d": {"_id": "d", "purl": purl, "name": name}}
+        pipeline = [{"$project": {"identity": package_identity_expr()}}]
+
+        [row] = asyncio.run(collection.aggregate(pipeline).to_list())
+
+        assert (row["identity"]["type"], row["identity"]["path"]) == expected
 
 
 class TestGetPurlType:

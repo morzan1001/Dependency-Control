@@ -37,6 +37,7 @@ from app.models.user import User
 from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
 from app.services.component_identity import build_component_index
+from app.services.purl_utils import package_identity_expr
 from app.services.recommendation.common import get_attr
 
 MONGO_MATCH = "$match"
@@ -457,28 +458,20 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> li
     """Packages carrying more than one version across the compared scans.
 
     Grouped in Mongo rather than by pushing each scan's package list to the caller: the answer is
-    a version count per package name, and a per-scan sample of the input cannot produce it.
-    Names are lower-cased because that is the identity the recommendation reports under.
+    a version count per package, and a per-scan sample of the input cannot produce it.
     """
     return [
-        {MONGO_MATCH: {"scan_id": {"$in": scan_ids}, "name": {"$nin": [None, ""]}}},
-        {
-            "$project": {
-                "package": {"$toLower": "$name"},
-                "package_version": {"$ifNull": ["$version", "unknown"]},
-                "project_id": 1,
-            }
-        },
+        {MONGO_MATCH: {"scan_id": {"$in": scan_ids}}},
         {
             MONGO_GROUP: {
-                "_id": "$package",
-                "versions": {"$addToSet": "$package_version"},
+                "_id": package_identity_expr(),
+                "versions": {"$addToSet": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
             }
         },
         {
             "$project": {
-                "name": "$_id",
+                "name": "$_id.path",
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
                 "project_count": {"$size": "$project_ids"},
