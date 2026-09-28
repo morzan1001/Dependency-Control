@@ -217,6 +217,8 @@ class TeamRepository:
         sort_by: str = "name",
         sort_order: int = 1,
     ) -> list[Team]:
+        if limit <= 0:
+            return []
         cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Team(**doc) for doc in docs]
