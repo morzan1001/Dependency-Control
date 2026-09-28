@@ -1,12 +1,6 @@
 from collections import defaultdict
-from typing import Any
 
-from app.core.constants import (
-    DETAILS_KEY_IN_KEV,
-    DETAILS_KEY_KEV_RANSOMWARE,
-    EPSS_HIGH_THRESHOLD,
-    OS_PACKAGE_TYPES,
-)
+from app.core.constants import EPSS_HIGH_THRESHOLD, OS_PACKAGE_TYPES
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -15,20 +9,19 @@ from app.schemas.recommendation import (
 )
 from app.services.recommendation.common import (
     ModelOrDict,
-    calculate_best_fix_version,
-    finding_cve_ids,
+    VulnStats,
     get_attr,
     sample_components,
     sampled,
+    summarize_vulns,
+    vuln_info,
+    vuln_priority,
 )
 
 # Evidence samples inside the update action; each is paired with its population by `sampled`.
 _CVES_SAMPLED = 10
 _MARKED_CVES_SAMPLED = 5
-
-_CVE_PREFIX = "CVE-"
-# Shown where a finding names no advisory at all; VulnerabilityInfo.cve_id is not optional.
-_UNRESOLVED_CVE_ID = "unknown"
+_TRANSITIVE_CVES_SHOWN = 5
 
 
 def process_vulnerabilities(
@@ -46,11 +39,11 @@ def process_vulnerabilities(
     if base_image_rec:
         recommendations.append(base_image_rec)
 
-    direct_recs = _analyze_direct_dependencies(vulns_by_source.get("application", []))
-    recommendations.extend(direct_recs)
-
-    transitive_recs = _analyze_transitive_dependencies(vulns_by_source.get("transitive", []), dependencies)
-    recommendations.extend(transitive_recs)
+    # One card per installed copy: another version of the package has its own fixes and CVEs.
+    for (component, version), group in _by_installed_version(vulns_by_source.get("application", [])).items():
+        recommendations.append(_build_direct_recommendation(component, version, group))
+    for (component, version), group in _by_installed_version(vulns_by_source.get("transitive", [])).items():
+        recommendations.append(_build_transitive_recommendation(component, version, group))
 
     no_fix_recs = _analyze_no_fix_vulns(vulns_by_source.get("no_fix", []))
     recommendations.extend(no_fix_recs)
@@ -58,51 +51,18 @@ def process_vulnerabilities(
     return recommendations
 
 
-def _resolve_dep(
-    component: str,
-    version: str,
-    dep_by_name_version: dict[str, ModelOrDict],
-) -> ModelOrDict | None:
-    """Resolve a dependency by name@version."""
-    return dep_by_name_version.get(f"{component}@{version}")
+def _by_installed_version(vulns: list[VulnerabilityInfo]) -> dict[tuple[str, str], list[VulnerabilityInfo]]:
+    groups: dict[tuple[str, str], list[VulnerabilityInfo]] = defaultdict(list)
+    for v in vulns:
+        groups[(v.package_name, v.current_version or "unknown")].append(v)
+    return groups
 
 
-def _resolve_cve_id(f: ModelOrDict) -> str:
-    """The advisory a finding is shown under: a CVE where its group names one, else the first
-    advisory id (GHSA-only ecosystems)."""
-    advisories = finding_cve_ids(f)
-    cve = next((a for a in advisories if a.startswith(_CVE_PREFIX)), None)
-    if cve:
-        return cve
-    return advisories[0] if advisories else _UNRESOLVED_CVE_ID
-
-
-def _build_vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
-    """Build a VulnerabilityInfo from a finding."""
-    details = get_attr(f, "details", {})
-    details_dict = details if isinstance(details, dict) else {}
-
-    return VulnerabilityInfo(
-        finding_id=get_attr(f, "id", ""),
-        cve_id=_resolve_cve_id(f),
-        severity=get_attr(f, "severity", "UNKNOWN"),
-        package_name=get_attr(f, "component", ""),
-        current_version=get_attr(f, "version", ""),
-        fixed_version=details_dict.get("fixed_version"),
-        epss_score=details_dict.get("epss_score"),
-        is_kev=details_dict.get(DETAILS_KEY_IN_KEV, False),
-        kev_ransomware=details_dict.get(DETAILS_KEY_KEV_RANSOMWARE, False),
-        is_reachable=get_attr(f, "reachable"),
-        reachability_level=get_attr(f, "reachability_level"),
-        risk_score=details_dict.get("risk_score"),
-    )
-
-
-def _classify_category(vuln_info: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
+def _classify_category(vuln: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
     """Determine which category a vulnerability belongs to."""
     # An advisory that records no fixed version does not say a fix is absent, only that it does
     # not name one, so this bucket is "no fix known" and the card it produces says as much.
-    if not vuln_info.fixed_version:
+    if not vuln.fixed_version:
         return "no_fix"
     if not dep:
         return "application"
@@ -127,14 +87,10 @@ def _categorize_by_source(
         if get_attr(f, "type") != "vulnerability":
             continue
 
-        dep = _resolve_dep(
-            get_attr(f, "component", ""),
-            get_attr(f, "version", ""),
-            dep_by_name_version,
-        )
-
-        vuln_info = _build_vuln_info(f)
-        categories[_classify_category(vuln_info, dep)].append(vuln_info)
+        dep = dep_by_name_version.get(f"{get_attr(f, 'component', '')}@{get_attr(f, 'version', '')}")
+        vuln = vuln_info(f)
+        vuln.direct_inferred = bool(dep and get_attr(dep, "direct_inferred", False))
+        categories[_classify_category(vuln, dep)].append(vuln)
 
     return categories
 
@@ -220,148 +176,50 @@ def _analyze_base_image_vulns(
     )
 
 
-def _aggregate_vuln_stats(component_vulns: list[VulnerabilityInfo]) -> dict[str, Any]:
-    """Aggregate severity, EPSS/KEV, and reachability stats for a component's vulns."""
-    severity_counts: dict[str, int] = defaultdict(int)
-    stats: dict[str, Any] = {
-        "cves": [],
-        "kev_count": 0,
-        "kev_ransomware_count": 0,
-        "high_epss_count": 0,
-        "medium_epss_count": 0,
-        "reachable_count": 0,
-        "unreachable_count": 0,
-        "reachable_critical": 0,
-        "reachable_high": 0,
-        "actionable_count": 0,
-        "epss_scores": [],
-    }
-
-    for v in component_vulns:
-        severity_counts[v.severity] += 1
-        if v.cve_id:
-            stats["cves"].append(v.cve_id)
-        if v.is_kev:
-            stats["kev_count"] += 1
-        if v.kev_ransomware:
-            stats["kev_ransomware_count"] += 1
-
-        if v.epss_score is not None:
-            stats["epss_scores"].append(v.epss_score)
-            if v.epss_score >= 0.1:
-                stats["high_epss_count"] += 1
-            elif v.epss_score >= 0.01:
-                stats["medium_epss_count"] += 1
-
-        if v.is_reachable is True:
-            stats["reachable_count"] += 1
-            if v.severity == "CRITICAL":
-                stats["reachable_critical"] += 1
-            elif v.severity == "HIGH":
-                stats["reachable_high"] += 1
-        elif v.is_reachable is False:
-            stats["unreachable_count"] += 1
-
-        if v.is_actionable:
-            stats["actionable_count"] += 1
-
-    stats["severity_counts"] = severity_counts
-    return stats
-
-
-def _score_priority(component_vulns: list[VulnerabilityInfo], stats: dict[str, Any]) -> Priority:
-    """Determine recommendation priority from aggregated stats."""
-    severity_counts = stats["severity_counts"]
-
-    if stats["kev_count"] > 0 or stats["reachable_critical"] > 0:
-        return Priority.CRITICAL
-
-    if severity_counts.get("CRITICAL", 0) > 0:
-        critical_vulns = [v for v in component_vulns if v.severity == "CRITICAL"]
-        if critical_vulns and all(v.is_reachable is False for v in critical_vulns):
-            return Priority.HIGH
-        return Priority.CRITICAL
-
-    if stats["high_epss_count"] > 0 or stats["reachable_high"] > 0:
-        return Priority.HIGH
-    if severity_counts.get("HIGH", 0) > 0:
-        return Priority.HIGH
-    if severity_counts.get("MEDIUM", 0) > 0:
-        return Priority.MEDIUM
-    return Priority.LOW
-
-
-def _build_direct_description(
-    component: str,
-    current_version: str,
-    best_fix: str,
-    component_vulns: list[VulnerabilityInfo],
-    stats: dict[str, Any],
-) -> str:
+def _build_direct_description(component: str, current_version: str, stats: VulnStats, direct_inferred: bool) -> str:
     """Build the description string for a direct-dependency update recommendation."""
     desc_parts = [
-        f"Update {component} from {current_version} to {best_fix} to fix {len(component_vulns)} vulnerabilities."
+        f"Update {component} from {current_version} to {stats.best_fix} to fix {stats.total} vulnerabilities."
     ]
-    if stats["kev_count"] > 0:
-        desc_parts.append(f"{stats['kev_count']} CVE(s) are in CISA KEV (actively exploited).")
-    if stats["kev_ransomware_count"] > 0:
-        desc_parts.append(f"{stats['kev_ransomware_count']} are used in ransomware campaigns.")
-    if stats["high_epss_count"] > 0:
-        desc_parts.append(f"{stats['high_epss_count']} have high exploitation probability (EPSS >10%).")
-    if stats["reachable_count"] > 0:
-        desc_parts.append(f"{stats['reachable_count']} are confirmed reachable in your code.")
-    if stats["unreachable_count"] > 0 and stats["unreachable_count"] == len(component_vulns):
+    if stats.kev > 0:
+        desc_parts.append(f"{stats.kev} CVE(s) are in CISA KEV (actively exploited).")
+    if stats.kev_ransomware > 0:
+        desc_parts.append(f"{stats.kev_ransomware} are used in ransomware campaigns.")
+    if stats.high_epss > 0:
+        desc_parts.append(f"{stats.high_epss} have high exploitation probability (EPSS >10%).")
+    if stats.reachable > 0:
+        desc_parts.append(f"{stats.reachable} are confirmed reachable in your code.")
+    if stats.unreachable > 0 and stats.unreachable == stats.total:
         desc_parts.append("All vulnerabilities are unreachable - lower priority.")
+    if direct_inferred:
+        desc_parts.append(
+            f"The SBOM does not record whether {component} is a direct dependency; if it is pulled in "
+            "transitively, update the parent that brings it in or add an override."
+        )
     return " ".join(desc_parts)
 
 
 def _build_direct_recommendation(
-    component: str,
-    component_vulns: list[VulnerabilityInfo],
-) -> Recommendation | None:
-    """Build a single direct-dependency recommendation, returning None if no fix is known."""
-    fixed_versions = [v.fixed_version for v in component_vulns if v.fixed_version]
-    if not fixed_versions:
-        return None
-
-    current_version = (component_vulns[0].current_version if component_vulns else None) or "unknown"
-    best_fix = calculate_best_fix_version(fixed_versions)
-
-    stats = _aggregate_vuln_stats(component_vulns)
-    severity_counts = stats["severity_counts"]
-    epss_scores = stats["epss_scores"]
-    priority = _score_priority(component_vulns, stats)
-    description = _build_direct_description(component, current_version, best_fix, component_vulns, stats)
+    component: str, current_version: str, component_vulns: list[VulnerabilityInfo]
+) -> Recommendation:
+    """Build a single direct-dependency recommendation."""
+    stats = summarize_vulns(component_vulns)
+    direct_inferred = component_vulns[0].direct_inferred
 
     return Recommendation(
         type=RecommendationType.DIRECT_DEPENDENCY_UPDATE,
-        priority=priority,
-        title=f"Update {component}",
-        description=description,
-        impact={
-            "critical": severity_counts.get("CRITICAL", 0),
-            "high": severity_counts.get("HIGH", 0),
-            "medium": severity_counts.get("MEDIUM", 0),
-            "low": severity_counts.get("LOW", 0),
-            "total": len(component_vulns),
-            "kev_count": stats["kev_count"],
-            "kev_ransomware_count": stats["kev_ransomware_count"],
-            "high_epss_count": stats["high_epss_count"],
-            "medium_epss_count": stats["medium_epss_count"],
-            "avg_epss": (round(sum(epss_scores) / len(epss_scores), 4) if epss_scores else None),
-            "reachable_count": stats["reachable_count"],
-            "unreachable_count": stats["unreachable_count"],
-            "reachable_critical": stats["reachable_critical"],
-            "reachable_high": stats["reachable_high"],
-            "actionable_count": stats["actionable_count"],
-        },
-        affected_components=[component],
+        priority=vuln_priority(stats),
+        title=f"Update {component}@{current_version}",
+        description=_build_direct_description(component, current_version, stats, direct_inferred),
+        impact=stats.impact(),
+        affected_components=[f"{component}@{current_version}"],
         action={
             "type": "update_dependency",
             "package": component,
             "current_version": current_version,
-            "target_version": best_fix,
-            **sampled("cves", stats["cves"], _CVES_SAMPLED),
+            "target_version": stats.best_fix,
+            "direct_inferred": direct_inferred,
+            **sampled("cves", stats.cves, _CVES_SAMPLED),
             **sampled("kev_cves", [v.cve_id for v in component_vulns if v.is_kev], _MARKED_CVES_SAMPLED),
             **sampled(
                 "high_epss_cves",
@@ -369,112 +227,51 @@ def _build_direct_recommendation(
                 _MARKED_CVES_SAMPLED,
             ),
         },
-        effort="low",
+        effort="medium" if direct_inferred else "low",
     )
 
 
-def _analyze_direct_dependencies(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:
-    """Analyze direct dependency updates with EPSS/KEV/Reachability prioritization."""
-
-    recommendations = []
-
-    vulns_by_component = defaultdict(list)
-    for v in vulns:
-        vulns_by_component[v.package_name].append(v)
-
-    for component, component_vulns in vulns_by_component.items():
-        rec = _build_direct_recommendation(component, component_vulns)
-        if rec is not None:
-            recommendations.append(rec)
-
-    return recommendations
-
-
-def _build_transitive_description(
-    component: str, current_version: str, best_fix: str, component_vulns: list[VulnerabilityInfo], stats: dict[str, Any]
-) -> str:
+def _build_transitive_description(component: str, current_version: str, stats: VulnStats) -> str:
     """Build the description for a transitive-dependency recommendation."""
     desc_parts = [
         (
             f"Transitive dependency {component}@{current_version} has "
-            f"{len(component_vulns)} vulnerabilities. "
-            f"Update a parent dependency that includes a fixed version ({best_fix}), "
+            f"{stats.total} vulnerabilities. "
+            f"Update a parent dependency that includes a fixed version ({stats.best_fix}), "
             f"or override the transitive version directly."
         )
     ]
-    if stats["kev_count"] > 0:
-        desc_parts.append(f"{stats['kev_count']} are actively exploited (KEV).")
-    if stats["high_epss_count"] > 0:
-        desc_parts.append(f"{stats['high_epss_count']} have high EPSS.")
-    if stats["reachable_count"] > 0:
-        desc_parts.append(f"{stats['reachable_count']} are reachable.")
+    if stats.kev > 0:
+        desc_parts.append(f"{stats.kev} are actively exploited (KEV).")
+    if stats.high_epss > 0:
+        desc_parts.append(f"{stats.high_epss} have high EPSS.")
+    if stats.reachable > 0:
+        desc_parts.append(f"{stats.reachable} are reachable.")
     return " ".join(desc_parts)
 
 
-def _build_transitive_recommendation(component: str, component_vulns: list[VulnerabilityInfo]) -> Recommendation | None:
-    """Build a transitive recommendation, returning None when there is no fix."""
-    fixed_versions = [v.fixed_version for v in component_vulns if v.fixed_version]
-    if not fixed_versions:
-        return None
-
-    current_version = (component_vulns[0].current_version if component_vulns else None) or "unknown"
-    best_fix = calculate_best_fix_version(fixed_versions)
-
-    stats = _aggregate_vuln_stats(component_vulns)
-    severity_counts = stats["severity_counts"]
-    priority = _score_priority(component_vulns, stats)
-    description = _build_transitive_description(component, current_version, best_fix, component_vulns, stats)
+def _build_transitive_recommendation(
+    component: str, current_version: str, component_vulns: list[VulnerabilityInfo]
+) -> Recommendation:
+    """Build a transitive-dependency recommendation."""
+    stats = summarize_vulns(component_vulns)
 
     return Recommendation(
         type=RecommendationType.TRANSITIVE_FIX_VIA_PARENT,
-        priority=priority,
-        title=f"Update transitive dependency {component}",
-        description=description,
-        impact={
-            "critical": severity_counts.get("CRITICAL", 0),
-            "high": severity_counts.get("HIGH", 0),
-            "medium": severity_counts.get("MEDIUM", 0),
-            "low": severity_counts.get("LOW", 0),
-            "total": len(component_vulns),
-            "kev_count": stats["kev_count"],
-            "kev_ransomware_count": stats["kev_ransomware_count"],
-            "high_epss_count": stats["high_epss_count"],
-            "medium_epss_count": stats["medium_epss_count"],
-            "reachable_count": stats["reachable_count"],
-            "unreachable_count": stats["unreachable_count"],
-            "reachable_critical": stats["reachable_critical"],
-            "reachable_high": stats["reachable_high"],
-            "actionable_count": stats["actionable_count"],
-        },
-        affected_components=[component],
+        priority=vuln_priority(stats),
+        title=f"Update transitive dependency {component}@{current_version}",
+        description=_build_transitive_description(component, current_version, stats),
+        impact=stats.impact(),
+        affected_components=[f"{component}@{current_version}"],
         action={
             "type": "update_transitive",
             "package": component,
             "current_version": current_version,
-            "target_version": best_fix,
-            "cves": [v.cve_id for v in component_vulns if v.cve_id][:5],
+            "target_version": stats.best_fix,
+            "cves": stats.cves[:_TRANSITIVE_CVES_SHOWN],
         },
         effort="high",
     )
-
-
-def _analyze_transitive_dependencies(
-    vulns: list[VulnerabilityInfo], _dependencies: list[ModelOrDict]
-) -> list[Recommendation]:
-    """Analyze transitive dependency vulnerabilities with EPSS/KEV/Reachability prioritization."""
-
-    recommendations = []
-
-    vulns_by_component = defaultdict(list)
-    for v in vulns:
-        vulns_by_component[v.package_name].append(v)
-
-    for component, component_vulns in vulns_by_component.items():
-        rec = _build_transitive_recommendation(component, component_vulns)
-        if rec is not None:
-            recommendations.append(rec)
-
-    return recommendations
 
 
 def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:

@@ -612,3 +612,39 @@ class TestTyposquatCollection:
         recs = await engine.generate_recommendations(findings=[self._malware_finding("evil-pkg")])
 
         assert not [r for r in recs if r.type == RecommendationType.TYPOSQUAT_DETECTED]
+
+
+class TestOnePackageAcrossCardTypes:
+    @staticmethod
+    def _dep(name, version, direct):
+        return {"name": name, "version": version, "purl": f"pkg:npm/{name}@{version}", "direct": direct}
+
+    @pytest.mark.asyncio
+    async def test_two_installed_versions_survive_deduplication_as_two_update_cards(self):
+        findings = [
+            _make_vuln_finding("CVE-1", component="minimist", version="0.0.8", fixed_version="0.2.1"),
+            _make_vuln_finding("CVE-2", component="minimist", version="1.2.0", fixed_version="1.2.6"),
+        ]
+        deps = [self._dep("minimist", "0.0.8", False), self._dep("minimist", "1.2.0", False)]
+
+        result = await RecommendationEngine().generate_recommendations(findings=findings, dependencies=deps)
+
+        transitive = [r for r in result if r.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT]
+        assert sorted(r.affected_components[0] for r in transitive) == ["minimist@0.0.8", "minimist@1.2.0"]
+
+    @pytest.mark.asyncio
+    async def test_unreachable_criticals_put_the_hotspot_and_the_update_on_one_tier(self):
+        findings = [
+            _make_vuln_finding(f"CVE-{v}", severity="CRITICAL", component="lib", version=v, reachable=False)
+            for v in ("1.0.0", "1.1.0", "1.2.0")
+        ]
+        deps = [self._dep("lib", v, True) for v in ("1.0.0", "1.1.0", "1.2.0")]
+
+        result = await RecommendationEngine().generate_recommendations(findings=findings, dependencies=deps)
+
+        tiers = {
+            r.priority
+            for r in result
+            if r.type in (RecommendationType.CRITICAL_HOTSPOT, RecommendationType.DIRECT_DEPENDENCY_UPDATE)
+        }
+        assert tiers == {Priority.HIGH}

@@ -253,7 +253,7 @@ class TestIdentifyQuickWinsActionDetails:
         result = identify_quick_wins(vulns, deps)
         rec = result[0]
         assert rec.action["package"] == "pkg"
-        assert rec.action["current_version"] == "1.0"
+        assert rec.action["current_versions"] == ["1.0"]
         assert rec.action["is_direct"] is True
         assert rec.action["fixes_count"] == 2
 
@@ -339,3 +339,54 @@ class TestQuickWinsSayHowManyWereRankedOut:
         result = identify_quick_wins(findings, [])
 
         assert [(r.rank, r.ranked_out_of) for r in result] == [(0, 0)]
+
+
+class TestQuickWinNamesEveryInstalledVersion:
+    def test_each_version_the_card_counts_is_named(self):
+        vulns = [
+            _vuln("lodash", severity="HIGH", version="4.17.15", fixed_version="4.17.21", finding_id="CVE-1"),
+            _vuln("lodash", severity="CRITICAL", version="3.10.1", fixed_version="4.17.12", finding_id="CVE-2"),
+        ]
+
+        [rec] = identify_quick_wins(vulns, [])
+
+        assert rec.affected_components == ["lodash@4.17.15", "lodash@3.10.1"]
+        assert rec.action["current_versions"] == ["4.17.15", "3.10.1"]
+        assert "from 4.17.15, 3.10.1 to 4.17.21" in rec.description
+
+    def test_a_record_without_a_version_does_not_drop_the_quick_wins(self):
+        vulns = [
+            _vuln("pkg", version=None, finding_id="CVE-1"),
+            _vuln("pkg", version=None, finding_id="CVE-2"),
+            _vuln("other", finding_id="CVE-3"),
+            _vuln("other", finding_id="CVE-4"),
+        ]
+
+        assert sorted(r.action["package"] for r in identify_quick_wins(vulns, [])) == ["other", "pkg"]
+
+
+class TestQuickWinDirectnessIsOnlyWhatTheGraphConfirms:
+    def _vulns(self):
+        return [_vuln("pkg", finding_id="CVE-1"), _vuln("pkg", finding_id="CVE-2")]
+
+    def test_an_inferred_direct_flag_is_unknown_directness(self):
+        deps = [{**_dep("pkg", direct=True), "direct_inferred": True}]
+
+        [rec] = identify_quick_wins(self._vulns(), deps)
+
+        assert rec.action["is_direct"] is None
+        assert "Updating this dependency from" in rec.description
+
+    def test_a_package_missing_from_the_inventory_is_unknown_directness(self):
+        [rec] = identify_quick_wins(self._vulns(), [])
+
+        assert rec.action["is_direct"] is None
+
+    def test_an_inferred_direct_package_gets_no_direct_bonus(self):
+        inferred = [_vuln("guessed", finding_id="CVE-1"), _vuln("guessed", finding_id="CVE-2")]
+        confirmed = [_vuln("declared", finding_id="CVE-3"), _vuln("declared", finding_id="CVE-4")]
+        deps = [{**_dep("guessed", direct=True), "direct_inferred": True}, _dep("declared", direct=True)]
+
+        result = identify_quick_wins(inferred + confirmed, deps)
+
+        assert [r.action["package"] for r in result] == ["declared", "guessed"]

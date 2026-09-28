@@ -98,14 +98,14 @@ class TestDirectDependencyUpdate:
         assert rec.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE
         assert rec.priority == expected_priority
 
-    def test_affected_components_contains_package(self):
+    def test_affected_components_names_the_installed_copy(self):
         finding = _make_finding(component="requests")
         dep = _make_dependency(name="requests")
         dep_by_nv = _build_lookup_maps([dep])
 
         result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
 
-        assert "requests" in result[0].affected_components
+        assert result[0].affected_components == ["requests@1.0.0"]
 
     def test_action_contains_target_version(self):
         finding = _make_finding(fixed_version="2.0.0")
@@ -791,3 +791,71 @@ class TestCveIdOnTheStoredShape:
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert direct_recs[0].action["cves"] == ["unknown"]
+
+
+class TestUpdateCardsArePerInstalledVersion:
+    def _cards(self, findings, deps, card_type):
+        dep_by_nv = _build_lookup_maps(deps)
+        return [r for r in process_vulnerabilities(findings, dep_by_nv, deps, None) if r.type == card_type]
+
+    def test_each_transitive_version_gets_its_own_card(self):
+        findings = [
+            _make_finding(finding_id="CVE-1", component="minimist", version="0.0.8", fixed_version="0.2.1"),
+            _make_finding(finding_id="CVE-2", component="minimist", version="1.2.0", fixed_version="1.2.6"),
+        ]
+        deps = [_make_dependency(name="minimist", version=v, direct=False) for v in ("0.0.8", "1.2.0")]
+
+        cards = self._cards(findings, deps, RecommendationType.TRANSITIVE_FIX_VIA_PARENT)
+
+        assert sorted(
+            (c.affected_components[0], c.action["current_version"], c.action["target_version"]) for c in cards
+        ) == [
+            ("minimist@0.0.8", "0.0.8", "0.2.1"),
+            ("minimist@1.2.0", "1.2.0", "1.2.6"),
+        ]
+        assert sorted(c.action["cves"][0] for c in cards) == ["CVE-1", "CVE-2"]
+
+    def test_each_direct_version_gets_its_own_card(self):
+        findings = [
+            _make_finding(finding_id="CVE-1", severity="HIGH", version="4.17.15", fixed_version="4.17.21"),
+            _make_finding(finding_id="CVE-2", severity="CRITICAL", version="3.10.1", fixed_version="4.17.12"),
+        ]
+        deps = [_make_dependency(version=v) for v in ("4.17.15", "3.10.1")]
+
+        cards = self._cards(findings, deps, RecommendationType.DIRECT_DEPENDENCY_UPDATE)
+
+        assert {c.title: c.priority for c in cards} == {
+            "Update pkg-name@4.17.15": Priority.HIGH,
+            "Update pkg-name@3.10.1": Priority.CRITICAL,
+        }
+
+    def test_the_transitive_card_reports_the_average_epss_like_the_direct_one(self):
+        finding = _make_finding(component="trans", epss_score=0.2)
+        dep = _make_dependency(name="trans", direct=False)
+
+        [card] = self._cards([finding], [dep], RecommendationType.TRANSITIVE_FIX_VIA_PARENT)
+
+        assert card.impact["avg_epss"] == 0.2
+
+
+class TestInferredDirectnessIsNotPresentedAsDeclared:
+    def test_an_inferred_direct_dependency_says_the_sbom_does_not_record_it(self):
+        finding = _make_finding(component="openssl-lib")
+        dep = {**_make_dependency(name="openssl-lib"), "direct_inferred": True}
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], None)
+
+        [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        assert card.action["direct_inferred"] is True
+        assert card.effort == "medium"
+        assert "does not record whether openssl-lib is a direct dependency" in card.description
+
+    def test_a_declared_direct_dependency_keeps_the_low_effort_update(self):
+        finding = _make_finding()
+        dep = _make_dependency()
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], None)
+
+        [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        assert card.action["direct_inferred"] is False
+        assert card.effort == "low"

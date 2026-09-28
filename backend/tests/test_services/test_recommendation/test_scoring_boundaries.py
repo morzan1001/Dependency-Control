@@ -7,7 +7,8 @@ which cards appear — an ordering a single term can dominate without changing t
 import pytest
 
 from app.core.constants import DETAILS_KEY_IN_KEV
-from app.services.recommendation.risks import _append_vuln_risk_factor
+from app.services.recommendation.common import vuln_info
+from app.services.recommendation.risks import _PackageRisks, _toxic_risk_factors
 
 _CRITICAL_WEIGHT = 50
 _HIGH_WEIGHT = 20
@@ -20,9 +21,8 @@ def _vuln(severity: str, in_kev: bool = False) -> dict:
 
 
 def _scored(vulns: list[dict]) -> dict:
-    pkg: dict = {"risk_factors": [], "total_score": 0, "vulns": vulns, "version": "1.0.0"}
-    _append_vuln_risk_factor(pkg)
-    return pkg
+    factors, score = _toxic_risk_factors(_PackageRisks(name="pkg", vulns=[vuln_info(v) for v in vulns]))
+    return {"risk_factors": factors, "total_score": score}
 
 
 @pytest.mark.parametrize(

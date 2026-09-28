@@ -246,13 +246,6 @@ SEVERITY_WEIGHTS: dict[str, float] = {
 }
 
 
-def get_severity_weight(severity: str | None) -> float:
-    """Get risk weight for a severity level (case-insensitive)."""
-    if not severity:
-        return 0.0
-    return SEVERITY_WEIGHTS.get(severity.upper(), 0.0)
-
-
 # Common patterns for development dependencies
 DEV_DEPENDENCY_PATTERNS = [
     r"jest",

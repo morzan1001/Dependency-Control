@@ -1,18 +1,40 @@
 from collections import defaultdict
 
-from app.core.constants import DETAILS_KEY_IN_KEV, QUICK_WIN_SCORING_WEIGHTS
+from app.core.constants import QUICK_WIN_SCORING_WEIGHTS
 from app.schemas.recommendation import (
     Priority,
-    QuickWinEntry,
     Recommendation,
     RecommendationType,
+    VulnerabilityInfo,
 )
 from app.services.component_identity import build_component_index, lookup_component
-from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr, take_top
+from app.services.recommendation.common import (
+    ModelOrDict,
+    VulnStats,
+    get_attr,
+    sample_components,
+    summarize_vulns,
+    take_top,
+    vuln_info,
+)
 
 # A quick win is one recommendation per package, so this bounds the advice feed rather than a
 # list inside one card; each emitted card carries the rank it was cut at.
 QUICK_WINS_SHOWN = 5
+
+# Keyed by directness: True/False where the SBOM graph records it, None where it does not.
+_DEPENDENCY_KIND = {True: "direct dependency", False: "transitive dependency", None: "dependency"}
+
+
+def _confirmed_directness(dependencies: list[ModelOrDict]) -> dict[str, bool]:
+    """Directness per package name, from graph-confirmed rows only; a direct copy wins."""
+    confirmed: dict[str, bool] = {}
+    for dep in dependencies:
+        if not get_attr(dep, "direct_inferred", False):
+            name = get_attr(dep, "name", "")
+            confirmed[name] = confirmed.get(name, False) or bool(get_attr(dep, "direct", False))
+    # Findings carry the qualified component while the inventory keeps the bare name.
+    return build_component_index(confirmed)
 
 
 def identify_quick_wins(
@@ -20,104 +42,71 @@ def identify_quick_wins(
     dependencies: list[ModelOrDict],
 ) -> list[Recommendation]:
     """Identify quick wins - single updates that fix many or critical/KEV vulnerabilities."""
-    recommendations = []
-
-    vulns_by_package: dict[str, list[ModelOrDict]] = defaultdict(list)
+    fixable: dict[str, list[VulnerabilityInfo]] = defaultdict(list)
     for f in vuln_findings:
-        component = get_attr(f, "component", "")
-        details = get_attr(f, "details", {})
-        if component and isinstance(details, dict) and details.get("fixed_version"):
-            vulns_by_package[component].append(f)
+        vuln = vuln_info(f)
+        if vuln.package_name and vuln.fixed_version:
+            fixable[vuln.package_name].append(vuln)
 
-    # Findings carry the qualified component while the inventory keeps the bare name.
-    direct_deps = build_component_index(
-        {get_attr(dep, "name", ""): True for dep in dependencies if get_attr(dep, "direct", False)}
-    )
+    directness = _confirmed_directness(dependencies)
 
-    quick_wins = []
-    for pkg, vulns in vulns_by_package.items():
+    candidates: list[tuple[int, str, VulnStats, bool | None]] = []
+    for pkg, vulns in fixable.items():
         if len(vulns) < 2:
             continue
-
-        fixed_versions: list[str] = []
-        for v in vulns:
-            v_details = get_attr(v, "details", {})
-            if isinstance(v_details, dict):
-                fv = v_details.get("fixed_version")
-                if fv:
-                    fixed_versions.append(fv)
-        fixed_versions = list(set(fixed_versions))
-
-        critical_count = len([v for v in vulns if get_attr(v, "severity") == "CRITICAL"])
-        high_count = len([v for v in vulns if get_attr(v, "severity") == "HIGH"])
-        kev_count = 0
-        for v in vulns:
-            v_details = get_attr(v, "details", {})
-            if isinstance(v_details, dict) and v_details.get(DETAILS_KEY_IN_KEV):
-                kev_count += 1
-
-        is_direct = bool(lookup_component(direct_deps, pkg))
-
+        stats = summarize_vulns(vulns)
+        is_direct = lookup_component(directness, pkg)
         score = (
-            len(vulns) * QUICK_WIN_SCORING_WEIGHTS["base_per_vuln"]
-            + critical_count * QUICK_WIN_SCORING_WEIGHTS["critical"]
-            + high_count * QUICK_WIN_SCORING_WEIGHTS["high"]
-            + kev_count * QUICK_WIN_SCORING_WEIGHTS["kev"]
+            stats.total * QUICK_WIN_SCORING_WEIGHTS["base_per_vuln"]
+            + stats.severity["CRITICAL"] * QUICK_WIN_SCORING_WEIGHTS["critical"]
+            + stats.severity["HIGH"] * QUICK_WIN_SCORING_WEIGHTS["high"]
+            + stats.kev * QUICK_WIN_SCORING_WEIGHTS["kev"]
             + (QUICK_WIN_SCORING_WEIGHTS["direct_dep_bonus"] if is_direct else 0)
         )
+        candidates.append((score, pkg, stats, is_direct))
 
-        quick_wins.append(
-            QuickWinEntry(
-                package=pkg,
-                version=get_attr(vulns[0], "version", "unknown"),
-                fixed_version=calculate_best_fix_version(fixed_versions),
-                vuln_count=len(vulns),
-                critical_count=critical_count,
-                high_count=high_count,
-                kev_count=kev_count,
-                is_direct=is_direct,
-                score=score,
-            )
-        )
+    candidates.sort(key=lambda candidate: candidate[0], reverse=True)
 
-    quick_wins.sort(key=lambda x: x.score, reverse=True)
+    return [
+        _quick_win_recommendation(pkg, stats, is_direct, rank, ranked_out_of)
+        for rank, (_, pkg, stats, is_direct), ranked_out_of in take_top(candidates, QUICK_WINS_SHOWN)
+    ]
 
-    for rank, qw, ranked_out_of in take_top(quick_wins, QUICK_WINS_SHOWN):
-        dep_type = "direct dependency" if qw.is_direct else "transitive dependency"
 
-        recommendations.append(
-            Recommendation(
-                type=(
-                    RecommendationType.SINGLE_UPDATE_MULTI_FIX if qw.vuln_count >= 3 else RecommendationType.QUICK_WIN
-                ),
-                priority=(Priority.HIGH if qw.kev_count > 0 or qw.critical_count > 0 else Priority.MEDIUM),
-                title=f"Quick Win: Update {qw.package}",
-                description=(
-                    f"Updating this {dep_type} from {qw.version} to {qw.fixed_version} "
-                    f"will fix {qw.vuln_count} vulnerabilities in a single update! "
-                    f"({qw.critical_count} critical, {qw.high_count} high)"
-                ),
-                impact={
-                    "critical": qw.critical_count,
-                    "high": qw.high_count,
-                    "medium": qw.vuln_count - qw.critical_count - qw.high_count,
-                    "low": 0,
-                    "total": qw.vuln_count,
-                    "kev_count": qw.kev_count,
-                },
-                affected_components=[f"{qw.package}@{qw.version}"],
-                action={
-                    "type": "quick_win_update",
-                    "package": qw.package,
-                    "current_version": qw.version,
-                    "target_version": qw.fixed_version,
-                    "is_direct": qw.is_direct,
-                    "fixes_count": qw.vuln_count,
-                },
-                effort="low",
-                rank=rank,
-                ranked_out_of=ranked_out_of,
-            )
-        )
-
-    return recommendations
+def _quick_win_recommendation(
+    pkg: str, stats: VulnStats, is_direct: bool | None, rank: int, ranked_out_of: int
+) -> Recommendation:
+    critical, high = stats.severity["CRITICAL"], stats.severity["HIGH"]
+    versions = stats.versions or ["unknown"]
+    components_shown, components_total = sample_components(f"{pkg}@{version}" for version in versions)
+    return Recommendation(
+        type=(RecommendationType.SINGLE_UPDATE_MULTI_FIX if stats.total >= 3 else RecommendationType.QUICK_WIN),
+        priority=(Priority.HIGH if stats.kev > 0 or critical > 0 else Priority.MEDIUM),
+        title=f"Quick Win: Update {pkg}",
+        description=(
+            f"Updating this {_DEPENDENCY_KIND[is_direct]} from {', '.join(versions)} to {stats.best_fix} "
+            f"will fix {stats.total} vulnerabilities in a single update! "
+            f"({critical} critical, {high} high)"
+        ),
+        impact={
+            "critical": critical,
+            "high": high,
+            "medium": stats.total - critical - high,
+            "low": 0,
+            "total": stats.total,
+            "kev_count": stats.kev,
+        },
+        affected_components=components_shown,
+        affected_components_total=components_total,
+        action={
+            "type": "quick_win_update",
+            "package": pkg,
+            "current_versions": versions,
+            "target_version": stats.best_fix,
+            "is_direct": is_direct,
+            "fixes_count": stats.total,
+        },
+        effort="low",
+        rank=rank,
+        ranked_out_of=ranked_out_of,
+    )

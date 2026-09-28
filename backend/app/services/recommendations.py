@@ -281,14 +281,8 @@ class RecommendationEngine:
         # 11. Risks & Hotspots
         _safe_extend(
             recommendations,
-            lambda: risks.detect_critical_hotspots(findings_list, dependencies_list),
-            "critical_hotspots",
-        )
-
-        _safe_extend(
-            recommendations,
-            lambda: risks.detect_toxic_dependencies(findings_list, dependencies_list),
-            "toxic_dependencies",
+            lambda: risks.detect_package_risks(findings_list),
+            "package_risks",
         )
 
         _safe_extend(

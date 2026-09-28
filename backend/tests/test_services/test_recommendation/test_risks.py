@@ -1,13 +1,12 @@
 """Tests for risk detection: hotspots, toxic dependencies, and attack surface analysis."""
 
-from app.schemas.recommendation import PackageHotspot, Priority, RecommendationType
+from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.risks import (
     CRITICAL_HOTSPOTS_SHOWN,
     TOXIC_DEPENDENCIES_SHOWN,
     analyze_attack_surface,
-    detect_critical_hotspots,
-    detect_toxic_dependencies,
-    get_hotspot_remediation_steps,
+    _roll_up_packages,
+    detect_package_risks,
 )
 
 
@@ -81,13 +80,21 @@ def _license(component, severity="HIGH", license_name="GPL-3.0"):
     }
 
 
+def _hotspots(findings):
+    return [r for r in detect_package_risks(findings) if r.type == RecommendationType.CRITICAL_HOTSPOT]
+
+
+def _toxic(findings):
+    return [r for r in detect_package_risks(findings) if r.type == RecommendationType.TOXIC_DEPENDENCY]
+
+
 def _dep(name, version="1.0", direct=True):
     return {"name": name, "version": version, "direct": direct}
 
 
 class TestDetectCriticalHotspotsEmpty:
     def test_empty_findings_returns_empty(self):
-        result = detect_critical_hotspots([], [])
+        result = _hotspots([])
         assert result == []
 
 
@@ -98,7 +105,7 @@ class TestDetectCriticalHotspotsMultiVulnCritical:
             _vuln("pkg", "HIGH", finding_id="CVE-2024-002"),
             _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert len(result) == 1
         assert result[0].type == RecommendationType.CRITICAL_HOTSPOT
         assert result[0].priority == Priority.CRITICAL
@@ -108,7 +115,7 @@ class TestDetectCriticalHotspotsMultiVulnCritical:
 class TestDetectCriticalHotspotsMalware:
     def test_malware_triggers_hotspot_with_reason(self):
         findings = [_malware("evil-pkg")]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert len(result) == 1
         rec = result[0]
         assert rec.type == RecommendationType.CRITICAL_HOTSPOT
@@ -122,7 +129,7 @@ class TestDetectCriticalHotspotsKEV:
         findings = [
             _vuln("pkg", "CRITICAL", is_kev=True, finding_id="CVE-2024-001"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert len(result) == 1
         rec = result[0]
         assert "KEV" in rec.description
@@ -134,7 +141,7 @@ class TestDetectCriticalHotspotsHighEpssReachable:
         findings = [
             _vuln("pkg", "MEDIUM", epss_score=0.5, reachable=True, finding_id="CVE-2024-001"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert len(result) == 1
         rec = result[0]
         assert "high-EPSS" in rec.description
@@ -143,13 +150,13 @@ class TestDetectCriticalHotspotsHighEpssReachable:
         findings = [
             _vuln("pkg", "MEDIUM", epss_score=0.5, finding_id="CVE-2024-001"),
         ]
-        assert detect_critical_hotspots(findings, []) == []
+        assert _hotspots(findings) == []
 
     def test_reachability_alone_is_not_a_hotspot(self):
         findings = [
             _vuln("pkg", "MEDIUM", epss_score=0.0, reachable=True, finding_id="CVE-2024-001"),
         ]
-        assert detect_critical_hotspots(findings, []) == []
+        assert _hotspots(findings) == []
 
 
 class TestDetectCriticalHotspotsNotHotspot:
@@ -158,7 +165,7 @@ class TestDetectCriticalHotspotsNotHotspot:
             _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
             _vuln("pkg", "LOW", finding_id="CVE-2024-002"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert result == []
 
     def test_3_low_vulns_without_critical_or_high_not_hotspot(self):
@@ -168,7 +175,7 @@ class TestDetectCriticalHotspotsNotHotspot:
             _vuln("pkg", "LOW", finding_id="CVE-2024-002"),
             _vuln("pkg", "LOW", finding_id="CVE-2024-003"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         # No KEV, no malware, no high-EPSS+reachable, vuln_count>=3 but critical_high==0
         assert result == []
 
@@ -179,7 +186,7 @@ class TestDetectCriticalHotspotsEolReason:
             _vuln("pkg", "CRITICAL", is_kev=True, finding_id="CVE-2024-001"),
             _eol("pkg"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert len(result) == 1
         assert "End-of-Life" in result[0].description
 
@@ -190,7 +197,7 @@ class TestDetectCriticalHotspotsLowScorecard:
             _vuln("pkg", "CRITICAL", is_kev=True, finding_id="CVE-2024-001"),
             _quality("pkg", overall_score=2.0),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert len(result) == 1
         assert "Scorecard" in result[0].description
 
@@ -199,7 +206,7 @@ class TestDetectCriticalHotspotsLowScorecard:
             _vuln("pkg", "CRITICAL", is_kev=True, finding_id="CVE-2024-001"),
             _quality("pkg", overall_score=8.0),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert len(result) == 1
         assert "Scorecard" not in result[0].description
 
@@ -210,7 +217,7 @@ class TestDetectCriticalHotspotsTop10Limit:
         for i in range(12):
             pkg = f"pkg-{i}"
             findings.append(_vuln(pkg, "CRITICAL", is_kev=True, finding_id=f"CVE-2024-{i:03d}"))
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert len(result) == 10
 
 
@@ -224,7 +231,7 @@ class TestDetectCriticalHotspotsSorting:
             # Package C: malware
             _malware("pkg-malware"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         names = [r.action["package"] for r in result]
         assert names[0] == "pkg-malware"
         # pkg-risk and pkg-kev both have kev_count=1 so they sort by risk_score
@@ -237,7 +244,7 @@ class TestDetectCriticalHotspotsSorting:
             _vuln("pkg-kev", "CRITICAL", is_kev=True, finding_id="CVE-2024-011"),
             _malware("pkg-mal"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         names = [r.action["package"] for r in result]
         assert names[0] == "pkg-mal"
         assert names[1] == "pkg-kev"
@@ -247,13 +254,13 @@ class TestDetectCriticalHotspotsSorting:
 class TestDetectCriticalHotspotsRemediation:
     def test_malware_remediation_steps(self):
         findings = [_malware("evil")]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         steps = result[0].action["steps"]
         assert any("malware" in s.lower() for s in steps)
 
     def test_kev_remediation_steps(self):
         findings = [_vuln("pkg", "CRITICAL", is_kev=True)]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         steps = result[0].action["steps"]
         assert any("exploited" in s.lower() for s in steps)
 
@@ -264,9 +271,8 @@ class TestDetectCriticalHotspotsRemediation:
             _vuln("pkg", "HIGH", fixed_version="2.0", finding_id="CVE-2024-002"),
             _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
         ]
-        result = detect_critical_hotspots(findings, [])
-        steps = result[0].action["steps"]
-        assert any("Update" in s or "update" in s.lower() for s in steps)
+        result = _hotspots(findings)
+        assert result[0].action["steps"][0] == "1. Update pkg to version 2.0 or later"
 
     def test_no_fix_remediation_steps(self):
         # 3 vulns with critical but no fixed_version
@@ -275,30 +281,8 @@ class TestDetectCriticalHotspotsRemediation:
             _vuln("pkg", "HIGH", finding_id="CVE-2024-002"),
             _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         steps = result[0].action["steps"]
-        assert any("alternative" in s.lower() for s in steps)
-
-
-class TestGetHotspotRemediationSteps:
-    def test_malware_steps(self):
-        hotspot = PackageHotspot(package="x", has_malware=True, kev_count=0, fixed_versions=[])
-        steps = get_hotspot_remediation_steps(hotspot)
-        assert any("malware" in s.lower() for s in steps)
-
-    def test_kev_steps(self):
-        hotspot = PackageHotspot(package="x", has_malware=False, kev_count=1, fixed_versions=[])
-        steps = get_hotspot_remediation_steps(hotspot)
-        assert any("exploited" in s.lower() for s in steps)
-
-    def test_fixable_steps(self):
-        hotspot = PackageHotspot(package="x", has_malware=False, kev_count=0, fixed_versions=["2.0"])
-        steps = get_hotspot_remediation_steps(hotspot)
-        assert any("2.0" in s for s in steps)
-
-    def test_no_fix_steps(self):
-        hotspot = PackageHotspot(package="x", has_malware=False, kev_count=0, fixed_versions=[])
-        steps = get_hotspot_remediation_steps(hotspot)
         assert any("alternative" in s.lower() for s in steps)
 
 
@@ -307,26 +291,26 @@ class TestDetectCriticalHotspotsVersionAndFixedVersion:
         findings = [
             _vuln("pkg", "CRITICAL", version="3.1.0", is_kev=True, finding_id="CVE-2024-001"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert "3.1.0" in result[0].affected_components[0]
 
     def test_fixed_version_shown_in_description(self):
         findings = [
             _vuln("pkg", "CRITICAL", is_kev=True, fixed_version="4.0.0", finding_id="CVE-2024-001"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert "4.0.0" in result[0].description
 
 
 class TestDetectCriticalHotspotsPriority:
     def test_critical_priority_for_malware(self):
         findings = [_malware("evil")]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert result[0].priority == Priority.CRITICAL
 
     def test_critical_priority_for_kev(self):
         findings = [_vuln("pkg", "MEDIUM", is_kev=True)]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert result[0].priority == Priority.CRITICAL
 
     def test_critical_priority_for_critical_vuln_in_hotspot(self):
@@ -335,7 +319,7 @@ class TestDetectCriticalHotspotsPriority:
             _vuln("pkg", "HIGH", finding_id="CVE-2024-002"),
             _vuln("pkg", "HIGH", finding_id="CVE-2024-003"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert result[0].priority == Priority.CRITICAL
 
     def test_high_priority_when_no_critical_no_kev_no_malware(self):
@@ -343,19 +327,19 @@ class TestDetectCriticalHotspotsPriority:
         findings = [
             _vuln("pkg", "HIGH", epss_score=0.5, reachable=True, finding_id="CVE-2024-001"),
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert result[0].priority == Priority.HIGH
 
 
 class TestDetectCriticalHotspotsEffort:
     def test_effort_low_when_fix_available(self):
         findings = [_vuln("pkg", "CRITICAL", is_kev=True, fixed_version="2.0")]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert result[0].effort == "low"
 
     def test_effort_high_when_no_fix(self):
         findings = [_vuln("pkg", "CRITICAL", is_kev=True)]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert result[0].effort == "high"
 
 
@@ -370,13 +354,13 @@ class TestDetectCriticalHotspotsSkipsEmptyComponent:
                 "id": "CVE-2024-001",
             },
         ]
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
         assert result == []
 
 
 class TestDetectToxicDependenciesEmpty:
     def test_empty_returns_empty(self):
-        result = detect_toxic_dependencies([], [])
+        result = _toxic([])
         assert result == []
 
 
@@ -386,7 +370,7 @@ class TestDetectToxicDependenciesMultipleFactors:
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
             _quality("pkg", overall_score=2.0),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         assert len(result) == 1
         rec = result[0]
         assert rec.type == RecommendationType.TOXIC_DEPENDENCY
@@ -398,7 +382,7 @@ class TestDetectToxicDependenciesMultipleFactors:
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
             _eol("pkg"),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         assert len(result) == 1
         rec = result[0]
         assert rec.type == RecommendationType.TOXIC_DEPENDENCY
@@ -410,7 +394,7 @@ class TestDetectToxicDependenciesSingleFactor:
         findings = [
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         assert result == []
 
 
@@ -420,7 +404,7 @@ class TestDetectToxicDependenciesMalwareScore:
             _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
             _malware("pkg"),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         assert len(result) == 1
         rec = result[0]
         assert rec.impact["toxic_score"] >= 100
@@ -433,7 +417,7 @@ class TestDetectToxicDependenciesTop5Limit:
             pkg = f"pkg-{i}"
             findings.append(_vuln(pkg, "HIGH", finding_id=f"CVE-2024-{i:03d}"))
             findings.append(_quality(pkg, overall_score=1.0))
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         assert len(result) == 5
 
 
@@ -447,7 +431,7 @@ class TestDetectToxicDependenciesSortedByScore:
             _vuln("pkg-high", "CRITICAL", finding_id="CVE-2024-002"),
             _malware("pkg-high"),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         assert len(result) == 2
         assert result[0].action["package"] == "pkg-high"
         assert result[1].action["package"] == "pkg-low"
@@ -459,7 +443,7 @@ class TestDetectToxicDependenciesLicenseRiskFactor:
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
             _license("pkg", severity="HIGH", license_name="GPL-3.0"),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         assert len(result) == 1
         assert any("License" in d or "license" in d for d in result[0].description.split("|"))
 
@@ -468,7 +452,7 @@ class TestDetectToxicDependenciesLicenseRiskFactor:
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
             _license("pkg", severity="LOW"),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         # Only 1 risk factor (vulns) -> not toxic
         assert result == []
 
@@ -479,7 +463,7 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
             _vuln("pkg", "CRITICAL", finding_id="CVE-2024-001"),
             _quality("pkg", overall_score=1.0),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
         assert vuln_factor[0]["severity"] == "CRITICAL"
 
@@ -488,7 +472,7 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
             _quality("pkg", overall_score=1.0),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
         assert vuln_factor[0]["severity"] == "HIGH"
 
@@ -497,7 +481,7 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
             _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
             _quality("pkg", overall_score=1.0),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
         assert vuln_factor[0]["severity"] == "MEDIUM"
 
@@ -509,7 +493,7 @@ class TestDetectToxicDependenciesDeduplication:
             _eol("pkg"),
             _eol("pkg"),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         assert len(result) == 1
         eol_factors = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "eol"]
         assert len(eol_factors) == 1
@@ -520,7 +504,7 @@ class TestDetectToxicDependenciesDeduplication:
             _quality("pkg", overall_score=2.0),
             _quality("pkg", overall_score=2.0),
         ]
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
         assert len(result) == 1
         scorecard_factors = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "low_scorecard"]
         assert len(scorecard_factors) == 1
@@ -617,7 +601,7 @@ class TestRankedListsSayHowManyWereRankedOut:
                 _vuln(f"pkg-{index}", "MEDIUM", finding_id=f"CVE-2024-{index}-3"),
             ]
 
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
 
         assert len(result) == CRITICAL_HOTSPOTS_SHOWN
         assert [r.rank for r in result] == list(range(1, CRITICAL_HOTSPOTS_SHOWN + 1))
@@ -630,7 +614,7 @@ class TestRankedListsSayHowManyWereRankedOut:
             _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
         ]
 
-        result = detect_critical_hotspots(findings, [])
+        result = _hotspots(findings)
 
         assert [(r.rank, r.ranked_out_of) for r in result] == [(0, 0)]
 
@@ -644,7 +628,7 @@ class TestRankedListsSayHowManyWereRankedOut:
                 _license(f"pkg-{index}"),
             ]
 
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
 
         assert len(result) == TOXIC_DEPENDENCIES_SHOWN
         assert [r.rank for r in result] == list(range(1, TOXIC_DEPENDENCIES_SHOWN + 1))
@@ -657,6 +641,133 @@ class TestRankedListsSayHowManyWereRankedOut:
             _license("pkg"),
         ]
 
-        result = detect_toxic_dependencies(findings, [])
+        result = _toxic(findings)
 
         assert [(r.rank, r.ranked_out_of) for r in result] == [(0, 0)]
+
+
+class TestHotspotNamesEveryInstalledVersionAndOneTarget:
+    def test_versions_are_all_listed_and_the_target_is_the_best_fix(self):
+        findings = [
+            _vuln("jackson-databind", "CRITICAL", version="2.9.8", is_kev=True, fixed_version="2.9.10.8"),
+            _vuln("jackson-databind", "HIGH", version="2.12.1", fixed_version="2.12.7.1"),
+        ]
+
+        [rec] = _hotspots(findings)
+
+        assert rec.affected_components == ["jackson-databind@2.12.1", "jackson-databind@2.9.8"]
+        assert rec.action["current_versions"] == ["2.12.1", "2.9.8"]
+        assert rec.action["fixed_versions"] == ["2.12.7.1", "2.9.10.8"]
+        assert rec.action["target_version"] == "2.12.7.1"
+        assert "Available fix: Update to 2.12.7.1" in rec.description
+
+    def test_the_target_agrees_with_the_quick_win_whatever_the_set_order(self):
+        findings = [
+            _vuln("lib", "CRITICAL", is_kev=True, fixed_version=fix, finding_id=f"CVE-{fix}")
+            for fix in ("1.2.5", "2.0.1", "1.3.0")
+        ]
+
+        [rec] = _hotspots(findings)
+
+        assert rec.action["fixed_versions"] == ["2.0.1", "1.3.0", "1.2.5"]
+        assert rec.action["steps"][0] == "URGENT: This vulnerability is being actively exploited in the wild"
+        assert "Available fix: Update to 2.0.1" in rec.description
+
+
+class TestCardsWithoutVulnerabilitiesKeepTheirVersion:
+    def test_a_malware_hotspot_names_the_installed_version(self):
+        [rec] = _hotspots([{**_malware("evil"), "version": "0.1.0"}])
+
+        assert rec.affected_components == ["evil@0.1.0"]
+
+    def test_a_malware_and_eol_toxic_card_names_the_installed_version(self):
+        [rec] = _toxic([{**_malware("old"), "version": "1.2.3"}, {**_eol("old"), "version": "1.2.3"}])
+
+        assert rec.affected_components == ["old@1.2.3"]
+        assert rec.action["versions"] == ["1.2.3"]
+
+
+class TestPackageFindingsJoinAcrossSpellings:
+    def test_a_maven_vulnerability_and_a_bare_scorecard_finding_are_one_package(self):
+        findings = [
+            _vuln("org.apache.logging.log4j:log4j-core", "CRITICAL", version="2.14.1", is_kev=True),
+            {**_quality("log4j-core", overall_score=2.0), "version": "2.14.1"},
+        ]
+
+        [toxic] = _toxic(findings)
+        [hotspot] = _hotspots(findings)
+
+        assert toxic.title == "Toxic Dependency: org.apache.logging.log4j:log4j-core"
+        assert "Low OpenSSF Scorecard: 2.0/10" in hotspot.description
+
+    def test_a_bare_name_shared_by_two_packages_joins_neither(self):
+        findings = [
+            _vuln("com.a:core", "HIGH"),
+            _vuln("org.b:core", "HIGH"),
+            _quality("core", overall_score=1.0),
+        ]
+
+        assert _toxic(findings) == []
+
+
+class TestHotspotUrgencyFollowsTheVulnerabilityRule:
+    def test_criticals_that_are_all_unreachable_make_a_high_hotspot(self):
+        findings = [_vuln("pkg", "CRITICAL", reachable=False, finding_id=f"CVE-{i}") for i in range(3)]
+
+        [rec] = _hotspots(findings)
+
+        assert rec.priority == Priority.HIGH
+        assert "immediate attention" not in rec.description
+
+    def test_malware_keeps_a_hotspot_critical(self):
+        findings = [
+            *(_vuln("pkg", "CRITICAL", reachable=False, finding_id=f"CVE-{i}") for i in range(3)),
+            _malware("pkg"),
+        ]
+
+        assert _hotspots(findings)[0].priority == Priority.CRITICAL
+
+
+class TestHotspotRiskScoreIsOneScale:
+    def test_an_unenriched_critical_package_is_not_ranked_out_by_enriched_high_ones(self):
+        findings = [
+            _vuln(f"enriched-{i}", severity, risk_score=14.0, finding_id=f"CVE-{i}-{n}")
+            for i in range(CRITICAL_HOTSPOTS_SHOWN)
+            for n, severity in enumerate(("MEDIUM", "MEDIUM", "HIGH"))
+        ]
+        findings += [_vuln("ghsa-only", "CRITICAL", finding_id=f"GHSA-{n}") for n in range(3)]
+
+        result = _hotspots(findings)
+
+        assert "ghsa-only" in [r.action["package"] for r in result]
+        assert next(r for r in result if r.action["package"] == "ghsa-only").impact["risk_score"] == 120.0
+
+
+class TestToxicImpactCountsEachSeverityOnce:
+    def test_impact_breaks_down_the_vulnerabilities(self):
+        findings = [
+            _vuln("pkg", "CRITICAL", finding_id="CVE-1"),
+            _vuln("pkg", "HIGH", finding_id="CVE-2"),
+            _vuln("pkg", "MEDIUM", finding_id="CVE-3"),
+            _eol("pkg"),
+        ]
+
+        [rec] = _toxic(findings)
+
+        assert {k: rec.impact[k] for k in ("critical", "high", "medium", "total")} == {
+            "critical": 1,
+            "high": 1,
+            "medium": 1,
+            "total": 3,
+        }
+
+
+class TestOnlyPackageFindingsAreRolledUp:
+    def test_a_sast_file_path_opens_no_package(self):
+        findings = [
+            {"type": "sast", "severity": "HIGH", "component": "src/app.py", "details": {}},
+            {"type": "secret", "severity": "HIGH", "component": "config/.env", "details": {}},
+            _vuln("pkg"),
+        ]
+
+        assert [pkg.name for pkg in _roll_up_packages(findings)] == ["pkg"]

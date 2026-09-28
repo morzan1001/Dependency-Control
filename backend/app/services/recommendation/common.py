@@ -1,18 +1,23 @@
 import re
+from collections import Counter
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import dataclass
 from typing import Any
 
 from pydantic import BaseModel
 
 from app.core.constants import (
     ACTIONABLE_VULN_BONUS,
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
     EFFORT_BONUSES,
     REACHABILITY_MODIFIERS,
     REACHABILITY_SCORING_WEIGHTS,
     RECOMMENDATION_SCORING_WEIGHTS,
     RECOMMENDATION_TYPE_BONUSES,
 )
-from app.schemas.recommendation import Priority, Recommendation
+from app.core.epss import bucket_epss
+from app.schemas.recommendation import Priority, Recommendation, VulnerabilityInfo
 from app.services.enrichment import canonical_cves
 
 ModelOrDict = BaseModel | dict[str, Any]
@@ -146,6 +151,125 @@ def calculate_best_fix_version(versions: list[str]) -> str:
 
     parsed.sort(key=parse_version_tuple, reverse=True)
     return parsed[0]
+
+
+_CVE_PREFIX = "CVE-"
+# Shown where a finding names no advisory at all; VulnerabilityInfo.cve_id is not optional.
+_UNRESOLVED_CVE_ID = "unknown"
+
+
+def _resolve_cve_id(f: ModelOrDict) -> str:
+    """The advisory a finding is shown under: a CVE where its group names one, else the first
+    advisory id (GHSA-only ecosystems)."""
+    advisories = finding_cve_ids(f)
+    cve = next((a for a in advisories if a.startswith(_CVE_PREFIX)), None)
+    if cve:
+        return cve
+    return advisories[0] if advisories else _UNRESOLVED_CVE_ID
+
+
+def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
+    """A vulnerability finding in the shape every per-package roll-up counts."""
+    details = get_attr(f, "details", {})
+    details_dict = details if isinstance(details, dict) else {}
+
+    return VulnerabilityInfo(
+        finding_id=get_attr(f, "id", ""),
+        cve_id=_resolve_cve_id(f),
+        severity=get_attr(f, "severity", "UNKNOWN"),
+        package_name=get_attr(f, "component", ""),
+        current_version=get_attr(f, "version") or "",
+        fixed_version=details_dict.get("fixed_version"),
+        epss_score=details_dict.get("epss_score"),
+        is_kev=bool(details_dict.get(DETAILS_KEY_IN_KEV)),
+        kev_ransomware=bool(details_dict.get(DETAILS_KEY_KEV_RANSOMWARE)),
+        is_reachable=get_attr(f, "reachable"),
+        reachability_level=get_attr(f, "reachability_level"),
+        risk_score=details_dict.get("risk_score"),
+    )
+
+
+@dataclass(frozen=True)
+class VulnStats:
+    """What a set of vulnerability findings adds up to; every per-package card reads it."""
+
+    total: int
+    severity: Counter[str]
+    cves: list[str]
+    kev: int
+    kev_ransomware: int
+    high_epss: int
+    medium_epss: int
+    reachable: int
+    unreachable: int
+    reachable_critical: int
+    reachable_high: int
+    unreachable_critical: int
+    actionable: int
+    epss_scores: list[float]
+    # Installed versions and distinct fixes, newest first.
+    versions: list[str]
+    fixed_versions: list[str]
+    best_fix: str
+
+    def impact(self) -> dict[str, Any]:
+        return {
+            "critical": self.severity["CRITICAL"],
+            "high": self.severity["HIGH"],
+            "medium": self.severity["MEDIUM"],
+            "low": self.severity["LOW"],
+            "total": self.total,
+            "kev_count": self.kev,
+            "kev_ransomware_count": self.kev_ransomware,
+            "high_epss_count": self.high_epss,
+            "medium_epss_count": self.medium_epss,
+            "avg_epss": round(sum(self.epss_scores) / len(self.epss_scores), 4) if self.epss_scores else None,
+            "reachable_count": self.reachable,
+            "unreachable_count": self.unreachable,
+            "reachable_critical": self.reachable_critical,
+            "reachable_high": self.reachable_high,
+            "actionable_count": self.actionable,
+        }
+
+
+def summarize_vulns(vulns: list[VulnerabilityInfo]) -> VulnStats:
+    reachable = [v for v in vulns if v.is_reachable is True]
+    unreachable = [v for v in vulns if v.is_reachable is False]
+    epss_scores = [v.epss_score for v in vulns if v.epss_score is not None]
+    epss_buckets = Counter(bucket_epss(score) for score in epss_scores)
+    fixes = [v.fixed_version for v in vulns if v.fixed_version]
+    return VulnStats(
+        total=len(vulns),
+        severity=Counter(v.severity for v in vulns),
+        cves=[v.cve_id for v in vulns],
+        kev=sum(v.is_kev for v in vulns),
+        kev_ransomware=sum(v.kev_ransomware for v in vulns),
+        high_epss=epss_buckets["high"],
+        medium_epss=epss_buckets["medium"],
+        reachable=len(reachable),
+        unreachable=len(unreachable),
+        reachable_critical=sum(v.severity == "CRITICAL" for v in reachable),
+        reachable_high=sum(v.severity == "HIGH" for v in reachable),
+        unreachable_critical=sum(v.severity == "CRITICAL" for v in unreachable),
+        actionable=sum(v.is_actionable for v in vulns),
+        epss_scores=epss_scores,
+        versions=newest_first({v.current_version for v in vulns if v.current_version}),
+        fixed_versions=newest_first(set(fixes)),
+        best_fix=calculate_best_fix_version(fixes),
+    )
+
+
+def vuln_priority(stats: VulnStats) -> Priority:
+    """How urgent acting on a set of vulnerabilities is: KEV or a reachable critical first, and
+    criticals that are all confirmed unreachable one tier lower."""
+    critical = stats.severity["CRITICAL"]
+    if stats.kev or stats.reachable_critical:
+        return Priority.CRITICAL
+    if critical:
+        return Priority.HIGH if stats.unreachable_critical == critical else Priority.CRITICAL
+    if stats.high_epss or stats.reachable_high or stats.severity["HIGH"]:
+        return Priority.HIGH
+    return Priority.MEDIUM if stats.severity["MEDIUM"] else Priority.LOW
 
 
 # Module-level cache to avoid repeated dict lookups on the hot scoring path.

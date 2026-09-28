@@ -27,16 +27,16 @@ class TestSampled:
 
 
 def _vulnerability(index):
-    """One aggregated record per advisory on the same package, which is how the generator
-    groups the CVEs it lists in the update action."""
+    """One record per advisory on the same installed copy, which is how the generator groups
+    the CVEs it lists in the update action."""
     cve = f"CVE-2021-{index:05d}"
     return {
         "type": "vulnerability",
         "severity": "HIGH",
         "component": "log4j-core",
-        "version": f"2.14.{index}",
+        "version": "2.14.1",
         "details": {"fixed_version": "2.17.0", "vulnerabilities": [{"id": cve, "fixed_version": "2.17.0"}]},
-        "id": f"log4j-core:2.14.{index}",
+        "id": cve,
     }
 
 
