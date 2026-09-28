@@ -926,3 +926,77 @@ class TestBindingPickerListing:
                 )
 
         assert excinfo.value.status_code == 404
+
+
+def _run_gitlab_update(instance, current_user, **fields):
+    from app.api.v1.endpoints.gitlab_instances import update_instance
+    from app.schemas.gitlab_instance import GitLabInstanceUpdate
+
+    mock_repo = _make_repo_mock(get_by_id=instance, exists_by_url=False, exists_by_name=False, update=True)
+    with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+        asyncio.run(
+            update_instance(
+                instance_id="inst-1",
+                update_data=GitLabInstanceUpdate(**fields),
+                db=MagicMock(),
+                current_user=current_user,
+            )
+        )
+    return mock_repo
+
+
+class TestGitLabInstanceNamespaceAllowlist:
+    """Auto-create on gitlab.com admits every project there unless a namespace list narrows it."""
+
+    def test_create_persists_and_returns_the_namespace_list(self, admin_user):
+        from app.api.v1.endpoints.gitlab_instances import create_instance
+        from app.schemas.gitlab_instance import GitLabInstanceCreate
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
+        mock_repo.create = AsyncMock(side_effect=lambda instance: instance)
+        payload = GitLabInstanceCreate(
+            name="GitLab.com",
+            url="https://gitlab.com",
+            oidc_audience="my-aud",
+            auto_create_projects=True,
+            allowed_namespaces=["acme"],
+        )
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            response = asyncio.run(create_instance(instance_data=payload, db=MagicMock(), current_user=admin_user))
+
+        assert mock_repo.create.await_args.args[0].allowed_namespaces == ["acme"]
+        assert response.allowed_namespaces == ["acme"]
+
+    def test_enabling_auto_create_on_gitlab_com_without_a_list_is_rejected(self, admin_user):
+        instance = make_gitlab_instance(id="inst-1", url="https://gitlab.com", auto_create_projects=False)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run_gitlab_update(instance, admin_user, auto_create_projects=True)
+
+        assert exc_info.value.status_code == 400
+        assert "allowed namespace" in exc_info.value.detail
+
+    def test_enabling_auto_create_together_with_a_list_is_allowed(self, admin_user):
+        instance = make_gitlab_instance(id="inst-1", url="https://gitlab.com", auto_create_projects=False)
+
+        repo = _run_gitlab_update(instance, admin_user, auto_create_projects=True, allowed_namespaces=["acme"])
+
+        assert repo.update.await_args.args[1]["allowed_namespaces"] == ["acme"]
+
+    def test_emptying_the_list_while_auto_create_stays_on_is_rejected(self, admin_user):
+        instance = make_gitlab_instance(
+            id="inst-1", url="https://gitlab.com", auto_create_projects=True, allowed_namespaces=["acme"]
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run_gitlab_update(instance, admin_user, allowed_namespaces=[])
+
+        assert exc_info.value.status_code == 400
+
+    def test_a_self_managed_instance_auto_creates_without_a_list(self, admin_user):
+        instance = make_gitlab_instance(id="inst-1", auto_create_projects=False)
+
+        repo = _run_gitlab_update(instance, admin_user, auto_create_projects=True)
+
+        assert repo.update.await_args.args[1]["auto_create_projects"] is True

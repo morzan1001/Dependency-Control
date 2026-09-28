@@ -4,6 +4,7 @@ export interface User {
   username: string;
   is_active: boolean;
   is_verified?: boolean;
+  pending_email?: string | null;
   auth_provider?: string;
   permissions: string[];
   totp_enabled: boolean;
@@ -28,8 +29,6 @@ export interface UserUpdate {
 }
 
 export interface UserUpdateMe {
-  email?: string;
-  username?: string;
   slack_username?: string;
   mattermost_username?: string;
   notification_preferences?: Record<string, string[]>;

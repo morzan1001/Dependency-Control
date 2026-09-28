@@ -16,7 +16,7 @@ from app.models.system import SystemSettings
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.auth"
-_USER_LOOKUP = "app.repositories.users.UserRepository.get_raw_by_username"
+_USER_LOOKUP = "app.repositories.users.UserRepository.get_raw_by_id"
 
 # The pad targets 200ms; the floor sits below it so scheduler jitter cannot flake the assertion.
 _TIMING_PAD_FLOOR_SECONDS = 0.15
@@ -67,10 +67,11 @@ def _refresh(token: str, *users: dict, system_config: SystemSettings | None = No
 
 class TestRefreshToken2FAGate:
     def _run_refresh(self, user: dict, system_config: SystemSettings):
-        return _refresh(security.create_refresh_token(user["username"]), user, system_config=system_config)
+        return _refresh(security.create_refresh_token(user["_id"]), user, system_config=system_config)
 
     def test_no_2fa_enforced_local_user_gets_only_setup_scope(self):
         user = {
+            "_id": "u-bob",
             "username": "bob",
             "is_active": True,
             "totp_enabled": False,
@@ -85,6 +86,7 @@ class TestRefreshToken2FAGate:
 
     def test_2fa_configured_user_keeps_full_permissions(self):
         user = {
+            "_id": "u-alice",
             "username": "alice",
             "is_active": True,
             "totp_enabled": True,
@@ -99,6 +101,7 @@ class TestRefreshToken2FAGate:
 
     def test_enforce_2fa_off_keeps_full_permissions(self):
         user = {
+            "_id": "u-carol",
             "username": "carol",
             "is_active": True,
             "totp_enabled": False,
@@ -113,6 +116,7 @@ class TestRefreshToken2FAGate:
 
     def test_oidc_user_exempt_from_2fa_gate(self):
         user = {
+            "_id": "u-dave",
             "username": "dave",
             "is_active": True,
             "totp_enabled": False,
@@ -128,6 +132,7 @@ class TestRefreshToken2FAGate:
     def test_a_user_document_without_the_totp_field_counts_as_2fa_unconfigured(self):
         """Documents written before the 2FA columns existed carry no totp_enabled at all."""
         user = {
+            "_id": "u-erin",
             "username": "erin",
             "is_active": True,
             "auth_provider": "local",
@@ -144,7 +149,7 @@ class TestRefreshTokenType:
     @pytest.mark.parametrize(
         "mint",
         [
-            pytest.param(lambda: security.create_access_token("bob", permissions=["admin:manage"]), id="access"),
+            pytest.param(lambda: security.create_access_token("u-bob", permissions=["admin:manage"]), id="access"),
             pytest.param(lambda: security.create_password_reset_token("bob@test.com"), id="password-reset"),
         ],
     )
@@ -172,15 +177,16 @@ class TestRefreshTokenRejections:
         assert exc_info.value.status_code == _NOT_FOUND
 
     def test_an_inactive_user_is_400(self):
-        user = {"username": "bob", "is_active": False, "permissions": []}
+        user = {"_id": "u-bob", "username": "bob", "is_active": False, "permissions": []}
 
         with pytest.raises(HTTPException) as exc_info:
-            _refresh(security.create_refresh_token("bob"), user)
+            _refresh(security.create_refresh_token("u-bob"), user)
 
         assert exc_info.value.status_code == _BAD_REQUEST
 
     def test_a_token_issued_before_the_last_logout_is_403(self):
         user = {
+            "_id": "u-bob",
             "username": "bob",
             "is_active": True,
             "permissions": [],
@@ -188,7 +194,7 @@ class TestRefreshTokenRejections:
         }
 
         with pytest.raises(HTTPException) as exc_info:
-            _refresh(security.create_refresh_token("bob"), user)
+            _refresh(security.create_refresh_token("u-bob"), user)
 
         assert exc_info.value.status_code == _FORBIDDEN
 
@@ -200,18 +206,18 @@ class TestRefreshTokenMetrics:
         ("mint", "user_fields", "blacklisted"),
         [
             pytest.param(lambda: "not-a-jwt", {}, False, id="undecodable"),
-            pytest.param(lambda: security.create_access_token("bob"), {}, False, id="access-token"),
+            pytest.param(lambda: security.create_access_token("u-bob"), {}, False, id="access-token"),
             pytest.param(
-                lambda: security.create_refresh_token("bob"),
+                lambda: security.create_refresh_token("u-bob"),
                 {"last_logout_at": datetime.now(timezone.utc) + _LOGOUT_AFTER_ISSUE},
                 False,
                 id="issued-before-logout",
             ),
-            pytest.param(lambda: security.create_refresh_token("bob"), {}, True, id="blacklisted"),
+            pytest.param(lambda: security.create_refresh_token("u-bob"), {}, True, id="blacklisted"),
         ],
     )
     def test_a_refused_refresh_token_is_not_counted(self, mint, user_fields, blacklisted):
-        user = {"username": "bob", "is_active": True, "permissions": [], **user_fields}
+        user = {"_id": "u-bob", "username": "bob", "is_active": True, "permissions": [], **user_fields}
         before = _token_validations()
 
         with pytest.raises(HTTPException) as exc_info:

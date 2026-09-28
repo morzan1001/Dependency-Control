@@ -16,7 +16,7 @@ from app.core.init_db import create_team_indexes
 from app.models.gitlab_api import GitLabMember
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubService
+from app.services.github import GitHubEmailLookup, GitHubService
 from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
@@ -36,10 +36,10 @@ _ORG_TEAM_A = [{"id": 4711, "slug": "payments", "name": "Payments", "parent": No
 _ORG_TEAM_B = [{"id": 8150, "slug": "zahlungen", "name": "Zahlungen", "parent": None}]
 
 _USERS = [
-    {"_id": "u-ada", "username": "ada", "email": "ada@corp.com"},
-    {"_id": "u-bob", "username": "bob", "email": "bob@corp.com"},
-    {"_id": "u-cleo", "username": "cleo", "email": "cleo@corp.com"},
-    {"_id": "u-eve", "username": "eve", "email": "eve@corp.com"},
+    {"_id": "u-ada", "username": "ada", "email": "ada@corp.com", "is_verified": True},
+    {"_id": "u-bob", "username": "bob", "email": "bob@corp.com", "is_verified": True},
+    {"_id": "u-cleo", "username": "cleo", "email": "cleo@corp.com", "is_verified": True},
+    {"_id": "u-eve", "username": "eve", "email": "eve@corp.com", "is_verified": True},
 ]
 
 
@@ -64,6 +64,10 @@ async def _seed(db) -> None:
     )
 
 
+async def _public_email(login: str) -> GitHubEmailLookup:
+    return GitHubEmailLookup(f"{login}@corp.com")
+
+
 async def _github_sync(db, instance_id: str, org_teams: list[dict], logins: list[dict] | None) -> None:
     """One CI run of one GitHub instance against a repository the bound team holds."""
     service = GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret", sync_teams=True))
@@ -72,6 +76,7 @@ async def _github_sync(db, instance_id: str, org_teams: list[dict], logins: list
         patch.object(service, "get_team_repository", new=AsyncMock(return_value=True)),
         patch.object(service, "get_team_members", new=AsyncMock(return_value=logins)),
         patch.object(service, "get_org_repository_map", new=AsyncMock(return_value={})),
+        patch.object(service, "get_user_public_email", new=AsyncMock(side_effect=_public_email)),
     ):
         await service.sync_team_from_github(db, "acme", "acme/widgets")
 

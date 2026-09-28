@@ -9,6 +9,7 @@ export interface GitLabInstance {
   auto_create_projects: boolean;
   sync_teams: boolean;
   team_sync_depth: number;
+  allowed_namespaces: string[];
   created_at: string;
   created_by: string;
   last_modified_at?: string;
@@ -26,6 +27,7 @@ export interface GitLabInstanceCreate {
   auto_create_projects?: boolean;
   sync_teams?: boolean;
   team_sync_depth?: number;
+  allowed_namespaces?: string[];
 }
 
 export interface GitLabInstanceUpdate {
@@ -39,6 +41,7 @@ export interface GitLabInstanceUpdate {
   auto_create_projects?: boolean;
   sync_teams?: boolean;
   team_sync_depth?: number;
+  allowed_namespaces?: string[];
 }
 
 export interface GitLabInstanceList {

@@ -1051,6 +1051,10 @@ SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
 GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour
 GITLAB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
 
+# GitLab answers a non-admin token's GET /users/:id at most 300 times per 10 minutes by default, and
+# public emails rarely change: at a day one token keeps ~43,000 members answered, at an hour ~1,800.
+GITLAB_USER_EMAIL_CACHE_TTL = 86400  # 24 hours
+
 # GitHub JWKS cache TTLs (in seconds)
 GITHUB_JWKS_CACHE_TTL = 3600  # 1 hour
 GITHUB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)

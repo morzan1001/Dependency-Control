@@ -32,6 +32,7 @@ import { toast } from "sonner"
 import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
+import { authApi } from '@/api/auth'
 import { systemApi } from '@/api/system'
 import { ANALYTICS_ROUTE_PERMISSIONS } from '@/lib/constants'
 import { lazy, Suspense, useState, useEffect } from 'react'
@@ -138,7 +139,8 @@ function AppRoutes() {
       <Route path="/reset-password" element={<ResetPassword />} />
       <Route path="/login/callback" element={<LoginCallback />} />
       <Route path="/signup" element={<SignupRoute />} />
-      <Route path="/verify-email" element={<VerifyEmail />} />
+      <Route path="/verify-email" element={<VerifyEmail verifyToken={authApi.verifyEmail} />} />
+      <Route path="/confirm-email" element={<VerifyEmail verifyToken={authApi.confirmEmailChange} />} />
       <Route path="/resend-verification" element={<ResendVerification />} />
       <Route path="/accept-invite" element={<AcceptInvite />} />
       <Route path="/setup-2fa" element={

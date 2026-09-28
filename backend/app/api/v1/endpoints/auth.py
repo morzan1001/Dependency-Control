@@ -25,6 +25,7 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_password_reset_email, send_verification_email
 from app.api.v1.helpers.responses import (
+    RESP_400,
     RESP_400_401_500,
     RESP_400_403,
     RESP_400_403_404,
@@ -201,10 +202,10 @@ async def login_access_token(
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     access_token = security.create_access_token(
-        user["username"], permissions=permissions, expires_delta=access_token_expires
+        str(user["_id"]), permissions=permissions, expires_delta=access_token_expires
     )
 
-    refresh_token = security.create_refresh_token(user["username"])
+    refresh_token = security.create_refresh_token(str(user["_id"]))
 
     if auth_login_attempts_total:
         auth_login_attempts_total.labels(status="success").inc()
@@ -251,10 +252,10 @@ async def refresh_token(
     permissions = restricted if restricted is not None else user.get("permissions", [])
 
     access_token = security.create_access_token(
-        user["username"], permissions=permissions, expires_delta=access_token_expires
+        str(user["_id"]), permissions=permissions, expires_delta=access_token_expires
     )
 
-    new_refresh_token = security.create_refresh_token(user["username"])
+    new_refresh_token = security.create_refresh_token(str(user["_id"]))
 
     return {
         "access_token": access_token,
@@ -287,7 +288,7 @@ async def create_user(
             detail="The user with this username already exists in the system.",
         )
 
-    if await user_repo.get_raw_by_email(user_in.email):
+    if await user_repo.exists_by_email(user_in.email):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="The user with this email already exists in the system.",
@@ -412,6 +413,32 @@ async def verify_email(token: str, db: DatabaseDep) -> EmailVerifyResponse:
     await user_repo.update(user["_id"], {"is_verified": True})
 
     return EmailVerifyResponse(message="Email successfully verified")
+
+
+@router.post(
+    "/confirm-email-change",
+    summary="Confirm a pending email change",
+    responses=RESP_400,
+)
+async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: DatabaseDep) -> EmailVerifyResponse:
+    """Swap in the pending email the token was mailed to; the address is verified by the click."""
+    change = security.verify_email_change_token(token)
+    if not change:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired confirmation link")
+    user_id, new_email = change
+
+    user_repo = UserRepository(db)
+    user = await user_repo.get_raw_by_id(user_id)
+    # A newer request or an earlier confirmation replaced the pending address this link was mailed to.
+    if not user or user.get("pending_email") != new_email:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This email change is no longer pending")
+
+    if await user_repo.exists_by_email(new_email):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
+
+    await user_repo.update(user_id, {"email": new_email, "pending_email": None, "is_verified": True})
+
+    return EmailVerifyResponse(message="Your email address has been changed")
 
 
 @router.post(
@@ -669,6 +696,11 @@ async def _fetch_oidc_user_info(system_config: SystemSettings, code: str, redire
         return await _oidc_fetch_user_info(client, system_config, access_token)
 
 
+def _email_unverified(user_info: dict[str, Any]) -> bool:
+    # Providers send the claim as a bool, a string in any case, or 0/1; absent means unasserted.
+    return str(user_info.get("email_verified")).strip().lower() in {"false", "0"}
+
+
 @router.get(
     "/login/oidc/callback",
     summary="OIDC callback",
@@ -706,6 +738,14 @@ async def login_oidc_callback(
             detail="Email not provided by OIDC provider",
         )
 
+    if _email_unverified(user_info):
+        if auth_oidc_logins_total:
+            auth_oidc_logins_total.labels(status="email_unverified").inc()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The identity provider has not verified this email address",
+        )
+
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
     if not user:
@@ -718,9 +758,9 @@ async def login_oidc_callback(
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = security.create_access_token(
-        user["username"], permissions=permissions, expires_delta=access_token_expires
+        str(user["_id"]), permissions=permissions, expires_delta=access_token_expires
     )
-    refresh_token = security.create_refresh_token(user["username"])
+    refresh_token = security.create_refresh_token(str(user["_id"]))
 
     if auth_oidc_logins_total:
         auth_oidc_logins_total.labels(status="success").inc()

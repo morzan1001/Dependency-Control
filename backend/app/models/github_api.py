@@ -11,6 +11,8 @@ class GitHubOIDCPayload(BaseModel):
     repository_id: str
     repository: str  # "owner/repo" format
     repository_owner: str
+    # Optional so a GHES without the claim keeps working; an owner allowlist refuses its absence.
+    repository_owner_id: str | None = None
     actor: str  # Username who triggered the workflow
     ref: str | None = None
     sha: str | None = None

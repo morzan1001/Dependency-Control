@@ -1,11 +1,35 @@
+import re
 from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.models.gitlab_instance import is_shared_gitlab_issuer
 from app.schemas._oidc_audience import (
     validate_audience_not_blank,
     validate_optional_audience_not_blank,
 )
+
+AUTO_CREATE_NEEDS_NAMESPACES = (
+    "Auto-creating projects on gitlab.com needs at least one allowed namespace, "
+    "since every gitlab.com project can mint tokens for it"
+)
+
+_TOP_LEVEL_GROUP = re.compile(r"[A-Za-z0-9_.-]+")
+
+
+def lacks_required_namespaces(url: str, auto_create_projects: bool, allowed_namespaces: list[str]) -> bool:
+    return auto_create_projects and is_shared_gitlab_issuer(url) and not allowed_namespaces
+
+
+def _validate_namespaces(value: list[str] | None) -> list[str]:
+    if value is None:
+        raise ValueError("allowed_namespaces must be a list; send [] to clear it")
+    for namespace in value:
+        if not _TOP_LEVEL_GROUP.fullmatch(namespace):
+            raise ValueError(
+                f"allowed_namespaces holds top-level group paths such as 'acme', without '/': {namespace!r}"
+            )
+    return value
 
 
 class GitLabInstanceBase(BaseModel):
@@ -30,6 +54,11 @@ class GitLabInstanceBase(BaseModel):
         "1 = top-level group only (e.g. 'mo'), 2 = two levels (e.g. 'mo/edge'), "
         "0 = full path.",
     )
+    allowed_namespaces: list[str] = Field(
+        default_factory=list,
+        description="Top-level groups whose projects' tokens are accepted (case-insensitive); empty accepts every "
+        "project",
+    )
 
 
 class GitLabInstanceCreate(GitLabInstanceBase):
@@ -44,11 +73,14 @@ class GitLabInstanceCreate(GitLabInstanceBase):
     access_token: str | None = Field(None, description="Personal or Group Access Token with 'api' scope")
 
     _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
+    _namespaces_top_level = field_validator("allowed_namespaces")(_validate_namespaces)
 
     @model_validator(mode="after")
     def validate_token_dependent_features(self) -> "GitLabInstanceCreate":
         if self.sync_teams and not self.access_token:
             raise ValueError("An access token is required to enable team syncing")
+        if lacks_required_namespaces(self.url, self.auto_create_projects, self.allowed_namespaces):
+            raise ValueError(AUTO_CREATE_NEEDS_NAMESPACES)
         return self
 
 
@@ -69,8 +101,12 @@ class GitLabInstanceUpdate(BaseModel):
     team_sync_depth: int | None = Field(
         None, ge=0, description="GitLab group path depth for team creation (0 = full path)."
     )
+    allowed_namespaces: list[str] | None = Field(
+        None, description="Top-level groups whose projects' tokens are accepted; [] accepts every project"
+    )
 
     _audience_not_blank = field_validator("oidc_audience")(validate_optional_audience_not_blank)
+    _namespaces_top_level = field_validator("allowed_namespaces")(_validate_namespaces)
 
 
 class GitLabInstanceResponse(GitLabInstanceBase):

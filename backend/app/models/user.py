@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 class User(MongoDocument):
     username: str
     email: EmailStr
+    pending_email: str | None = None
     hashed_password: str | None = None
     is_active: bool = True
     is_verified: bool = False

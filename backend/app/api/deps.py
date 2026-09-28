@@ -8,7 +8,7 @@ from jose import JWTError, jwt
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 
-from app.core import security
+from app.core import ensure_utc, security
 from app.core.config import settings
 from app.core.constants import (
     API_KEY_SURFACE_ADHOC,
@@ -18,6 +18,7 @@ from app.core.constants import (
     TEAM_SOURCE_GITLAB,
     team_source,
 )
+from app.core.log_utils import sanitize_for_log
 from app.core.metrics import auth_token_validations_total
 from app.core.permissions import Permissions, has_permission
 from app.db.mongodb import get_database
@@ -79,7 +80,7 @@ async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabas
 
 def _check_logout_invalidation(user: dict, payload: dict) -> None:
     """Raise TokenRejected if the token was issued before the user's last logout."""
-    last_logout_at = user.get("last_logout_at")
+    last_logout_at = ensure_utc(user.get("last_logout_at"))
     if not last_logout_at:
         return
     iat = payload.get("iat")
@@ -101,7 +102,7 @@ async def decode_token(token: str, expected_type: str, db: AsyncIOMotorDatabase)
 
     await _ensure_token_not_blacklisted(payload.get("jti"), db)
 
-    user = await UserRepository(db).get_raw_by_username(token_data.sub)
+    user = await UserRepository(db).get_raw_by_id(token_data.sub)
     if user is not None:
         _check_logout_invalidation(user, payload)
     return token_data, user
@@ -170,19 +171,12 @@ class PermissionChecker:
         )
 
 
-async def _resolve_initial_member_id(
-    user_repo: UserRepository, email: str | None = None, username: str | None = None
-) -> str | None:
-    """Resolve a user ID to add as initial project admin member. Returns None if no match."""
-    if email:
-        user = await user_repo.get_raw_by_email(email)
-        if user:
-            return str(user["_id"])
-    if username:
-        user = await user_repo.get_raw_by_username(username)
-        if user:
-            return str(user["_id"])
-    return None
+async def _resolve_initial_member_id(user_repo: UserRepository, email: str | None) -> str | None:
+    """The account that verified the CI job's email, to add as initial project admin; None if none did."""
+    if not email:
+        return None
+    user = await user_repo.get_raw_by_verified_email(email)
+    return str(user["_id"]) if user else None
 
 
 def _within_cap(source: str, would_own: set[str], repository_path: str) -> bool:
@@ -332,6 +326,18 @@ async def _handle_gitlab_oidc(
     gitlab_project_path = payload.project_path
     instance_id = str(gitlab_instance.id)
 
+    if not gitlab_instance.accepts_project_path(gitlab_project_path):
+        logger.warning(
+            "Refused GitLab OIDC token from %s: outside the namespaces allowed on instance '%s'",
+            sanitize_for_log(gitlab_project_path),
+            gitlab_instance.name,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"Project '{gitlab_project_path}' is outside the namespaces allowed on GitLab instance "
+            f"'{gitlab_instance.name}'",
+        )
+
     project_data = await project_repo.get_raw_by_gitlab_composite_key(instance_id, gitlab_project_id)
 
     if project_data:
@@ -356,8 +362,14 @@ async def _handle_gitlab_oidc(
             status_code=404,
             detail=f"Project not found on instance '{gitlab_instance.name}' and auto-creation is disabled",
         )
+    if gitlab_instance.is_shared_issuer and not gitlab_instance.allowed_namespaces:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Project not found on instance '{gitlab_instance.name}': auto-creation on gitlab.com needs "
+            "an allowed namespace list",
+        )
 
-    initial_member_id = await _resolve_initial_member_id(user_repo, email=payload.user_email)
+    initial_member_id = await _resolve_initial_member_id(user_repo, payload.user_email)
     members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
 
     owners: list[str] = []
@@ -413,6 +425,19 @@ async def _handle_github_oidc(
     repo_id = gh_payload.repository_id
     repo_path = gh_payload.repository
 
+    if not github_instance.accepts_owner(gh_payload.repository_owner_id):
+        logger.warning(
+            "Refused GitHub OIDC token from %s (owner id %s): owner not allowed on instance '%s'",
+            sanitize_for_log(repo_path),
+            sanitize_for_log(gh_payload.repository_owner_id),
+            github_instance.name,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=f"Repository owner '{gh_payload.repository_owner}' (id {gh_payload.repository_owner_id}) "
+            f"is not allowed on GitHub instance '{github_instance.name}'",
+        )
+
     project_data = await project_repo.get_raw_by_github_composite_key(instance_id, repo_id)
     if project_data:
         project = Project(**project_data)
@@ -436,9 +461,15 @@ async def _handle_github_oidc(
             status_code=404,
             detail=f"Project not found on GitHub instance '{github_instance.name}' and auto-creation is disabled",
         )
+    if github_instance.is_shared_issuer and not github_instance.allowed_owner_ids:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Project not found on GitHub instance '{github_instance.name}': auto-creation on the shared "
+            "github.com issuer needs an allowed owner list",
+        )
 
-    initial_member_id = await _resolve_initial_member_id(user_repo, username=gh_payload.actor)
-    members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
+    actor = (await github_service.resolve_login(gh_payload.actor, user_repo)).user
+    members = [ProjectMember(user_id=str(actor["_id"]), role="admin")] if actor else []
 
     owners: list[str] = []
     github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)

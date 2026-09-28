@@ -211,7 +211,9 @@ class TestGlobalWriteGrantsWithoutMembership:
         from app.api.v1.endpoints.teams import add_team_member
 
         db = await _seeded()
-        await db.users.insert_one({"_id": "newcomer", "username": "newcomer", "email": "newcomer@test.com"})
+        await db.users.insert_one(
+            {"_id": "newcomer", "username": "newcomer", "email": "newcomer@test.com", "is_verified": True}
+        )
 
         await add_team_member(
             team_id=_TEAM,

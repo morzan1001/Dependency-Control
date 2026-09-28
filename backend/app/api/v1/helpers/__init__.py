@@ -18,6 +18,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.auth import (
     get_logo_path,
+    send_email_change_email,
     send_password_reset_email,
     send_system_invitation_email,
     send_verification_email,
@@ -85,6 +86,7 @@ from app.api.v1.helpers.teams import (
 )
 from app.api.v1.helpers.users import (
     check_admin_or_self,
+    ensure_can_manage_target,
     fetch_updated_user,
     get_user_or_404,
     is_2fa_setup_mode,
@@ -148,6 +150,7 @@ __all__ = [
     # Storage helpers
     "detect_format",
     "enrich_team_with_usernames",
+    "ensure_can_manage_target",
     "exchange_slack_code_for_token",
     "extract_fix_versions",
     "extract_slack_tokens",
@@ -183,6 +186,7 @@ __all__ = [
     "require_analytics_permission",
     "resolve_sbom_refs",
     "resolve_team_names",
+    "send_email_change_email",
     "send_password_reset_email",
     "send_system_invitation_email",
     "send_verification_email",

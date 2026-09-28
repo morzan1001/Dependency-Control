@@ -337,6 +337,7 @@ class TestInstanceResponseAllowsNullAudience:
             oidc_audience=None,
             auto_create_projects=False,
             sync_teams=False,
+            allowed_namespaces=[],
             created_at=datetime.now(timezone.utc),
             created_by="user-1",
             last_modified_at=None,

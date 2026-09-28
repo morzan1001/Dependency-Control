@@ -20,10 +20,57 @@ interface UserDetailsCardProps {
   appConfig: AppConfig | undefined;
 }
 
+function EmailChangeForm({ pendingEmail }: Readonly<{ pendingEmail: string | null | undefined }>) {
+  const queryClient = useQueryClient();
+  const [newEmail, setNewEmail] = useState('');
+
+  const requestMutation = useMutation({
+    mutationFn: () => userApi.requestEmailChange(newEmail),
+    onSuccess: (updated) => {
+      queryClient.invalidateQueries({ queryKey: ['me'] });
+      setNewEmail('');
+      toast.success("Confirmation link sent", {
+        description: `Open the link sent to ${updated.pending_email} to finish the change.`,
+      });
+    },
+    onError: (error: ApiError) => {
+      toast.error("Error", {
+        description: getErrorMessage(error),
+      });
+    }
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    requestMutation.mutate();
+  };
+
+  return (
+    <form onSubmit={handleSubmit} className="grid gap-2">
+      {pendingEmail && (
+        <p className="text-xs text-muted-foreground">
+          Waiting for confirmation of <span className="font-medium">{pendingEmail}</span>. Open the link sent there to finish the change.
+        </p>
+      )}
+      <Label htmlFor="new-email">New email</Label>
+      <div className="flex gap-2">
+        <Input
+          id="new-email"
+          type="email"
+          value={newEmail}
+          onChange={(e) => setNewEmail(e.target.value)}
+          required
+        />
+        <Button type="submit" variant="outline" disabled={requestMutation.isPending || !newEmail}>
+          {requestMutation.isPending ? 'Sending...' : 'Send confirmation link'}
+        </Button>
+      </div>
+    </form>
+  );
+}
+
 export function UserDetailsCard({ user, notificationChannels, appConfig }: Readonly<UserDetailsCardProps>) {
   const queryClient = useQueryClient();
-  const [username, setUsername] = useState(user?.username || '');
-  const [email, setEmail] = useState(user?.email || '');
   const [slackUsername, setSlackUsername] = useState(user?.slack_username || '');
   const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
   const [prevUserId, setPrevUserId] = useState<string | undefined>(user?.id);
@@ -31,16 +78,12 @@ export function UserDetailsCard({ user, notificationChannels, appConfig }: Reado
   // Reset form fields when a different user loads
   if (user && user.id !== prevUserId) {
     setPrevUserId(user.id);
-    setUsername(user.username || '');
-    setEmail(user.email || '');
     setSlackUsername(user.slack_username || '');
     setMattermostUsername(user.mattermost_username || '');
   }
 
   const updateProfileMutation = useMutation({
-    mutationFn: () => userApi.updateMe({ 
-      username, 
-      email,
+    mutationFn: () => userApi.updateMe({
       slack_username: slackUsername || undefined,
       mattermost_username: mattermostUsername || undefined
     }),
@@ -62,6 +105,8 @@ export function UserDetailsCard({ user, notificationChannels, appConfig }: Reado
     updateProfileMutation.mutate();
   };
 
+  const isLocalAccount = (user?.auth_provider || 'local') === 'local';
+
   return (
     <Card>
       <CardHeader>
@@ -69,25 +114,20 @@ export function UserDetailsCard({ user, notificationChannels, appConfig }: Reado
         <CardDescription>Your account information</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <form onSubmit={handleProfileUpdate} className="space-y-4">
-          <div className="grid gap-2">
-            <Label htmlFor="username">Username</Label>
-            <Input 
-              id="username" 
-              value={username} 
-              onChange={(e) => setUsername(e.target.value)} 
-            />
-          </div>
-          <div className="grid gap-2">
-            <Label htmlFor="email">Email</Label>
-            <Input 
-              id="email" 
-              type="email" 
-              value={email} 
-              onChange={(e) => setEmail(e.target.value)} 
-            />
-          </div>
+        <div className="grid gap-2">
+          <Label htmlFor="username">Username</Label>
+          <Input id="username" value={user?.username || ''} disabled className="bg-muted" />
+        </div>
+        <div className="grid gap-2">
+          <Label htmlFor="email">Email</Label>
+          <Input id="email" type="email" value={user?.email || ''} disabled className="bg-muted" />
+          {!isLocalAccount && (
+            <p className="text-xs text-muted-foreground">Managed by your identity provider.</p>
+          )}
+        </div>
+        {isLocalAccount && <EmailChangeForm pendingEmail={user?.pending_email} />}
 
+        <form onSubmit={handleProfileUpdate} className="space-y-4">
           <div className="grid gap-2">
             <Label>Authentication Provider</Label>
             <Input 

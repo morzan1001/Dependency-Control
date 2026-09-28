@@ -9,6 +9,7 @@ from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Response, status
 from fastapi.responses import StreamingResponse
+from pymongo.errors import DuplicateKeyError
 
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -36,6 +37,7 @@ from app.api.v1.helpers.projects import max_project_role
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
+    RESP_AUTH_400_404_409,
     RESP_AUTH_400_404_500,
     RESP_AUTH_404,
     RESP_AUTH_404_500,
@@ -70,6 +72,7 @@ from app.repositories import (
     UserRepository,
     WaiverRepository,
 )
+from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.projects import (
     literal_set_stage,
     ownership_fields,
@@ -98,6 +101,7 @@ from app.schemas.project import (
 from app.services.aggregation.components import component_match_expr
 from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
 from app.services.branches import resolve_default_branch
+from app.services.gitlab import GitLabService
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
 from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
@@ -116,6 +120,7 @@ _MSG_ALREADY_A_MEMBER = "User already a member"
 _MSG_LAST_ADMIN_REMOVE = "Cannot remove the last admin. Add another admin first."
 _MSG_LAST_ADMIN_DEMOTE = "Cannot demote the last admin. Add another admin first."
 _MSG_LAST_ADMIN_OWNER = "This would leave the project without an admin; add one first"
+_MSG_NO_VERIFIED_USER = "No user has verified this email address"
 
 _SCAN_HISTORY_PAGE_SIZE = 100
 
@@ -599,6 +604,49 @@ async def _admin_survival_guard_for(
     return await admin_survival_guard(project, chosen, team_repo)
 
 
+_GITLAB_BINDING_KEYS = ("gitlab_instance_id", "gitlab_project_id")
+
+
+def _may_bind_gitlab(user: User) -> bool:
+    return is_write_superuser(user) or has_permission(user.permissions, Permissions.SYSTEM_MANAGE)
+
+
+async def _vet_gitlab_binding(
+    project: Project,
+    update_data: dict[str, Any],
+    current_user: User,
+    db: Any,
+) -> None:
+    """OIDC ingest resolves a pipeline's project by this binding alone, so setting one is an estate admin's call."""
+    # Clients resend the stored binding with every update, so only a changed value counts.
+    changed = [
+        update_data[key]
+        for key in _GITLAB_BINDING_KEYS
+        if key in update_data and update_data[key] != getattr(project, key)
+    ]
+    if not changed:
+        return
+    if any(value is not None for value in changed) and not _may_bind_gitlab(current_user):
+        raise HTTPException(status_code=403, detail="Only administrators can bind a project to a GitLab project")
+
+    instance_id = update_data.get("gitlab_instance_id", project.gitlab_instance_id)
+    gitlab_project_id = update_data.get("gitlab_project_id", project.gitlab_project_id)
+    if instance_id is None and gitlab_project_id is None:
+        return
+    if instance_id is None or gitlab_project_id is None:
+        raise HTTPException(
+            status_code=400,
+            detail="A GitLab binding needs both the instance and the project id; clear both to unbind",
+        )
+
+    instance = await GitLabInstanceRepository(db).get_by_id(instance_id)
+    if not instance:
+        raise HTTPException(status_code=404, detail=f"GitLab instance with ID {instance_id} not found")
+    details = await GitLabService(instance).get_project_details(gitlab_project_id)
+    if details and details.path_with_namespace:
+        update_data["gitlab_project_path"] = details.path_with_namespace
+
+
 async def _assert_gitlab_mr_token_present(
     project: Project,
     update_data: dict[str, Any],
@@ -609,10 +657,7 @@ async def _assert_gitlab_mr_token_present(
     instance_id = update_data.get("gitlab_instance_id", project.gitlab_instance_id)
     if not (mr_enabled and instance_id):
         return
-    from app.repositories.gitlab_instances import GitLabInstanceRepository
-
-    instance_repo = GitLabInstanceRepository(db)
-    gitlab_instance = await instance_repo.get_by_id(instance_id)
+    gitlab_instance = await GitLabInstanceRepository(db).get_by_id(instance_id)
     if gitlab_instance and not gitlab_instance.access_token:
         raise HTTPException(
             status_code=400,
@@ -671,7 +716,7 @@ async def _audit_license_policy_change(
         )
 
 
-@router.put("/{project_id}", summary="Update project details", responses=RESP_AUTH_404)
+@router.put("/{project_id}", summary="Update project details", responses=RESP_AUTH_400_404_409)
 async def update_project(
     project_id: str,
     project_in: ProjectUpdate,
@@ -694,6 +739,7 @@ async def update_project(
         await _assert_may_hand_to_teams(project, chosen, current_user, team_repo)
         ownership_stages = set_owners_pipeline(sorted(chosen))
         guard = await _admin_survival_guard_for(project, chosen, current_user, team_repo)
+    await _vet_gitlab_binding(project, update_data, current_user, db)
     await _assert_gitlab_mr_token_present(project, update_data, db)
     await _assert_github_pr_token_present(project, update_data, db)
 
@@ -708,8 +754,16 @@ async def update_project(
     old_license_policy = _resolve_license_policy(project)
 
     stages = ([literal_set_stage(update_data)] if update_data else []) + ownership_stages
+    try:
+        written = not stages or await project_repo.update_raw(project_id, stages, guard)
+    except DuplicateKeyError as exc:
+        # The GitLab binding is the only unique key an update body can write.
+        bound_id = update_data.get("gitlab_project_id", project.gitlab_project_id)
+        raise HTTPException(
+            status_code=409, detail=f"GitLab project {bound_id} is already bound to another project"
+        ) from exc
     # An unguarded write matching nothing means the project is gone, which the read below answers.
-    if stages and not await project_repo.update_raw(project_id, stages, guard) and guard:
+    if not written and guard:
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_OWNER)
 
     updated_project = await project_repo.get_by_id_strong(project_id)
@@ -1101,15 +1155,15 @@ async def invite_user(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    """Add an existing user to the project by email (404 if no account exists; use system invitations for new users)."""
+    """Add the existing user that verified this email (404 if none did; use system invitations for new users)."""
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     user_repo = UserRepository(db)
     project_repo = ProjectRepository(db)
 
-    user_to_add = await user_repo.get_raw_by_email(invite_in.email)
+    user_to_add = await user_repo.get_raw_by_verified_email(invite_in.email)
     if not user_to_add:
-        raise HTTPException(status_code=404, detail="User with this email not found")
+        raise HTTPException(status_code=404, detail=_MSG_NO_VERIFIED_USER)
 
     member = ProjectMember(user_id=str(user_to_add["_id"]), role=invite_in.role)
 

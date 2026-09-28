@@ -8,6 +8,7 @@ export interface GitHubInstance {
   oidc_audience?: string;
   auto_create_projects: boolean;
   sync_teams: boolean;
+  allowed_owner_ids: string[];
   has_access_token?: boolean;
   created_at: string;
   created_by: string;
@@ -24,6 +25,7 @@ export interface GitHubInstanceCreate {
   auto_create_projects?: boolean;
   sync_teams?: boolean;
   access_token?: string;
+  allowed_owner_ids?: string[];
 }
 
 export interface GitHubInstanceUpdate {
@@ -36,6 +38,7 @@ export interface GitHubInstanceUpdate {
   auto_create_projects?: boolean;
   sync_teams?: boolean;
   access_token?: string;
+  allowed_owner_ids?: string[];
 }
 
 export interface GitHubInstanceList {

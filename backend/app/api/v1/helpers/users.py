@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.permissions import has_permission
+from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories import UserRepository
 
@@ -41,6 +41,14 @@ def check_admin_or_self(
     if not has_admin_perm and str(current_user.id) != target_user_id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
     return has_admin_perm
+
+
+def ensure_can_manage_target(caller: User, target: dict[str, Any]) -> None:
+    """Raise 403 unless the caller holds every permission of the target account or holds system:manage."""
+    if has_permission(caller.permissions, Permissions.SYSTEM_MANAGE):
+        return
+    if not set(target.get("permissions") or []) <= set(caller.permissions):
+        raise HTTPException(status_code=403, detail="Cannot manage a user who holds permissions you don't hold")
 
 
 def is_2fa_setup_mode(user: User) -> bool:

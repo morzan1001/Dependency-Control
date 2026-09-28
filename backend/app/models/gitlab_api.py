@@ -30,6 +30,7 @@ class GitLabProjectDetails(BaseModel):
 
     namespace: GitLabNamespace | None = None
     default_branch: str | None = None
+    path_with_namespace: str | None = None
 
 
 class GitLabMergeRequest(BaseModel):
@@ -57,6 +58,8 @@ class GitLabMember(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    id: int | None = None
     username: str | None = None
+    # Present only for a token of an instance administrator.
     email: str | None = None
     access_level: int = 0
