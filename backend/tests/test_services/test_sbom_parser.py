@@ -2279,6 +2279,69 @@ def _syft_cyclonedx() -> dict:
     }
 
 
+def _npm_cyclonedx() -> dict:
+    """cyclonedx-npm output: bom-refs are name@version paths, not purls."""
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "app@1.0.0"}},
+        "components": [
+            {"type": "library", "name": "express", "version": "4.18.2", "bom-ref": "app@1.0.0|express@4.18.2"},
+            {
+                "type": "library",
+                "name": "body-parser",
+                "version": "1.20.1",
+                "bom-ref": "app@1.0.0|express@4.18.2|body-parser@1.20.1",
+                "purl": "pkg:npm/body-parser@1.20.1",
+            },
+        ],
+        "dependencies": [
+            {"ref": "app@1.0.0", "dependsOn": ["app@1.0.0|express@4.18.2"]},
+            {"ref": "app@1.0.0|express@4.18.2", "dependsOn": ["app@1.0.0|express@4.18.2|body-parser@1.20.1"]},
+        ],
+    }
+
+
+def _express_syft_json() -> dict:
+    artifacts = [
+        {"id": "a-express", "name": "express", "version": "4.18.2", "type": "npm", "purl": "pkg:npm/express@4.18.2"},
+        {
+            "id": "a-body",
+            "name": "body-parser",
+            "version": "1.20.1",
+            "type": "npm",
+            "purl": "pkg:npm/body-parser@1.20.1",
+        },
+    ]
+    return {
+        "descriptor": {"name": "syft"},
+        "source": {"id": "src"},
+        "artifacts": artifacts,
+        "artifactRelationships": [
+            {"parent": "src", "child": "a-express", "type": "depends-on"},
+            {"parent": "a-express", "child": "a-body", "type": "depends-on"},
+        ],
+    }
+
+
+def _express_spdx() -> dict:
+    packages = [_spdx_package("app"), _spdx_package("express"), _spdx_package("body-parser")]
+    edges = [
+        ("DOCUMENT", "DESCRIBES", "app"),
+        ("app", "DEPENDS_ON", "express"),
+        ("express", "DEPENDS_ON", "body-parser"),
+    ]
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "packages": packages,
+        "relationships": [
+            {"spdxElementId": f"SPDXRef-{a}", "relationshipType": kind, "relatedSpdxElement": f"SPDXRef-{b}"}
+            for a, kind, b in edges
+        ],
+    }
+
+
 class TestCycloneDXParentRefs:
     def test_parents_are_stored_as_the_parent_s_node_key(self):
         deps = {d.name: d for d in parse_sbom(_syft_cyclonedx()).dependencies}
@@ -2286,10 +2349,15 @@ class TestCycloneDXParentRefs:
         assert deps["body-parser"].parent_components == ["pkg:npm/express@4.18.2"]
         assert deps["express"].parent_components == []
 
-    def test_the_dependency_tree_nests_a_syft_cyclonedx_sbom(self):
+    @pytest.mark.parametrize(
+        "sbom",
+        [_syft_cyclonedx(), _npm_cyclonedx(), _express_syft_json(), _express_spdx()],
+        ids=["cyclonedx-syft", "cyclonedx-npm", "syft-json", "spdx"],
+    )
+    def test_the_dependency_tree_nests_every_sbom_format(self, sbom):
         from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
 
-        dependencies = [d.to_dict() for d in parse_sbom(_syft_cyclonedx()).dependencies]
+        dependencies = [d.to_dict() for d in parse_sbom(sbom).dependencies]
         graph = _build_dependency_graph(dependencies, {}, len(dependencies))
 
         nodes = {node.name: node for node in graph.nodes}

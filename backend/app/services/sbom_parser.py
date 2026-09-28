@@ -970,8 +970,7 @@ class SBOMParser:
             else:
                 self._count_skipped(result, "unidentifiable")
 
-        # Second pass: parent ids only resolve once every artifact is parsed, and
-        # they must be stored as purl/name@version so tree nodes can match them.
+        # Parent ids resolve to node keys only once every artifact is parsed.
         for artifact_id, parsed in parsed_by_id.items():
             parsed.parent_components = _parent_refs(parents_by_id.get(artifact_id, []), parsed_by_id)
 
@@ -1282,9 +1281,8 @@ class SBOMParser:
             else:
                 self._count_skipped(result, "unidentifiable")
 
-        # SPDXRef parents only resolve after all packages parsed; store them as
-        # purl/name@version so tree nodes can match them. Refs to the skipped
-        # root drop out here, leaving direct dependencies parentless as expected.
+        # SPDXRef parents resolve to node keys only once every package is parsed; refs to the
+        # skipped root drop out, leaving direct dependencies parentless as expected.
         for pkg_spdx_id, parsed in parsed_by_id.items():
             parsed.parent_components = _parent_refs(reverse_deps_graph.get(pkg_spdx_id, []), parsed_by_id)
 
