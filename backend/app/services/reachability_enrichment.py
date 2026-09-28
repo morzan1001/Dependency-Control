@@ -107,11 +107,34 @@ class _PreparedCallgraph:
     analyzed_index: dict[str, bool]
 
 
+def _with_enclosing_packages(module_usage: dict[str, Any]) -> dict[str, Any]:
+    """Fold each Python submodule's usage (``urllib3.util.retry``) into every enclosing package key.
+
+    The producer emits a from-import's module path when it cannot resolve the distribution.
+    """
+    locations: dict[str, dict[str, None]] = {}
+    symbols: dict[str, dict[str, None]] = {}
+    for key, usage in module_usage.items():
+        parts = key.split(".")
+        for depth in range(1, len(parts) + 1):
+            target = ".".join(parts[:depth])
+            locations.setdefault(target, {}).update(dict.fromkeys(usage.get("import_locations") or []))
+            symbols.setdefault(target, {}).update(dict.fromkeys(usage.get("used_symbols") or []))
+    return {
+        key: {**module_usage.get(key, {}), "import_locations": list(found), "used_symbols": list(symbols[key])}
+        for key, found in locations.items()
+    }
+
+
 def _prepare_callgraph(callgraph: Any) -> _PreparedCallgraph:
     analyzed_modules = callgraph.analyzed_modules or []
+    language = callgraph.language or "unknown"
+    module_usage = callgraph.module_usage or {}
+    if language.lower() == "python":
+        module_usage = _with_enclosing_packages(module_usage)
     return _PreparedCallgraph(
-        language=callgraph.language or "unknown",
-        usage_index=build_component_index(callgraph.module_usage or {}),
+        language=language,
+        usage_index=build_component_index(module_usage),
         import_map=callgraph.import_map or {},
         analyzed_index=build_component_index(dict.fromkeys(analyzed_modules, True)),
     )

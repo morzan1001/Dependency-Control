@@ -106,18 +106,6 @@ class TestDistinctPackagesStaySeparate:
 
 
 class TestMostQualifiedNameWins:
-    def test_scoped_npm_name_survives_the_bare_one(self):
-        agg = ResultAggregator()
-        agg.add_finding(_vuln("core", "21.1.5", "CVE-2026-50557", "osv"))
-        agg.add_finding(_vuln("@angular/core", "21.1.5", "CVE-2026-50557", "trivy"))
-
-        findings = [f for f in agg.get_findings() if f.type == FindingType.VULNERABILITY]
-        assert len(findings) == 1
-        assert findings[0].component == "@angular/core"
-        assert findings[0].id == "@angular/core:21.1.5"
-        assert "core:21.1.5" in findings[0].aliases
-        assert set(findings[0].scanners) == {"osv", "trivy"}
-
     def test_maven_coordinates_survive_the_bare_artifact_id(self):
         agg = ResultAggregator()
         agg.add_finding(_vuln("postgresql", "42.7.3", "CVE-2024-1597", "grype"))
@@ -131,25 +119,40 @@ class TestMostQualifiedNameWins:
     def test_related_findings_still_link_across_qualification(self):
         """An outdated finding on the bare dependency name links to the qualified vulnerability."""
         agg = ResultAggregator()
-        agg.add_finding(_vuln("@angular/core", "21.1.5", "CVE-2026-50557", "trivy"))
-        agg.add_finding(
-            Finding(
-                id="OUTDATED-core",
-                type=FindingType.OUTDATED,
-                severity=Severity.INFO,
-                component="core",
-                version="21.1.5",
-                description="outdated",
-                scanners=["outdated_packages"],
-                details={"fixed_version": "21.2.0"},
-            )
-        )
+        agg.add_finding(_vuln("org.postgresql:postgresql", "42.7.3", "CVE-2024-1597", "trivy"))
+        agg.add_finding(_outdated("postgresql", "42.7.3", "42.7.4"))
 
         findings = agg.get_findings()
         vuln = next(f for f in findings if f.type == FindingType.VULNERABILITY)
         outdated = next(f for f in findings if f.type == FindingType.OUTDATED)
         assert outdated.id in vuln.related_findings
         assert vuln.id in outdated.related_findings
+
+    def test_a_type_definition_package_is_not_linked_to_its_runtime_package(self):
+        agg = ResultAggregator()
+        agg.add_finding(_vuln("lodash", "4.17.15", "CVE-2020-8203", "trivy"))
+        agg.add_finding(_outdated("lodash", "4.17.15", "4.17.21"))
+        agg.add_finding(_outdated("@types/lodash", "4.14.100", "4.17.20"))
+
+        findings = agg.get_findings()
+        vuln = next(f for f in findings if f.type == FindingType.VULNERABILITY)
+        types_outdated = next(f for f in findings if f.component == "@types/lodash")
+        assert vuln.details["outdated_info"]["current_version"] == "4.17.15"
+        assert types_outdated.id not in vuln.related_findings
+        assert "vulnerability_info" not in types_outdated.details
+
+
+def _outdated(component: str, version: str, latest: str) -> Finding:
+    return Finding(
+        id=f"OUTDATED-{component}",
+        type=FindingType.OUTDATED,
+        severity=Severity.INFO,
+        component=component,
+        version=version,
+        description="outdated",
+        scanners=["outdated_packages"],
+        details={"current_version": version, "latest_version": latest, "fixed_version": latest},
+    )
 
 
 class TestPackageNameWaiverTargetsOnePackage:

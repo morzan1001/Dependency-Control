@@ -3,18 +3,24 @@
 import json
 
 import pytest
+from bson import ObjectId
 from fastapi import HTTPException
 
 from app.api.v1.endpoints.callgraph import _parse_callgraph, _resolve_format
 from app.api.v1.helpers.callgraph import (
     callgraph_entry_count,
-    canonical_module_key,
     detect_format,
     parse_generic_format,
     parse_madge_format,
 )
-from app.services.component_identity import build_component_index, lookup_component
-from app.services.reachability_enrichment import _normalize_component
+from app.services.component_identity import build_component_index, canonical_module_key, lookup_component
+from app.schemas.projections import CallgraphMinimal
+from app.services.reachability_enrichment import (
+    _find_usage,
+    _is_package_in_callgraph,
+    _normalize_component,
+    _prepare_callgraph,
+)
 from tests.helpers.comparisons import counted_str_type
 
 # madge 8.0.0: `npx madge@latest --json --include-npm src` over a fixture tree with a real
@@ -75,6 +81,21 @@ JDEPS_OUTPUT = """
   "analyzed_modules": ["com.example:textkit", "hdrhistogram:hdrhistogram"]
 }
 """
+
+
+def _prepared_python_callgraph(imports: list[dict], analyzed: list[str] | None = None):
+    _, _, module_usage, analyzed_keys = parse_generic_format(
+        {"imports": imports, "analyzed_modules": analyzed or []}, "python"
+    )
+    return _prepare_callgraph(
+        CallgraphMinimal(
+            _id=ObjectId(),
+            language="python",
+            module_usage={key: usage.model_dump() for key, usage in module_usage.items()},
+            analyzed_modules=analyzed_keys,
+        )
+    )
+
 
 # Names that a directory-based parser would produce instead of package names.
 PATH_ARTEFACTS = {"src", "lib", "utils", "utils.js", "index.js", "node_modules", "app", "cmd", ".", ""}
@@ -225,6 +246,32 @@ class TestWriteReadMeetingPoint:
     )
     def test_canonical_key_equals_read_side_normalization(self, component, language):
         assert canonical_module_key(component, language) == _normalize_component(component, language)
+
+    @pytest.mark.parametrize(
+        ("one", "sibling"),
+        [("ruamel.yaml", "ruamel.yaml.clib"), ("zope.interface", "zope.component"), ("oslo.config", "oslo.messaging")],
+    )
+    def test_dotted_python_distributions_keep_distinct_keys(self, one, sibling):
+        assert canonical_module_key(one, "python") != canonical_module_key(sibling, "python")
+
+    def test_a_dotted_distribution_is_not_reachable_through_an_imported_sibling(self):
+        prepared = _prepared_python_callgraph(
+            [{"module": "zope.interface", "file": "app/models.py", "line": 1, "symbols": ["Interface"]}],
+            analyzed=["zope.interface", "zope.component"],
+        )
+
+        assert _is_package_in_callgraph(prepared, "zope.interface")
+        assert not _is_package_in_callgraph(prepared, "zope.component")
+
+    def test_an_unresolved_submodule_import_counts_for_its_distribution(self):
+        """Without the dependencies installed the producer emits the module path of a from-import."""
+        prepared = _prepared_python_callgraph(
+            [{"module": "urllib3.util.retry", "file": "app/client.py", "line": 4, "symbols": ["Retry"]}]
+        )
+
+        usage = _find_usage(prepared, "urllib3")
+        assert usage["used_symbols"] == ["Retry"]
+        assert usage["import_locations"] == ["app/client.py"]
 
     @pytest.mark.parametrize(
         ("stored", "component", "language"),

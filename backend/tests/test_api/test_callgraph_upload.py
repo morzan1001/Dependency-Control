@@ -119,10 +119,10 @@ _PRODUCERS = [
     pytest.param(
         _envelope("generic", "python", _PYTHON_DATA),
         "python",
-        # A first-party absolute import ("app.config") is indistinguishable from a
-        # distribution at parse time, so it gets a usage entry; only analyzed_modules gates
-        # the unreachable verdict.
-        {"requests", "urllib3", "app"},
+        # Keys keep the imported module path: a first-party absolute import ("app.config") is
+        # indistinguishable from a distribution at parse time, so it gets a usage entry; only
+        # analyzed_modules gates the unreachable verdict.
+        {"requests", "urllib3.util.retry", "app.config"},
         ["pyyaml", "requests", "urllib3"],
         id="python-ast",
     ),
@@ -239,8 +239,8 @@ class TestProducerUploads:
         await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
 
         stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
-        assert stored["module_usage"]["urllib3"]["used_symbols"] == ["Retry"]
-        assert stored["module_usage"]["urllib3"]["import_locations"] == ["app/client.py"]
+        assert stored["module_usage"]["urllib3.util.retry"]["used_symbols"] == ["Retry"]
+        assert stored["module_usage"]["urllib3.util.retry"]["import_locations"] == ["app/client.py"]
 
     @pytest.mark.asyncio
     async def test_java_publishes_no_coverage_universe_by_default(self, client, db):

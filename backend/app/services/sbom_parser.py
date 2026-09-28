@@ -656,6 +656,9 @@ class SBOMParser:
 
         if not name:
             return None
+        # Every other producer names a scoped npm package "@scope/name"; the bare name is another package.
+        if isinstance(group, str) and group.startswith("@") and get_purl_type(purl) == "npm":
+            name = f"{group}/{name}"
 
         layer_digest, found_by, locations, properties, prop_cpes = self._extract_cyclonedx_properties(comp)
 

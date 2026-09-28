@@ -2201,3 +2201,41 @@ def _spdx_package(name: str) -> dict:
 
 def _syft_artifact(name: str) -> dict:
     return {"id": name, "name": name, "version": "1.0.0", "type": "npm", "purl": f"pkg:npm/{name}@1.0.0"}
+
+
+class TestCycloneDXNpmScope:
+    def test_a_scoped_npm_component_keeps_its_scope_in_the_name(self):
+        result = parse_sbom(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "library",
+                        "group": "@angular",
+                        "name": "core",
+                        "version": "16.2.0",
+                        "purl": "pkg:npm/%40angular/core@16.2.0",
+                    }
+                ]
+            )
+        )
+
+        [dep] = result.dependencies
+        assert (dep.name, dep.group) == ("@angular/core", "@angular")
+
+    def test_a_maven_group_stays_in_its_own_field(self):
+        result = parse_sbom(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "library",
+                        "group": "org.jetbrains",
+                        "name": "annotations",
+                        "version": "24.0.1",
+                        "purl": "pkg:maven/org.jetbrains/annotations@24.0.1",
+                    }
+                ]
+            )
+        )
+
+        [dep] = result.dependencies
+        assert (dep.name, dep.group) == ("annotations", "org.jetbrains")

@@ -84,7 +84,7 @@ Supported aggregation stages
 Supported aggregation expression operators (in ``$project`` / accumulator args)
 ------------------------------------------------------------------------------
 - ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``, ``$toString``
-- Strings: ``$trim``, ``$replaceAll``, ``$regexFind``
+- Strings: ``$trim``, ``$replaceAll``, ``$regexFind``, ``$regexMatch``
 - Arrays and maps: ``$size``, ``$setUnion``, ``$setDifference``, ``$objectToArray``,
   ``$arrayToObject``, ``$arrayElemAt``, ``$split``
 - Comparison: ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``
@@ -779,6 +779,10 @@ def _eval_expr(doc: dict, expr):
         spec = expr["$replaceAll"]
         val = _eval_expr(doc, spec["input"])
         return val.replace(spec["find"], spec["replacement"]) if isinstance(val, str) else None
+    if "$regexMatch" in expr:
+        spec = expr["$regexMatch"]
+        val = _eval_expr(doc, spec["input"])
+        return isinstance(val, str) and _re.search(spec["regex"], val) is not None
     if "$regexFind" in expr:
         spec = expr["$regexFind"]
         val = _eval_expr(doc, spec["input"])
