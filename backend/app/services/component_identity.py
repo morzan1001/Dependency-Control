@@ -80,8 +80,6 @@ def _resolve_bucket(names: list[str]) -> dict[str, str]:
     A name attaches to a more qualified spelling of itself only when exactly one such
     candidate exists, so ``core`` is never guessed onto one of several ``*:core`` packages.
     """
-    # Walking each name's own boundary suffixes keeps this linear; a bucket can hold every
-    # file sharing a basename in a large SAST scan, where pairwise matching would not scale.
     members = set(names)
     qualifiers: dict[str, list[str]] = {}
     for name in names:

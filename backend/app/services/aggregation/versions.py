@@ -87,7 +87,7 @@ def resolve_fixed_versions(versions: list[str]) -> str | None:
     return calculate_aggregated_fixed_version(versions)
 
 
-def normalize_version(version: str) -> str:
+def normalize_version(version: str | None) -> str:
     if not version:
         return "unknown"
     v = version.strip().lower()

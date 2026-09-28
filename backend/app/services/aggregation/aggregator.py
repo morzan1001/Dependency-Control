@@ -10,7 +10,7 @@ from app.core.constants import (
     UNKNOWN_LICENSE_PATTERNS,
     get_severity_value,
 )
-from app.models.finding import Finding, FindingType, Severity
+from app.models.finding import PACKAGE_FINDING_TYPES, Finding, FindingType, Severity
 from app.schemas.enrichment import DependencyEnrichment
 from app.schemas.finding import (
     QualityAggregatedDetails,
@@ -72,6 +72,11 @@ _LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
 _SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
 _SPDX_WITH_SPLIT = re.compile(r"\s++WITH\s++")
 _CATEGORY_RANK_BY_VALUE = {category.value: rank for category, rank in CATEGORY_RESTRICTIVENESS.items()}
+
+
+def _package_key(finding: Finding) -> tuple[str, str]:
+    """(component, version) as every aggregate key spells them: trimmed, lowercased, v-prefix dropped."""
+    return normalize_component(finding.component), normalize_version(finding.version)
 
 
 class ResultAggregator:
@@ -322,8 +327,7 @@ class ResultAggregator:
         vulns = {v["id"] for v in f.details.get("vulnerabilities", [])}
         if not vulns:
             return None
-        component = f.component.lower() if f.component else "unknown"
-        version = f.version or "unknown"
+        component, version = _package_key(f)
         return (extract_artifact_name(component), version)
 
     def _partition_findings(
@@ -428,7 +432,7 @@ class ResultAggregator:
                 cross_link_pair(f1, f2)
 
     def _link_related_findings_by_component(self, findings: list[Finding]) -> None:
-        """Link findings for the same package to each other (vuln, outdated, quality, license, eol).
+        """Link findings for the same package, or the same file path, to each other.
 
         Groups past ``MAX_CROSS_LINK_GROUP_SIZE`` are left unlinked but not unmarked: a file
         carrying thousands of SAST hits is one "component" here, linking it pairwise costs more
@@ -438,13 +442,18 @@ class ResultAggregator:
         ``details`` context blocks depend on this, never a severity, a count or a score — which
         is why the ceiling is safe on the persisted path too.
         """
-        representatives = cluster_by_package_identity(f.component for f in findings if f.component)
-        component_map: dict[str, list[Finding]] = {}
+        representatives = cluster_by_package_identity(
+            f.component for f in findings if f.component and f.type in PACKAGE_FINDING_TYPES
+        )
+        component_map: dict[tuple[str, str], list[Finding]] = {}
 
         for f in findings:
             if not f.component:
                 continue
-            key = representatives[normalize_component(f.component)]
+            if f.type in PACKAGE_FINDING_TYPES:
+                key = ("package", representatives[normalize_component(f.component)])
+            else:
+                key = ("file", f.component.strip())
             component_map.setdefault(key, []).append(f)
 
         for component_findings in component_map.values():
@@ -526,8 +535,7 @@ class ResultAggregator:
         existing.details["fixed_version"] = resolve_fixed_versions(fvs) if fvs else None
 
     def _add_vulnerability_finding(self, finding: Finding, source: str | None = None) -> None:
-        comp_key = normalize_component(finding.component or "unknown")
-        version_key = normalize_version(finding.version or "unknown")
+        comp_key, version_key = _package_key(finding)
         agg_key = f"{AGG_KEY_VULNERABILITY}:{comp_key}:{version_key}"
 
         vuln_entry = self._build_vuln_entry(finding, source)
@@ -609,10 +617,7 @@ class ResultAggregator:
 
     def _add_quality_finding(self, finding: Finding, source: str | None = None) -> None:
         """Aggregate quality findings (scorecard, maintainer_risk, ...) by component+version."""
-        raw_comp = finding.component if finding.component else "unknown"
-        comp_key = normalize_component(raw_comp)
-        raw_version = finding.version if finding.version else "unknown"
-        version_key = normalize_version(raw_version)
+        comp_key, version_key = _package_key(finding)
         agg_key = f"{AGG_KEY_QUALITY}:{comp_key}:{version_key}"
 
         issue_type = self._quality_issue_type(finding)
@@ -653,12 +658,12 @@ class ResultAggregator:
             found_in=[source] if source else [],
         )
 
-    def _lookup_existing_key(self, finding: Finding, comp_key: str, lookup_key_id: str) -> str | None:
+    def _lookup_existing_key(self, finding: Finding, package: str, lookup_key_id: str) -> str | None:
         """Resolve an existing aggregate key for the finding via id or aliases."""
         if lookup_key_id in self.alias_map:
             return self.alias_map[lookup_key_id]
         for alias in finding.aliases:
-            lookup_key_alias = f"{finding.type}:{comp_key}:{finding.version}:{alias}"
+            lookup_key_alias = f"{finding.type}:{package}:{alias}"
             if lookup_key_alias in self.alias_map:
                 return self.alias_map[lookup_key_alias]
         return None
@@ -682,11 +687,11 @@ class ResultAggregator:
         if source and source not in existing.found_in:
             existing.found_in.append(source)
 
-    def _record_alias_map(self, finding: Finding, comp_key: str, lookup_key_id: str, target_key: str) -> None:
+    def _record_alias_map(self, finding: Finding, package: str, lookup_key_id: str, target_key: str) -> None:
         """Record id and alias lookups for a finding pointing to target_key."""
         self.alias_map[lookup_key_id] = target_key
         for alias in finding.aliases:
-            k = f"{finding.type}:{comp_key}:{finding.version}:{alias}"
+            k = f"{finding.type}:{package}:{alias}"
             self.alias_map[k] = target_key
 
     def _add_generic_finding(self, finding: Finding, source: str | None = None) -> None:
@@ -694,16 +699,17 @@ class ResultAggregator:
         if source and source not in finding.found_in:
             finding.found_in.append(source)
 
-        comp_key = finding.component.lower() if finding.component else "unknown"
-        primary_key = f"{finding.type}:{finding.id}:{comp_key}:{finding.version}"
-        lookup_key_id = f"{finding.type}:{comp_key}:{finding.version}:{finding.id}"
+        comp_key, version_key = _package_key(finding)
+        package = f"{comp_key}:{version_key}"
+        primary_key = f"{finding.type}:{finding.id}:{package}"
+        lookup_key_id = f"{finding.type}:{package}:{finding.id}"
 
-        existing_key = self._lookup_existing_key(finding, comp_key, lookup_key_id)
+        existing_key = self._lookup_existing_key(finding, package, lookup_key_id)
 
         if existing_key and existing_key in self.findings:
             self._merge_generic_into_existing(self.findings[existing_key], finding, source)
-            self._record_alias_map(finding, comp_key, lookup_key_id, existing_key)
+            self._record_alias_map(finding, package, lookup_key_id, existing_key)
             return
 
         self.findings[primary_key] = finding
-        self._record_alias_map(finding, comp_key, lookup_key_id, primary_key)
+        self._record_alias_map(finding, package, lookup_key_id, primary_key)

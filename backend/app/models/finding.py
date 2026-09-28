@@ -45,6 +45,19 @@ class FindingType(str, Enum):
     OTHER = "other"
 
 
+# Types whose component is a package name; every other type anchors on a file path or asset.
+PACKAGE_FINDING_TYPES = frozenset(
+    {
+        FindingType.VULNERABILITY,
+        FindingType.OUTDATED,
+        FindingType.LICENSE,
+        FindingType.EOL,
+        FindingType.QUALITY,
+        FindingType.MALWARE,
+    }
+)
+
+
 class Finding(BaseModel):
     id: str = Field(..., description="Unique identifier for the finding")
     type: FindingType = Field(..., description="Type of finding")

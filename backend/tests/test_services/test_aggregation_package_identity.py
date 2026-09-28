@@ -6,6 +6,8 @@ Fixtures mirror real prod shapes: npm components arrive scoped from trivy/grype
 from grype.
 """
 
+import pytest
+
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
 
@@ -75,34 +77,52 @@ class TestDistinctPackagesStaySeparate:
         for finding in agg.get_findings():
             assert finding.related_findings == []
 
-    def test_same_named_files_in_different_directories_stay_unlinked(self):
-        """SAST components are file paths; a/util.js and b/util.js are different files."""
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            ("src/a/util.js", "src/b/util.js"),
+            ("util.js", "src/util.js"),
+            ("Dockerfile", "deploy/Dockerfile"),
+            ("Dockerfile", "dockerfile"),
+        ],
+    )
+    def test_same_named_files_stay_unlinked(self, first, second):
+        """File-anchored findings carry a path; two paths are two files, whatever they end in."""
         agg = ResultAggregator()
-        agg.add_finding(
-            Finding(
-                id="SECRET-a",
-                type=FindingType.SECRET,
-                severity=Severity.CRITICAL,
-                component="src/a/util.js",
-                version="",
-                description="secret",
-                scanners=["trufflehog"],
-            )
-        )
-        agg.add_finding(
-            Finding(
-                id="SECRET-b",
-                type=FindingType.SECRET,
-                severity=Severity.CRITICAL,
-                component="src/b/util.js",
-                version="",
-                description="secret",
-                scanners=["trufflehog"],
-            )
-        )
+        agg.add_finding(_file_finding("SECRET-a", FindingType.SECRET, first))
+        agg.add_finding(_file_finding("IAC-b", FindingType.IAC, second))
 
         for finding in agg.get_findings():
             assert finding.related_findings == []
+            assert "additional_finding_types" not in finding.details
+
+    def test_a_package_and_a_vendored_file_of_the_same_name_stay_unlinked(self):
+        agg = ResultAggregator()
+        agg.add_finding(_vuln("chart.js", "2.9.3", "CVE-2020-7746", "trivy"))
+        agg.add_finding(_file_finding("SECRET-v", FindingType.SECRET, "static/vendor/chart.js"))
+
+        for finding in agg.get_findings():
+            assert finding.related_findings == []
+
+    def test_the_same_file_links_across_file_anchored_types(self):
+        agg = ResultAggregator()
+        agg.add_finding(_file_finding("SECRET-a", FindingType.SECRET, "app/config.py"))
+        agg.add_finding(_file_finding("IAC-a", FindingType.IAC, "app/config.py"))
+
+        secret = next(f for f in agg.get_findings() if f.type == FindingType.SECRET)
+        assert secret.related_findings == ["IAC-a"]
+
+
+def _file_finding(finding_id: str, finding_type: FindingType, path: str) -> Finding:
+    return Finding(
+        id=finding_id,
+        type=finding_type,
+        severity=Severity.HIGH,
+        component=path,
+        version="",
+        description="file finding",
+        scanners=["scanner"],
+    )
 
 
 class TestMostQualifiedNameWins:
@@ -194,3 +214,12 @@ class TestPackageNameWaiverTargetsOnePackage:
         assert modified == 1
         waived = asyncio.run(db.findings.find({"scan_id": "scan-1", "waived": True}).to_list(None))
         assert [d["component"] for d in waived] == ["@angular/core"]
+
+
+class TestVersionSpellingDoesNotSplitAFinding:
+    def test_an_outdated_finding_with_and_without_a_v_prefix_is_one_finding(self):
+        agg = ResultAggregator()
+        for version in ("v1.2.3", "1.2.3"):
+            agg.add_finding(_outdated("github.com/x/y", version, "1.3.0"))
+
+        assert [f.version for f in agg.get_findings()] == ["v1.2.3"]

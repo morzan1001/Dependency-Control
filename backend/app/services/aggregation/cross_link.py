@@ -4,14 +4,18 @@ from __future__ import annotations
 
 from app.core.constants import get_severity_value
 from app.models.finding import Finding, FindingType
+from app.services.aggregation.versions import normalize_version
 
 
 def cross_link_pair(f1: Finding, f2: Finding) -> None:
-    """Cross-reference two findings on the same package and exchange their context blocks."""
+    """Cross-reference two findings on the same package; context blocks only pass between one version."""
     if f2.id not in f1.related_findings:
         f1.related_findings.append(f2.id)
     if f1.id not in f2.related_findings:
         f2.related_findings.append(f1.id)
+
+    if f1.version and f2.version and normalize_version(f1.version) != normalize_version(f2.version):
+        return
 
     for primary, other in ((f1, f2), (f2, f1)):
         add_context_to_vulnerability(primary, other)
