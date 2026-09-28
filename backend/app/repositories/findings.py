@@ -201,12 +201,6 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def count_by_scan(self, scan_id: str) -> int:
         return await self.count({"scan_id": scan_id})
 
-    async def bulk_upsert(self, operations: list[UpdateOne]) -> int:
-        if not operations:
-            return 0
-        result = await self.collection.bulk_write(operations)
-        return result.upserted_count + result.modified_count
-
     _LOCATION_TYPES = ("sast", "iac", "secret", "crypto_key_management")
 
     async def find_location_findings(self, scan_id: str) -> list[dict[str, Any]]:
