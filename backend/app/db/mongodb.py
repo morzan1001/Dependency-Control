@@ -2,11 +2,11 @@
 
 import asyncio
 import logging
+from datetime import timezone
 from typing import Any
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
-from pymongo import ReadPreference
 
 from app.core.config import settings
 from app.core.metrics import db_connections_active
@@ -19,11 +19,6 @@ DEFAULT_MIN_POOL_SIZE = 5
 DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 30000
 DEFAULT_CONNECT_TIMEOUT_MS = 20000
 DEFAULT_SOCKET_TIMEOUT_MS = 30000
-
-
-def primary_gridfs_bucket(db: AsyncIOMotorDatabase) -> AsyncIOMotorGridFSBucket:
-    """Pin to PRIMARY so read-your-writes paths don't miss a just-written file on a lagging secondary."""
-    return AsyncIOMotorGridFSBucket(db.with_options(read_preference=ReadPreference.PRIMARY))
 
 
 async def open_gridfs_download_with_retry(
@@ -58,9 +53,15 @@ async def get_database() -> AsyncIOMotorDatabase[Any]:
     return db.client[settings.DATABASE_NAME]
 
 
+def create_client(url: str, **options: Any) -> AsyncIOMotorClient[Any]:
+    """A client whose reads see their own writes and whose datetimes come back aware UTC."""
+    # A keyword beats a URI option, so a readPreference in the URL cannot move reads to a lagging secondary.
+    return AsyncIOMotorClient(url, readPreference="primary", tz_aware=True, tzinfo=timezone.utc, **options)
+
+
 async def connect_to_mongo() -> None:
     """Establish the pooled connection to MongoDB."""
-    db.client = AsyncIOMotorClient(
+    db.client = create_client(
         settings.MONGODB_URL,
         maxPoolSize=DEFAULT_MAX_POOL_SIZE,
         minPoolSize=DEFAULT_MIN_POOL_SIZE,
@@ -70,7 +71,6 @@ async def connect_to_mongo() -> None:
         retryWrites=True,
         retryReads=True,
         compressors="zstd,zlib",
-        readPreference=settings.MONGODB_READ_PREFERENCE,
     )
 
     try:

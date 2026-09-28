@@ -52,9 +52,9 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.config import settings
+from app.db.mongodb import create_client
 from app.core.constants import SCAN_USABLE_STATUSES
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -226,7 +226,7 @@ async def run(args: argparse.Namespace) -> int:
         )
         return 2
 
-    client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
+    client = create_client(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
         since = datetime.now(tz=timezone.utc) - timedelta(days=args.since_days) if args.since_days else None

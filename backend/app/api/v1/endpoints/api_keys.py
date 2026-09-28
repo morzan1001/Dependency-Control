@@ -10,7 +10,6 @@ from fastapi import HTTPException, status
 from app.api.deps import SURFACE_PERMISSIONS, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_401, RESP_401_404, RESP_AUTH
-from app.core import ensure_utc
 from app.core.constants import ApiKeySurface
 from app.core.permissions import has_permission
 from app.models.user import User
@@ -73,7 +72,7 @@ def _to_response(doc: dict[str, Any]) -> ApiKeyResponse:
 
     def moment(field: str, *, nullable: bool = False) -> datetime | None:
         value = doc.get(field)
-        rendered = ensure_utc(value) if isinstance(value, datetime) else None
+        rendered = value if isinstance(value, datetime) else None
         if rendered is None and not (nullable and value is None):
             damaged.append(field)
         return rendered

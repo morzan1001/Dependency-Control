@@ -1,27 +1,10 @@
-"""Engine read-after-write paths must use strong reads, and missing scans must terminate cleanly."""
+"""A missing scan must terminate cleanly."""
 
 import asyncio
-from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
-from app.services.analysis.engine import _check_race_condition, run_analysis
-
-
-class TestCheckRaceCondition:
-    def test_uses_strong_read(self):
-        scan_repo = SimpleNamespace(
-            get_by_id_strong=AsyncMock(return_value=None),
-            get_by_id=AsyncMock(side_effect=AssertionError("must use get_by_id_strong, not get_by_id")),
-        )
-
-        result = asyncio.run(
-            _check_race_condition("scan-1", datetime.now(timezone.utc), scan_repo),  # type: ignore[arg-type]
-        )
-
-        scan_repo.get_by_id_strong.assert_awaited_once_with("scan-1")
-        scan_repo.get_by_id.assert_not_awaited()
-        assert result is False
+from app.services.analysis.engine import run_analysis
 
 
 class TestRunAnalysisScanNotFound:
@@ -32,7 +15,7 @@ class TestRunAnalysisScanNotFound:
 
         def _scan_repo(_db):
             return SimpleNamespace(
-                get_by_id_strong=AsyncMock(return_value=None),
+                get_by_id=AsyncMock(return_value=None),
                 update_raw=update_raw,
             )
 

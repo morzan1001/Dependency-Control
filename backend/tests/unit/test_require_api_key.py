@@ -1,7 +1,7 @@
 """The unified key dependency admits a caller only when the key names the surface and the owner
 still holds that surface's permission."""
 
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
@@ -91,9 +91,6 @@ def _key_doc(surfaces=_ABSENT):
 
 def _db_with_key(doc):
     keys = create_mock_collection(find_one=doc)
-    # get_by_plaintext reads through with_options(read_preference=PRIMARY); create_mock_collection
-    # does not stub it, so the strong-read alias has to point back at the same mock.
-    keys.with_options = MagicMock(return_value=keys)
     return create_mock_db({_COL: keys}), keys
 
 

@@ -55,7 +55,7 @@ def _gridfs_patched(monkeypatch):
         return stream
 
     fs.open_download_stream = AsyncMock(side_effect=_open)
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     return fs
 
 

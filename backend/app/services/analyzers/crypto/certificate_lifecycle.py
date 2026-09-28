@@ -7,6 +7,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core import ensure_utc
 from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
@@ -149,7 +150,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
     ) -> list[dict[str, Any]]:
         if cert.not_valid_after is None:
             return []
-        na = _ensure_aware(cert.not_valid_after)
+        na = ensure_utc(cert.not_valid_after)
         delta = now - na
         if delta.total_seconds() <= 0:
             return []
@@ -173,7 +174,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
     ) -> list[dict[str, Any]]:
         if cert.not_valid_after is None:
             return []
-        na = _ensure_aware(cert.not_valid_after)
+        na = ensure_utc(cert.not_valid_after)
         remaining = (na - now).total_seconds()
         if remaining < 0:
             return []
@@ -211,7 +212,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
     ) -> list[dict[str, Any]]:
         if cert.not_valid_before is None:
             return []
-        nb = _ensure_aware(cert.not_valid_before)
+        nb = ensure_utc(cert.not_valid_before)
         remaining = (nb - now).total_seconds()
         if remaining <= 0:
             return []
@@ -330,8 +331,8 @@ class CertificateLifecycleAnalyzer(Analyzer):
     ) -> list[dict[str, Any]]:
         if cert.not_valid_before is None or cert.not_valid_after is None:
             return []
-        nb = _ensure_aware(cert.not_valid_before)
-        na = _ensure_aware(cert.not_valid_after)
+        nb = ensure_utc(cert.not_valid_before)
+        na = ensure_utc(cert.not_valid_after)
         total = (na - nb).days
         if total <= 0:
             return []
@@ -361,10 +362,6 @@ class CertificateLifecycleAnalyzer(Analyzer):
                 )
             )
         return out
-
-
-def _ensure_aware(d: datetime) -> datetime:
-    return d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
 
 
 def _is_expiry_rule(rule: CryptoRule) -> bool:

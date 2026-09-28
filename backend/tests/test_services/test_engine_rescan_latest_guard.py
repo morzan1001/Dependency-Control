@@ -59,9 +59,9 @@ class _CountingScanRepository(ScanRepository):
         super().__init__(database)
         self.reads = 0
 
-    async def get_by_id_strong(self, scan_id: str):
+    async def get_by_id(self, scan_id: str):
         self.reads += 1
-        return await super().get_by_id_strong(scan_id)
+        return await super().get_by_id(scan_id)
 
 
 @pytest.fixture

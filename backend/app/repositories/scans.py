@@ -16,13 +16,12 @@ the marked scan), so the project tile, the analytics page and the release view c
 import logging
 from collections.abc import AsyncGenerator, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, NamedTuple
 
-from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
-from pymongo import ReadPreference
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core import ensure_utc
+from app.core import UNDATED
 from app.core.constants import MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
 from app.core.metrics import track_db_operation
 from app.models.project import Scan
@@ -34,7 +33,6 @@ _COL = "scans"
 _RESCAN_RANK = "_rescan_rank"
 _USABLE_RANK = "_usable_rank"
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
-_UNDATED = datetime.min.replace(tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -48,7 +46,7 @@ class LineageAnalysis:
 
 def _created_at(doc: dict[str, Any]) -> datetime:
     # A scan with no created_at sorts oldest, so it wins only when its chain holds nothing else.
-    return ensure_utc(doc.get("created_at")) or _UNDATED
+    return doc.get("created_at") or UNDATED
 
 
 def _is_fresher(doc: dict[str, Any], incumbent: dict[str, Any]) -> bool:
@@ -155,25 +153,13 @@ class ScanRepository:
         self.db = db
         self.collection = db.scans
 
-    def _primary(self) -> AsyncIOMotorCollection:
-        return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-
     async def get_by_id(self, scan_id: str) -> Scan | None:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": scan_id})
         return Scan(**data) if data else None
 
-    async def get_by_id_strong(self, scan_id: str) -> Scan | None:
-        with track_db_operation(_COL, "find_one"):
-            data = await self._primary().find_one({"_id": scan_id})
-        return Scan(**data) if data else None
-
     async def get_minimal_by_id(self, scan_id: str) -> ScanMinimal | None:
         data = await self.collection.find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
-        return ScanMinimal(**data) if data else None
-
-    async def get_minimal_by_id_strong(self, scan_id: str) -> ScanMinimal | None:
-        data = await self._primary().find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
         return ScanMinimal(**data) if data else None
 
     async def create(self, scan: Scan) -> Scan:
@@ -400,7 +386,7 @@ class ScanRepository:
             doc = await self.collection.find_one(
                 {"_id": {"$in": list(scan_ids)}}, {"created_at": 1}, sort=[("created_at", 1)]
             )
-        return ensure_utc(doc.get("created_at")) if doc else None
+        return doc.get("created_at") if doc else None
 
     async def _freshest_analysis_docs(self, scan_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Each of these scans mapped to the whole document of the analysis its lineage resolves to."""

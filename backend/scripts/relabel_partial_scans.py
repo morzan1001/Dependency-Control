@@ -25,9 +25,9 @@ import asyncio
 import sys
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.config import settings
+from app.db.mongodb import create_client
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 
 DEFAULT_BATCH_SIZE = 200
@@ -126,7 +126,7 @@ async def relabel(db: Any, batch_size: int, sleep_ms: int, execute: bool) -> dic
 
 
 async def run(args: argparse.Namespace) -> int:
-    client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
+    client = create_client(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
         mode = "EXECUTE" if args.execute else "DRY-RUN"

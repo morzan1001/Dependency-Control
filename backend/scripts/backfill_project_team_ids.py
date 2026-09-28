@@ -31,9 +31,9 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.config import settings
+from app.db.mongodb import create_client
 from app.core.constants import TEAM_SOURCE_MANUAL
 
 DEFAULT_BATCH_SIZE = 500
@@ -238,7 +238,7 @@ async def run_verify(db: Any) -> int:
 
 
 async def run(args: argparse.Namespace) -> int:
-    client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
+    client = create_client(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
         mode = "VERIFY" if args.verify else "EXECUTE" if args.execute else "DRY-RUN"

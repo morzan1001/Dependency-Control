@@ -35,7 +35,7 @@ async def test_max_over_mixed_types_answers_with_the_date():
         [{"$group": {"_id": "$branch", "newest": {"$max": "$created_at"}, "oldest": {"$min": "$created_at"}}}]
     ).to_list(None)
 
-    assert rows[0]["newest"] == _LATE.replace(tzinfo=None)
+    assert rows[0]["newest"] == _LATE
     assert rows[0]["oldest"] == "2026-03-01T00:00:00Z"
 
 
@@ -281,7 +281,7 @@ async def test_a_stored_datetime_loses_its_sub_millisecond_digits():
 
     stored = {doc["_id"]: doc["created_at"] for doc in await db.scans.find({}).to_list(None)}
 
-    assert stored["s1"] == _SUB_MILLISECOND.replace(tzinfo=None, microsecond=_TRUNCATED_MICROSECONDS)
+    assert stored["s1"] == _SUB_MILLISECOND.replace(microsecond=_TRUNCATED_MICROSECONDS)
     assert stored["s1"] == stored["s2"]
 
 

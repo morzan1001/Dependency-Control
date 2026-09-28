@@ -49,8 +49,6 @@ _TIED_LOW_ROW_ID = "row-a"
 _TIED_HIGH_ROW_ID = "row-z"
 
 _PAST = _NOW - timedelta(days=1)
-# BSON has no offsets, so an aware datetime reads back as naive UTC.
-_PAST_NAIVE = _PAST.replace(tzinfo=None)
 
 _NO_RECORDS = 0
 _ONE_RECORD = 1
@@ -288,8 +286,9 @@ async def test_a_supplied_released_at_drives_the_ordering(client, db, api_key_he
     )
 
     assert late.status_code == 201, late.text
+    assert late.json()["released_at"].endswith("Z")
     row = await db.releases.find_one({"scan_id": "backfilled"})
-    assert row["released_at"] == _PAST_NAIVE
+    assert row["released_at"] == _PAST
     # Recorded in the past, so it does not take the environment over from the live release.
     assert await latest_release_scan(db, _PROJECT, _STAGING) == "current"
 

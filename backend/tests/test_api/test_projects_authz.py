@@ -237,7 +237,7 @@ class TestUpdateProjectTeamAssignment:
         """Return the mocked collaborators for update_project."""
         project_repo = MagicMock()
         project_repo.update_raw = AsyncMock(return_value=True)
-        project_repo.get_by_id_strong = AsyncMock(return_value=project)
+        project_repo.get_by_id = AsyncMock(return_value=project)
 
         team_repo = MagicMock()
         team_repo.is_member = AsyncMock(return_value=True)

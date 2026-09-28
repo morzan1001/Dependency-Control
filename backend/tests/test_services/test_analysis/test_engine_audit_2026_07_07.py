@@ -37,9 +37,6 @@ class _FakeFindings:
         self._waived_docs = waived_docs
         self.last_query = None
 
-    def with_options(self, read_preference=None):
-        return self
-
     def find(self, query, projection=None):
         self.last_query = query
         return _AsyncIter(self._waived_docs)
@@ -48,7 +45,7 @@ class _FakeFindings:
 class TestFilterOutWaivedFindings:
     def test_waived_finding_is_excluded(self):
         findings = [SimpleNamespace(id="F1"), SimpleNamespace(id="F2"), SimpleNamespace(id="F3")]
-        db = SimpleNamespace(findings=_FakeFindings([{"finding_id": "F2"}]))
+        db = {"findings": _FakeFindings([{"finding_id": "F2"}])}
 
         result = asyncio.run(_filter_out_waived_findings(findings, "scan-1", db))
 
@@ -57,27 +54,25 @@ class TestFilterOutWaivedFindings:
 
     def test_no_waivers_returns_original(self):
         findings = [SimpleNamespace(id="F1")]
-        db = SimpleNamespace(findings=_FakeFindings([]))
+        db = {"findings": _FakeFindings([])}
 
         result = asyncio.run(_filter_out_waived_findings(findings, "scan-1", db))
 
         assert result is findings  # same object: no filtering performed
 
     def test_query_filters_on_scan_and_waived(self):
-        db = SimpleNamespace(findings=_FakeFindings([{"finding_id": "F1"}]))
+        db = {"findings": _FakeFindings([{"finding_id": "F1"}])}
         asyncio.run(_filter_out_waived_findings([SimpleNamespace(id="F1")], "scan-9", db))
-        assert db.findings.last_query == {"scan_id": "scan-9", "waived": True}
+        assert db["findings"].last_query == {"scan_id": "scan-9", "waived": True}
 
 
 class TestShouldUpdateProjectLatestScan:
     def _run(self, this_created, current_latest_id, current_created):
         scan_doc = SimpleNamespace(created_at=this_created)
         project_repo = SimpleNamespace(
-            get_by_id_strong=AsyncMock(return_value=SimpleNamespace(latest_scan_id=current_latest_id))
+            get_by_id=AsyncMock(return_value=SimpleNamespace(latest_scan_id=current_latest_id))
         )
-        scan_repo = SimpleNamespace(
-            get_by_id_strong=AsyncMock(return_value=SimpleNamespace(created_at=current_created))
-        )
+        scan_repo = SimpleNamespace(get_by_id=AsyncMock(return_value=SimpleNamespace(created_at=current_created)))
         return asyncio.run(_should_update_project_latest_scan("scan-new", scan_doc, "proj-1", scan_repo, project_repo))
 
     def test_stale_scan_does_not_overwrite_newer_latest(self):
@@ -94,12 +89,6 @@ class TestShouldUpdateProjectLatestScan:
         now = datetime.now(timezone.utc)
         assert self._run(now, None, None) is True
 
-    def test_naive_created_at_compared_as_utc(self):
-        # stored datetimes are often tz-naive UTC; comparison must not raise
-        naive_old = datetime(2020, 1, 1)
-        aware_new = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        assert self._run(naive_old, "scan-newer", aware_new) is False
-
 
 class TestFinalizeGuardsProjectUpdate:
     def _stats(self):
@@ -111,11 +100,11 @@ class TestFinalizeGuardsProjectUpdate:
         project_update = AsyncMock()
         scan_repo = SimpleNamespace(
             update_raw=AsyncMock(),
-            get_by_id_strong=AsyncMock(return_value=SimpleNamespace(created_at=now)),
+            get_by_id=AsyncMock(return_value=SimpleNamespace(created_at=now)),
         )
         project_repo = SimpleNamespace(
             update_raw=project_update,
-            get_by_id_strong=AsyncMock(return_value=SimpleNamespace(latest_scan_id="scan-newer")),
+            get_by_id=AsyncMock(return_value=SimpleNamespace(latest_scan_id="scan-newer")),
         )
         scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None, created_at=older)
 
@@ -213,7 +202,7 @@ class TestFinalizeTOCTOU:
         update_raw = AsyncMock()
         scan_repo = SimpleNamespace(collection=collection, update_raw=update_raw)
         project_update = AsyncMock()
-        project_repo = SimpleNamespace(update_raw=project_update, get_by_id_strong=AsyncMock())
+        project_repo = SimpleNamespace(update_raw=project_update, get_by_id=AsyncMock())
         scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None, created_at=None)
 
         finalized = asyncio.run(
@@ -243,12 +232,12 @@ class TestFinalizeTOCTOU:
         scan_repo = SimpleNamespace(
             collection=collection,
             update_raw=AsyncMock(),
-            get_by_id_strong=AsyncMock(),
+            get_by_id=AsyncMock(),
         )
         project_update = AsyncMock()
         project_repo = SimpleNamespace(
             update_raw=project_update,
-            get_by_id_strong=AsyncMock(return_value=SimpleNamespace(latest_scan_id=None)),
+            get_by_id=AsyncMock(return_value=SimpleNamespace(latest_scan_id=None)),
         )
         scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None, created_at=None)
 

@@ -41,9 +41,9 @@ from app.core.metrics import (
     analysis_scans_total,
     analysis_waivers_applied_total,
 )
-from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
+from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.finding import Finding, FindingType, Severity
-from app.models.project import Project, Scan
+from app.models.project import Scan
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.repositories import (
@@ -715,12 +715,8 @@ def _track_waiver_metrics(active_waivers: list[Waiver]) -> None:
 
 async def _check_race_condition(scan_id: str, external_load_start: datetime, scan_repo: ScanRepository) -> bool:
     """Check if new results arrived during processing. Returns True if race detected."""
-    race_check = await scan_repo.get_by_id_strong(scan_id)
+    race_check = await scan_repo.get_by_id(scan_id)
     last_result_at = race_check.last_result_at if race_check else None
-
-    if last_result_at and last_result_at.tzinfo is None:
-        last_result_at = last_result_at.replace(tzinfo=timezone.utc)
-
     if last_result_at and last_result_at >= external_load_start:
         logger.warning(
             f"Race condition detected for scan {scan_id}. "
@@ -745,7 +741,7 @@ async def _load_project_settings_overrides(
     """Load license_policy and analyzer_settings from project doc."""
     if not project_id:
         return None, None
-    project_doc = await project_repo.get_by_id_strong(project_id)
+    project_doc = await project_repo.get_by_id(project_id)
     if not project_doc:
         return None, None
     license_policy = getattr(project_doc, "license_policy", None) or None
@@ -909,7 +905,7 @@ async def _stamp_first_seen(
     scans that first saw it and the SLA age has to survive them."""
     earliest = await finding_repo.earliest_detections(project_id, records) if project_id else {}
     for record in records:
-        detections = (earliest.get(finding_identity(record)), _as_utc(record["scan_created_at"]))
+        detections = (earliest.get(finding_identity(record)), record["scan_created_at"])
         record["first_seen_at"] = min(d for d in detections if d is not None)
 
 
@@ -938,18 +934,8 @@ async def _persist_findings_and_waivers(
     from app.services.stats import _apply_waivers
 
     await _apply_waivers(finding_repo, scan_id, active_waivers)
-    from pymongo import ReadPreference
-
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
+    ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})
     return persisted_count, ignored_count, active_waivers
-
-
-def _as_utc(dt: datetime | None) -> datetime | None:
-    """Normalise a possibly-naive datetime to timezone-aware UTC for comparison."""
-    if dt is not None and dt.tzinfo is None:
-        return dt.replace(tzinfo=timezone.utc)
-    return dt
 
 
 async def _lineage_root(scan_id: str, scan_doc: Any, scan_repo: ScanRepository) -> str:
@@ -967,7 +953,7 @@ async def _lineage_root(scan_id: str, scan_doc: Any, scan_repo: ScanRepository) 
         if not parent_id or parent_id == root_id:
             break
         root_id = parent_id
-        doc = await scan_repo.get_by_id_strong(parent_id)
+        doc = await scan_repo.get_by_id(parent_id)
     return root_id
 
 
@@ -990,14 +976,14 @@ async def _should_update_project_latest_scan(
     The slot means "the tip of the default branch", so a pipeline on another branch — a feature
     branch or a tag build — cannot take it off the branch the VCS calls default.
     """
-    project_doc = await project_repo.get_by_id_strong(project_id)
+    project_doc = await project_repo.get_by_id(project_id)
     current_latest_id = getattr(project_doc, "latest_scan_id", None) if project_doc else None
     if not authoritative and current_latest_id and current_latest_id != scan_id:
         return False
     if not current_latest_id or current_latest_id == scan_id:
         return True
 
-    current_latest = await scan_repo.get_by_id_strong(current_latest_id)
+    current_latest = await scan_repo.get_by_id(current_latest_id)
     if not current_latest:
         return True
 
@@ -1017,8 +1003,8 @@ async def _should_update_project_latest_scan(
             if incoming_root != current_root:
                 return False
 
-    this_created = _as_utc(getattr(scan_doc, "created_at", None))
-    current_created = _as_utc(getattr(current_latest, "created_at", None))
+    this_created: datetime | None = getattr(scan_doc, "created_at", None)
+    current_created: datetime | None = getattr(current_latest, "created_at", None)
     if this_created is None or current_created is None:
         return True
     return this_created >= current_created
@@ -1128,12 +1114,8 @@ async def _filter_out_waived_findings(aggregated_findings: list[Any], scan_id: s
     Waivers are applied only as DB updates; in-memory Finding objects are never marked waived,
     so re-read the persisted waived finding_ids and exclude them before notifying.
     """
-    from pymongo import ReadPreference
-
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    cursor = findings_primary.find({"scan_id": scan_id, "waived": True}, {"finding_id": 1})
     waived_ids = set()
-    async for doc in cursor:
+    async for doc in FindingRepository(db).iterate_raw({"scan_id": scan_id, "waived": True}, {"finding_id": 1}):
         fid = doc.get("finding_id")
         if fid is not None:
             waived_ids.add(fid)
@@ -1154,13 +1136,9 @@ async def _send_integrations_and_notifications(
 ) -> None:
     if not project_id:
         return
-    from pymongo import ReadPreference
-
-    projects_primary = db.projects.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    project_data = await projects_primary.find_one({"_id": project_id})
-    if not project_data:
+    project = await ProjectRepository(db).get_by_id(project_id)
+    if not project:
         return
-    project = Project(**project_data)
     await decorate_gitlab_mr(scan_id, stats, scan_doc, project, db)
     await decorate_github_pr(scan_id, stats, scan_doc, project, db)
     await send_scan_notifications(scan_id, project, aggregated_findings, results_summary, db)
@@ -1251,7 +1229,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     callgraph_repo = CallgraphRepository(db)
     project_repo = ProjectRepository(db)
 
-    scan_doc = await scan_repo.get_by_id_strong(scan_id)
+    scan_doc = await scan_repo.get_by_id(scan_id)
     if not scan_doc:
         # Mark terminal — worker re-claim only matches scans still in "pending".
         logger.error(f"Scan {scan_id} not found, marking as failed")
@@ -1284,7 +1262,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
 
     project_license_policy, project_analyzer_settings = await _load_project_settings_overrides(project_id, project_repo)
 
-    fs = primary_gridfs_bucket(db)
+    fs = AsyncIOMotorGridFSBucket(db)
     sboms_to_process = _resolve_sboms_to_process(sboms, scan_type)
 
     # Resolve every SBOM before the first dependency delete: a partial GridFS failure must

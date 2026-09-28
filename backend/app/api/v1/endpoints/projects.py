@@ -766,7 +766,7 @@ async def update_project(
     if not written and guard:
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_OWNER)
 
-    updated_project = await project_repo.get_by_id_strong(project_id)
+    updated_project = await project_repo.get_by_id(project_id)
     if not updated_project:
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 

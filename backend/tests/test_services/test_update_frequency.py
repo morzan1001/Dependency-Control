@@ -344,7 +344,7 @@ class FakeScanRepo:
     async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
         # Run the real pipeline through the fake Mongo engine rather than
         # reimplementing it: a pipeline that would not answer in Mongo must not
-        # answer here either, down to the naive UTC datetimes it stores.
+        # answer here either, down to the UTC datetimes it stores.
         db = FakeDatabase()
         for scan in self._scans:
             await db.scans.insert_one(dict(scan))
@@ -735,24 +735,6 @@ class TestBranchScopedScanSelection:
         m = await self._compute(scans, deps, deleted_branches=["gone"])
         assert m.branch == "main"
         assert m.scan_count == 2
-
-    @pytest.mark.asyncio
-    async def test_naive_created_at_is_coerced_to_utc(self):
-        # Motor returns naive UTC datetimes; the tz-aware window cutoff and the
-        # downstream date math must both survive that.
-        naive = (datetime.now(tz=timezone.utc) - timedelta(days=40)).replace(tzinfo=None)
-        scans = [
-            {**_make_scan("s1", 0), "created_at": naive},
-            {**_make_scan("s2", 30), "created_at": naive + timedelta(days=30)},
-        ]
-        deps = {
-            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
-            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
-        }
-        m = await self._compute(scans, deps, window_days=60)
-        assert m.scan_count == 2
-        assert m.first_scan_date.endswith("+00:00")
-        assert m.last_scan_date.endswith("+00:00")
 
     @pytest.mark.asyncio
     async def test_a_textual_created_at_drops_the_scan(self):

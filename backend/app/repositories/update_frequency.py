@@ -2,10 +2,11 @@
 
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from itertools import batched
 from typing import Any
 
+from app.core import UNDATED
 from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.metrics import track_db_operation
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdatedSet, ScanUpdateDelta
@@ -38,14 +39,9 @@ _WINDOW_PROJECTION = {
 _WINDOW_PROJECT_BATCH = 100
 
 
-def _as_utc(at: datetime) -> datetime:
-    """Mongo returns naive UTC datetimes."""
-    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
-
-
 def _chain_order(doc: dict[str, Any]) -> tuple[datetime, str]:
     """The writer's total order over one branch."""
-    return (_as_utc(doc["scan_created_at"]), doc["_id"])
+    return (doc["scan_created_at"], doc["_id"])
 
 
 @dataclass(frozen=True)
@@ -62,7 +58,7 @@ def _ledger_entry(pushed: dict[str, Any]) -> LedgerEntry:
     return LedgerEntry(
         pushed.get("v"),
         pushed.get("prev"),
-        _as_utc(prev_at) if isinstance(prev_at, datetime) else None,
+        prev_at if isinstance(prev_at, datetime) else None,
     )
 
 
@@ -82,9 +78,6 @@ class BranchWindowActivity:
     def commit_count(self) -> int:
         return len(self.scans_per_commit)
 
-
-# Sorts last on the recency tie-break.
-_UNDATED = datetime.min.replace(tzinfo=timezone.utc)
 
 # The index on (project_id, branch, created_at) bounds the scan to the batch's projects;
 # status and is_rescan are not in it, so their documents are fetched. A whole-scope
@@ -166,7 +159,7 @@ async def window_scans_by_branch(
                 continue
             last_scan_at = row["last_scan_at"]
             # Archive restore can insert a scan date as an ISO string, which $max hands back verbatim.
-            moment = _as_utc(last_scan_at) if isinstance(last_scan_at, datetime) else _UNDATED
+            moment = last_scan_at if isinstance(last_scan_at, datetime) else UNDATED
             per_commit = {c["t"]: int(c["n"]) for c in row["commits"] if isinstance(c.get("t"), str)}
             activity[chain] = BranchWindowActivity(per_commit, moment)
     return activity
@@ -202,7 +195,7 @@ async def window_scan_ids_by_branch(
             chain = _named_branch(row["_id"])
             if chain is None:
                 continue
-            scans[chain] = [(entry["i"], _as_utc(entry["t"])) for entry in row["scans"]]
+            scans[chain] = [(entry["i"], entry["t"]) for entry in row["scans"]]
     return scans
 
 

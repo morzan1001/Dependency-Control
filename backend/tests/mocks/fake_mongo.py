@@ -35,9 +35,9 @@ Server-side behaviour that tests rely on
 ----------------------------------------
 - Projections in ``find``/``find_one``, inclusion and exclusion, dotted paths
   included, so a too-narrow projection surfaces here instead of in production.
-- BSON datetimes: a written aware datetime is stored (and read back) as naive
-  UTC truncated to the millisecond, and a query value is normalised the same way
-  before comparison, matching what the driver puts on the wire.
+- BSON datetimes: a written datetime is stored and read back as aware UTC truncated
+  to the millisecond, a naive one counting as UTC, and a query value is normalised the
+  same way before comparison, matching the tz_aware client in ``app.db.mongodb``.
 - BSON compares by type before value, so a bool never equals the number Python
   would call it equal to: ``{"$ne": True}`` keeps a document holding ``1``.
 - Cross-type BSON ordering: sorts, ``$min`` and ``$max`` rank a mixed column
@@ -138,13 +138,12 @@ _MICROSECONDS_PER_MILLISECOND = 1000
 # ---------------------------------------------------------------------------
 
 
-def _naive_utc(value: Any) -> Any:
-    """BSON has no offsets and dates are int64 milliseconds: an aware datetime is stored (and read
-    back) as naive UTC, and every datetime loses the sub-millisecond digits the wire cannot carry."""
+def _utc(value: Any) -> Any:
+    """BSON dates are int64 milliseconds since the epoch: every datetime comes back aware UTC and
+    loses the sub-millisecond digits the wire cannot carry."""
     if not isinstance(value, _datetime):
         return value
-    if value.tzinfo is not None:
-        value = value.astimezone(_timezone.utc).replace(tzinfo=None)
+    value = value.replace(tzinfo=_timezone.utc) if value.tzinfo is None else value.astimezone(_timezone.utc)
     return value.replace(microsecond=value.microsecond // _MICROSECONDS_PER_MILLISECOND * _MICROSECONDS_PER_MILLISECOND)
 
 
@@ -152,7 +151,7 @@ def _bson_equal(left: Any, right: Any) -> bool:
     """Equality with BSON's type ranking: bool is its own type, so ``1`` never equals ``True``."""
     if isinstance(left, bool) != isinstance(right, bool):
         return False
-    return bool(_naive_utc(left) == _naive_utc(right))
+    return bool(_utc(left) == _utc(right))
 
 
 def _bson_identical(left: Any, right: Any) -> bool:
@@ -183,7 +182,7 @@ def _bsonify(value: Any) -> Any:
         return {k: _bsonify(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_bsonify(v) for v in value]
-    return _naive_utc(value)
+    return _utc(value)
 
 
 def _bson_type_rank(value: Any) -> int:
@@ -245,8 +244,8 @@ def _bson_sort_key(value: Any) -> tuple[int, Any]:
         return (rank, int(value))
     if rank == 7:
         # Equal ranks are all a tuple comparison ever reaches, so the datetimes
-        # only ever meet each other, and normalising to naive keeps that legal.
-        return (rank, _naive_utc(value))
+        # only ever meet each other, and normalising to UTC keeps that legal.
+        return (rank, _utc(value))
     if rank == 3:
         return (rank, value)
     # Documents and arrays have no total order in Python; their text form has one.
@@ -327,9 +326,9 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
         if op_key in ops_dict:
             if value is None:
                 return False
-            # The driver encodes an aware query value to UTC, so it compares
-            # against the stored naive datetime instead of raising.
-            left, right = _naive_utc(value), _naive_utc(ops_dict[op_key])
+            # The driver encodes a naive query value as UTC, so it compares
+            # against the stored aware datetime instead of raising.
+            left, right = _utc(value), _utc(ops_dict[op_key])
             # A range query is bracketed to the bound's BSON type, so a date
             # bound skips a document holding a string there rather than
             # widening the match.
@@ -847,7 +846,7 @@ def _eval_bool(doc: dict, expr) -> bool:
     for op, cmp_fn in (("$eq", _op.eq), ("$ne", _op.ne), *_CMP.items()):
         if op in expr:
             a, b = (_eval_expr(doc, e) for e in expr[op])
-            return cmp_fn(_bson_sort_key(_naive_utc(a)), _bson_sort_key(_naive_utc(b)))
+            return cmp_fn(_bson_sort_key(_utc(a)), _bson_sort_key(_utc(b)))
     return _truthy(_eval_expr(doc, expr))
 
 
@@ -1489,10 +1488,6 @@ class FakeCollection:
         result.modified_count = modified
         result.matched_count = len(matched)
         return result
-
-    def with_options(self, **_kwargs) -> FakeCollection:
-        # Read-preference / write-concern variations are no-ops in-process.
-        return self
 
     async def find_one_and_update(self, query, update, return_document: bool = False, upsert: bool = False, **_kwargs):
         assert_no_path_conflict(update)

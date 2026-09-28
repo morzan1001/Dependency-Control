@@ -6,7 +6,6 @@ from typing import Any
 
 from pymongo import UpdateOne
 
-from app.core import ensure_utc
 from app.core.constants import get_severity_value
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
@@ -193,9 +192,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         ]
         rows = await self.aggregate(pipeline, allow_disk_use=True)
         return {
-            finding_identity(row["_id"]): first_seen
-            for row in rows
-            if (first_seen := ensure_utc(row["first_seen_at"])) is not None
+            finding_identity(row["_id"]): first_seen for row in rows if (first_seen := row["first_seen_at"]) is not None
         }
 
     async def delete_by_scan(self, scan_id: str) -> int:

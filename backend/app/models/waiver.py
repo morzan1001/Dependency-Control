@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 
 from pydantic import ConfigDict, Field, computed_field
 
+from app.core import ensure_utc
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
 from app.models.base import CreatedAtModel
 from app.models.finding import FindingType
@@ -11,13 +12,10 @@ from app.models.types import PyObjectId
 
 
 def is_waiver_active(expiration_date: datetime | None, now: datetime | None = None) -> bool:
-    """Return True if the waiver is still active. Mirrors WaiverRepository._non_expired_filter; treats naive datetimes as UTC."""
+    """Return True if the waiver is still active. Mirrors WaiverRepository._non_expired_filter."""
     if expiration_date is None:
         return True
-    reference = now or datetime.now(timezone.utc)
-    if expiration_date.tzinfo is None:
-        expiration_date = expiration_date.replace(tzinfo=timezone.utc)
-    return expiration_date > reference
+    return ensure_utc(expiration_date) > (now or datetime.now(timezone.utc))
 
 
 class Waiver(CreatedAtModel):

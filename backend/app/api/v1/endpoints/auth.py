@@ -635,7 +635,7 @@ async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: d
 
 
 async def _create_oidc_user(
-    db: Any, user_repo: UserRepository, user_info: dict, email: str, system_config: SystemSettings
+    user_repo: UserRepository, user_info: dict, email: str, system_config: SystemSettings
 ) -> dict:
     """Create a new OIDC user, return the persisted user dict."""
     username = await _generate_unique_oidc_username(user_repo, user_info, email)
@@ -649,16 +649,7 @@ async def _create_oidc_user(
     )
 
     await user_repo.create(new_user)
-    from pymongo import ReadPreference
-
-    users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    user = await users_primary.find_one({"_id": new_user.id})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create user",
-        )
-    return dict(user)
+    return new_user.model_dump(by_alias=True)
 
 
 def _validate_existing_oidc_user(user: dict, email: str) -> None:
@@ -749,7 +740,7 @@ async def login_oidc_callback(
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
     if not user:
-        user = await _create_oidc_user(db, user_repo, user_info, email, system_config)
+        user = await _create_oidc_user(user_repo, user_info, email, system_config)
     else:
         _validate_existing_oidc_user(user, email)
 

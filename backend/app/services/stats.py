@@ -357,15 +357,9 @@ async def _restamp_scan(
     await _apply_waivers(finding_repo, scan_id, vuln_waivers + legacy, waiver_repo)
     await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
 
-    # 3. Recompute the authoritative full Stats; it reads from PRIMARY so it sees the waiver
-    #    writes above.
+    # 3. Recompute the authoritative full Stats from the waiver writes above.
     stats = await calculate_comprehensive_stats(db, scan_id)
-
-    # 4. Calculate ignored count (read from PRIMARY after waiver writes)
-    from pymongo import ReadPreference
-
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
+    ignored_count = await finding_repo.count({"scan_id": scan_id, "waived": True})
 
     from app.repositories import ScanRepository
 

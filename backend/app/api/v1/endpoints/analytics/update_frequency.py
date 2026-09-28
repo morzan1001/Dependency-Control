@@ -7,7 +7,7 @@ import logging
 from collections import Counter
 from collections.abc import Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Any, cast
 
 import httpx
@@ -52,7 +52,6 @@ from app.services.release_history import (
 )
 from app.services.update_frequency import (
     DEP_PROJECTION,
-    as_utc,
     compute_update_frequency,
     compute_update_frequency_comparison,
     fold_scan_deps,
@@ -366,7 +365,7 @@ def _spanned_days(bars: list[list[dict[str, Any]]]) -> int:
 
     Measured representative to representative, the two scans the bars are dated by.
     """
-    span = as_utc(bars[-1][-1]["scan_created_at"]) - as_utc(bars[0][-1]["scan_created_at"])
+    span: timedelta = bars[-1][-1]["scan_created_at"] - bars[0][-1]["scan_created_at"]
     return max(1, round(span.total_seconds() / 86400))
 
 

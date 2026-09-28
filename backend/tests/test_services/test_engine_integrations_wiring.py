@@ -1,7 +1,7 @@
 """Every completed scan must reach both VCS decorators."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from app.models.project import Scan
 from app.models.stats import Stats
@@ -9,9 +9,7 @@ from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 
 def _db_with_project():
-    # engine reads the project through with_options(read_preference=PRIMARY).
     projects = create_mock_collection(find_one={"_id": "p1", "name": "Proj"})
-    projects.with_options = MagicMock(return_value=projects)
     return create_mock_db({"projects": projects})
 
 

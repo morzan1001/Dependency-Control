@@ -11,9 +11,6 @@ class _InMemoryLockCollection:
     def __init__(self):
         self.docs = {}  # _id -> document
 
-    def with_options(self, **_kwargs):
-        return self
-
     def _matches(self, doc, query):
         for key, cond in query.items():
             if key == "$or":

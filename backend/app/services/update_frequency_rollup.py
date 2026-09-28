@@ -20,7 +20,6 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
 from app.services.update_frequency import (
     DEP_PROJECTION,
-    as_utc,
     classify_version_change,
     fold_scan_deps,
     load_outdated_entries,
@@ -138,7 +137,7 @@ async def _load_scan(db: Any, scan_id: str) -> _ScanRef | None:
         scan_id=scan_id,
         project_id=doc.get("project_id", ""),
         branch=doc.get("branch", ""),
-        created_at=as_utc(created_at),
+        created_at=created_at,
         commit_hash=doc.get("commit_hash"),
         usable=doc.get("status") in SCAN_USABLE_STATUSES and not doc.get("is_rescan"),
     )
@@ -162,7 +161,7 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
         scan_created_at=scan.created_at,
         commit_hash=scan.commit_hash,
         prev_scan_id=prev["_id"] if prev else None,
-        prev_created_at=as_utc(prev["scan_created_at"]) if prev else None,
+        prev_created_at=prev["scan_created_at"] if prev else None,
         is_baseline=prev is None,
         dep_count=len(deps),
         updates=diff.to_counts(),
@@ -203,7 +202,7 @@ async def _resolve_predecessor(db: Any, scan: _ScanRef) -> tuple[dict[str, Any] 
                 id=prev["_id"],
                 project_id=scan.project_id,
                 branch=scan.branch,
-                scan_created_at=as_utc(prev["scan_created_at"]),
+                scan_created_at=prev["scan_created_at"],
                 error=_STALE_DEPENDENCIES_ERROR,
             )
         )
@@ -368,7 +367,7 @@ async def _repair_successors(
             return
         # A failed recomputation leaves an error document, which is never a
         # predecessor either, so the scan behind it is affected as well.
-        after = as_utc(successor["scan_created_at"])
+        after = successor["scan_created_at"]
         after_id = successor["_id"]
     logger.warning(
         "Update-frequency repair stopped after %d hops from scan %s; later deltas may keep a stale predecessor",

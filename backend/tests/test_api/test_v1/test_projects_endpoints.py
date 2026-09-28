@@ -295,24 +295,6 @@ class TestProjectLimitCountsOnlyProjectsTheUserAdmins:
         assert len(db.projects._docs) == len([1, 2, 3]) + 1
 
 
-class _StaleSecondary:
-    """A lagging replica-set secondary: default reads miss the just-inserted doc, primary reads see it."""
-
-    def __init__(self, primary):
-        self._primary = primary
-
-    def __getattr__(self, name):
-        return getattr(self._primary, name)
-
-    async def find_one(self, *_args, **_kwargs):
-        return None
-
-    def with_options(self, read_preference=None, **_kwargs):
-        from pymongo import ReadPreference
-
-        return self._primary if read_preference == ReadPreference.PRIMARY else self
-
-
 class TestCreateProjectStoresWhatTheDialogChose:
     """A dropped retention_action is stored as "delete", and housekeeping then purges scans the user chose to keep."""
 
@@ -374,7 +356,7 @@ class TestCreateProjectStoresWhatTheDialogChose:
             {"deployment_model": "cli_batch"},
         )
 
-    def test_the_license_policy_change_reaches_the_team_before_secondaries_catch_up(self):
+    def test_the_license_policy_change_reaches_the_team(self):
         from app.schemas.project import ProjectCreate
         from app.services.notifications.service import notification_service
         from app.services.webhooks import webhook_service
@@ -401,7 +383,6 @@ class TestCreateProjectStoresWhatTheDialogChose:
             "events": ["license_policy.changed"],
             "is_active": True,
         }
-        db.projects = _StaleSecondary(db.projects)
 
         with (
             patch.object(webhook_service, "_send_webhook", AsyncMock(return_value=True)) as sent,

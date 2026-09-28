@@ -71,7 +71,7 @@ def _fake_gridfs(sboms_by_file_id: dict[str, dict]) -> MagicMock:
 @pytest.fixture
 def _gridfs_patched(monkeypatch):
     fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _SBOM_B})
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     return fs
 
 
@@ -313,7 +313,7 @@ async def test_k8_partial_findings_persistence_is_surfaced(db, _gridfs_patched, 
 @pytest.mark.asyncio
 async def test_k10_sast_only_scan_does_not_replace_project_latest(db, monkeypatch):
     fs = _fake_gridfs({})
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     await _seed_project(db, latest_scan_id="previous-sbom-scan")
     scan_id = await _seed_scan(db, sbom_refs=[])
 
@@ -330,7 +330,7 @@ async def test_k10_sast_only_scan_does_not_replace_project_latest(db, monkeypatc
 @pytest.mark.asyncio
 async def test_k10_sast_only_scan_becomes_latest_when_project_has_none(db, monkeypatch):
     fs = _fake_gridfs({})
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     await _seed_project(db, latest_scan_id=None)
     scan_id = await _seed_scan(db, sbom_refs=[])
 

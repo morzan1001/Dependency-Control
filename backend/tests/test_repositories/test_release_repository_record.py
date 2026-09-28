@@ -11,7 +11,6 @@ from app.repositories.releases import ReleaseRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
-_NOW_AS_STORED = _NOW.replace(tzinfo=None)  # BSON keeps UTC without the offset
 _PROJECT = "p1"
 _ENVIRONMENT = "production"
 _SCAN = "scan-1"
@@ -64,7 +63,7 @@ async def test_a_lost_insert_race_updates_the_row_the_winner_wrote(db):
 
     rows = await db.releases.find({}).to_list(None)
     assert len(rows) == _ONE_RECORD
-    assert rows[0]["released_at"] == _NOW_AS_STORED
+    assert rows[0]["released_at"] == _NOW
     assert rows[0]["version"] == _VERSION
 
 

@@ -4,7 +4,6 @@ import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar
 
-from app.core import ensure_utc
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
     ControlDefinition,
@@ -99,5 +98,5 @@ def _is_overdue(
     fsev = finding.get("severity")
     if fsev != severity.value and fsev != severity:
         return False
-    first_seen = ensure_utc(finding.get("first_seen_at"))
+    first_seen = finding.get("first_seen_at")
     return first_seen is not None and now - first_seen >= timedelta(days=sla_days)

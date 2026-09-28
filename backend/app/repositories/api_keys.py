@@ -11,7 +11,6 @@ from typing import Any
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReadPreference
 
 from app.core.constants import API_KEY_SURFACES
 from app.core.metrics import track_db_operation
@@ -104,10 +103,8 @@ class ApiKeyRepository:
         if not plaintext.startswith(_TOKEN_PREFIX):
             return None
         now = datetime.now(timezone.utc)
-        # Strong read: fresh keys must auth immediately, revoked keys must stop immediately.
-        primary = self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         with track_db_operation(_COL, "find_one"):
-            doc: dict[str, Any] | None = await primary.find_one(
+            doc: dict[str, Any] | None = await self.collection.find_one(
                 {
                     "token_hash": hash_token(plaintext),
                     "revoked_at": None,

@@ -5,7 +5,6 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, validate_release_environment
-from app.schemas.datetimes import UtcDatetime
 
 
 class ReleaseMarkRequest(BaseModel):
@@ -28,7 +27,7 @@ class ReleaseItem(BaseModel):
     project_id: str
     environment: str
     version: str | None = None
-    released_at: UtcDatetime
+    released_at: datetime
     commit_hash: str | None = None
     branch: str | None = None
     scan_status: str | None = Field(None, description="Status of the released scan; null once retention removed it")

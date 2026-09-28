@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReadPreference
 
 from app.core.config import settings
 from app.core.constants import (
@@ -466,9 +465,7 @@ class WebhookService:
             )
 
             try:
-                # Primary read: the event may fire right after the project was inserted.
-                projects_primary = db.projects.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-                project_doc = await projects_primary.find_one({"_id": project_id}, {"team_ids": 1})
+                project_doc = await db.projects.find_one({"_id": project_id}, {"team_ids": 1})
                 owners = (project_doc or {}).get("team_ids") or []
                 if owners:
                     webhooks.extend(

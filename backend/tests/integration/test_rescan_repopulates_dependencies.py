@@ -93,7 +93,7 @@ async def _seed_stored_dependency(db, scan_id: str, name: str, version: str, pur
 @pytest.fixture
 def _gridfs_patched(monkeypatch):
     fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _SBOM_B})
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     return fs
 
 
@@ -233,7 +233,7 @@ async def test_cross_sbom_duplicate_is_merged_by_the_analysis_run(db, monkeypatc
         "ref-base", "/usr/share/doc/libssl3/copyright", "cpe:2.3:a:openssl:libssl3:3.0.11:*:*:*:*:*:*:*", None
     )
     fs = _fake_gridfs({_FILE_ID_A: sbom_app, _FILE_ID_B: sbom_base})
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
 
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan_id = await _seed_rescan(db, refs)

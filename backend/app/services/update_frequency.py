@@ -661,11 +661,6 @@ class _AccumulatorState:
         return list(islice(chain.from_iterable(reversed(self.recent_events_by_scan)), RECENT_UPDATES_LIMIT))
 
 
-def as_utc(dt: datetime) -> datetime:
-    """Mongo/Motor returns naive UTC datetimes; make them aware once at load."""
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-
-
 _MIN_COMPARABLE_COMMITS = 2
 
 
@@ -785,7 +780,7 @@ async def _load_completed_scans(
         projection={"_id": 1, "created_at": 1, "commit_hash": 1},
     )
     scans_raw: list[dict[str, Any]] = [
-        {"_id": d["_id"], "created_at": as_utc(d["created_at"]), "commit_hash": d.get("commit_hash")}
+        {"_id": d["_id"], "created_at": d["created_at"], "commit_hash": d.get("commit_hash")}
         for d in docs
         # Archive restore inserts bundle JSON verbatim, so a date can arrive as an ISO string.
         # Neither the window aggregation nor the delta writer matches those, so analysing them

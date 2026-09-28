@@ -393,11 +393,6 @@ class TestIsRescanDue:
 
         assert _is_rescan_due(source, _DEFAULT_INTERVAL_HOURS) is False
 
-    def test_a_naive_timestamp_as_mongo_returns_it_is_read_as_utc(self) -> None:
-        naive = (_NOW - _PAST_INTERVAL).replace(tzinfo=None)
-
-        assert _is_rescan_due(_scan_doc(created_at=naive), _DEFAULT_INTERVAL_HOURS) is True
-
 
 class TestBuildRescan:
     def test_carries_the_source_ci_metadata_into_a_fresh_pending_scan(self) -> None:

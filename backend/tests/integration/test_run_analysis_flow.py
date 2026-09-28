@@ -20,7 +20,7 @@ async def _seed_scan(db) -> str:
 
 @pytest.fixture(autouse=True)
 def _no_gridfs(monkeypatch):
-    monkeypatch.setattr(engine, "primary_gridfs_bucket", lambda _db: None)
+    monkeypatch.setattr(engine, "AsyncIOMotorGridFSBucket", lambda _db: None)
 
 
 @pytest.fixture

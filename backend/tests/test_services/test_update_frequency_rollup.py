@@ -120,8 +120,7 @@ class TestBaseline:
         assert doc["project_id"] == PROJECT
         assert doc["branch"] == BRANCH
         assert doc["commit_hash"] == "commit-s1"
-        # Motor returns naive UTC; that is what the document carries after the round trip.
-        assert doc["scan_created_at"] == _at(0).replace(tzinfo=None)
+        assert doc["scan_created_at"] == _at(0)
 
     @pytest.mark.asyncio
     async def test_outdated_set_is_written_separately(self):
@@ -134,7 +133,7 @@ class TestBaseline:
         assert outdated_set is not None
         assert outdated_set["names"] == ["flask", "requests"]
         assert outdated_set["n"] == 2
-        assert outdated_set["scan_created_at"] == _at(0).replace(tzinfo=None)
+        assert outdated_set["scan_created_at"] == _at(0)
         assert outdated_set["schema_version"] == 1
 
     @pytest.mark.asyncio
@@ -187,7 +186,7 @@ class TestDiff:
         assert doc is not None
         assert doc["is_baseline"] is False
         assert doc["prev_scan_id"] == "s1"
-        assert doc["prev_created_at"] == _at(0).replace(tzinfo=None)
+        assert doc["prev_created_at"] == _at(0)
         assert doc["updates"] == {"patch": 1, "minor": 1, "major": 1, "unknown": 0, "downgrade": 0}
         assert doc["total_updates"] == 3
         assert doc["dep_count"] == 4
@@ -579,7 +578,7 @@ class TestOutOfOrderArrival:
         repaired = await _delta(db, "s3")
         assert repaired is not None
         assert repaired["prev_scan_id"] == "s2"
-        assert repaired["prev_created_at"] == _at(1).replace(tzinfo=None)
+        assert repaired["prev_created_at"] == _at(1)
         assert repaired["updates"] == {"patch": 1, "minor": 0, "major": 0, "unknown": 0, "downgrade": 0}
         assert repaired["outdated_resolved"] == ["requests"]
 
@@ -838,7 +837,7 @@ class TestFailures:
         assert doc["dep_count"] == 0
         assert doc["total_updates"] == 0
         assert doc["project_id"] == PROJECT
-        assert doc["scan_created_at"] == _at(0).replace(tzinfo=None)
+        assert doc["scan_created_at"] == _at(0)
         # The outdated set belongs to a successful computation only.
         assert await db.scan_outdated_sets.find_one({"_id": "s1"}) is None
         assert _counter("error") == errors_before + 1

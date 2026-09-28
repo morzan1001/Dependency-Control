@@ -3,7 +3,6 @@
 from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReadPreference
 from pymongo.errors import DuplicateKeyError
 
 
@@ -11,8 +10,6 @@ class DistributedLocksRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.collection = db.distributed_locks
-        # Lock-state reads must be coherent — two pods must never both see "free".
-        self._reads = self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
     async def acquire_lock(self, lock_name: str, holder_id: str, ttl_seconds: int = 30) -> bool:
         now = datetime.now(timezone.utc)
@@ -59,14 +56,14 @@ class DistributedLocksRepository:
         return result.deleted_count > 0
 
     async def get_lock_info(self, lock_name: str) -> dict | None:
-        return await self._reads.find_one({"_id": lock_name})
+        return await self.collection.find_one({"_id": lock_name})
 
     async def is_locked(self, lock_name: str) -> bool:
         now = datetime.now(timezone.utc)
-        lock = await self._reads.find_one({"_id": lock_name, "expires_at": {"$gt": now}})
+        lock = await self.collection.find_one({"_id": lock_name, "expires_at": {"$gt": now}})
         return lock is not None
 
     async def held_locks(self, lock_names: list[str]) -> set[str]:
         now = datetime.now(timezone.utc)
-        cursor = self._reads.find({"_id": {"$in": lock_names}, "expires_at": {"$gt": now}}, {"_id": 1})
+        cursor = self.collection.find({"_id": {"$in": lock_names}, "expires_at": {"$gt": now}}, {"_id": 1})
         return {lock["_id"] async for lock in cursor}

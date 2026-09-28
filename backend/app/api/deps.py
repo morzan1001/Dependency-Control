@@ -8,7 +8,7 @@ from jose import JWTError, jwt
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 
-from app.core import ensure_utc, security
+from app.core import security
 from app.core.config import settings
 from app.core.constants import (
     API_KEY_SURFACE_ADHOC,
@@ -80,7 +80,7 @@ async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabas
 
 def _check_logout_invalidation(user: dict, payload: dict) -> None:
     """Raise TokenRejected if the token was issued before the user's last logout."""
-    last_logout_at = ensure_utc(user.get("last_logout_at"))
+    last_logout_at = user.get("last_logout_at")
     if not last_logout_at:
         return
     iat = payload.get("iat")
@@ -300,7 +300,7 @@ async def _sync_project_name(
         return project
     await project_repo.update_raw(project.id, stages)
     # The owners are computed server-side, so the caller is handed what was stored, not a guess.
-    return await project_repo.get_by_id_strong(project.id) or project
+    return await project_repo.get_by_id(project.id) or project
 
 
 async def _handle_gitlab_oidc(

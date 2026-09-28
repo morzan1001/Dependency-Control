@@ -43,7 +43,7 @@ class TestWaiverModel:
 
 
 class TestWaiverExpiry:
-    # Motor hands back tz-naive datetimes, so every expiration_date loaded from Mongo takes this path.
+    # A request may send expiration_date without an offset, and the model keeps it naive.
     _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     def test_naive_expiration_in_the_future_stays_active(self):

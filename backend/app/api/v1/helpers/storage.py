@@ -5,9 +5,9 @@ import logging
 from typing import Any
 
 from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorDatabase
+from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
-from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
+from app.db.mongodb import open_gridfs_download_with_retry
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,7 @@ async def load_from_gridfs(
 ) -> dict[str, Any] | None:
     """Load and parse JSON content from GridFS, or None if loading fails."""
     try:
-        fs = primary_gridfs_bucket(db)
+        fs = AsyncIOMotorGridFSBucket(db)
         grid_out = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
         content: bytes = await grid_out.read()
         data: dict[str, Any] = json.loads(content)
@@ -37,7 +37,7 @@ async def resolve_sbom_refs(
         return []
 
     resolved_sboms = []
-    fs = primary_gridfs_bucket(db)
+    fs = AsyncIOMotorGridFSBucket(db)
 
     for index, item in enumerate(sbom_items):
         if isinstance(item, dict) and item.get("type") == "gridfs_reference":

@@ -45,7 +45,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.api.v1.endpoints.analytics.update_frequency import (
     _DEFAULT_COMPARISON_WINDOW_DAYS,
@@ -54,6 +53,7 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _rollup_project_metrics,
 )
 from app.core.config import settings
+from app.db.mongodb import create_client
 from app.core.constants import SCAN_USABLE_STATUSES
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
 from app.repositories.update_frequency import WINDOW_HARD_LIMIT, ScanUpdateDeltaRepository
@@ -480,7 +480,7 @@ def print_totals(reports: Sequence[ProjectReport], comparison: Sequence[Deviatio
 
 
 async def run(args: argparse.Namespace) -> int:
-    client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
+    client = create_client(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
         since = cast(datetime, window_cutoff(args.window_days))

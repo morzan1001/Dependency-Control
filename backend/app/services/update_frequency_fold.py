@@ -22,7 +22,6 @@ from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import (
     ECOSYSTEM_DOMINANCE_THRESHOLD,
-    as_utc,
     compute_trend,
     fold_runs_into_bars,
     granularity_ratio,
@@ -296,7 +295,7 @@ def _reject_broken_contract(deltas: Sequence[dict[str, Any]]) -> None:
     if len(scopes) > 1:
         raise ValueError(f"deltas span more than one project/branch: {sorted(scopes)}")
     for older, newer in pairwise(deltas):
-        if as_utc(newer["scan_created_at"]) < as_utc(older["scan_created_at"]):
+        if newer["scan_created_at"] < older["scan_created_at"]:
             raise ValueError(f"deltas must be ordered oldest first; {newer['_id']} precedes {older['_id']}")
 
 
@@ -375,7 +374,7 @@ def _timeline_entry(delta: dict[str, Any], *, baseline: bool) -> ScanTimelineEnt
     outdated_count = delta.get("outdated_count")
     return ScanTimelineEntry(
         scan_id=str(delta["_id"]),
-        date=as_utc(delta["scan_created_at"]).isoformat(),
+        date=delta["scan_created_at"].isoformat(),
         updates_count=sum(counts.values()),
         outdated_count=None if outdated_count is None else int(outdated_count),
         patch=counts["patch"],
@@ -408,8 +407,8 @@ def _recent_updates(deltas: Sequence[dict[str, Any]]) -> list[DependencyUpdateEv
         prev_created_at = delta.get("prev_created_at")
         if prev_created_at is None:
             continue
-        scan_date = as_utc(delta["scan_created_at"])
-        previous_scan_date = as_utc(prev_created_at)
+        scan_date = delta["scan_created_at"]
+        previous_scan_date = prev_created_at
         days_between = max(1, (scan_date - previous_scan_date).days)
         for sample in delta.get("updates_sample") or []:
             events.append(

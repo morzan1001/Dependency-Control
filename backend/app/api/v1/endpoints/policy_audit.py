@@ -19,6 +19,7 @@ from app.api.v1.helpers.responses import (
     RESP_403_404,
     RESP_404,
 )
+from app.core import ensure_utc
 from app.core.config import settings
 from app.core.constants import MAX_POLICY_AUDIT_PAGE
 from app.models.crypto_policy import CryptoPolicy
@@ -247,12 +248,8 @@ def _min_prune_days() -> int:
 def _enforce_min_prune_cutoff(cutoff: datetime) -> None:
     """Reject prune requests whose cutoff is too recent, preserving forensic history."""
     days = _min_prune_days()
-    # Normalise a possibly-naive client timestamp to UTC.
-    now = datetime.now(timezone.utc)
-    if cutoff.tzinfo is None:
-        cutoff = cutoff.replace(tzinfo=timezone.utc)
-    min_age_boundary = now - timedelta(days=days)
-    if cutoff > min_age_boundary:
+    min_age_boundary = datetime.now(timezone.utc) - timedelta(days=days)
+    if ensure_utc(cutoff) > min_age_boundary:
         raise HTTPException(
             status_code=400,
             detail=(f"before must be at least {days} days in the past to preserve forensic history"),

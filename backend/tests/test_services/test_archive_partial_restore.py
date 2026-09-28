@@ -113,7 +113,7 @@ async def test_reaper_drops_the_metadata_of_a_completed_restore_whose_cleanup_fa
 
     assert await restore_scan(db, SCAN_ID) is not None
     scan = await db.scans.find_one({"_id": SCAN_ID})
-    assert scan["restored_at"] > _ARCHIVED_AT.replace(tzinfo=None)
+    assert scan["restored_at"] > _ARCHIVED_AT
     assert "restore_in_progress" not in scan
 
     reaped = await _reap_stale_metadata(db)

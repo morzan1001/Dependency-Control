@@ -66,7 +66,7 @@ class TestFinalizeMarksFailed:
         # no latest scan yet -> guard allows the update
         project_repo = SimpleNamespace(
             update_raw=project_update,
-            get_by_id_strong=AsyncMock(return_value=SimpleNamespace(latest_scan_id=None)),
+            get_by_id=AsyncMock(return_value=SimpleNamespace(latest_scan_id=None)),
         )
         scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None)
 

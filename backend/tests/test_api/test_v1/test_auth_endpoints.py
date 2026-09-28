@@ -25,8 +25,7 @@ _BAD_REQUEST = 400
 _FORBIDDEN = 403
 _NOT_FOUND = 404
 _MSG_CREDENTIALS = "Could not validate credentials"
-# Stored datetimes come back naive and .timestamp() reads them in the process timezone, so the
-# logout lies far enough ahead to stay ahead of any offset.
+# The logout lies a whole day after the token was issued, so no clock offset can reorder them.
 _LOGOUT_AFTER_ISSUE = timedelta(days=1)
 
 

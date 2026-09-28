@@ -3,8 +3,8 @@
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
-from pymongo import ReadPreference, ReturnDocument
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReturnDocument
 
 from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_SOURCE_MANUAL
 from app.core.metrics import track_db_operation
@@ -260,17 +260,9 @@ class ProjectRepository:
         self.db = db
         self.collection = db.projects
 
-    def _primary(self) -> AsyncIOMotorCollection:
-        return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-
     async def get_by_id(self, project_id: str) -> Project | None:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": project_id})
-        return Project(**data) if data else None
-
-    async def get_by_id_strong(self, project_id: str) -> Project | None:
-        with track_db_operation(_COL, "find_one"):
-            data = await self._primary().find_one({"_id": project_id})
         return Project(**data) if data else None
 
     async def get_raw_by_id(self, project_id: str) -> dict[str, Any] | None:

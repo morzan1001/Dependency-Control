@@ -3,9 +3,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
-from pymongo import ReadPreference
 
-from app.core import ensure_utc
 from app.core.cache import update_cache_stats
 from app.core.config import settings
 from app.core.constants import (
@@ -144,10 +142,10 @@ def _rescan_clock(source_scan: dict) -> datetime | None:
 
 def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
     """Whether this source scan has gone interval_hours without a rescan."""
-    last_rescan_aware = ensure_utc(_rescan_clock(source_scan))
-    if not last_rescan_aware:
+    last_rescan = _rescan_clock(source_scan)
+    if not last_rescan:
         return False
-    next_rescan_due = last_rescan_aware + timedelta(hours=interval_hours)
+    next_rescan_due = last_rescan + timedelta(hours=interval_hours)
     return datetime.now(timezone.utc) >= next_rescan_due
 
 
@@ -193,10 +191,9 @@ async def _create_rescan_for_project(
         return
 
     try:
-        # TOCTOU re-check inside lock — strong read. Scoped to this source so unrelated CI
+        # TOCTOU re-check inside lock. Scoped to this source so unrelated CI
         # traffic on the project cannot cancel a rescan that is genuinely due.
-        scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-        active_rescan = await scans_primary.find_one(
+        active_rescan = await db.scans.find_one(
             {
                 "project_id": project.id,
                 "original_scan_id": source_scan_id,
@@ -704,9 +701,7 @@ async def recover_stuck_scans(
         )
         max_retries = HOUSEKEEPING_MAX_SCAN_RETRIES
 
-        # Strong read: avoid resetting scans whose "completed" hasn't replicated yet.
-        scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-        cursor = scans_primary.find(
+        cursor = db.scans.find(
             {
                 "status": "processing",
                 "$or": [
@@ -851,7 +846,7 @@ async def _resolve_latest_scan_after_branch_deletion(
     if active_scan:
         updates: dict = {
             "latest_scan_id": active_scan.id,
-            "last_scan_at": ensure_utc(active_scan.created_at),
+            "last_scan_at": active_scan.created_at,
         }
         if active_scan.stats:
             updates["stats"] = active_scan.stats.model_dump()
