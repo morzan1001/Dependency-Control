@@ -15,7 +15,7 @@ _ROWS_PER_SCAN = 150
 _LATE_PACKAGE = "late-package"
 
 
-def _dep(_id, scan_id, project_id, name, version, purl=None, group=None):
+def _dep(_id, scan_id, project_id, name, version, purl=None, group=None, component_type=None):
     return {
         "_id": _id,
         "scan_id": scan_id,
@@ -24,6 +24,7 @@ def _dep(_id, scan_id, project_id, name, version, purl=None, group=None):
         "version": version,
         "purl": purl,
         "group": group,
+        "type": component_type,
     }
 
 
@@ -164,3 +165,14 @@ async def test_the_payload_says_how_many_projects_the_comparison_reached(db):
     assert data["total_projects"] == _ACCESSIBLE_PROJECTS
     assert data["projects_compared"] == _COMPARISON_LIMIT
     assert len(data["projects"]) == _COMPARISON_LIMIT
+
+
+def test_purl_less_components_of_different_types_sharing_a_name_are_different_packages():
+    col = FakeCollection()
+    docs = [
+        _dep("d1", "s1", "p1", "busybox", "1.36.1", component_type="application"),
+        _dep("d2", "s2", "p2", "busybox", "1.35.0", component_type="operating-system"),
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert _run(col, ["s1", "s2"]) == []

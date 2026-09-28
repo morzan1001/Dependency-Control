@@ -134,14 +134,14 @@ _CASE_INSENSITIVE_TYPES = ("alpm", "apk", "bitbucket", "composer", "deb", "githu
 _IDENTITY_PATTERN = r"^pkg:([^/]+)/([^?#]*?)(?:@[^/?#]*)?(?:[?#].*)?$"
 
 
-def package_identity(purl: str | None, name: str) -> tuple[str, str]:
+def package_identity(purl: str | None, name: str, component_type: str | None) -> tuple[str, str]:
     """Version-free package identity ``(type, namespace/name)`` under the purl spec's per-type rules.
 
-    Without a parseable purl the row is keyed by its lowercased name under an empty type.
+    Without a parseable purl the row is keyed by its component type and lowercased name.
     """
     parsed = parse_purl(purl) if purl else None
     if parsed is None:
-        return "", name.strip().lower()
+        return component_type or "", name.strip().lower()
     path = parsed.full_name
     if parsed.type in _CASE_INSENSITIVE_TYPES:
         path = path.lower()
@@ -151,7 +151,7 @@ def package_identity(purl: str | None, name: str) -> tuple[str, str]:
 
 
 def package_identity_expr() -> dict[str, Any]:
-    """:func:`package_identity` as an aggregation expression over a dependency row's ``purl`` and ``name``."""
+    """:func:`package_identity` as an aggregation expression over a dependency row's ``purl``, ``name`` and ``type``."""
     # Mongo cannot percent-decode; '%40' (the npm scope) is the only escape producers write in a package path.
     path = {"$replaceAll": {"input": {"$arrayElemAt": ["$$m.captures", 1]}, "find": "%40", "replacement": "@"}}
     folded = {"$cond": [{"$in": ["$$type", list(_CASE_INSENSITIVE_TYPES)]}, {"$toLower": path}, path]}
@@ -161,7 +161,10 @@ def package_identity_expr() -> dict[str, Any]:
             "in": {
                 "$cond": [
                     {"$eq": ["$$m", None]},
-                    {"type": "", "path": {"$toLower": {"$trim": {"input": {"$ifNull": ["$name", ""]}}}}},
+                    {
+                        "type": {"$ifNull": ["$type", ""]},
+                        "path": {"$toLower": {"$trim": {"input": {"$ifNull": ["$name", ""]}}}},
+                    },
                     {
                         "$let": {
                             "vars": {"type": {"$toLower": {"$arrayElemAt": ["$$m.captures", 0]}}},

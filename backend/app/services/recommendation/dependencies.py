@@ -129,7 +129,7 @@ def analyze_version_fragmentation(
 
     deps_by_package: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for dep in dependencies:
-        deps_by_package[package_identity(get_attr(dep, "purl"), get_attr(dep, "name"))].append(
+        deps_by_package[package_identity(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"))].append(
             {"version": get_attr(dep, "version"), "direct": get_attr(dep, "direct", False)}
         )
 

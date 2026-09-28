@@ -158,59 +158,83 @@ class TestParsedPURLProperties:
 
 
 _IDENTITY_TABLE = [
-    pytest.param("pkg:npm/%40angular/core@16.2.0", "core", ("npm", "@angular/core"), id="npm_encoded_scope"),
-    pytest.param("pkg:npm/@angular/core@16.2.0", "@angular/core", ("npm", "@angular/core"), id="npm_literal_scope"),
-    pytest.param("pkg:npm/@angular/core", "core", ("npm", "@angular/core"), id="npm_scope_without_version"),
-    pytest.param("pkg:npm/JSONStream@1.3.5", "JSONStream", ("npm", "JSONStream"), id="npm_keeps_case"),
-    pytest.param("pkg:pypi/PyYAML@6.0.1", "PyYAML", ("pypi", "pyyaml"), id="pypi_folds_case"),
+    pytest.param("pkg:npm/%40angular/core@16.2.0", "core", "library", ("npm", "@angular/core"), id="npm_encoded_scope"),
     pytest.param(
-        "pkg:pypi/typing_extensions@4.8.0", "typing_extensions", ("pypi", "typing-extensions"), id="pypi_underscore"
+        "pkg:npm/@angular/core@16.2.0", "@angular/core", "library", ("npm", "@angular/core"), id="npm_literal_scope"
+    ),
+    pytest.param("pkg:npm/@angular/core", "core", "library", ("npm", "@angular/core"), id="npm_scope_without_version"),
+    pytest.param("pkg:npm/JSONStream@1.3.5", "JSONStream", "library", ("npm", "JSONStream"), id="npm_keeps_case"),
+    pytest.param("pkg:pypi/PyYAML@6.0.1", "PyYAML", "library", ("pypi", "pyyaml"), id="pypi_folds_case"),
+    pytest.param(
+        "pkg:pypi/typing_extensions@4.8.0",
+        "typing_extensions",
+        "library",
+        ("pypi", "typing-extensions"),
+        id="pypi_underscore",
     ),
     pytest.param(
         "pkg:maven/org.jetbrains/annotations@24.0.1?type=jar",
         "annotations",
+        "library",
         ("maven", "org.jetbrains/annotations"),
         id="maven_group_kept_qualifiers_dropped",
     ),
     pytest.param(
         "pkg:maven/software.amazon.awssdk/annotations@2.20.0",
         "annotations",
+        "library",
         ("maven", "software.amazon.awssdk/annotations"),
         id="maven_other_group",
     ),
     pytest.param(
         "pkg:golang/github.com/cespare/xxhash/v2@v2.3.0",
         "github.com/cespare/xxhash/v2",
+        "library",
         ("golang", "github.com/cespare/xxhash/v2"),
         id="golang_module_path",
     ),
-    pytest.param("pkg:cargo/serde@1.0.188", "serde", ("cargo", "serde"), id="cargo"),
-    pytest.param("pkg:nuget/Newtonsoft.Json@13.0.3", "Newtonsoft.Json", ("nuget", "Newtonsoft.Json"), id="nuget"),
-    pytest.param("pkg:gem/rails@7.0.8", "rails", ("gem", "rails"), id="gem"),
+    pytest.param("pkg:cargo/serde@1.0.188", "serde", "library", ("cargo", "serde"), id="cargo"),
     pytest.param(
-        "pkg:composer/Laravel/Framework@10.0.0", "framework", ("composer", "laravel/framework"), id="composer_folds"
+        "pkg:nuget/Newtonsoft.Json@13.0.3", "Newtonsoft.Json", "library", ("nuget", "Newtonsoft.Json"), id="nuget"
+    ),
+    pytest.param("pkg:gem/rails@7.0.8", "rails", "library", ("gem", "rails"), id="gem"),
+    pytest.param(
+        "pkg:composer/Laravel/Framework@10.0.0",
+        "framework",
+        "library",
+        ("composer", "laravel/framework"),
+        id="composer_folds",
     ),
     pytest.param(
-        "pkg:deb/debian/zlib1g@1.2.13?arch=amd64&distro=debian-12", "zlib1g", ("deb", "debian/zlib1g"), id="deb"
+        "pkg:deb/debian/zlib1g@1.2.13?arch=amd64&distro=debian-12",
+        "zlib1g",
+        "library",
+        ("deb", "debian/zlib1g"),
+        id="deb",
     ),
-    pytest.param("pkg:apk/alpine/zlib@1.3-r0?arch=x86_64", "zlib", ("apk", "alpine/zlib"), id="apk"),
-    pytest.param("pkg:rpm/redhat/zlib@1.2.11?arch=x86_64", "zlib", ("rpm", "redhat/zlib"), id="rpm"),
-    pytest.param("pkg:github/Actions/Checkout@v4", "checkout", ("github", "actions/checkout"), id="github_folds"),
-    pytest.param("pkg:npm/lodash@4.17.21#dist/lodash.min.js", "lodash", ("npm", "lodash"), id="subpath_dropped"),
-    pytest.param(None, " Debian ", ("", "debian"), id="no_purl_falls_back_to_the_name"),
-    pytest.param("not-a-purl", "Foo", ("", "foo"), id="unparseable_purl_falls_back_to_the_name"),
+    pytest.param("pkg:apk/alpine/zlib@1.3-r0?arch=x86_64", "zlib", "library", ("apk", "alpine/zlib"), id="apk"),
+    pytest.param("pkg:rpm/redhat/zlib@1.2.11?arch=x86_64", "zlib", "library", ("rpm", "redhat/zlib"), id="rpm"),
+    pytest.param(
+        "pkg:github/Actions/Checkout@v4", "checkout", "library", ("github", "actions/checkout"), id="github_folds"
+    ),
+    pytest.param(
+        "pkg:npm/lodash@4.17.21#dist/lodash.min.js", "lodash", "library", ("npm", "lodash"), id="subpath_dropped"
+    ),
+    pytest.param(None, " Debian ", "operating-system", ("operating-system", "debian"), id="no_purl_keys_type_and_name"),
+    pytest.param(None, "Debian", "application", ("application", "debian"), id="no_purl_other_type_other_package"),
+    pytest.param("not-a-purl", "Foo", None, ("", "foo"), id="unparseable_purl_without_type"),
 ]
 
 
 class TestPackageIdentity:
-    @pytest.mark.parametrize(("purl", "name", "expected"), _IDENTITY_TABLE)
-    def test_identity_per_ecosystem(self, purl, name, expected):
-        assert package_identity(purl, name) == expected
+    @pytest.mark.parametrize(("purl", "name", "component_type", "expected"), _IDENTITY_TABLE)
+    def test_identity_per_ecosystem(self, purl, name, component_type, expected):
+        assert package_identity(purl, name, component_type) == expected
 
-    @pytest.mark.parametrize(("purl", "name", "expected"), _IDENTITY_TABLE)
-    def test_the_aggregation_expression_computes_the_same_identity(self, purl, name, expected):
+    @pytest.mark.parametrize(("purl", "name", "component_type", "expected"), _IDENTITY_TABLE)
+    def test_the_aggregation_expression_computes_the_same_identity(self, purl, name, component_type, expected):
         collection = FakeCollection()
-        collection._docs = {"d": {"_id": "d", "purl": purl, "name": name}}
+        collection._docs = {"d": {"_id": "d", "purl": purl, "name": name, "type": component_type}}
         pipeline = [{"$project": {"identity": package_identity_expr()}}]
 
         [row] = asyncio.run(collection.aggregate(pipeline).to_list())
