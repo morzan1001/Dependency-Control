@@ -280,20 +280,6 @@ async def create_user(
             detail="Signup is currently disabled.",
         )
 
-    user_repo = UserRepository(db)
-
-    if await user_repo.exists_by_username(user_in.username):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The user with this username already exists in the system.",
-        )
-
-    if await user_repo.exists_by_email(user_in.email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The user with this email already exists in the system.",
-        )
-
     new_user = User(
         email=user_in.email,
         username=user_in.username,
@@ -306,7 +292,7 @@ async def create_user(
         is_verified=False,
         auth_provider="local",
     )
-    await user_repo.create(new_user)
+    await UserRepository(db).create(new_user)
 
     await send_verification_email(background_tasks, new_user.email, system_settings=system_config)
 
@@ -433,9 +419,6 @@ async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: Data
     # A newer request or an earlier confirmation replaced the pending address this link was mailed to.
     if not user or user.get("pending_email") != new_email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This email change is no longer pending")
-
-    if await user_repo.exists_by_email(new_email):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
 
     await user_repo.update(user_id, {"email": new_email, "pending_email": None, "is_verified": True})
 
@@ -623,7 +606,8 @@ async def _oidc_fetch_user_info(
 
 async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: dict, email: str) -> str:
     """Generate a unique username for a new OIDC user."""
-    base_username = str(user_info.get("preferred_username", email.split("@")[0]))
+    preferred = str(user_info.get("preferred_username") or "").strip()
+    base_username = preferred if preferred and "@" not in preferred else email.split("@")[0]
     username = base_username
     suffix = 0
     while await user_repo.exists_by_username(username):

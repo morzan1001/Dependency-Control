@@ -63,12 +63,6 @@ async def create_user(
     db: DatabaseDep,
 ) -> User:
     """Create a new user. Requires 'user:create' permission."""
-    if not user_in.password:
-        raise HTTPException(
-            status_code=400,
-            detail="Password is required when creating a user",
-        )
-
     # A caller may never grant a permission they don't hold themselves.
     if user_in.permissions:
         if not has_permission(current_user.permissions, [Permissions.USER_MANAGE_PERMISSIONS]):
@@ -85,26 +79,11 @@ async def create_user(
                 detail=f"Cannot grant permissions you don't hold: {sorted(unauthorised)}",
             )
 
-    user_repo = UserRepository(db)
-
-    if await user_repo.exists_by_email(user_in.email):
-        raise HTTPException(
-            status_code=400,
-            detail="A user with this email already exists in the system.",
-        )
-
-    if await user_repo.exists_by_username(user_in.username):
-        raise HTTPException(
-            status_code=400,
-            detail="A user with this username already exists in the system.",
-        )
-
     user_dict = user_in.model_dump()
-    hashed_password = security.get_password_hash(user_dict.pop("password"))
-    user_dict["hashed_password"] = hashed_password
+    user_dict["hashed_password"] = security.get_password_hash(user_dict.pop("password"))
 
     new_user = User(**user_dict)
-    await user_repo.create(new_user)
+    await UserRepository(db).create(new_user)
     return new_user
 
 
@@ -218,14 +197,6 @@ def _ensure_can_change_permissions(caller: User, existing: set[str], requested: 
         )
 
 
-async def _ensure_admin_can_set_email(user_repo: UserRepository, target: dict[str, Any], new_email: str) -> None:
-    """The IdP owns a non-local account's email; any other address must be unused in every case."""
-    if target.get("auth_provider", AUTH_PROVIDER_LOCAL) != AUTH_PROVIDER_LOCAL:
-        raise HTTPException(status_code=400, detail="This account's email is managed by its identity provider")
-    if await user_repo.exists_by_email(new_email):
-        raise HTTPException(status_code=400, detail="Email already registered")
-
-
 @router.put("/{user_id}", response_model=UserSchema, responses=RESP_AUTH_400_404)
 async def update_user(
     user_id: str,
@@ -265,15 +236,9 @@ async def update_user(
         )
 
     if "email" in update_data and update_data["email"] != existing_user["email"].lower():
-        await _ensure_admin_can_set_email(user_repo, existing_user, update_data["email"])
+        if existing_user.get("auth_provider", AUTH_PROVIDER_LOCAL) != AUTH_PROVIDER_LOCAL:
+            raise HTTPException(status_code=400, detail="This account's email is managed by its identity provider")
         update_data["is_verified"] = False
-
-    if (
-        "username" in update_data
-        and update_data["username"] != existing_user.get("username")
-        and await user_repo.exists_by_username(update_data["username"])
-    ):
-        raise HTTPException(status_code=400, detail="Username already taken")
 
     if "password" in update_data:
         if has_admin_perm:

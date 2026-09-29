@@ -15,7 +15,8 @@ from app.core.config import settings
 from app.models.invitation import SystemInvitation
 from app.models.user import User
 from app.repositories.invitations import InvitationRepository
-from app.repositories.users import UserRepository
+from app.repositories.users import IdentityTakenError, UserRepository
+from app.schemas.user import LowercaseEmail, Username
 from app.schemas.user import User as UserSchema
 
 router = CustomAPIRouter()
@@ -39,14 +40,14 @@ async def create_system_invitation(
     background_tasks: BackgroundTasks,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
-    email: Annotated[str, Body(..., embed=True)],
+    email: Annotated[LowercaseEmail, Body(..., embed=True)],
 ) -> dict[str, Any]:
     """Create a system invitation for a new user. Requires 'user:create' permission."""
-    user_repo = UserRepository(db)
     invitation_repo = InvitationRepository(db)
 
-    if await user_repo.exists_by_email(email):
-        raise HTTPException(status_code=400, detail="User with this email already exists")
+    # An invitation writes no user, so no unique index refuses a registered address here.
+    if await UserRepository(db).exists_by_email(email):
+        raise IdentityTakenError("email")
 
     existing_invite = await invitation_repo.get_system_invitation_by_email(email)
 
@@ -100,23 +101,16 @@ async def validate_system_invitation(token: str, db: DatabaseDep) -> dict[str, A
 async def accept_system_invitation(
     db: DatabaseDep,
     token: Annotated[str, Body(...)],
-    username: Annotated[str, Body(...)],
+    username: Annotated[Username, Body(...)],
     password: Annotated[str, Body(...)],
 ) -> User:
     """Accept a system invitation and create a user account."""
-    user_repo = UserRepository(db)
     invitation_repo = InvitationRepository(db)
 
     invitation = await invitation_repo.get_system_invitation_by_token(token)
 
     if not invitation:
         raise HTTPException(status_code=400, detail="Invalid or expired invitation token")
-
-    if await user_repo.exists_by_username(username):
-        raise HTTPException(status_code=400, detail="Username already taken")
-
-    if await user_repo.exists_by_email(invitation["email"]):
-        raise HTTPException(status_code=400, detail="Email already registered")
 
     hashed_password = security.get_password_hash(password)
     new_user = User(
@@ -128,7 +122,7 @@ async def accept_system_invitation(
         permissions=[],
     )
 
-    await user_repo.create(new_user)
+    await UserRepository(db).create(new_user)
 
     await invitation_repo.mark_system_invitation_used(invitation["_id"])
 

@@ -23,8 +23,15 @@ def validate_password_strength(password: str) -> str:
     return password
 
 
+def _not_email_shaped(username: str) -> str:
+    # Login resolves the username before the email, so an email-shaped name would shadow that account.
+    if "@" in username:
+        raise ValueError("A username must not contain '@'")
+    return username
+
+
 LowercaseEmail = Annotated[EmailStr, AfterValidator(str.lower)]
-Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1), AfterValidator(_not_email_shaped)]
 
 
 class UserBase(BaseModel):
@@ -40,19 +47,18 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     email: LowercaseEmail
-    password: str | None = None
+    username: Username
+    password: str
 
     @field_validator("password")
     @classmethod
-    def validate_password(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
+    def validate_password(cls, v: str) -> str:
         return validate_password_strength(v)
 
 
 class UserSignup(BaseModel):
     email: LowercaseEmail
-    username: str
+    username: Username
     password: str
     slack_username: str | None = None
     mattermost_username: str | None = None
