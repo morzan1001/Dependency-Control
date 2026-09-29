@@ -1,4 +1,4 @@
-"""ScanManager - scan lifecycle: find/create scans, apply waivers, store results, compute stats, trigger aggregation."""
+"""ScanManager - scan lifecycle: find/create scans, apply waivers, register scanner results."""
 
 import logging
 import uuid
@@ -154,20 +154,10 @@ class ScanManager:
 
             if is_waived:
                 waived_count += 1
-                finding.waived = True
             else:
                 final_findings.append(finding)
 
         return final_findings, waived_count
-
-    async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> None:
-        from app.repositories.analysis_results import AnalysisResultRepository
-
-        await AnalysisResultRepository(self.db).insert_result(scan_id, analyzer_name, result)
-
-    async def trigger_aggregation(self, scan_id: str) -> None:
-        """Add scan to worker queue for aggregation."""
-        await worker_manager.add_job(scan_id)
 
     async def register_result(self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False) -> None:
         """Record a scanner's submission; if the scan was completed, reset to pending and re-aggregate.
@@ -211,4 +201,4 @@ class ScanManager:
             should_reaggregate = await scan_repo.reopen_finished(scan_id)
 
         if trigger_analysis or should_reaggregate:
-            await self.trigger_aggregation(scan_id)
+            await worker_manager.add_job(scan_id)

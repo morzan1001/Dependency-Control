@@ -1,8 +1,12 @@
-"""Request-body size guards: a declared-size fast path plus a streaming ceiling."""
+"""Size guards answering 413: a declared-size fast path, a streaming ceiling and MongoDB's document limit."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 
 from fastapi import HTTPException, Request
+from pymongo.errors import DocumentTooLarge, WriteError
+
+_RESULTING_DOCUMENT_TOO_LARGE = 17419
 
 
 def _too_large(limit: int, received: str) -> HTTPException:
@@ -43,3 +47,14 @@ async def read_body_within_limit(request: Request, limit: int) -> bytes:
             raise _too_large(limit, f"{total}+")
         chunks.append(chunk)
     return b"".join(chunks)
+
+
+@contextmanager
+def refuse_oversized_document(what: str) -> Iterator[None]:
+    """413 for a write refused by the 16 MB limit, whether the driver or the server applying the update refuses it."""
+    try:
+        yield
+    except (DocumentTooLarge, WriteError) as exc:
+        if isinstance(exc, WriteError) and exc.code != _RESULTING_DOCUMENT_TOO_LARGE:
+            raise
+        raise HTTPException(status_code=413, detail=f"{what} exceeds the 16 MB document limit") from exc

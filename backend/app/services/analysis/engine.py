@@ -199,8 +199,6 @@ async def process_analyzer(
             duration = time.time() - analyzer_start_time
             analysis_duration_seconds.labels(analyzer=analyzer_name).observe(duration)
 
-        await AnalysisResultRepository(db).insert_result(scan_id, analyzer_name, result)
-
         source: str = fallback_source
         if sbom.get("metadata") and sbom["metadata"].get("component"):
             source = str(sbom["metadata"]["component"].get("name", fallback_source))
@@ -208,6 +206,12 @@ async def process_analyzer(
             source = str(sbom.get("serialNumber"))
 
         aggregator.aggregate(analyzer_name, result, source=source)
+
+        # The findings are already aggregated, so a refused raw row costs only the raw-results view.
+        try:
+            await AnalysisResultRepository(db).save_result(scan_id, analyzer_name, result, source=source)
+        except Exception as e:
+            logger.exception("Storing the raw %s result of %s failed: %s", analyzer_name, scan_id, e)
 
         # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts instead of raising.
         if isinstance(result, dict) and result.get("error"):
@@ -530,7 +534,7 @@ async def _run_epss_kev_enrichment(
     try:
         await enrich_vulnerability_findings(vulnerability_findings, github_token=github_token)
         epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
-        await result_repo.insert_result(scan_id, "epss_kev", epss_kev_summary)
+        await result_repo.save_result(scan_id, "epss_kev", epss_kev_summary)
         results_summary.append(f"epss_kev: Success ({len(vulnerability_findings)} enriched)")
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
@@ -579,7 +583,7 @@ async def _run_reachability_enrichment(
             [cg.model_dump(by_alias=True) for cg in callgraphs],
             enriched_count,
         )
-        await result_repo.replace_result(scan_id, "reachability", reachability_summary)
+        await result_repo.save_result(scan_id, "reachability", reachability_summary)
         results_summary.append(f"reachability: Success ({enriched_count} enriched)")
         logger.info(f"[reachability] Enriched {enriched_count} findings for scan {scan_id}")
 

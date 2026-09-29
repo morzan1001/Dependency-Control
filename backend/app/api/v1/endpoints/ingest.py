@@ -25,6 +25,7 @@ from app.repositories.distributed_locks import DistributedLocksRepository, new_l
 from app.repositories.scans import ScanRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
+    BaseIngest,
     FindingsIngestResponse,
     ProjectConfigResponse,
     SBOMIngest,
@@ -48,6 +49,10 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
+def _scanner_payload(data: BaseIngest) -> dict[str, Any]:
+    return data.model_dump(exclude=set(BaseIngest.model_fields))
+
+
 @router.post(
     "/ingest/trufflehog",
     summary="Ingest TruffleHog Results",
@@ -63,9 +68,7 @@ async def ingest_trufflehog(
     manager = ScanManager(db, project)
     scan_id = await manager.find_or_create_scan(data)
 
-    result_dict = {"findings": [f.model_dump() for f in data.findings]}
-
-    response = await process_findings_ingest(manager, "trufflehog", result_dict, scan_id)
+    response = await process_findings_ingest(manager, "trufflehog", _scanner_payload(data), scan_id)
 
     # Any secret found fails the pipeline.
     failed = response["findings_count"] > 0
@@ -94,9 +97,7 @@ async def ingest_opengrep(
     manager = ScanManager(db, project)
     scan_id = await manager.find_or_create_scan(data)
 
-    result_dict = {"findings": [f.model_dump() for f in data.findings]}
-
-    response = await process_findings_ingest(manager, "opengrep", result_dict, scan_id)
+    response = await process_findings_ingest(manager, "opengrep", _scanner_payload(data), scan_id)
     return FindingsIngestResponse(**response)
 
 
@@ -115,10 +116,7 @@ async def ingest_kics(
     manager = ScanManager(db, project)
     scan_id = await manager.find_or_create_scan(data)
 
-    # KICS uses the full model
-    result_dict = data.model_dump()
-
-    response = await process_findings_ingest(manager, "kics", result_dict, scan_id)
+    response = await process_findings_ingest(manager, "kics", _scanner_payload(data), scan_id)
     return FindingsIngestResponse(**response)
 
 
@@ -137,10 +135,7 @@ async def ingest_bearer(
     manager = ScanManager(db, project)
     scan_id = await manager.find_or_create_scan(data)
 
-    # Bearer uses the full model
-    result_dict = data.model_dump()
-
-    response = await process_findings_ingest(manager, "bearer", result_dict, scan_id)
+    response = await process_findings_ingest(manager, "bearer", _scanner_payload(data), scan_id)
     return FindingsIngestResponse(**response)
 
 

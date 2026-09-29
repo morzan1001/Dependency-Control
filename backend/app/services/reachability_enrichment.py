@@ -655,7 +655,7 @@ async def run_pending_reachability_for_scan(
         reachability_summary = build_reachability_summary(
             findings_dicts, [cg.model_dump(by_alias=True) for cg in callgraphs], enriched_count
         )
-        await result_repo.replace_result(scan_id, "reachability", reachability_summary)
+        await result_repo.save_result(scan_id, "reachability", reachability_summary)
         await scan_repo.update_raw(scan_id, finished)
         # The scan's stats were frozen at completion, before any reachability verdict existed.
         await refresh_scan_stats(db, project_id, scan_id, component_languages)

@@ -25,7 +25,7 @@ _FINDINGS = [{"finding_id": "log4j-core:2.14.1", "details": {"vulnerabilities": 
 def _run(monkeypatch, active_analyzers):
     enrich = AsyncMock()
     monkeypatch.setattr("app.services.analysis.engine.enrich_vulnerability_findings", enrich)
-    result_repo = SimpleNamespace(insert_result=AsyncMock())
+    result_repo = SimpleNamespace(save_result=AsyncMock())
     summary: list[str] = []
 
     asyncio.run(
@@ -47,7 +47,7 @@ def _run(monkeypatch, active_analyzers):
 def test_default_analyzer_set_runs_the_enrichment(monkeypatch):
     enrich, result_repo, summary = _run(monkeypatch, DEFAULT_ACTIVE_ANALYZERS)
     enrich.assert_awaited_once()
-    assert result_repo.insert_result.await_args.args[1] == "epss_kev"
+    assert result_repo.save_result.await_args.args[1] == "epss_kev"
     assert summary == ["epss_kev: Success (1 enriched)"]
 
 
@@ -55,7 +55,7 @@ def test_a_set_without_the_enrichment_writes_nothing(monkeypatch):
     without = [a for a in DEFAULT_ACTIVE_ANALYZERS if a != "epss_kev"]
     enrich, result_repo, summary = _run(monkeypatch, without)
     enrich.assert_not_awaited()
-    result_repo.insert_result.assert_not_awaited()
+    result_repo.save_result.assert_not_awaited()
     assert summary == []
 
 

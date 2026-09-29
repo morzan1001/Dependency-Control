@@ -21,22 +21,12 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
     async def delete_by_scan(self, scan_id: str) -> int:
         return await self.delete_many({"scan_id": scan_id})
 
-    async def insert_result(self, scan_id: str, analyzer_name: str, result: Mapping[str, Any]) -> None:
-        """Append a row; one scan carries several rows per analyzer, one per SBOM or parallel job."""
-        await self.create_raw(
-            {
-                "_id": str(uuid.uuid4()),
-                "scan_id": scan_id,
-                "analyzer_name": analyzer_name,
-                "result": result,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
-
-    async def replace_result(self, scan_id: str, analyzer_name: str, result: Mapping[str, Any]) -> None:
-        """The scan's single row for an analyzer whose every run supersedes the last."""
+    async def save_result(
+        self, scan_id: str, analyzer_name: str, result: Mapping[str, Any], source: str | None = None
+    ) -> None:
+        """Replace the row of this scan, analyzer and source; ``None`` also matches legacy rows stored without one."""
         await self.collection.update_one(
-            {"scan_id": scan_id, "analyzer_name": analyzer_name},
+            {"scan_id": scan_id, "analyzer_name": analyzer_name, "source": source},
             {
                 "$set": {"result": result, "created_at": datetime.now(timezone.utc)},
                 "$setOnInsert": {"_id": str(uuid.uuid4())},

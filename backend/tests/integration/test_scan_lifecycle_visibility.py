@@ -216,7 +216,7 @@ def test_enrichment_post_processor_failures_do_not_flip_the_status():
 
 @pytest.mark.asyncio
 async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, monkeypatch):
-    """An EPSS/KEV outage writes no analysis_results document (create_raw sits inside the
+    """An EPSS/KEV outage writes no analysis_results document (the write sits inside the
     try) and must not change the status, so the scan field is its only queryable trace."""
 
     async def _enrichment_outage(*_args, **_kwargs):
