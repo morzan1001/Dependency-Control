@@ -24,8 +24,13 @@ def client() -> TestClient:
     async def _db() -> MagicMock:
         return MagicMock()
 
+    async def _no_scope() -> None:
+        return None
+
     app.dependency_overrides[get_current_active_user] = _user
     app.dependency_overrides[get_database] = _db
+    # FastAPI resolves the inventory scope, which reads the project, before it validates the query.
+    app.dependency_overrides[inventory._inventory_scope] = _no_scope
     app.include_router(projects.router, prefix="/projects")
     app.include_router(teams.router, prefix="/teams")
     app.include_router(users.router, prefix="/users")
