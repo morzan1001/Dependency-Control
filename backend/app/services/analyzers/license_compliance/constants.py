@@ -565,16 +565,6 @@ CATEGORY_STAT_KEY: dict[LicenseCategory, str] = {
 }
 
 
-CATEGORY_RESTRICTIVENESS: dict[LicenseCategory, int] = {
-    LicenseCategory.PERMISSIVE: 0,
-    LicenseCategory.PUBLIC_DOMAIN: 0,
-    LicenseCategory.WEAK_COPYLEFT: 1,
-    LicenseCategory.STRONG_COPYLEFT: 2,
-    LicenseCategory.NETWORK_COPYLEFT: 3,
-    LicenseCategory.PROPRIETARY: 4,
-}
-
-
 @functools.cache
 def get_lowercase_mappings() -> tuple[dict[str, str], dict[str, str]]:
     """Return cached (db_lower, alias_lower) lookup tables for case-insensitive matching."""

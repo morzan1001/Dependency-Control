@@ -5,9 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from app.models.finding import Severity
+from app.models.license import CATEGORY_RESTRICTIVENESS
 
 from .constants import (
-    CATEGORY_RESTRICTIVENESS,
     LICENSE_DATABASE,
     LICENSE_INCOMPATIBILITIES,
 )

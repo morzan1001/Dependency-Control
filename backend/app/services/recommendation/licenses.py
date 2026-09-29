@@ -1,22 +1,15 @@
 from collections import defaultdict
 from typing import Any
 
+from app.models.license import CATEGORY_RESTRICTIVENESS, LicenseCategory
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 from app.services.aggregation.components import extract_artifact_name
 from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components
 
 _LICENSES_NAMED = 5
 
-# Category restrictiveness rank (higher = more restrictive)
-_CATEGORY_RANK = {
-    "permissive": 0,
-    "public_domain": 0,
-    "weak_copyleft": 1,
-    "strong_copyleft": 2,
-    "network_copyleft": 3,
-    "proprietary": 4,
-    "unknown": -1,
-}
+# Drift into strong copyleft or anything more restrictive (network copyleft, proprietary) is urgent.
+_HIGH_PRIORITY_DRIFT_MIN_RANK = CATEGORY_RESTRICTIVENESS[LicenseCategory.STRONG_COPYLEFT]
 
 
 def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -124,8 +117,8 @@ def _check_license_drift(
     if curr_info["license"] == prev["license"]:
         return {}
 
-    prev_rank = _CATEGORY_RANK.get(prev["category"], -1)
-    curr_rank = _CATEGORY_RANK.get(curr_info["category"], -1)
+    prev_rank = CATEGORY_RESTRICTIVENESS.get(prev["category"], -1)
+    curr_rank = CATEGORY_RESTRICTIVENESS.get(curr_info["category"], -1)
     if curr_rank <= prev_rank:
         return {}
 
@@ -158,7 +151,9 @@ def detect_license_drift(
     if not drifted:
         return []
 
-    has_copyleft_drift = any(_CATEGORY_RANK.get(d["current_category"], 0) >= 2 for d in drifted)
+    restrictive = [
+        d for d in drifted if CATEGORY_RESTRICTIVENESS.get(d["current_category"], 0) >= _HIGH_PRIORITY_DRIFT_MIN_RANK
+    ]
     drift_shown, drift_total = sample_components(
         f"{d['component']}@{d['version']}: {d['previous_license']} → {d['current_license']}" for d in drifted
     )
@@ -166,7 +161,7 @@ def detect_license_drift(
     return [
         Recommendation(
             type=RecommendationType.LICENSE_DRIFT,
-            priority=Priority.HIGH if has_copyleft_drift else Priority.MEDIUM,
+            priority=Priority.HIGH if restrictive else Priority.MEDIUM,
             title=f"License drift detected: {len(drifted)} component(s) changed to more restrictive licenses",
             description=(
                 "The following dependencies changed their license to a more restrictive "
@@ -175,7 +170,7 @@ def detect_license_drift(
             ),
             impact={
                 "total": len(drifted),
-                "copyleft_drift": len([d for d in drifted if _CATEGORY_RANK.get(d["current_category"], 0) >= 2]),
+                "restrictive_drift": len(restrictive),
             },
             affected_components=drift_shown,
             affected_components_total=drift_total,
