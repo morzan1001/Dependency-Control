@@ -43,3 +43,9 @@ def canonical_cves(details_list: list[Any]) -> list[str]:
             if isinstance(entry, dict):
                 seen.update(dict.fromkeys(counted_cves(entry)))
     return list(seen)
+
+
+def display_vulnerability_id(details: Any) -> str | None:
+    """The one id a vulnerability finding is shown under: its first advisory CVE, else its first advisory's id."""
+    ids = canonical_cves([details])
+    return next((i for i in ids if i.startswith("CVE-")), next(iter(ids), None))

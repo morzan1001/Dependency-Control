@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.core.cve import canonical_cve, canonical_cves
+from app.core.cve import canonical_cve, canonical_cves, display_vulnerability_id
 from app.services.aggregation.merging import dedupe_vulnerability_entries, merge_vulnerability_into_list
 from app.services.analysis.stats import build_epss_kev_summary
 
@@ -65,3 +65,16 @@ def test_the_kev_row_names_the_cve_the_analytics_pages_count():
     finding = {"component": "c", "details": {"in_kev": True, "vulnerabilities": [entry]}}
     [row] = build_epss_kev_summary([finding])["kev_details"]
     assert row["cve"] == canonical_cve(entry) == "CVE-2024-0002"
+
+
+@pytest.mark.parametrize(
+    ("entries", "expected"),
+    [
+        pytest.param([{"id": "GHSA-x"}, {"id": "CVE-2024-1"}], "CVE-2024-1", id="a-later-cve-wins-over-a-ghsa"),
+        pytest.param([{"id": "GHSA-x", "aliases": ["CVE-2024-2"]}], "CVE-2024-2", id="cve-alias"),
+        pytest.param([{"id": "GHSA-ABCD"}, {"id": "RUSTSEC-1"}], "GHSA-abcd", id="no-cve-first-advisory"),
+        pytest.param([], None, id="no-advisory"),
+    ],
+)
+def test_a_finding_is_shown_under_its_first_cve(entries, expected):
+    assert display_vulnerability_id({"vulnerabilities": entries}) == expected

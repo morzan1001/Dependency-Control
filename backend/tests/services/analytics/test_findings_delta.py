@@ -243,6 +243,29 @@ async def test_findings_delta_added_and_removed(db):
 
 
 @pytest.mark.asyncio
+async def test_an_advisory_is_named_by_its_cve_as_on_the_scan_page(db):
+    """A GHSA with a CVE alias, or a CVE behind a GHSA-only advisory, is shown under the CVE."""
+    aliased = _agg_vuln_doc("fb1", "sb", "lodash", "4.17.20", [])
+    aliased["details"]["vulnerabilities"] = [{"id": "GHSA-35jh-r3h4-6jhm", "aliases": ["CVE-2021-23337"]}]
+    later = _agg_vuln_doc("fb2", "sb", "minimist", "1.2.0", ["GHSA-vh95-rmgr-6w4m", "CVE-2020-7598"])
+    await db["findings"].insert_many([aliased, later])
+
+    resp = await compute_findings_delta(
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=None,
+        finding_type=None,
+    )
+
+    assert sorted(i.cve_id for i in resp.items) == ["CVE-2020-7598", "CVE-2021-23337"]
+
+
+@pytest.mark.asyncio
 async def test_breakdowns_decompose_full_totals_under_change_filter(db):
     """by_severity/by_type decompose the full added+removed totals even when the change filter scopes the paginated item list."""
     await _seed_added_removed(db)

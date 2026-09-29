@@ -372,6 +372,17 @@ class TestKevRowsCarryRealCveIds:
         assert result["high_risk_cves"][0]["cve"] == "CVE-2025-66614"
 
 
+class TestVulnerabilityIdsNeverShowTheFindingId:
+    def test_a_reachability_row_without_advisories_names_no_cve(self):
+        finding = {
+            "finding_id": "lodash:4.17.20",
+            "component": "lodash",
+            "details": {"reachability": {"is_reachable": True, "analysis_level": "symbol"}},
+        }
+        summary = build_reachability_summary([finding], [], 1)
+        assert summary["reachable_vulnerabilities"][0]["cve"] == ""
+
+
 class TestHighRiskRowsNameTheirOwnCve:
     def test_each_row_carries_its_own_cves_kev_epss_and_score(self):
         """log4j-core@2.14.1: the record's KEV flag and EPSS belong to CVE-2021-44228, not its first CVE."""
@@ -439,11 +450,11 @@ def _make_reachable_finding(
     if reachable_functions is not None:
         reachability_data["matched_symbols"] = reachable_functions
     return {
-        "finding_id": finding_id,
+        "finding_id": f"{component}:{version}",
         "component": component,
         "version": version,
         "severity": severity,
-        "details": {"reachability": reachability_data},
+        "details": {"vulnerabilities": [{"id": finding_id}], "reachability": reachability_data},
     }
 
 

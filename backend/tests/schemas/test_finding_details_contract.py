@@ -373,5 +373,5 @@ def test_the_kev_consumers_per_entry_reads_are_walked():
         {use.key for use in _collect_file_uses(APP_ROOT / "services" / "analysis" / name)}
         for name in ("stats.py", "notifications.py")
     )
-    assert {"id", "in_kev", "kev_due_date", "kev_ransomware_use"} <= stats
+    assert {"in_kev", "kev_due_date", "kev_ransomware_use", "epss_score", "risk_score"} <= stats
     assert {"id", "severity", "epss_score", "in_kev", "kev_due_date", "kev_ransomware_use"} <= notifications

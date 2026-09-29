@@ -12,7 +12,7 @@ from app.core.constants import (
     HIGH_RISK_SCORE_THRESHOLD,
     sort_by_severity,
 )
-from app.core.cve import canonical_cve, entry_cves
+from app.core.cve import canonical_cve, display_vulnerability_id
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import (
     ACTIVELY_EXPLOITED_MATURITY,
@@ -72,25 +72,6 @@ def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss
     summary["epss_enriched"] += 1
     epss_scores.append(epss_score)
     summary["epss_scores"][bucket_epss(epss_score)] += 1
-
-
-def finding_vulnerability_id(finding: dict[str, Any]) -> str:
-    """An identifier a user can look up: a CVE where one exists, else a scanner id.
-
-    ``finding_id`` is ``component:version`` on aggregated vulnerability documents, so it must
-    never reach a field labelled "CVE".
-    """
-    entries = [e for e in (finding.get("details") or {}).get("vulnerabilities") or [] if isinstance(e, dict)]
-    for entry_details in entries:
-        if cves := entry_cves(entry_details):
-            return cves[0]
-    for alias in finding.get("aliases") or []:
-        if isinstance(alias, str) and alias.startswith("CVE-"):
-            return alias
-    for entry_details in entries:
-        if entry_details.get("id"):
-            return str(entry_details["id"])
-    return str(finding.get("finding_id") or finding.get("id") or "")
 
 
 def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summary: EPSSKEVSummary) -> None:
@@ -251,7 +232,7 @@ def build_reachability_summary(
         tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
 
         vuln_info: VulnerabilityInfo = {
-            "cve": finding_vulnerability_id(finding),
+            "cve": display_vulnerability_id(finding.get("details")) or "",
             "component": finding.get("component", ""),
             "version": finding.get("version") or "",
             "severity": finding.get("severity", "unknown"),

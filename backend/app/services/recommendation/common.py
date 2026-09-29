@@ -18,7 +18,7 @@ from app.core.constants import (
 from app.core.epss import bucket_epss
 from app.schemas.recommendation import Priority, Recommendation, VulnerabilityInfo
 from app.services.aggregation.versions import parse_version_key
-from app.core.cve import canonical_cves
+from app.core.cve import canonical_cves, display_vulnerability_id
 
 ModelOrDict = BaseModel | dict[str, Any]
 
@@ -139,19 +139,8 @@ def calculate_best_fix_version(versions: list[str]) -> str:
     return parsed[0]
 
 
-_CVE_PREFIX = "CVE-"
 # Shown where a finding names no advisory at all; VulnerabilityInfo.cve_id is not optional.
 _UNRESOLVED_CVE_ID = "unknown"
-
-
-def _resolve_cve_id(f: ModelOrDict) -> str:
-    """The advisory a finding is shown under: a CVE where its group names one, else the first
-    advisory id (GHSA-only ecosystems)."""
-    advisories = finding_cve_ids(f)
-    cve = next((a for a in advisories if a.startswith(_CVE_PREFIX)), None)
-    if cve:
-        return cve
-    return advisories[0] if advisories else _UNRESOLVED_CVE_ID
 
 
 def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
@@ -161,7 +150,7 @@ def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
 
     return VulnerabilityInfo(
         finding_id=get_attr(f, "id", ""),
-        cve_id=_resolve_cve_id(f),
+        cve_id=display_vulnerability_id(details_dict) or _UNRESOLVED_CVE_ID,
         severity=get_attr(f, "severity", "UNKNOWN"),
         package_name=get_attr(f, "component", ""),
         current_version=get_attr(f, "version") or "",

@@ -19,6 +19,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_USABLE_STATUSES,
 )
+from app.core.cve import display_vulnerability_id
 from app.core.metrics import (
     analysis_aggregation_duration_seconds,
     analysis_components_parsed_total,
@@ -68,7 +69,6 @@ from app.services.analysis.stats import (
     build_epss_kev_summary,
     build_reachability_summary,
     calculate_comprehensive_stats,
-    finding_vulnerability_id,
 )
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
@@ -853,7 +853,7 @@ def _build_findings_summary(
     """Compact, bounded, vulnerability-only summary; details trimmed to the CVE id to bound size."""
     summary: list[dict[str, Any]] = []
     for record in vulnerability_findings[:limit]:
-        cve_id = finding_vulnerability_id(record)
+        cve_id = display_vulnerability_id(record.get("details"))
         summary.append(
             {
                 "id": record.get("id"),
