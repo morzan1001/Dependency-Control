@@ -11,12 +11,13 @@ from datetime import datetime
 from typing import Any
 
 from app.core.config import settings
-from app.core.constants import RECENT_UPDATES_LIMIT, SCAN_USABLE_STATUSES, UPDATE_SAMPLE_RANK
+from app.core.constants import RECENT_UPDATES_LIMIT, UPDATE_SAMPLE_RANK
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import update_frequency_delta_writes_total
 from app.models.update_frequency import ScanOutdatedSet, ScanUpdateDelta, UpdateCounts, UpdateSample
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
+from app.repositories.scans import is_usable_build
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
 from app.services.update_frequency import (
     classify_version_change,
@@ -129,7 +130,7 @@ async def _load_scan(db: Any, scan_id: str) -> _ScanRef | None:
         branch=doc.get("branch", ""),
         created_at=created_at,
         commit_hash=doc.get("commit_hash"),
-        usable=doc.get("status") in SCAN_USABLE_STATUSES and not doc.get("is_rescan"),
+        usable=is_usable_build(doc),
     )
 
 

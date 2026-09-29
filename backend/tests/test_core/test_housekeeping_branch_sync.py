@@ -114,22 +114,22 @@ async def test_a_head_on_a_deleted_branch_moves_to_the_newest_live_one(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_a_head_on_a_live_branch_is_left_where_it_is(monkeypatch):
-    """Repairing a branch deletion is this pass's only claim on the pointer: a head parked on a
-    live non-default branch must not be quietly rebased onto the default one."""
+async def test_a_head_the_rule_no_longer_names_is_repointed_in_the_same_pass(monkeypatch):
+    """The resolver would not trust a pointer parked on a live non-default branch, so leaving it would
+    keep project.stats on a branch analytics no longer reports."""
     stored = await _run(
         monkeypatch,
         _project(latest_scan_id="s-release"),
         [
             _scan("s-release", _RELEASE, _T0),
-            _scan("s-main", _MAIN, _T0 + 2 * _HOUR),
+            _scan("s-main", _MAIN, _T0 + 2 * _HOUR, stats={"critical": _MAIN_CRITICALS}),
             _scan("s-gone", _GONE, _T0 + _HOUR),
         ],
         vcs_branches=[_MAIN, _RELEASE],
     )
 
-    assert stored["latest_scan_id"] == "s-release"
-    assert "stats" not in stored
+    assert stored["latest_scan_id"] == "s-main"
+    assert stored["stats"]["critical"] == _MAIN_CRITICALS
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,6 @@ import logging
 import re
 import uuid
 import zipfile
-from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Response, status
@@ -48,8 +47,7 @@ from app.core.constants import (
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_VIEWER,
-    SCAN_STATUS_PENDING,
-    SCAN_USABLE_STATUSES,
+    SCAN_ACTIVE_STATUSES,
     SEVERITY_ORDER,
     TEAM_ROLE_ADMIN,
     TEAM_SOURCE_MANUAL,
@@ -71,7 +69,7 @@ from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.invitations import InvitationRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.releases import ReleaseRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import BRANCH_SCAN_FILTER, ScanRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
 from app.repositories.waivers import WaiverRepository
@@ -101,11 +99,10 @@ from app.schemas.project import (
     ScanWithReleases,
 )
 from app.services.aggregation.components import component_match_expr
-from app.services.branches import resolve_default_branch
 from app.services.gitlab import GitLabService
 from app.services.inventory.csv_stream import csv_response, export_filename
-from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
-from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
+from app.services.inventory.findings_export import FINDINGS_COLUMNS, ExportedScan, iter_findings_rows
+from app.services.rescan import create_rescan
 from app.services.scan_cascade import delete_scans_and_related_data
 
 router = CustomAPIRouter()
@@ -400,7 +397,8 @@ async def read_all_scans(
     sort_field = get_sort_field("scans", sort_by)
 
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"project_id": {"$in": project_ids}}},
+        # A rescan carries an old pipeline number under today's date, so it would read as a fresh run.
+        {"$match": {"project_id": {"$in": project_ids}, "is_rescan": {"$ne": True}}},
         {"$sort": dict(_scan_page_sort(sort_field, direction))},
         {"$skip": skip},
         {"$limit": limit},
@@ -770,6 +768,10 @@ async def update_project(
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_OWNER)
 
     updated_project = await _reload_project(project_repo, project_id)
+    if updated_project.default_branch != project.default_branch:
+        head = await ScanRepository(db).head_fields(updated_project)
+        await project_repo.update_raw(project_id, {"$set": head})
+        updated_project = await _reload_project(project_repo, project_id)
     await _audit_license_policy_change(db, project_id, old_license_policy, updated_project, current_user)
     return updated_project
 
@@ -799,49 +801,32 @@ async def read_project_branches(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> list[BranchInfo]:
-    """Get all unique branches for a project with their active/deleted status."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
-
+    """Every branch the project's scans name, with its active/deleted status; the default is the
+    branch head resolves to, so the view opens on what the project tile reports."""
+    project = await check_project_access(project_id, current_user, db, required_role="viewer")
     scan_repo = ScanRepository(db)
-    project_repo = ProjectRepository(db)
 
-    branches = await scan_repo.distinct("branch", {"project_id": project_id})
-    project = await project_repo.get_by_id(project_id)
-    deleted_set = set(project.deleted_branches) if project else set()
-
-    pipeline: list[dict[str, Any]] = [
-        {"$match": {"project_id": project_id}},
-        {
-            MONGO_GROUP: {
-                "_id": "$branch",
-                "last_scan_at": {"$max": "$created_at"},
-                # Ranked on separately: a branch whose newest scans all failed renders nothing.
-                "last_usable_at": {
-                    "$max": {"$cond": [{"$in": ["$status", list(SCAN_USABLE_STATUSES)]}, "$created_at", None]}
-                },
-            }
-        },
-    ]
-    last_scans: dict[str, Any] = {}
-    last_usable: dict[str, Any] = {}
-    async for doc in db.scans.aggregate(pipeline):
-        last_scans[doc["_id"]] = doc["last_scan_at"]
-        last_usable[doc["_id"]] = doc.get("last_usable_at")
-
-    default_branch = resolve_default_branch(
-        project.default_branch if project else None,
-        [b for b in branches if b not in deleted_set],
-        last_usable,
+    rows = await scan_repo.aggregate(
+        [
+            {"$match": {"project_id": project_id, **BRANCH_SCAN_FILTER}},
+            {MONGO_GROUP: {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
+        ]
     )
+    last_scans = {row["_id"]: row["last_scan_at"] for row in rows if isinstance(row["_id"], str) and row["_id"]}
+    deleted = set(project.deleted_branches or [])
+    active = [branch for branch in sorted(last_scans) if branch not in deleted]
+
+    head = await scan_repo.get_latest_active_scan(project)
+    default_branch = head.branch if head and head.branch in active else next(iter(active), None)
 
     return [
         BranchInfo(
-            name=b,
-            is_active=b not in deleted_set,
-            last_scan_at=last_scans.get(b),
-            is_default=b == default_branch,
+            name=branch,
+            is_active=branch not in deleted,
+            last_scan_at=last_scans[branch],
+            is_default=branch == default_branch,
         )
-        for b in sorted(branches)
+        for branch in sorted(last_scans)
     ]
 
 
@@ -944,43 +929,22 @@ async def read_project_branch_tips(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ProjectBranchTips:
-    """Every branch's representative scan and scan count, plus the newest release-flagged scan.
+    """Every branch's representative scan and scan count.
 
-    A page of the scan list answers neither: a branch whose newest scan fell off the page
-    disappears from it, and a release marked before the page begins reads as no release.
+    A page of the scan list cannot answer this: a branch whose newest scan fell off the page
+    disappears from it.
     """
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
-    project_repo = ProjectRepository(db)
-    project = await project_repo.get_by_id(project_id)
+    project = await ProjectRepository(db).get_by_id(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
-    deleted = list(project.deleted_branches or [])
-    scan_repo = ScanRepository(db)
-    tips = await scan_repo.branch_tips(project_id, deleted)
-
-    flagged_query: dict[str, Any] = {
-        "project_id": project_id,
-        "is_release": True,
-        "status": {"$in": SCAN_USABLE_STATUSES},
-    }
-    if deleted:
-        flagged_query["branch"] = {"$nin": deleted}
-    flagged_doc = await scan_repo.find_one(flagged_query, sort=[("created_at", -1), ("_id", 1)])
-
-    flagged: ScanWithReleases | None = None
-    if flagged_doc:
-        releases_by_scan = await ReleaseRepository(db).group_by_scan([flagged_doc["_id"]])
-        flagged = ScanWithReleases(
-            **{**flagged_doc, "releases": _release_refs(releases_by_scan.get(flagged_doc["_id"], []))}
-        )
-
+    tips = await ScanRepository(db).branch_tips(project_id, list(project.deleted_branches or []))
     return ProjectBranchTips(
         branches=[
             BranchTip(branch=branch, scan_count=count, tip=Scan(**tip) if tip else None) for branch, count, tip in tips
-        ],
-        flagged_release_scan=flagged,
+        ]
     )
 
 
@@ -998,63 +962,24 @@ async def trigger_rescan(
     """Manually trigger a re-scan: a new scan entry with the same SBOMs, re-analysed."""
     await check_project_access(project_id, current_user, db, required_role="editor")
 
-    scan_repo = ScanRepository(db)
-
-    scan = await scan_repo.find_one({"_id": scan_id, "project_id": project_id})
+    scan = await ScanRepository(db).find_one({"_id": scan_id, "project_id": project_id})
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     if not scan.get("sbom_refs"):
         raise HTTPException(status_code=400, detail="Cannot re-scan: No SBOMs found in the source scan.")
 
-    # Trace back to the original scan so lineage stays intact.
-    original_scan_id = scan.get("original_scan_id") or scan_id
+    # Scanner results may still be arriving, and a rescan would copy the SBOM set as it stands.
+    if scan.get("status") in SCAN_ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="Cannot re-scan: the scan is still being analysed.")
 
-    new_scan = Scan(
-        project_id=project_id,
-        branch=scan.get("branch", "unknown"),
-        commit_hash=scan.get("commit_hash"),
-        pipeline_id=None,  # Don't collide with ingest
-        pipeline_iid=scan.get("pipeline_iid"),
-        project_url=scan.get("project_url"),
-        pipeline_url=scan.get("pipeline_url"),
-        job_id=scan.get("job_id"),
-        job_started_at=scan.get("job_started_at"),
-        project_name=scan.get("project_name"),
-        commit_message=scan.get("commit_message"),
-        commit_tag=scan.get("commit_tag"),
-        sbom_refs=scan.get("sbom_refs", []),
-        # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
-        scan_type=scan.get("scan_type"),
-        status=SCAN_STATUS_PENDING,
-        created_at=datetime.now(timezone.utc),
-        is_rescan=True,
-        original_scan_id=original_scan_id,
-    )
-
-    await scan_repo.create(new_scan)
-
-    # Update original scan to point to this new pending rescan
-    await scan_repo.update_raw(
-        original_scan_id,
-        {
-            "$set": {
-                "latest_rescan_id": new_scan.id,
-                "latest_run": {
-                    "scan_id": new_scan.id,
-                    "status": SCAN_STATUS_PENDING,
-                    "created_at": datetime.now(timezone.utc),
-                },
-            }
-        },
-    )
-
-    if worker_manager:
-        await worker_manager.add_job(new_scan.id)
-    else:
+    if not worker_manager:
         raise HTTPException(status_code=500, detail="Worker manager not available")
 
-    return new_scan
+    rescan = await create_rescan(db, scan, worker_manager)
+    if rescan is None:
+        raise HTTPException(status_code=409, detail="A re-scan of this scan is already under way.")
+    return rescan
 
 
 @router.get(
@@ -1680,7 +1605,12 @@ async def export_project_csv(
 ) -> StreamingResponse:
     project = await check_project_access(project_id, current_user, db, required_role="viewer")
 
-    scans = await latest_completed_scans_by_branch(db, project)
+    tips = await ScanRepository(db).branch_tips(project_id, list(project.deleted_branches or []))
+    scans = [
+        ExportedScan(tip["_id"], branch, tip.get("created_at"), tip.get("commit_hash"))
+        for branch, _, tip in tips
+        if tip
+    ]
     if not scans:
         raise HTTPException(status_code=404, detail="No completed scans found on any active branch")
 

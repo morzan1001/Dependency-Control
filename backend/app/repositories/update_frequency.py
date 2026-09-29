@@ -7,10 +7,9 @@ from itertools import batched
 from typing import Any
 
 from app.core import UNDATED
-from app.core.constants import SCAN_USABLE_STATUSES
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdatedSet, ScanUpdateDelta
 from app.repositories.base import BaseRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 
 _NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "prev_scan_id": 1, "dep_count": 1}
 
@@ -100,8 +99,8 @@ _COMMIT_TOKEN = {"$cond": [{"$eq": [{"$ifNull": ["$commit_hash", ""]}, ""]}, "$_
 
 
 def _usable_scan_match(since: datetime | None) -> dict[str, Any]:
-    """The scans the rollup writer accepts and both read paths fold."""
-    scoped: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "is_rescan": {"$ne": True}}
+    """The usable builds both read paths fold, from ``since`` on."""
+    scoped: dict[str, Any] = dict(USABLE_BUILD_MATCH)
     if since is not None:
         scoped["created_at"] = {"$gte": since}
     return scoped

@@ -14,7 +14,6 @@ from app.core.constants import (
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
     HOUSEKEEPING_MAX_SCAN_RETRIES,
-    HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS,
     HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS,
     HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS,
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
@@ -31,7 +30,6 @@ from app.core.constants import (
     SCAN_USABLE_STATUSES,
     SETTINGS_MODE_GLOBAL,
 )
-from app.core.init_db import SCANS_TIP_SORT
 from app.core.metrics import (
     archive_housekeeping_batch_total,
     archive_housekeeping_scans_processed_total,
@@ -40,14 +38,15 @@ from app.core.metrics import (
 )
 from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
-from app.models.project import Project, Scan
+from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import BRANCH_SCAN_FILTER, USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.releases import reconcile_release_flags, release_protected_scan_ids
+from app.services.rescan import create_rescan
 from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 
@@ -140,103 +139,6 @@ def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
     return datetime.now(timezone.utc) >= next_rescan_due
 
 
-def _build_rescan(project: Project, source_scan: dict) -> Scan:
-    return Scan(
-        project_id=project.id,
-        branch=source_scan.get("branch", "unknown"),
-        commit_hash=source_scan.get("commit_hash"),
-        pipeline_id=None,
-        pipeline_iid=source_scan.get("pipeline_iid"),
-        project_url=source_scan.get("project_url"),
-        pipeline_url=source_scan.get("pipeline_url"),
-        job_id=source_scan.get("job_id"),
-        job_started_at=source_scan.get("job_started_at"),
-        project_name=source_scan.get("project_name"),
-        commit_message=source_scan.get("commit_message"),
-        commit_tag=source_scan.get("commit_tag"),
-        sbom_refs=source_scan.get("sbom_refs", []),
-        # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
-        scan_type=source_scan.get("scan_type"),
-        status=SCAN_STATUS_PENDING,
-        created_at=datetime.now(timezone.utc),
-        is_rescan=True,
-        original_scan_id=str(source_scan["_id"]),
-    )
-
-
-async def _create_rescan_for_project(
-    project: Project, source_scan: dict, db: Any, worker_manager: "WorkerManager"
-) -> None:
-    """Atomically create a rescan after acquiring the distributed lock."""
-    import os
-
-    from app.repositories.distributed_locks import DistributedLocksRepository
-
-    source_scan_id = str(source_scan["_id"])
-    lock_repo = DistributedLocksRepository(db)
-    lock_name = f"rescan_create:{project.id}:{source_scan_id}"
-    holder_id = f"housekeeping-{os.getenv('HOSTNAME', 'unknown')}"
-
-    if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS):
-        logger.debug(f"Could not acquire lock for rescanning {project.name}/{source_scan_id}.")
-        return
-
-    try:
-        # TOCTOU re-check inside lock. Scoped to this source so unrelated CI
-        # traffic on the project cannot cancel a rescan that is genuinely due.
-        active_rescan = await db.scans.find_one(
-            {
-                "project_id": project.id,
-                "original_scan_id": source_scan_id,
-                "status": {"$in": SCAN_ACTIVE_STATUSES},
-            }
-        )
-        if active_rescan:
-            logger.debug(f"Project {project.name} already has an active rescan of {source_scan_id}")
-            return
-
-        logger.info(
-            f"Triggering re-scan for project {project.name} from source scan {source_scan_id} "
-            f"(rescan clock: {_rescan_clock(source_scan)})"
-        )
-        new_scan = _build_rescan(project, source_scan)
-
-        await db.scans.insert_one(new_scan.model_dump(by_alias=True))
-        await db.scans.update_one(
-            {"_id": source_scan_id},
-            {"$set": {"latest_rescan_id": new_scan.id, "last_rescanned_at": datetime.now(timezone.utc)}},
-        )
-        await worker_manager.add_job(new_scan.id)
-        logger.info(f"Rescan {new_scan.id} created for project {project.name}")
-    finally:
-        await lock_repo.release_lock(lock_name, holder_id)
-
-
-async def _branch_tip(project: Project, tip_source: dict[str, Any], db: Any) -> dict | None:
-    """The newest build that stands for the project's branch tip, picked the way the head rule
-    picks its commit: the default branch while the VCS still has one, else any branch it has not
-    deleted. The rule's second step is deliberately left out — a rescan target has to be the build,
-    or each interval would rescan the previous interval's output.
-
-    A tag pipeline names its tag as its branch, so it can hold a release slot but never the tip
-    slot — otherwise a project that tags every release stops having its default branch
-    re-evaluated, and where the tag build is also the release the two targets collapse to one.
-    """
-    deleted = project.deleted_branches or []
-    if project.default_branch and project.default_branch not in deleted:
-        on_default: dict | None = await db.scans.find_one(
-            {**tip_source, "branch": project.default_branch}, sort=SCANS_TIP_SORT
-        )
-        if on_default:
-            return on_default
-
-    any_branch: dict[str, Any] = {**tip_source, "$expr": {"$ne": ["$branch", "$commit_tag"]}}
-    if deleted:
-        any_branch["branch"] = {"$nin": deleted}
-    tip: dict | None = await db.scans.find_one(any_branch, sort=SCANS_TIP_SORT)
-    return tip
-
-
 async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     """The branch tip plus the newest release per environment. A release is a second identity that
     has to keep being re-evaluated, not just the tip of its branch.
@@ -253,15 +155,12 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
         "sbom_refs": {"$exists": True, "$ne": []},
     }
 
-    # Tri-state: scans predating the flag carry no is_rescan field and are originals.
-    tip_source = {**usable_source, "is_rescan": {"$ne": True}}
-
     targets: list[dict] = []
     targeted_ids: set[str] = set()
 
-    # BSON dates are milliseconds, so two scans of one project can share a created_at; _id decides
-    # between them, or the tip alternates between passes and each alternate falls due immediately.
-    tip = await _branch_tip(project, tip_source, db)
+    # Head's own tip build, so the rescan refreshes the analysis head reports; the lineage step is
+    # left out because a rescan target has to be the build, not the previous interval's output.
+    tip = await ScanRepository(db).head_build(project, {**usable_source, **USABLE_BUILD_MATCH})
     if tip:
         targets.append(tip)
         targeted_ids.add(str(tip["_id"]))
@@ -295,7 +194,8 @@ async def _process_project_rescan(
 
     for source_scan in targets:
         if _is_rescan_due(source_scan, interval_hours):
-            await _create_rescan_for_project(project, source_scan, db, worker_manager)
+            logger.info(f"Re-scan due for project {project.name} from source scan {source_scan['_id']}")
+            await create_rescan(db, source_scan, worker_manager)
 
 
 async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:
@@ -793,36 +693,6 @@ async def _fetch_vcs_default_branch(project_data: dict, db: Any) -> str | None:
     return None
 
 
-async def _resolve_latest_scan_after_branch_deletion(
-    project_data: dict, deleted: list, db: Any, project_name: str
-) -> dict:
-    """If the project's latest scan is on a deleted branch, find a replacement.
-
-    Returns a dict of update fields (may be empty).
-    """
-    current_scan_id = project_data.get("latest_scan_id")
-    if not current_scan_id:
-        return {}
-    scan_doc = await db.scans.find_one({"_id": current_scan_id}, {"branch": 1})
-    if not scan_doc or scan_doc.get("branch") not in deleted:
-        return {}
-
-    # ``deleted`` is the freshly-computed set, not yet persisted on the project.
-    active_scan = await ScanRepository(db).get_latest_active_scan(project_data, deleted_branches=deleted)
-    if active_scan:
-        updates: dict = {
-            "latest_scan_id": active_scan.id,
-            "last_scan_at": active_scan.created_at,
-        }
-        if active_scan.stats:
-            updates["stats"] = active_scan.stats.model_dump()
-        logger.info(f"Project {project_name}: updated latest_scan_id to active branch '{active_scan.branch}'")
-        return updates
-
-    logger.info(f"Project {project_name}: no active branch scans, cleared stats")
-    return {"latest_scan_id": None, "stats": None}
-
-
 async def sync_project_branches(project_data: dict, db: Any) -> None:
     """Sync branch status for a single project against its VCS provider."""
     project_id = project_data["_id"]
@@ -833,11 +703,8 @@ async def sync_project_branches(project_data: dict, db: Any) -> None:
         if not vcs_branches:
             return
 
-        # A scan whose branch is its own commit tag came off a tag pipeline and names no branch,
-        # so counting it would file the tag as a branch the VCS has deleted.
-        our_branches = await db.scans.distinct(
-            "branch", {"project_id": project_id, "$expr": {"$ne": ["$branch", "$commit_tag"]}}
-        )
+        # Counting a tag build would file its tag as a branch the VCS has deleted.
+        our_branches = await db.scans.distinct("branch", {"project_id": project_id, **BRANCH_SCAN_FILTER})
         vcs_set = set(vcs_branches)
         deleted = sorted(b for b in our_branches if b not in vcs_set)
 
@@ -846,15 +713,15 @@ async def sync_project_branches(project_data: dict, db: Any) -> None:
             "branches_checked_at": datetime.now(timezone.utc),
         }
 
-        if not project_data.get("default_branch"):
+        # A default the VCS deleted was renamed or retired, so it cannot be a deliberate choice either.
+        stored_default = project_data.get("default_branch")
+        if not stored_default or stored_default in deleted:
             vcs_default = await _fetch_vcs_default_branch(project_data, db)
-            if vcs_default:
+            if vcs_default and vcs_default != stored_default:
                 update_fields["default_branch"] = vcs_default
 
-        if deleted:
-            update_fields.update(
-                await _resolve_latest_scan_after_branch_deletion(project_data, deleted, db, project_name)
-            )
+        if deleted or "default_branch" in update_fields:
+            update_fields.update(await ScanRepository(db).head_fields({**project_data, **update_fields}))
 
         await db.projects.update_one({"_id": project_id}, {"$set": update_fields})
 

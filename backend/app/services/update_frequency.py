@@ -18,14 +18,13 @@ from packaging.version import InvalidVersion, Version
 from app.core.constants import (
     COUNTED_UPDATE_KINDS,
     RECENT_UPDATES_LIMIT,
-    SCAN_USABLE_STATUSES,
     SLOWEST_PACKAGES_LIMIT,
     UPDATE_SAMPLE_RANK,
     UpdateKind,
 )
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
@@ -772,10 +771,9 @@ async def _load_completed_scans(
     # the limit would empty the window when the newest scans are failed/processing.
     docs = await scan_repo.find_many_raw(
         {
+            **USABLE_BUILD_MATCH,
             "project_id": project_id,
-            "status": {"$in": SCAN_USABLE_STATUSES},
             "branch": branch,
-            "is_rescan": {"$ne": True},
         },
         sort=[("created_at", -1), ("_id", -1)],
         limit=fetch_limit,

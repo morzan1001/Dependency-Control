@@ -1,20 +1,21 @@
 """Repository for scans, and the one rule for what a project's head is.
 
-Head is the freshest readable analysis of the tip commit of the project's head branch.
+Head is the freshest readable analysis of the tip build of the project's head branch.
 
-The head branch is the default branch while the VCS still has one, else any branch it has not
-deleted. The tip commit is the newest build on that branch: a rescan carries ``created_at = now``
-over an older commit, so builds rank ahead of rescans and only a build can move head onto another
-commit. The freshest analysis is the newest usable scan in that build's rescan lineage, so the
-rescanner's enrichment is what head reports about the commit the builds chose. ``latest_scan_id``
-is that answer cached by ingest, trusted only while it names a readable scan on the head branch.
+The head branch is the default branch while the VCS still has one and it holds a usable scan, else
+any branch it has not deleted. The tip build is the newest build there: a rescan carries
+``created_at = now`` over an older commit and a tag pipeline writes its tag into ``branch``, so a
+branch build outranks a tag build and both outrank a rescan. The freshest analysis is the newest
+usable scan in that build's rescan lineage. ``latest_scan_id`` caches the answer and is trusted only
+while it names a readable scan that may head the project.
 
 The same two steps answer per branch (``branch_tips``) and per release (``freshest_in_lineage`` on
-the marked scan), so the project tile, the analytics page and the release view cannot disagree.
+the marked scan), so the project tile, head-mode analytics and the release view cannot disagree.
 """
 
+import asyncio
 import logging
-from collections.abc import AsyncGenerator, Iterable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, NamedTuple
@@ -22,15 +23,29 @@ from typing import Any, NamedTuple
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core import UNDATED
-from app.core.constants import MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
+from app.core.constants import MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES, SCANS_TIP_SORT
 from app.models.project import Scan
 from app.schemas.projections import ScanMinimal, ScanWithStats
 
 logger = logging.getLogger(__name__)
 
-_RESCAN_RANK = "_rescan_rank"
-_USABLE_RANK = "_usable_rank"
+# $ne rather than False: scans predating the flag carry none and are builds.
+USABLE_BUILD_MATCH: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "is_rescan": {"$ne": True}}
+# A tag pipeline writes its tag into branch, so such a scan names no branch.
+BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"]}}
+# Best first, so a project whose usable scans are all tag builds or rescans still has a tip.
+_TIP_TIERS: tuple[dict[str, Any], ...] = (
+    {**USABLE_BUILD_MATCH, **BRANCH_SCAN_FILTER},
+    USABLE_BUILD_MATCH,
+    {"status": {"$in": SCAN_USABLE_STATUSES}},
+)
+_TIP_LOOKUP_CONCURRENCY = 16
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
+_TIP_PROJECTION = {**_CHAIN_PROJECTION, "branch": 1, "commit_tag": 1}
+
+
+def is_usable_build(doc: dict[str, Any]) -> bool:
+    return doc.get("status") in SCAN_USABLE_STATUSES and not doc.get("is_rescan")
 
 
 @dataclass(frozen=True)
@@ -48,12 +63,21 @@ def _created_at(doc: dict[str, Any]) -> datetime:
 
 
 def _is_fresher(doc: dict[str, Any], incumbent: dict[str, Any]) -> bool:
-    """Newer wins; on a tie the lower _id does, because BSON dates are milliseconds and two links
-    stamped inside one cannot be told apart by their date alone."""
+    """SCANS_TIP_SORT in Python: newer wins, and on a same-millisecond tie the lower _id does."""
     doc_at, incumbent_at = _created_at(doc), _created_at(incumbent)
     if doc_at != incumbent_at:
         return doc_at > incumbent_at
     return str(doc["_id"]) < str(incumbent["_id"])
+
+
+async def _bounded_gather[T](awaitables: Iterable[Awaitable[T]]) -> list[T]:
+    semaphore = asyncio.Semaphore(_TIP_LOOKUP_CONCURRENCY)
+
+    async def run(awaitable: Awaitable[T]) -> T:
+        async with semaphore:
+            return await awaitable
+
+    return await asyncio.gather(*(run(awaitable) for awaitable in awaitables))
 
 
 _MINIMAL_PROJECTION = {
@@ -101,49 +125,20 @@ def _head_scope(project: Any, deleted_override: list[str] | None = None) -> tupl
     )
 
 
-def _is_head_branch(branch: str | None, default_branch: str | None, deleted: list[str]) -> bool:
-    """Whether a scan on this branch can be the project's head.
+def _live_default(scope: _HeadScope) -> str | None:
+    return scope.default_branch if scope.default_branch and scope.default_branch not in scope.deleted else None
 
-    The head is the tip of the default branch whenever the VCS still has one, because a pipeline on
-    any other branch answers a different question than "what is on main".
+
+def _may_head(doc: dict[str, Any], scope: _HeadScope) -> bool:
+    """Whether this scan may stand in for the project's tip build without re-deriving it.
+
+    With a live default branch only a scan on it may; otherwise any branch may, but a tag build only
+    ranks behind every branch build, so the derived pick has to decide.
     """
-    if default_branch and default_branch not in deleted:
-        return branch == default_branch
-    return branch not in deleted
-
-
-def _head_pipeline(or_conditions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [
-        {"$match": {"$or": or_conditions}},
-        # A rescan carries created_at = now while re-analysing an older commit, so it is the tip
-        # only once the branch holds nothing that was actually built.
-        {"$addFields": {_RESCAN_RANK: {"$cond": [{"$eq": ["$is_rescan", True]}, 1, 0]}}},
-        # BSON dates are milliseconds: without _id, two scans stamped inside one leave the
-        # project's representative scan up to the server and it can change between requests.
-        {"$sort": {_RESCAN_RANK: 1, "created_at": -1, "_id": 1}},
-        {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-    ]
-
-
-def _branch_tip_pipeline(match: dict[str, Any]) -> list[dict[str, Any]]:
-    return [
-        {"$match": match},
-        {
-            "$addFields": {
-                _RESCAN_RANK: {"$cond": [{"$eq": ["$is_rescan", True]}, 1, 0]},
-                _USABLE_RANK: {"$cond": [{"$in": ["$status", SCAN_USABLE_STATUSES]}, 1, 0]},
-            }
-        },
-        # Unusable scans sort last so they cannot become the tip, while still entering the count.
-        {"$sort": {_USABLE_RANK: -1, _RESCAN_RANK: 1, "created_at": -1, "_id": 1}},
-        {
-            "$group": {
-                "_id": "$branch",
-                "tip": {"$first": "$$ROOT"},
-                "scan_count": {"$sum": {"$cond": [{"$eq": ["$is_rescan", True]}, 0, 1]}},
-            }
-        },
-    ]
+    default = _live_default(scope)
+    if default:
+        return doc.get("branch") == default
+    return doc.get("branch") not in scope.deleted and doc.get("branch") != doc.get("commit_tag")
 
 
 class ScanRepository:
@@ -203,33 +198,68 @@ class ScanRepository:
             return await self.collection.find_one(query, sort=sort)
         return await self.collection.find_one(query)
 
+    async def _tip(self, match: dict[str, Any], projection: dict[str, int] | None = _TIP_PROJECTION) -> dict | None:
+        """The newest scan under ``match`` in the best tier that holds one; each tier is one index seek."""
+        for tier in _TIP_TIERS:
+            doc: dict | None = await self.collection.find_one({**match, **tier}, projection, sort=SCANS_TIP_SORT)
+            if doc:
+                return doc
+        return None
+
+    async def _head_build(
+        self, project_id: str, scope: _HeadScope, match: dict[str, Any], projection: dict[str, int] | None
+    ) -> dict | None:
+        base = {**match, "project_id": project_id}
+        default = _live_default(scope)
+        if default and (on_default := await self._tip({**base, "branch": default}, projection)):
+            return on_default
+        # A default branch this instance never scanned must leave the project visible rather than empty.
+        if scope.deleted:
+            base["branch"] = {"$nin": scope.deleted}
+        return await self._tip(base, projection)
+
+    async def head_build(self, project: Any, match: dict[str, Any]) -> dict | None:
+        """The whole document of the build that heads the project among scans under ``match``,
+        before the lineage step."""
+        project_id, scope = _head_scope(project)
+        return await self._head_build(project_id, scope, match, None) if project_id else None
+
+    async def branch_tip(self, project_id: str, branch: str) -> Scan | None:
+        """The head rule scoped to one branch: its tip build, resolved to the freshest analysis of it."""
+        tip = await self._tip({"project_id": project_id, "branch": branch})
+        doc = (await self._freshest_analysis_docs([tip])).get(tip["_id"]) if tip else None
+        return Scan(**doc) if doc else None
+
     async def branch_tips(
         self, project_id: str, deleted_branches: list[str] | None = None
     ) -> list[tuple[str, int, dict[str, Any] | None]]:
-        """``(branch, scan_count, tip)`` per branch, over every scan the project holds.
+        """``(branch, scan_count, tip)`` per branch the project has not deleted, sorted by branch.
 
-        The tip is the module's head rule scoped to one branch: the branch's newest build,
-        resolved to the freshest analysis of it, so the project tile reports the same numbers
-        analytics does. The branch count bounds the answer, so a busy branch cannot push another
-        branch's tip out of it, and ``scan_count`` is grouped rather than counted off a page.
+        The tip is ``branch_tip``'s answer, and ``scan_count`` counts the branch's builds over every
+        scan it holds, so neither depends on a page of the scan list.
         """
-        match: dict[str, Any] = {"project_id": project_id}
+        match: dict[str, Any] = {"project_id": project_id, **BRANCH_SCAN_FILTER}
         if deleted_branches:
             match["branch"] = {"$nin": list(deleted_branches)}
-        rows = await self.aggregate(_branch_tip_pipeline(match))
-        builds: list[tuple[str, int, str | None]] = []
-        for row in rows:
-            branch = row["_id"]
-            if not isinstance(branch, str) or not branch:
-                continue
-            tip = row.get("tip") or {}
-            usable = str(tip["_id"]) if tip.get("status") in SCAN_USABLE_STATUSES else None
-            builds.append((branch, int(row.get("scan_count", 0)), usable))
-
-        analyses = await self._freshest_analysis_docs([build for _branch, _count, build in builds if build])
-        tips = [(branch, count, analyses.get(build) if build else None) for branch, count, build in builds]
-        tips.sort(key=lambda row: row[0])
-        return tips
+        rows = await self.aggregate(
+            [
+                {"$match": match},
+                {
+                    "$group": {
+                        "_id": "$branch",
+                        "scan_count": {"$sum": {"$cond": [{"$eq": ["$is_rescan", True]}, 0, 1]}},
+                    }
+                },
+            ]
+        )
+        counts = {row["_id"]: int(row["scan_count"]) for row in rows if isinstance(row["_id"], str) and row["_id"]}
+        branches = sorted(counts)
+        builds = await _bounded_gather(self._tip({"project_id": project_id, "branch": b}) for b in branches)
+        analyses = await self._freshest_analysis_docs([build for build in builds if build])
+        return [
+            (branch, counts[branch], analyses.get(build["_id"]) if build else None)
+            for branch, build in zip(branches, builds, strict=True)
+        ]
 
     async def find_many(
         self,
@@ -278,54 +308,56 @@ class ScanRepository:
             return await self.collection.count_documents(query or {}, limit=limit)
         return await self.collection.count_documents(query or {})
 
-    async def get_latest_active_scan(self, project: Any, deleted_branches: list[str] | None = None) -> Scan | None:
-        """The project's head as a full document. ``project`` may be a model or a raw dict, and
-        ``deleted_branches`` overrides the project's own set, which housekeeping needs while the
-        freshly-computed one is not yet persisted."""
-        project_id, scope = _head_scope(project, deleted_branches)
+    async def get_latest_active_scan(self, project: Any) -> Scan | None:
+        """The project's head as a full document; ``project`` may be a model or a raw dict."""
+        project_id, scope = _head_scope(project)
         if not project_id:
             return None
         scan_id = (await self._head_scan_ids({project_id: scope})).get(project_id)
         return await self.get_by_id(scan_id) if scan_id else None
 
+    async def head_fields(self, project: Any, deleted_branches: list[str] | None = None) -> dict[str, Any]:
+        """``latest_scan_id`` and ``stats`` for the project document, derived afresh rather than
+        through the pointer they replace. ``deleted_branches`` overrides a set not yet persisted."""
+        project_id, scope = _head_scope(project, deleted_branches)
+        scan_id = None
+        if project_id:
+            scan_id = (await self._head_scan_ids({project_id: scope._replace(pointer=None)})).get(project_id)
+        doc = await self.collection.find_one({"_id": scan_id}, {"stats": 1}) if scan_id else None
+        return {"latest_scan_id": doc["_id"] if doc else None, "stats": doc.get("stats") if doc else None}
+
     async def get_preceding_scan(self, scan_id: str) -> Scan | None:
-        """The build the given scan succeeded: the newest usable build on its own branch that
-        predates it. A rescan carries today's date over an older commit, so it is not the build
-        anything followed; ``$ne`` rather than ``False`` because the flag is often simply absent."""
-        current = await self.collection.find_one({"_id": scan_id}, {"project_id": 1, "branch": 1, "created_at": 1})
+        """The build the given scan's commit succeeded: the newest usable build on its branch that
+        predates it. A rescan carries today's date over an older commit, so a rescan is measured by
+        the build it re-analysed and never counts as a predecessor."""
+        fields = {"project_id": 1, "branch": 1, "created_at": 1, "is_rescan": 1, "original_scan_id": 1}
+        current = await self.collection.find_one({"_id": scan_id}, fields)
+        if current and current.get("is_rescan") and current.get("original_scan_id"):
+            current = await self.collection.find_one({"_id": current["original_scan_id"]}, fields)
         if not current or current.get("created_at") is None:
             return None
         query = {
+            **USABLE_BUILD_MATCH,
             "project_id": current.get("project_id"),
             "branch": current.get("branch"),
-            "status": {"$in": SCAN_USABLE_STATUSES},
-            "is_rescan": {"$ne": True},
             "created_at": {"$lt": current["created_at"]},
         }
-        # Same _id tie-break as head resolution, so two builds stamped inside one millisecond
-        # do not swap places between requests.
-        data = await self.collection.find_one(query, sort=[("created_at", -1), ("_id", 1)])
+        data = await self.collection.find_one(query, sort=SCANS_TIP_SORT)
         return Scan(**data) if data else None
 
-    async def _readable_scan_branches(self, scan_ids: list[str]) -> dict[str, str | None]:
-        """The branch of each of these scans that still exists with a usable status."""
-        cursor = self.collection.find(
-            {"_id": {"$in": scan_ids}, "status": {"$in": SCAN_USABLE_STATUSES}}, {"branch": 1}
-        )
-        return {doc["_id"]: doc.get("branch") async for doc in cursor}
-
-    async def freshest_in_lineage(self, scan_ids: Iterable[str]) -> dict[str, LineageAnalysis]:
+    async def freshest_in_lineage(
+        self, scan_ids: Iterable[str], seeds: dict[str, dict[str, Any]] | None = None
+    ) -> dict[str, LineageAnalysis]:
         """The freshest readable analysis of each of these scans, following its rescan chain.
 
-        Rescans chain — a rescan is created from an original (``_rescan_targets``), so that
-        original's ``latest_rescan_id`` is overwritten rather than extended and never advances past
-        the first link — and the walk follows unusable links too, or a failed rescan would hide the
-        good one behind it. Bounded, so a cyclic pointer cannot hang a request; a scan whose chain
-        was still going at the bound is marked, because the answer is then the freshest within ten
-        hops rather than the freshest there is. A scan with no usable analysis in its chain, like
-        one whose successor retention deleted, is absent rather than a misleading id.
+        Both rescan creators root a rescan at its lineage root, and the root's ``latest_rescan_id``
+        moves only onto a rescan that finished usable, so a chain is normally one link deep. Bounded,
+        so a cyclic pointer cannot hang a request; a scan whose chain was still going at the bound is
+        marked. A scan with no usable analysis in its chain is absent rather than a misleading id.
+        ``seeds`` are scans the caller already read with the chain fields, spared a second read.
         """
         frontier: dict[str, str] = {scan_id: scan_id for scan_id in scan_ids}
+        seeded = seeds or {}
         visited: set[str] = set()
         freshest: dict[str, dict[str, Any]] = {}
         bounded: set[str] = set()
@@ -335,7 +367,12 @@ class ScanRepository:
                 break
             visited.update(frontier)
             next_frontier: dict[str, str] = {}
-            async for doc in self.collection.find({"_id": {"$in": list(frontier)}}, _CHAIN_PROJECTION):
+            docs = [seeded[scan_id] for scan_id in frontier if scan_id in seeded]
+            unread = [scan_id for scan_id in frontier if scan_id not in seeded]
+            if unread:
+                docs += await self.collection.find({"_id": {"$in": unread}}, _CHAIN_PROJECTION).to_list(None)
+            seeded = {}
+            for doc in docs:
                 root_id = frontier[doc["_id"]]
                 if doc.get("status") in SCAN_USABLE_STATUSES:
                     incumbent = freshest.get(root_id)
@@ -373,22 +410,16 @@ class ScanRepository:
         )
         return doc.get("created_at") if doc else None
 
-    async def _freshest_analysis_docs(self, scan_ids: list[str]) -> dict[str, dict[str, Any]]:
-        """Each of these scans mapped to the whole document of the analysis its lineage resolves to."""
-        if not scan_ids:
+    async def _freshest_analysis_docs(self, tips: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+        """Each of these tip builds' ids mapped to the whole document of the analysis its lineage resolves to."""
+        if not tips:
             return {}
-        resolved = await self.freshest_in_lineage(scan_ids)
+        resolved = await self.freshest_in_lineage([tip["_id"] for tip in tips], seeds={tip["_id"]: tip for tip in tips})
         docs = {
             doc["_id"]: doc
             async for doc in self.collection.find({"_id": {"$in": sorted({a.scan_id for a in resolved.values()})}})
         }
         return {scan_id: docs[analysis.scan_id] for scan_id, analysis in resolved.items() if analysis.scan_id in docs}
-
-    async def _newest_head_per_project(self, or_conditions: list[dict[str, Any]]) -> dict[str, str]:
-        if not or_conditions:
-            return {}
-        cursor = self.collection.aggregate(_head_pipeline(or_conditions))
-        return {doc["_id"]: doc["scan_id"] async for doc in cursor}
 
     async def get_latest_active_scan_ids(self, projects: list[Any]) -> dict[str, str]:
         """Maps project_id -> the scan that represents its head, under this module's head rule;
@@ -402,68 +433,30 @@ class ScanRepository:
         return await self._head_scan_ids(scopes)
 
     async def _head_scan_ids(self, scopes: dict[str, _HeadScope]) -> dict[str, str]:
-        """The one head resolver: pick each project's tip commit, then report the freshest analysis
-        of it. ``latest_scan_id`` is head cached by ingest, so it is trusted only while it still
-        names a readable scan on the head branch — and it names whichever analysis ingest last
-        finished, so it goes through the same lineage step as the derived answer."""
+        """The one head resolver: pick each project's tip build, then report the freshest analysis of
+        it. ``latest_scan_id`` stands in for the pick while it names a readable scan that may head the
+        project; it names whichever analysis was last cached, so it goes through the lineage step too."""
         pointers = {pid: scope.pointer for pid, scope in scopes.items() if scope.pointer}
-
-        result: dict[str, str] = {}
+        readable: dict[str, dict[str, Any]] = {}
         if pointers:
-            # Retention deletes a scan without clearing the pointer, so a pointer can name a scan
-            # that is gone while an older one it exempted survives. Re-ingest and a late analyzer
-            # result send a completed scan back to pending, so it can also name an unreadable one.
-            branches = await self._readable_scan_branches(list(pointers.values()))
-            for project_id, scan_id in pointers.items():
-                scope = scopes[project_id]
-                if scan_id in branches and _is_head_branch(branches[scan_id], scope.default_branch, scope.deleted):
-                    result[project_id] = scan_id
-
-        unresolved = {pid: scope for pid, scope in scopes.items() if pid not in result}
-        if not unresolved:
-            return await self._resolved_to_freshest(result)
-
-        by_default_branch: dict[str, list[str]] = {}
-        for project_id, scope in unresolved.items():
-            if scope.default_branch and scope.default_branch not in scope.deleted:
-                by_default_branch.setdefault(scope.default_branch, []).append(project_id)
-        result.update(
-            await self._newest_head_per_project(
-                [
-                    {"project_id": {"$in": project_ids}, "branch": branch, "status": {"$in": SCAN_USABLE_STATUSES}}
-                    for branch, project_ids in by_default_branch.items()
-                ]
+            # Retention deletes a scan without clearing the pointer, and re-ingest or a late analyzer
+            # result sends a completed scan back to pending.
+            cursor = self.collection.find(
+                {"_id": {"$in": list(pointers.values())}, "status": {"$in": SCAN_USABLE_STATUSES}}, _TIP_PROJECTION
             )
+            readable = {doc["_id"]: doc async for doc in cursor}
+        tips = {
+            pid: readable[scan_id]
+            for pid, scan_id in pointers.items()
+            if scan_id in readable and _may_head(readable[scan_id], scopes[pid])
+        }
+        unresolved = [pid for pid in scopes if pid not in tips]
+        derived = await _bounded_gather(self._head_build(pid, scopes[pid], {}, _TIP_PROJECTION) for pid in unresolved)
+        tips.update({pid: doc for pid, doc in zip(unresolved, derived, strict=True) if doc})
+        lineage = await self.freshest_in_lineage(
+            [doc["_id"] for doc in tips.values()], seeds={doc["_id"]: doc for doc in tips.values()}
         )
-
-        # A default branch this instance never scanned — CI wired to another one, or a repo whose
-        # tip predates the integration — must leave the project visible rather than empty.
-        or_conditions: list[dict[str, Any]] = []
-        without_deleted: list[str] = []
-        for project_id, scope in unresolved.items():
-            if project_id in result:
-                continue
-            if scope.deleted:
-                or_conditions.append(
-                    {
-                        "project_id": project_id,
-                        "branch": {"$nin": scope.deleted},
-                        "status": {"$in": SCAN_USABLE_STATUSES},
-                    }
-                )
-            else:
-                without_deleted.append(project_id)
-        if without_deleted:
-            or_conditions.append({"project_id": {"$in": without_deleted}, "status": {"$in": SCAN_USABLE_STATUSES}})
-        result.update(await self._newest_head_per_project(or_conditions))
-        return await self._resolved_to_freshest(result)
-
-    async def _resolved_to_freshest(self, tips: dict[str, str]) -> dict[str, str]:
-        """The second half of the head rule: each project's tip commit swapped for the freshest
-        analysis of it. A tip whose analysis vanished between the two reads drops out, which is
-        what "projects resolving to no scan are omitted" already means."""
-        lineage = await self.freshest_in_lineage(tips.values())
-        return {project_id: lineage[scan_id].scan_id for project_id, scan_id in tips.items() if scan_id in lineage}
+        return {pid: lineage[doc["_id"]].scan_id for pid, doc in tips.items() if doc["_id"] in lineage}
 
     async def iterate_raw(
         self, query: dict[str, Any], projection: dict[str, int] | None = None

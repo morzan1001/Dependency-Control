@@ -1,7 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Scan } from '@/types/scan'
-import { hasUnrecordedRelease } from '@/lib/releases'
 import { resolveRun } from '@/lib/scan-run'
 import { isScanUsable, SCAN_STATUS_FAILED } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
@@ -232,10 +231,10 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                           return formatDateTime(date);
                       })()}
                     </div>
-                    {scan.latest_rescan_id && (
+                    {scan.latest_run && scan.latest_run.scan_id !== scan.id && (
                         <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                             <RefreshCw className="h-3 w-3" />
-                            {rescanNote(scan.latest_run?.status)}
+                            {rescanNote(scan.latest_run.status)}
                         </div>
                     )}
                   </TableCell>
@@ -303,7 +302,6 @@ export function ProjectScans({ projectId }: Readonly<ProjectScansProps>) {
                         className="mt-1"
                       />
                     ))}
-                    {hasUnrecordedRelease(scan) && <ReleaseBadge className="mt-1" />}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">

@@ -15,7 +15,6 @@ _QUIET_TIP = "quiet-tip"
 _STATUS = "completed"
 # More scans than the scan-list endpoint will return on any one page.
 _BUSY_BRANCH_SCANS = 120
-_PRODUCTION = "production"
 
 
 async def _seed(db) -> None:
@@ -38,7 +37,6 @@ async def _seed(db) -> None:
             "branch": _QUIET_BRANCH,
             "status": _STATUS,
             "is_rescan": False,
-            "is_release": True,
             "created_at": _NOW - (_BUSY_BRANCH_SCANS + 10) * _AN_HOUR,
         }
     )
@@ -77,30 +75,8 @@ async def test_counts_the_whole_branch_rather_than_a_page_of_it(seeded, member_a
 
 
 @pytest.mark.asyncio
-async def test_names_a_release_flagged_scan_older_than_a_whole_page(seeded, member_auth_headers):
+async def test_answers_branches_only(seeded, member_auth_headers):
+    """Release rows are the one authority on what a release is, so the tips carry no flag-based guess."""
     response = await seeded.get(f"/api/v1/projects/{_PROJECT}/scans/branch-tips", headers=member_auth_headers)
 
-    flagged = response.json()["flagged_release_scan"]
-    assert flagged is not None
-    assert flagged["id"] == _QUIET_TIP
-    assert flagged["releases"] == []
-
-
-@pytest.mark.asyncio
-async def test_carries_the_release_rows_of_the_flagged_scan(seeded, db, member_auth_headers):
-    await db.releases.insert_one(
-        {
-            "_id": "row-1",
-            "scan_id": _QUIET_TIP,
-            "project_id": _PROJECT,
-            "environment": _PRODUCTION,
-            "version": None,
-            "released_at": _NOW,
-            "branch": _QUIET_BRANCH,
-            "commit_hash": None,
-        }
-    )
-
-    response = await seeded.get(f"/api/v1/projects/{_PROJECT}/scans/branch-tips", headers=member_auth_headers)
-
-    assert [ref["environment"] for ref in response.json()["flagged_release_scan"]["releases"]] == [_PRODUCTION]
+    assert set(response.json()) == {"branches"}

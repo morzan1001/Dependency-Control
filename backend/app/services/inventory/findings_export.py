@@ -1,16 +1,24 @@
 """Row builder for the multi-branch findings CSV export."""
 
 from collections.abc import AsyncIterator
-from typing import Any
+from datetime import datetime
+from typing import Any, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import DETAILS_KEY_IN_KEV
 from app.models.finding import FindingType, Severity
-from app.models.project import Scan
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.services.aggregation.components import build_component_index, lookup_component
+
+
+class ExportedScan(NamedTuple):
+    id: str
+    branch: str
+    created_at: datetime | None
+    commit_hash: str | None
+
 
 FINDINGS_COLUMNS = [
     "branch",
@@ -72,7 +80,7 @@ _DEP_PROJECTION = {"name": 1, "version": 1, "purl": 1, "direct": 1}
 _DepLookup = dict[str, dict[str, tuple[str | None, bool | None]]]
 
 
-def _row(scan: Scan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dict[str, Any]:
+def _row(scan: ExportedScan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dict[str, Any]:
     details = doc.get("details") or {}
     is_vuln = doc.get("type") == FindingType.VULNERABILITY.value
     is_license = doc.get("type") == FindingType.LICENSE.value
@@ -107,7 +115,7 @@ def _row(scan: Scan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dict[str, A
     }
 
 
-async def _dependency_lookup(db: AsyncIOMotorDatabase, scan: Scan) -> _DepLookup:
+async def _dependency_lookup(db: AsyncIOMotorDatabase, scan: ExportedScan) -> _DepLookup:
     by_version: dict[str, dict[str, tuple[str | None, bool | None]]] = {}
     async for dep in DependencyRepository(db).iterate_raw({"scan_id": scan.id}, _DEP_PROJECTION):
         by_name = by_version.setdefault(str(dep.get("version")), {})
@@ -122,11 +130,12 @@ async def _dependency_lookup(db: AsyncIOMotorDatabase, scan: Scan) -> _DepLookup
     return {version: build_component_index(names) for version, names in by_version.items()}
 
 
-async def iter_findings_rows(db: AsyncIOMotorDatabase, scans: list[Scan]) -> AsyncIterator[dict[str, Any]]:
+async def iter_findings_rows(db: AsyncIOMotorDatabase, scans: list[ExportedScan]) -> AsyncIterator[dict[str, Any]]:
     findings = FindingRepository(db)
     for scan in scans:
         dep_lookup = await _dependency_lookup(db, scan)
-        # One query per severity, most severe first, keeps streaming order without an in-memory sort.
+        # One query per severity, most severe first; the (scan_id, severity, type, finding_id) index
+        # hands each bucket over in streaming order.
         for severity in Severity:
             query = {"scan_id": scan.id, "severity": severity.value}
             async for doc in findings.iterate_raw(query, _PROJECTION, [("type", 1), ("finding_id", 1)]):

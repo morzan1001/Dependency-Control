@@ -5,7 +5,7 @@ from typing import Any
 import pymongo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import TEAM_SOURCE_GITLAB, team_source
+from app.core.constants import SCANS_TIP_SORT, TEAM_SOURCE_GITLAB, team_source
 from app.core.metrics import update_db_stats
 from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
@@ -27,7 +27,6 @@ RELEASES_LATEST_LOOKUP_NAME = "releases_latest_lookup"
 
 # BSON dates are milliseconds, so a date-ordered pick tie-breaks on _id. Each sort is the trailing
 # keys of its index: sorting on anything else turns an indexed seek into a blocking sort.
-SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
 RELEASES_LATEST_SORT: list[tuple[str, int]] = [("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
 
 SCANS_TIP_INDEX_KEY: list[tuple[str, int]] = [
@@ -288,7 +287,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["findings"].create_index("severity")
     await database["findings"].create_index("type")
     await database["findings"].create_index("finding_id")  # Logical CVE id, not _id.
-    await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("severity", pymongo.DESCENDING)])
+    # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
+    await database["findings"].create_index(
+        [
+            ("scan_id", pymongo.ASCENDING),
+            ("severity", pymongo.ASCENDING),
+            ("type", pymongo.ASCENDING),
+            ("finding_id", pymongo.ASCENDING),
+        ]
+    )
 
     # Finding Records
     await database["finding_records"].create_index(

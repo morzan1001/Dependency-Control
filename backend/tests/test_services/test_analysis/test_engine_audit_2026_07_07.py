@@ -1,7 +1,7 @@
-"""Engine resilience: waived-finding filtering, out-of-order finalize guards, post-processor result exclusion, and finalize TOCTOU rescheduling."""
+"""Engine resilience: waived-finding filtering, post-processor result exclusion, and finalize TOCTOU rescheduling."""
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -12,7 +12,6 @@ from app.services.analysis.engine import (
     _cleanup_analyzer_names,
     _filter_out_waived_findings,
     _finalize_scan_and_project,
-    _should_update_project_latest_scan,
 )
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 
@@ -64,68 +63,6 @@ class TestFilterOutWaivedFindings:
         db = {"findings": _FakeFindings([{"finding_id": "F1"}])}
         asyncio.run(_filter_out_waived_findings([SimpleNamespace(id="F1")], "scan-9", db))
         assert db["findings"].last_query == {"scan_id": "scan-9", "waived": True}
-
-
-class TestShouldUpdateProjectLatestScan:
-    def _run(self, this_created, current_latest_id, current_created):
-        scan_doc = SimpleNamespace(created_at=this_created)
-        project_repo = SimpleNamespace(
-            get_by_id=AsyncMock(return_value=SimpleNamespace(latest_scan_id=current_latest_id))
-        )
-        scan_repo = SimpleNamespace(get_by_id=AsyncMock(return_value=SimpleNamespace(created_at=current_created)))
-        return asyncio.run(_should_update_project_latest_scan("scan-new", scan_doc, "proj-1", scan_repo, project_repo))
-
-    def test_stale_scan_does_not_overwrite_newer_latest(self):
-        now = datetime.now(timezone.utc)
-        older = now - timedelta(days=7)
-        assert self._run(older, "scan-newer", now) is False
-
-    def test_newer_scan_updates(self):
-        now = datetime.now(timezone.utc)
-        older = now - timedelta(days=7)
-        assert self._run(now, "scan-older", older) is True
-
-    def test_no_existing_latest_updates(self):
-        now = datetime.now(timezone.utc)
-        assert self._run(now, None, None) is True
-
-
-class TestFinalizeGuardsProjectUpdate:
-    def _stats(self):
-        return SimpleNamespace(model_dump=lambda: {"x": 1})
-
-    def test_stale_completion_skips_project_update(self):
-        now = datetime.now(timezone.utc)
-        older = now - timedelta(days=7)
-        project_update = AsyncMock()
-        scan_repo = SimpleNamespace(
-            update_raw=AsyncMock(),
-            get_by_id=AsyncMock(return_value=SimpleNamespace(created_at=now)),
-        )
-        project_repo = SimpleNamespace(
-            update_raw=project_update,
-            get_by_id=AsyncMock(return_value=SimpleNamespace(latest_scan_id="scan-newer")),
-        )
-        scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None, created_at=older)
-
-        finalized = asyncio.run(
-            _finalize_scan_and_project(
-                "scan-stale",
-                scan_doc,
-                "proj-1",
-                5,
-                0,
-                self._stats(),
-                {"status": "completed"},
-                scan_repo,
-                project_repo,
-            )
-        )
-
-        assert finalized is True
-        # scan row still updated; project latest not clobbered by the stale scan
-        scan_repo.update_raw.assert_awaited()
-        project_update.assert_not_awaited()
 
 
 class TestCleanupAnalyzerNames:
@@ -232,7 +169,7 @@ class TestFinalizeTOCTOU:
         scan_repo = SimpleNamespace(
             collection=collection,
             update_raw=AsyncMock(),
-            get_by_id=AsyncMock(),
+            head_fields=AsyncMock(return_value={"latest_scan_id": "scan-1", "stats": {"x": 1}}),
         )
         project_update = AsyncMock()
         project_repo = SimpleNamespace(

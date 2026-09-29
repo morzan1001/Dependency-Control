@@ -62,7 +62,9 @@ class TestFinalizeMarksFailed:
 
     def test_completed_status_updates_project(self):
         project_update = AsyncMock()
-        scan_repo = SimpleNamespace(update_raw=AsyncMock())
+        scan_repo = SimpleNamespace(
+            update_raw=AsyncMock(), head_fields=AsyncMock(return_value={"latest_scan_id": "scan-1", "stats": {}})
+        )
         # no latest scan yet -> guard allows the update
         project_repo = SimpleNamespace(
             update_raw=project_update,

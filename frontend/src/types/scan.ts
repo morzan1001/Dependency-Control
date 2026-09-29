@@ -575,5 +575,4 @@ export interface BranchTip {
 
 export interface ProjectBranchTips {
   branches: BranchTip[];
-  flagged_release_scan: ScanWithReleases | null;
 }

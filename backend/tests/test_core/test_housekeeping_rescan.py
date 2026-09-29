@@ -16,8 +16,6 @@ from app.core.constants import (
     SETTINGS_MODE_GLOBAL,
 )
 from app.core.housekeeping import (
-    _build_rescan,
-    _create_rescan_for_project,
     _is_rescan_due,
     _process_project_rescan,
     _rescan_targets,
@@ -29,6 +27,7 @@ from app.models.release import Release
 from app.models.system import SystemSettings
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.system_settings import SystemSettingsRepository
+from app.services.rescan import build_rescan, create_rescan
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT_ID = "p1"
@@ -368,6 +367,12 @@ class TestResolveRescanInterval:
         assert _resolve_rescan_interval(opted_out, settings) == _GLOBAL_INTERVAL_HOURS
         assert _resolve_rescan_interval(own_interval, settings) == _GLOBAL_INTERVAL_HOURS
 
+    def test_in_global_mode_a_project_opt_in_cannot_override_the_global_switch_being_off(self) -> None:
+        opted_in = _project(rescan_enabled=True, rescan_interval=_PROJECT_INTERVAL_HOURS)
+        settings = _system_settings(rescan_mode=SETTINGS_MODE_GLOBAL, global_rescan_enabled=False)
+
+        assert _resolve_rescan_interval(opted_in, settings) is None
+
 
 class TestIsRescanDue:
     """The clock is the source scan's own, so CI traffic on the project cannot postpone it."""
@@ -405,7 +410,7 @@ class TestIsRescanDue:
 
 class TestBuildRescan:
     def test_carries_the_source_ci_metadata_into_a_fresh_pending_scan(self) -> None:
-        rescan = _build_rescan(_project(), _scan_doc())
+        rescan = build_rescan(_scan_doc())
 
         assert rescan.id != _SOURCE_SCAN_ID
         assert rescan.status == SCAN_STATUS_PENDING
@@ -425,28 +430,28 @@ class TestBuildRescan:
         assert rescan.project_name == _PROJECT_NAME
 
     def test_the_pipeline_id_is_dropped_so_a_rescan_cannot_be_mistaken_for_an_ingest(self) -> None:
-        assert _build_rescan(_project(), _scan_doc()).pipeline_id is None
+        assert build_rescan(_scan_doc()).pipeline_id is None
 
     def test_a_source_carrying_no_branch_field_is_rescanned_as_unknown(self) -> None:
         source = _scan_doc()
         del source["branch"]
 
-        assert _build_rescan(_project(), source).branch == _UNKNOWN_BRANCH
+        assert build_rescan(source).branch == _UNKNOWN_BRANCH
 
     def test_the_release_flag_is_not_inherited(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(is_release=True)).is_release is False
+        assert build_rescan(_scan_doc(is_release=True)).is_release is False
 
     def test_the_cbom_scan_type_is_carried_so_the_rescan_selects_the_same_analyzers(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(scan_type=_CBOM_SCAN_TYPE)).scan_type == _CBOM_SCAN_TYPE
+        assert build_rescan(_scan_doc(scan_type=_CBOM_SCAN_TYPE)).scan_type == _CBOM_SCAN_TYPE
 
     def test_a_source_carrying_no_scan_type_produces_a_rescan_without_one(self) -> None:
-        assert _build_rescan(_project(), _scan_doc()).scan_type is None
+        assert build_rescan(_scan_doc()).scan_type is None
 
     def test_the_pipeline_user_is_not_inherited(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(pipeline_user=_PIPELINE_USER)).pipeline_user is None
+        assert build_rescan(_scan_doc(pipeline_user=_PIPELINE_USER)).pipeline_user is None
 
     def test_the_rescan_clock_is_not_inherited_so_the_fresh_scan_starts_from_its_own_creation(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(last_rescanned_at=_NOW)).last_rescanned_at is None
+        assert build_rescan(_scan_doc(last_rescanned_at=_NOW)).last_rescanned_at is None
 
     def test_the_scan_model_holds_exactly_the_pinned_fields(self) -> None:
         """Widening Scan is a decision about what a rescan inherits, so it has to be made here."""
@@ -455,42 +460,49 @@ class TestBuildRescan:
     def test_a_rescan_carries_exactly_the_pinned_fields_and_nothing_else(self) -> None:
         source = _saturated_scan_doc()
 
-        assert _carried_fields(source, _build_rescan(_project(), source)) == _CARRIED_FROM_SOURCE
+        assert _carried_fields(source, build_rescan(source)) == _CARRIED_FROM_SOURCE
 
 
 class TestCreateRescanForProject:
     @pytest.mark.asyncio
-    async def test_inserts_the_rescan_points_the_source_at_it_and_queues_the_job(
+    async def test_inserts_the_rescan_announces_it_on_the_source_and_queues_the_job(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
+        """The lineage pointer waits for a delivered rescan; the pending run is what the list shows."""
         source = await _seed_scan(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         rescans = await _rescans(db)
         assert len(rescans) == 1
         assert rescans[0]["original_scan_id"] == _SOURCE_SCAN_ID
         stored_source = await db.scans.find_one({"_id": _SOURCE_SCAN_ID})
-        assert stored_source["latest_rescan_id"] == rescans[0]["_id"]
+        assert stored_source["latest_run"]["scan_id"] == rescans[0]["_id"]
+        assert stored_source["latest_run"]["status"] == SCAN_STATUS_PENDING
+        assert stored_source.get("latest_rescan_id") is None
         worker.add_job.assert_awaited_once_with(rescans[0]["_id"])
+
+    @pytest.mark.asyncio
+    async def test_a_rescan_of_a_rescan_is_rooted_at_the_lineage_root(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _ROOT_SCAN_ID)
+        clicked = await _seed_scan(db, _PREVIOUS_RESCAN_ID, is_rescan=True, original_scan_id=_ROOT_SCAN_ID)
+
+        rescan = await create_rescan(db, clicked, worker)
+
+        assert rescan is not None
+        assert rescan.original_scan_id == _ROOT_SCAN_ID
+        assert (await db.scans.find_one({"_id": _ROOT_SCAN_ID}))["latest_run"]["scan_id"] == rescan.id
 
     @pytest.mark.asyncio
     async def test_creating_a_rescan_stamps_the_clock_on_the_source(self, db: FakeDatabase, worker: AsyncMock) -> None:
         source = await _seed_scan(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         stored_source = await db.scans.find_one({"_id": _SOURCE_SCAN_ID})
         assert stored_source["last_rescanned_at"] is not None
-
-    @pytest.mark.asyncio
-    async def test_the_source_scan_is_not_given_a_latest_run_summary(self, db: FakeDatabase, worker: AsyncMock) -> None:
-        source = await _seed_scan(db)
-
-        await _create_rescan_for_project(_project(), source, db, worker)
-
-        stored_source = await db.scans.find_one({"_id": _SOURCE_SCAN_ID})
-        assert stored_source.get("latest_run") is None
 
     @pytest.mark.asyncio
     async def test_a_lock_held_for_this_source_stops_the_creation(self, db: FakeDatabase, worker: AsyncMock) -> None:
@@ -499,7 +511,7 @@ class TestCreateRescanForProject:
             _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
         )
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert await _rescans(db) == []
         worker.add_job.assert_not_awaited()
@@ -513,7 +525,7 @@ class TestCreateRescanForProject:
             _lock_name(_OTHER_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
         )
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
 
@@ -526,7 +538,7 @@ class TestCreateRescanForProject:
             _lock_name(_PROJECT_ID, _OTHER_SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
         )
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
         worker.add_job.assert_awaited_once()
@@ -536,7 +548,7 @@ class TestCreateRescanForProject:
         source = await _seed_scan(db)
         locks = await _seed_expired_lock(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert await locks.get_lock_info(_lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)) is None
 
@@ -548,7 +560,7 @@ class TestCreateRescanForProject:
         await _seed_inflight_rescan(db)
         locks = await _seed_expired_lock(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert await locks.get_lock_info(_lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)) is None
 
@@ -559,7 +571,7 @@ class TestCreateRescanForProject:
         source = await _seed_scan(db)
         await _seed_inflight_rescan(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert [r["_id"] for r in await _rescans(db)] == [_INFLIGHT_RESCAN_ID]
         worker.add_job.assert_not_awaited()
@@ -571,7 +583,7 @@ class TestCreateRescanForProject:
         source = await _seed_scan(db)
         await _seed_scan(db, _ACTIVE_SCAN_ID, branch=_FEATURE_BRANCH, status=SCAN_STATUS_PROCESSING, created_at=_NOW)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
         worker.add_job.assert_awaited_once()
@@ -583,7 +595,7 @@ class TestCreateRescanForProject:
         source = await _seed_scan(db)
         await _seed_inflight_rescan(db, original_scan_id=_OTHER_SOURCE_SCAN_ID)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         created = [r for r in await _rescans(db) if r["_id"] != _INFLIGHT_RESCAN_ID]
         assert len(created) == 1
@@ -598,7 +610,7 @@ class TestCreateRescanForProject:
             db, _FOREIGN_SCAN_ID, project_id=_OTHER_PROJECT_ID, status=SCAN_STATUS_PENDING, created_at=_NOW
         )
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
 
@@ -608,8 +620,8 @@ class TestCreateRescanForProject:
     ) -> None:
         source = await _seed_scan(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
         assert worker.add_job.await_count == 1
@@ -674,7 +686,7 @@ class TestProcessProjectRescan:
         assert len(created) == 1
         assert created[0]["original_scan_id"] == _ROOT_SCAN_ID
         root = await db.scans.find_one({"_id": _ROOT_SCAN_ID})
-        assert root["latest_rescan_id"] == created[0]["_id"]
+        assert root["latest_run"]["scan_id"] == created[0]["_id"]
         previous = await db.scans.find_one({"_id": _PREVIOUS_RESCAN_ID})
         assert previous.get("latest_rescan_id") is None
 
@@ -769,6 +781,17 @@ class TestProcessProjectRescan:
         targets = await _rescan_targets(_project(), db)
 
         assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_project_whose_ci_only_builds_tags_still_has_its_tip_rescanned(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        """Head falls back to the tag build when nothing else exists, so the rescan has to follow it."""
+        await _seed_scan(db, _TAG_BUILD_SCAN_ID, branch=_COMMIT_TAG, created_at=_NOW - _RECENT)
+
+        targets = await _rescan_targets(_project(), db)
+
+        assert [t["_id"] for t in targets] == [_TAG_BUILD_SCAN_ID]
 
     @pytest.mark.asyncio
     async def test_a_project_gets_exactly_one_rescan_however_many_branches_are_usable(
@@ -936,7 +959,7 @@ class TestReleaseRescanTargets:
         created = [r for r in await _rescans(db) if r["_id"] != _PREVIOUS_RESCAN_ID]
         assert [r["original_scan_id"] for r in created] == [_RELEASED_SCAN_ID]
         marked = await db.scans.find_one({"_id": _RELEASED_SCAN_ID})
-        assert marked["latest_rescan_id"] == created[0]["_id"], "the chain stays one link deep"
+        assert marked["latest_run"]["scan_id"] == created[0]["_id"], "the chain stays one link deep"
 
 
 class TestRescanClockIsIndependentOfCiTraffic:

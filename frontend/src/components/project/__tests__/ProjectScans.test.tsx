@@ -11,7 +11,6 @@ const RELEASE_VERSION = 'v1.2.3'
 const STAGING_VERSION = 'v1.3.0-rc1'
 const RELEASED_AT = '2026-07-01T00:00:00Z'
 const RELEASES_ONLY_BUTTON = 'Releases only'
-const GENERIC_RELEASE_LABEL = 'Release'
 
 const mockUseProjectScans = vi.fn()
 const mockUseProjectBranches = vi.fn()
@@ -132,8 +131,8 @@ describe('ProjectScans - a scan whose rescan is still queued', () => {
     return makeScan({
       id: 'main-1',
       stats: { critical: OWN_CRITICAL, high: 0, medium: 0, low: 0 },
-      latest_rescan_id: RESCAN_ID,
-      // A queued rescan has analysed nothing yet, so its summary carries no stats.
+      // A queued rescan has analysed nothing yet, so its summary carries no stats, and the lineage
+      // pointer only moves once a rescan delivers.
       latest_run: { scan_id: RESCAN_ID, status: 'pending' },
     })
   }
@@ -197,13 +196,24 @@ describe('ProjectScans - a scan whose rescan is still queued', () => {
     expect(screen.queryByText(NOTE_IN_FLIGHT)).not.toBeInTheDocument()
   })
 
-  it('says the rescan is still running when the scheduler has queued it without a summary', () => {
-    // The automatic scheduler sets latest_rescan_id and never writes latest_run.
-    renderScans([makeScan({ id: 'main-1', latest_rescan_id: RESCAN_ID })])
+  it('says a second rescan is running while the lineage still points at the one that delivered', () => {
+    renderScans([
+      makeScan({
+        id: 'main-1',
+        latest_rescan_id: 'main-1-earlier-rescan',
+        latest_run: { scan_id: RESCAN_ID, status: 'pending' },
+      }),
+    ])
 
     expect(screen.getByText(NOTE_IN_FLIGHT)).toBeInTheDocument()
     expect(screen.queryByText(NOTE_DELIVERED)).not.toBeInTheDocument()
-    expect(screen.queryByText(NOTE_FAILED)).not.toBeInTheDocument()
+  })
+
+  it('adds no note while the latest run is the analysis of the scan itself', () => {
+    renderScans([makeScan({ id: 'main-1', latest_run: { scan_id: 'main-1', status: 'completed' } })])
+
+    expect(screen.queryByText(NOTE_IN_FLIGHT)).not.toBeInTheDocument()
+    expect(screen.queryByText(NOTE_DELIVERED)).not.toBeInTheDocument()
   })
 
   it('names a failed rescan as failed rather than as still running', () => {
@@ -249,10 +259,10 @@ describe('ProjectScans - release', () => {
     expect(screen.getByLabelText(`Release ${RELEASE_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
   })
 
-  it('still marks a scan whose release record has not landed yet', () => {
+  it('renders no badge for a release flag no release record backs', () => {
     renderScans([makeScan({ id: 'rel', is_release: true })])
 
-    expect(screen.getByLabelText(GENERIC_RELEASE_LABEL)).toBeInTheDocument()
+    expect(screen.queryByLabelText(/^Release/)).not.toBeInTheDocument()
   })
 
   it('renders no badge for a plain scan', () => {

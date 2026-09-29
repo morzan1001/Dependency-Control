@@ -36,17 +36,12 @@ _ONE_PROJECT = 1
 _MANY_PROJECTS = 50
 _COUNTED_COLLECTIONS = ("projects", "scans", "releases")
 _COUNTED_OPERATIONS = ("find", "find_one", "aggregate", "distinct")
-# Head resolution's second step walks the rescan lineage of the tip it picked: one read for the
-# whole scope, plus one per extra link, never one per project.
-_LINEAGE_READS = 1
+# One read validates every pointer in the scope; a project the pointer cannot answer costs one index
+# seek of its own. The lineage step starts from tips already in hand, so a tip without a rescan
+# link costs no further read.
 _POINTER_READS = 1
-_HEAD_QUERIES = {"projects.find": 1, "scans.aggregate": 1, "scans.find": _LINEAGE_READS}
-_HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1, "scans.find": _POINTER_READS + _LINEAGE_READS}
-_HEAD_QUERIES_WITH_A_DANGLING_POINTER = {
-    "projects.find": 1,
-    "scans.find": _POINTER_READS + _LINEAGE_READS,
-    "scans.aggregate": 1,
-}
+_HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1, "scans.find": _POINTER_READS}
+_HEAD_QUERIES_WITH_A_DANGLING_POINTER = {"projects.find": 1, "scans.find": _POINTER_READS, "scans.find_one": 1}
 _RELEASE_QUERIES = {"releases.aggregate": 1, "scans.find": 1}
 _RELEASE_QUERIES_WITH_RESCANS = {"releases.aggregate": 1, "scans.find": 2}
 _RELEASE_QUERIES_WITH_A_CHAIN = {"releases.aggregate": 1, "scans.find": 4}
@@ -55,7 +50,7 @@ _CHAIN_BEYOND_THE_BOUND = MAX_RESCAN_HOPS + 5
 _NO_RELEASES: dict[str, str] = {}
 _CYCLE_QUERIES = {"releases.find_one": 1, "scans.find": 2}
 _NO_QUERIES: dict[str, int] = {}
-_NAMES_AND_HEAD_QUERIES = {"projects.find": 1, "scans.find": _POINTER_READS + _LINEAGE_READS}
+_NAMES_AND_HEAD_QUERIES = {"projects.find": 1, "scans.find": _POINTER_READS}
 _NAMES_AND_RELEASE_QUERIES = {"projects.find": 1, "releases.aggregate": 1, "scans.find": 1}
 _RETENTION_DELETED = "head-deleted-by-retention"
 _EXEMPTED_RELEASE = "exempted-release"
@@ -570,13 +565,13 @@ async def test_resolve_scan_ids_empty_scope_reads_nothing(db):
 
 @pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])
 @pytest.mark.asyncio
-async def test_head_query_count_does_not_grow_with_the_scope(db, project_count):
+async def test_a_pointer_less_project_costs_one_index_seek(db, project_count):
     project_ids = await _seed_one_scan_each(db, project_count)
     counts = _count_queries(db)
 
     await resolve_scan_ids(db, project_ids)
 
-    assert dict(counts) == _HEAD_QUERIES
+    assert dict(counts) == {"projects.find": 1, "scans.find_one": project_count}
 
 
 @pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])

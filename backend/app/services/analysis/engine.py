@@ -16,7 +16,6 @@ from pymongo import UpdateMany
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
-    MAX_RESCAN_HOPS,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
@@ -863,78 +862,6 @@ async def _persist_findings_and_waivers(
     return persisted_count, ignored_count, active_waivers
 
 
-async def _lineage_root(scan_id: str, scan_doc: Any, scan_repo: ScanRepository) -> str:
-    """The scan a rescan lineage descends from, following original_scan_id upwards.
-
-    A pointer may name a rescan rather than the root, so one hop is not enough. Bounded, so a
-    cyclic pointer cannot hang the ingest path.
-    """
-    root_id = scan_id
-    doc = scan_doc
-    for _hop in range(MAX_RESCAN_HOPS):
-        if doc is None or not getattr(doc, "is_rescan", False):
-            break
-        parent_id = getattr(doc, "original_scan_id", None)
-        if not parent_id or parent_id == root_id:
-            break
-        root_id = parent_id
-        doc = await scan_repo.get_by_id(parent_id)
-    return root_id
-
-
-async def _should_update_project_latest_scan(
-    scan_id: str,
-    scan_doc: Any,
-    project_id: str,
-    scan_repo: ScanRepository,
-    project_repo: ProjectRepository,
-    authoritative: bool = True,
-) -> bool:
-    """True unless a strictly-newer scan (by created_at) is already the project's latest.
-
-    Guards against a late/out-of-order scan clobbering latest_scan_id/stats with stale data.
-    A rescan always carries created_at = now, so it wins the slot only when it descends from the
-    same original the current latest descends from — a release or old-scan rescan must not swing
-    the project onto its numbers.
-    A non-authoritative scan (no SBOM ever received) may only become latest when the project
-    has none yet, so a SAST-only pipeline run cannot wipe the SBOM-derived picture.
-    The slot means "the tip of the default branch", so a pipeline on another branch — a feature
-    branch or a tag build — cannot take it off the branch the VCS calls default.
-    """
-    project_doc = await project_repo.get_by_id(project_id)
-    current_latest_id = getattr(project_doc, "latest_scan_id", None) if project_doc else None
-    if not authoritative and current_latest_id and current_latest_id != scan_id:
-        return False
-    if not current_latest_id or current_latest_id == scan_id:
-        return True
-
-    current_latest = await scan_repo.get_by_id(current_latest_id)
-    if not current_latest:
-        return True
-
-    default_branch = getattr(project_doc, "default_branch", None)
-    incoming_branch = getattr(scan_doc, "branch", None)
-    if default_branch and current_latest.branch == default_branch and incoming_branch != default_branch:
-        return False
-
-    if getattr(scan_doc, "is_rescan", False):
-        incoming_parent = getattr(scan_doc, "original_scan_id", None)
-        current_parent = getattr(current_latest, "original_scan_id", None) or current_latest_id
-        # One shared parent settles the common case with no read at all; only a mismatch is worth
-        # resolving both sides for, because a pointer into the middle of a chain names no root.
-        if incoming_parent and incoming_parent != current_parent:
-            incoming_root = await _lineage_root(scan_id, scan_doc, scan_repo)
-            current_root = await _lineage_root(current_latest_id, current_latest, scan_repo)
-            if incoming_root != current_root:
-                return False
-
-    this_created: datetime | None = getattr(scan_doc, "created_at", None)
-    current_created: datetime | None = getattr(current_latest, "created_at", None)
-    if this_created is None or current_created is None:
-        return True
-    return this_created >= current_created
-
-
 async def _finalize_scan_and_project(
     scan_id: str,
     scan_doc: Any,
@@ -1007,29 +934,18 @@ async def _finalize_scan_and_project(
         await scan_repo.update_raw(scan_id, {"$set": set_fields, "$unset": unset_fields})
 
     if scan_doc.is_rescan and scan_doc.original_scan_id:
-        await scan_repo.update_raw(
-            scan_doc.original_scan_id,
-            {"$set": {"latest_rescan_id": scan_id, "latest_run": latest_run_summary}},
-        )
+        # latest_run reports every run, while the lineage moves only onto an analysis head may report.
+        root_fields: dict[str, Any] = {"latest_run": latest_run_summary}
+        if status in SCAN_USABLE_STATUSES:
+            root_fields["latest_rescan_id"] = scan_id
+        await scan_repo.update_raw(scan_doc.original_scan_id, {"$set": root_fields})
 
-    # A failed or out-of-order scan must not become the project's latest or overwrite its stats.
-    if (
-        project_id
-        and status != SCAN_STATUS_FAILED
-        and await _should_update_project_latest_scan(
-            scan_id, scan_doc, project_id, scan_repo, project_repo, authoritative=authoritative
-        )
-    ):
-        await project_repo.update_raw(
-            project_id,
-            {
-                "$set": {
-                    "stats": stats.model_dump(),
-                    "last_scan_at": datetime.now(timezone.utc),
-                    "latest_scan_id": scan_id,
-                }
-            },
-        )
+    if project_id and status != SCAN_STATUS_FAILED:
+        project_doc = await project_repo.get_by_id(project_id)
+        # A scan without an SBOM must not replace the SBOM-derived picture of a project that has one.
+        if project_doc and (authoritative or not project_doc.latest_scan_id):
+            head = await scan_repo.head_fields(project_doc)
+            await project_repo.update_raw(project_id, {"$set": {**head, "last_scan_at": datetime.now(timezone.utc)}})
     return True
 
 

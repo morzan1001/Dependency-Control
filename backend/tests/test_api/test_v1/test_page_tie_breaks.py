@@ -104,7 +104,35 @@ async def test_the_recent_scans_list_covers_the_projects_analytics_resolves():
     ):
         await read_all_scans(reader, FakeDatabase(), sort_by="created_at", sort_order="desc")
 
-    assert aggregate.await_args.args[0][0] == {"$match": {"project_id": {"$in": ["p2"]}}}
+    assert aggregate.await_args.args[0][0] == {"$match": {"project_id": {"$in": ["p2"]}, "is_rescan": {"$ne": True}}}
+
+
+@pytest.mark.asyncio
+async def test_the_recent_scans_list_leaves_out_rescans():
+    """A rescan carries an old pipeline number under today's date and would read as a fresh CI run."""
+    db = FakeDatabase()
+    await db.projects.insert_one({"_id": "p1", "name": "p1"})
+    stamp = datetime(2026, 9, 1, tzinfo=timezone.utc)
+    for doc in (
+        {"_id": "build", "project_id": "p1", "branch": "main", "status": "completed", "created_at": stamp},
+        {"_id": "legacy", "project_id": "p1", "branch": "main", "status": "completed", "created_at": stamp},
+        {
+            "_id": "rescan",
+            "project_id": "p1",
+            "branch": "main",
+            "status": "completed",
+            "created_at": stamp,
+            "is_rescan": True,
+            "original_scan_id": "build",
+        },
+    ):
+        await db.scans.insert_one(doc)
+    await db.scans.update_one({"_id": "build"}, {"$set": {"is_rescan": False}})
+    reader = User(id="u1", username="u1", email="u1@test.com", permissions=[Permissions.PROJECT_READ_ALL])
+
+    rows = await read_all_scans(reader, db, sort_by="created_at", sort_order="desc")
+
+    assert sorted(row["_id"] for row in rows) == ["build", "legacy"]
 
 
 @pytest.mark.asyncio

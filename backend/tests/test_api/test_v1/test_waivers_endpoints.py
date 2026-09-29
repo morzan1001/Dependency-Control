@@ -73,9 +73,10 @@ class TestCreateWaiver:
         mock_repo.create = AsyncMock()
         bg_tasks = BackgroundTasks()
 
-        # Project has no latest scan → finding-match validation short-circuits.
+        # Project has no scan to head it → finding-match validation short-circuits.
         db = MagicMock()
         db.projects.find_one = AsyncMock(return_value={"_id": "proj-1", "latest_scan_id": None})
+        db.scans.find_one = AsyncMock(return_value=None)
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
@@ -843,6 +844,7 @@ class TestCreateWaiverPermissions:
 
         db = MagicMock()
         db.projects.find_one = AsyncMock(return_value={"_id": "proj-1", "latest_scan_id": None})
+        db.scans.find_one = AsyncMock(return_value=None)
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock) as mock_access:
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):

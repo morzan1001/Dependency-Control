@@ -10,6 +10,7 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404
 from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.models.project import Project, Scan
+from app.repositories.scans import ScanRepository
 from app.schemas.inventory import (
     ComponentsPageResponse,
     CryptoPageResponse,
@@ -32,14 +33,19 @@ from app.services.inventory.licenses import (
     build_license_rows,
     iter_license_rows,
 )
-from app.services.inventory.scan_resolution import resolve_inventory_scan
 from app.services.inventory.stats import build_inventory_stats, scan_context
 
 router = CustomAPIRouter(tags=["inventory"])
 
 
 async def _resolve_scan_or_404(db: AsyncIOMotorDatabase, project: Project, branch: str | None) -> Scan:
-    scan = await resolve_inventory_scan(db, project, branch)
+    scan_repo = ScanRepository(db)
+    if not branch:
+        scan = await scan_repo.get_latest_active_scan(project)
+    elif branch in (project.deleted_branches or []):
+        scan = None
+    else:
+        scan = await scan_repo.branch_tip(project.id, branch)
     if scan is None:
         target = branch or project.default_branch or "any active branch"
         raise HTTPException(status_code=404, detail=f"No completed scan found for branch '{target}'")

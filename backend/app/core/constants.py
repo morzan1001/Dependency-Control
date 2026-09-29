@@ -847,6 +847,9 @@ SCAN_USABLE_STATUSES = [
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
 ]
 
+# BSON dates are milliseconds, so a date-ordered pick of scans tie-breaks on _id, lowest first.
+SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", -1), ("_id", 1)]
+
 # Version changes the "recent updates" list answers with, and the samples the delta writer keeps
 # per scan. One number for both: a writer keeping fewer than the readers show leaves a busy scan
 # unable to fill the list on its own, and the two read paths then answer with different events.

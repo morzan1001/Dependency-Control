@@ -263,8 +263,8 @@ class BranchTip(BaseModel):
     )
     tip: Scan | None = Field(
         None,
-        description="Newest usable scan of the branch, a rescan only where nothing built is left; "
-        "None while the branch has produced no usable scan",
+        description="Freshest analysis of the branch's newest usable build, or its newest usable rescan "
+        "where no usable build is left; None while the branch has produced no usable scan",
     )
 
 
@@ -272,10 +272,6 @@ class ProjectBranchTips(BaseModel):
     """Every branch of a project, so no branch-level verdict is drawn from a page of scans."""
 
     branches: list[BranchTip] = Field(..., description="Alphabetical by branch name")
-    flagged_release_scan: ScanWithReleases | None = Field(
-        None,
-        description="Newest usable scan carrying the release flag, whatever its age; None when the project has none",
-    )
 
 
 class DashboardStats(BaseModel):

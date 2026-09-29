@@ -1,7 +1,6 @@
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { Button } from '@/components/ui/button'
 import { useReleaseActions } from '@/hooks/use-release-actions'
-import { hasUnrecordedRelease } from '@/lib/releases'
 import { formatDateTime } from '@/lib/utils'
 import type { ScanWithReleases } from '@/types/scan'
 
@@ -17,8 +16,7 @@ export function ScanReleaseControl({ projectId, scan }: Readonly<ScanReleaseCont
 
   // A re-scan's releases are held by the original scan, so this panel would be empty or wrong;
   // MarkReleaseButton explains that and links there.
-  const unrecorded = !scan.is_rescan && hasUnrecordedRelease(scan)
-  if (scan.is_rescan || (scan.releases.length === 0 && !unrecorded)) return null
+  if (scan.is_rescan || scan.releases.length === 0) return null
 
   return (
     <div className="flex flex-col space-y-1">
@@ -39,7 +37,6 @@ export function ScanReleaseControl({ projectId, scan }: Readonly<ScanReleaseCont
             </Button>
           </div>
         ))}
-        {unrecorded && <ReleaseBadge />}
       </div>
     </div>
   )
