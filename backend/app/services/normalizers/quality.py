@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Any
 
+from app.core.constants import SCORECARD_FLAG_THRESHOLD, SCORECARD_HIGH_SEVERITY_THRESHOLD
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding_details import MaintainerRiskDetails, ScorecardIssueDetails, TyposquattingDetails
 from app.services.normalizers.utils import FindingIdPrefix, build_finding_id, safe_get, safe_severity
@@ -38,9 +39,9 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], 
 
         aggregator.record_scorecard(component_key, scorecard_data)
 
-        if overall < 3.0 or "Maintained" in critical_issues or "Vulnerabilities" in critical_issues:
+        if overall < SCORECARD_HIGH_SEVERITY_THRESHOLD or {"Maintained", "Vulnerabilities"} & set(critical_issues):
             severity = Severity.HIGH
-        elif overall < 5.0 or critical_issues:
+        elif overall < SCORECARD_FLAG_THRESHOLD or critical_issues:
             severity = Severity.MEDIUM
         else:
             severity = Severity.LOW

@@ -378,8 +378,11 @@ CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project pattern
 EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploited
 
 # OpenSSF Scorecard thresholds
-# deps_dev raises a scorecard finding below this unless a project sets its own scorecard_threshold.
+# deps_dev raises a scorecard finding below this unless a project sets its own scorecard_threshold;
+# normalize_scorecard grades a score below it at least MEDIUM.
 SCORECARD_FLAG_THRESHOLD: float = 5.0
+# normalize_scorecard grades a score below this HIGH.
+SCORECARD_HIGH_SEVERITY_THRESHOLD: float = 3.0
 # Recommendations call a scored package poor quality below this.
 SCORECARD_POOR_QUALITY_THRESHOLD: float = 4.0
 
