@@ -10,22 +10,19 @@ from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
     HIGH_RISK_SCORE_THRESHOLD,
-    REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
-    REACHABILITY_LEVEL_IMPORT,
-    REACHABILITY_LEVEL_SYMBOL,
     sort_by_severity,
 )
 from app.core.cve import canonical_cve, entry_cves
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import (
     ACTIVELY_EXPLOITED_MATURITY,
-    CONFIRMED_REACHABLE_RISK_MODIFIER,
     RISK_SEVERITY_WEIGHTS,
-    UNREACHABLE_RISK_MODIFIER,
     calculate_exploit_maturity,
     is_actionable_vulnerability,
     is_deprioritized_secret,
     is_deprioritized_vulnerability,
+    reachability_display_tier,
+    reachability_risk_modifier,
     saturating_risk_score,
     severity_exposure,
 )
@@ -53,7 +50,6 @@ from app.services.reachability_enrichment import (
     ComponentLanguages,
     build_component_language_map,
     is_high_confidence_reachable,
-    reachability_display_tier,
 )
 
 
@@ -274,7 +270,7 @@ def build_reachability_summary(
             "severity": finding.get("severity", "unknown"),
             "reachability_level": tier,
             "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
-            "is_high_confidence": is_high_confidence_reachable(reachability_data),
+            "is_high_confidence": is_high_confidence_reachable(reachable, reachability_data.get("confidence_score")),
         }
 
         reachability_counts = cast(dict[str, int], summary["reachability_levels"])
@@ -310,15 +306,6 @@ def _numeric(raw: Any) -> float | None:
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
     return float(raw)
-
-
-def _reach_modifier(reachable: Any, level: Any) -> float:
-    """Per-finding weight multiplier. Unreachable is tested first, so it wins over confirmed-reachable."""
-    if reachable is False:
-        return UNREACHABLE_RISK_MODIFIER
-    if reachable is True and level == REACHABILITY_LEVEL_SYMBOL:
-        return CONFIRMED_REACHABLE_RISK_MODIFIER
-    return 1.0
 
 
 class StatsAccumulator:
@@ -399,15 +386,15 @@ class StatsAccumulator:
 
         # Weights are keyed on bucket, not on raw severity: a new RISK_SEVERITY_WEIGHTS key that is
         # not also in _BUCKETED_SEVERITIES collapses to UNKNOWN and silently contributes 0.
-        self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * _reach_modifier(reachable, level)
+        self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * reachability_risk_modifier(reachable, level)
 
         finding_type = finding.get("type")
         if finding_type == "vulnerability":
             self._add_vulnerability(bucket, epss, in_kev, reachable, finding.get("component"))
+            self._add_reachability(bucket, reachable, level, details)
         elif finding_type == "secret":
             self._add_secret(details)
         self._add_threat_intel(details, epss, in_kev)
-        self._add_reachability(bucket, reachable, level, details)
 
     def _add_vulnerability(self, bucket: str, epss: float | None, in_kev: bool, reachable: Any, component: Any) -> None:
         self._vuln_total += 1
@@ -468,17 +455,16 @@ class StatsAccumulator:
 
     def _add_reachable(self, bucket: str, level: Any, details: Mapping[str, Any]) -> None:
         self._reachable += 1
-        if level == REACHABILITY_LEVEL_SYMBOL:
-            self._confirmed += 1
-        elif level == REACHABILITY_LEVEL_IMPORT:
-            self._likely += 1
+        tier = reachability_display_tier(True, level)
+        self._confirmed += tier == "confirmed"
+        self._likely += tier == "likely"
         if bucket == "CRITICAL":
             self._reachable_critical += 1
         elif bucket == "HIGH":
             self._reachable_high += 1
         raw_reach = details.get("reachability")
-        confidence = _numeric(raw_reach.get("confidence_score")) if isinstance(raw_reach, Mapping) else None
-        if confidence is not None and confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD:
+        confidence = raw_reach.get("confidence_score") if isinstance(raw_reach, Mapping) else None
+        if is_high_confidence_reachable(True, confidence):
             self._reachable_hc += 1
             if bucket == "CRITICAL":
                 self._reachable_critical_hc += 1
@@ -542,8 +528,6 @@ class StatsAccumulator:
                 confirmed_reachable_count=self._confirmed,
                 likely_reachable_count=self._likely,
                 unreachable_count=self._unreachable,
-                # vuln_total is type-gated; _analyzed is ungated. Non-vulnerabilities carrying
-                # reachable drive this negative.
                 unknown_count=self._vuln_total - self._analyzed,
                 reachable_critical=self._reachable_critical,
                 reachable_high=self._reachable_high,

@@ -4,6 +4,7 @@ producer listed that package in ``analyzed_modules`` for a language covering its
 import pytest
 
 from app.core.constants import REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE, REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED
+from app.core.risk_scoring import reachability_display_tier
 from app.services.component_identity import canonical_module_key
 from app.schemas.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
@@ -11,7 +12,6 @@ from app.services.reachability_enrichment import (
     _lists_package,
     _prepare_callgraph,
     component_language_map,
-    reachability_display_tier,
 )
 
 _BASE_RISK = 80.0

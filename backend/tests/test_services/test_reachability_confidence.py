@@ -19,37 +19,24 @@ from app.services.reachability_enrichment import (
 
 class TestIsHighConfidenceReachable:
     def test_reachable_with_high_confidence_returns_true(self):
-        data = {"is_reachable": True, "confidence_score": 0.9}
-        assert is_high_confidence_reachable(data) is True
+        assert is_high_confidence_reachable(True, 0.9) is True
 
     def test_reachable_at_threshold_returns_true(self):
         # Inclusive boundary: a finding exactly on the threshold is high-confidence.
-        data = {"is_reachable": True, "confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD}
-        assert is_high_confidence_reachable(data) is True
+        assert is_high_confidence_reachable(True, REACHABILITY_HIGH_CONFIDENCE_THRESHOLD) is True
 
     def test_reachable_below_threshold_returns_false(self):
         # Imported-but-no-symbol-info matches sit at 0.5; they must not feed headline reachable counts.
-        data = {"is_reachable": True, "confidence_score": 0.5}
-        assert is_high_confidence_reachable(data) is False
+        assert is_high_confidence_reachable(True, 0.5) is False
 
     def test_unreachable_returns_false_regardless_of_confidence(self):
-        data = {"is_reachable": False, "confidence_score": 0.99}
-        assert is_high_confidence_reachable(data) is False
+        assert is_high_confidence_reachable(False, 0.99) is False
 
     def test_missing_is_reachable_returns_false(self):
-        data = {"confidence_score": 0.9}
-        assert is_high_confidence_reachable(data) is False
+        assert is_high_confidence_reachable(None, 0.9) is False
 
     def test_missing_confidence_returns_false(self):
-        # Without a confidence number we can't assert "high confidence".
-        data = {"is_reachable": True}
-        assert is_high_confidence_reachable(data) is False
-
-    def test_empty_dict_returns_false(self):
-        assert is_high_confidence_reachable({}) is False
-
-    def test_none_returns_false(self):
-        assert is_high_confidence_reachable(None) is False
+        assert is_high_confidence_reachable(True, None) is False
 
 
 class TestPendingSummaryTiers:
@@ -85,6 +72,14 @@ class TestPendingSummaryTiers:
         cg = [{"language": "python", "module_usage": {}}]
         summary = build_reachability_summary(findings, cg, 1)
         assert "is_high_confidence" in summary["reachable_vulnerabilities"][0]
+
+    @pytest.mark.parametrize("confidence", [True, "0.9"], ids=["bool", "string"])
+    def test_a_non_numeric_confidence_is_not_high_confidence(self, confidence):
+        finding = self._f("a", True, "symbol")
+        finding["details"]["reachability"]["confidence_score"] = confidence
+        cg = [{"language": "python", "module_usage": {}}]
+        summary = build_reachability_summary([finding], cg, 1)
+        assert summary["reachable_vulnerabilities"][0]["is_high_confidence"] is False
 
 
 class TestImportMatchingUsesWholePackageKeys:

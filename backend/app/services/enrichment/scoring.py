@@ -6,7 +6,7 @@ from app.core.constants import (
     EXPLOIT_MATURITY_ORDER,
     SEVERITY_CALCULATED_RISK_SCORES,
 )
-from app.core.risk_scoring import is_deprioritized_secret
+from app.core.risk_scoring import is_deprioritized_secret, reachability_risk_modifier
 from app.models.finding import Severity
 from app.schemas.enrichment import VulnerabilityEnrichment
 
@@ -46,30 +46,13 @@ def _calculate_epss_contribution(epss_score: float) -> float:
     return epss_score * (10.0 / EPSS_MEDIUM_THRESHOLD)
 
 
-def _apply_reachability_modifier(
-    score: float,
-    is_reachable: bool | None,
-    reachability_level: str | None,
-) -> float:
-    """Scale by reachability: 0.4 if unreachable, 1.1 if confirmed, else identity (not 0 — analysis is imperfect)."""
-    if is_reachable is None and reachability_level is None:
-        return score
-    if is_reachable is False or reachability_level == "unreachable":
-        return score * 0.4
-    if reachability_level == "confirmed":
-        return score * 1.1
-    return score
-
-
 def calculate_risk_score(
     cvss_score: float | None,
     epss_score: float | None,
     is_kev: bool,
     kev_ransomware: bool,
-    is_reachable: bool | None = None,
-    reachability_level: str | None = None,
 ) -> float:
-    """Combined 0..100 risk = CVSS (<=40, 20 default) + EPSS (<=25) + KEV (+20) + ransomware (+5), then reachability multiplier, capped at 100."""
+    """Combined 0..100 risk = CVSS (<=40, 20 default) + EPSS (<=25) + KEV (+20) + ransomware (+5), capped at 100."""
     score = (cvss_score / 10.0) * 40 if cvss_score is not None else 20.0
     if epss_score is not None:
         score += _calculate_epss_contribution(epss_score)
@@ -77,37 +60,14 @@ def calculate_risk_score(
         score += 20
     if kev_ransomware:
         score += 5
-    score = _apply_reachability_modifier(score, is_reachable, reachability_level)
     return min(score, 100.0)
 
 
 def calculate_adjusted_risk_score(
-    base_risk_score: float,
-    is_reachable: bool | None = None,
-    reachability_level: str | None = None,
+    base_risk_score: float, is_reachable: bool | None, analysis_level: str | None
 ) -> float:
-    """Apply only the reachability modifier to an already-computed risk score."""
-    if is_reachable is None and reachability_level is None:
-        return base_risk_score
-    if is_reachable is False or reachability_level == "unreachable":
-        return base_risk_score * 0.4
-    if reachability_level == "confirmed":
-        return min(base_risk_score * 1.1, 100.0)
-    return base_risk_score
-
-
-def map_reachability_level_to_modifier(
-    analysis_level: str | None,
-    is_reachable: bool | None,
-) -> str | None:
-    """Map reachability enrichment (analysis_level + is_reachable) to the scoring modifier vocab: not-reachable -> "unreachable", symbol-level reachable -> "confirmed", else identity."""
-    if analysis_level in ("confirmed", "unreachable"):
-        return analysis_level
-    if is_reachable is False:
-        return "unreachable"
-    if is_reachable is True and analysis_level == "symbol":
-        return "confirmed"
-    return None
+    """An already-computed risk score scaled by its reachability verdict."""
+    return min(base_risk_score * reachability_risk_modifier(is_reachable, analysis_level), 100.0)
 
 
 def calculate_secret_risk_score(

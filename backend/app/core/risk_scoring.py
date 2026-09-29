@@ -4,7 +4,12 @@ recommendations, chat and secret scoring must agree on."""
 
 from typing import Any
 
-from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD
+from app.core.constants import (
+    EPSS_HIGH_THRESHOLD,
+    EPSS_MEDIUM_THRESHOLD,
+    REACHABILITY_LEVEL_IMPORT,
+    REACHABILITY_LEVEL_SYMBOL,
+)
 from app.core.epss import bucket_epss
 
 # Relative weight per finding: 1 CRITICAL = 5 HIGH = 20 MEDIUM = 80 LOW; INFO/UNKNOWN/NEGLIGIBLE carry none.
@@ -19,7 +24,6 @@ RISK_SEVERITY_WEIGHTS: dict[str, float] = {
 # median project lands mid-scale instead of the whole top decile compressing into 99.x.
 RISK_SCORE_HALF_SATURATION: float = 250.0
 
-# Per-finding weight multipliers mirroring the reachability scaling of details.adjusted_risk_score.
 UNREACHABLE_RISK_MODIFIER: float = 0.4
 CONFIRMED_REACHABLE_RISK_MODIFIER: float = 1.1
 
@@ -59,6 +63,28 @@ def risk_score_expr(count_paths: dict[str, str]) -> dict[str, Any]:
             1,
         ]
     }
+
+
+def reachability_display_tier(is_reachable: bool | None, analysis_level: str | None) -> str:
+    """Persisted reachability (is_reachable + none/import/symbol level) as confirmed/likely/unreachable/unknown."""
+    if is_reachable is False:
+        return "unreachable"
+    if is_reachable is True:
+        if analysis_level == REACHABILITY_LEVEL_SYMBOL:
+            return "confirmed"
+        if analysis_level == REACHABILITY_LEVEL_IMPORT:
+            return "likely"
+    return "unknown"
+
+
+def reachability_risk_modifier(is_reachable: bool | None, analysis_level: str | None) -> float:
+    """Risk weight of a reachability verdict; not reachable is not zero, because analysis is imperfect."""
+    tier = reachability_display_tier(is_reachable, analysis_level)
+    if tier == "unreachable":
+        return UNREACHABLE_RISK_MODIFIER
+    if tier == "confirmed":
+        return CONFIRMED_REACHABLE_RISK_MODIFIER
+    return 1.0
 
 
 # details.exploit_maturity values meaning actively exploited in the wild (KEV-listed).

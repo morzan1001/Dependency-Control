@@ -33,10 +33,7 @@ from app.services.component_identity import (
     lookup_component,
 )
 from app.core.purl import get_purl_type
-from app.services.enrichment.scoring import (
-    calculate_adjusted_risk_score,
-    map_reachability_level_to_modifier,
-)
+from app.services.enrichment.scoring import calculate_adjusted_risk_score
 from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
@@ -202,62 +199,27 @@ def _falsifying_languages(
 
 
 def _apply_adjusted_risk_score(finding: dict[str, Any], reachability: Mapping[str, Any]) -> None:
-    """Apply the reachability modifier to ``details.risk_score`` and store ``adjusted_risk_score``.
-
-    Symbol-level reachable boosts (x1.1); not-reachable de-prioritises (x0.4); else
-    identity. No base risk_score -> nothing to adjust.
-    """
+    """Store ``details.risk_score`` scaled by the reachability verdict as ``adjusted_risk_score``."""
     details = finding.setdefault("details", {})
     base = details.get("risk_score")
     if base is None:
         return
     is_reachable = reachability.get("is_reachable")
     analysis_level = reachability.get("analysis_level")
-    modifier_level = map_reachability_level_to_modifier(analysis_level, is_reachable)
-    down_weighting = is_reachable is False or modifier_level == "unreachable"
-    if down_weighting and analysis_level != REACHABILITY_LEVEL_SYMBOL and details.get(DETAILS_KEY_IN_KEV):
+    if is_reachable is False and analysis_level != REACHABILITY_LEVEL_SYMBOL and details.get(DETAILS_KEY_IN_KEV):
         # A known-exploited CVE is never de-prioritised on import-level absence alone.
-        is_reachable, modifier_level = None, None
-    details["adjusted_risk_score"] = round(
-        calculate_adjusted_risk_score(
-            float(base),
-            is_reachable=is_reachable,
-            reachability_level=modifier_level,
-        ),
-        1,
+        is_reachable, analysis_level = None, None
+    details["adjusted_risk_score"] = round(calculate_adjusted_risk_score(float(base), is_reachable, analysis_level), 1)
+
+
+def is_high_confidence_reachable(is_reachable: Any, confidence: Any) -> bool:
+    """The gate for headline reachable counts; bool is no confidence, True would pass as a perfect 1.0."""
+    return (
+        is_reachable is True
+        and isinstance(confidence, (int, float))
+        and not isinstance(confidence, bool)
+        and confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
     )
-
-
-def is_high_confidence_reachable(reachability_data: dict[str, Any] | None) -> bool:
-    """True only when ``is_reachable=True`` *and* confidence clears the threshold.
-
-    Use this for any user-facing count that drives prioritisation. The
-    raw boolean alone collapses two very different signals (matched
-    symbol vs. "package was imported, rest is heuristic") into one bit;
-    this gate keeps the noisy lower tier out of headline metrics.
-    """
-    if not reachability_data:
-        return False
-    if reachability_data.get("is_reachable") is not True:
-        return False
-    confidence = reachability_data.get("confidence_score")
-    if confidence is None:
-        return False
-    return bool(confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD)
-
-
-def reachability_display_tier(is_reachable: bool | None, analysis_level: str | None) -> str:
-    """Map persisted reachability (is_reachable + analysis_level in
-    none/import/symbol) onto the display vocabulary confirmed/likely/unreachable/
-    unknown. Shared by the comprehensive-stats and persisted-pending summaries so they cannot drift."""
-    if is_reachable is False:
-        return "unreachable"
-    if is_reachable is True:
-        if analysis_level == REACHABILITY_LEVEL_SYMBOL:
-            return "confirmed"
-        if analysis_level == REACHABILITY_LEVEL_IMPORT:
-            return "likely"
-    return "unknown"
 
 
 class ReachabilityResult(TypedDict, total=False):

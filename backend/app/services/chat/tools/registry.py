@@ -25,7 +25,7 @@ from app.core.constants import (
 from app.core.cve import canonical_cve
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
-from app.core.risk_scoring import ACTIVELY_EXPLOITED_MATURITY
+from app.core.risk_scoring import ACTIVELY_EXPLOITED_MATURITY, reachability_display_tier
 from app.models.finding import FindingType, Severity
 from app.models.project import Project
 from app.models.user import User
@@ -38,7 +38,6 @@ from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
 from app.services.analytics.scopes import ScopeTooLargeError, ensure_whole_scope, scope_probe_limit
 from app.core.purl import canonical_purl
-from app.services.reachability_enrichment import reachability_display_tier
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (

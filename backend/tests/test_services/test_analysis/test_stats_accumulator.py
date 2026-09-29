@@ -257,6 +257,13 @@ class TestReachabilityTriState:
         findings = [_finding(ftype="license") for _ in range(5)] + [_finding(), _finding()]
         assert compute_stats(findings, {}).reachability.unknown_count == 2
 
+    def test_reachability_on_a_non_vulnerability_is_not_counted(self):
+        """unknown_count is vulnerabilities minus analysed ones, so analysed must count vulnerabilities only."""
+        sast = {**_finding(ftype="sast"), "reachable": True, "reachability_level": REACHABILITY_LEVEL_IMPORT}
+        r = compute_stats([sast, _finding()], {}).reachability
+        assert (r.analyzed_count, r.reachable_count, r.likely_reachable_count) == (0, 0, 0)
+        assert r.unknown_count == 1
+
     def test_symbol_level_is_confirmed_import_level_is_likely_and_reachable_is_both(self):
         findings = [
             {**_finding(), "reachable": True, "reachability_level": REACHABILITY_LEVEL_SYMBOL},
