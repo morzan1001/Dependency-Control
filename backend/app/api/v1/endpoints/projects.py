@@ -39,7 +39,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
     RESP_AUTH_400_404_409,
-    RESP_AUTH_400_404_500,
+    RESP_AUTH_400_404_409_500,
     RESP_AUTH_404,
     RESP_AUTH_404_500,
 )
@@ -951,7 +951,7 @@ async def read_project_branch_tips(
 @router.post(
     "/{project_id}/scans/{scan_id}/rescan",
     summary="Trigger a manual re-scan",
-    responses=RESP_AUTH_400_404_500,
+    responses=RESP_AUTH_400_404_409_500,
 )
 async def trigger_rescan(
     project_id: str,

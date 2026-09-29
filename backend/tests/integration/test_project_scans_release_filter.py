@@ -340,6 +340,16 @@ async def test_a_scan_still_being_analysed_is_not_rescanned(client, db, editor_h
     assert await db.scans.count_documents({"is_rescan": True}) == 0
 
 
+def test_the_rescan_route_documents_its_conflicts():
+    from app.main import app
+
+    operation = next(
+        path["post"] for route, path in app.openapi()["paths"].items() if route.endswith("/scans/{scan_id}/rescan")
+    )
+
+    assert "409" in operation["responses"]
+
+
 @pytest.mark.asyncio
 async def test_a_rescan_of_a_source_without_sboms_is_refused(client, db, editor_headers):
     """The endpoint re-analyses the source's SBOMs, so a source with none has nothing to re-analyse."""
