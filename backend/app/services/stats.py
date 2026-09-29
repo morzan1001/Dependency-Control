@@ -6,6 +6,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
+from pymongo import ReadPreference
 
 from app.core.constants import WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
 from app.models.project import Project
@@ -187,6 +188,8 @@ async def run_waiver_recalc(db: AsyncIOMotorDatabase) -> None:
     Every change queued so far shares one pass, repeated while more arrive. A change leaves the queue only once its
     pass is done, so a restart resumes it.
     """
+    # A secondary lagging behind the change would fingerprint the old waiver set and retire the change as done.
+    db = db.with_options(read_preference=ReadPreference.PRIMARY)
     lock_repo = DistributedLocksRepository(db)
     holder_id = _holder_id()
     while await lock_repo.acquire_lock(_RECALC_LOCK, holder_id, _LOCK_TTL_SECONDS):

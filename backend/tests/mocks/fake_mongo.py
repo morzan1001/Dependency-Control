@@ -1817,3 +1817,6 @@ class FakeDatabase:
 
     def __getitem__(self, name: str) -> FakeCollection:
         return getattr(self, name)
+
+    def with_options(self, **_kwargs) -> FakeDatabase:
+        return self

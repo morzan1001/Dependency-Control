@@ -4,12 +4,14 @@ until its pass is done."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pymongo import ReadPreference
 
 import app.services.stats as stats_module
 from app.models.waiver import Waiver
 from app.repositories import DistributedLocksRepository
 from app.services.stats import request_waiver_recalc, run_waiver_recalc
-from tests.mocks.fake_mongo import FakeDatabase
+from app.services.waivers.apply import waiver_fingerprint
+from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
 
 pytestmark = pytest.mark.asyncio
 
@@ -202,3 +204,41 @@ async def test_the_first_sweep_takes_every_waiver_that_ever_expired():
 
     assert (await db.findings.find_one({"_id": "f-p-1"}))["waived"] is False
     assert (await db.waiver_recalc.find_one({"_id": "expiry_sweep"}))["swept_until"] is not None
+
+
+class _LaggingSecondary(FakeDatabase):
+    """Default reads of waivers see a secondary that has not replicated the change yet; PRIMARY sees it."""
+
+    def __init__(self, primary: FakeDatabase) -> None:
+        object.__setattr__(self, "primary", primary)
+        object.__setattr__(self, "waivers", FakeCollection(primary))
+
+    def __getattr__(self, name: str) -> FakeCollection:
+        return getattr(self.primary, name)
+
+    def with_options(self, read_preference=None, **_kwargs) -> FakeDatabase:
+        return self.primary if read_preference == ReadPreference.PRIMARY else self
+
+
+async def test_a_waiver_change_a_lagging_secondary_has_not_seen_is_not_dropped_as_done():
+    primary = FakeDatabase()
+    await _seed_project(primary, "p-1", _GPL)
+    await primary.scans.update_one({"_id": "scan-p-1"}, {"$set": {"waiver_fingerprint": waiver_fingerprint([])}})
+    await request_waiver_recalc(primary, await _store(primary, _gpl_waiver(project_id="p-1")))
+
+    await run_waiver_recalc(_LaggingSecondary(primary))
+
+    assert (await primary.findings.find_one({"_id": "f-p-1"}))["waived"] is True
+
+
+async def test_the_operator_restamp_entry_clears_flags_stamped_under_older_rules():
+    db = FakeDatabase()
+    await _seed_project(db, "p-1", _GPL, waived=True)
+    await db.waiver_recalc.insert_one(
+        {"waiver": {"_id": "restamp-p-1", "project_id": "p-1", "reason": "post-deploy restamp", "created_by": "op"}}
+    )
+
+    await run_waiver_recalc(db)
+
+    assert (await db.findings.find_one({"_id": "f-p-1"}))["waived"] is False
+    assert (await db.scans.find_one({"_id": "scan-p-1"}))["waiver_fingerprint"] == waiver_fingerprint([])
