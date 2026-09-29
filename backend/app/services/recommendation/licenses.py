@@ -1,8 +1,10 @@
 from collections import defaultdict
 from typing import Any
 
+from app.models.finding import Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS, LicenseCategory
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.analyzers.license_compliance.constants import UNDETERMINED_LICENSE_ID
 from app.services.component_identity import extract_artifact_name
 from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components
 
@@ -13,22 +15,23 @@ _HIGH_PRIORITY_DRIFT_MIN_RANK = CATEGORY_RESTRICTIVENESS[LicenseCategory.STRONG_
 
 
 def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Process license compliance findings."""
-    if not findings:
-        return []
-
-    by_license = defaultdict(list)
-    for f in findings:
-        details = get_attr(f, "details", {})
-        license_name = (details.get("license") if isinstance(details, dict) else None) or "unknown"
-        by_license[license_name].append(f)
-
+    """License compliance card over the findings the project policy did not accept."""
     severity_counts: dict[str, int] = defaultdict(int)
     components = set()
-
+    licenses = set()
     for f in findings:
-        severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
+        severity = get_attr(f, "severity", "UNKNOWN")
+        license_name = get_attr(f, "details", {}).get("license") or "unknown"
+        # The evaluator marks a policy-accepted outcome INFO; an undeterminable licence is INFO yet needs action.
+        if severity == Severity.INFO and license_name != UNDETERMINED_LICENSE_ID:
+            continue
+        severity_counts[severity] += 1
         components.add(get_attr(f, "component", "unknown"))
+        licenses.add(license_name)
+
+    total = sum(severity_counts.values())
+    if not total:
+        return []
 
     if severity_counts.get("CRITICAL", 0) > 0:
         priority = Priority.CRITICAL
@@ -37,10 +40,10 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
     elif severity_counts.get("MEDIUM", 0) > 0 or severity_counts.get("LOW", 0) > 0:
         priority = Priority.MEDIUM
     else:
-        # All findings are INFO-only.
+        # Only undeterminable licences remain.
         priority = Priority.LOW
 
-    problematic_licenses = sorted(by_license)
+    problematic_licenses = sorted(licenses)
     components_shown, components_total = sample_components(sorted(components))
 
     return [
@@ -49,7 +52,7 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
             priority=priority,
             title="Resolve License Compliance Issues",
             description=(
-                f"Found {len(findings)} license compliance issues across {len(components)} components. "
+                f"Found {total} license compliance issues across {len(components)} components. "
                 f"Problematic licenses: {name_some(problematic_licenses, _LICENSES_NAMED)}."
             ),
             impact={
@@ -57,7 +60,7 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
                 "high": severity_counts.get("HIGH", 0),
                 "medium": severity_counts.get("MEDIUM", 0),
                 "low": severity_counts.get("LOW", 0),
-                "total": len(findings),
+                "total": total,
             },
             affected_components=components_shown,
             affected_components_total=components_total,

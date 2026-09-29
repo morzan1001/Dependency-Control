@@ -1,6 +1,11 @@
 """Tests for app.services.recommendation.licenses."""
 
+import pytest
+
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.aggregation import ResultAggregator
+from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.constants import UNDETERMINED_LICENSE_ID
 from app.services.recommendation.licenses import _LICENSES_NAMED, detect_license_drift, process_licenses
 
 
@@ -213,10 +218,56 @@ class TestProcessLicensesAction:
         assert len(rec.action["steps"]) > 0
 
 
-class TestProcessLicensesPriorityLow:
-    def test_info_only_returns_low(self):
-        rec = process_licenses([_license(severity="INFO")])[0]
+_INTERNAL_ONLY = {"distribution_model": "internal_only"}
+
+
+def _component(name, licence=None):
+    component = {"name": name, "version": "1.0", "purl": f"pkg:npm/{name}@1.0", "direct": True}
+    if licence:
+        component["license"] = licence
+    return component
+
+
+async def _analyzed(components, settings):
+    result = await LicenseAnalyzer().analyze(sbom={}, settings=settings, parsed_components=components)
+    aggregator = ResultAggregator()
+    aggregator.aggregate("license_compliance", result)
+    return aggregator.get_findings()
+
+
+class TestProcessLicensesPolicyAccepted:
+    """INFO is the evaluator's verdict for an outcome the policy accepts; only the undeterminable licence needs action."""
+
+    @pytest.mark.asyncio
+    async def test_licences_the_policy_accepted_produce_no_card(self):
+        findings = await _analyzed([_component("gpl-lib", "GPL-3.0-only")], _INTERNAL_ONLY)
+
+        assert [f.severity for f in findings] == ["INFO"]
+        assert process_licenses(findings) == []
+
+    @pytest.mark.asyncio
+    async def test_accepted_findings_are_left_out_of_the_count_and_the_licences(self):
+        findings = await _analyzed(
+            [_component("gpl-lib", "GPL-3.0-only"), _component("nc-lib", "CC-BY-NC-4.0")], _INTERNAL_ONLY
+        )
+
+        [rec] = process_licenses(findings)
+
+        assert rec.priority == Priority.HIGH
+        assert rec.impact["total"] == 1
+        assert rec.action["problematic_licenses"] == ["CC-BY-NC-4.0"]
+        assert rec.affected_components == ["nc-lib"]
+        assert rec.description.startswith("Found 1 license compliance issues across 1 components.")
+
+    @pytest.mark.asyncio
+    async def test_an_undeterminable_licence_is_still_counted(self):
+        findings = await _analyzed([_component("mystery-lib")], _INTERNAL_ONLY)
+
+        [rec] = process_licenses(findings)
+
         assert rec.priority == Priority.LOW
+        assert rec.impact["total"] == 1
+        assert rec.action["problematic_licenses"] == [UNDETERMINED_LICENSE_ID]
 
 
 # --- License Drift Detection ---
