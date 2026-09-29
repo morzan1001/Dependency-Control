@@ -254,14 +254,27 @@ class TestSendWithBackoff:
     @pytest.mark.asyncio
     async def test_a_transport_error_is_retried_then_reraised(self, sleeps):
         seen: list[str] = []
-        transport = _scripted([httpx.ConnectError("refused"), httpx.ReadTimeout("slow")], seen)
+        transport = _scripted([httpx.ConnectError("refused"), httpx.RemoteProtocolError("reset")], seen)
 
         async with InstrumentedAsyncClient("BackoffTransport", transport=transport) as client:
-            with pytest.raises(httpx.ReadTimeout):
+            with pytest.raises(httpx.RemoteProtocolError):
                 await client.send_with_backoff("GET", "https://example.test", attempts=3, base_delay=1.0)
 
         assert len(seen) == 3
         assert sleeps == [1.0, 2.0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("timed_out", [httpx.ReadTimeout("slow"), httpx.ConnectTimeout("unreachable")])
+    async def test_a_timed_out_try_is_reraised_without_a_retry(self, sleeps, timed_out):
+        seen: list[str] = []
+        transport = _scripted([httpx.ConnectError("refused"), timed_out, 200], seen)
+
+        async with InstrumentedAsyncClient("BackoffTimeout", transport=transport) as client:
+            with pytest.raises(type(timed_out)):
+                await client.send_with_backoff("GET", "https://example.test", attempts=4, base_delay=1.0)
+
+        assert len(seen) == 2
+        assert sleeps == [1.0]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(("seconds_left", "tries"), [(-1.0, 1), (1.5, 2), (100.0, 4)])

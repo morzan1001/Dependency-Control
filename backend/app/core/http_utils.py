@@ -95,12 +95,15 @@ class InstrumentedAsyncClient:
         deadline: float | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
-        """Retries 429, 5xx and transport errors; returns the last answer or re-raises the last error."""
+        """Retries 429, 5xx and non-timeout transport errors; returns the last answer or re-raises the last error."""
         loop = asyncio.get_running_loop()
         outcome: httpx.Response | httpx.TransportError
         for attempt in range(attempts):
             try:
                 outcome = await self.request(method, url, **kwargs)
+            except httpx.TimeoutException:
+                # A timed-out try already spent the whole timeout; repeating it multiplies a hanging upstream's cost.
+                raise
             except httpx.TransportError as exc:
                 outcome = exc
             if isinstance(outcome, httpx.Response):

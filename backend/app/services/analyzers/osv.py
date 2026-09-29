@@ -238,7 +238,7 @@ class OSVAnalyzer(Analyzer):
     name = "osv"
     api_url = OSV_BATCH_API_URL
 
-    # Retries per request on 429, 5xx and transport errors, so a throttled chunk isn't silently dropped.
+    # Retries per request on 429, 5xx and non-timeout transport errors, so a throttled chunk isn't silently dropped.
     max_retries: int = 3
     retry_base_delay: float = 5.0  # seconds, doubles each attempt
 

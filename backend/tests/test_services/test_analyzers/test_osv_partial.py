@@ -71,6 +71,16 @@ async def test_a_transient_batch_failure_is_retried(monkeypatch, failure):
 
 
 @pytest.mark.asyncio
+async def test_a_timed_out_batch_is_not_resent(monkeypatch):
+    seen = serve_osv(monkeypatch, _answers(httpx.ReadTimeout("timed out"), _CLEAN))
+
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert len(seen) == 1, "a hanging OSV must cost one request timeout per chunk, not one per try"
+    assert result["partial_components_skipped"] == 3
+
+
+@pytest.mark.asyncio
 async def test_retries_are_bounded(monkeypatch):
     seen = serve_osv(monkeypatch, _answers(httpx.Response(429)))
     analyzer = OSVAnalyzer()

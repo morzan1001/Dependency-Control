@@ -158,6 +158,16 @@ async def test_a_transient_record_failure_is_retried(cache, monkeypatch, failure
 
 
 @pytest.mark.asyncio
+async def test_a_timed_out_record_fetch_is_not_repeated(cache, monkeypatch):
+    seen = serve_osv(monkeypatch, _osv(_flask_fails(httpx.ReadTimeout("timed out"))))
+
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert vuln_ids_fetched(seen).count("GHSA-flask") == 1
+    assert result["partial_vulnerabilities_unhydrated"] == 1
+
+
+@pytest.mark.asyncio
 async def test_each_id_is_fetched_once_and_cached_under_its_modified_stamp(cache, monkeypatch):
     shared = [{"name": name, "version": "1", "purl": f"pkg:npm/{name}@1"} for name in ("a", "b", "c")]
     seen = serve_osv(monkeypatch, _osv(batch=[_BATCH_RESULTS[0]] * 3))
