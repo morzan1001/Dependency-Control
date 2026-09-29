@@ -10,10 +10,9 @@ from app.core.constants import (
     ANALYZER_BATCH_SIZES,
     ANALYZER_TIMEOUTS,
     DEPS_DEV_API_URL,
-    SCORECARD_UNMAINTAINED_THRESHOLD,
+    SCORECARD_FLAG_THRESHOLD,
 )
 from app.core.http_utils import InstrumentedAsyncClient
-from app.models.finding import Severity
 
 from .base import Analyzer
 from .purl_utils import parse_purl
@@ -44,37 +43,19 @@ class DepsDevAnalyzer(Analyzer):
 
     MAX_CONCURRENT = ANALYZER_BATCH_SIZES.get("deps_dev", 10)
 
-    def _resolve_scorecard_threshold(self, settings: dict[str, Any] | None) -> float:
-        """Resolve the configured scorecard threshold, validating range."""
-        threshold = SCORECARD_UNMAINTAINED_THRESHOLD
-        if not settings or "scorecard_threshold" not in settings:
-            return threshold
-        try:
-            custom_threshold = float(settings["scorecard_threshold"])
-            if 0 <= custom_threshold <= 10:
-                return custom_threshold
-        except (ValueError, TypeError):
-            pass
-        return threshold
-
     def _collect_cached(
         self,
         cached_results: dict[str, Any],
-        threshold: float,
         package_metadata: dict[str, Any],
         scorecard_issues: list[Any],
     ) -> None:
-        """Apply cached deps.dev results to outputs, re-checking the threshold."""
+        """Apply cached deps.dev results to outputs."""
         for key, data in cached_results.items():
             if not data:
                 continue
             package_metadata[key] = data.get("metadata")
-            scorecard_issue = data.get("scorecard_issue")
-            if not scorecard_issue:
-                continue
-            score = scorecard_issue.get("scorecard", {}).get("overallScore", 10)
-            if score < threshold:
-                scorecard_issues.append(scorecard_issue)
+            if data.get("scorecard_issue"):
+                scorecard_issues.append(data["scorecard_issue"])
 
     def _collect_live_result(self, result: Any, package_metadata: dict[str, Any], scorecard_issues: list[Any]) -> None:
         """Apply a single live fetch result to outputs."""
@@ -89,21 +70,13 @@ class DepsDevAnalyzer(Analyzer):
             key = f"{result['metadata']['name']}@{result['metadata']['version']}"
             package_metadata[key] = result["metadata"]
 
-    async def _fetch_uncached(
-        self,
-        uncached_components: list[dict[str, Any]],
-        threshold: float,
-        severity_thresholds: dict[str, float],
-    ) -> list[Any]:
+    async def _fetch_uncached(self, uncached_components: list[dict[str, Any]]) -> list[Any]:
         """Fetch deps.dev data for uncached components with bounded concurrency."""
         semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
         timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
 
         async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-            tasks = [
-                self._check_component_with_limit(semaphore, client, c, threshold, severity_thresholds)
-                for c in uncached_components
-            ]
+            tasks = [self._check_component_with_limit(semaphore, client, c) for c in uncached_components]
             results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
             return results
 
@@ -117,27 +90,23 @@ class DepsDevAnalyzer(Analyzer):
         scorecard_issues: list[Any] = []
         package_metadata: dict[str, Any] = {}
 
-        threshold = self._resolve_scorecard_threshold(settings)
-        # Thread thresholds per-call, never on the singleton instance: analyzers are shared
-        # across concurrent scans with awaits between resolving and using them.
-        severity_thresholds = {
-            "high": _validated_threshold(settings, "scorecard_high_threshold", 2.0),
-            "medium": _validated_threshold(settings, "scorecard_medium_threshold", 4.0),
-            "low": _validated_threshold(settings, "scorecard_low_threshold", 5.0),
-        }
+        # The cache is shared across projects, so it holds every scorecard and each project filters its own.
+        threshold = _validated_threshold(settings, "scorecard_threshold", SCORECARD_FLAG_THRESHOLD)
 
         cached_results, uncached_components = await self._get_cached_components(components)
-        self._collect_cached(cached_results, threshold, package_metadata, scorecard_issues)
+        self._collect_cached(cached_results, package_metadata, scorecard_issues)
 
         logger.debug(f"deps_dev: {len(cached_results)} from cache, {len(uncached_components)} to fetch")
 
         if uncached_components:
-            component_results = await self._fetch_uncached(uncached_components, threshold, severity_thresholds)
+            component_results = await self._fetch_uncached(uncached_components)
             for result in component_results:
                 self._collect_live_result(result, package_metadata, scorecard_issues)
 
         return {
-            "scorecard_issues": scorecard_issues,
+            "scorecard_issues": [
+                issue for issue in scorecard_issues if issue.get("scorecard", {}).get("overallScore", 10) < threshold
+            ],
             "package_metadata": package_metadata,
         }
 
@@ -197,8 +166,6 @@ class DepsDevAnalyzer(Analyzer):
         semaphore: asyncio.Semaphore,
         client: InstrumentedAsyncClient,
         component: dict[str, Any],
-        threshold: float,
-        severity_thresholds: dict[str, float],
     ) -> dict[str, Any] | None:
         """Fetch component data with concurrency limit and distributed lock."""
         cache_key = self._get_cache_key_for_component(component)
@@ -207,7 +174,7 @@ class DepsDevAnalyzer(Analyzer):
 
         async def fetch_component() -> dict[str, Any] | None:
             async with semaphore:
-                return await self._check_component(client, component, threshold, severity_thresholds)
+                return await self._check_component(client, component)
 
         # Distributed lock prevents multiple pods fetching the same package.
         return await cache_service.get_or_fetch_with_lock(
@@ -239,8 +206,6 @@ class DepsDevAnalyzer(Analyzer):
         name: str,
         version: str,
         purl: str,
-        threshold: float,
-        severity_thresholds: dict[str, float],
     ) -> None:
         """Fetch project info and scorecard for the resolved project_id."""
         encoded_project_id = quote(project_id, safe="")
@@ -273,10 +238,7 @@ class DepsDevAnalyzer(Analyzer):
             "checks_count": len(scorecard.get("checks", [])),
         }
 
-        if overall_score < threshold:
-            result["scorecard_issue"] = self._create_scorecard_issue(
-                name, version, purl, project_id, scorecard, severity_thresholds
-            )
+        result["scorecard_issue"] = self._create_scorecard_issue(name, version, purl, project_id, scorecard)
 
     async def _enrich_with_dependents(
         self,
@@ -308,8 +270,6 @@ class DepsDevAnalyzer(Analyzer):
         self,
         client: InstrumentedAsyncClient,
         component: dict[str, Any],
-        threshold: float,
-        severity_thresholds: dict[str, float],
     ) -> dict[str, Any] | None:
         """Check a component for Scorecard data and package metadata via deps.dev API."""
         purl = component.get("purl", "")
@@ -344,9 +304,7 @@ class DepsDevAnalyzer(Analyzer):
 
             project_id = self._select_project_id(data.get("relatedProjects", []))
             if project_id:
-                await self._enrich_with_project(
-                    client, project_id, metadata, result, name, version, purl, threshold, severity_thresholds
-                )
+                await self._enrich_with_project(client, project_id, metadata, result, name, version, purl)
 
             await self._enrich_with_dependents(client, metadata, system, encoded_name, encoded_version, name, version)
 
@@ -415,9 +373,8 @@ class DepsDevAnalyzer(Analyzer):
         purl: str,
         project_id: str,
         scorecard: dict[str, Any],
-        severity_thresholds: dict[str, float] | None = None,
     ) -> dict[str, Any]:
-        """Create a scorecard issue; severity_thresholds is per-call, never on the shared singleton."""
+        """Create a scorecard issue; normalize_scorecard grades its severity."""
         overall_score = scorecard.get("overallScore", 0)
         checks = scorecard.get("checks", [])
 
@@ -443,15 +400,6 @@ class DepsDevAnalyzer(Analyzer):
                 ]:
                     critical_issues.append(check_name)
 
-        thresholds = severity_thresholds or {"high": 2.0, "medium": 4.0, "low": 5.0}
-        severity = self._calculate_scorecard_severity(
-            overall_score,
-            critical_issues,
-            high_threshold=thresholds["high"],
-            medium_threshold=thresholds["medium"],
-            low_threshold=thresholds["low"],
-        )
-
         warning_parts = [f"Low OpenSSF Scorecard score: {overall_score:.1f}/10"]
 
         if critical_issues:
@@ -469,7 +417,6 @@ class DepsDevAnalyzer(Analyzer):
             "component": name,
             "version": version,
             "purl": purl,
-            "severity": severity,
             "message": message,
             "project_url": f"https://{project_id}",
             "scorecard": {
@@ -482,25 +429,3 @@ class DepsDevAnalyzer(Analyzer):
             "critical_issues": critical_issues,
             "warning": message,
         }
-
-    def _calculate_scorecard_severity(
-        self,
-        overall_score: float,
-        critical_issues: list[str],
-        high_threshold: float = 2.0,
-        medium_threshold: float = 4.0,
-        low_threshold: float = 5.0,
-    ) -> str:
-        """Calculate severity based on scorecard score and critical issues."""
-        if "Vulnerabilities" in critical_issues or "Dangerous-Workflow" in critical_issues:
-            return Severity.HIGH.value
-        if critical_issues:
-            return Severity.MEDIUM.value
-
-        if overall_score < high_threshold:
-            return Severity.HIGH.value
-        if overall_score < medium_threshold:
-            return Severity.MEDIUM.value
-        if overall_score < low_threshold:
-            return Severity.LOW.value
-        return Severity.INFO.value

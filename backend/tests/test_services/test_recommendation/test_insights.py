@@ -130,7 +130,7 @@ class TestCorrelateScorceardCriticalUnmaintained:
 
 
 class TestCorrelateScorceardHighVulnLowScore:
-    """High vuln in package with score below SCORECARD_UNMAINTAINED_THRESHOLD (5.0)."""
+    """High vuln in package with score below SCORECARD_FLAG_THRESHOLD (5.0)."""
 
     def test_high_vuln_low_score_produces_recommendation(self):
         vulns = [_vuln_finding(component="pkg", severity="HIGH")]
@@ -145,7 +145,7 @@ class TestCorrelateScorceardHighVulnLowScore:
         assert rec.type == RecommendationType.CRITICAL_RISK
 
     def test_high_vuln_score_exactly_at_threshold_not_flagged(self):
-        # SCORECARD_UNMAINTAINED_THRESHOLD is 5.0; condition is score < 5.0.
+        # SCORECARD_FLAG_THRESHOLD is 5.0; condition is score < 5.0.
         vulns = [_vuln_finding(component="pkg", severity="HIGH")]
         quality = [_quality_finding(component="pkg", overall_score=5.0)]
         result = correlate_scorecard_with_vulnerabilities(vulns, quality)

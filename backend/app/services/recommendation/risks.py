@@ -4,7 +4,7 @@ from typing import Any
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     EPSS_HIGH_THRESHOLD,
-    SCORECARD_LOW_THRESHOLD,
+    SCORECARD_POOR_QUALITY_THRESHOLD,
     SEVERITY_CALCULATED_RISK_SCORES,
 )
 from app.schemas.recommendation import (
@@ -19,6 +19,7 @@ from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
     sample_components,
+    scorecard_score,
     take_top,
 )
 
@@ -179,11 +180,8 @@ def _collect_hotspot_reasons(pkg_data: dict[str, Any]) -> tuple[bool, list[str]]
         )
 
     for qi in pkg_data["quality_issues"]:
-        qi_details = get_attr(qi, "details", {})
-        score = qi_details.get("overall_score", 10) if isinstance(qi_details, dict) else 10
-        if score is None:
-            score = 10
-        if score < SCORECARD_LOW_THRESHOLD:
+        score = scorecard_score(get_attr(qi, "details", {}))
+        if score is not None and score < SCORECARD_POOR_QUALITY_THRESHOLD:
             reasons.append(f"Low OpenSSF Scorecard: {score}/10")
             break
 
@@ -300,10 +298,8 @@ def detect_critical_hotspots(
 
 def _record_quality_risk(pkg: dict[str, Any], details: Any) -> None:
     """Record a low-scorecard risk factor if applicable."""
-    score = details.get("overall_score", 10) if isinstance(details, dict) else 10
-    if score is None:
-        score = 10
-    if score >= SCORECARD_LOW_THRESHOLD:
+    score = scorecard_score(details)
+    if score is None or score >= SCORECARD_POOR_QUALITY_THRESHOLD:
         return
     if "low_scorecard" in [r["type"] for r in pkg["risk_factors"]]:
         return

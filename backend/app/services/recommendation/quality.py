@@ -1,9 +1,15 @@
 from collections import defaultdict
 from typing import Any
 
-from app.core.constants import SCORECARD_LOW_THRESHOLD
+from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr, sample_components, scorecard_details
+from app.services.recommendation.common import (
+    ModelOrDict,
+    get_attr,
+    sample_components,
+    scorecard_details,
+    scorecard_score,
+)
 
 
 def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -24,9 +30,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         version = get_attr(f, "version", "")
         details = get_attr(f, "details", {})
 
-        overall_score = details.get("overall_score") if isinstance(details, dict) else None
-        if overall_score is None:
-            overall_score = 0.0
+        overall_score = scorecard_score(details)
 
         sc_details = scorecard_details(details)
         critical_issues = sc_details.get("critical_issues") or []
@@ -34,7 +38,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         project_url = sc_details.get("project_url") or ""
         has_maintenance = bool(details.get("has_maintenance_issues")) if isinstance(details, dict) else False
 
-        if overall_score < SCORECARD_LOW_THRESHOLD:
+        if overall_score is not None and overall_score < SCORECARD_POOR_QUALITY_THRESHOLD:
             low_score_packages.append(
                 {
                     "component": component,
@@ -141,7 +145,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 title="Review Low-Quality Dependencies",
                 description=(
                     f"Found {len(low_score_packages)} packages with OpenSSF Scorecard "
-                    f"scores below {SCORECARD_LOW_THRESHOLD}/10. "
+                    f"scores below {SCORECARD_POOR_QUALITY_THRESHOLD}/10. "
                     "These packages may have quality, security, or maintenance concerns."
                 ),
                 impact={

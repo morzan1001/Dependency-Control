@@ -68,6 +68,12 @@ def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
     return default
 
 
+def scorecard_score(details: Any) -> float | None:
+    """A quality finding's OpenSSF Scorecard score; None when it carries maintainer risk only."""
+    score = details.get("overall_score") if isinstance(details, dict) else None
+    return None if score is None else float(score)
+
+
 def scorecard_details(details: Any) -> dict[str, Any]:
     """Per-issue scorecard fields (critical_issues, failed_checks, project_url) live
     one level down in the aggregated shape: details.quality_issues[].details."""

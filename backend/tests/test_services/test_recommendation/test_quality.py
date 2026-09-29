@@ -1,6 +1,6 @@
 """Tests for app.services.recommendation.quality."""
 
-from app.core.constants import SCORECARD_LOW_THRESHOLD
+from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.quality import process_quality
 
@@ -172,14 +172,14 @@ class TestProcessQualityLowScorecard:
         assert low_recs[0].title == "Review Low-Quality Dependencies"
 
     def test_score_exactly_at_threshold_not_flagged(self):
-        """Score exactly at SCORECARD_LOW_THRESHOLD is NOT below it."""
-        finding = _quality(overall_score=SCORECARD_LOW_THRESHOLD)
+        """Score exactly at SCORECARD_POOR_QUALITY_THRESHOLD is NOT below it."""
+        finding = _quality(overall_score=SCORECARD_POOR_QUALITY_THRESHOLD)
         recs = process_quality([finding])
         low_recs = [r for r in recs if "Low-Quality" in r.title]
         assert len(low_recs) == 0
 
     def test_score_just_below_threshold_flagged(self):
-        finding = _quality(overall_score=SCORECARD_LOW_THRESHOLD - 0.1)
+        finding = _quality(overall_score=SCORECARD_POOR_QUALITY_THRESHOLD - 0.1)
         recs = process_quality([finding])
         low_recs = [r for r in recs if "Low-Quality" in r.title]
         assert len(low_recs) == 1
@@ -188,7 +188,7 @@ class TestProcessQualityLowScorecard:
         finding = _quality(overall_score=2.0)
         recs = process_quality([finding])
         low_recs = [r for r in recs if "Low-Quality" in r.title]
-        assert str(SCORECARD_LOW_THRESHOLD) in low_recs[0].description
+        assert str(SCORECARD_POOR_QUALITY_THRESHOLD) in low_recs[0].description
 
     def test_impact_contains_average_score(self):
         findings = [
@@ -298,24 +298,6 @@ class TestProcessQualityCodeReview:
         recs = process_quality(findings)
         cr_recs = [r for r in recs if "Code Review" in r.title]
         assert cr_recs[0].impact["total"] == 3
-
-
-class TestProcessQualityScoreNone:
-    """overall_score None defaults to 0.0."""
-
-    def test_none_score_treated_as_zero(self):
-        finding = _quality(overall_score=None)
-        # With score 0.0, it's below threshold, so should appear in low_score_packages
-        recs = process_quality([finding])
-        low_recs = [r for r in recs if "Low-Quality" in r.title]
-        assert len(low_recs) == 1
-
-    def test_none_score_in_packages_action(self):
-        finding = _quality(overall_score=None)
-        recs = process_quality([finding])
-        low_recs = [r for r in recs if "Low-Quality" in r.title]
-        packages = low_recs[0].action["packages"]
-        assert packages[0]["score"] == 0.0
 
 
 class TestProcessQualityHighScore:
@@ -491,3 +473,9 @@ class TestUnmaintainedFromMaintenanceRollup:
         }
         recs = process_quality([finding])
         assert any(r.title == "Replace Unmaintained Dependencies" for r in recs)
+
+
+def test_a_maintainer_risk_finding_without_a_scorecard_is_not_listed_as_low_score():
+    finding = {"type": "quality", "severity": "MEDIUM", "component": "pkg", "version": "1.0", "details": {}}
+
+    assert process_quality([finding]) == []

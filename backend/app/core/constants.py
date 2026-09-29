@@ -377,8 +377,10 @@ EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploit
 EPSS_ACTIVE_EXPLOITATION_THRESHOLD: float = 0.7  # >= 70% - treated as under active exploitation
 
 # OpenSSF Scorecard thresholds
-SCORECARD_LOW_THRESHOLD: float = 4.0  # Packages below this are flagged as low quality
-SCORECARD_UNMAINTAINED_THRESHOLD: float = 5.0  # Used for critical risk correlation
+# deps_dev raises a scorecard finding below this unless a project sets its own scorecard_threshold.
+SCORECARD_FLAG_THRESHOLD: float = 5.0
+# Recommendations call a scored package poor quality below this.
+SCORECARD_POOR_QUALITY_THRESHOLD: float = 4.0
 
 # Maintainer risk thresholds (days since last release)
 STALE_PACKAGE_THRESHOLD_DAYS: int = 730  # 2 years = potentially abandoned

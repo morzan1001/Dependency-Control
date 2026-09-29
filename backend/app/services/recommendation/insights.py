@@ -3,7 +3,7 @@ from typing import Any, cast
 
 from app.core.constants import (
     CROSS_PROJECT_MIN_OCCURRENCES,
-    SCORECARD_UNMAINTAINED_THRESHOLD,
+    SCORECARD_FLAG_THRESHOLD,
 )
 from app.schemas.recommendation import (
     Priority,
@@ -77,7 +77,7 @@ def correlate_scorecard_with_vulnerabilities(
         critical_issues = scorecard.get("critical_issues", [])
         is_unmaintained = "Maintained" in critical_issues or scorecard.get("has_maintenance_issues", False)
 
-        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score < SCORECARD_UNMAINTAINED_THRESHOLD):
+        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score < SCORECARD_FLAG_THRESHOLD):
             vf_details = get_attr(vf, "details", {})
             high_risk_vulns.append(
                 {
@@ -115,7 +115,7 @@ def correlate_scorecard_with_vulnerabilities(
                     f"Found {len(high_risk_vulns)} critical/high vulnerabilities in packages "
                     f"with concerning OpenSSF Scorecard ratings. "
                     f"{unmaintained_count} are in unmaintained packages, "
-                    f"{low_score_count} are in packages with scores below {SCORECARD_UNMAINTAINED_THRESHOLD}/10. "
+                    f"{low_score_count} are in packages with scores below {SCORECARD_FLAG_THRESHOLD}/10. "
                     "These vulnerabilities may never receive fixes."
                 ),
                 impact={
