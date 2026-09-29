@@ -221,8 +221,8 @@ class TestProcessLicensesAction:
 _INTERNAL_ONLY = {"distribution_model": "internal_only"}
 
 
-def _component(name, licence=None):
-    component = {"name": name, "version": "1.0", "purl": f"pkg:npm/{name}@1.0", "direct": True}
+def _component(name, licence=None, version="1.0"):
+    component = {"name": name, "version": version, "purl": f"pkg:npm/{name}@{version}", "direct": True}
     if licence:
         component["license"] = licence
     return component
@@ -272,103 +272,91 @@ class TestProcessLicensesPolicyAccepted:
 
 # --- License Drift Detection ---
 
-_BARE_NAME = "jackson-databind"
-_QUALIFIED_NAME = "com.fasterxml.jackson.core:jackson-databind"
+
+async def _stored(*components):
+    """Each SBOM row with the licence category the analysis engine copies onto it from the licence scan."""
+    result = await LicenseAnalyzer().analyze(sbom={}, settings={}, parsed_components=list(components))
+    aggregator = ResultAggregator()
+    aggregator.aggregate("license_compliance", result)
+    categories = {entry["purl"]: entry["data"]["license_category"] for entry in aggregator.get_dependency_enrichments()}
+    return [
+        {**component, "license_category": categories[component["purl"]]}
+        if component["purl"] in categories
+        else component
+        for component in components
+    ]
 
 
-def _drift_finding(component, version, license_name, category="permissive"):
-    return {
-        "type": "license",
-        "severity": "INFO",
-        "component": component,
-        "version": version,
-        "details": {"license": license_name, "category": category},
-        "id": f"LIC-{license_name}",
-    }
+async def _drift(previous, current):
+    return detect_license_drift(await _stored(*current), await _stored(*previous))
 
 
 class TestDetectLicenseDrift:
-    def test_empty_previous_returns_empty(self):
-        assert detect_license_drift([_drift_finding("a", "1.0", "MIT")], []) == []
+    @pytest.mark.asyncio
+    async def test_a_package_relicensed_from_mit_to_gpl_between_two_scans_is_drift(self):
+        [rec] = await _drift([_component("lib", "MIT")], [_component("lib", "GPL-3.0-only", version="2.0")])
 
-    def test_empty_current_returns_empty(self):
-        assert detect_license_drift([], [_drift_finding("a", "1.0", "MIT")]) == []
-
-    def test_no_change_returns_empty(self):
-        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
-        curr = [_drift_finding("a", "1.0", "MIT", "permissive")]
-        assert detect_license_drift(curr, prev) == []
-
-    def test_permissive_to_copyleft_detected(self):
-        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
-        curr = [_drift_finding("a", "1.0", "GPL-3.0", "strong_copyleft")]
-        result = detect_license_drift(curr, prev)
-        assert len(result) == 1
-        assert result[0].type == RecommendationType.LICENSE_DRIFT
-        assert result[0].priority == Priority.HIGH
-
-    def test_permissive_to_weak_copyleft_detected(self):
-        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
-        curr = [_drift_finding("a", "1.0", "LGPL-3.0", "weak_copyleft")]
-        result = detect_license_drift(curr, prev)
-        assert len(result) == 1
-        assert result[0].priority == Priority.MEDIUM
-
-    def test_a_switch_to_proprietary_counts_as_restrictive_drift_not_copyleft(self):
-        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
-        curr = [_drift_finding("a", "1.0", "Commercial", "proprietary")]
-        [result] = detect_license_drift(curr, prev)
-        assert result.priority == Priority.HIGH
-        assert result.impact == {"total": 1, "restrictive_drift": 1}
-
-    def test_copyleft_to_permissive_not_flagged(self):
-        # Drift to a less restrictive license is not a problem.
-        prev = [_drift_finding("a", "1.0", "GPL-3.0", "strong_copyleft")]
-        curr = [_drift_finding("a", "1.0", "MIT", "permissive")]
-        assert detect_license_drift(curr, prev) == []
-
-    def test_affected_components_format(self):
-        prev = [_drift_finding("lodash", "4.17.0", "MIT", "permissive")]
-        curr = [_drift_finding("lodash", "4.17.0", "GPL-3.0", "strong_copyleft")]
-        result = detect_license_drift(curr, prev)
-        assert "lodash" in result[0].affected_components[0]
-        assert "MIT" in result[0].affected_components[0]
-        assert "GPL-3.0" in result[0].affected_components[0]
-
-    def test_a_requalified_component_is_still_matched_against_its_previous_licence(self):
-        """Scanners disagree on how far a package name is qualified; an unfolded key makes the
-        previous licence unfindable, so a real drift reads as no drift."""
-        prev = [_drift_finding(_BARE_NAME, "2.13.0", "Apache-2.0", "permissive")]
-        curr = [_drift_finding(_QUALIFIED_NAME, "2.13.0", "GPL-3.0", "strong_copyleft")]
-
-        result = detect_license_drift(curr, prev)
-
-        assert len(result) == 1
-        assert result[0].priority == Priority.HIGH
-
-    def test_two_different_packages_are_not_folded_together(self):
-        prev = [_drift_finding("lodash", "1.0", "MIT", "permissive")]
-        curr = [_drift_finding("underscore", "1.0", "GPL-3.0", "strong_copyleft")]
-
-        assert detect_license_drift(curr, prev) == []
-
-    def test_a_licence_change_inside_one_category_is_not_drift(self):
-        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
-        curr = [_drift_finding("a", "1.0", "Apache-2.0", "permissive")]
-
-        assert detect_license_drift(curr, prev) == []
-
-    def test_a_previous_vulnerability_finding_is_not_read_as_a_previous_licence(self):
-        prev = [
+        assert rec.type == RecommendationType.LICENSE_DRIFT
+        assert rec.priority == Priority.HIGH
+        assert rec.impact == {"total": 1, "restrictive_drift": 1}
+        assert rec.affected_components == ["lib: MIT → GPL-3.0-only"]
+        assert rec.action["drifted_components"] == [
             {
-                "type": "vulnerability",
-                "severity": "HIGH",
-                "component": "a",
-                "version": "1.0",
-                "details": {"fixed_version": "1.1"},
-                "id": "CVE-2024-0001",
+                "component": "lib",
+                "previous_license": "MIT",
+                "previous_category": "permissive",
+                "current_license": "GPL-3.0-only",
+                "current_category": "strong_copyleft",
             }
         ]
-        curr = [_drift_finding("a", "1.0", "MIT", "permissive")]
 
-        assert detect_license_drift(curr, prev) == []
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("licence", ["MIT", "GPL-3.0-only"])
+    async def test_a_licence_that_became_determinable_is_not_drift(self, licence):
+        assert await _drift([_component("lib")], [_component("lib", licence)]) == []
+
+    @pytest.mark.asyncio
+    async def test_an_unchanged_package_with_two_licence_findings_is_not_drift(self):
+        package = _component("lib", "GPL-2.0-only AND FooBar-License")
+        assert [f.details["license"] for f in await _analyzed([package], {})] == [
+            "GPL-2.0-only",
+            UNDETERMINED_LICENSE_ID,
+        ]
+
+        assert await _drift([package], [package]) == []
+
+    @pytest.mark.asyncio
+    async def test_drift_to_weak_copyleft_is_medium(self):
+        [rec] = await _drift([_component("lib", "MIT")], [_component("lib", "MPL-2.0")])
+
+        assert rec.priority == Priority.MEDIUM
+        assert rec.impact == {"total": 1, "restrictive_drift": 0}
+
+    @pytest.mark.asyncio
+    async def test_a_switch_to_proprietary_counts_as_restrictive_drift_not_copyleft(self):
+        [rec] = await _drift([_component("lib", "MIT")], [_component("lib", "CC-BY-NC-4.0")])
+
+        assert rec.priority == Priority.HIGH
+        assert rec.impact == {"total": 1, "restrictive_drift": 1}
+
+    @pytest.mark.asyncio
+    async def test_copyleft_to_permissive_is_not_drift(self):
+        assert await _drift([_component("lib", "GPL-3.0-only")], [_component("lib", "MIT")]) == []
+
+    @pytest.mark.asyncio
+    async def test_a_licence_change_inside_one_category_is_not_drift(self):
+        assert await _drift([_component("lib", "MIT")], [_component("lib", "Apache-2.0")]) == []
+
+    @pytest.mark.asyncio
+    async def test_a_package_new_in_this_scan_is_not_drift(self):
+        assert await _drift([_component("lodash", "MIT")], [_component("underscore", "GPL-3.0-only")]) == []
+
+    @pytest.mark.asyncio
+    async def test_two_versions_of_one_package_count_once_at_their_most_restrictive_licence(self):
+        [rec] = await _drift(
+            [_component("lib", "MIT")],
+            [_component("lib", "MIT"), _component("lib", "GPL-3.0-only", version="2.0")],
+        )
+
+        assert rec.impact["total"] == 1
+        assert rec.affected_components == ["lib: MIT → GPL-3.0-only"]
