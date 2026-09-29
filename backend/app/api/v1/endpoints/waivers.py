@@ -24,7 +24,9 @@ from app.core.constants import (
     WAIVER_SCOPE_RULE,
 )
 from app.core.permissions import Permissions, has_permission
+from app.models.project import Project
 from app.models.waiver import Waiver
+from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
@@ -39,7 +41,7 @@ def _invalidate_analytics_cache() -> None:
 
 
 _MSG_NO_MATCHING_FINDING = (
-    "Waiver criteria do not match any finding on the project's current build. "
+    "Waiver criteria do not match any finding on the given scan (default: the project's current build). "
     "Verify finding_id, finding_type, package_name and package_version. "
     "Use scope='rule' or 'file' to pre-emptively waive future findings."
 )
@@ -68,22 +70,25 @@ def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
     )
 
 
-async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> dict | None:
-    """Reject finding-scope project waivers matching no finding on the head build; return the matched finding doc, or None when validation is skipped."""
-    if not waiver_in.project_id:
+async def _named_scan_id(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> str | None:
+    """The scan the waiver was written from, refused unless it belongs to the waiver's project."""
+    if not waiver_in.scan_id:
         return None
-    if waiver_in.scope != WAIVER_SCOPE_FINDING:
-        return None
-    if waiver_in.vulnerability_id:
-        return None
+    scan = await ScanRepository(db).get_minimal_by_id(waiver_in.scan_id)
+    if scan is None or scan.project_id != waiver_in.project_id:
+        raise HTTPException(status_code=404, detail="Scan not found in this project")
+    return waiver_in.scan_id
 
-    project = await db.projects.find_one(
-        {"_id": waiver_in.project_id}, {"latest_scan_id": 1, "default_branch": 1, "deleted_branches": 1}
-    )
-    if not project:
+
+async def _ensure_waiver_matches_finding(
+    waiver_in: WaiverCreate, project: Project | None, scan_id: str | None, db: AsyncIOMotorDatabase
+) -> dict | None:
+    """Reject finding-scope project waivers matching no finding on the named scan, else on the head
+    build; return the matched finding doc, or None when validation is skipped."""
+    if project is None or waiver_in.scope != WAIVER_SCOPE_FINDING or waiver_in.vulnerability_id:
         return None
-    head_scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(waiver_in.project_id)
-    if not head_scan_id:
+    scan_id = scan_id or (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project.id)
+    if not scan_id:
         return None
 
     probe = Waiver(**waiver_in.model_dump(), created_by="__validation__")
@@ -91,8 +96,8 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
     if not finding_query:
         return None  # nothing concrete to validate against
 
-    finding_query["scan_id"] = head_scan_id
-    finding: dict | None = await db.findings.find_one(finding_query, {"match": 1, "type": 1, "component": 1})
+    finding_query["scan_id"] = scan_id
+    finding = await FindingRepository(db).find_one_raw(finding_query, {"match": 1, "type": 1, "component": 1})
     if finding is None:
         raise HTTPException(status_code=422, detail=_MSG_NO_MATCHING_FINDING)
     return finding
@@ -112,15 +117,17 @@ async def create_waiver(
     current_user: CurrentUserDep,
 ) -> Waiver:
     """Create a new waiver/exception for a vulnerability."""
+    project = None
     if waiver_in.project_id:
-        await check_project_access(waiver_in.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
+        project = await check_project_access(waiver_in.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
     else:
         if not has_permission(current_user.permissions, Permissions.WAIVER_MANAGE):
             raise HTTPException(status_code=403, detail="Only admins can create global waivers")
 
     # Reject zombie and over-broad waivers early, before consuming a write and recalculating stats.
     _reject_unscoped_broad_waiver(waiver_in)
-    matched_finding = await _ensure_waiver_matches_finding(waiver_in, db)
+    scan_id = await _named_scan_id(waiver_in, db)
+    matched_finding = await _ensure_waiver_matches_finding(waiver_in, project, scan_id, db)
 
     if (
         waiver_in.scope == WAIVER_SCOPE_RULE
@@ -147,7 +154,9 @@ async def create_waiver(
     _invalidate_analytics_cache()
 
     if waiver.project_id:
-        background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
+        background_tasks.add_task(
+            recalculate_project_stats, waiver.project_id, db, restamp=[scan_id] if scan_id else []
+        )
     else:
         background_tasks.add_task(recalculate_all_projects, db)
 

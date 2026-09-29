@@ -38,7 +38,7 @@ from app.services.aggregation.components import (
 )
 from app.services.recommendation.common import get_attr
 
-from ._shared import _get_enrichment_info, _resolve_scan_id
+from ._shared import _get_enrichment_info
 
 router = CustomAPIRouter()
 
@@ -183,7 +183,7 @@ async def get_dependency_tree(
 ) -> DependencyGraph:
     """Get the dependency graph for a project as flat nodes + roots (client nests lazily)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_TREE)
-    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
+    project = await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
 
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
@@ -192,7 +192,7 @@ async def get_dependency_tree(
         if not await ScanRepository(db).count({"_id": scan_id, "project_id": project_id}, limit=1):
             raise HTTPException(status_code=404, detail="No scan found for this project")
     else:
-        scan_id = await _resolve_scan_id(project_id, db)
+        scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
 
     if not scan_id:
         return DependencyGraph()

@@ -3,6 +3,7 @@ import logging
 import os
 import re
 from collections import Counter
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -388,9 +389,11 @@ async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> l
     return sorted({analysis.scan_id for analysis in resolved.values()})
 
 
-async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Stats | None:
+async def recalculate_project_stats(
+    project_id: str, db: AsyncIOMotorDatabase, restamp: Sequence[str] = ()
+) -> Stats | None:
     """Recalculate a project's stats from its head scan and active waivers, and re-stamp the same
-    waiver set onto the scans release mode reports.
+    waiver set onto the scans release mode reports and onto ``restamp``.
 
     Resets ALL waivers for those scans and re-applies them under a distributed lock to
     prevent races when pods modify waivers concurrently. Returns None if project not found.
@@ -411,7 +414,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         return None
 
     scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
-    released_ids = [rid for rid in await _released_analysis_ids(db, project_id) if rid != scan_id]
+    released_ids = sorted({*await _released_analysis_ids(db, project_id), *restamp} - {scan_id})
     if not scan_id and not released_ids:
         return None
 

@@ -30,6 +30,10 @@ class WaiverCreate(BaseModel):
         None,
         description="Scanner rule ID (e.g. 'javascript_lang_insufficiently_random_values'). Auto-populated from finding_id.",
     )
+    scan_id: str | None = Field(
+        None,
+        description="Scan the waiver is written from; a finding-scope waiver is validated against it instead of the head build. Not stored.",
+    )
     reason: str
     status: WaiverStatus = WAIVER_STATUS_ACCEPTED_RISK
     expiration_date: datetime | None = None

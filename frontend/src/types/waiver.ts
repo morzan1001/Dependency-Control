@@ -6,6 +6,7 @@ export type WaiverStatus = 'accepted_risk' | 'false_positive';
 
 export interface WaiverCreate {
   project_id?: string;
+  scan_id?: string;  // Validates a finding-scope waiver against this scan instead of the head build
   finding_id?: string;
   vulnerability_id?: string;  // For granular CVE-level waivers within aggregated findings
   package_name?: string;

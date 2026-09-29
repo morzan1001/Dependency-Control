@@ -257,6 +257,26 @@ class TestRecalculateReachesTheReleasedBuild:
         assert waiver["last_eval_scan_id"] == SCAN_ID
 
 
+BRANCH_SCAN_ID = "scan-w4-feature"
+
+
+class TestRecalculateReachesANamedScan:
+    @pytest.mark.asyncio
+    async def test_the_scan_a_waiver_was_written_from_is_restamped(self, seeded_db):
+        """A waiver created from a feature-branch scan shows on that scan now, not after its next pipeline."""
+        await seeded_db.scans.insert_one({"_id": BRANCH_SCAN_ID, "project_id": PROJECT_ID, "status": "completed"})
+        branch_finding = _finding("f-branch", "CRITICAL", cvss_score=9.0, risk_score=90.0)
+        branch_finding.update(scan_id=BRANCH_SCAN_ID, finding_id="f-waived")
+        await seeded_db.findings.insert_one(branch_finding)
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db, restamp=[BRANCH_SCAN_ID])
+
+        assert (await seeded_db.findings.find_one({"_id": "f-branch"}))["waived"] is True
+        branch_scan = await seeded_db.scans.find_one({"_id": BRANCH_SCAN_ID})
+        assert (branch_scan["stats"]["critical"], branch_scan["ignored_count"]) == (0, 1)
+        assert (await seeded_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == SCAN_ID
+
+
 # ---------------------------------------------------------------------------
 # A waiver with no matching criteria must NOT waive every finding: an empty
 # _build_waiver_query ({}) would match all findings, so _apply_waivers must

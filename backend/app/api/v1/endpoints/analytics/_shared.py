@@ -2,20 +2,9 @@
 
 from typing import Any
 
-from app.api.deps import DatabaseDep
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
-from app.repositories.projects import ProjectRepository
-from app.repositories.scans import ScanRepository
 
 _MSG_ACCESS_DENIED = "Access denied to this project"
-
-
-async def _resolve_scan_id(project_id: str, db: DatabaseDep) -> str | None:
-    """The scan representing the project's head."""
-    project = await ProjectRepository(db).get_by_id(project_id)
-    if not project:
-        return None
-    return (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
 
 
 async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, purl: str | None) -> dict[str, Any]:
