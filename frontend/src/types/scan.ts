@@ -210,6 +210,7 @@ export interface FindingDetails {
   kev_required_action?: string;
   exploit_maturity?: string;
   detector?: string;
+  detector_name?: string;
   decoder?: string;
   verified?: boolean;
   redacted?: string;

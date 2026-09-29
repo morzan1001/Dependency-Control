@@ -203,6 +203,7 @@ class LicenseDetails(_DetailsModel):
 
 class SecretDetails(_DetailsModel):
     detector: str
+    detector_name: str | None = None
     decoder: str | None = None
     verified: bool | None = None
     redacted: str | None = None
