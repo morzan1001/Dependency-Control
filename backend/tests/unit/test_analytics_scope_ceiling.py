@@ -1,10 +1,4 @@
-"""A project scope analytics cannot materialise whole is refused, not answered over a subset.
-
-Every analytics answer at team or user scope is computed over a list of project ids, and no
-analytics response carries a field naming the projects a truncated list dropped. The two
-enumerations used to cap silently — one at 10 000 with a log nobody reads, one at 100 000 with
-nothing at all — so a large estate got an answer that looked complete and was not.
-"""
+"""A scope analytics cannot materialise whole is refused, since no response could name the projects a subset drops."""
 
 import pytest
 

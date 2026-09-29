@@ -1,4 +1,4 @@
-"""Resolves an analytics (scope, scope_id) into the projects the caller may query, so query functions stay scope-agnostic."""
+"""Resolves an analytics (scope, scope_id) into the projects the caller may query."""
 
 from dataclasses import dataclass
 from typing import Any

@@ -1,6 +1,4 @@
-"""One waiver read rule for the list, the filtered list and a single waiver: waiver:read or
-waiver:read_all opens global waivers, read_all opens every project's, and waiver:read alone opens
-the projects the caller may view."""
+"""One waiver read rule for the list, the filtered list and a single waiver."""
 
 from datetime import datetime, timezone
 

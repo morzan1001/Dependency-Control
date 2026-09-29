@@ -26,16 +26,12 @@ from app.services.waivers.matching import waiver_reach_filter
 
 logger = logging.getLogger(__name__)
 
-# Lock-acquisition retry policy for recalculate_project_stats. Two recalculation runs overlap only once
-# one outlived its job lock; bounded exponential backoff lets the later one wait for the earlier one's
-# pass on the same project, then recompute against the fully-committed waiver set, rather than drop it.
-# Total worst-case wait ~= 0.2*(2^5-1) = 6.2s.
+# A run that outlived its job lock is waited for (at most ~6.2s) rather than dropped.
 _LOCK_MAX_RETRIES = 5
 _LOCK_RETRY_BASE_DELAY = 0.2
 _LOCK_TTL_SECONDS = 300
 
-# One run at a time works the queued waiver changes off, estate-wide; the queue collection also holds the
-# expiry sweep's watermark.
+# The queue collection also holds the expiry sweep's watermark.
 _RECALC_LOCK = "waiver_recalc"
 _EXPIRY_SWEEP = "expiry_sweep"
 _QUEUED = {"waiver": {"$exists": True}}
@@ -53,8 +49,7 @@ async def _restamp_scan(
     finding_repo: FindingRepository,
     waiver_repo: WaiverRepository | None,
 ) -> Stats:
-    """Re-apply the current waiver set to one scan and rewrite its stats from the result; ``waiver_repo``,
-    when given, records what each waiver matched there."""
+    """Restamp one scan and rewrite its stats; ``waiver_repo`` also records each waiver's outcome."""
     await restamp_waivers(finding_repo, waiver_repo, scan_id, waivers)
     tally = await calculate_comprehensive_stats(db, scan_id)
     await ScanRepository(db).update_raw(
@@ -111,13 +106,7 @@ async def _acquire_with_backoff(lock_repo: DistributedLocksRepository, lock_name
 async def recalculate_project_stats(
     project_id: str, db: AsyncIOMotorDatabase, reach: dict[str, Any] | None = None
 ) -> Stats | None:
-    """Re-stamp the project's active waiver set onto its head, the tips of recently built branches and the scans
-    release mode reports, and carry head's stats onto the project.
-
-    Restamps under a per-project lock, so overlapping runs never stamp one scan at once; a scan
-    already stamped with this waiver set is left alone. ``reach`` is a finding filter: a project none
-    of whose scans holds a match is not recalculated. Returns head's new stats, None if head needed none.
-    """
+    """Restamp head, recent branch tips and released scans ``reach`` can touch; returns head's new stats or None."""
     project_repo = ProjectRepository(db)
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
@@ -160,8 +149,7 @@ async def recalculate_project_stats(
             f"{'current' if head_current else 'stale'}, {len(stale)} of {len(other_ids)} other scans stale"
         )
         stats = None
-        # Each pass binds unsigned waivers to its own scan's findings in memory, so each takes its own copy.
-        # Head alone records waiver outcomes and signatures: those describe head.
+        # Each pass binds unsigned waivers to its scan in memory, so each takes its own copy.
         if scan_id and not head_current:
             stats = await _restamp_scan(scan_id, db, _copy(waivers), fingerprint, finding_repo, waiver_repo)
             await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
@@ -183,11 +171,7 @@ async def request_waiver_recalc(db: AsyncIOMotorDatabase, waiver: Waiver) -> Non
 
 
 async def run_waiver_recalc(db: AsyncIOMotorDatabase) -> None:
-    """Recalculate what the queued waiver changes, and the waivers expired since the last run, can reach.
-
-    Every change queued so far shares one pass, repeated while more arrive. A change leaves the queue only once its
-    pass is done, so a restart resumes it.
-    """
+    """Recalculate what queued waiver changes and new expiries reach; a change stays queued until its pass is done."""
     # A secondary lagging behind the change would fingerprint the old waiver set and retire the change as done.
     db = db.with_options(read_preference=ReadPreference.PRIMARY)
     lock_repo = DistributedLocksRepository(db)

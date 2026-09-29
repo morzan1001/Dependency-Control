@@ -1651,8 +1651,7 @@ class ChatToolRegistry:
         return [p.id for p in await read_scope_projects(ctx.db, ctx.user_project_query)]
 
     async def _in_scope(self, ctx: _ToolContext) -> dict[str, Any]:
-        """A `project_id` filter to the caller's projects; none for a caller who reads them all, as project
-        deletion takes the project's scans, findings and waivers with it."""
+        """A `project_id` filter to the caller's projects; none for a caller who reads them all."""
         return {"project_id": {"$in": await self._get_authorized_project_ids(ctx)}} if ctx.user_project_query else {}
 
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
@@ -1696,8 +1695,7 @@ class ChatToolRegistry:
         return stats
 
     async def _heads_in_scope(self, ctx: _ToolContext) -> tuple[dict[str, str], dict[str, str]]:
-        """{project_id: head scan id} and {project_id: name} for the `project_id` argument's project, or
-        for every project in the caller's scope from one read."""
+        """Head scan ids and names by project id, for the `project_id` argument or the whole scope in one read."""
         from app.services.releases import resolve_scan_ids
 
         if ctx.args.get("project_id"):

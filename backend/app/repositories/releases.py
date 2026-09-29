@@ -36,8 +36,7 @@ class ReleaseRepository(BaseRepository[Release]):
             "environment": release.environment,
             "scan_id": release.scan_id,
         }
-        # Only carried when this payload names one (a CI producer sends an unset tag as ""), so a
-        # later job of the same CI pipeline cannot blank the version the deploy job recorded.
+        # CI sends an unset tag as "", which must not blank the version the deploy job recorded.
         changes: dict[str, Any] = {"released_at": release.released_at}
         if release.version:
             changes["version"] = release.version

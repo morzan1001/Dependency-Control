@@ -250,7 +250,7 @@ class ScanRepository:
     async def branch_tips(
         self, project_id: str, deleted_branches: list[str] | None = None, since: datetime | None = None
     ) -> list[tuple[str, int, dict[str, Any] | None]]:
-        """``(branch, scan_count, tip)`` per branch, over every scan the project holds (``since``: created then or later).
+        """``(branch, scan_count, tip)`` per branch, over the project's scans (created at or after ``since``, if given).
 
         The tip is the module's head rule scoped to one branch: the branch's newest build,
         resolved to the freshest analysis of it, so the project tile reports the same numbers
@@ -326,9 +326,7 @@ class ScanRepository:
             return await self.collection.count_documents(query or {})
 
     async def get_latest_active_scan_id(self, project: Any, deleted_branches: list[str] | None = None) -> str | None:
-        """The id of the project's head. ``project`` may be a model or a raw dict, and
-        ``deleted_branches`` overrides the project's own set, which housekeeping needs while the
-        freshly-computed one is not yet persisted."""
+        """The project's head id; ``deleted_branches`` overrides the stored set before housekeeping saves it."""
         project_id, scope = _head_scope(project, deleted_branches)
         if not project_id:
             return None

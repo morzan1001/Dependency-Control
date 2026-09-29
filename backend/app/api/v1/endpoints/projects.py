@@ -437,20 +437,11 @@ _OWNING_TEAM_MEMBER_IDS = {
 
 
 def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
-    """Add the members the owning teams bring in, each named with every owner it comes from, and
-    give every row the role check_project_access grants as ``effective_role``.
-
-    A team role counts at the strongest any owner grants: ``team_ids`` is in whatever order the last
-    writer left it and the join answers in the teams collection's, so a first-wins merge would hand a
-    user who is an admin of one owner and a plain member of another a different role from one
-    request to the next. Someone already named in the project's own members keeps that entry — it is
-    theirs to be removed from — with its stored role.
-    """
+    """Add the owning teams' members, named with each owner, and set every row's ``effective_role``; direct rows win."""
     team_roles: dict[str, ProjectRole | None] = {}
     owners: dict[str, set[str]] = {}
 
-    # Teams by id and their names sorted below, so the same owners answer the same rows in the same
-    # order and spell the same string however the join ordered them.
+    # Sorted, so the answer does not depend on the order the join returned the teams in.
     for team in sorted(data.get("team_data") or [], key=lambda team: str(team.get("_id"))):
         for tm in team.get("members", []):
             uid = tm["user_id"]
@@ -543,12 +534,7 @@ async def read_project(
 
 
 async def _assert_may_grant_teams(gained: set[str], current_user: User, team_repo: TeamRepository) -> None:
-    """Refuse handing the project to a team that does not exist (404) or, short of a write
-    superuser, that the caller is not a member of (403).
-
-    An id nothing resolves to grants nobody anything and no sync would ever reap it, so it is
-    refused whoever asks.
-    """
+    """404 for a team that does not exist (whoever asks); 403 unless the caller is a member or a write superuser."""
     teams = await team_repo.members_by_team(sorted(gained))
     for team_id in sorted(gained):
         if team_id not in teams:
@@ -693,8 +679,7 @@ async def update_project(
         chosen = set(update_data.pop("team_ids") or [])
         if len(chosen) > MAX_PROJECT_TEAMS:
             raise HTTPException(status_code=400, detail=f"A project may be owned by at most {MAX_PROJECT_TEAMS} teams")
-        # An owner the project already holds was granted by an earlier write; re-checking it would
-        # stop an admin of one owner from editing the rest.
+        # Re-checking owners already held would stop an admin of one owner from editing the rest.
         await _assert_may_grant_teams(chosen - set(project.team_ids), current_user, team_repo)
         ownership_stages = set_owners_pipeline(sorted(chosen))
         guard = await last_admin_guard(project, current_user, team_repo, surviving_owners=chosen)
@@ -986,8 +971,7 @@ async def update_notification_settings(
             project_id, user_id, {"notification_preferences": settings.notification_preferences}
         )
     elif role is not None:
-        # A team grants the access, so the preferences live beside the members rather than in a
-        # member entry that would outlive the team membership.
+        # Beside the members, so no member entry outlives the team membership that granted access.
         await project_repo.update_raw(
             project_id, {"$set": {f"notification_overrides.{user_id}": settings.notification_preferences}}
         )

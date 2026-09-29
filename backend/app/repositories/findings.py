@@ -54,8 +54,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         return [doc["_id"] async for doc in self._primary().find({"scan_id": scan_id, **query}, {"_id": 1})]
 
     async def find_advisory_state(self, scan_id: str, clause: dict[str, Any]) -> list[dict[str, Any]]:
-        """Vulnerability documents matching ``clause``, with what a vulnerability waiver scopes on and its advisories'
-        waiver state; element order is kept, so an index addresses the stored advisory."""
+        """Vulnerability documents matching ``clause``: waiver scope fields and advisories, in stored order."""
         projection = {
             "finding_id": 1,
             "component": 1,
@@ -152,8 +151,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         return result.upserted_count + result.modified_count
 
     async def find_location_findings(self, scan_id: str) -> list[dict[str, Any]]:
-        """Raw docs for location-based findings of a scan (waiver-matchable), with details only where
-        no match signature is stored and one has to be recomputed from them."""
+        """A scan's location findings, with details only where the match signature must be recomputed from them."""
         primary = self._primary()
         docs = await primary.find(
             {"scan_id": scan_id, "type": {"$in": [t.value for t in LOCATION_FINDING_TYPES]}},

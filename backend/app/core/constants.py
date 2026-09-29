@@ -1029,8 +1029,7 @@ WaiverStatus = Literal["accepted_risk", "false_positive"]
 # "finding" = exact match, "file" = same rule in same file, "rule" = same rule project-wide.
 WaiverScope = Literal["finding", "file", "rule"]
 
-# A waiver change restamps the tips of branches built within this many days; an abandoned branch or an old
-# tag build keeps the flags of its last analysis.
+# A waiver change restamps only the tips of branches built within this many days.
 WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS: int = 30
 
 # Default CVSS scores used when actual score is not available

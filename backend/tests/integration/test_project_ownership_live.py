@@ -98,9 +98,7 @@ _UNMIGRATED_PROJECT = {
 
 
 async def _assert_an_ingest_leaves_unmigrated_owners_as_they_are(db) -> None:
-    """A bare provider value names no instance, so no instance's sync may claim or retire it: the
-    owner it still resolves keeps its value like a hand assignment does, and the unchanged-subset
-    short circuit spares the write."""
+    """A bare provider value names no instance, so it stays as a hand assignment would, with no write."""
     await db.projects.insert_one(dict(_UNMIGRATED_PROJECT))
     project = Project(**_UNMIGRATED_PROJECT)
     service = MagicMock()

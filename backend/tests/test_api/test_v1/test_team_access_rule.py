@@ -1,6 +1,4 @@
-"""One team read rule, and the team writes that must hold across every path: REST, chat and analytics
-scopes read teams the same way, a missing team is a 404 for every caller, the last admin cannot be
-demoted, and an entry a live sync owns is not edited by hand."""
+"""One team read rule for REST, chat and analytics, and the team write invariants every path holds."""
 
 from datetime import datetime, timezone
 

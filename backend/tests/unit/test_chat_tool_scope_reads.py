@@ -1,6 +1,4 @@
-"""An estate-wide tool reads the caller's projects once per call, a caller who reads every project
-sends no id list downstream, and a project_id the caller cannot see is answered as unknown rather
-than as a project without scan data."""
+"""An estate-wide tool reads the caller's scope once per call, and an unseen project_id is unknown."""
 
 import json
 from datetime import datetime, timedelta, timezone

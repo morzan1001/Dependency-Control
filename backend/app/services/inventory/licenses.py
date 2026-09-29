@@ -118,8 +118,7 @@ async def build_license_rows(db: AsyncIOMotorDatabase, scan: Scan) -> list[Licen
     async for doc in cursor:
         tokens = license_ids(doc.get("license"))
         component = f"{doc.get('name')}@{doc.get('version')}"
-        # A composite expression's purl reflects the worst-member license, not any single token, and an
-        # unknown row's purl names no license at all, so neither may seed the enrichment lookup.
+        # A composite or unknown license's purl names no single license, so it cannot seed enrichment.
         seeds_enrichment = len(tokens) == 1 and tokens != [UNKNOWN_LICENSE]
         for license_id in tokens:
             _add_to_group(

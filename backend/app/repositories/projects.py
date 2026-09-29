@@ -136,8 +136,7 @@ def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[
         {
             "$set": {
                 "team_ids": {"$setUnion": [held_elsewhere, team_ids]},
-                # Only owners the project holds through no other writer are stamped, so a hand
-                # assignment the provider also resolves stays one the provider never retires.
+                # Owners held through another writer stay unstamped, so the provider never retires a hand assignment.
                 "team_sources": {
                     "$mergeObjects": [
                         _sources_except(source),
@@ -243,12 +242,7 @@ def ownership_fields(team_ids: list[str], source: str) -> dict[str, Any]:
 
 
 def surviving_admin_filter(admin_owners: list[str], leaving_member: str | None = None) -> dict[str, Any]:
-    """Match only while the project still holds an admin: a member other than ``leaving_member``,
-    or one of the admin-supplying owners it still holds.
-
-    Part of the write's own filter, so two concurrent writes each taking one of the last two admins
-    cannot both pass a check made beforehand and leave nobody who can administer the project.
-    """
+    """Match only while an admin other than ``leaving_member`` remains; the write checks it, so no race removes both."""
     other_admin: dict[str, Any] = {"role": PROJECT_ROLE_ADMIN}
     if leaving_member is not None:
         other_admin["user_id"] = {"$ne": leaving_member}

@@ -96,11 +96,7 @@ async def team_derived_role(
     user_id: str,
     team_repo: TeamRepository,
 ) -> ProjectRole | None:
-    """The strongest project role any of these teams grants.
-
-    Strongest rather than first, because array order is set by whichever writer touched the field
-    last and must not decide who may write.
-    """
+    """The strongest project role any of these teams grants; array order only says which writer came last."""
     if not team_ids:
         return None
     role: ProjectRole | None = None
@@ -152,13 +148,7 @@ async def last_admin_guard(
     surviving_owners: set[str] | None = None,
     leaving_member: str | None = None,
 ) -> dict[str, Any]:
-    """The write filter under which the project keeps someone able to administer it; {} needs none.
-
-    A filter rather than a verdict: which teams supply an admin is answered from the ``teams``
-    collection beforehand, but whether the project still holds them, and still has another admin
-    member, is checked by the write itself, so a concurrent write cannot invalidate it in between.
-    A write superuser is exempt, because they are the ones who can undo it.
-    """
+    """The filter the write itself checks so the project keeps an admin despite concurrent writes; {} needs none."""
     if is_write_superuser(user):
         return {}
     if surviving_owners is not None:

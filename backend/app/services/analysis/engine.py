@@ -898,10 +898,7 @@ async def _persist_findings_and_waivers(
     *,
     head: bool,
 ) -> int:
-    """Insert findings, stamp the active waiver set on them and on the scan; return how many were persisted.
-
-    Only head's pass records what each waiver matched and where its signature now is.
-    """
+    """Insert findings, stamp the waiver set on them and the scan (outcomes only for head); returns the count."""
     # Before the delete, so re-analysing a scan still sees the dates its own copies inherited.
     await _stamp_first_seen(findings_to_insert, project_id, finding_repo)
     await finding_repo.delete_many({"scan_id": scan_id})

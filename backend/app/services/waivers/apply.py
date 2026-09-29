@@ -31,8 +31,7 @@ logger = logging.getLogger(__name__)
 
 _FieldsById = dict[str, dict[str, Any]]
 
-# What a pass writes (its outcome, and the signature it follows the finding with), when an active waiver expires,
-# and the creation time (defaulted on load for a document without one) do not change the decision a scan carries.
+# Pass bookkeeping, a future expiry and a load-defaulted creation time do not change what a scan is stamped with.
 _NOT_STAMPED = {"last_eval_scan_id", "last_match_count", "match", "expiration_date", "is_active", "created_at"}
 
 
@@ -45,11 +44,7 @@ def waiver_fingerprint(waivers: list[Waiver]) -> str:
 async def restamp_waivers(
     finding_repo: FindingRepository, waiver_repo: WaiverRepository | None, scan_id: str, waivers: list[Waiver]
 ) -> Counter[str]:
-    """Bring one scan's waiver flags in line with ``waivers``, writing only the findings whose flags change, and
-    return how many findings each waiver matched there.
-
-    ``waiver_repo``, when given, records what each project waiver matched there and where its signature now is.
-    """
+    """Write the scan's changed waiver flags; returns each waiver's match count. ``waiver_repo`` records outcomes."""
     finding_fields: _FieldsById = defaultdict(dict)
     counts: Counter[str] = Counter()
 
@@ -86,8 +81,7 @@ def _safe_match_signature(raw: dict, context: str) -> MatchSignature | None:
 async def _signed_location_findings(
     finding_repo: FindingRepository, scan_id: str, waivers: list[Waiver], finding_fields: _FieldsById
 ) -> list[tuple[str, MatchFinding]]:
-    """The scan's location findings with their signatures and the finding_id a legacy waiver names them by, loaded
-    only when a waiver can use them. A signature recomputed because none was stored is staged to persist."""
+    """The scan's signed location findings when a waiver can use them; a recomputed signature is staged to persist."""
     if not any(route_waiver(w) == "signature" or may_bind_signature(w) for w in waivers):
         return []
     signed = []
@@ -108,8 +102,7 @@ async def _stamp_advisories(
     counts: Counter[str],
     finding_fields: _FieldsById,
 ) -> dict[str, str | None]:
-    """Recompute the advisories of every vulnerability document a waiver names or that still holds a waived one,
-    stage what changed, and return the documents that roll up to waived with their reason."""
+    """Restage advisories of documents a waiver names or that hold a waived one; returns waived ones' reasons."""
     ids = [w.vulnerability_id for w in waivers if w.vulnerability_id]
     clause = {"$or": [{"details.vulnerabilities.waived": True}, *(advisory_filter(ids) if ids else [])]}
     scoped = [(waiver, waiver_criteria(waiver)) for waiver in waivers]
@@ -154,8 +147,7 @@ async def _query_matches(
             continue
         ids = await finding_repo.find_ids(scan_id, query)
         counts[waiver.id] = len(ids)
-        # finding_id is not unique per scan for license/eol findings, so an unscoped waiver can blanket
-        # dozens of unrelated components.
+        # license/eol finding_ids repeat per scan, so an unscoped waiver can blanket unrelated components.
         if len(ids) > 1 and not waiver.package_name:
             logger.warning(
                 "Waiver %s (%s, finding_id=%s) has no package scope and suppresses %d findings in scan %s",
@@ -229,8 +221,7 @@ def _waiver_bookkeeping(
     bound: dict[str, MatchSignature],
     app: WaiverApplication,
 ) -> _FieldsById:
-    """What changed about each project waiver: its match count, a back-filled or walked signature. A global waiver
-    spans projects, so no single project's outcome or location is its own."""
+    """Each project waiver's changed match count and signature; a global waiver spans projects and records none."""
     fields: _FieldsById = defaultdict(dict)
     for waiver in waivers:
         if waiver.last_eval_scan_id != scan_id or waiver.last_match_count != counts[waiver.id]:

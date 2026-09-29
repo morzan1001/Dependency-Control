@@ -326,8 +326,7 @@ def _max_epss(entries: Iterable[Mapping[str, Any]]) -> float | None:
 
 
 def _live_threat_intel(details: Mapping[str, Any]) -> tuple[float | None, bool, bool]:
-    """The document's EPSS, KEV and ransomware marks, less those only its waived advisories carry.
-    A mark no advisory carries (enrichment matched a document-level alias) stays the document's."""
+    """The document's EPSS, KEV and ransomware marks, less those only its waived advisories carry."""
     epss = _numeric(details.get("epss_score"))
     in_kev = details.get(DETAILS_KEY_IN_KEV) is True
     ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
@@ -628,8 +627,7 @@ class ScanTally(NamedTuple):
 
 
 async def calculate_comprehensive_stats(db: Database, scan_id: str) -> ScanTally:
-    """Comprehensive statistics for a scan and how many of its findings are waived, folded from a single
-    projected cursor so both describe one read."""
+    """A scan's statistics and waived count, folded from one cursor so both describe the same read."""
     acc = StatsAccumulator(await build_component_language_map(db, scan_id))
     # PRIMARY: with secondaryPreferred the read can miss findings written milliseconds earlier.
     findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]

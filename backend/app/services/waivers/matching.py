@@ -1,6 +1,4 @@
-"""Waiver matching: how a waiver is routed, the field criteria it sets (as a MongoDB filter and as an
-in-memory check), the advisory roll-up, and the two-pass signature matcher, strong-exact (Pass 1) then
-content/proximity re-anchor (Pass 2)."""
+"""Waiver matching: routing, field criteria (query and in-memory), advisory roll-up, two-pass signature matcher."""
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -27,8 +25,7 @@ def finding_rule_id(details: Mapping[str, Any] | None) -> str | None:
 
 
 def waiver_criteria(waiver: Waiver) -> dict[str, Any]:
-    """The finding fields a waiver constrains, honouring its scope and rule_id. A file or rule scope widens from
-    the finding it was taken from to its rule (in that file); without a rule_id it stays on that finding."""
+    """The finding fields a waiver constrains; a file or rule scope widens to its rule_id, else stays on its finding."""
     # An advisory lives only in vulnerability documents, whatever type or rule the waiver names.
     advisory = bool(waiver.vulnerability_id)
     widened = waiver.scope != "finding" and bool(waiver.rule_id)
@@ -139,8 +136,7 @@ def waive_advisories(record: dict[str, Any], waiver: Waiver) -> bool:
 
 
 def roll_up_advisories(record: dict[str, Any]) -> None:
-    """Every waiver consumer reads the document level: its severity is the highest live advisory, and it counts
-    as waived once all advisories are. It never un-waives, so a whole-finding waiver on it stands."""
+    """Roll advisories up: severity is the highest live one, waived once all are; never un-waives the document."""
     entries = (record.get("details") or {}).get("vulnerabilities") or []
     if not entries:
         return
@@ -246,11 +242,7 @@ def _refresh(app: WaiverApplication, w: Waiver, wsig: MatchSignature, finding: M
 
 
 def _pass2_reanchor(app: WaiverApplication, unmatched: list[_Signed], findings: Sequence[MatchFinding]) -> None:
-    """Pass 2: first every waiver whose content is still present, then false_positive proximity for the rest.
-
-    Candidates include findings other waivers already claimed: a waiver whose best candidate is
-    taken is shadowed, never handed the next-best finding.
-    """
+    """Pass 2: content matches, then false_positive proximity; a taken best candidate shadows, never falls back."""
     by_file: dict[str, list[MatchFinding]] = {}
     for f in findings:
         by_file.setdefault(f.sig.file_key, []).append(f)

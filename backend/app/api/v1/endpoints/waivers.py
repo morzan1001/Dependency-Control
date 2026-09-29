@@ -64,8 +64,7 @@ _MSG_SCOPE_NEEDS_LOCATION = "File and rule scope apply only to findings a scanne
 
 
 async def _resolve_widened_rule(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> None:
-    """A file or rule scope widens to a rule, so it must name one: as given, else the rule a stored copy of the
-    finding it was taken from reports."""
+    """A file or rule scope names its rule: as given, else the one its stored source finding reports."""
     if waiver_in.finding_type is not None and waiver_in.finding_type not in LOCATION_FINDING_TYPES:
         raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_LOCATION)
     if waiver_in.scope == "file" and not waiver_in.package_name:

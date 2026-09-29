@@ -209,8 +209,7 @@ class NotificationService:
 
         enforced_prefs = None
         if project.enforce_notification_settings:
-            # The first admin with preferences, direct entries before team-granted ones, the order the
-            # project page lists them in.
+            # Direct admins before team-granted ones, the order the project page lists them in.
             candidates = [
                 (m.user_id, m.notification_preferences)
                 for m in project.members

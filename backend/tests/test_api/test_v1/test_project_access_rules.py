@@ -1,7 +1,4 @@
-"""The project rules check_project_access owns, applied the same way on every path: who may hand a
-project to a team, which grant deletes and which edits, the effective role the page shows, who
-keeps the last admin, where a team member's notification preferences live, and what a deletion
-takes along."""
+"""The project rules check_project_access owns, applied the same way on every path."""
 
 from unittest.mock import AsyncMock, patch
 
