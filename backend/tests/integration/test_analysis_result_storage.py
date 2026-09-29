@@ -3,8 +3,8 @@
 from datetime import datetime, timezone
 from typing import Any
 
+import bson
 import pytest
-from pymongo.errors import WriteError
 
 from app.models.project import Scan
 from app.repositories.analysis_results import AnalysisResultRepository
@@ -22,6 +22,7 @@ _ENVELOPE = {
     "job_id": 9,
     "is_release": False,
 }
+_MONGO_DOCUMENT_LIMIT = 16 * 1024 * 1024
 _OVER_THE_DOCUMENT_LIMIT = "x" * (17 * 1024 * 1024)
 _BRACE = {"name": "brace-expansion", "version": "2.0.2", "purl": "pkg:npm/brace-expansion@2.0.2"}
 
@@ -173,15 +174,29 @@ async def test_a_scanner_result_too_large_to_store_is_refused_with_413(client, d
 
 
 @pytest.mark.asyncio
-async def test_a_result_the_server_finds_too_large_after_the_update_is_refused_with_413(
-    client, api_key_headers, monkeypatch
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    "pipeline_id",
+    [
+        pytest.param(_RUN["pipeline_id"], id="replacing-a-row"),
+        pytest.param(_RUN["pipeline_id"] + 1, id="inserting-a-row"),
+    ],
+)
+async def test_a_result_the_server_finds_just_over_the_limit_is_refused_with_413(
+    client, db, api_key_headers, pipeline_id
 ):
-    async def _server_refuses(*_args: Any, **_kwargs: Any) -> None:
-        raise WriteError("Resulting document after update is larger than 16777216", 17419, {"code": 17419})
+    first = await client.post(
+        "/api/v1/ingest/opengrep", json={**_RUN, "findings": [_OPENGREP_FINDING]}, headers=api_key_headers
+    )
+    [row] = await _rows(db, first.json()["scan_id"])
+    padding = "x" * (_MONGO_DOCUMENT_LIMIT + 1000 - len(bson.encode(row)))
+    grown = {**_OPENGREP_FINDING, "extra": {"message": "Detected the use of eval()" + padding, "severity": "WARNING"}}
 
-    monkeypatch.setattr(AnalysisResultRepository, "save_result", _server_refuses)
-
-    resp = await client.post("/api/v1/ingest/opengrep", json={**_RUN, "findings": []}, headers=api_key_headers)
+    resp = await client.post(
+        "/api/v1/ingest/opengrep",
+        json={**_RUN, "pipeline_id": pipeline_id, "findings": [grown]},
+        headers=api_key_headers,
+    )
 
     assert resp.status_code == 413, resp.text
 
