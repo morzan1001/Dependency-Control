@@ -10,6 +10,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import (
     external_api_duration_seconds,
     external_api_errors_total,
+    external_api_rate_limit_hits_total,
     external_api_requests_total,
 )
 
@@ -177,3 +178,103 @@ async def test_stream_raises_when_not_started():
     with pytest.raises(RuntimeError):
         async with InstrumentedAsyncClient("StreamNotStarted").stream("GET", "https://example.test"):
             pass
+
+
+def _scripted(outcomes: list[int | Exception], seen: list[str]) -> httpx.MockTransport:
+    """Answers each request with the next status code or raises the next transport error."""
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        seen.append(request.method)
+        outcome = outcomes[min(len(seen), len(outcomes)) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        headers = {"Retry-After": "3"} if outcome == 503 else {}
+        return httpx.Response(outcome, headers=headers)
+
+    return httpx.MockTransport(handle)
+
+
+@pytest.fixture
+def sleeps(monkeypatch) -> list[float]:
+    slept: list[float] = []
+
+    async def _record(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(asyncio, "sleep", _record)
+    return slept
+
+
+class TestSendWithBackoff:
+    @pytest.mark.asyncio
+    async def test_429_and_5xx_are_retried_until_the_answer(self, sleeps):
+        service = "BackoffRetry"
+        hits_before = _counter_value(external_api_rate_limit_hits_total, service)
+        seen: list[str] = []
+
+        async with InstrumentedAsyncClient(service, transport=_scripted([429, 500, 200], seen)) as client:
+            response = await client.send_with_backoff("POST", "https://example.test", attempts=4, base_delay=2.0)
+
+        assert response.status_code == 200
+        assert seen == ["POST"] * 3
+        assert sleeps == [2.0, 4.0]
+        assert _counter_value(external_api_rate_limit_hits_total, service) == hits_before + 1
+
+    @pytest.mark.asyncio
+    async def test_attempts_counts_every_try_and_the_last_answer_is_returned_without_a_sleep(self, sleeps):
+        seen: list[str] = []
+
+        async with InstrumentedAsyncClient("BackoffExhausted", transport=_scripted([429], seen)) as client:
+            response = await client.send_with_backoff("GET", "https://example.test", attempts=3, base_delay=1.0)
+
+        assert response.status_code == 429
+        assert len(seen) == 3
+        assert sleeps == [1.0, 2.0]
+
+    @pytest.mark.asyncio
+    async def test_retry_after_replaces_the_exponential_delay(self, sleeps):
+        async with InstrumentedAsyncClient("BackoffRetryAfter", transport=_scripted([503, 200], [])) as client:
+            response = await client.send_with_backoff("GET", "https://example.test", attempts=2, base_delay=10.0)
+
+        assert response.status_code == 200
+        assert sleeps == [3.0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 404, 403])
+    async def test_other_answers_are_returned_at_once(self, sleeps, status):
+        seen: list[str] = []
+
+        async with InstrumentedAsyncClient("BackoffFinal", transport=_scripted([status], seen)) as client:
+            response = await client.send_with_backoff("GET", "https://example.test", attempts=4, base_delay=1.0)
+
+        assert response.status_code == status
+        assert len(seen) == 1
+        assert sleeps == []
+
+    @pytest.mark.asyncio
+    async def test_a_transport_error_is_retried_then_reraised(self, sleeps):
+        seen: list[str] = []
+        transport = _scripted([httpx.ConnectError("refused"), httpx.ReadTimeout("slow")], seen)
+
+        async with InstrumentedAsyncClient("BackoffTransport", transport=transport) as client:
+            with pytest.raises(httpx.ReadTimeout):
+                await client.send_with_backoff("GET", "https://example.test", attempts=3, base_delay=1.0)
+
+        assert len(seen) == 3
+        assert sleeps == [1.0, 2.0]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("seconds_left", "tries"), [(-1.0, 1), (1.5, 2), (100.0, 4)])
+    async def test_no_retry_is_started_that_would_begin_past_the_deadline(self, sleeps, seconds_left, tries):
+        seen: list[str] = []
+        deadline = asyncio.get_running_loop().time() + seconds_left
+
+        async with InstrumentedAsyncClient("BackoffDeadline", transport=_scripted([429], seen)) as client:
+            response = await client.send_with_backoff(
+                "GET", "https://example.test", attempts=4, base_delay=1.0, deadline=deadline
+            )
+
+        # The recorded sleeps take no time, so only the backoff delays count against the deadline.
+        assert response.status_code == 429
+        assert len(seen) == tries
+        assert sleeps == [1.0, 2.0, 4.0][: tries - 1]

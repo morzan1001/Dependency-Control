@@ -1,49 +1,51 @@
 """W15: OSV must report skipped coverage instead of silently dropping whole batches."""
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
 from app.services.analyzers.osv import OSVAnalyzer
+from tests.helpers.osv import osv_cache, serve_osv
 
 _COMPONENTS = [{"name": f"pkg-{i}", "version": "1.0.0", "purl": f"pkg:pypi/pkg-{i}@1.0.0"} for i in range(3)]
 
 _SBOM: dict[str, Any] = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": []}
 
-
-def _client_stub(post_side_effect) -> MagicMock:
-    client = MagicMock()
-    client.post = AsyncMock(side_effect=post_side_effect)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
-    return client
+_CLEAN = httpx.Response(200, json={"results": [{} for _ in _COMPONENTS]})
 
 
-def _response(status_code: int, results: list | None = None) -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = status_code
-    resp.json.return_value = {"results": results if results is not None else []}
-    return resp
+def _answers(*outcomes: httpx.Response | Exception):
+    """Answers each querybatch with the next outcome, repeating the last."""
+    sent: list[int] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        sent.append(1)
+        outcome = outcomes[min(len(sent), len(outcomes)) - 1]
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    return handle
 
 
-@pytest.fixture
-def _no_cache(monkeypatch):
-    async def _mget(keys):
-        return dict.fromkeys(keys)
-
-    async def _mset(mapping, ttl=None):
-        return True
-
-    monkeypatch.setattr("app.services.analyzers.osv.cache_service.mget", _mget)
-    monkeypatch.setattr("app.services.analyzers.osv.cache_service.mset", _mset)
+@pytest.fixture(autouse=True)
+def _cache(monkeypatch):
+    return osv_cache(monkeypatch)
 
 
 @pytest.mark.asyncio
-async def test_timeout_reports_skipped_components(_no_cache, monkeypatch):
-    client = _client_stub(httpx.TimeoutException("timed out"))
-    monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", lambda *a, **k: client)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(httpx.TimeoutException("timed out"), id="timeout"),
+        pytest.param(httpx.Response(500), id="5xx"),
+        pytest.param(httpx.Response(429), id="rate_limited"),
+        pytest.param(httpx.Response(403), id="refused"),
+    ],
+)
+async def test_a_persistently_failing_batch_reports_skipped_components(monkeypatch, failure):
+    serve_osv(monkeypatch, _answers(failure))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
@@ -51,33 +53,37 @@ async def test_timeout_reports_skipped_components(_no_cache, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_non_200_reports_skipped_components(_no_cache, monkeypatch):
-    client = _client_stub(lambda *a, **k: _response(500))
-    monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", lambda *a, **k: client)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(httpx.ConnectError("connection reset"), id="transport_error"),
+        pytest.param(httpx.Response(503), id="5xx"),
+        pytest.param(httpx.Response(429), id="rate_limited"),
+    ],
+)
+async def test_a_transient_batch_failure_is_retried(monkeypatch, failure):
+    seen = serve_osv(monkeypatch, _answers(failure, _CLEAN))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
-    assert result["partial_components_skipped"] == 3
+    assert len(seen) == 2
+    assert "partial_components_skipped" not in result
 
 
 @pytest.mark.asyncio
-async def test_persistent_rate_limit_reports_skipped_components(_no_cache, monkeypatch):
-    client = _client_stub(lambda *a, **k: _response(429))
-    monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", lambda *a, **k: client)
+async def test_retries_are_bounded(monkeypatch):
+    seen = serve_osv(monkeypatch, _answers(httpx.Response(429)))
     analyzer = OSVAnalyzer()
-    analyzer.max_retries = 1
-    analyzer.retry_base_delay = 0.0
 
-    result = await analyzer.analyze(_SBOM, parsed_components=_COMPONENTS)
+    await analyzer.analyze(_SBOM, parsed_components=_COMPONENTS)
 
-    assert result["partial_components_skipped"] == 3
+    assert len(seen) == 1 + analyzer.max_retries
 
 
 @pytest.mark.asyncio
-async def test_response_count_mismatch_reports_truncated_tail(_no_cache, monkeypatch):
+async def test_response_count_mismatch_reports_truncated_tail(monkeypatch):
     # 3 components sent, 1 result received -> 2 components were never scanned.
-    client = _client_stub(lambda *a, **k: _response(200, results=[{"vulns": []}]))
-    monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", lambda *a, **k: client)
+    serve_osv(monkeypatch, _answers(httpx.Response(200, json={"results": [{"vulns": []}]})))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
@@ -85,10 +91,10 @@ async def test_response_count_mismatch_reports_truncated_tail(_no_cache, monkeyp
 
 
 @pytest.mark.asyncio
-async def test_full_success_has_no_partial_marker(_no_cache, monkeypatch):
-    client = _client_stub(lambda *a, **k: _response(200, results=[{"vulns": []}] * 3))
-    monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", lambda *a, **k: client)
+async def test_full_success_has_no_partial_marker(monkeypatch):
+    seen = serve_osv(monkeypatch, _answers(_CLEAN))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
+    assert len(seen) == 1
     assert "partial_components_skipped" not in result

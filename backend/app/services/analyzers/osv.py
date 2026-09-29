@@ -17,7 +17,6 @@ from app.core.constants import (
 )
 from app.core.cvss import cvss_base_score
 from app.core.http_utils import InstrumentedAsyncClient
-from app.core.metrics import external_api_rate_limit_hits_total
 from app.core.purl import ParsedPURL, canonical_purl, parse_purl
 from app.models.finding import Severity
 
@@ -172,7 +171,7 @@ class OSVAnalyzer(Analyzer):
     name = "osv"
     api_url = OSV_BATCH_API_URL
 
-    # Bounded retry on HTTP 429 so a throttled chunk isn't silently dropped.
+    # Retries per request on 429, 5xx and transport errors, so a throttled chunk isn't silently dropped.
     max_retries: int = 3
     retry_base_delay: float = 5.0  # seconds, doubles each attempt
 
@@ -293,7 +292,7 @@ class OSVAnalyzer(Analyzer):
             async with semaphore:
                 if budget.exhausted():
                     return vuln_id, None
-                record = await self._get_vuln_record(client, vuln_id, budget)
+                record = await self._get_vuln_record(client, vuln_id, deadline)
                 budget.record(success=record is not None)
                 return vuln_id, record
 
@@ -318,41 +317,30 @@ class OSVAnalyzer(Analyzer):
         self,
         client: InstrumentedAsyncClient,
         vuln_id: str,
-        budget: "_HydrationBudget | None" = None,
+        deadline: float,
     ) -> dict[str, Any] | None:
-        """One full OSV record, retrying only on 429. None when it stays unresolved.
-
-        The deadline is rechecked between attempts: it cannot cancel a request already in
-        flight, so without this the tail past the budget would be the whole retry ladder
-        (4 x 60s timeout + 35s of backoff). The residual tail is one request timeout plus one
-        backoff sleep, because the sleep below runs before the next iteration rechecks.
-        """
-        for attempt in range(1 + self.max_retries):
-            if budget is not None and attempt and budget.exhausted():
-                return None
-            try:
-                response = await client.get(f"{OSV_VULN_API_URL}/{vuln_id}")
-            except Exception as exc:
-                logger.warning(f"OSV vuln fetch failed for {vuln_id}: {type(exc).__name__}: {exc}")
-                return None
-
-            if response.status_code == 200:
-                try:
-                    record = response.json()
-                except ValueError as exc:
-                    # A proxy or CDN error page answering 200 must cost one id, not the analyzer.
-                    logger.warning(f"OSV vuln fetch for {vuln_id} returned an unparseable body: {exc}")
-                    return None
-                return record if isinstance(record, dict) else None
-            if response.status_code != 429:
-                logger.warning(f"OSV vuln fetch for {vuln_id} returned {response.status_code}")
-                return None
-
-            external_api_rate_limit_hits_total.labels(service=_OSV_SERVICE_LABEL).inc()
-            if attempt < self.max_retries:
-                await asyncio.sleep(self.retry_base_delay * (2**attempt))
-        logger.error(f"OSV vuln fetch for {vuln_id} rate limited after {1 + self.max_retries} attempts")
-        return None
+        """One full OSV record, or None when it stays unresolved."""
+        try:
+            response = await client.send_with_backoff(
+                "GET",
+                f"{OSV_VULN_API_URL}/{vuln_id}",
+                attempts=1 + self.max_retries,
+                base_delay=self.retry_base_delay,
+                deadline=deadline,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(f"OSV vuln fetch failed for {vuln_id}: {type(exc).__name__}: {exc}")
+            return None
+        if response.status_code != 200:
+            logger.warning(f"OSV vuln fetch for {vuln_id} returned {response.status_code}")
+            return None
+        try:
+            record = response.json()
+        except ValueError as exc:
+            # A proxy or CDN error page answering 200 must cost one id, not the analyzer.
+            logger.warning(f"OSV vuln fetch for {vuln_id} returned an unparseable body: {exc}")
+            return None
+        return record if isinstance(record, dict) else None
 
     async def _send_chunk(
         self,
@@ -362,61 +350,26 @@ class OSVAnalyzer(Analyzer):
         chunk_start: int,
         resends: int,
     ) -> int:
-        """POST one chunk, retrying it on 429. Returns how many of its components were lost."""
-        for attempt in range(1 + self.max_retries):
-            rate_limited, skipped = await self._post_and_handle(client, chunk, pending, chunk_start, resends)
-            if not rate_limited:
-                return skipped
-            if attempt < self.max_retries:
-                delay = self.retry_base_delay * (2**attempt)
-                logger.warning(
-                    f"OSV API rate limit hit for batch starting at {chunk_start} "
-                    f"(attempt {attempt + 1}/{1 + self.max_retries}), retrying in {delay:.1f}s"
-                )
-                await asyncio.sleep(delay)
-        logger.error(
-            f"OSV API rate limit persisted after {1 + self.max_retries} attempts; "
-            f"dropping batch starting at {chunk_start} ({len(chunk)} components)"
-        )
-        return len(chunk)
-
-    async def _post_and_handle(
-        self,
-        client: InstrumentedAsyncClient,
-        chunk: list[_Target],
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
-        chunk_start: int,
-        resends: int,
-    ) -> tuple[bool, int]:
-        """POST one batch and dispatch on response status.
-
-        Returns ``(rate_limited, skipped)``: ``rate_limited`` asks the caller to
-        retry the same chunk, ``skipped`` counts components this batch lost.
-        """
+        """POST one chunk and collect its stubs in ``pending``; returns how many of its components were lost."""
         try:
-            response = await client.post(self.api_url, json={"queries": [query for _, _, query in chunk]})
-        except httpx.TimeoutException:
-            logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
-            return False, len(chunk)
-        except httpx.ConnectError:
-            logger.warning("OSV API connection error")
-            return False, len(chunk)
-        except Exception as e:
-            logger.warning(f"OSV Analysis Exception: {type(e).__name__}: {e}")
-            return False, len(chunk)
-
+            response = await client.send_with_backoff(
+                "POST",
+                self.api_url,
+                attempts=1 + self.max_retries,
+                base_delay=self.retry_base_delay,
+                json={"queries": [query for _, _, query in chunk]},
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(f"OSV batch starting at {chunk_start} failed: {type(exc).__name__}: {exc}")
+            return len(chunk)
         if response.status_code == 200:
-            skipped = self._handle_success(response, chunk, pending)
-            return False, skipped
-        if response.status_code == 429:
-            external_api_rate_limit_hits_total.labels(service=_OSV_SERVICE_LABEL).inc()
-            return True, 0
+            return self._handle_success(response, chunk, pending)
         if response.status_code == 400 and resends:
-            return False, await self._resend_accepted(client, chunk, pending, chunk_start, response.text, resends - 1)
+            return await self._resend_accepted(client, chunk, pending, chunk_start, response.text, resends - 1)
         logger.warning(
             f"OSV Batch API error for batch starting at {chunk_start}: {response.status_code} {response.text[:200]}"
         )
-        return False, len(chunk)
+        return len(chunk)
 
     async def _resend_accepted(
         self,

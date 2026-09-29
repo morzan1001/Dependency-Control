@@ -1,5 +1,6 @@
 """HTTP client helpers for shared error handling and retry logic."""
 
+import asyncio
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -12,8 +13,20 @@ from typing_extensions import Self
 from app.core.metrics import (
     external_api_duration_seconds,
     external_api_errors_total,
+    external_api_rate_limit_hits_total,
     external_api_requests_total,
 )
+
+_MAX_RETRY_AFTER_SECONDS = 60.0
+
+
+def _retry_after_seconds(outcome: httpx.Response | httpx.TransportError) -> float | None:
+    if not isinstance(outcome, httpx.Response):
+        return None
+    try:
+        return min(float(outcome.headers["Retry-After"]), _MAX_RETRY_AFTER_SECONDS)
+    except (KeyError, ValueError):
+        return None
 
 
 class InstrumentedAsyncClient:
@@ -71,6 +84,37 @@ class InstrumentedAsyncClient:
         except Exception:
             self._record_error()
             raise
+
+    async def send_with_backoff(
+        self,
+        method: str,
+        url: str,
+        *,
+        attempts: int,
+        base_delay: float,
+        deadline: float | None = None,
+        **kwargs: Any,
+    ) -> httpx.Response:
+        """Retries 429, 5xx and transport errors; returns the last answer or re-raises the last error."""
+        loop = asyncio.get_running_loop()
+        outcome: httpx.Response | httpx.TransportError
+        for attempt in range(attempts):
+            try:
+                outcome = await self.request(method, url, **kwargs)
+            except httpx.TransportError as exc:
+                outcome = exc
+            if isinstance(outcome, httpx.Response):
+                if outcome.status_code == 429:
+                    external_api_rate_limit_hits_total.labels(service=self.service_name).inc()
+                elif outcome.status_code < 500:
+                    return outcome
+            delay = _retry_after_seconds(outcome) or base_delay * 2**attempt
+            if attempt == attempts - 1 or (deadline is not None and loop.time() + delay >= deadline):
+                break
+            await asyncio.sleep(delay)
+        if isinstance(outcome, httpx.TransportError):
+            raise outcome
+        return outcome
 
     @asynccontextmanager
     async def stream(self, method: str, url: str, **kwargs: Any) -> AsyncIterator[httpx.Response]:

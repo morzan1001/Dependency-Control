@@ -1,9 +1,6 @@
 """Unit tests for the OSV analyzer's pure helpers (CVSS-score extraction, withdrawn handling)."""
 
-from typing import Any
-
 import pytest
-from typing_extensions import Self
 
 from app.services.analyzers.osv import OSVAnalyzer
 
@@ -139,121 +136,6 @@ class TestCvssVersionAwareSeverity:
     )
     def test_the_severity_comes_from_the_newest_rating_in_range(self, severity_array, expected):
         assert self.analyzer._severity_from_cvss_array(severity_array) == expected
-
-
-class _Response:
-    """Minimal stand-in for httpx.Response."""
-
-    def __init__(self, status_code: int, payload: dict[str, Any] | None = None) -> None:
-        self.status_code = status_code
-        self._payload = payload or {}
-
-    def json(self) -> dict[str, Any]:
-        return self._payload
-
-
-class _FakeCache:
-    """In-memory replacement for cache_service (mget/mset only)."""
-
-    def __init__(self) -> None:
-        self.store: dict[str, Any] = {}
-
-    async def mget(self, keys: list[str]) -> dict[str, Any]:
-        return {k: self.store.get(k) for k in keys}
-
-    async def mset(self, mapping: dict[str, Any], ttl_seconds: int = 0) -> None:
-        self.store.update(mapping)
-
-
-def _scripted_client_factory(responses: list[_Response], call_counter: list[int]):
-    """InstrumentedAsyncClient replacement returning ``responses`` in order (repeating the last) and counting .post calls."""
-
-    class _ScriptedClient:
-        def __init__(self, *_a: Any, **_k: Any) -> None: ...
-
-        async def __aenter__(self) -> Self:
-            return self
-
-        async def __aexit__(self, *_a: object) -> None:
-            return None
-
-        async def post(self, _url: str, **_kwargs: Any) -> _Response:
-            idx = min(call_counter[0], len(responses) - 1)
-            call_counter[0] += 1
-            return responses[idx]
-
-    return _ScriptedClient
-
-
-def _vuln_response() -> _Response:
-    return _Response(
-        200,
-        {
-            "results": [
-                {"vulns": [{"id": "GHSA-boom", "summary": "bad", "severity": [{"type": "CVSS_V3", "score": "9.8"}]}]}
-            ]
-        },
-    )
-
-
-class TestRateLimitRetry:
-    """A 429 must retry the chunk, not silently drop up to 500 components."""
-
-    def setup_method(self):
-        self.analyzer = OSVAnalyzer()
-        self.component = {
-            "name": "boompkg",
-            "version": "1.0.0",
-            "purl": "pkg:pypi/boompkg@1.0.0",
-        }
-
-    @pytest.mark.asyncio
-    async def test_rate_limited_chunk_is_retried_and_succeeds(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # First POST is throttled (429); the retry returns real vulns.
-        counter = [0]
-        client_cls = _scripted_client_factory([_Response(429), _vuln_response()], counter)
-        monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", client_cls)
-        monkeypatch.setattr("app.services.analyzers.osv.cache_service", _FakeCache())
-        monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", _noop_sleep)
-
-        results = (await self.analyzer.analyze({}, parsed_components=[self.component]))["osv_vulnerabilities"]
-
-        assert counter[0] == 2
-        assert len(results) == 1
-        assert results[0]["component"] == "boompkg"
-        assert results[0]["vulnerabilities"][0]["id"] == "GHSA-boom"
-
-    @pytest.mark.asyncio
-    async def test_persistent_rate_limit_gives_up_after_bounded_attempts(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # Always 429 -> bounded attempts, no infinite loop, no results.
-        counter = [0]
-        client_cls = _scripted_client_factory([_Response(429)], counter)
-        monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", client_cls)
-        monkeypatch.setattr("app.services.analyzers.osv.cache_service", _FakeCache())
-        monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", _noop_sleep)
-
-        results = (await self.analyzer.analyze({}, parsed_components=[self.component]))["osv_vulnerabilities"]
-
-        assert counter[0] == 1 + self.analyzer.max_retries
-        assert results == []
-
-    @pytest.mark.asyncio
-    async def test_success_first_try_does_not_retry(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        counter = [0]
-        client_cls = _scripted_client_factory([_vuln_response()], counter)
-        monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", client_cls)
-        monkeypatch.setattr("app.services.analyzers.osv.cache_service", _FakeCache())
-        monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", _noop_sleep)
-
-        results = (await self.analyzer.analyze({}, parsed_components=[self.component]))["osv_vulnerabilities"]
-
-        assert counter[0] == 1
-        assert len(results) == 1
-
-
-async def _noop_sleep(_seconds: float) -> None:
-    """Skip real backoff delays in tests."""
-    return
 
 
 class TestParseCvssScoreNonFinite:

@@ -1,63 +1,43 @@
 """What OSV is asked for each component, and whose name a cached answer carries."""
 
+import json
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 
 from app.core.cache import CacheKeys
 from app.services.analyzers import osv
 from app.services.analyzers.osv import OSVAnalyzer
+from tests.helpers.osv import batch_queries, osv_cache, serve_osv
 
 _SBOM: dict[str, Any] = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": []}
 
 
-def _client(rejected: frozenset[str] = frozenset(), names_index: bool = True) -> MagicMock:
-    """A querybatch stub recording payloads; like OSV, a ``rejected`` purl fails the batch with 400 naming its index."""
-    client = MagicMock()
-    client.payloads = []
+def _querybatch(rejected: frozenset[str] = frozenset(), names_index: bool = True):
+    """Answers every query clean; like OSV, a ``rejected`` purl fails the batch with 400 naming its index."""
 
-    async def _post(url: str, json: dict[str, Any]) -> MagicMock:
-        client.payloads.append(json)
-        response = MagicMock()
-        purls = [query["package"].get("purl") for query in json["queries"]]
+    def handle(request: httpx.Request) -> httpx.Response:
+        queries = json.loads(request.content)["queries"]
+        purls = [query["package"].get("purl") for query in queries]
         bad = next((index for index, purl in enumerate(purls) if purl in rejected), None)
         if bad is None:
-            response.status_code = 200
-            response.json.return_value = {"results": [{} for _ in json["queries"]]}
-        else:
-            response.status_code = 400
-            message = f"error in query at index {bad}: invalid qualifiers" if names_index else "Bad Request"
-            response.text = f'{{"code":3,"message":"{message}"}}'
-        return response
+            return httpx.Response(200, json={"results": [{} for _ in queries]})
+        message = f"error in query at index {bad}: invalid qualifiers" if names_index else "Bad Request"
+        return httpx.Response(400, text=f'{{"code":3,"message":"{message}"}}')
 
-    client.post = AsyncMock(side_effect=_post)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
-    return client
+    return handle
 
 
 @pytest.fixture
 def cache(monkeypatch):
-    store: dict[str, Any] = {}
-
-    async def _mget(keys):
-        return {key: store.get(key) for key in keys}
-
-    async def _mset(mapping, ttl=None):
-        store.update(mapping)
-        return True
-
-    monkeypatch.setattr("app.services.analyzers.osv.cache_service.mget", _mget)
-    monkeypatch.setattr("app.services.analyzers.osv.cache_service.mset", _mset)
-    return store
+    return osv_cache(monkeypatch)
 
 
 async def _queries(monkeypatch, components: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-    client = _client()
-    monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", lambda *a, **k: client)
+    seen = serve_osv(monkeypatch, _querybatch())
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=components)
-    return [query for payload in client.payloads for query in payload["queries"]], result
+    return batch_queries(seen), result
 
 
 def _npm(name: str, qualifiers: str = "") -> dict[str, Any]:
@@ -236,26 +216,24 @@ class TestRejectedQueries:
         bad = _npm("foo", "?1a=b")
         components = [_npm(f"good-{i}") for i in range(5)]
         components.insert(3, bad)
-        client = _client(rejected=frozenset({bad["purl"]}), names_index=names_index)
-        monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", lambda *a, **k: client)
+        seen = serve_osv(monkeypatch, _querybatch(rejected=frozenset({bad["purl"]}), names_index=names_index))
 
         result = await OSVAnalyzer().analyze(_SBOM, parsed_components=components)
 
         assert result["partial_components_skipped"] == 1
         assert set(cache) == {CacheKeys.osv(c["purl"]) for c in components if c is not bad}
         if names_index:
-            assert len(client.payloads) == 2
+            assert len(seen) == 2
 
     @pytest.mark.asyncio
     async def test_resends_stop_after_the_cap(self, cache, monkeypatch):
         rejected = [_npm(f"bad-{i}", "?1a=b") for i in range(osv._MAX_REJECTION_RESENDS + 1)]
         components = [*rejected, _npm("good")]
-        client = _client(rejected=frozenset(c["purl"] for c in rejected))
-        monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", lambda *a, **k: client)
+        seen = serve_osv(monkeypatch, _querybatch(rejected=frozenset(c["purl"] for c in rejected)))
 
         result = await OSVAnalyzer().analyze(_SBOM, parsed_components=components)
 
-        assert len(client.payloads) == 1 + osv._MAX_REJECTION_RESENDS
+        assert len(seen) == 1 + osv._MAX_REJECTION_RESENDS
         assert result["partial_components_skipped"] == len(components)
         assert cache == {}
 
