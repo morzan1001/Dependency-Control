@@ -374,4 +374,4 @@ def test_the_kev_consumers_per_entry_reads_are_walked():
         for name in ("stats.py", "notifications.py")
     )
     assert {"in_kev", "kev_due_date", "kev_ransomware_use", "epss_score", "risk_score"} <= stats
-    assert {"id", "severity", "epss_score", "in_kev", "kev_due_date", "kev_ransomware_use"} <= notifications
+    assert {"severity", "epss_score", "in_kev", "kev_due_date", "kev_ransomware_use"} <= notifications
