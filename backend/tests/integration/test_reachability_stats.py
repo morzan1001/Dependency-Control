@@ -388,3 +388,13 @@ async def test_a_rescan_is_enriched_from_the_callgraph_of_the_build_it_re_analys
     assert summary == ["reachability: Success (1 enriched)"]
     assert findings[0]["reachable"] is True
     assert not (await db.scans.find_one({"_id": rescan_id})).get("reachability_pending")
+
+
+@pytest.mark.asyncio
+async def test_rescans_pointing_at_each_other_find_no_callgraph_instead_of_recursing(db):
+    for scan_id, parent in (("rescan-a", "rescan-b"), ("rescan-b", "rescan-a")):
+        await db.scans.insert_one(
+            {"_id": scan_id, "project_id": _PROJECT_ID, "status": "completed", "original_scan_id": parent}
+        )
+
+    assert await fetch_callgraphs(_PROJECT_ID, "rescan-a", db) == []

@@ -11,6 +11,7 @@ from pymongo import UpdateOne
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
+    MAX_RESCAN_HOPS,
     REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS,
     REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO,
     REACHABILITY_CONFIDENCE_NOT_USED,
@@ -242,13 +243,17 @@ async def fetch_callgraphs(
     from app.repositories.scans import ScanRepository
 
     callgraph_repo = CallgraphRepository(db)
-    callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
-    if callgraphs:
-        return callgraphs
-
-    scan = await ScanRepository(db).get_minimal_by_id(scan_id)
-    if scan and scan.original_scan_id:
-        return await fetch_callgraphs(project_id, scan.original_scan_id, db)
+    scan_repo = ScanRepository(db)
+    # Bounded, so a cyclic rescan pointer cannot hang the analysis.
+    for _hop in range(MAX_RESCAN_HOPS + 1):
+        if callgraphs := await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id):
+            return callgraphs
+        scan = await scan_repo.get_minimal_by_id(scan_id)
+        if not scan or not scan.original_scan_id:
+            break
+        scan_id = scan.original_scan_id
+    else:
+        return []
     if scan and scan.pipeline_id:
         return await callgraph_repo.find_all_minimal_by_pipeline(project_id, scan.pipeline_id)
     return []
