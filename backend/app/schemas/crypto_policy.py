@@ -45,7 +45,8 @@ class CryptoRule(BaseModel):
         description="Match if (protocol_type, version) combines to one of these strings (case-insensitive)",
     )
     quantum_vulnerable: bool | None = Field(
-        None, description="When true, match if primitive is PKE/SIGNATURE/KEM and name is in match_name_patterns"
+        None,
+        description="When true, match if primitive is PKE/SIGNATURE/KEM/KEY-AGREE and name is in match_name_patterns",
     )
 
     # Certificate-Lifecycle thresholds (in days). None = "not used by this rule"
@@ -116,7 +117,12 @@ _MAX_RULES = 200
 
 
 def _unevaluable(rule: CryptoRule) -> str | None:
-    """Why no analyzer would evaluate the rule as written, or None when one would."""
+    """Why the rule cannot be stored, or why no analyzer would evaluate it while enabled; None otherwise."""
+    oversized = [f for f in _BOUNDED_LISTS if len(getattr(rule, f)) > _MAX_LIST_ITEMS]
+    if oversized:
+        return f"{', '.join(oversized)} hold more than {_MAX_LIST_ITEMS} entries"
+    if not rule.enabled:
+        return None
     # The lifecycle and cipher analyzers select rules by these fields, not by finding type.
     families = [
         finding_types
@@ -147,9 +153,6 @@ def _unevaluable(rule: CryptoRule) -> str | None:
     ladder = [getattr(rule, f) for f in _EXPIRY_LADDER if getattr(rule, f) is not None]
     if ladder != sorted(ladder):
         return "expiry thresholds must not decrease from critical to low"
-    oversized = [f for f in _BOUNDED_LISTS if len(getattr(rule, f)) > _MAX_LIST_ITEMS]
-    if oversized:
-        return f"{', '.join(oversized)} hold more than {_MAX_LIST_ITEMS} entries"
     return None
 
 

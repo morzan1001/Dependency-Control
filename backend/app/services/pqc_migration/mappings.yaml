@@ -68,5 +68,8 @@ timelines:
 # Vulnerable-family aliases that may appear in asset names from CBOM tools.
 family_aliases:
   "Diffie-Hellman": "DH"
+  "ECDHE": "ECDH"
+  "X25519": "ECDH"
+  "X448": "ECDH"
   "EC-DSA": "ECDSA"
   "ecDSA": "ECDSA"

@@ -49,6 +49,15 @@ def test_a_rule_driven_rule_without_a_subject_matcher_is_refused(fields):
     assert "'r1'" in _refused(_rule(**fields))
 
 
+def test_a_disabled_rule_is_not_held_to_what_an_analyzer_evaluates():
+    """A disabled rule never runs, so a legacy one must not block every later save of its policy."""
+    CryptoPolicyPutRequest(rules=[_rule(enabled=False, match_primitive=None, match_name_patterns=[])])
+
+
+def test_a_disabled_rule_still_respects_the_list_bound():
+    assert "'r1'" in _refused(_rule(enabled=False, match_name_patterns=[f"p{index}" for index in range(51)]))
+
+
 @pytest.mark.parametrize(
     ("finding_type", "fields"),
     [
@@ -82,9 +91,14 @@ def test_an_inverted_expiry_ladder_is_refused():
 @pytest.mark.parametrize("ids", [("x", "x"), ("", "y")])
 def test_duplicate_or_empty_rule_ids_are_refused(ids):
     """Rules are keyed by rule_id downstream, so a duplicate silently disarms the first one."""
-    _refused(*(_rule(rule_id) for rule_id in ids))
+    assert "duplicate or empty rule_id" in _refused(*(_rule(rule_id) for rule_id in ids))
 
 
 def test_the_rule_count_and_each_list_matcher_are_bounded():
-    _refused(*(_rule(f"r{index}") for index in range(201)))
-    _refused(_rule(match_name_patterns=[f"p{index}" for index in range(51)]))
+    assert "200" in _refused(*(_rule(f"r{index}") for index in range(201)))
+    assert "more than 50 entries" in _refused(_rule(match_name_patterns=[f"p{index}" for index in range(51)]))
+
+
+def test_a_policy_at_the_rule_and_list_bounds_is_accepted():
+    CryptoPolicyPutRequest(rules=[_rule(f"r{index}") for index in range(200)])
+    CryptoPolicyPutRequest(rules=[_rule(match_name_patterns=[f"p{index}" for index in range(50)])])

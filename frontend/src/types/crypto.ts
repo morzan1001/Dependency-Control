@@ -8,4 +8,9 @@ export type CryptoPrimitive =
   | "kem"
   | "kdf"
   | "drbg"
+  | "key-agree"
+  | "ae"
+  | "xof"
+  | "combiner"
+  | "unknown"
   | "other";

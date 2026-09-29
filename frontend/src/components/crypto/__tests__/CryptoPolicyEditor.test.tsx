@@ -61,3 +61,20 @@ describe("CryptoPolicyEditor prop resync", () => {
     expect(onSave).toHaveBeenCalledWith([]);
   });
 });
+
+describe("CryptoPolicyEditor add rule", () => {
+  it("adds a new custom rule disabled, so saving it before its matchers are filled flags nothing", async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined);
+    render(<CryptoPolicyEditor initialRules={[]} onSave={onSave} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Add custom rule" }));
+    const [ruleId, name] = screen.getAllByRole("textbox");
+    fireEvent.change(ruleId, { target: { value: "custom-rc4" } });
+    fireEvent.change(name, { target: { value: "Block RC4" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add" }));
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
+    expect(onSave.mock.calls[0][0]).toEqual([expect.objectContaining({ rule_id: "custom-rc4", enabled: false })]);
+  });
+});

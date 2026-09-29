@@ -5,6 +5,8 @@ from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analyzers.crypto.matcher import asset_in_rule_scope, rule_matches
+from app.services.cbom_parser import parse_crypto_components
+from app.services.crypto_policy.seeder import load_seed_rules
 
 
 def _asset(**kw):
@@ -133,7 +135,7 @@ def test_protocol_version_matching(proto, version, match_list, expected):
     [
         ("RSA", CryptoPrimitive.PKE, True),
         ("ECDSA", CryptoPrimitive.SIGNATURE, True),
-        ("DH", CryptoPrimitive.KEM, True),
+        ("DH", CryptoPrimitive.KEY_AGREE, True),
         ("AES", CryptoPrimitive.BLOCK_CIPHER, False),
         ("SHA-256", CryptoPrimitive.HASH, False),
     ],
@@ -154,3 +156,63 @@ def test_all_criteria_are_and():
     )
     assert rule_matches(asset_short, rule) is True
     assert rule_matches(asset_long, rule) is False
+
+
+def _seeded_rule_ids_matching(component):
+    [asset] = parse_crypto_components([component])
+    stored = CryptoAsset(project_id="p", scan_id="s", **asset.model_dump())
+    return {rule.rule_id for rule in load_seed_rules() if rule.enabled and rule_matches(stored, rule)}
+
+
+def _algorithm(name, primitive, **properties):
+    return {
+        "type": "cryptographic-asset",
+        "bom-ref": f"crypto/{name}",
+        "name": name,
+        "cryptoProperties": {
+            "assetType": "algorithm",
+            "algorithmProperties": {"primitive": primitive, **properties},
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "component,expected",
+    [
+        (
+            _algorithm("RSA-1024", "pke", parameterSetIdentifier="1024"),
+            {"nist-131a-rsa-min-2048", "pqc-quantum-vulnerable-pke"},
+        ),
+        (
+            _algorithm("rsa1024", "pke", parameterSetIdentifier="1024"),
+            {"nist-131a-rsa-min-2048", "pqc-quantum-vulnerable-pke"},
+        ),
+        (_algorithm("SHA1withRSA", "signature"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("ECDSA-P256", "signature", curve="secp256r1"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("ECDH", "key-agree"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("X25519", "key-agree"), {"pqc-quantum-vulnerable-pke"}),
+        (_algorithm("ML-DSA-65", "signature"), set()),
+        (_algorithm("SLH-DSA-SHA2-128s", "signature"), set()),
+        (_algorithm("AES-256-GCM", "ae"), set()),
+    ],
+    ids=lambda value: value["name"] if isinstance(value, dict) else None,
+)
+def test_seeded_rules_match_full_cyclonedx_algorithm_names(component, expected):
+    assert _seeded_rule_ids_matching(component) == expected
+
+
+def test_a_family_name_token_matches_a_bare_pattern():
+    assert _seeded_rule_ids_matching(_algorithm("DES-CBC", "block-cipher")) == {"nist-131a-des"}
+
+
+@pytest.mark.parametrize("name", ["SHA1withRSA", "ECDH-RSA"])
+def test_a_glob_pattern_keeps_whole_name_semantics(name):
+    assert rule_matches(_asset(name=name), _rule(match_name_patterns=["RSA*"])) is False
+
+
+def test_a_rule_without_subject_criteria_covers_no_asset():
+    rule = _rule(finding_type=FindingType.CRYPTO_WEAK_PROTOCOL, match_cipher_weaknesses=["weak-cipher-rc4"])
+    asset = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER)
+
+    assert asset_in_rule_scope(asset, rule) is False
+    assert rule_matches(asset, rule) is False

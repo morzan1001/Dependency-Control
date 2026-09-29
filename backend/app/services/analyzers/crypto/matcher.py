@@ -1,5 +1,6 @@
 """CryptoRule -> CryptoAsset matcher. AND semantics; glob matching is case-insensitive."""
 
+import re
 from fnmatch import fnmatchcase
 
 from app.models.crypto_asset import CryptoAsset
@@ -24,6 +25,9 @@ def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
 def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
     """True when the asset is within the rule's subject scope (primitive/name/curve/
     protocol/quantum class), ignoring threshold criteria; used for compliance applicability."""
+    if not (rule.match_primitive or rule.match_name_patterns or rule.match_curves or rule.match_protocol_versions):
+        return False
+
     if rule.match_primitive is not None and asset.primitive != rule.match_primitive:
         return False
 
@@ -48,15 +52,26 @@ def _name_or_variant_matches(asset: CryptoAsset, patterns: list[str]) -> bool:
     candidates = [asset.name]
     if asset.variant:
         candidates.append(asset.variant)
+    lowered = [pat.lower() for pat in patterns]
     for candidate in candidates:
         c_lower = candidate.lower()
-        for pat in patterns:
-            pat_lower = pat.lower()
-            if fnmatchcase(c_lower, pat_lower):
-                return True
-            if pat_lower == c_lower:
-                return True
+        tokens = _family_tokens(c_lower)
+        # Tokens hold no glob characters, so only a glob-free pattern can equal one.
+        if any(pat == c_lower or pat in tokens or fnmatchcase(c_lower, pat) for pat in lowered):
+            return True
     return False
+
+
+# ML-DSA, SLH-DSA and FN-DSA are post-quantum; their "dsa" token must not read as classic DSA.
+_POST_QUANTUM_PREFIXES = ("ml-", "slh-", "fn-")
+
+
+def _family_tokens(name: str) -> set[str]:
+    """RSA-2048 -> {rsa, 2048}, SHA1withRSA -> {sha1, sha, rsa}: name parts plus the letters before a digit run."""
+    if name.startswith(_POST_QUANTUM_PREFIXES):
+        return set()
+    tokens = {token for token in re.split(r"[^a-z0-9]+|with", name) if token}
+    return tokens | {m.group(1) for token in tokens if (m := re.match(r"([a-z]+)\d", token))}
 
 
 def _protocol_version_matches(asset: CryptoAsset, match_list: list[str]) -> bool:

@@ -10,7 +10,7 @@ rules:
       recommends migration to ML-KEM, ML-DSA, and SLH-DSA by 2035.
     finding_type: crypto_quantum_vulnerable
     default_severity: MEDIUM
-    match_name_patterns: ["RSA", "DSA", "ECDSA", "ECDH", "DH", "Diffie-Hellman", "EC-DSA"]
+    match_name_patterns: ["RSA", "DSA", "ECDSA", "ECDH", "ECDHE", "X25519", "X448", "DH", "Diffie-Hellman", "EC-DSA"]
     quantum_vulnerable: true
     source: nist-pqc
     references:

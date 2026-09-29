@@ -664,7 +664,6 @@ def _aggregate_crypto_rules(
         report.skipped[_CRYPTO_RULES] = _NO_CRYPTO_ASSETS
         return
 
-    # A seeded lifecycle or cipher rule constrains no subject, so the matcher alone would fire it on every asset.
     rules = [rule for rule in load_seed_rules() if rule.enabled and rule.finding_type in RULE_DRIVEN_FINDING_TYPES]
     for parsed_input in parsed_inputs:
         assets = [
