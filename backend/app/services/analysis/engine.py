@@ -6,7 +6,6 @@ import re
 import time
 import uuid
 from collections.abc import Callable
-from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -57,7 +56,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
-from app.schemas.sbom import ParsedDependency
+from app.schemas.sbom import ParsedSBOM
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.integrations import decorate_github_pr, decorate_gitlab_mr
 from app.services.analysis.notifications import notify_analysis_failed, send_scan_notifications
@@ -394,15 +393,6 @@ def _build_settings_resolver(
     return _settings_for
 
 
-@dataclass
-class _ScanDependencies:
-    """Dependencies collected across a scan's SBOMs. ``parsed`` stays False when no SBOM
-    reached the parser, so an inventory is never replaced by nothing."""
-
-    parsed: bool = False
-    items: list[ParsedDependency] = field(default_factory=list)
-
-
 async def _process_sbom(
     index: int,
     current_sbom: dict[str, Any],
@@ -415,18 +405,16 @@ async def _process_sbom(
     project_analyzer_settings: dict[str, dict[str, Any]] | None = None,
     project_id: str | None = None,
     scan_type: str | None = None,
-    deps_to_store: "_ScanDependencies | None" = None,
+    payload: list[ParsedSBOM | None] | None = None,
 ) -> list[str]:
     """Process a single resolved SBOM: parse, collect deps, run analyzers; returns the results summary."""
     fallback_source = f"SBOM #{index + 1}"
 
     parsed_sbom, parsed_components = _parse_and_track_sbom(current_sbom)
 
-    # Collected rather than stored here: the unique index spans the scan, so every SBOM's
-    # dependencies must be merged before the first write (see store_scan_dependencies).
-    if deps_to_store is not None and parsed_sbom is not None and project_id and current_sbom:
-        deps_to_store.parsed = True
-        deps_to_store.items.extend(parsed_sbom.dependencies)
+    # Collected rather than stored here: the inventory is replaced once per payload (see store_scan_dependencies).
+    if payload is not None and current_sbom:
+        payload.append(parsed_sbom)
 
     if parsed_sbom is not None and parsed_sbom.crypto_assets and project_id:
         await _persist_embedded_crypto_assets(parsed_sbom, project_id, scan_id, db)
@@ -1016,6 +1004,7 @@ def _partial_run_reasons(
     failed_analyzers: list[str],
     sbom_load_failed: bool,
     sbom_load_failures: int,
+    sbom_parse_failures: int,
     sboms_expected: int,
     persisted_findings_count: int,
     total_findings_count: int,
@@ -1025,6 +1014,10 @@ def _partial_run_reasons(
         reasons.append(f"analyzers failed or returned partial results: {', '.join(failed_analyzers)}")
     if not sbom_load_failed and sbom_load_failures:
         reasons.append(f"{sbom_load_failures} of {sboms_expected} SBOMs failed to load")
+    if sbom_parse_failures:
+        reasons.append(
+            f"{sbom_parse_failures} of {sboms_expected} SBOMs failed to parse; dependency inventory left unchanged"
+        )
     if persisted_findings_count < total_findings_count:
         reasons.append(f"only {persisted_findings_count} of {total_findings_count} findings were persisted")
     return reasons
@@ -1173,9 +1166,10 @@ async def run_analysis(
             sboms_expected,
         )
 
-    deps_to_store = None if sbom_load_failures else _ScanDependencies()
+    payload: list[ParsedSBOM | None] = []
     for index, current_sbom in enumerate(resolved_sboms):
         if current_sbom is None:
+            payload.append(None)
             continue
         sbom_results = await _process_sbom(
             index,
@@ -1189,7 +1183,7 @@ async def run_analysis(
             project_analyzer_settings=project_analyzer_settings,
             project_id=project_id,
             scan_type=scan_type,
-            deps_to_store=deps_to_store,
+            payload=payload,
         )
         resolved_sboms[index] = None
         results_summary.extend(sbom_results)
@@ -1198,10 +1192,12 @@ async def run_analysis(
         logger.warning("Scan %s: the claim moved to another run; stopping before writing results.", scan_id)
         return None
 
-    if deps_to_store is not None and deps_to_store.parsed and project_id:
-        stored = await store_scan_dependencies(deps_to_store.items, project_id, scan_id, DependencyRepository(db))
-        del deps_to_store
-        logger.info(f"Stored {stored} dependencies for scan {scan_id}")
+    sbom_parse_failures = payload.count(None) - sbom_load_failures
+    if project_id:
+        stored = await store_scan_dependencies(payload, project_id, scan_id, DependencyRepository(db))
+        if stored is not None:
+            logger.info(f"Stored {stored} dependencies for scan {scan_id}")
+    del payload
 
     external_load_start = datetime.now(timezone.utc)
     await _aggregate_external_results(aggregator, result_repo, scan_id, results_summary)
@@ -1262,6 +1258,7 @@ async def run_analysis(
         failed_analyzers,
         sbom_load_failed,
         sbom_load_failures,
+        sbom_parse_failures,
         sboms_expected,
         persisted_findings_count,
         total_findings_count,

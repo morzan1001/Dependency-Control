@@ -39,6 +39,7 @@ from app.schemas.ingest import (
 )
 from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
+from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.dependency_store import store_scan_dependencies
 from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs
@@ -180,7 +181,7 @@ async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_i
     }
 
 
-def _parse_one_sbom(sbom: Any, index: int, warnings: list[str]) -> Any:
+def _parse_one_sbom(sbom: Any, index: int, warnings: list[str]) -> ParsedSBOM:
     """Parse one SBOM; surfaces skipped-component loss as a response warning."""
     parsed_sbom = parse_sbom(sbom)
     logger.info(
@@ -208,22 +209,17 @@ async def _process_sboms(
     dep_repo: "DependencyRepository",
 ) -> tuple[list[dict[str, Any]], list[str], int, int, int]:
     """Upload and parse ALL SBOMs before the first dependency write; returns
-    (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted).
-
-    The scan's dependency inventory is replaced only when every SBOM uploaded and
-    parsed, so a mixed [good, malformed] payload cannot wipe a prior contribution.
-    """
+    (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted)."""
     sbom_refs: list[dict[str, Any]] = []
     warnings: list[str] = []
-    parsed_sboms: list[Any] = []
-    sboms_failed = 0
+    parsed_sboms: list[ParsedSBOM | None] = []
 
     for idx, sbom in enumerate(sboms):
         try:
             ref = await _upload_sbom_to_gridfs(fs, sbom, scan_id)
             sbom_refs.append(ref)
         except Exception as e:
-            sboms_failed += 1
+            parsed_sboms.append(None)
             warnings.append(f"SBOM {idx + 1}: Failed to upload to storage")
             logger.exception("Failed to upload SBOM to GridFS: %s", e)
             continue
@@ -231,20 +227,16 @@ async def _process_sboms(
         try:
             parsed_sboms.append(_parse_one_sbom(sbom, idx, warnings))
         except Exception as e:
-            sboms_failed += 1
+            parsed_sboms.append(None)
             warnings.append(f"SBOM {idx + 1}: Failed to parse dependencies")
             logger.exception("Failed to extract dependencies from SBOM: %s", e)
 
-    total_deps_inserted = 0
-    if sboms_failed:
-        if parsed_sboms:
-            warnings.append("Dependency inventory left unchanged: at least one SBOM of this payload failed to process")
-    else:
-        total_deps_inserted = await store_scan_dependencies(
-            [dep for parsed_sbom in parsed_sboms for dep in parsed_sbom.dependencies], project_id, scan_id, dep_repo
-        )
+    sboms_failed = parsed_sboms.count(None)
+    total_deps_inserted = await store_scan_dependencies(parsed_sboms, project_id, scan_id, dep_repo)
+    if total_deps_inserted is None and sboms_failed < len(parsed_sboms):
+        warnings.append("Dependency inventory left unchanged: at least one SBOM of this payload failed to process")
 
-    return sbom_refs, warnings, len(parsed_sboms), sboms_failed, total_deps_inserted
+    return sbom_refs, warnings, len(parsed_sboms) - sboms_failed, sboms_failed, total_deps_inserted or 0
 
 
 @router.post(

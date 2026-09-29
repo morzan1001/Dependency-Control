@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from app.models.dependency import Dependency
 from app.repositories.dependencies import DependencyRepository
-from app.schemas.sbom import ParsedDependency
+from app.schemas.sbom import ParsedDependency, ParsedSBOM
 from app.services.sbom_parser import merge_duplicate_dependencies
 
 _DEP_CHUNK_SIZE = 500
@@ -46,13 +46,16 @@ def _parsed_dep_to_dependency(
 
 
 async def store_scan_dependencies(
-    dependencies: list[ParsedDependency],
+    parsed_sboms: list[ParsedSBOM | None],
     project_id: str,
     scan_id: str,
     dep_repo: DependencyRepository,
-) -> int:
-    """Replace the scan's dependency inventory; merges cross-SBOM duplicates first (the unique index spans the scan)."""
-    merged, _ = merge_duplicate_dependencies(dependencies)
+) -> int | None:
+    """Replace the scan's inventory with the payload's merged dependencies; writes nothing and returns None
+    when an SBOM failed (None), so a re-run cannot swap a stored complete inventory for a partial one."""
+    if not parsed_sboms or None in parsed_sboms:
+        return None
+    merged, _ = merge_duplicate_dependencies([dep for sbom in parsed_sboms if sbom for dep in sbom.dependencies])
     # Deletes only rows no write since this one has touched, so after a failure part-way or an
     # overlapping store of the same scan the newest write's rows are all still there.
     written_at = datetime.now(timezone.utc)

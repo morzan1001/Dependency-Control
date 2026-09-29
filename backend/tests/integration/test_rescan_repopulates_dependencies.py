@@ -44,6 +44,8 @@ _SBOM_A = _cyclonedx_sbom(
     ]
 )
 _SBOM_B = _cyclonedx_sbom([("flask", "3.0.0", "pkg:pypi/flask@3.0.0")])
+# The parser rejects a non-object metadata, the shape prod CI retries carry.
+_MALFORMED_SBOM = {**_SBOM_B, "metadata": []}
 
 
 def _gridfs_ref(file_id: str) -> dict:
@@ -175,6 +177,33 @@ async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _gridfs_
     assert {(d["name"], d["version"]) for d in docs} == {(n, v) for n, v, _ in ingest_stored}, (
         "a partially resolved run must not wipe or halve the stored dependency set"
     )
+
+
+@pytest.mark.asyncio
+async def test_an_unparsable_sbom_keeps_the_stored_dependencies_and_flags_the_scan(db, monkeypatch):
+    fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _MALFORMED_SBOM})
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
+    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    await _seed_stored_dependency(db, scan.id, "flask", "3.0.0", "pkg:pypi/flask@3.0.0")
+
+    assert await run_analysis(scan.id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+
+    assert [d["name"] for d in await _dependency_docs(db, scan.id)] == ["flask"]
+    assert "1 of 2 SBOMs failed to parse" in (await db.scans.find_one({"_id": scan.id}))["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_rescan_with_an_unparsable_sbom_stores_no_partial_inventory(db, monkeypatch):
+    fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _MALFORMED_SBOM})
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
+    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    scan_id = await _seed_rescan(db, refs)
+
+    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+
+    assert await _dependency_docs(db, scan_id) == []
 
 
 @pytest.mark.asyncio

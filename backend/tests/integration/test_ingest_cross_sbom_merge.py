@@ -10,7 +10,7 @@ from bson import ObjectId
 from app.api.v1.endpoints.ingest import _process_sboms
 from app.core.init_db import create_indexes
 from app.repositories.dependencies import DependencyRepository
-from app.schemas.sbom import ParsedDependency
+from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 from app.services import dependency_store
 from app.services.dependency_store import store_scan_dependencies
 
@@ -176,11 +176,17 @@ async def test_the_store_merges_duplicates_its_caller_did_not(db):
     first = ParsedDependency(name="libssl3", version="3.0.11", purl=_PURL, locations=["/usr/lib/libssl.so.3"])
     second = ParsedDependency(name="libssl3", version="3.0.11", purl=_PURL, locations=["/usr/share/doc/libssl3"])
 
-    stored = await store_scan_dependencies([first, second], _PROJECT_ID, _SCAN_ID, DependencyRepository(db))
+    stored = await store_scan_dependencies(
+        [_sbom(first), _sbom(second)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
+    )
 
     assert stored == 1
     docs = [d async for d in db.dependencies.find({"scan_id": _SCAN_ID})]
     assert [d["locations"] for d in docs] == [["/usr/lib/libssl.so.3", "/usr/share/doc/libssl3"]]
+
+
+def _sbom(*dependencies: ParsedDependency) -> ParsedSBOM:
+    return ParsedSBOM(format=SBOMFormat.CYCLONEDX, dependencies=list(dependencies))
 
 
 def _dep(name: str, **fields) -> ParsedDependency:
@@ -197,7 +203,7 @@ async def test_a_store_that_fails_part_way_keeps_the_previous_inventory(db, monk
     """A re-ingest that dies between chunks must not leave the scan with a truncated inventory."""
     await create_indexes(db)
     repo = DependencyRepository(db)
-    await store_scan_dependencies([_dep("old-only"), _dep("shared")], _PROJECT_ID, _SCAN_ID, repo)
+    await store_scan_dependencies([_sbom(_dep("old-only"), _dep("shared"))], _PROJECT_ID, _SCAN_ID, repo)
 
     build = dependency_store._parsed_dep_to_dependency
 
@@ -210,7 +216,7 @@ async def test_a_store_that_fails_part_way_keeps_the_previous_inventory(db, monk
     monkeypatch.setattr(dependency_store, "_parsed_dep_to_dependency", fail_on_second_chunk)
     with pytest.raises(ConnectionResetError):
         await store_scan_dependencies(
-            [_dep("shared", scope="runtime"), _dep("new-a"), _dep("new-b")], _PROJECT_ID, _SCAN_ID, repo
+            [_sbom(_dep("shared", scope="runtime"), _dep("new-a"), _dep("new-b"))], _PROJECT_ID, _SCAN_ID, repo
         )
 
     assert sorted(await _inventory(db)) == ["new-a", "old-only", "shared"]
@@ -222,11 +228,11 @@ async def test_a_finished_store_leaves_exactly_the_new_inventory(db):
     await create_indexes(db)
     repo = DependencyRepository(db)
     unidentified = ParsedDependency(name="vendored-blob", version="1.0")
-    await store_scan_dependencies([_dep("old-only"), _dep("shared"), unidentified], _PROJECT_ID, _SCAN_ID, repo)
+    await store_scan_dependencies([_sbom(_dep("old-only"), _dep("shared"), unidentified)], _PROJECT_ID, _SCAN_ID, repo)
     kept_id = (await _inventory(db))["shared"]["_id"]
 
     stored = await store_scan_dependencies(
-        [_dep("shared", scope="runtime"), _dep("new"), unidentified], _PROJECT_ID, _SCAN_ID, repo
+        [_sbom(_dep("shared", scope="runtime"), _dep("new"), unidentified)], _PROJECT_ID, _SCAN_ID, repo
     )
 
     inventory = await _inventory(db)
@@ -263,10 +269,10 @@ async def test_overlapping_stores_of_one_scan_leave_the_later_inventory(db, earl
 
     async def later_store():
         await asyncio.sleep(0.01)  # a later millisecond, so the two writes carry distinct markers
-        await store_scan_dependencies([_dep(name) for name in later], _PROJECT_ID, _SCAN_ID, repo)
+        await store_scan_dependencies([_sbom(*map(_dep, later))], _PROJECT_ID, _SCAN_ID, repo)
 
     await asyncio.gather(
-        store_scan_dependencies([_dep(name) for name in earlier], _PROJECT_ID, _SCAN_ID, repo), later_store()
+        store_scan_dependencies([_sbom(*map(_dep, earlier))], _PROJECT_ID, _SCAN_ID, repo), later_store()
     )
 
     assert sorted(await _inventory(db)) == sorted(later)
