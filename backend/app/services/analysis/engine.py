@@ -82,6 +82,7 @@ from app.services.github import is_public_github
 from app.services.reachability_enrichment import enrich_findings_with_reachability, persist_reachability_result
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.update_frequency_rollup import record_scan_update_delta
+from app.services.waivers.apply import restamp_waivers
 
 logger = logging.getLogger(__name__)
 
@@ -936,14 +937,8 @@ async def _persist_findings_and_waivers(
         waiver_repo = WaiverRepository(db)
         active_waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
 
-    from app.services.stats import _apply_waivers
-
-    await _apply_waivers(finding_repo, scan_id, active_waivers)
-    from pymongo import ReadPreference
-
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
-    return persisted_count, ignored_count, active_waivers
+    await restamp_waivers(finding_repo, None, scan_id, active_waivers)
+    return persisted_count, await finding_repo.count_waived(scan_id), active_waivers
 
 
 def _as_utc(dt: datetime | None) -> datetime | None:

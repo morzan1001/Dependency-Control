@@ -1,9 +1,11 @@
 """Repository for waivers."""
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReturnDocument, UpdateOne
 
 from app.core.metrics import track_db_operation
 from app.models.waiver import Waiver
@@ -46,9 +48,20 @@ class WaiverRepository:
         return waiver
 
     async def update(self, waiver_id: str, update_data: dict[str, Any]) -> Waiver | None:
-        with track_db_operation(_COL, "update_one"):
-            await self.collection.update_one({"_id": waiver_id}, {"$set": update_data})
-        return await self.get_by_id(waiver_id)
+        with track_db_operation(_COL, "find_one_and_update"):
+            data = await self.collection.find_one_and_update(
+                {"_id": waiver_id}, {"$set": update_data}, return_document=ReturnDocument.AFTER
+            )
+        return Waiver(**data) if data else None
+
+    async def set_fields_many(self, fields_by_id: Mapping[str, dict[str, Any]]) -> None:
+        if not fields_by_id:
+            return
+        with track_db_operation(_COL, "bulk_write"):
+            await self.collection.bulk_write(
+                [UpdateOne({"_id": wid}, {"$set": fields}) for wid, fields in fields_by_id.items()],
+                ordered=False,
+            )
 
     async def delete(self, waiver_id: str) -> bool:
         with track_db_operation(_COL, "delete_one"):

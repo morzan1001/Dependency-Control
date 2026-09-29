@@ -58,7 +58,16 @@ from app.services.reachability_enrichment import (
 )
 from app.services.recommendations import recommendation_engine
 from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, parse_sbom
-from app.services.waivers.matching import MatchFinding, apply_waivers_to_findings, record_matches, waiver_criteria
+from app.services.waivers.matching import (
+    MatchFinding,
+    apply_waivers_to_findings,
+    bind_legacy_signatures,
+    record_matches,
+    roll_up_advisories,
+    route_waiver,
+    waive_advisories,
+    waiver_criteria,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -760,34 +769,11 @@ def _run_reachability(
     return dict(build_reachability_summary(vulnerabilities, [callgraph_dict], enriched))
 
 
-def _waive_matching_advisories(record: dict[str, Any], waiver: Waiver) -> None:
-    """Waive the matching nested advisories, then roll the document level up from them."""
-    entries = (record.get("details") or {}).get("vulnerabilities") or []
-    hit = False
-    for entry in entries:
-        known_as = {entry.get("id"), entry.get("resolved_cve")} | set(entry.get("aliases") or [])
-        if waiver.vulnerability_id in known_as:
-            entry["waived"] = True
-            entry["waiver_reason"] = waiver.reason
-            hit = True
-    if not hit:
-        return
-    # A fully waived document keeps the severity of its entries, so dropping the waiver
-    # restores it; a partly waived one drops to the highest entry still live.
-    live = [entry for entry in entries if not entry.get("waived")] or entries
-    severity = max((entry.get("severity") for entry in live), key=get_severity_value)
-    if severity:
-        record["severity"] = severity
-    if all(entry.get("waived") for entry in entries):
-        record["waived"] = True
-        record["waiver_reason"] = waiver.reason
-
-
 def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
     scope = waiver_criteria(waiver)
     for record in records:
-        if record.get("type") == _VULNERABILITY and record_matches(record, scope):
-            _waive_matching_advisories(record, waiver)
+        if record.get("type") == _VULNERABILITY and record_matches(record, scope) and waive_advisories(record, waiver):
+            roll_up_advisories(record)
 
 
 def _apply_field_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
@@ -825,13 +811,14 @@ def _apply_signature_waivers(records: list[dict[str, Any]], waivers: list[Waiver
 
 def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[Waiver]) -> int:
     """Apply global waivers to in-memory records; returns how many records end up waived."""
+    signed = {record["finding_id"]: MatchSignature(**record["match"]) for record in records if record.get("match")}
+    bind_legacy_signatures(waivers, signed)
     signature_waivers: list[Waiver] = []
     for waiver in waivers:
-        # A widened scope keeps its query semantics: re-anchoring one signature would narrow it
-        # back to the single location the waiver was taken from.
-        if waiver.match is not None and waiver.scope == "finding":
+        route = route_waiver(waiver)
+        if route == "signature":
             signature_waivers.append(waiver)
-        elif waiver.vulnerability_id:
+        elif route == "vulnerability":
             _apply_vulnerability_waiver(records, waiver)
         else:
             _apply_field_waiver(records, waiver)

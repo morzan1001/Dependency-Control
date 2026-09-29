@@ -1,14 +1,13 @@
-"""CRYPTO_* FindingType values work with the existing waiver machinery: waiver_query and FindingRepository.apply_finding_waiver."""
-
-from unittest.mock import AsyncMock, MagicMock
+"""CRYPTO_* FindingType values work with the existing waiver machinery: waiver_query and the restamp."""
 
 import pytest
 
 from app.models.finding import FindingType
 from app.models.waiver import Waiver
 from app.repositories.findings import FindingRepository
+from app.services.waivers.apply import restamp_waivers
 from app.services.waivers.matching import waiver_query
-from tests.mocks.mongodb import create_mock_collection
+from tests.mocks.fake_mongo import FakeDatabase
 
 
 def _crypto_waiver(finding_type: FindingType, **extra) -> Waiver:
@@ -59,64 +58,16 @@ def test_waiver_query_component_scoped():
     assert query.get("component") == "MD5 [bom-ref:a]"
 
 
-def _make_repo_with_mock_col(matched_count: int):
-    """BaseRepository sets self.collection = db[name], so the mock DB must support __getitem__."""
-    mock_col = create_mock_collection()
-    # apply_finding_waiver reports coverage (matched), not writes, so an already-waived
-    # finding covered by a second waiver still counts for that waiver.
-    mock_col.update_many = AsyncMock(return_value=MagicMock(matched_count=matched_count, modified_count=matched_count))
-
-    mock_db = MagicMock()
-    mock_db.__getitem__ = MagicMock(return_value=mock_col)
-
-    repo = FindingRepository(mock_db)
-    return repo, mock_col
-
-
 @pytest.mark.asyncio
-async def test_apply_finding_waiver_calls_update_many_for_crypto_type():
-    """apply_finding_waiver issues update_many combining the scan_id filter with the waiver query and setting waived/waiver_reason."""
-    repo, mock_col = _make_repo_with_mock_col(matched_count=3)
-
-    waiver_query = {"type": "crypto_weak_algorithm"}
-    modified = await repo.apply_finding_waiver(
-        scan_id="scan-123",
-        query=waiver_query,
-        waived=True,
-        waiver_reason="accepted risk for MD5 use",
+async def test_the_restamp_waives_a_crypto_finding_by_its_type():
+    db = FakeDatabase()
+    await db.findings.insert_many(
+        [
+            {"_id": "md5", "scan_id": "scan-xyz", "type": "crypto_weak_algorithm", "component": "MD5 [bom-ref:a]"},
+            {"_id": "rsa", "scan_id": "scan-xyz", "type": "crypto_weak_key", "component": "RSA-1024 [bom-ref:b]"},
+        ]
     )
 
-    assert modified == 3
+    await restamp_waivers(FindingRepository(db), None, "scan-xyz", [_crypto_waiver(FindingType.CRYPTO_WEAK_ALGORITHM)])
 
-    mock_col.update_many.assert_called_once()
-    actual_filter, actual_update = mock_col.update_many.call_args[0]
-
-    assert actual_filter == {"scan_id": "scan-123", "type": "crypto_weak_algorithm"}, (
-        f"Unexpected filter: {actual_filter!r}"
-    )
-    assert actual_update == {"$set": {"waived": True, "waiver_reason": "accepted risk for MD5 use"}}, (
-        f"Unexpected update: {actual_update!r}"
-    )
-
-
-@pytest.mark.asyncio
-async def test_full_waiver_flow_crypto_finding():
-    """waiver_query feeds FindingRepository.apply_finding_waiver, asserting the combined filter."""
-    repo, mock_col = _make_repo_with_mock_col(matched_count=2)
-
-    waiver = _crypto_waiver(FindingType.CRYPTO_WEAK_ALGORITHM)
-    query = waiver_query(waiver)
-
-    modified = await repo.apply_finding_waiver(
-        scan_id="scan-xyz",
-        query=query,
-        waived=True,
-        waiver_reason=waiver.reason,
-    )
-
-    assert modified == 2
-
-    actual_filter, actual_update = mock_col.update_many.call_args[0]
-    assert actual_filter["type"] == "crypto_weak_algorithm"
-    assert actual_filter["scan_id"] == "scan-xyz"
-    assert actual_update["$set"]["waived"] is True
+    assert [doc["_id"] async for doc in db.findings.find({"waived": True})] == ["md5"]

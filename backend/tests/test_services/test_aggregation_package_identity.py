@@ -159,7 +159,7 @@ class TestPackageNameWaiverTargetsOnePackage:
 
         from app.models.waiver import Waiver
         from app.repositories.findings import FindingRepository
-        from app.services.waivers.matching import waiver_query
+        from app.services.waivers.apply import restamp_waivers
         from tests.mocks.fake_mongo import FakeDatabase
 
         agg = ResultAggregator()
@@ -183,11 +183,7 @@ class TestPackageNameWaiverTargetsOnePackage:
             package_name="@angular/core",
             package_version="21.1.5",
         )
-        repo = FindingRepository(db)
-        modified = asyncio.run(
-            repo.apply_finding_waiver("scan-1", waiver_query(waiver), waived=True, waiver_reason="reviewed")
-        )
+        asyncio.run(restamp_waivers(FindingRepository(db), None, "scan-1", [waiver]))
 
-        assert modified == 1
         waived = asyncio.run(db.findings.find({"scan_id": "scan-1", "waived": True}).to_list(None))
         assert [d["component"] for d in waived] == ["@angular/core"]

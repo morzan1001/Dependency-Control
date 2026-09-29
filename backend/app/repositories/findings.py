@@ -4,10 +4,11 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from pymongo import UpdateOne
+from motor.motor_asyncio import AsyncIOMotorCollection
+from pymongo import ReadPreference, UpdateOne
 
 from app.core import ensure_utc
-from app.core.constants import get_severity_value
+from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
 from app.services.aggregation.components import build_component_index
@@ -27,6 +28,9 @@ _VULNERABILITY_IDENTITY_PROJECTION = {
 
 FindingIdentity = tuple[Any, Any, Any, Any]
 
+# What names an advisory, and its per-advisory waiver state.
+_ADVISORY_WAIVER_FIELDS = ("id", "aliases", "resolved_cve", "severity", "waived", "waiver_reason")
+
 
 def finding_identity(doc: Mapping[str, Any]) -> FindingIdentity:
     """What makes the findings of two scans of one project the same finding."""
@@ -37,106 +41,43 @@ class FindingRepository(BaseRepository[FindingRecord]):
     collection_name = "findings"
     model_class = FindingRecord
 
-    async def apply_vulnerability_waiver(
-        self,
-        scan_id: str,
-        vulnerability_id: str,
-        waived: bool,
-        waiver_reason: str | None = None,
-        scope: dict[str, Any] | None = None,
-    ) -> int:
-        """Waive the nested entry known under vulnerability_id, its aliases, or its resolved CVE.
+    def _primary(self) -> AsyncIOMotorCollection:
+        return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
-        ``scope`` narrows the documents (component/version/finding_id) the waiver applies to.
-        """
-        update_data: dict[str, Any] = {"details.vulnerabilities.$[vuln].waived": waived}
-        if waiver_reason:
-            update_data["details.vulnerabilities.$[vuln].waiver_reason"] = waiver_reason
+    async def find_waiver_state(self, scan_id: str) -> list[dict[str, Any]]:
+        """The scan's findings that carry a waived or lapsed flag, read from the primary behind the last write."""
+        query = {"scan_id": scan_id, "$or": [{"waived": True}, {"waiver_lapsed": True}]}
+        projection = {"waived": 1, "waiver_reason": 1, "waiver_lapsed": 1, "lapsed_waiver_id": 1}
+        return await self._primary().find(query, projection).to_list(None)
 
-        query: dict[str, Any] = {
-            "scan_id": scan_id,
-            **{k: v for k, v in (scope or {}).items() if k != "type"},
-            "type": "vulnerability",
-            "$or": [
-                {"details.vulnerabilities.id": vulnerability_id},
-                {"details.vulnerabilities.aliases": vulnerability_id},
-                {"details.vulnerabilities.resolved_cve": vulnerability_id},
-            ],
+    async def find_ids(self, scan_id: str, query: dict[str, Any]) -> list[str]:
+        return [doc["_id"] async for doc in self._primary().find({"scan_id": scan_id, **query}, {"_id": 1})]
+
+    async def find_advisory_state(self, scan_id: str, clause: dict[str, Any]) -> list[dict[str, Any]]:
+        """Vulnerability documents matching ``clause``, with what a vulnerability waiver scopes on and its advisories'
+        waiver state; element order is kept, so an index addresses the stored advisory."""
+        projection = {
+            "finding_id": 1,
+            "component": 1,
+            "version": 1,
+            "severity": 1,
+            **{f"details.vulnerabilities.{f}": 1 for f in _ADVISORY_WAIVER_FIELDS},
         }
-        result = await self.collection.update_many(
-            query,
-            {"$set": update_data},
-            array_filters=[
-                {
-                    "$or": [
-                        {"vuln.id": vulnerability_id},
-                        {"vuln.aliases": vulnerability_id},
-                        {"vuln.resolved_cve": vulnerability_id},
-                    ]
-                }
-            ],
+        return (
+            await self._primary()
+            .find({"scan_id": scan_id, "type": "vulnerability", **clause}, projection)
+            .to_list(None)
         )
-        await self._rollup_vulnerability_waivers(query, waiver_reason)
-        return result.matched_count
 
-    async def reset_nested_vulnerability_waivers(self, scan_id: str) -> int:
-        """Clear per-entry waiver flags so a deleted or expired waiver stops suppressing."""
-        result = await self.collection.update_many(
-            {"scan_id": scan_id, "type": "vulnerability", "details.vulnerabilities.waived": True},
-            {
-                "$set": {
-                    "details.vulnerabilities.$[].waived": False,
-                    "details.vulnerabilities.$[].waiver_reason": None,
-                }
-            },
-        )
-        # The rollup demotes severity to the highest live entry; without this the demotion
-        # outlives the waiver and the buckets under-report until the next rescan.
-        await self._rollup_vulnerability_waivers({"scan_id": scan_id, "type": "vulnerability"}, None)
-        return result.modified_count
+    async def set_fields(self, scan_id: str, fields_by_id: Mapping[str, dict[str, Any]]) -> None:
+        if fields_by_id:
+            await self.collection.bulk_write(
+                [UpdateOne({"_id": fid, "scan_id": scan_id}, {"$set": fields}) for fid, fields in fields_by_id.items()],
+                ordered=False,
+            )
 
-    async def _rollup_vulnerability_waivers(self, query: dict[str, Any], waiver_reason: str | None) -> None:
-        """Every waiver consumer (severity buckets, ignored_count) reads the document level, so a document
-        counts as waived only once all its entries are, and its severity must reflect what is still live."""
-        cursor = self.collection.find(query, {"_id": 1, "severity": 1, "waived": 1, "details.vulnerabilities": 1})
-        updates: list[UpdateOne] = []
-        for doc in await cursor.to_list(None):
-            entries = (doc.get("details") or {}).get("vulnerabilities") or []
-            if not entries:
-                continue
-            live = [e for e in entries if not e.get("waived")] or entries
-            changes: dict[str, Any] = {}
-            all_waived = all(e.get("waived") for e in entries)
-            if bool(doc.get("waived")) != all_waived:
-                changes["waived"] = all_waived
-                changes["waiver_reason"] = waiver_reason if all_waived else None
-            # A fully waived document keeps the severity of its entries, so dropping the
-            # waiver restores it without a rescan.
-            severity = max((e.get("severity") for e in live), key=get_severity_value)
-            if severity and severity != doc.get("severity"):
-                changes["severity"] = severity
-            if changes:
-                updates.append(UpdateOne({"_id": doc["_id"]}, {"$set": changes}))
-        if updates:
-            await self.collection.bulk_write(updates)
-
-    async def apply_finding_waiver(
-        self,
-        scan_id: str,
-        query: dict,
-        waived: bool,
-        waiver_reason: str | None = None,
-    ) -> int:
-        """Apply waiver to findings matching `query` (finding-level, not nested-vulnerability)."""
-        full_query = {"scan_id": scan_id, **query}
-        update_data: dict[str, Any] = {"waived": waived}
-        if waiver_reason:
-            update_data["waiver_reason"] = waiver_reason
-
-        result = await self.collection.update_many(full_query, {"$set": update_data})
-        # Coverage, not writes: a finding already waived by an overlapping waiver reports no
-        # modification, and counting that as 0 badges a working waiver as matching nothing.
-        return result.matched_count
+    async def count_waived(self, scan_id: str) -> int:
+        return await self._primary().count_documents({"scan_id": scan_id, "waived": True})
 
     async def find_by_scan(
         self,
@@ -210,39 +151,19 @@ class FindingRepository(BaseRepository[FindingRecord]):
         result = await self.collection.bulk_write(operations)
         return result.upserted_count + result.modified_count
 
-    _LOCATION_TYPES = ("sast", "iac", "secret", "crypto_key_management")
-
     async def find_location_findings(self, scan_id: str) -> list[dict[str, Any]]:
         """Raw docs for location-based findings of a scan (waiver-matchable), with details only where
         no match signature is stored and one has to be recomputed from them."""
-        docs = await self.collection.find(
-            {"scan_id": scan_id, "type": {"$in": list(self._LOCATION_TYPES)}},
+        primary = self._primary()
+        docs = await primary.find(
+            {"scan_id": scan_id, "type": {"$in": [t.value for t in LOCATION_FINDING_TYPES]}},
             {"_id": 1, "finding_id": 1, "component": 1, "match": 1},
         ).to_list(None)
         unsigned = {d["_id"]: d for d in docs if not d.get("match")}
         if unsigned:
-            async for doc in self.collection.find({"scan_id": scan_id, "_id": {"$in": list(unsigned)}}, {"details": 1}):
+            async for doc in primary.find({"scan_id": scan_id, "_id": {"$in": list(unsigned)}}, {"details": 1}):
                 unsigned[doc["_id"]]["details"] = doc.get("details")
         return docs
-
-    async def set_waived(self, scan_id: str, finding_ids: list[str], reason: str | None) -> int:
-        if not finding_ids:
-            return 0
-        result = await self.collection.update_many(
-            {"scan_id": scan_id, "_id": {"$in": finding_ids}},
-            {"$set": {"waived": True, "waiver_reason": reason}},
-        )
-        return result.modified_count
-
-    async def set_lapsed(self, scan_id: str, mapping: dict[str, str]) -> int:
-        ops = [
-            UpdateOne({"scan_id": scan_id, "_id": fid}, {"$set": {"waiver_lapsed": True, "lapsed_waiver_id": wid}})
-            for fid, wid in mapping.items()
-        ]
-        if not ops:
-            return 0
-        result = await self.collection.bulk_write(ops)
-        return result.modified_count
 
     async def get_severity_distribution(
         self,

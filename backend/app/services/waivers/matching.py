@@ -1,12 +1,14 @@
-"""Waiver matching: the field criteria a waiver sets, as a MongoDB filter and as an in-memory check,
-and the two-pass signature matcher, strong-exact (Pass 1) then content/proximity re-anchor (Pass 2)."""
+"""Waiver matching: how a waiver is routed, the field criteria it sets (as a MongoDB filter and as an
+in-memory check), the advisory roll-up, and the two-pass signature matcher, strong-exact (Pass 1) then
+content/proximity re-anchor (Pass 2)."""
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
-from app.core.constants import AGG_KEY_SAST, WAIVER_STATUS_FALSE_POSITIVE
+from app.core.constants import AGG_KEY_SAST, WAIVER_STATUS_FALSE_POSITIVE, get_severity_value
+from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
 
@@ -95,6 +97,76 @@ def record_matches(record: Mapping[str, Any], criteria: Mapping[str, Any]) -> bo
         elif record.get(key) != expected:
             return False
     return True
+
+
+WaiverRoute = Literal["vulnerability", "signature", "query"]
+
+
+def route_waiver(waiver: Waiver) -> WaiverRoute:
+    """Which path applies a waiver: its advisory, its location signature, or its field criteria."""
+    if waiver.vulnerability_id:
+        return "vulnerability"
+    # A widened scope keeps its criteria: one signature would narrow it to the location it was taken from.
+    if waiver.scope == "finding" and waiver.match is not None:
+        return "signature"
+    return "query"
+
+
+def may_bind_signature(waiver: Waiver) -> bool:
+    """A waiver without a signature that names a location finding it could take one from."""
+    return (
+        waiver.match is None
+        and waiver.scope == "finding"
+        and not waiver.vulnerability_id
+        and bool(waiver.finding_id)
+        and (waiver.finding_type is None or waiver.finding_type in LOCATION_FINDING_TYPES)
+    )
+
+
+def bind_legacy_signatures(
+    waivers: Iterable[Waiver], sig_by_finding_id: Mapping[str, MatchSignature]
+) -> dict[str, MatchSignature]:
+    """Give each unsigned waiver the signature of the finding it names by exact id; returns what each one took."""
+    bound = {}
+    for waiver in waivers:
+        if may_bind_signature(waiver) and (sig := sig_by_finding_id.get(waiver.finding_id or "")) is not None:
+            waiver.match = bound[waiver.id] = sig
+    return bound
+
+
+_ADVISORY_NAMES = ("id", "resolved_cve", "aliases")
+
+
+def advisory_filter(vulnerability_ids: list[str]) -> list[dict[str, Any]]:
+    """``$or`` branches selecting the documents holding an advisory known under any of these ids."""
+    return [{f"details.vulnerabilities.{name}": {"$in": vulnerability_ids}} for name in _ADVISORY_NAMES]
+
+
+def waive_advisories(record: dict[str, Any], waiver: Waiver) -> bool:
+    """Waive the record's nested advisories known under the waiver's vulnerability_id; False when it holds none."""
+    hit = False
+    for entry in (record.get("details") or {}).get("vulnerabilities") or []:
+        if waiver.vulnerability_id in {entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])}:
+            entry["waived"] = True
+            entry["waiver_reason"] = waiver.reason
+            hit = True
+    return hit
+
+
+def roll_up_advisories(record: dict[str, Any]) -> None:
+    """Every waiver consumer reads the document level: its severity is the highest live advisory, and it counts
+    as waived once all advisories are. It never un-waives, so a whole-finding waiver on it stands."""
+    entries = (record.get("details") or {}).get("vulnerabilities") or []
+    if not entries:
+        return
+    # A fully waived document keeps the severity of its advisories, so dropping the waiver restores it.
+    live = [entry for entry in entries if not entry.get("waived")] or entries
+    severity = max((entry.get("severity") for entry in live), key=get_severity_value)
+    if severity:
+        record["severity"] = severity
+    if not record.get("waived") and all(entry.get("waived") for entry in entries):
+        record["waived"] = True
+        record["waiver_reason"] = entries[0].get("waiver_reason")
 
 
 def _content_equal(a: str | None, b: str | None) -> bool:

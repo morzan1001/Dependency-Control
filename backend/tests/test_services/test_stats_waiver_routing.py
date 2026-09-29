@@ -6,39 +6,43 @@ import pytest_asyncio
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
 from app.schemas.waiver import WaiverCreate
-from app.services.stats import _is_signature_waiver, recalculate_project_stats
+from app.services.stats import recalculate_project_stats
+from app.services.waivers.matching import may_bind_signature, route_waiver
 from tests.mocks.fake_mongo import FakeDatabase
 
 
-def _waiver(finding_type=None, match=None, scope="finding"):
-    return Waiver(reason="r", created_by="u", finding_type=finding_type, match=match, scope=scope)
+_SIG = MatchSignature(rule_key="OPENGREP:r", file_key="a.py", anchor="fp1", anchor_kind="scanner_fp")
 
 
-class TestIsSignatureWaiver:
-    def test_untyped_non_location_waiver_goes_legacy(self):
-        # finding_type=None, no match -> must NOT be routed to the signature path
-        assert _is_signature_waiver(_waiver(finding_type=None, match=None)) is False
+def _waiver(finding_type=None, match=None, scope="finding", **fields):
+    return Waiver(reason="r", created_by="u", finding_type=finding_type, match=match, scope=scope, **fields)
 
-    def test_typed_license_waiver_goes_legacy(self):
-        assert _is_signature_waiver(_waiver(finding_type="license", match=None)) is False
 
-    def test_location_typed_waiver_goes_signature(self):
-        assert _is_signature_waiver(_waiver(finding_type="sast", match=None)) is True
-        assert _is_signature_waiver(_waiver(finding_type="iac", match=None)) is True
+class TestRouteWaiver:
+    def test_a_waiver_without_a_signature_goes_by_its_criteria(self):
+        assert route_waiver(_waiver(finding_type="sast", finding_id="OPENGREP-r-a.py-1")) == "query"
+        assert route_waiver(_waiver(finding_type="license")) == "query"
 
-    def test_waiver_with_match_goes_signature(self):
-        sig = MatchSignature(rule_key="OPENGREP:r", file_key="a.py", anchor="fp1", anchor_kind="scanner_fp")
-        assert _is_signature_waiver(_waiver(finding_type=None, match=sig)) is True
+    def test_a_finding_scope_waiver_with_a_signature_goes_by_signature(self):
+        assert route_waiver(_waiver(match=_SIG)) == "signature"
 
-    def test_file_scope_location_waiver_goes_legacy(self):
-        # file/rule scope keep broad legacy semantics even for location types
-        assert _is_signature_waiver(_waiver(finding_type="sast", scope="file")) is False
+    def test_a_widened_scope_keeps_its_criteria_whatever_signature_it_carries(self):
+        assert route_waiver(_waiver(finding_type="sast", match=_SIG, scope="file")) == "query"
+        assert route_waiver(_waiver(finding_type="sast", match=_SIG, scope="rule")) == "query"
 
-    def test_rule_scope_location_waiver_goes_legacy(self):
-        assert _is_signature_waiver(_waiver(finding_type="sast", scope="rule")) is False
+    def test_a_vulnerability_id_wins_over_a_signature(self):
+        assert route_waiver(_waiver(match=_SIG, vulnerability_id="CVE-1")) == "vulnerability"
 
-    def test_finding_scope_location_waiver_goes_signature(self):
-        assert _is_signature_waiver(_waiver(finding_type="sast", scope="finding")) is True
+
+class TestMayBindSignature:
+    def test_an_unsigned_location_waiver_naming_a_finding_may_bind(self):
+        assert may_bind_signature(_waiver(finding_type="secret", finding_id="SECRET-AWS-ab12")) is True
+        assert may_bind_signature(_waiver(finding_id="SECRET-AWS-ab12")) is True
+
+    def test_a_waiver_naming_no_finding_or_no_location_type_may_not(self):
+        assert may_bind_signature(_waiver(finding_type="secret", package_name="a.yaml")) is False
+        assert may_bind_signature(_waiver(finding_type="license", finding_id="LIC-GPL")) is False
+        assert may_bind_signature(_waiver(finding_type="sast", finding_id="X", scope="file")) is False
 
 
 # ---------------------------------------------------------------------------
@@ -330,7 +334,7 @@ class TestRecalculateReachesTheReleasedBuild:
 
 # ---------------------------------------------------------------------------
 # A waiver with no matching criteria must NOT waive every finding: an empty
-# waiver query ({}) would match all findings, so _apply_waivers must
+# waiver query ({}) would match all findings, so the restamp must
 # skip criteria-less waivers.
 # ---------------------------------------------------------------------------
 

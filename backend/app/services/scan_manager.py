@@ -15,7 +15,7 @@ from app.models.release import Release
 from app.models.waiver import Waiver
 from app.repositories import ReleaseRepository, ScanRepository
 from app.schemas.ingest import BaseIngest
-from app.services.waivers.matching import record_matches, waiver_criteria, waiver_strong_match
+from app.services.waivers.matching import record_matches, route_waiver, waiver_criteria, waiver_strong_match
 
 logger = logging.getLogger(__name__)
 
@@ -162,9 +162,10 @@ class ScanManager:
 
     def _finding_matches_waiver(self, finding: Finding, waiver: Waiver) -> bool:
         """Best-effort match at ingest; the recalculation re-anchors a moved location finding."""
-        if waiver.vulnerability_id:
+        route = route_waiver(waiver)
+        if route == "vulnerability":
             return False
-        if waiver.scope == "finding" and waiver.match is not None:
+        if route == "signature" and waiver.match is not None:
             return finding.match is not None and waiver_strong_match(finding.match, waiver.match, waiver.status)
         criteria = waiver_criteria(waiver)
         record = {

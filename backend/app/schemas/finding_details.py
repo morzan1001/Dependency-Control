@@ -144,7 +144,7 @@ class VulnerabilityEntryDetails(_DetailsModel):
     kev_ransomware_use: bool | None = None
     github_advisory_url: str | None = None
     resolved_cve: str | None = None
-    # per-entry waiver state (repositories.findings.apply_vulnerability_waiver)
+    # per-entry waiver state (services.waivers.apply.restamp_waivers)
     waived: bool | None = None
     waiver_reason: str | None = None
 

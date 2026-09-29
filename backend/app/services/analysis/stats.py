@@ -589,7 +589,7 @@ def _stats_projection() -> dict[str, int]:
 assert _stats_projection().keys() >= StatsAccumulator.REQUIRED_PATHS, "stats projection drops a required path"
 
 # scan_id + type is the only index pair immutable after insert; severity and waived are rewritten by
-# _rollup_vulnerability_waivers and _apply_waivers, so hinting either opens a skip window mid-cursor.
+# the waiver restamp, so hinting either opens a skip window mid-cursor.
 _STATS_CURSOR_HINT = [("scan_id", ASCENDING), ("type", ASCENDING)]
 
 
