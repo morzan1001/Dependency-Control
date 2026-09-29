@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from app.core.constants import WAIVER_STATUS_FALSE_POSITIVE, get_severity_value
+from app.core.cve import advisory_ids, advisory_match
 from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
@@ -103,19 +104,11 @@ def bind_legacy_signatures(
     return bound
 
 
-_ADVISORY_NAMES = ("id", "resolved_cve", "aliases")
-
-
-def advisory_filter(vulnerability_ids: list[str]) -> list[dict[str, Any]]:
-    """``$or`` branches selecting the documents holding an advisory known under any of these ids."""
-    return [{f"details.vulnerabilities.{name}": {"$in": vulnerability_ids}} for name in _ADVISORY_NAMES]
-
-
 def waiver_reach_filter(waiver: Waiver) -> dict[str, Any] | None:
     """The findings a waiver can stamp, as a MongoDB filter; None when it can stamp none."""
     route = route_waiver(waiver)
     if route == "vulnerability" and waiver.vulnerability_id:
-        return {**waiver_query(waiver), "type": "vulnerability", "$or": advisory_filter([waiver.vulnerability_id])}
+        return {**waiver_query(waiver), "type": "vulnerability", **advisory_match(waiver.vulnerability_id)}
     if route == "signature" and waiver.match is not None:
         return {"type": {"$in": [t.value for t in LOCATION_FINDING_TYPES]}, "component": waiver.match.file_key}
     return waiver_query(waiver) or None
@@ -126,9 +119,7 @@ def waive_advisories(record: dict[str, Any], waiver: Waiver) -> bool:
     vid = waiver.vulnerability_id
     hit = False
     for entry in (record.get("details") or {}).get("vulnerabilities") or []:
-        names = [entry.get(name) for name in _ADVISORY_NAMES]
-        # As advisory_filter's $in does: a scalar name equals the id, a list name holds it.
-        if any(name == vid or (isinstance(name, list) and vid in name) for name in names):
+        if vid in advisory_ids(entry):
             entry["waived"] = True
             entry["waiver_reason"] = waiver.reason
             hit = True

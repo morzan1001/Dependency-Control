@@ -7,6 +7,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.core.cve import advisory_match
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
 from app.repositories.findings import FindingRepository
@@ -14,7 +15,6 @@ from app.repositories.waivers import WaiverRepository
 from app.services.waivers.matching import (
     MatchFinding,
     WaiverApplication,
-    advisory_filter,
     apply_waivers_to_findings,
     bind_legacy_signatures,
     may_bind_signature,
@@ -104,7 +104,7 @@ async def _stamp_advisories(
 ) -> dict[str, str | None]:
     """Restage advisories of documents a waiver names or that hold a waived one; returns waived ones' reasons."""
     ids = [w.vulnerability_id for w in waivers if w.vulnerability_id]
-    clause = {"$or": [{"details.vulnerabilities.waived": True}, *(advisory_filter(ids) if ids else [])]}
+    clause = {"$or": [{"details.vulnerabilities.waived": True}, *(advisory_match({"$in": ids})["$or"] if ids else [])]}
     scoped = [(waiver, waiver_criteria(waiver)) for waiver in waivers]
     waived: dict[str, str | None] = {}
     for doc in await finding_repo.find_advisory_state(scan_id, clause):
