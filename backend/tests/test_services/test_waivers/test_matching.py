@@ -1,3 +1,5 @@
+import pytest
+
 from app.models.match_signature import MatchSignature
 from app.services.waivers.matching import (
     MatchFinding,
@@ -246,3 +248,82 @@ def test_backcompat_pass2_reanchor_with_no_rule_keys_list():
     )
     app = apply_waivers_to_findings([finding], [waiver])
     assert app.waived.get("f1") == "w1"
+
+
+def _scan(normalize, result):
+    from app.services.aggregation import ResultAggregator
+
+    aggregator = ResultAggregator()
+    normalize(aggregator, result)
+    return aggregator.get_findings()
+
+
+def _bearer_scan(hits):
+    """One Bearer run over app/db.py; Bearer numbers a rule's hits in a file by position."""
+    from app.services.normalizers.sast import normalize_bearer
+
+    items = [
+        {
+            "id": "python_lang_sqli",
+            "filename": "app/db.py",
+            "line_number": line,
+            "code_extract": code,
+            "fingerprint": f"{'e' * 32}_{ordinal}",
+            "severity": "high",
+            "title": "SQLi",
+        }
+        for ordinal, (line, code) in enumerate(hits)
+    ]
+    return {
+        f.details["sast_findings"][0]["details"]["code_extract"]: f
+        for f in _scan(normalize_bearer, {"findings": items})
+    }
+
+
+_A, _B, _C, _NEW = "cursor.execute(q_a)", "cursor.execute(q_b)", "cursor.execute(q_c + user)", "cursor.execute(q_n)"
+
+
+def _waived_codes(scan, waiver):
+    app = apply_waivers_to_findings([MatchFinding(id=f.id, sig=f.match) for f in scan.values()], [waiver])
+    return {code for code, f in scan.items() if f.id in app.waived}
+
+
+@pytest.mark.parametrize("status", ["accepted_risk", "false_positive"])
+def test_fixing_a_bearer_hit_above_keeps_the_waiver_on_its_own_finding(status):
+    before = _bearer_scan([(10, _A), (20, _B), (30, _C)])
+    waiver = _W("W", status, before[_B].match)
+
+    after = _bearer_scan([(19, _B), (29, _C)])
+
+    assert _waived_codes(after, waiver) == {_B}
+
+
+@pytest.mark.parametrize("status", ["accepted_risk", "false_positive"])
+def test_a_new_bearer_hit_above_does_not_take_over_the_waiver(status):
+    before = _bearer_scan([(10, _A), (20, _B), (30, _C)])
+    waiver = _W("W", status, before[_B].match)
+
+    after = _bearer_scan([(5, _NEW), (11, _A), (21, _B), (31, _C)])
+
+    assert _waived_codes(after, waiver) == {_B}
+
+
+@pytest.mark.parametrize("status", ["accepted_risk", "false_positive"])
+def test_semgrep_login_placeholder_waiver_binds_only_the_waived_line(status):
+    from app.services.normalizers.sast import normalize_opengrep
+
+    def item(line):
+        return {
+            "check_id": "python.lang.sqli",
+            "path": "app/db.py",
+            "start": {"line": line, "col": 1},
+            "end": {"line": line, "col": 9},
+            "extra": {"severity": "ERROR", "message": "m", "fingerprint": "requires login", "lines": "requires login"},
+        }
+
+    line_10, line_50 = _scan(normalize_opengrep, {"results": [item(10), item(50)]})
+    waiver = _W("W", status, line_50.match)
+
+    app = apply_waivers_to_findings([MatchFinding(id=f.id, sig=f.match) for f in (line_10, line_50)], [waiver])
+
+    assert app.waived == {line_50.id: "W"}

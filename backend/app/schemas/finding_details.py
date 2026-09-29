@@ -310,7 +310,6 @@ class SastScannerDetails(_DetailsModel):
     shortlink: str | None = None
     license: str | None = None
     fingerprint: str | None = None
-    old_fingerprint: str | None = None
     documentation_url: str | None = None
     full_description: str | None = None
 

@@ -14,6 +14,8 @@ if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
 
 _CRYPTO_MISUSE_RULE_ID_PREFIX = "crypto-misuse-"
+# Semgrep CE writes this into extra.fingerprint and extra.lines of every result when run without login.
+_SEMGREP_LOGIN_PLACEHOLDER = "requires login"
 
 
 def _finding_type_from_rule(rule_id: Any) -> FindingType:
@@ -47,7 +49,7 @@ def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
     end_line = end_obj.get("line", 0)
     end_col = end_obj.get("col", 0)
 
-    extra = item.get("extra") or {}
+    extra = {k: v for k, v in (item.get("extra") or {}).items() if v != _SEMGREP_LOGIN_PLACEHOLDER}
     sev_str = (extra.get("severity") or "INFO").upper()
     severity = safe_severity(OPENGREP_SEVERITY_MAP.get(sev_str, sev_str))
     message = extra.get("message") or "Potential issue found"
@@ -161,8 +163,6 @@ def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], sou
             documentation_url=item.get("documentation_url"),
             references=item.get("references") or [],
             full_description=desc,
-            fingerprint=item.get("fingerprint"),
-            old_fingerprint=item.get("old_fingerprint"),
         ).model_dump(exclude_none=True)
 
         aggregator.add_finding(
