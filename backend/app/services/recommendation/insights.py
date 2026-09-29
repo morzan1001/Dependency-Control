@@ -19,6 +19,7 @@ from app.services.recommendation.common import (
     sample_components,
     sampled,
     scorecard_details,
+    scorecard_score,
 )
 
 # Advisories named per risky package, and packages detailed in the replace action; each is
@@ -50,9 +51,8 @@ def correlate_scorecard_with_vulnerabilities(
             continue
         details = get_attr(qf, "details", {})
         sc_details = scorecard_details(details)
-        overall_score = details.get("overall_score") if isinstance(details, dict) else None
         scorecard_by_component[component] = {
-            "overall_score": overall_score if overall_score is not None else 10,
+            "overall_score": scorecard_score(details),
             "critical_issues": sc_details.get("critical_issues") or [],
             "project_url": sc_details.get("project_url"),
             "has_maintenance_issues": bool(details.get("has_maintenance_issues"))
@@ -73,11 +73,11 @@ def correlate_scorecard_with_vulnerabilities(
         if not scorecard:
             continue
 
-        score = scorecard.get("overall_score", 10)
-        critical_issues = scorecard.get("critical_issues", [])
-        is_unmaintained = "Maintained" in critical_issues or scorecard.get("has_maintenance_issues", False)
+        score = scorecard["overall_score"]
+        is_unmaintained = "Maintained" in scorecard["critical_issues"] or scorecard["has_maintenance_issues"]
+        is_low_score = score is not None and score < SCORECARD_FLAG_THRESHOLD
 
-        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score < SCORECARD_FLAG_THRESHOLD):
+        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or is_low_score):
             vf_details = get_attr(vf, "details", {})
             high_risk_vulns.append(
                 {
@@ -96,11 +96,14 @@ def correlate_scorecard_with_vulnerabilities(
             )
 
     if high_risk_vulns:
-        high_risk_vulns.sort(key=lambda x: (not x["unmaintained"], x["scorecard_score"]))
+        high_risk_vulns.sort(
+            key=lambda x: (not x["unmaintained"], x["scorecard_score"] is None, x["scorecard_score"] or 0.0)
+        )
 
         risky_shown, risky_total = sample_components(
-            f"{v['component']}@{v['version']} (score: {v['scorecard_score']:.1f}/10"
-            f"{', UNMAINTAINED' if v['unmaintained'] else ''})"
+            f"{v['component']}@{v['version']} ("
+            + ("no scorecard" if v["scorecard_score"] is None else f"score: {v['scorecard_score']:.1f}/10")
+            + f"{', UNMAINTAINED' if v['unmaintained'] else ''})"
             for v in high_risk_vulns
         )
         unmaintained_count = sum(1 for v in high_risk_vulns if v["unmaintained"])

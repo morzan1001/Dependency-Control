@@ -357,3 +357,33 @@ def test_scorecard_correlation_does_not_guess_an_ambiguous_artifact_name():
     )
 
     assert recs == []
+
+
+class TestCorrelateScorecardUnmaintainedWithoutScorecard:
+    def _maintainer_only_finding(self, component="pkg"):
+        return {
+            "type": "quality",
+            "severity": "MEDIUM",
+            "component": component,
+            "details": {"has_maintenance_issues": True, "issue_count": 1, "quality_issues": []},
+        }
+
+    def test_the_package_is_flagged_without_an_invented_score(self):
+        vulns = [_vuln_finding(component="pkg", severity="CRITICAL", version="1.0.0")]
+        rec = correlate_scorecard_with_vulnerabilities(vulns, [self._maintainer_only_finding()])[0]
+
+        assert rec.action["packages"][0]["scorecard_score"] is None
+        assert rec.affected_components == ["pkg@1.0.0 (no scorecard, UNMAINTAINED)"]
+
+    def test_a_scored_unmaintained_package_sorts_before_an_unscored_one(self):
+        vulns = [
+            _vuln_finding(component="unscored", severity="CRITICAL", finding_id="v1"),
+            _vuln_finding(component="scored", severity="CRITICAL", finding_id="v2"),
+        ]
+        quality = [
+            self._maintainer_only_finding("unscored"),
+            _quality_finding(component="scored", overall_score=6.0, critical_issues=["Maintained"]),
+        ]
+        rec = correlate_scorecard_with_vulnerabilities(vulns, quality)[0]
+
+        assert [p["name"] for p in rec.action["packages"]] == ["scored", "unscored"]

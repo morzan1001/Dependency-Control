@@ -54,7 +54,7 @@ def enrich_with_scorecard(findings: list[Finding], scorecard_cache: dict[str, di
             }
 
             if finding.type == FindingType.VULNERABILITY:
-                score = scorecard_data.get("overall_score", 10)
+                score = scorecard_data["overall_score"]
                 critical = scorecard_data.get("critical_issues", [])
 
                 if score < SCORECARD_POOR_QUALITY_THRESHOLD or "Maintained" in critical:
