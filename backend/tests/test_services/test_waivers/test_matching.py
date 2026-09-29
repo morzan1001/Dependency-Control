@@ -73,21 +73,17 @@ class TestOrchestrator:
 
     def test_line_shift_same_content_reanchors(self):
         # finding lost its strong anchor but content matches -> Pass 2 follows
-        findings = [mf("f1", anchor="newfp", kind="scanner_fp", ch="c1", line=80)]
+        findings = [mf("f1", anchor="newfp", kind="scanner_fp", ch="c1", line=40)]
         w = _W("w1", "false_positive", sig(anchor="oldfp", kind="scanner_fp", ch="c1", line=10))
         res = apply_waivers_to_findings(findings, [w])
         assert res.waived == {"f1": "w1"}
         assert "w1" in res.reanchored
 
-    def test_reanchor_captures_finding_line_as_distinct_copy(self):
-        # reanchored sig must copy the finding's current line, not alias its sig object
-        f = mf("f1", anchor="newfp", kind="scanner_fp", ch="c1", line=80)
+    def test_reanchor_captures_finding_line(self):
+        f = mf("f1", anchor="newfp", kind="scanner_fp", ch="c1", line=40)
         w = _W("w1", "false_positive", sig(anchor="oldfp", kind="scanner_fp", ch="c1", line=10))
         res = apply_waivers_to_findings([f], [w])
-        new_sig = res.reanchored["w1"]
-        assert new_sig.last_line == 80
-        assert new_sig is not f.sig
-        assert new_sig == f.sig
+        assert res.reanchored["w1"] == f.sig
 
     def test_two_instances_one_waived_other_active(self):
         findings = [mf("f1", anchor="fpA", ch="c1"), mf("f2", anchor="fpB", ch="c1")]
@@ -117,12 +113,13 @@ class TestOrchestrator:
         assert res.waived == {}
         assert set(res.lapsed.values()) == {"w1"}
 
-    def test_far_single_candidate_outside_window_lapses(self):
+    def test_far_single_candidate_outside_window_stays_dormant(self):
         findings = [mf("f1", anchor="fp2", ch="c2", line=500)]
         w = _W("w1", "false_positive", sig(anchor="fp1", ch="c1", line=10))
         res = apply_waivers_to_findings(findings, [w])
         assert res.waived == {}
-        assert res.lapsed == {"f1": "w1"}
+        assert res.lapsed == {}
+        assert res.dormant == {"w1": "no_candidate_in_window"}
 
     def test_degraded_anchor_fp_does_not_follow_content_change(self):
         findings = [mf("f1", anchor="c2", kind="content_hash", ch="c2", line=12)]
@@ -130,12 +127,6 @@ class TestOrchestrator:
         res = apply_waivers_to_findings(findings, [w])
         assert res.waived == {}
         assert res.lapsed == {"f1": "w1"}
-
-    def test_finding_without_signature_ignored(self):
-        findings = [MatchFinding(id="f1", sig=None)]
-        w = _W("w1", "false_positive", sig())
-        res = apply_waivers_to_findings(findings, [w])
-        assert res.waived == {}
 
     def test_finding_not_both_waived_and_lapsed(self):
         # A lapsing accepted_risk waiver and a following false_positive waiver on the same
@@ -327,3 +318,145 @@ def test_semgrep_login_placeholder_waiver_binds_only_the_waived_line(status):
     app = apply_waivers_to_findings([MatchFinding(id=f.id, sig=f.match) for f in (line_10, line_50)], [waiver])
 
     assert app.waived == {line_50.id: "W"}
+
+
+def _secret(anchor):
+    return MatchSignature(
+        rule_key="17", file_key="config/settings.py", anchor=anchor, anchor_kind="secret_hash", content_hash=anchor
+    )
+
+
+def test_a_false_positive_secret_waiver_never_moves_to_another_secret():
+    app = apply_waivers_to_findings(
+        [MatchFinding(id="F-real", sig=_secret("bbbb2222"))], [_W("W", "false_positive", _secret("aaaa1111"))]
+    )
+
+    assert app.waived == {}
+    assert app.reanchored == {}
+    assert app.lapsed == {}
+    assert "W" in app.dormant
+
+
+def test_a_lone_candidate_without_a_known_line_does_not_bind():
+    finding = mf("f1", anchor="fp2", ch="c2", line=None)
+    app = apply_waivers_to_findings([finding], [_W("w1", "false_positive", sig(anchor="fp1", ch="c1", line=None))])
+
+    assert app.waived == {}
+
+
+def test_a_lone_same_content_candidate_far_away_does_not_bind():
+    finding = mf("f1", anchor="c1", kind="content_hash", ch="c1", line=400)
+    app = apply_waivers_to_findings(
+        [finding], [_W("w1", "false_positive", sig(anchor="c1", kind="content_hash", ch="c1", line=10))]
+    )
+
+    assert app.waived == {}
+    assert app.reanchored == {}
+
+
+def _kics(anchor, line, ch="acl"):
+    return sig(rule="KICS:q1", file="main.tf", anchor=anchor, kind="similarity_id", ch=ch, line=line)
+
+
+@pytest.mark.parametrize("line", [12, 400])
+def test_an_accepted_risk_iac_waiver_does_not_move_to_another_resource_with_the_same_message(line):
+    other = MatchFinding(id="private_data", sig=_kics("simB", line))
+    app = apply_waivers_to_findings([other], [_W("W", "accepted_risk", _kics("simA", 10))])
+
+    assert app.waived == {}
+    assert app.reanchored == {}
+
+
+def test_a_false_positive_iac_waiver_follows_its_renamed_resource_only_nearby():
+    near = apply_waivers_to_findings(
+        [MatchFinding(id="r", sig=_kics("simB", 12))], [_W("W", "false_positive", _kics("simA", 10))]
+    )
+    far = apply_waivers_to_findings(
+        [MatchFinding(id="r", sig=_kics("simB", 400))], [_W("W", "false_positive", _kics("simA", 10))]
+    )
+
+    assert near.waived == {"r": "W"}
+    assert far.waived == {}
+
+
+def test_a_duplicate_waiver_is_shadowed_instead_of_moving_to_a_neighbour():
+    findings = [mf("F", anchor="fpF", ch="cF", line=10), mf("G", anchor="fpG", ch="cG", line=30)]
+    waivers = [
+        _W("W1", "false_positive", sig(anchor="fpF", ch="cF", line=10)),
+        _W("W2", "false_positive", sig(anchor="fpF", ch="cF", line=10)),
+    ]
+
+    app = apply_waivers_to_findings(findings, waivers)
+
+    assert app.waived == {"F": "W1"}
+    assert app.reanchored == {}
+    assert app.dormant == {"W2": "shadowed"}
+
+
+def test_a_lapsed_waiver_next_to_its_rewaived_finding_does_not_take_a_neighbour():
+    findings = [mf("F", anchor="fpF2", ch="cF2", line=10), mf("G", anchor="fpG", ch="cG", line=30)]
+    rewaived = _W("W2", "false_positive", sig(anchor="fpF2", ch="cF2", line=10))
+    lapsed = _W("W1", "false_positive", sig(anchor="fpF1", ch="cF1", line=10))
+
+    app = apply_waivers_to_findings(findings, [lapsed, rewaived])
+
+    assert app.waived == {"F": "W2"}
+    assert app.dormant == {"W1": "shadowed"}
+
+
+def test_a_same_content_match_wins_over_another_waivers_proximity_in_either_order():
+    fb = mf("Fb", anchor="cB", kind="content_hash", ch="cB", line=20)
+    w1 = _W("W1", "false_positive", sig(anchor="gone", ch="cA", line=18))
+    w2 = _W("W2", "false_positive", sig(anchor="cB", kind="content_hash", ch="cB", line=21))
+
+    for order in ([w1, w2], [w2, w1]):
+        app = apply_waivers_to_findings([fb], order)
+        assert app.waived == {"Fb": "W2"}
+        assert "W1" in app.dormant
+        assert "W1" not in app.reanchored
+
+
+def test_ambiguous_same_content_lapses_instead_of_binding_a_different_finding():
+    findings = [
+        mf("copy80", anchor="x80", ch="cW", line=80),
+        mf("copy121", anchor="x121", ch="cW", line=121),
+        mf("other102", anchor="x102", ch="cO", line=102),
+    ]
+    app = apply_waivers_to_findings(findings, [_W("w", "false_positive", sig(anchor="gone", ch="cW", line=100))])
+
+    assert app.waived == {}
+    assert app.lapsed == {"copy80": "w"}
+    assert app.reanchored == {}
+
+
+def test_an_accepted_risk_waiver_far_from_any_candidate_is_dormant_not_lapsed():
+    app = apply_waivers_to_findings(
+        [mf("f1", anchor="fp2", ch="c2", line=400)], [_W("w1", "accepted_risk", sig(anchor="fp1", ch="c1", line=10))]
+    )
+
+    assert app.lapsed == {}
+    assert "w1" in app.dormant
+
+
+def test_a_pass1_match_refreshes_the_waivers_location():
+    waiver = _W("w1", "false_positive", sig(anchor="fpA", ch="c1", line=100))
+    app = apply_waivers_to_findings([mf("f1", anchor="fpA", ch="c2", line=300)], [waiver])
+
+    assert app.waived == {"f1": "w1"}
+    assert app.refreshed["w1"] == sig(anchor="fpA", ch="c2", line=300)
+
+
+def test_an_accepted_risk_refresh_keeps_the_accepted_content():
+    waiver = _W("w1", "accepted_risk", sig(anchor="fpA", ch="c1", line=100))
+    app = apply_waivers_to_findings([mf("f1", anchor="fpA", ch="c2", line=300)], [waiver])
+
+    assert app.refreshed["w1"] == sig(anchor="fpA", ch="c1", line=300)
+
+
+def test_an_unmoved_waiver_records_no_signature_change():
+    exact = apply_waivers_to_findings([mf("f1", anchor="fpA")], [_W("w1", "false_positive", sig(anchor="fpA"))])
+    weak = sig(anchor="c1", kind="content_hash")
+    content = apply_waivers_to_findings([MatchFinding(id="f1", sig=weak)], [_W("w1", "false_positive", weak)])
+
+    assert exact.waived == content.waived == {"f1": "w1"}
+    assert exact.refreshed == exact.reanchored == content.refreshed == content.reanchored == {}

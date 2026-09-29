@@ -256,6 +256,38 @@ class TestRecalculateReachesTheReleasedBuild:
         waiver = await released_db.waivers.find_one({"_id": "w-1"})
         assert waiver["last_eval_scan_id"] == SCAN_ID
 
+    @pytest.mark.asyncio
+    async def test_the_released_build_stamps_the_waiver_without_moving_its_signature(self, released_db):
+        at_head = MatchSignature(
+            rule_key="bearer:r", file_key="a.py", anchor="c", anchor_kind="content_hash", content_hash="c", last_line=10
+        )
+        await _insert_finding(released_db, {"_id": "loc-head", "type": "sast", "match": at_head.model_dump()})
+        await _insert_finding(
+            released_db,
+            {
+                "_id": "loc-shipped",
+                "scan_id": RELEASE_SCAN_ID,
+                "type": "sast",
+                "match": {**at_head.model_dump(), "last_line": 40},
+            },
+        )
+        await released_db.waivers.insert_one(
+            {
+                "_id": "w-loc",
+                "project_id": PROJECT_ID,
+                "finding_type": "sast",
+                "match": at_head.model_dump(),
+                "status": "false_positive",
+                "reason": "reviewed",
+                "created_by": "tester",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert (await released_db.findings.find_one({"_id": "loc-shipped"}))["waived"] is True
+        assert MatchSignature(**(await released_db.waivers.find_one({"_id": "w-loc"}))["match"]) == at_head
+
 
 # ---------------------------------------------------------------------------
 # A waiver with no matching criteria must NOT waive every finding: an empty

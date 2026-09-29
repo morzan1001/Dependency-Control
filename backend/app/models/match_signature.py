@@ -6,6 +6,8 @@ AnchorKind = Literal["scanner_fp", "similarity_id", "search_key", "secret_hash",
 
 # anchor_kinds that uniquely identify ONE finding instance (eligible for Pass-1 exact match).
 STRONG_ANCHOR_KINDS = ("scanner_fp", "similarity_id", "search_key", "secret_hash")
+# Strong anchors derived from the finding's content, so an equal anchor needs no content_hash check.
+CONTENT_BEARING_ANCHOR_KINDS = ("scanner_fp", "secret_hash")
 
 
 class MatchSignature(BaseModel):
@@ -22,6 +24,10 @@ class MatchSignature(BaseModel):
     @property
     def is_strong(self) -> bool:
         return self.anchor_kind in STRONG_ANCHOR_KINDS and bool(self.anchor)
+
+    @property
+    def implies_content_equality(self) -> bool:
+        return self.anchor_kind in CONTENT_BEARING_ANCHOR_KINDS
 
     @property
     def effective_rule_keys(self) -> set[str]:

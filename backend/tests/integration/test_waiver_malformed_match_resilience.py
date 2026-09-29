@@ -1,8 +1,9 @@
-"""A malformed stored `match` dict for one waiver/finding is logged and skipped; well-formed waivers still apply during recalc."""
+"""A malformed stored `match` dict on one finding is logged and skipped; the other findings are still matched during recalc."""
 
 import pytest
 
 from app.models.match_signature import MatchSignature
+from app.models.waiver import Waiver
 from app.services.stats import _apply_waivers_signature
 
 
@@ -54,46 +55,8 @@ class _WRepo:
         self.updates[wid] = data
 
 
-class _Waiver:
-    def __init__(self, id, status, match, finding_id=None):
-        self.id = id
-        self.status = status
-        self.match = match
-        self.finding_id = finding_id
-
-
-@pytest.mark.asyncio
-async def test_malformed_waiver_match_dict_is_skipped_others_applied():
-    scan = "s1"
-    repo = _Repo(
-        [
-            _finding_doc(scan, "f1", "fpA", "c1", 10),
-            _finding_doc(scan, "f2", "fpB", "c2", 20),
-        ]
-    )
-    wrepo = _WRepo()
-
-    # w_bad carries a malformed stored match dict (invalid anchor_kind => ValidationError).
-    w_bad = _Waiver("w_bad", "false_positive", {"rule_key": "OPENGREP:r", "anchor_kind": "NOT_A_KIND"})
-    # w_good is a well-formed waiver targeting f2.
-    w_good = _Waiver(
-        "w_good",
-        "false_positive",
-        MatchSignature(
-            rule_key="OPENGREP:r",
-            file_key="a.py",
-            anchor="fpB",
-            anchor_kind="scanner_fp",
-            content_hash="c2",
-            last_line=20,
-        ),
-    )
-
-    # Must NOT raise; the malformed one is skipped, the good one is applied.
-    await _apply_waivers_signature(repo, wrepo, scan, [w_bad, w_good])
-
-    assert "f2" in repo.waived
-    assert repo.waived.get("f2") is not None or "f2" in repo.waived
+def _Waiver(id, status, match):
+    return Waiver(id=id, status=status, match=match, reason=f"reason {id}", created_by="u")
 
 
 @pytest.mark.asyncio

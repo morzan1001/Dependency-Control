@@ -5,6 +5,7 @@ import logging
 import pytest
 
 from app.models.match_signature import MatchSignature
+from app.models.waiver import Waiver
 from app.services.stats import _apply_waivers_signature
 
 
@@ -51,11 +52,8 @@ class _WRepo:
         self.updates[wid] = data
 
 
-class _Waiver:
-    def __init__(self, id, status, match):
-        self.id = id
-        self.status = status
-        self.match = match
+def _Waiver(id, status, match):
+    return Waiver(id=id, status=status, match=match, reason=f"reason {id}", created_by="u")
 
 
 @pytest.mark.asyncio

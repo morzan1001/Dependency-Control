@@ -221,3 +221,38 @@ class TestGetSeverityDistributionSkipsWaived:
         )
 
         assert distribution == {"CRITICAL": 2}
+
+
+def test_location_findings_carry_details_only_where_no_signature_is_stored():
+    asyncio.run(_location_findings_carry_details_only_where_no_signature_is_stored())
+
+
+async def _location_findings_carry_details_only_where_no_signature_is_stored():
+    db = FakeDatabase()
+    await db.findings.insert_many(
+        [
+            {
+                "_id": "signed",
+                "scan_id": "s",
+                "type": "sast",
+                "component": "a.py",
+                "match": {"rule_key": "r"},
+                "details": {"big": 1},
+            },
+            {
+                "_id": "unsigned",
+                "scan_id": "s",
+                "type": "iac",
+                "component": "b.tf",
+                "match": None,
+                "details": {"rule_id": "q"},
+            },
+            {"_id": "vuln", "scan_id": "s", "type": "vulnerability", "component": "pkg", "details": {}},
+        ]
+    )
+
+    docs = {d["_id"]: d for d in await FindingRepository(db).find_location_findings("s")}
+
+    assert set(docs) == {"signed", "unsigned"}
+    assert "details" not in docs["signed"]
+    assert docs["unsigned"]["details"] == {"rule_id": "q"}

@@ -12,6 +12,7 @@ from app.models.waiver import Waiver
 from app.services.analysis.stats import calculate_comprehensive_stats
 
 if TYPE_CHECKING:
+    from app.models.match_signature import MatchSignature
     from app.services.waivers.matching import MatchFinding, WaiverApplication
 
 logger = logging.getLogger(__name__)
@@ -183,8 +184,8 @@ def _is_signature_waiver(waiver: Any) -> bool:
     return waiver.finding_type in FindingRepository._LOCATION_TYPES
 
 
-def _safe_match_signature(raw: dict, context: str) -> Any | None:
-    """Build a MatchSignature from a stored dict, returning None (and logging) if malformed.
+def _safe_match_signature(raw: dict, context: str) -> "MatchSignature | None":
+    """Build a MatchSignature from a stored finding dict, returning None (and logging) if malformed.
 
     Skipping a malformed sub-document keeps the recalc reset+reapply from aborting and
     leaving findings transiently un-waived.
@@ -200,138 +201,99 @@ def _safe_match_signature(raw: dict, context: str) -> Any | None:
         return None
 
 
-async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id: str, waivers: list) -> None:
-    """Apply non-vulnerability waivers to a scan's location-based findings via signature matching.
-
-    Persists re-anchored waiver signatures and marks lapsed findings. Vulnerability-id waivers
-    are handled separately by the caller via apply_vulnerability_waiver.
-    """
+async def _apply_waivers_signature(
+    finding_repo: Any, waiver_repo: Any | None, scan_id: str, waivers: list[Waiver]
+) -> None:
+    """Apply finding-scope location waivers to a scan by signature; ``waiver_repo``, when given, records
+    each waiver's outcome and walked signature. Vulnerability-id waivers are handled by the caller."""
     from app.services.waivers.matching import apply_waivers_to_findings
 
-    docs = await finding_repo.find_location_findings(scan_id)
-    await _backfill_legacy_waiver_signatures(waiver_repo, waivers, docs)
-    findings, recomputed = _signed_match_findings(docs)
-    enriched = _hydrate_waiver_signatures(waivers)
+    if not waivers:
+        return
+    signed, recomputed = _signed_match_findings(await finding_repo.find_location_findings(scan_id))
+    await _backfill_legacy_waiver_signatures(waiver_repo, waivers, {legacy_id: f.sig for legacy_id, f in signed})
 
-    app = apply_waivers_to_findings(findings, enriched)
+    app = apply_waivers_to_findings([f for _, f in signed], waivers)
 
     logger.info(
-        "waiver signature apply: scan=%s waivers=%d waived=%d reanchored=%d lapsed=%d dormant=%d recomputed_sig=%d",
+        "waiver signature apply: scan=%s waivers=%d waived=%d reanchored=%d refreshed=%d lapsed=%d dormant=%d "
+        "recomputed_sig=%d",
         scan_id,
-        len(enriched),
+        len(waivers),
         len(app.waived),
         len(app.reanchored),
+        len(app.refreshed),
         len(app.lapsed),
         len(app.dormant),
         recomputed,
     )
-    if app.dormant:
-        _log_dormant_waivers(scan_id, app.dormant, findings, enriched)
-
-    await _persist_signature_application(finding_repo, waiver_repo, scan_id, app, enriched)
-
-
-async def _backfill_legacy_waiver_signatures(waiver_repo: Any, waivers: list, docs: list[dict]) -> None:
-    """Legacy waivers without a stored signature inherit the one of the finding they name by exact finding_id."""
-    docs_by_legacy_id = {d.get("finding_id") or d["_id"]: d for d in docs}
-    for w in waivers:
-        if getattr(w, "match", None) is not None:
-            continue
-        legacy_doc = docs_by_legacy_id.get(getattr(w, "finding_id", None))
-        if legacy_doc and legacy_doc.get("match"):
-            sig = _safe_match_signature(legacy_doc["match"], f"back-fill waiver {getattr(w, 'id', '?')}")
-            if sig is not None:
-                w.match = sig
-                await waiver_repo.update(w.id, {"match": legacy_doc["match"]})
-
-
-def _signed_match_findings(docs: list[dict]) -> tuple[list["MatchFinding"], int]:
-    """MatchFindings for the scan's docs, plus how many signatures were self-healed."""
-    from app.services.waivers.matching import MatchFinding
-    from app.services.waivers.signature import compute_match_signature_from_doc
-
-    findings = []
-    recomputed = 0
-    for d in docs:
-        stored = d.get("match")
-        if stored:
-            sig = _safe_match_signature(stored, f"finding {d['_id']}")
-            if sig is None:
-                continue  # malformed stored signature — skip rather than abort the batch
-        else:
-            # Self-heal: a missing stored signature would otherwise silently drop this finding
-            # from the matchable set and orphan any waiver in its (rule_key,file_key) group.
-            sig = compute_match_signature_from_doc(d)
-            if sig is not None:
-                recomputed += 1
-        findings.append(MatchFinding(id=d["_id"], sig=sig))
-    return findings, recomputed
-
-
-def _hydrate_waiver_signatures(waivers: list) -> list:
-    """Hydrate dict .match values into MatchSignatures and drop malformed ones; Waiver models pass through."""
-    enriched = []
-    for w in waivers:
-        m = getattr(w, "match", None)
-        if isinstance(m, dict):
-            sig = _safe_match_signature(m, f"waiver {getattr(w, 'id', '?')}")
-            if sig is None:
-                continue  # malformed stored waiver signature — skip; others still applied
-            w.match = sig
-        enriched.append(w)
-    return enriched
-
-
-def _log_dormant_waivers(scan_id: str, dormant: dict[str, str], findings: list["MatchFinding"], enriched: list) -> None:
-    group_sizes: dict[str, int] = {}
-    for f in findings:
-        if f.sig is not None:
-            # \x00 delimiter: rule_key/file_key are scanner IDs and file paths; neither contains NUL (so no key collision).
-            key = f"{f.sig.rule_key}\x00{f.sig.file_key}"
-            group_sizes[key] = group_sizes.get(key, 0) + 1
-    match_by_waiver = {w.id: getattr(w, "match", None) for w in enriched}
-    for wid, dormant_reason in dormant.items():
-        m = match_by_waiver.get(wid)
-        rk = getattr(m, "rule_key", None)
-        fk = getattr(m, "file_key", None)
+    match_by_waiver = {w.id: w.match for w in waivers if w.match is not None}
+    for wid, dormant_reason in app.dormant.items():
+        m = match_by_waiver[wid]
         logger.warning(
-            "waiver dormant: waiver=%s scan=%s reason=%s rule_key=%s file_key=%s last_line=%s group_findings=%d",
+            "waiver dormant: waiver=%s scan=%s reason=%s rule_key=%s file_key=%s last_line=%s",
             wid,
             scan_id,
             dormant_reason,
-            rk,
-            fk,
-            getattr(m, "last_line", None),
-            group_sizes.get(f"{rk}\x00{fk}", 0),
+            m.rule_key,
+            m.file_key,
+            m.last_line,
         )
+
+    await _persist_signature_application(finding_repo, waiver_repo, scan_id, app, waivers)
+
+
+async def _backfill_legacy_waiver_signatures(
+    waiver_repo: Any | None, waivers: list[Waiver], sig_by_finding_id: "dict[str, MatchSignature]"
+) -> None:
+    """A waiver without a signature takes the one of the finding it names by exact finding_id."""
+    for w in waivers:
+        sig = sig_by_finding_id.get(w.finding_id or "")
+        if w.match is None and sig is not None:
+            w.match = sig
+            if waiver_repo is not None:
+                await waiver_repo.update(w.id, {"match": sig.model_dump()})
+
+
+def _signed_match_findings(docs: list[dict]) -> "tuple[list[tuple[str, MatchFinding]], int]":
+    """The scan's findings that carry a signature, with the finding_id a legacy waiver names them by,
+    plus how many signatures were recomputed because none was stored."""
+    from app.services.waivers.matching import MatchFinding
+    from app.services.waivers.signature import compute_match_signature_from_doc
+
+    signed = []
+    recomputed = 0
+    for d in docs:
+        if d.get("match"):
+            sig = _safe_match_signature(d["match"], f"finding {d['_id']}")
+        else:
+            sig = compute_match_signature_from_doc(d)
+            recomputed += sig is not None
+        if sig is not None:
+            signed.append((d.get("finding_id") or d["_id"], MatchFinding(id=d["_id"], sig=sig)))
+    return signed, recomputed
 
 
 async def _persist_signature_application(
-    finding_repo: Any, waiver_repo: Any, scan_id: str, app: "WaiverApplication", enriched: list
+    finding_repo: Any, waiver_repo: Any | None, scan_id: str, app: "WaiverApplication", waivers: list[Waiver]
 ) -> None:
-    # Record per-waiver outcome so orphaned waivers (suppressing 0 findings in the latest scan)
-    # are visible in the UI. Covers dormant AND match=None waivers (both yield count 0).
-    match_counts = Counter(app.waived.values())  # waiver_id -> #findings waived
-    # getattr defaults guard pre-schema waiver docs; enriched items are Waiver instances.
-    for w in enriched:
-        count = match_counts.get(w.id, 0)
-        if getattr(w, "last_eval_scan_id", None) != scan_id or getattr(w, "last_match_count", None) != count:
-            await waiver_repo.update(w.id, {"last_eval_scan_id": scan_id, "last_match_count": count})
-
-    # Group waive writes by reason for fewer queries.
-    reason_by_waiver = {w.id: getattr(w, "reason", None) for w in enriched}
+    reason_by_waiver = {w.id: w.reason for w in waivers}
     by_reason: dict[str | None, list[str]] = {}
     for fid, wid in app.waived.items():
-        by_reason.setdefault(reason_by_waiver.get(wid), []).append(fid)
+        by_reason.setdefault(reason_by_waiver[wid], []).append(fid)
     for reason, fids in by_reason.items():
         await finding_repo.set_waived(scan_id, fids, reason)
 
     if app.lapsed:
         await finding_repo.set_lapsed(scan_id, app.lapsed)
 
-    # Persist re-anchored signatures + walked last_line (only when changed).
-    for wid, new_sig in app.reanchored.items():
-        await waiver_repo.update(wid, {"match": new_sig.model_dump()})
+    if waiver_repo is None:
+        return
+    match_counts = Counter(app.waived.values())
+    for w in waivers:
+        await _record_match_outcome(waiver_repo, w, scan_id, match_counts.get(w.id, 0))
+    for wid, sig in (app.refreshed | app.reanchored).items():
+        await waiver_repo.update(wid, {"match": sig.model_dump()})
 
 
 async def _restamp_scan(
@@ -339,9 +301,10 @@ async def _restamp_scan(
     db: AsyncIOMotorDatabase,
     waivers: list[Waiver],
     finding_repo: Any,
-    waiver_repo: Any,
+    waiver_repo: Any | None,
 ) -> Stats:
-    """Re-apply the current waiver set to one scan and rewrite its stats from the result."""
+    """Re-apply the current waiver set to one scan and rewrite its stats from the result; ``waiver_repo``,
+    when given, records what each waiver matched there."""
     # 1. Reset waivers AND lapsed flags for this scan, nested vulnerability entries included
     await finding_repo.update_many(
         {"scan_id": scan_id},
@@ -458,14 +421,14 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         )
 
         waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
-        # Head last: every pass writes each waiver's last_eval_scan_id and re-anchored signature,
-        # and those describe head.
+        # Head first and alone records waiver outcomes and signatures: those describe head, and the
+        # released passes then see the signatures head back-filled.
+        stats = await _restamp_scan(scan_id, db, waivers, finding_repo, waiver_repo) if scan_id else None
         for released_id in released_ids:
-            await _restamp_scan(released_id, db, waivers, finding_repo, waiver_repo)
-        if not scan_id:
+            await _restamp_scan(released_id, db, waivers, finding_repo, None)
+        if stats is None:
             return None
 
-        stats = await _restamp_scan(scan_id, db, waivers, finding_repo, waiver_repo)
         await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
 
         logger.info(f"Stats updated for project {project_id}: {stats.model_dump()}")

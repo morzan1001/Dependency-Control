@@ -213,13 +213,17 @@ class FindingRepository(BaseRepository[FindingRecord]):
     _LOCATION_TYPES = ("sast", "iac", "secret", "crypto_key_management")
 
     async def find_location_findings(self, scan_id: str) -> list[dict[str, Any]]:
-        """Raw docs for location-based findings of a scan (waiver-matchable)."""
-        cursor = self.collection.find(
+        """Raw docs for location-based findings of a scan (waiver-matchable), with details only where
+        no match signature is stored and one has to be recomputed from them."""
+        docs = await self.collection.find(
             {"scan_id": scan_id, "type": {"$in": list(self._LOCATION_TYPES)}},
-            # "details" is needed to recompute a missing match signature.
-            {"_id": 1, "finding_id": 1, "type": 1, "component": 1, "match": 1, "details": 1},
-        )
-        return await cursor.to_list(None)
+            {"_id": 1, "finding_id": 1, "component": 1, "match": 1},
+        ).to_list(None)
+        unsigned = {d["_id"]: d for d in docs if not d.get("match")}
+        if unsigned:
+            async for doc in self.collection.find({"scan_id": scan_id, "_id": {"$in": list(unsigned)}}, {"details": 1}):
+                unsigned[doc["_id"]]["details"] = doc.get("details")
+        return docs
 
     async def set_waived(self, scan_id: str, finding_ids: list[str], reason: str | None) -> int:
         if not finding_ids:

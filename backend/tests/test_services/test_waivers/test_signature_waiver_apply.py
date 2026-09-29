@@ -5,6 +5,7 @@ import logging
 import pytest
 
 from app.models.match_signature import MatchSignature
+from app.models.waiver import Waiver
 from app.services.stats import _apply_waivers_signature
 
 _SCAN = "s1"
@@ -44,13 +45,8 @@ class _WaiverRepo:
         self.updates.append((wid, data))
 
 
-class _Waiver:
-    def __init__(self, id, match, finding_id=None):
-        self.id = id
-        self.status = "false_positive"
-        self.reason = f"reason {id}"
-        self.match = match
-        self.finding_id = finding_id
+def _Waiver(id, match, finding_id=None, status="false_positive"):
+    return Waiver(id=id, reason=f"reason {id}", created_by="u", status=status, match=match, finding_id=finding_id)
 
 
 @pytest.mark.asyncio
@@ -88,22 +84,9 @@ async def test_a_legacy_waiver_whose_finding_has_a_malformed_signature_stays_uns
 
 
 @pytest.mark.asyncio
-async def test_a_waiver_signature_stored_as_a_dict_is_hydrated_and_applied():
-    waiver = _Waiver("w", match=_sig("fpA").model_dump())
-    finding_repo = _FindingRepo([_doc("f1", _sig("fpA").model_dump())])
-    waiver_repo = _WaiverRepo()
-
-    await _apply_waivers_signature(finding_repo, waiver_repo, _SCAN, [waiver])
-
-    assert waiver.match == _sig("fpA")
-    assert finding_repo.waived == {"f1": "reason w"}
-    assert waiver_repo.updates == [("w", {"last_eval_scan_id": _SCAN, "last_match_count": 1})]
-
-
-@pytest.mark.asyncio
-async def test_a_dormant_waiver_logs_the_signed_findings_of_its_group_only(caplog):
+async def test_a_dormant_waiver_logs_its_reason(caplog):
     claimer = _Waiver("w-claimer", match=_sig("fpA", content_hash="c1"))
-    dormant = _Waiver("w-dormant", match=_sig("gone", content_hash="c2"))
+    dormant = _Waiver("w-dormant", match=_sig("gone", content_hash="c2", file="b.py"))
     docs = [_doc("f1", _sig("fpA", content_hash="c1").model_dump()), _doc("unsigned", None)]
 
     with caplog.at_level(logging.WARNING, logger="app.services.stats"):
@@ -113,4 +96,104 @@ async def test_a_dormant_waiver_logs_the_signed_findings_of_its_group_only(caplo
     assert len(dormant_logs) == 1
     assert "waiver=w-dormant" in dormant_logs[0]
     assert "reason=no_candidates_in_group" in dormant_logs[0]
-    assert dormant_logs[0].endswith("group_findings=1")
+    assert "group_findings" not in dormant_logs[0]
+
+
+class _NoFindingRepo:
+    async def find_location_findings(self, scan_id):
+        raise AssertionError("no waiver, no finding load")
+
+
+@pytest.mark.asyncio
+async def test_without_signature_waivers_no_finding_is_loaded():
+    await _apply_waivers_signature(_NoFindingRepo(), _WaiverRepo(), _SCAN, [])
+
+
+def _match_updates(waiver_repo):
+    return [(wid, MatchSignature(**data["match"])) for wid, data in waiver_repo.updates if "match" in data]
+
+
+@pytest.mark.asyncio
+async def test_a_pass1_match_persists_the_walked_location():
+    moved = MatchSignature(**{**_sig("fpA").model_dump(), "last_line": 30})
+    waiver_repo = _WaiverRepo()
+
+    await _apply_waivers_signature(
+        _FindingRepo([_doc("f1", moved.model_dump())]), waiver_repo, _SCAN, [_Waiver("w", _sig("fpA"))]
+    )
+
+    assert _match_updates(waiver_repo) == [("w", moved)]
+
+
+@pytest.mark.asyncio
+async def test_an_unchanged_signature_is_not_rewritten():
+    weak = MatchSignature(
+        rule_key="OPENGREP:r", file_key="a.py", anchor="c", anchor_kind="content_hash", content_hash="c", last_line=10
+    )
+    finding_repo = _FindingRepo([_doc("f1", weak.model_dump())])
+    waiver_repo = _WaiverRepo()
+
+    await _apply_waivers_signature(finding_repo, waiver_repo, _SCAN, [_Waiver("w", weak)])
+
+    assert finding_repo.waived == {"f1": "reason w"}
+    assert _match_updates(waiver_repo) == []
+
+
+@pytest.mark.asyncio
+async def test_without_a_waiver_repo_the_scan_is_stamped_and_no_waiver_is_written():
+    finding_repo = _FindingRepo([_doc("f1", _sig("fpA").model_dump())])
+
+    await _apply_waivers_signature(finding_repo, None, _SCAN, [_Waiver("w", _sig("fpA"))])
+
+    assert finding_repo.waived == {"f1": "reason w"}
+
+
+def _crypto_doc(line):
+    from app.services.aggregation import ResultAggregator
+    from app.services.normalizers.sast import normalize_opengrep
+
+    aggregator = ResultAggregator()
+    item = {
+        "check_id": "crypto-misuse-hardcoded-key",
+        "path": "a.py",
+        "start": {"line": line, "col": 1},
+        "end": {"line": line, "col": 9},
+        "extra": {"severity": "ERROR", "message": "m", "fingerprint": "fp-crypto", "lines": "key = b'x'"},
+    }
+    normalize_opengrep(aggregator, {"results": [item]})
+    (finding,) = aggregator.get_findings()
+    return {
+        "_id": finding.id,
+        "scan_id": _SCAN,
+        "finding_id": finding.id,
+        "type": finding.type,
+        "component": finding.component,
+        "details": finding.details,
+        "match": finding.match.model_dump(),
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_crypto_misuse_waiver_follows_its_finding_across_a_line_shift():
+    waiver = _Waiver("w", MatchSignature(**_crypto_doc(12)["match"]), status="accepted_risk")
+    shifted = _crypto_doc(13)
+    finding_repo = _FindingRepo([shifted])
+    waiver_repo = _WaiverRepo()
+
+    await _apply_waivers_signature(finding_repo, waiver_repo, _SCAN, [waiver])
+
+    assert finding_repo.waived == {shifted["_id"]: "reason w"}
+    assert [sig.last_line for _, sig in _match_updates(waiver_repo)] == [13]
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_waiver_takes_the_recomputed_signature_of_its_unsigned_finding():
+    unsigned = {**_crypto_doc(12), "match": None}
+    waiver = _Waiver("w", match=None, finding_id=unsigned["finding_id"])
+    finding_repo = _FindingRepo([unsigned])
+    waiver_repo = _WaiverRepo()
+
+    await _apply_waivers_signature(finding_repo, waiver_repo, _SCAN, [waiver])
+
+    assert waiver.match is not None and waiver.match.anchor == "fp-crypto"
+    assert finding_repo.waived == {unsigned["_id"]: "reason w"}
