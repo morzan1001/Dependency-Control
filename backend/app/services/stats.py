@@ -117,7 +117,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
             f"with lock {lock_name}"
         )
 
-        waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
+        waivers = await waiver_repo.find_active_for_project(project_id)
         # Head first and alone records waiver outcomes and signatures: those describe head, and the
         # released passes then see the signatures head back-filled.
         stats = await _restamp_scan(scan_id, db, waivers, finding_repo, waiver_repo) if scan_id else None

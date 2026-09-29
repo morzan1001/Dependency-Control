@@ -935,7 +935,7 @@ async def _persist_findings_and_waivers(
     active_waivers: list[Waiver] = []
     if project_id:
         waiver_repo = WaiverRepository(db)
-        active_waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
+        active_waivers = await waiver_repo.find_active_for_project(project_id)
 
     await restamp_waivers(finding_repo, None, scan_id, active_waivers)
     return persisted_count, await finding_repo.count_waived(scan_id), active_waivers

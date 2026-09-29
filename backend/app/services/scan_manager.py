@@ -156,7 +156,7 @@ class ScanManager:
             from app.repositories import WaiverRepository
 
             waiver_repo = WaiverRepository(self.db)
-            self._waivers = await waiver_repo.find_active_for_project(str(self.project.id), include_global=True)
+            self._waivers = await waiver_repo.find_active_for_project(str(self.project.id))
 
         return self._waivers
 

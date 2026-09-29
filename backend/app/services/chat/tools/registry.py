@@ -702,15 +702,17 @@ class ChatToolRegistry:
         ) or await ctx.db["waivers"].find_one({"finding_id": ctx.args["finding_id"], "project_id": None})
         if not waiver:
             return {"waived": False}
-        if is_waiver_active(waiver.get("expiration_date"), now):
+        active = is_waiver_active(waiver.get("expiration_date"), now)
+        serialized = {**_serialize_doc(waiver), "is_active": active}
+        if active:
             return {
                 "waived": False,
                 "waiver_present": True,
                 "suppressing": False,
                 "reason": "no matching finding in the latest scan — finding fixed/moved or waiver dormant",
-                "waiver": _serialize_doc(waiver),
+                "waiver": serialized,
             }
-        return {"waived": False, "expired_waiver": _serialize_doc(waiver)}
+        return {"waived": False, "expired_waiver": serialized}
 
     async def _tool_list_project_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await ctx.db["projects"].find_one({"_id": ctx.args.get("project_id")}, {"_id": 1})
