@@ -102,7 +102,7 @@ def extract_cvss(cvss_data: dict[str, Any]) -> tuple[float | None, str | None]:
     for score_key, vector_key in _TRIVY_CVSS_VERSIONS:
         for source in _TRIVY_CVSS_SOURCES:
             data = cvss_data.get(source) or {}
-            if score := data.get(score_key):
+            if (score := data.get(score_key)) is not None:
                 return float(score), data.get(vector_key)
     return None, None
 

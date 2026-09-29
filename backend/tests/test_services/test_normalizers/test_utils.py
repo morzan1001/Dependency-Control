@@ -230,6 +230,14 @@ class TestExtractCvss:
         }
         assert extract_cvss(data) == (9.3, _V4_VECTOR)
 
+    def test_a_zero_v3_score_is_still_the_v3_score(self):
+        """CVSS 3 scores a vulnerability with no impact 0.0; that is a score, not a missing one."""
+        data = {
+            "nvd": {"V3Score": 0.0, "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N"},
+            "ghsa": {"V3Score": 7.5, "V3Vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"},
+        }
+        assert extract_cvss(data) == (0.0, "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:N")
+
     def test_v3_still_wins_over_v4(self):
         data = {"ghsa": {"V3Vector": "CVSS:3.1/AV:N/AC:L", "V3Score": 9.8, "V40Vector": _V4_VECTOR, "V40Score": 9.3}}
         assert extract_cvss(data) == (9.8, "CVSS:3.1/AV:N/AC:L")
