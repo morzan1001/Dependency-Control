@@ -7,11 +7,13 @@ import pytest
 
 from app.core.constants import LICENSE_URL_PATTERNS
 from app.services.analyzers.license_compliance import LICENSE_DATABASE, LicenseAnalyzer
+from app.services.analyzers.license_compliance import normalizer
 from app.services.analyzers.license_compliance.normalizer import (
     composite_license_expression,
     extract_license_from_url,
     extract_licenses,
     normalize_license,
+    split_license_list,
     tokenize_license_string,
 )
 from app.services.sbom_parser import SBOMParser, parse_sbom
@@ -85,6 +87,22 @@ def test_a_licence_title_with_a_comma_stays_one_licence():
     assert extract_licenses(component) == [("Apache License, Version 2.0", None), ("MIT", None)]
     assert tokenize_license_string("Apache License, Version 2.0") == ["Apache-2.0"]
     assert composite_license_expression({"license": "Apache License, Version 2.0"}) is None
+
+
+def test_splitting_a_long_licence_list_normalizes_each_part_a_bounded_number_of_times(monkeypatch):
+    # PyPI License: metadata can carry a whole licence text with hundreds of commas.
+    parts = [f"clause {i}" for i in range(1000)]
+    calls = 0
+
+    def counting_normalize(lic_id: str) -> str:
+        nonlocal calls
+        calls += 1
+        return normalize_license(lic_id)
+
+    monkeypatch.setattr(normalizer, "normalize_license", counting_normalize)
+
+    assert split_license_list(", ".join(parts)) == parts
+    assert calls <= 5 * len(parts)
 
 
 def test_syft_prefers_the_spdx_expression_it_resolved_over_the_raw_value():

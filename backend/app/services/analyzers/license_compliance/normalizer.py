@@ -58,6 +58,12 @@ def extract_license_from_url(url: str | None) -> str | None:
     return None
 
 
+# Comma-separated parts in the longest known licence title; bounds the re-join window on untrusted input.
+_MAX_TITLE_PARTS = 1 + max(
+    title.count(",") for title in (*LICENSE_ALIASES, *(info.name for info in LICENSE_DATABASE.values()))
+)
+
+
 def split_license_list(raw: str) -> list[str]:
     """Split a ', '-joined licence list without breaking a licence title that contains a comma."""
     parts = [part.strip() for part in raw.split(",")]
@@ -67,7 +73,7 @@ def split_license_list(raw: str) -> list[str]:
         end = next(
             (
                 stop
-                for stop in range(len(parts), start + 1, -1)
+                for stop in range(min(len(parts), start + _MAX_TITLE_PARTS), start + 1, -1)
                 if normalize_license(", ".join(parts[start:stop])) in LICENSE_DATABASE
             ),
             start + 1,
