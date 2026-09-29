@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.cache import CacheKeys, CacheTTL
-from app.core.constants import TYPOSQUATTING_POPULAR_PACKAGE_RANKS
+from app.core.constants import ANALYZER_TIMEOUTS, TYPOSQUATTING_POPULAR_PACKAGE_RANKS
 from app.services.analyzers import typosquatting
 from app.services.analyzers.typosquatting import _STATIC_NPM_PACKAGES, _STATIC_PYPI_FALLBACK, TyposquattingAnalyzer
 from tests.helpers.analyzers import analyze_cyclonedx
@@ -210,20 +210,22 @@ class TestCorpusDepthIsDeclaredAndReported:
 
 
 class _CorpusCache:
-    """Mirrors cache_service.get_or_fetch_with_lock and records every write with its TTL."""
+    """Mirrors cache_service.get_or_fetch_with_lock and records every write with its TTL and lock timing."""
 
     def __init__(self, entries: dict[str, Any] | None = None):
         self.entries = dict(entries or {})
         self.writes: list[tuple[str, Any, int | None]] = []
+        self.lock_timing: tuple[int, float] | None = None
 
-    async def mget(self, keys: list[str]) -> dict[str, Any]:
-        return {key: self.entries.get(key) for key in keys}
-
-    async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
-        self.writes.append((key, value, ttl_seconds))
-        return True
-
-    async def get_or_fetch_with_lock(self, key: str, fetch_fn, ttl_seconds: int | None = None) -> Any:
+    async def get_or_fetch_with_lock(
+        self,
+        key: str,
+        fetch_fn,
+        ttl_seconds: int | None = None,
+        lock_ttl_seconds: int = 30,
+        max_wait_seconds: float = 5.0,
+    ) -> Any:
+        self.lock_timing = (lock_ttl_seconds, max_wait_seconds)
         if self.entries.get(key) is not None:
             return self.entries[key]
         value = await fetch_fn()
@@ -255,6 +257,15 @@ class TestOnlyThePypiCorpusIsCached:
 
         assert corpus == {"pypi": {"requests"}, "npm": set(_STATIC_NPM_PACKAGES)}
         assert cache.writes == [(_PYPI_KEY, ["requests"], CacheTTL.POPULAR_PACKAGES)]
+
+    @pytest.mark.asyncio
+    async def test_peers_wait_out_the_holders_fetch_instead_of_downloading_again(self, monkeypatch):
+        cache = _CorpusCache()
+
+        await self._corpus(monkeypatch, cache, payload={"rows": [{"project": "requests"}]})
+
+        lock_ttl, max_wait = cache.lock_timing
+        assert ANALYZER_TIMEOUTS["typosquatting"] < max_wait < lock_ttl
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
