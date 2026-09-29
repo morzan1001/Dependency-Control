@@ -36,7 +36,7 @@ async def test_project_scope_denied_nonmember():
 async def test_team_scope_denied_for_a_user_the_team_does_not_list(db):
     await db.teams.insert_one({"_id": "t1", "name": "Alpha", "members": [{"user_id": "someone-else"}]})
     await db.projects.insert_one({"_id": "p1", "name": "P1", "team_ids": ["t1"]})
-    resolver = ScopeResolver(db, MagicMock(id="u1", permissions=frozenset()))
+    resolver = ScopeResolver(db, MagicMock(id="u1", permissions=frozenset({"team:read", "project:read"})))
     with pytest.raises(ScopeResolutionError):
         await resolver.resolve(scope="team", scope_id="t1")
 

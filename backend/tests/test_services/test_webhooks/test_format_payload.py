@@ -1,5 +1,7 @@
 """Unit tests for WebhookService._format_payload and test_webhook."""
 
+import hashlib
+import hmac
 import json
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -343,3 +345,32 @@ class TestTestWebhookForTeams:
             503,
             "HTTP 503: down for maintenance",
         )
+
+
+class TestDeliverySignature:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("webhook_type", "url"),
+        [("teams", "https://example.test/teams-hook"), ("generic", "https://tenant.webhook.office.com/webhookb2/abc")],
+    )
+    async def test_a_teams_delivery_is_signed_over_the_card_it_transmits(self, webhook_type, url):
+        webhook = make_webhook(webhook_type)
+        webhook.url = url
+        webhook.secret = "s3cret"
+        service = WebhookService(timeout=1.0, max_retries=1)
+        transport, requests = _recording_transport()
+
+        with (
+            patch(
+                "app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=transport)
+            ),
+            patch.object(service, "_update_webhook_status", new=AsyncMock()),
+            patch.object(service, "_log_webhook_delivery", new=AsyncMock()),
+        ):
+            delivered = await service._send_webhook(MagicMock(), webhook, make_scan_payload(), "scan.completed")
+
+        body = requests[0].content
+        expected = hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
+        assert delivered is True
+        assert json.loads(body)["type"] == "message"
+        assert requests[0].headers["X-Webhook-Signature"] == f"sha256={expected}"
