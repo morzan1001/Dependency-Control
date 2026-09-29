@@ -107,6 +107,28 @@ async def test_a_bare_name_shared_by_two_qualified_packages_counts_neither():
     assert await _vulnerability_counts(findings, "core") == 0
 
 
+@pytest.mark.asyncio
+async def test_only_the_listed_packages_advisories_are_read():
+    from app.repositories.findings import FindingRepository
+
+    findings = [
+        _vulnerability("f1", "com.fasterxml.jackson.core:jackson-databind"),
+        _vulnerability("f2", "unlisted-lib"),
+    ]
+    grouped: list = []
+    original = FindingRepository.aggregate
+
+    async def recording(self, pipeline, **kwargs):
+        rows = await original(self, pipeline, **kwargs)
+        grouped.extend(row["_id"] for row in rows)
+        return rows
+
+    with patch.object(FindingRepository, "aggregate", recording):
+        assert await _vulnerability_counts(findings, "jackson-databind") == 1
+
+    assert grouped == ["com.fasterxml.jackson.core:jackson-databind"]
+
+
 def _dependency(doc_id: str, project_id: str, name: str, version: str, purl: str) -> dict:
     return {
         "_id": doc_id,

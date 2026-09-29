@@ -32,7 +32,12 @@ from app.schemas.analytics import (
     DependencyUsage,
     SeverityBreakdown,
 )
-from app.services.component_identity import build_component_index, lookup_component
+from app.services.component_identity import (
+    artifact_name_expr,
+    build_component_index,
+    extract_artifact_name,
+    lookup_component,
+)
 from app.services.aggregation.versions import parse_version_key
 
 router = CustomAPIRouter()
@@ -211,8 +216,16 @@ async def get_top_dependencies(
 
     results = await dep_repo.aggregate(pipeline)
 
+    # Every same-artifact spelling is read, so build_component_index sees the ambiguity it guards against.
+    listed_artifacts = sorted({extract_artifact_name(dep["name"]) for dep in results})
     details_by_component = await vuln_details_by(
-        finding_repo, "component", {"scan_id": {"$in": scan_ids}, "project_id": {"$in": project_ids}}
+        finding_repo,
+        "component",
+        {
+            "scan_id": {"$in": scan_ids},
+            "project_id": {"$in": project_ids},
+            "$expr": {"$in": [artifact_name_expr("$component"), listed_artifacts]},
+        },
     )
     vuln_count_map = build_component_index(
         {component: len(live_cves(details)) for component, details in details_by_component.items()}

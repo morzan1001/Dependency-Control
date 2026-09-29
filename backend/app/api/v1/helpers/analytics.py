@@ -392,16 +392,29 @@ def severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
 
 
 async def vuln_details_by(finding_repo: Any, field: str, match: dict[str, Any]) -> dict[str, list[Any]]:
-    """Slim advisory lists of the unwaived vulnerability findings `match` selects, per value of `field`."""
+    """The distinct live advisories of the vulnerability findings `match` selects, per value of `field`."""
     rows = await finding_repo.aggregate(
         [
             {MONGO_MATCH: {**match, "type": "vulnerability", "waived": {"$ne": True}}},
-            {"$project": {field: 1, "details": SLIM_DETAILS_EXPR}},
-            {MONGO_GROUP: {"_id": f"${field}", "details_list": {"$addToSet": "$details"}}},
+            {"$unwind": "$details.vulnerabilities"},
+            {MONGO_MATCH: {"details.vulnerabilities.waived": {"$ne": True}}},
+            {
+                MONGO_GROUP: {
+                    "_id": f"${field}",
+                    "advisories": {
+                        "$addToSet": {
+                            "id": "$details.vulnerabilities.id",
+                            "resolved_cve": "$details.vulnerabilities.resolved_cve",
+                            "aliases": "$details.vulnerabilities.aliases",
+                            "severity": "$details.vulnerabilities.severity",
+                        }
+                    },
+                }
+            },
         ],
         allow_disk_use=True,
     )
-    return {r["_id"]: r["details_list"] for r in rows if r["_id"]}
+    return {r["_id"]: [{"vulnerabilities": r["advisories"]}] for r in rows if r["_id"]}
 
 
 def build_hotspot_priority_reasons(

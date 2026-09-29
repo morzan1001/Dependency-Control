@@ -127,3 +127,20 @@ async def test_a_cve_of_unknown_severity_still_counts(client, db, scanned):
 
     assert (counts["tree"], counts["hotspot"], counts["top"], counts["metadata"]) == (1, 1, 1, 1)
     assert counts["tree_severity"]["unknown"] == 1
+
+
+@pytest.mark.asyncio
+async def test_a_group_holds_each_live_advisory_once_however_many_versions_carry_it(db):
+    from app.api.v1.helpers.analytics import vuln_details_by
+    from app.repositories.findings import FindingRepository
+
+    for version in ("4.17.15", "4.17.19", "4.17.20"):
+        advisories = [
+            {"id": "CVE-2026-0001", "severity": "HIGH", "aliases": [], "fixed_version": version},
+            _advisory("CVE-2026-0002", "CRITICAL", waived=True),
+        ]
+        await db.findings.insert_one({**_finding(advisories), "_id": f"f-{version}", "version": version})
+
+    groups = await vuln_details_by(FindingRepository(db), "component", {"scan_id": SCAN_ID})
+
+    assert groups == {COMPONENT: [{"vulnerabilities": [{"id": "CVE-2026-0001", "aliases": [], "severity": "HIGH"}]}]}
