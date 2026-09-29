@@ -73,7 +73,7 @@ class SecretPrioritizedCounts(BaseModel):
     in_current_tree_count: int = Field(0, description="Secrets whose file exists at the scanned commit's tree")
     historical_only_count: int = Field(0, description="Secrets whose file no longer exists in the current tree")
     unknown_tree_count: int = Field(0, description="Secrets with no current-tree information available")
-    actionable_count: int = Field(0, description="Verified secrets still present in the current tree")
+    actionable_count: int = Field(0, description="Verified secrets (live leak until rotated), regardless of tree state")
     deprioritized_count: int = Field(0, description="Unverified secrets no longer present in the current tree")
 
 

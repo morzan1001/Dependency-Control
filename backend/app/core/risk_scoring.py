@@ -119,6 +119,11 @@ def is_deprioritized_vulnerability(*, epss_score: float | None, is_kev: bool, re
     return not is_kev and epss_score is not None and epss_score < EPSS_MEDIUM_THRESHOLD
 
 
+def is_actionable_secret(verified: bool | None) -> bool:
+    """A verified credential is a live leak until rotated, whether or not its file is still in the tree."""
+    return verified is True
+
+
 def is_deprioritized_secret(verified: bool | None, in_current_tree: bool | None) -> bool:
     """Unverified and no longer present in the scanned tree."""
     return verified is not True and in_current_tree is False

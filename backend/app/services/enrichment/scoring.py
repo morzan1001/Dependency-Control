@@ -6,7 +6,7 @@ from app.core.constants import (
     EXPLOIT_MATURITY_ORDER,
     SEVERITY_CALCULATED_RISK_SCORES,
 )
-from app.core.risk_scoring import is_deprioritized_secret, reachability_risk_modifier
+from app.core.risk_scoring import is_actionable_secret, is_deprioritized_secret, reachability_risk_modifier
 from app.models.finding import Severity
 from app.schemas.enrichment import VulnerabilityEnrichment
 
@@ -76,7 +76,7 @@ def calculate_secret_risk_score(
 ) -> tuple[float, float]:
     """CRITICAL-anchor (risk_score, adjusted_risk_score): verified secrets stay urgent regardless of tree state (already exposed until rotated), else 0.4x if gone from the tree."""
     base = SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"]
-    if verified is True:
+    if is_actionable_secret(verified):
         modifier = 1.1
     elif in_current_tree is False:
         modifier = 0.4

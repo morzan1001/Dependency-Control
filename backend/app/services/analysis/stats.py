@@ -18,6 +18,7 @@ from app.core.risk_scoring import (
     ACTIVELY_EXPLOITED_MATURITY,
     RISK_SEVERITY_WEIGHTS,
     calculate_exploit_maturity,
+    is_actionable_secret,
     is_actionable_vulnerability,
     is_deprioritized_secret,
     is_deprioritized_vulnerability,
@@ -423,7 +424,7 @@ class StatsAccumulator:
             self._secret_historical += 1
         elif in_current_tree is None:
             self._secret_unknown_tree += 1
-        if verified is True and in_current_tree is True:
+        if is_actionable_secret(verified):
             self._secret_actionable += 1
         if is_deprioritized_secret(verified, in_current_tree):
             self._secret_deprioritized += 1

@@ -132,13 +132,13 @@ class TestSecretGate:
         assert secrets is not None
         assert secrets.total == 0
 
-    def test_verified_historical_secret_is_neither_actionable_nor_deprioritized(self):
-        """(verified=True, in_current_tree=False) is historical only; not actionable, not deprioritized."""
-        findings = [_finding(ftype="secret", verified=True, in_current_tree=False)]
+    @pytest.mark.parametrize("in_current_tree", [False, None], ids=["historical", "unknown_tree"])
+    def test_a_verified_secret_is_actionable_wherever_its_file_is(self, in_current_tree):
+        """A verified credential is a live leak until rotated; scoring keeps it CRITICAL, so stats count it."""
+        findings = [_finding(ftype="secret", verified=True, in_current_tree=in_current_tree)]
         s = compute_stats(findings, {}).secret_priority
         assert s.verified_count == 1
-        assert s.historical_only_count == 1
-        assert s.actionable_count == 0
+        assert s.actionable_count == 1
         assert s.deprioritized_count == 0
 
 

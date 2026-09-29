@@ -6,6 +6,7 @@ from app.core.constants import REACHABILITY_LEVEL_IMPORT, REACHABILITY_LEVEL_SYM
 from app.core.risk_scoring import (
     CONFIRMED_REACHABLE_RISK_MODIFIER,
     UNREACHABLE_RISK_MODIFIER,
+    is_actionable_secret,
     is_actionable_vulnerability,
     is_deprioritized_secret,
     is_deprioritized_vulnerability,
@@ -76,6 +77,10 @@ class TestSecret:
 
     def test_unknown_tree_is_not_deprioritized(self):
         assert is_deprioritized_secret(False, None) is False
+
+    @pytest.mark.parametrize(("verified", "expected"), [(True, True), (False, False), (None, False)])
+    def test_only_a_verified_secret_is_actionable(self, verified, expected):
+        assert is_actionable_secret(verified) is expected
 
 
 class TestReachabilityRiskModifier:
