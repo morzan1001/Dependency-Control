@@ -13,9 +13,9 @@ from app.services.recommendation.common import (
     calculate_best_fix_version,
     calculate_score,
     finding_cve_ids,
+    newest_first,
     get_attr,
     name_some,
-    parse_version_tuple,
     sample_components,
     sort_key,
     take_top,
@@ -169,32 +169,14 @@ class TestFindingCveIds:
         assert finding_cve_ids(_Finding()) == ["CVE-2021-44228"]
 
 
-class TestParseVersionTuple:
-    @pytest.mark.parametrize(
-        ("version", "expected"),
-        [
-            pytest.param("1.2.3", (1, 2, 3), id="simple_semver"),
-            pytest.param("1.2", (1, 2), id="two_part_version"),
-            pytest.param("1.2.3.4", (1, 2, 3, 4), id="four_part_version"),
-            pytest.param("42", (42,), id="single_number"),
-            pytest.param("1.2.0-beta.1", (1, 2, 0, 1), id="prerelease_beta"),
-            pytest.param("2.0.0-rc2", (2, 0, 0, 2), id="prerelease_rc"),
-            pytest.param("", (), id="empty_string"),
-            pytest.param("abc", (), id="no_numeric_parts"),
-        ],
-    )
-    def test_reads_the_numeric_parts(self, version, expected):
-        assert parse_version_tuple(version) == expected
+class TestVersionOrdering:
+    """Recommendations rank versions by the key the aggregate fixed_version uses."""
 
-    @pytest.mark.parametrize(
-        ("higher", "lower"),
-        [
-            pytest.param("1.2.4", "1.2.3", id="patch"),
-            pytest.param("2.0.0", "1.99.99", id="major"),
-        ],
-    )
-    def test_the_tuples_compare_in_version_order(self, higher, lower):
-        assert parse_version_tuple(higher) > parse_version_tuple(lower)
+    def test_letter_suffixed_releases_are_ordered(self):
+        assert newest_first(["2.3.1b", "2.3.1c"]) == ["2.3.1c", "2.3.1b"]
+
+    def test_debian_revisions_are_ordered_numerically(self):
+        assert calculate_best_fix_version(["1.2.3-2", "1.2.3-10"]) == "1.2.3-10"
 
 
 class TestCalculateBestFixVersion:

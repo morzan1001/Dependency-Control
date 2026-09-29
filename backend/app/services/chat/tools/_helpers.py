@@ -7,6 +7,7 @@ from typing import Any
 from app.core.config import settings
 from app.services.component_identity import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
+from app.services.aggregation.versions import parse_version_key
 from app.services.recommendation.common import finding_cve_ids
 
 
@@ -239,29 +240,9 @@ def _parse_major(version: str | None) -> int | None:
 
 
 def _compare_versions(a: str, b: str) -> int:
-    """Naive numeric-tuple comparison (-1/0/1) to pick the 'largest' fix_version, not full semver."""
-
-    def parts(v: str) -> list[Any]:
-        out: list[Any] = []
-        for token in v.lstrip("vV=^~ ").split("."):
-            head = token.split("-", 1)[0].split("+", 1)[0]
-            try:
-                out.append((0, int(head)))
-            except (TypeError, ValueError):
-                out.append((1, head))
-        return out
-
-    pa, pb = parts(a), parts(b)
-    for x, y in zip(pa, pb, strict=False):
-        if x < y:
-            return -1
-        if x > y:
-            return 1
-    if len(pa) < len(pb):
-        return -1
-    if len(pa) > len(pb):
-        return 1
-    return 0
+    """-1/0/1 by the ordering the aggregate fixed_version uses."""
+    key_a, key_b = parse_version_key(a), parse_version_key(b)
+    return (key_a > key_b) - (key_a < key_b)
 
 
 def _breaking_risk(current: str | None, target: str | None) -> str:

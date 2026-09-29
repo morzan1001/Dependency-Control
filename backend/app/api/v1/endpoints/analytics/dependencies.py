@@ -40,7 +40,8 @@ from app.services.component_identity import (
     lookup_component,
     normalize_component,
 )
-from app.services.recommendation.common import get_attr, parse_version_tuple
+from app.services.aggregation.versions import parse_version_key
+from app.services.recommendation.common import get_attr
 from app.services.recommendation.graph import build_dependency_edges
 
 from ._shared import _get_enrichment_info, _resolve_scan_id
@@ -335,7 +336,7 @@ async def get_dependency_metadata_endpoint(
     # Without a version, the modal describes the version most projects run.
     shown_version = version or max(
         projects_by_version,
-        key=lambda v: (len({p.get("id") for p in projects_by_version[v]}), parse_version_tuple(v or ""), v or ""),
+        key=lambda v: (len({p.get("id") for p in projects_by_version[v]}), parse_version_key(v or ""), v or ""),
     )
     dependencies = [
         dep
@@ -367,7 +368,7 @@ async def get_dependency_metadata_endpoint(
     return DependencyMetadata(
         name=get_attr(first_dep, "name", component),
         version=get_attr(first_dep, "version", version or "unknown"),
-        versions=sorted((v for v in projects_by_version if v), key=lambda v: (parse_version_tuple(v), v), reverse=True),
+        versions=sorted((v for v in projects_by_version if v), key=lambda v: (parse_version_key(v), v), reverse=True),
         type=get_attr(first_dep, "type", "unknown"),
         purl=dep_purl,
         description=_first_dep_value(dependencies, "description") or enrichment_info["description"],
