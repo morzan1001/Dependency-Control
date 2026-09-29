@@ -42,7 +42,6 @@ from app.services.analysis.types import (
     EPSSKEVSummary,
     EPSSScoreCounts,
     ExploitMaturityCounts,
-    HighRiskCVE,
     KEVDetail,
     ReachabilityLevelCounts,
     ReachabilitySummary,
@@ -66,15 +65,13 @@ def _format_datetime(value: Any | None) -> str | None:
     return str(value)
 
 
-def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> float | None:
-    """Process EPSS data for a single finding. Returns the epss_score if present and numeric."""
+def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> None:
     epss_score = _numeric(details.get("epss_score"))
     if epss_score is None:
-        return None
+        return
     summary["epss_enriched"] += 1
     epss_scores.append(epss_score)
     summary["epss_scores"][bucket_epss(epss_score)] += 1
-    return epss_score
 
 
 def finding_vulnerability_id(finding: dict[str, Any]) -> str:
@@ -98,58 +95,47 @@ def finding_vulnerability_id(finding: dict[str, Any]) -> str:
 
 def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summary: EPSSKEVSummary) -> None:
     """Emit one row per known-exploited CVE of a finding."""
-    if not details.get(DETAILS_KEY_IN_KEV):
-        return
     component = finding.get("component", "")
     rows: list[KEVDetail] = [
         {
             "cve": canonical_cve(entry_details) or "",
             "component": component,
             "due_date": entry_details.get("kev_due_date"),
-            "ransomware": bool(entry_details.get(DETAILS_KEY_KEV_RANSOMWARE)),
+            "ransomware": entry_details.get(DETAILS_KEY_KEV_RANSOMWARE) is True,
         }
-        for entry_details in (details.get("vulnerabilities") or [])
-        if isinstance(entry_details, dict) and entry_details.get(DETAILS_KEY_IN_KEV)
+        for entry_details in details.get("vulnerabilities") or []
+        if entry_details.get(DETAILS_KEY_IN_KEV) is True
     ]
-    if not rows:
-        # The KEV CVE can come from the finding's own aliases, which match no nested entry.
-        rows = [
-            {
-                "cve": finding_vulnerability_id(finding),
-                "component": component,
-                "due_date": details.get("kev_due_date"),
-                "ransomware": bool(details.get(DETAILS_KEY_KEV_RANSOMWARE)),
-            }
-        ]
     summary["kev_matches"] += len(rows)
     summary["kev_details"].extend(rows)
     summary["kev_ransomware"] += sum(1 for row in rows if row["ransomware"])
 
 
 def _process_finding_risk(
-    finding: dict[str, Any],
-    details: dict[str, Any],
-    epss_score: float | None,
-    maturity: str,
-    risk_scores: list[float],
-    summary: EPSSKEVSummary,
+    finding: dict[str, Any], details: dict[str, Any], risk_scores: list[float], summary: EPSSKEVSummary
 ) -> None:
-    """Process risk score data for a single finding."""
+    """Collect the finding's risk score and one high-risk row per advisory scored above the threshold."""
     risk_score = details.get("risk_score")
-    if risk_score is None:
-        return
-    risk_scores.append(float(risk_score))
-    if risk_score > HIGH_RISK_SCORE_THRESHOLD:
-        high_risk_cve: HighRiskCVE = {
-            "cve": finding_vulnerability_id(finding),
-            "component": finding.get("component", ""),
-            "version": finding.get("version") or "",
-            "risk_score": round(risk_score, 1),
-            "epss_score": round(epss_score, 4) if epss_score is not None else None,
-            "in_kev": details.get(DETAILS_KEY_IN_KEV, False),
-            "exploit_maturity": maturity,
-        }
-        summary["high_risk_cves"].append(high_risk_cve)
+    if risk_score is not None:
+        risk_scores.append(float(risk_score))
+    for entry_details in details.get("vulnerabilities") or []:
+        entry_risk = entry_details.get("risk_score")
+        if entry_risk is None or entry_risk <= HIGH_RISK_SCORE_THRESHOLD:
+            continue
+        epss = _numeric(entry_details.get("epss_score"))
+        in_kev = entry_details.get(DETAILS_KEY_IN_KEV) is True
+        ransomware = entry_details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
+        summary["high_risk_cves"].append(
+            {
+                "cve": canonical_cve(entry_details) or "",
+                "component": finding.get("component", ""),
+                "version": finding.get("version") or "",
+                "risk_score": round(entry_risk, 1),
+                "epss_score": round(epss, 4) if epss is not None else None,
+                "in_kev": in_kev,
+                "exploit_maturity": calculate_exploit_maturity(in_kev, ransomware, epss),
+            }
+        )
 
 
 # The high-risk list is a UI sample of the highest scores; high_risk_total carries the real count.
@@ -192,16 +178,15 @@ def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
     for finding in findings:
         details = finding.get("details", {})
 
-        epss_score = _process_finding_epss(details, summary, epss_scores)
+        _process_finding_epss(details, summary, epss_scores)
         _process_finding_kev(finding, details, summary)
 
-        # Exploit maturity
         maturity: str = details.get("exploit_maturity", "unknown")
         exploit_maturity = cast(dict[str, int], summary["exploit_maturity"])
         if maturity in exploit_maturity:
             exploit_maturity[maturity] += 1
 
-        _process_finding_risk(finding, details, epss_score, maturity, risk_scores, summary)
+        _process_finding_risk(finding, details, risk_scores, summary)
 
     if epss_scores:
         summary["avg_epss_score"] = round(sum(epss_scores) / len(epss_scores), 4)

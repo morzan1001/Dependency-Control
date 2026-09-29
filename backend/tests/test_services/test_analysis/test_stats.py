@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.models.stats import Stats
+from app.schemas.enrichment import EPSSData, KEVEntry
 from app.services.analysis.stats import (
     _HIGH_RISK_SAMPLE_CAP,
     _format_datetime,
@@ -14,9 +15,15 @@ from app.services.analysis.stats import (
     calculate_comprehensive_stats,
     compute_stats,
 )
+from app.services.enrichment.service import _build_enrichment, apply_enrichments
 from tests.mocks.fake_mongo import FakeDatabase
 
 _HIGH_RISK_POPULATION = _HIGH_RISK_SAMPLE_CAP + 5
+
+
+def _epss(cve, score):
+    return EPSSData(cve=cve, epss_score=score, percentile=0.9, date="2024-01-01")
+
 
 # ---------------------------------------------------------------------------
 # _format_datetime
@@ -58,22 +65,27 @@ def _make_finding(
     exploit_maturity="unknown",
     risk_score=None,
 ):
-    details = {"exploit_maturity": exploit_maturity}
+    """A single-advisory finding as enrichment leaves it: the advisory and the roll-up carry the same values."""
+    enrichment: dict = {}
     if epss_score is not None:
-        details["epss_score"] = epss_score
+        enrichment["epss_score"] = epss_score
     if in_kev:
-        details["in_kev"] = True
+        enrichment["in_kev"] = True
     if kev_due_date is not None:
-        details["kev_due_date"] = kev_due_date
+        enrichment["kev_due_date"] = kev_due_date
     if kev_ransomware_use:
-        details["kev_ransomware_use"] = True
+        enrichment["kev_ransomware_use"] = True
     if risk_score is not None:
-        details["risk_score"] = risk_score
+        enrichment["risk_score"] = risk_score
     return {
-        "finding_id": finding_id,
+        "finding_id": f"{component}:{version}",
         "component": component,
         "version": version,
-        "details": details,
+        "details": {
+            "exploit_maturity": exploit_maturity,
+            **enrichment,
+            "vulnerabilities": [{"id": finding_id, **enrichment}],
+        },
     }
 
 
@@ -350,17 +362,9 @@ class TestKevRowsCarryRealCveIds:
         result = build_epss_kev_summary([finding])
         assert result["kev_details"][0]["cve"] == "GHSA-9f52-rjqv-25qv"
 
-    def test_kev_flag_only_on_the_document_falls_back_to_its_alias(self):
-        finding = _aggregated_vuln_finding(
-            [{"id": "GHSA-other", "severity": "HIGH"}],
-            aliases=["CVE-2025-77777"],
-        )
-        result = build_epss_kev_summary([finding])
-        assert result["kev_details"][0]["cve"] == "CVE-2025-77777"
-
     def test_high_risk_row_uses_the_cve_too(self):
         finding = _aggregated_vuln_finding(
-            [{"id": "CVE-2025-66614", "severity": "CRITICAL"}],
+            [{"id": "CVE-2025-66614", "severity": "CRITICAL", "risk_score": 91.0}],
             in_kev=False,
             risk_score=91.0,
         )
@@ -368,22 +372,41 @@ class TestKevRowsCarryRealCveIds:
         assert result["high_risk_cves"][0]["cve"] == "CVE-2025-66614"
 
 
-class TestBuildEpssKevSummaryFindingId:
-    def test_finding_id_preferred_over_id(self):
-        finding = _make_finding(finding_id="CVE-PREFERRED", risk_score=80.0)
-        finding["id"] = "CVE-FALLBACK"
-        result = build_epss_kev_summary([finding])
-        assert result["high_risk_cves"][0]["cve"] == "CVE-PREFERRED"
-
-    def test_id_used_as_fallback(self):
+class TestHighRiskRowsNameTheirOwnCve:
+    def test_each_row_carries_its_own_cves_kev_epss_and_score(self):
+        """log4j-core@2.14.1: the record's KEV flag and EPSS belong to CVE-2021-44228, not its first CVE."""
         finding = {
-            "id": "CVE-FALLBACK",
-            "component": "pkg",
-            "version": "1.0",
-            "details": {"risk_score": 80.0, "exploit_maturity": "unknown"},
+            "component": "log4j-core",
+            "version": "2.14.1",
+            "details": {
+                "vulnerabilities": [
+                    {"id": "CVE-2021-44832", "severity": "MEDIUM", "cvss_score": 6.6},
+                    {"id": "CVE-2021-44228", "severity": "CRITICAL", "cvss_score": 10.0},
+                ]
+            },
         }
-        result = build_epss_kev_summary([finding])
-        assert result["high_risk_cves"][0]["cve"] == "CVE-FALLBACK"
+        kev = KEVEntry(
+            cve="CVE-2021-44228",
+            vendor_project="Apache",
+            product="Log4j2",
+            vulnerability_name="Log4Shell",
+            date_added="2021-12-10",
+            short_description="RCE",
+            required_action="patch",
+            due_date="2021-12-24",
+        )
+        apply_enrichments(
+            finding["details"],
+            {
+                "CVE-2021-44832": _build_enrichment("CVE-2021-44832", None, _epss("CVE-2021-44832", 0.02)),
+                "CVE-2021-44228": _build_enrichment("CVE-2021-44228", kev, _epss("CVE-2021-44228", 0.97)),
+            },
+        )
+        rows = build_epss_kev_summary([finding])["high_risk_cves"]
+        assert [(r["cve"], r["in_kev"], r["epss_score"], r["exploit_maturity"]) for r in rows] == [
+            ("CVE-2021-44228", True, 0.97, "active")
+        ]
+        assert rows[0]["risk_score"] == 84.8
 
 
 # ---------------------------------------------------------------------------
