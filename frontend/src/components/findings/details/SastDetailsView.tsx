@@ -217,11 +217,11 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </DetailSection>
             )}
 
-            {(findingDesc || details.full_description) && (
+            {findingDesc && (
                 <DetailSection label="Description & Remediation">
                     <div className="prose prose-sm dark:prose-invert max-w-none bg-muted/30 p-4 rounded-lg border">
                         <ReactMarkdown components={markdownComponents}>
-                            {findingDesc || details.full_description}
+                            {findingDesc}
                         </ReactMarkdown>
                     </div>
                 </DetailSection>

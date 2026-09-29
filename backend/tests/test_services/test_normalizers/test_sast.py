@@ -1,6 +1,12 @@
 """Tests for SAST normalizers (OpenGrep, Bearer)."""
 
+import json
+from pathlib import Path
+
 from app.services.aggregation import ResultAggregator
+
+# bearer 2.1.1 `scan . --format json` over a Python file hashing a password with MD5 and logging an email.
+_BEARER_OUTPUT = json.loads((Path(__file__).parents[2] / "fixtures/sast/bearer_2.1.1_findings.json").read_text())
 
 
 class TestNormalizeOpengrep:
@@ -233,6 +239,17 @@ class TestNormalizeOpengrep:
 class TestNormalizeBearer:
     def setup_method(self):
         self.agg = ResultAggregator()
+
+    def test_real_output_keeps_the_rule_doc_link_and_not_the_rule_doc(self):
+        self.agg.aggregate("bearer", {"findings": _BEARER_OUTPUT})
+        findings = sorted(self.agg.findings.values(), key=lambda f: f.details["rule_id"])
+
+        assert [(f.description, f.severity) for f in findings] == [
+            ("Leakage of sensitive information in logger message", "MEDIUM"),
+            ("Usage of weak hashing library on a password (MD5)", "HIGH"),
+        ]
+        assert all(f.details["documentation_url"].startswith("https://docs.bearer.com/") for f in findings)
+        assert all("full_description" not in f.details for f in findings)
 
     def test_basic_finding(self):
         result = {

@@ -679,10 +679,6 @@ SEVERITY_ALIASES: dict[str, str] = {
     "TRACE": "INFO",
 }
 
-# Scanner-specific overrides applied before safe_severity and SEVERITY_ALIASES.
-OPENGREP_SEVERITY_MAP: dict[str, str] = {"INFO": "LOW"}
-BEARER_SEVERITY_MAP: dict[str, str] = {"warning": "LOW"}
-
 # Notification channel identifiers
 NOTIFICATION_CHANNEL_EMAIL = "email"
 NOTIFICATION_CHANNEL_SLACK = "slack"

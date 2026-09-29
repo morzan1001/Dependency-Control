@@ -307,7 +307,6 @@ class SastScannerDetails(_DetailsModel):
     license: str | None = None
     fingerprint: str | None = None
     documentation_url: str | None = None
-    full_description: str | None = None
 
 
 class SastFindingEntry(_DetailsModel):
@@ -342,7 +341,6 @@ class IacDetails(_DetailsModel):
     cwe_ids: list[str] = []
     documentation_url: str | None = None
     references: list[Any] = []
-    full_description: str | None = None
 
 
 class TyposquattingDetails(_DetailsModel):

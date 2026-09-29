@@ -22,10 +22,7 @@ def safe_severity(
     try:
         return Severity(normalized)
     except ValueError:
-        try:
-            return Severity[normalized]
-        except KeyError:
-            return default
+        return default
 
 
 def normalize_list(value: str | list[str] | None) -> list[str]:
