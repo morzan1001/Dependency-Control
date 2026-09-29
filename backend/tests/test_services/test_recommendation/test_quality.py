@@ -14,6 +14,7 @@ def _quality(
     failed_checks=None,
     project_url="https://github.com/example/old-lib",
     finding_id="q1",
+    has_maintenance_issues=None,
 ):
     critical = critical_issues if critical_issues is not None else []
     # Mirrors the stored aggregated shape: per-issue scorecard fields live one
@@ -25,7 +26,9 @@ def _quality(
         "version": version,
         "details": {
             "overall_score": overall_score,
-            "has_maintenance_issues": "Maintained" in critical,
+            "has_maintenance_issues": (
+                "Maintained" in critical if has_maintenance_issues is None else has_maintenance_issues
+            ),
             "issue_count": 1,
             "quality_issues": [
                 {
@@ -43,6 +46,13 @@ def _quality(
         },
         "id": finding_id,
     }
+
+
+class TestProcessQualityMaintenanceFlag:
+    def test_only_the_aggregated_flag_marks_a_package_unmaintained(self):
+        finding = _quality(overall_score=None, critical_issues=["Maintained"], has_maintenance_issues=False)
+        recs = process_quality([finding])
+        assert not [r for r in recs if "Unmaintained" in r.title]
 
 
 class TestProcessQualityEmpty:

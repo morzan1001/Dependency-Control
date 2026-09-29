@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
 from app.models.finding import Finding, FindingType
 from app.services.aggregation.components import build_component_index, lookup_component
 
@@ -52,14 +51,3 @@ def enrich_with_scorecard(findings: list[Finding], scorecard_cache: dict[str, di
                 "maintenance_risk": "Maintained" in scorecard_data.get("critical_issues", []),
                 "has_vulnerabilities_issue": "Vulnerabilities" in scorecard_data.get("critical_issues", []),
             }
-
-            if finding.type == FindingType.VULNERABILITY:
-                score = scorecard_data["overall_score"]
-                critical = scorecard_data.get("critical_issues", [])
-
-                if score < SCORECARD_POOR_QUALITY_THRESHOLD or "Maintained" in critical:
-                    finding.details["maintenance_warning"] = True
-                    finding.details["maintenance_warning_text"] = (
-                        f"This package has a low OpenSSF Scorecard score ({score:.1f}/10) "
-                        "which may indicate maintenance or security concerns."
-                    )

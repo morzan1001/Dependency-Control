@@ -37,7 +37,6 @@ class TestScorecardReachesRequalifiedComponents:
         enrich_with_scorecard([finding], {"jackson-databind@2.20.2": SCORECARD})
 
         assert finding.details["scorecard_context"]["overall_score"] == 2.4
-        assert finding.details["maintenance_warning"] is True
 
     def test_exact_key_still_wins(self):
         finding = _vuln("jackson-databind", "2.20.2")

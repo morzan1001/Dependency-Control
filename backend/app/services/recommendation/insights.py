@@ -1,10 +1,7 @@
 from collections import defaultdict
 from typing import Any, cast
 
-from app.core.constants import (
-    CROSS_PROJECT_MIN_OCCURRENCES,
-    SCORECARD_FLAG_THRESHOLD,
-)
+from app.core.constants import CROSS_PROJECT_MIN_OCCURRENCES
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -53,7 +50,6 @@ def correlate_scorecard_with_vulnerabilities(
         sc_details = scorecard_details(details)
         scorecard_by_component[component] = {
             "overall_score": scorecard_score(details),
-            "critical_issues": sc_details.get("critical_issues") or [],
             "project_url": sc_details.get("project_url"),
             "has_maintenance_issues": bool(details.get("has_maintenance_issues"))
             if isinstance(details, dict)
@@ -74,10 +70,10 @@ def correlate_scorecard_with_vulnerabilities(
             continue
 
         score = scorecard["overall_score"]
-        is_unmaintained = "Maintained" in scorecard["critical_issues"] or scorecard["has_maintenance_issues"]
-        is_low_score = score is not None and score < SCORECARD_FLAG_THRESHOLD
+        is_unmaintained = scorecard["has_maintenance_issues"]
 
-        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or is_low_score):
+        # A score exists only where deps_dev flagged it under the project's own threshold.
+        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score is not None):
             vf_details = get_attr(vf, "details", {})
             high_risk_vulns.append(
                 {
@@ -118,7 +114,7 @@ def correlate_scorecard_with_vulnerabilities(
                     f"Found {len(high_risk_vulns)} critical/high vulnerabilities in packages "
                     f"with concerning OpenSSF Scorecard ratings. "
                     f"{unmaintained_count} are in unmaintained packages, "
-                    f"{low_score_count} are in packages with scores below {SCORECARD_FLAG_THRESHOLD}/10. "
+                    f"{low_score_count} are in packages flagged by OpenSSF Scorecard. "
                     "These vulnerabilities may never receive fixes."
                 ),
                 impact={

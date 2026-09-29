@@ -30,6 +30,7 @@ def _quality_finding(
     overall_score=3.0,
     critical_issues=None,
     project_url=None,
+    has_maintenance_issues=None,
 ):
     critical = critical_issues or []
     # Mirrors the stored aggregated shape: per-issue scorecard fields live one
@@ -40,7 +41,9 @@ def _quality_finding(
         "component": component,
         "details": {
             "overall_score": overall_score,
-            "has_maintenance_issues": "Maintained" in critical,
+            "has_maintenance_issues": (
+                "Maintained" in critical if has_maintenance_issues is None else has_maintenance_issues
+            ),
             "issue_count": 1,
             "quality_issues": [
                 {
@@ -130,7 +133,7 @@ class TestCorrelateScorceardCriticalUnmaintained:
 
 
 class TestCorrelateScorceardHighVulnLowScore:
-    """High vuln in package with score below SCORECARD_FLAG_THRESHOLD (5.0)."""
+    """High vuln in a package the scorecard analyzer flagged, whatever threshold the project set."""
 
     def test_high_vuln_low_score_produces_recommendation(self):
         vulns = [_vuln_finding(component="pkg", severity="HIGH")]
@@ -144,12 +147,28 @@ class TestCorrelateScorceardHighVulnLowScore:
         rec = correlate_scorecard_with_vulnerabilities(vulns, quality)[0]
         assert rec.type == RecommendationType.CRITICAL_RISK
 
-    def test_high_vuln_score_exactly_at_threshold_not_flagged(self):
-        # SCORECARD_FLAG_THRESHOLD is 5.0; condition is score < 5.0.
+    def test_a_score_flagged_under_a_raised_project_threshold_counts(self):
         vulns = [_vuln_finding(component="pkg", severity="HIGH")]
-        quality = [_quality_finding(component="pkg", overall_score=5.0)]
+        quality = [_quality_finding(component="pkg", overall_score=6.0)]
         result = correlate_scorecard_with_vulnerabilities(vulns, quality)
-        assert len(result) == 0
+        assert len(result) == 1
+
+    def test_the_description_names_the_flag_rather_than_a_cut(self):
+        vulns = [_vuln_finding(component="pkg", severity="HIGH")]
+        quality = [_quality_finding(component="pkg", overall_score=3.5)]
+        rec = correlate_scorecard_with_vulnerabilities(vulns, quality)[0]
+        assert "1 are in packages flagged by OpenSSF Scorecard" in rec.description
+        assert "below" not in rec.description
+
+    def test_only_the_aggregated_maintenance_flag_marks_a_package_unmaintained(self):
+        vulns = [_vuln_finding(component="pkg", severity="HIGH")]
+        quality = [
+            _quality_finding(
+                component="pkg", overall_score=3.5, critical_issues=["Maintained"], has_maintenance_issues=False
+            )
+        ]
+        rec = correlate_scorecard_with_vulnerabilities(vulns, quality)[0]
+        assert rec.impact["unmaintained_count"] == 0
 
 
 class TestCorrelateScorceardNotFlagged:
@@ -158,8 +177,8 @@ class TestCorrelateScorceardNotFlagged:
         [
             pytest.param("pkg", "LOW", "pkg", 2.0, id="low-vuln-low-score"),
             pytest.param("pkg", "MEDIUM", "pkg", 2.0, id="medium-vuln-low-score"),
-            pytest.param("pkg", "CRITICAL", "pkg", 8.0, id="critical-vuln-well-maintained"),
-            pytest.param("pkg", "HIGH", "pkg", 7.5, id="high-vuln-well-maintained"),
+            pytest.param("pkg", "CRITICAL", "pkg", None, id="critical-vuln-no-scorecard"),
+            pytest.param("pkg", "HIGH", "pkg", None, id="high-vuln-no-scorecard"),
             pytest.param("pkg-a", "CRITICAL", "pkg-b", 2.0, id="no-matching-component"),
         ],
     )

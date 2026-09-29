@@ -49,7 +49,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 }
             )
 
-        if "Maintained" in critical_issues or has_maintenance:
+        if has_maintenance:
             unmaintained_packages.append(
                 {
                     "component": component,

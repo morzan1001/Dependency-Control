@@ -276,8 +276,6 @@ export interface FindingDetails {
     email?: string;
     packages_maintained?: number;
   };
-  maintenance_warning?: boolean;
-  maintenance_warning_text?: string;
   scorecard?: ScorecardData;
   maintainer_risk?: MaintainerRiskData;
   error_details?: string | ErrorDetails;
