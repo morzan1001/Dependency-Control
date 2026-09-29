@@ -32,4 +32,4 @@ async def test_the_scan_dependencies_fold_by_identity():
     folded = await load_scan_deps(repo, "s2")
 
     assert [info["version"] for info in folded.values()] == ["2.0.0"]
-    assert set(DEP_PROJECTION) <= {"name", "version", "type", "purl"}
+    assert set(DEP_PROJECTION) <= {"name", "version", "type", "purl", "group"}
