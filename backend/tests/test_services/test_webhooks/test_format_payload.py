@@ -116,13 +116,6 @@ class TestFormatPayloadTeamsWebhook:
         result = service._format_payload(webhook.webhook_type, "sbom.ingested", raw)
         assert result["type"] == "message"
 
-    def test_scan_completed_snake_case_alias_also_works(self):
-        service = WebhookService()
-        webhook = make_webhook("teams")
-        result = service._format_payload(webhook.webhook_type, "scan_completed", make_scan_payload())
-        assert result["type"] == "message"
-        assert result["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive"
-
 
 class TestFormatPayloadPolicyEvents:
     """Flat policy payloads must render a detailed Teams card, not the generic 'Unknown Project' fallback."""

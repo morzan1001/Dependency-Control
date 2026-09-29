@@ -7,7 +7,7 @@ from typing import Annotated, Any
 
 import pyotp
 import qrcode
-from fastapi import BackgroundTasks, Depends, HTTPException, status
+from fastapi import BackgroundTasks, Depends, HTTPException, Query, status
 
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -22,7 +22,6 @@ from app.api.v1.helpers import (
     send_email_change_email,
     send_password_reset_email,
 )
-from app.api.v1.helpers.users import ensure_identity_available
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400,
@@ -31,12 +30,15 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400_501,
     RESP_AUTH_404,
 )
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core import security
 from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User, is_local_account
-from app.repositories import ProjectRepository, TeamRepository, UserRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import IdentityTakenError, UserRepository
 from app.schemas.user import UserResponse
 from app.schemas.user import (
     User2FADisable,
@@ -88,15 +90,11 @@ async def create_user(
     if user_in.permissions:
         _ensure_can_set_permissions(current_user, existing=set(), requested=set(user_in.permissions))
 
-    user_repo = UserRepository(db)
-    await ensure_identity_available(user_repo, email=user_in.email, username=user_in.username)
-
     user_dict = user_in.model_dump()
-    hashed_password = security.get_password_hash(user_dict.pop("password"))
-    user_dict["hashed_password"] = hashed_password
+    user_dict["hashed_password"] = security.get_password_hash(user_dict.pop("password"))
 
     new_user = User(**user_dict)
-    await user_repo.create(new_user)
+    await UserRepository(db).create(new_user)
     return new_user
 
 
@@ -104,11 +102,11 @@ async def create_user(
 async def read_users(
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_READ_ALL]))],
     db: DatabaseDep,
-    skip: int = 0,
-    limit: int = 100,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 100,
     search: str | None = None,
     sort_by: str = "username",
-    sort_order: str = "asc",
+    sort_order: SortOrderQuery = "asc",
 ) -> list[User]:
     query = {}
     if search:
@@ -120,10 +118,10 @@ async def read_users(
             ]
         }
 
-    sort_direction = 1 if sort_order == "asc" else -1
-
     user_repo = UserRepository(db)
-    return await user_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
+    return await user_repo.find_many(
+        query, skip=skip, limit=limit, sort_by=sort_by, sort_order=parse_sort_direction(sort_order)
+    )
 
 
 @router.get("/me", response_model=UserResponse, responses=RESP_AUTH)
@@ -168,7 +166,8 @@ async def request_email_change(
         raise HTTPException(status_code=400, detail="This is already your email address")
 
     user_repo = UserRepository(db)
-    await ensure_identity_available(user_repo, email=email_in.email)
+    if await user_repo.exists_by_email(email_in.email):
+        raise IdentityTakenError("email")
 
     await user_repo.update(current_user.id, {"pending_email": email_in.email})
     send_email_change_email(background_tasks, current_user.id, email_in.email, system_settings)
@@ -185,13 +184,6 @@ async def read_user_by_id(
     """Get user by ID. Requires admin permission or self."""
     check_admin_or_self(current_user, user_id, [Permissions.USER_READ])
     return await get_user_or_404(user_id, db)
-
-
-async def _ensure_admin_can_set_email(user_repo: UserRepository, target: dict[str, Any], new_email: str) -> None:
-    """The IdP owns a non-local account's email; any other address must be unused in every case."""
-    if not is_local_account(target.get("auth_provider")):
-        raise HTTPException(status_code=400, detail="This account's email is managed by its identity provider")
-    await ensure_identity_available(user_repo, email=new_email)
 
 
 @router.put("/{user_id}", response_model=UserResponse, responses=RESP_AUTH_400_404)
@@ -220,7 +212,7 @@ async def update_user(
         _ensure_can_set_permissions(
             current_user,
             existing=set(existing_user.get("permissions") or []),
-            requested=set(update_data["permissions"] or []),
+            requested=set(update_data["permissions"]),
         )
 
     # Forbid self-change of is_active so a user can't lock themselves or every admin out.
@@ -231,11 +223,9 @@ async def update_user(
         )
 
     if "email" in update_data and update_data["email"] != existing_user["email"].lower():
-        await _ensure_admin_can_set_email(user_repo, existing_user, update_data["email"])
+        if not is_local_account(existing_user.get("auth_provider")):
+            raise HTTPException(status_code=400, detail="This account's email is managed by its identity provider")
         update_data["is_verified"] = False
-
-    if "username" in update_data and update_data["username"] != existing_user.get("username"):
-        await ensure_identity_available(user_repo, username=update_data["username"])
 
     if update_data:
         await user_repo.update(user_id, update_data)

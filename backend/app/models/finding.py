@@ -45,6 +45,7 @@ class FindingType(str, Enum):
     OTHER = "other"
 
 
+CRYPTO_FINDING_TYPES = frozenset(t.value for t in FindingType if t.value.startswith("crypto_"))
 # Findings a scanner places at a source location; their waivers bind by match signature and follow line drift.
 LOCATION_FINDING_TYPES = frozenset(
     {FindingType.SAST, FindingType.IAC, FindingType.SECRET, FindingType.CRYPTO_KEY_MANAGEMENT}

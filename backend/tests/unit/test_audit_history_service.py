@@ -27,7 +27,7 @@ async def test_record_policy_change_persists_entry():
     with (
         patch(
             "app.services.audit.history.PolicyAuditRepository",
-            return_value=MagicMock(insert=insert_mock),
+            return_value=MagicMock(create=insert_mock),
         ),
         patch(
             "app.services.audit.history._dispatch_webhook",
@@ -66,7 +66,7 @@ async def test_record_policy_change_survives_webhook_failure():
     with (
         patch(
             "app.services.audit.history.PolicyAuditRepository",
-            return_value=MagicMock(insert=insert_mock),
+            return_value=MagicMock(create=insert_mock),
         ),
         patch(
             "app.services.audit.history._dispatch_webhook",
@@ -102,7 +102,7 @@ async def test_record_policy_change_denormalises_actor():
     with (
         patch(
             "app.services.audit.history.PolicyAuditRepository",
-            return_value=MagicMock(insert=insert_mock),
+            return_value=MagicMock(create=insert_mock),
         ),
         patch(
             "app.services.audit.history._dispatch_webhook",
@@ -140,7 +140,7 @@ async def test_record_policy_change_clears_analytics_cache():
     with (
         patch(
             "app.services.audit.history.PolicyAuditRepository",
-            return_value=MagicMock(insert=insert_mock),
+            return_value=MagicMock(create=insert_mock),
         ),
         patch(
             "app.services.audit.history._dispatch_webhook",

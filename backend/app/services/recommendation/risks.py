@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from functools import cached_property
 from typing import Any
 
-from app.core.constants import SCORECARD_LOW_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
+from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
 from app.models.finding import PACKAGE_FINDING_TYPES
 from app.schemas.recommendation import (
     Priority,
@@ -11,7 +11,7 @@ from app.schemas.recommendation import (
     RecommendationType,
     VulnerabilityInfo,
 )
-from app.services.aggregation.versions import normalize_version
+from app.services.aggregation.versions import newest_first, normalize_version
 from app.services.component_identity import (
     build_component_index,
     cluster_by_package_identity,
@@ -27,8 +27,8 @@ from app.services.recommendation.common import (
     live_cves,
     get_attr,
     name_some,
-    newest_first,
     sample_components,
+    scorecard_score,
     summarize_vulns,
     take_top,
     vuln_info,
@@ -94,8 +94,8 @@ def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
     elif finding_type == "eol":
         pkg.is_eol = True
     elif finding_type == "quality":
-        score = details.get("overall_score")
-        if pkg.low_scorecard is None and score is not None and score < SCORECARD_LOW_THRESHOLD:
+        score = scorecard_score(details)
+        if pkg.low_scorecard is None and score is not None and score < SCORECARD_POOR_QUALITY_THRESHOLD:
             pkg.low_scorecard = score
     elif finding_type == "license":
         severity = get_attr(finding, "severity")

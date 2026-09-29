@@ -1,6 +1,6 @@
 """Tests for app.services.recommendation.quality."""
 
-from app.core.constants import SCORECARD_LOW_THRESHOLD
+from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.quality import process_quality
 
@@ -14,6 +14,7 @@ def _quality(
     failed_checks=None,
     project_url="https://github.com/example/old-lib",
     finding_id="q1",
+    has_maintenance_issues=None,
 ):
     critical = critical_issues if critical_issues is not None else []
     # Mirrors the stored aggregated shape: per-issue scorecard fields live one
@@ -25,7 +26,9 @@ def _quality(
         "version": version,
         "details": {
             "overall_score": overall_score,
-            "has_maintenance_issues": "Maintained" in critical,
+            "has_maintenance_issues": (
+                "Maintained" in critical if has_maintenance_issues is None else has_maintenance_issues
+            ),
             "issue_count": 1,
             "quality_issues": [
                 {
@@ -43,6 +46,13 @@ def _quality(
         },
         "id": finding_id,
     }
+
+
+class TestProcessQualityMaintenanceFlag:
+    def test_only_the_aggregated_flag_marks_a_package_unmaintained(self):
+        finding = _quality(overall_score=None, critical_issues=["Maintained"], has_maintenance_issues=False)
+        recs = process_quality([finding])
+        assert not [r for r in recs if "Unmaintained" in r.title]
 
 
 class TestProcessQualityEmpty:
@@ -172,14 +182,14 @@ class TestProcessQualityLowScorecard:
         assert low_recs[0].title == "Review Low-Quality Dependencies"
 
     def test_score_exactly_at_threshold_not_flagged(self):
-        """Score exactly at SCORECARD_LOW_THRESHOLD is NOT below it."""
-        finding = _quality(overall_score=SCORECARD_LOW_THRESHOLD)
+        """Score exactly at SCORECARD_POOR_QUALITY_THRESHOLD is NOT below it."""
+        finding = _quality(overall_score=SCORECARD_POOR_QUALITY_THRESHOLD)
         recs = process_quality([finding])
         low_recs = [r for r in recs if "Low-Quality" in r.title]
         assert len(low_recs) == 0
 
     def test_score_just_below_threshold_flagged(self):
-        finding = _quality(overall_score=SCORECARD_LOW_THRESHOLD - 0.1)
+        finding = _quality(overall_score=SCORECARD_POOR_QUALITY_THRESHOLD - 0.1)
         recs = process_quality([finding])
         low_recs = [r for r in recs if "Low-Quality" in r.title]
         assert len(low_recs) == 1
@@ -188,7 +198,7 @@ class TestProcessQualityLowScorecard:
         finding = _quality(overall_score=2.0)
         recs = process_quality([finding])
         low_recs = [r for r in recs if "Low-Quality" in r.title]
-        assert str(SCORECARD_LOW_THRESHOLD) in low_recs[0].description
+        assert str(SCORECARD_POOR_QUALITY_THRESHOLD) in low_recs[0].description
 
     def test_impact_contains_average_score(self):
         findings = [
@@ -298,24 +308,6 @@ class TestProcessQualityCodeReview:
         recs = process_quality(findings)
         cr_recs = [r for r in recs if "Code Review" in r.title]
         assert cr_recs[0].impact["total"] == 3
-
-
-class TestProcessQualityScoreNone:
-    """overall_score None defaults to 0.0."""
-
-    def test_none_score_treated_as_zero(self):
-        finding = _quality(overall_score=None)
-        # With score 0.0, it's below threshold, so should appear in low_score_packages
-        recs = process_quality([finding])
-        low_recs = [r for r in recs if "Low-Quality" in r.title]
-        assert len(low_recs) == 1
-
-    def test_none_score_in_packages_action(self):
-        finding = _quality(overall_score=None)
-        recs = process_quality([finding])
-        low_recs = [r for r in recs if "Low-Quality" in r.title]
-        packages = low_recs[0].action["packages"]
-        assert packages[0]["score"] == 0.0
 
 
 class TestProcessQualityHighScore:
@@ -527,3 +519,19 @@ class TestQualityCardsCountPackagesNotVersions:
 
         assert rec.description.startswith("1 packages have unaddressed security vulnerabilities")
         assert rec.impact["total"] == 1
+
+    def test_an_unmaintained_package_keeps_its_score_beside_an_unscored_version(self):
+        findings = [
+            _quality(version=version, finding_id=version, overall_score=score, has_maintenance_issues=True)
+            for version, score in (("1.0", None), ("2.0", 3.0), ("3.0", None))
+        ]
+
+        [rec] = [r for r in process_quality(findings) if "Unmaintained" in r.title]
+
+        assert [p["score"] for p in rec.action["packages"]] == [3.0]
+
+
+def test_a_maintainer_risk_finding_without_a_scorecard_is_not_listed_as_low_score():
+    finding = {"type": "quality", "severity": "MEDIUM", "component": "pkg", "version": "1.0", "details": {}}
+
+    assert process_quality([finding]) == []

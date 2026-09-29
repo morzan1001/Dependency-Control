@@ -36,6 +36,7 @@ from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
 from app.schemas.bearer import BearerFinding
+from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.kics import KicsQuery
 from app.schemas.opengrep import OpenGrepFinding
@@ -49,7 +50,7 @@ from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories,
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
-from app.services.analyzers.crypto.base import CryptoRuleAnalyzer, crypto_findings_for_assets
+from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import VulnerabilityEnrichmentService
@@ -167,21 +168,6 @@ _CRYPTO_ANALYZER_NO_EQUIVALENT: dict[str, str] = {
         "analyzer reading stored assets, not by the rules the 'crypto_rules' stage evaluates"
     ),
 }
-
-
-# The finding types the registered rule-driven analyzers own. A seeded rule outside them belongs
-# to an analyzer with its own grading logic: the certificate-lifecycle rule constrains nothing,
-# so the matcher alone would fire it on every asset in the CBOM.
-def _rule_driven_finding_types() -> frozenset[str]:
-    types: set[str] = set()
-    for factory in analyzer_factories.values():
-        analyzer = factory()
-        if isinstance(analyzer, CryptoRuleAnalyzer):
-            types.update(finding_type.value for finding_type in analyzer.finding_types)
-    return frozenset(types)
-
-
-_RULE_DRIVEN_FINDING_TYPES: frozenset[str] = _rule_driven_finding_types()
 
 
 def _hosts(*urls: str) -> str:
@@ -678,7 +664,8 @@ def _aggregate_crypto_rules(
         report.skipped[_CRYPTO_RULES] = _NO_CRYPTO_ASSETS
         return
 
-    rules = [rule for rule in load_seed_rules() if rule.enabled and rule.finding_type in _RULE_DRIVEN_FINDING_TYPES]
+    # A seeded lifecycle or cipher rule constrains no subject, so the matcher alone would fire it on every asset.
+    rules = [rule for rule in load_seed_rules() if rule.enabled and rule.finding_type in RULE_DRIVEN_FINDING_TYPES]
     for parsed_input in parsed_inputs:
         assets = [
             CryptoAsset(project_id=_ADHOC_SCOPE, scan_id=_ADHOC_SCOPE, **asset.model_dump())
@@ -854,8 +841,6 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
-    # Defaults, not the stored document: the settings dependency exposes an ``auto_init`` query
-    # parameter that writes a ``system_settings`` document.
     license_policy = request.license_policy.model_dump() if request.license_policy else None
     settings_for = _build_settings_resolver(SystemSettings(), license_policy, None)
 
@@ -896,7 +881,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     waived_count = 0
     waivers_applied = _WAIVERS_NONE
     if request.apply_global_waivers:
-        from app.repositories import WaiverRepository
+        from app.repositories.waivers import WaiverRepository
 
         waived_count = apply_global_waivers_in_memory(records, await WaiverRepository(db).find_active_global())
         waivers_applied = _WAIVERS_GLOBAL

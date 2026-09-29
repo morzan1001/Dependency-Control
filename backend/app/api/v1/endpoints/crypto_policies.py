@@ -8,7 +8,7 @@ from app.api.deps import CurrentUserDep, DatabaseDep, SystemManagerDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_500
-from app.core.constants import PROJECT_ROLE_ADMIN
+from app.core.constants import PROJECT_ROLE_ADMIN, SETTINGS_MODE_GLOBAL
 from app.models.crypto_policy import CryptoPolicy
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.system_settings import SystemSettingsRepository
@@ -94,7 +94,7 @@ async def put_project_policy(
     """Create or replace the project override policy. Project owner or admin only."""
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     settings = await SystemSettingsRepository(db).get()
-    if settings.crypto_policy_mode == "global":
+    if settings.crypto_policy_mode == SETTINGS_MODE_GLOBAL:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="System enforces a global crypto policy; project overrides are disabled.",

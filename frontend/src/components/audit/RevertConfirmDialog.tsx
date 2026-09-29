@@ -39,7 +39,14 @@ export function RevertConfirmDialog({ open, targetVersion, onClose, onConfirm }:
             disabled={busy || !comment.trim()}
             onClick={async () => {
               setBusy(true);
-              try { await onConfirm(comment); onClose(); } finally { setBusy(false); }
+              try {
+                await onConfirm(comment);
+                onClose();
+              } catch {
+                // The caller's toast reports the failure; the dialog stays open for another try.
+              } finally {
+                setBusy(false);
+              }
             }}
           >
             {busy ? "Reverting…" : "Confirm revert"}

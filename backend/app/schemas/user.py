@@ -6,6 +6,7 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, Str
 from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.notification_prefs import NotificationPreferences
 from app.models.types import PyObjectId
+from app.schemas._not_null import reject_null
 
 
 def validate_password_strength(password: str) -> str:
@@ -23,8 +24,15 @@ def validate_password_strength(password: str) -> str:
     return password
 
 
+def _not_email_shaped(username: str) -> str:
+    # Login resolves the username before the email, so an email-shaped name would shadow that account.
+    if "@" in username:
+        raise ValueError("A username must not contain '@'")
+    return username
+
+
 LowercaseEmail = Annotated[EmailStr, AfterValidator(str.lower)]
-Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1), AfterValidator(_not_email_shaped)]
 
 
 class UserCreate(BaseModel):
@@ -33,7 +41,7 @@ class UserCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     email: LowercaseEmail
-    username: str
+    username: Username
     password: str
     is_active: bool = True
     permissions: list[str] = []
@@ -49,7 +57,7 @@ class UserCreate(BaseModel):
 
 class UserSignup(BaseModel):
     email: LowercaseEmail
-    username: str
+    username: Username
     password: str
     slack_username: str | None = None
     mattermost_username: str | None = None
@@ -72,12 +80,7 @@ class UserUpdate(BaseModel):
     mattermost_username: str | None = None
     notification_preferences: NotificationPreferences = None
 
-    @field_validator("email", "username")
-    @classmethod
-    def reject_null(cls, v: str | None) -> str:
-        if v is None:
-            raise ValueError("may be omitted but not null")
-        return v
+    _not_null = field_validator("email", "username", "is_active", "permissions")(reject_null)
 
 
 class UserUpdateMe(BaseModel):

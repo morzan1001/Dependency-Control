@@ -1,15 +1,16 @@
 """REST endpoints for crypto analytics (hotspots, trends)."""
 
 from datetime import datetime
+
 from fastapi import HTTPException, Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_400_403, RESP_403, RESP_404
-from app.core.constants import MAX_CRYPTO_HOTSPOT_PAGE
-from app.schemas.analytics import HotspotResponse, ScopeKind, TrendSeries
-from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
-from app.services.analytics.crypto_trends import Bucket, CryptoTrendService, Metric
+from app.core.constants import MAX_CRYPTO_HOTSPOT_PAGE, ScopeName
+from app.schemas.analytics import Bucket, GroupBy, HotspotResponse, Metric, TrendSeries
+from app.services.analytics.crypto_hotspots import CryptoHotspotService
+from app.services.analytics.crypto_trends import CryptoTrendService
 from app.services.analytics.scopes import ScopeResolver
 
 router = CustomAPIRouter(prefix="/analytics/crypto", tags=["crypto-analytics"])
@@ -19,7 +20,7 @@ router = CustomAPIRouter(prefix="/analytics/crypto", tags=["crypto-analytics"])
 async def get_hotspots(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    scope: ScopeKind = Query(...),
+    scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
     group_by: GroupBy = Query("name"),
     scan_id: str | None = Query(None),
@@ -42,7 +43,7 @@ async def get_hotspot_locations(
     key: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    scope: ScopeKind = Query(...),
+    scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
     grouping: GroupBy = Query("name"),
 ) -> object:
@@ -67,7 +68,7 @@ async def get_trends(
     db: DatabaseDep,
     range_start: datetime = Query(...),
     range_end: datetime = Query(...),
-    scope: ScopeKind = Query(...),
+    scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
     metric: Metric = Query("total_crypto_findings"),
     bucket: Bucket = Query("week"),

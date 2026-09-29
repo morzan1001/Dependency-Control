@@ -11,6 +11,7 @@ from app.core.constants import (
     get_severity_value,
 )
 from app.models.finding import PACKAGE_FINDING_TYPES, Finding, FindingType, Severity
+from app.models.license import CATEGORY_RESTRICTIVENESS
 from app.schemas.enrichment import DependencyEnrichment
 from app.schemas.finding import (
     QualityAggregatedDetails,
@@ -33,10 +34,7 @@ from app.services.aggregation.merging import (
 from app.services.aggregation.quality import update_quality_description
 from app.services.aggregation.scorecard import enrich_with_scorecard
 from app.services.aggregation.versions import aggregate_fixed_version, normalize_version
-from app.services.analyzers.license_compliance.constants import (
-    CATEGORY_RESTRICTIVENESS,
-    LICENSE_DATABASE,
-)
+from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
 from app.services.analyzers.license_compliance.normalizer import (
     normalize_license as normalize_spdx_id,
 )
@@ -69,7 +67,6 @@ from app.services.normalizers.vulnerability import (
 _LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
 _SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
 _SPDX_WITH_SPLIT = re.compile(r"\s++WITH\s++")
-_CATEGORY_RANK_BY_VALUE = {category.value: rank for category, rank in CATEGORY_RESTRICTIVENESS.items()}
 _ENTRY_LEVEL_KEYS = frozenset({"ecosystem_specific", "fixed_version", "cvss_score", "cvss_vector", "references"})
 
 
@@ -218,8 +215,8 @@ class ResultAggregator:
         """Most-restrictive-wins keeps multi-license primaries order-independent; a scanner classification always beats a deps.dev guess (no category)."""
         if enrichment.primary_license is None or enrichment.license_category is None:
             return True
-        incoming_rank = _CATEGORY_RANK_BY_VALUE.get(category or "", 0)
-        current_rank = _CATEGORY_RANK_BY_VALUE.get(enrichment.license_category, 0)
+        incoming_rank = CATEGORY_RESTRICTIVENESS.get(category or "", 0)
+        current_rank = CATEGORY_RESTRICTIVENESS.get(enrichment.license_category, 0)
         return incoming_rank > current_rank
 
     def enrich_from_license_scanner(self, name: str, version: str, license_info: dict[str, Any]) -> None:

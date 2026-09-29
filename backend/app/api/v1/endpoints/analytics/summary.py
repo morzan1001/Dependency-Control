@@ -18,11 +18,9 @@ from app.api.v1.helpers.analytics import (
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.permissions import Permissions
 from app.core.purl import package_identity_expr
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-    ScanRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.analytics import (
     AnalyticsScope,
     AnalyticsSummary,
@@ -36,7 +34,7 @@ from app.services.component_identity import (
     extract_artifact_name,
     lookup_component,
 )
-from app.services.aggregation.versions import parse_version_key
+from app.services.aggregation.versions import newest_first
 from app.services.recommendation.common import live_cves
 
 router = CustomAPIRouter()
@@ -123,25 +121,12 @@ async def get_analytics_summary(
 
     severity_counts = await finding_repo.get_severity_distribution(scan_ids)
 
-    total_vulns = sum(severity_counts.values())
-    named = {sev: severity_counts.get(sev, 0) for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")}
-    severity_dist = SeverityBreakdown(
-        critical=named["CRITICAL"],
-        high=named["HIGH"],
-        medium=named["MEDIUM"],
-        low=named["LOW"],
-        negligible=named["NEGLIGIBLE"],
-        info=named["INFO"],
-        # Catch-all so the breakdown always sums to total_vulns, even for unmapped severities.
-        unknown=total_vulns - sum(named.values()),
-    )
-
     return AnalyticsSummary(
         total_dependencies=total_deps,
-        total_vulnerabilities=total_vulns,
+        total_vulnerabilities=sum(severity_counts.values()),
         unique_packages=unique_packages,
         dependency_types=dependency_types,
-        severity_distribution=severity_dist,
+        severity_distribution=SeverityBreakdown.from_counts(severity_counts),
         resolved_projects=resolved_projects,
         projects_without_release=projects_without_release,
     )
@@ -225,7 +210,7 @@ async def get_top_dependencies(
                 type=dep.get("type", "unknown"),
                 group=dep.get("group"),
                 # $addToSet has no order, so rank before sampling.
-                versions=sorted(dep["versions"], key=parse_version_key, reverse=True)[:_VERSION_SAMPLE],
+                versions=newest_first(dep["versions"])[:_VERSION_SAMPLE],
                 version_count=dep["version_count"],
                 project_count=dep["project_count"],
                 total_occurrences=dep["total_occurrences"],

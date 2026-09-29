@@ -15,10 +15,10 @@ from app.core.constants import (
     RECOMMENDATION_SCORING_WEIGHTS,
     RECOMMENDATION_TYPE_BONUSES,
 )
+from app.core.cve import canonical_cves
 from app.core.epss import bucket_epss
 from app.schemas.recommendation import Priority, Recommendation, VulnerabilityInfo
-from app.services.aggregation.versions import aggregate_fixed_version, parse_version_key, split_fixed_versions
-from app.core.cve import canonical_cves
+from app.services.aggregation.versions import aggregate_fixed_version, newest_first, split_fixed_versions
 
 ModelOrDict = BaseModel | dict[str, Any]
 
@@ -77,6 +77,12 @@ def dependency_label(dep: ModelOrDict) -> str:
     return f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
+def scorecard_score(details: Any) -> float | None:
+    """A quality finding's OpenSSF Scorecard score; None when it carries maintainer risk only."""
+    score = details.get("overall_score") if isinstance(details, dict) else None
+    return None if score is None else float(score)
+
+
 def scorecard_details(details: Any) -> dict[str, Any]:
     """Per-issue scorecard fields (critical_issues, failed_checks, project_url) live
     one level down in the aggregated shape: details.quality_issues[].details."""
@@ -124,16 +130,10 @@ def live_cves(details_list: Iterable[Any]) -> list[str]:
 ACTION_VERSION_SAMPLE = 5
 
 
-def newest_first(versions: Iterable[Any]) -> list[str]:
-    """Versions ranked newest first. A set-derived list carries no order of its own, so a sample
-    taken off one is a different five between runs."""
-    return sorted((str(v) for v in versions), key=parse_version_key, reverse=True)
-
-
 def calculate_best_fix_version(versions: list[str]) -> str:
     """The highest single version among stored fixed_version values."""
     parts = [part for v in versions for part in split_fixed_versions(v)]
-    return max(parts, key=parse_version_key) if parts else "unknown"
+    return newest_first(parts)[0] if parts else "unknown"
 
 
 def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:

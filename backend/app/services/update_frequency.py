@@ -16,15 +16,16 @@ from typing import Any, Literal
 from packaging.version import InvalidVersion, Version
 
 from app.core.constants import (
+    COUNTED_UPDATE_KINDS,
     RECENT_UPDATES_LIMIT,
-    SCAN_USABLE_STATUSES,
     SLOWEST_PACKAGES_LIMIT,
     UPDATE_SAMPLE_RANK,
+    UpdateKind,
 )
 from app.core.purl import package_identity, parse_purl
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
@@ -68,7 +69,7 @@ def _release_tuple(version: Version) -> tuple[int, int]:
     )
 
 
-def classify_version_change(old_version: str, new_version: str) -> str:
+def classify_version_change(old_version: str, new_version: str) -> UpdateKind | Literal["none"]:
     """Classify a version change via PEP 440 parsing.
 
     Returns ``"major" | "minor" | "patch" | "downgrade" | "none" | "unknown"``.
@@ -159,6 +160,10 @@ def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
             identity, info = record
             candidates[identity].append(info)
     return {identity: _resolve_duplicate(infos) for identity, infos in candidates.items()}
+
+
+async def load_scan_deps(dep_repo: DependencyRepository, scan_id: str) -> dict[str, dict[str, str]]:
+    return fold_scan_deps(await dep_repo.find_raw_by_scan(scan_id, DEP_PROJECTION))
 
 
 async def load_outdated_entries(
@@ -277,17 +282,16 @@ def _build_timeline_entry(
 ) -> ScanTimelineEntry:
     """Build a timeline entry from a list of update events for a scan."""
     type_counts = Counter(e.update_type for e in events)
-    downgrades = type_counts.get("downgrade", 0)
     return ScanTimelineEntry(
         scan_id=scan_id,
         date=scan_date.isoformat(),
-        updates_count=len(events) - downgrades,
+        updates_count=sum(type_counts[kind] for kind in COUNTED_UPDATE_KINDS),
         outdated_count=outdated_count,
         patch=type_counts.get("patch", 0),
         minor=type_counts.get("minor", 0),
         major=type_counts.get("major", 0),
         unknown=type_counts.get("unknown", 0),
-        downgrades=downgrades,
+        downgrades=type_counts.get("downgrade", 0),
     )
 
 
@@ -354,11 +358,9 @@ def compute_trend(scan_timeline: Sequence[ScanTimelineEntry]) -> tuple[str, str]
 
 def granularity_ratio(type_counter: Counter, total_updates: int) -> dict[str, float]:
     """Per-update-type share of all updates, rounded to 2 dp."""
-    if not total_updates:
-        return {"patch": 0.0, "minor": 0.0, "major": 0.0, "unknown": 0.0}
     return {
-        bucket: round(type_counter.get(bucket, 0) / total_updates, 2)
-        for bucket in ("patch", "minor", "major", "unknown")
+        bucket: round(type_counter.get(bucket, 0) / total_updates, 2) if total_updates else 0.0
+        for bucket in COUNTED_UPDATE_KINDS
     }
 
 
@@ -403,8 +405,7 @@ def _aggregate_metrics(
 ) -> UpdateFrequencyMetrics:
     """Build the final metrics response from streamed counters."""
     downgrade_total = type_counter.get("downgrade", 0)
-    # Downgrades are recorded but are not update activity.
-    total_updates = sum(type_counter.values()) - downgrade_total
+    total_updates = sum(type_counter.get(kind, 0) for kind in COUNTED_UPDATE_KINDS)
     num_intervals = len(bars) - 1
 
     first_date = datetime.fromisoformat(bars[0].date)
@@ -651,11 +652,6 @@ class _AccumulatorState:
         return list(islice(chain.from_iterable(reversed(self.recent_events_by_scan)), RECENT_UPDATES_LIMIT))
 
 
-def as_utc(dt: datetime) -> datetime:
-    """Mongo/Motor returns naive UTC datetimes; make them aware once at load."""
-    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
-
-
 _MIN_COMPARABLE_COMMITS = 2
 
 
@@ -765,17 +761,16 @@ async def _load_completed_scans(
     # the limit would empty the window when the newest scans are failed/processing.
     docs = await scan_repo.find_many_raw(
         {
+            **USABLE_BUILD_MATCH,
             "project_id": project_id,
-            "status": {"$in": SCAN_USABLE_STATUSES},
             "branch": branch,
-            "is_rescan": {"$ne": True},
         },
         sort=[("created_at", -1), ("_id", -1)],
         limit=fetch_limit,
         projection={"_id": 1, "created_at": 1, "commit_hash": 1},
     )
     scans_raw: list[dict[str, Any]] = [
-        {"_id": d["_id"], "created_at": as_utc(d["created_at"]), "commit_hash": d.get("commit_hash")}
+        {"_id": d["_id"], "created_at": d["created_at"], "commit_hash": d.get("commit_hash")}
         for d in docs
         # Archive restore inserts bundle JSON verbatim, so a date can arrive as an ISO string.
         # Neither the window aggregation nor the delta writer matches those, so analysing them
@@ -840,10 +835,6 @@ async def compute_update_frequency(
 
     state = _AccumulatorState()
 
-    async def _load_scan_deps(scan_id: str) -> dict[str, dict[str, str]]:
-        docs = await dep_repo.find_all({"scan_id": scan_id}, projection=DEP_PROJECTION)
-        return fold_scan_deps(docs)
-
     analysed: list[dict[str, Any]] = []
     prev_deps: dict[str, dict[str, str]] = {}
     prev_outdated: set[str] | None = None
@@ -857,7 +848,7 @@ async def compute_update_frequency(
             latest_outdated = prev_outdated
 
     for curr_scan in completed_scans:
-        curr_deps = await _load_scan_deps(curr_scan["_id"])
+        curr_deps = await load_scan_deps(dep_repo, curr_scan["_id"])
         # A scan that produced no SBOM measured nothing, so the delta ledger drops it.
         # Keeping it here would frame the update that happened across it as two quiet
         # intervals and put a structural zero-update bar on the timeline.

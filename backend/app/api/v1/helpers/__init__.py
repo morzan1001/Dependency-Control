@@ -27,8 +27,6 @@ from app.api.v1.helpers.callgraph import (
     parse_madge_format,
 )
 from app.api.v1.helpers.findings import (
-    CATEGORY_TYPE_MAP,
-    TYPE_CATEGORY_MAP,
     aggregate_stats_by_category,
     get_category_for_type,
     get_category_type_filter,
@@ -100,7 +98,6 @@ from app.api.v1.helpers.webhooks import (
 
 __all__ = [
     # Findings helpers
-    "CATEGORY_TYPE_MAP",
     # Response definitions
     "RESP_400",
     "RESP_401",
@@ -114,7 +111,6 @@ __all__ = [
     "RESP_AUTH_404",
     # Sorting helpers
     "SORT_FIELDS",
-    "TYPE_CATEGORY_MAP",
     # Integration helpers
     "SlackOAuthError",
     # Project helpers

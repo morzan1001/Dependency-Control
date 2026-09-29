@@ -24,16 +24,19 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400_404_409_502,
     RESP_AUTH_404,
 )
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_SEPARATOR
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
 from app.models.user import User
-from app.repositories import ProjectRepository, TeamRepository, UserRepository, WebhookRepository
 from app.repositories.base import and_filters
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
-from app.repositories.projects import remove_team_pipeline
+from app.repositories.projects import ProjectRepository, remove_team_pipeline
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
+from app.repositories.webhooks import WebhookRepository
 from app.schemas.team import (
     TeamBindingRequest,
     TeamCreate,
@@ -87,7 +90,7 @@ async def read_teams(
     db: DatabaseDep,
     search: str | None = None,
     sort_by: str = "name",
-    sort_order: str = "asc",
+    sort_order: SortOrderQuery = "asc",
 ) -> list[dict[str, Any]]:
     """List teams."""
     team_repo = TeamRepository(db)
@@ -98,9 +101,7 @@ async def read_teams(
     search_query = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
     final_query = and_filters(search_query, visible)
 
-    sort_direction = 1 if sort_order == "asc" else -1
-
-    pipeline = build_team_enrichment_pipeline(final_query, sort_by, sort_direction)
+    pipeline = build_team_enrichment_pipeline(final_query, sort_by, parse_sort_direction(sort_order))
     return await team_repo.aggregate(pipeline, limit=1000)
 
 

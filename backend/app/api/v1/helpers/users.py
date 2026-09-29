@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import UserRepository
+from app.repositories.users import UserRepository
 
 
 async def get_user_or_404(user_id: str, db: AsyncIOMotorDatabase) -> dict[str, Any]:
@@ -26,16 +26,6 @@ async def fetch_updated_user(user_id: str, db: AsyncIOMotorDatabase) -> dict[str
     if not user:
         raise HTTPException(status_code=500, detail="Failed to retrieve updated user")
     return user
-
-
-async def ensure_identity_available(
-    user_repo: UserRepository, *, email: str | None = None, username: str | None = None
-) -> None:
-    """400 when the email, in any case, or the username already names an account."""
-    if email is not None and await user_repo.exists_by_email(email):
-        raise HTTPException(status_code=400, detail="Email already registered")
-    if username is not None and await user_repo.exists_by_username(username):
-        raise HTTPException(status_code=400, detail="Username already taken")
 
 
 def check_admin_or_self(current_user: User, target_user_id: str, permissions: list[str]) -> None:

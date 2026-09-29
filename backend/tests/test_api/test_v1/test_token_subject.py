@@ -88,7 +88,7 @@ async def test_a_refresh_token_naming_a_username_is_refused():
 
 @pytest.fixture
 def local_zone_ahead_of_utc(monkeypatch):
-    # Mongo hands last_logout_at back naive; the pod's zone must not shift the comparison.
+    # The pod's zone must not shift the logout comparison.
     monkeypatch.setenv("TZ", "Etc/GMT-2")
     time.tzset()
     yield

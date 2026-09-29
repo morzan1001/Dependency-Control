@@ -249,3 +249,38 @@ class TestHTTP422OnOutOfBoundsParams:
     def test_read_scan_findings_limit_accepted(self, test_client, limit):
         r = self._patched_findings_call(test_client, limit)
         assert r.status_code != 422, f"limit={limit} must be accepted, got {r.status_code}: {r.text}"
+
+
+class TestReadUsersPaginationBounds:
+    @pytest.fixture
+    def endpoint(self):
+        from app.api.v1.endpoints.users import read_users
+
+        return read_users
+
+    def test_a_zero_or_negative_limit_is_refused(self, endpoint):
+        assert _bound(endpoint, "limit", "ge") == 1
+
+    def test_limit_has_le_cap(self, endpoint):
+        assert _bound(endpoint, "limit", "le") == 100
+
+    def test_skip_cannot_go_negative(self, endpoint):
+        assert _bound(endpoint, "skip", "ge") == 0
+
+
+@pytest.mark.parametrize("module", ["gitlab_instances", "github_instances"])
+class TestVcsInstanceListPaginationBounds:
+    @pytest.fixture
+    def endpoint(self, module):
+        import importlib
+
+        return importlib.import_module(f"app.api.v1.endpoints.{module}").list_instances
+
+    def test_page_starts_at_one(self, endpoint):
+        assert _bound(endpoint, "page", "ge") == 1
+
+    def test_a_zero_size_is_refused(self, endpoint):
+        assert _bound(endpoint, "size", "ge") == 1
+
+    def test_size_has_le_cap(self, endpoint):
+        assert _bound(endpoint, "size", "le") == 100

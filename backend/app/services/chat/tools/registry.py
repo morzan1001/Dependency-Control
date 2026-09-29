@@ -27,8 +27,11 @@ from app.core.constants import (
     MAX_CRYPTO_HOTSPOT_PAGE,
     MAX_POLICY_AUDIT_PAGE,
     MAX_PQC_PLAN_ITEMS,
+    SEVERITY_ORDER,
+    get_severity_value,
 )
 from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cve
+from app.core.epss import bucket_epss
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import calculate_exploit_maturity, reachability_display_tier
@@ -38,7 +41,10 @@ from app.models.user import User
 from app.models.waiver import is_waiver_active
 from app.models.webhook import Webhook
 from app.repositories.base import and_filters
+from app.repositories.findings import FindingRepository
+from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
+from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
@@ -53,7 +59,6 @@ from app.services.recommendation.common import live_advisories, max_advisory_cvs
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
-    _SEVERITY_RANK,
     MAX_DAY_WINDOW,
     MAX_FINDING_ROWS,
     MAX_PLAN_STEPS,
@@ -127,7 +132,7 @@ _FINDING_RANK_FETCH_CAP = 1000
 
 # Highest severity first; the trailing clause catches values outside the known set so no finding
 # is unreachable to the walk.
-_SEVERITY_TIERS: tuple[str, ...] = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO", "UNKNOWN")
+_SEVERITY_TIERS: tuple[str, ...] = tuple(s.value for s in Severity)
 
 _RANKING_SAMPLED = (
     "State this caveat in your answer: the {tier} tier holds {total} findings and only "
@@ -157,7 +162,6 @@ _TEAM_RISK_PROJECT_READ = 500
 
 # A breakdown groups over a closed enum, so its read bound is the size of that enum: any smaller
 # number returns some of the buckets under a key that reads as all of them.
-_SEVERITY_BUCKETS = len(Severity)
 _FINDING_TYPE_BUCKETS = len(FindingType)
 
 # A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
@@ -231,7 +235,7 @@ def _rank_findings(findings: list[dict[str, Any]]) -> None:
     """Sort findings in place by severity rank desc, then details.epss_score and the highest advisory CVSS desc."""
     findings.sort(
         key=lambda f: (
-            _SEVERITY_RANK.get((f.get("severity") or "").upper(), 0),
+            get_severity_value(f.get("severity")),
             _number((f.get("details") or {}).get("epss_score")),
             _number(max_advisory_cvss(f.get("details") or {})),
         ),
@@ -523,7 +527,7 @@ class ChatToolRegistry:
         limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
         cursor = ctx.db["findings"].find(query, limit=limit)
         findings = await cursor.to_list(length=limit)
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in findings}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in findings)
         out = []
         for f in findings:
             slim = _serialize_finding_for_llm(f)
@@ -536,12 +540,8 @@ class ChatToolRegistry:
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"breakdown": {}}
-        pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": head_scan_id}},
-            {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
-        ]
-        results = await ctx.db["findings"].aggregate(pipeline).to_list(length=_SEVERITY_BUCKETS)
-        return {"breakdown": {r["_id"]: r["count"] for r in results}}
+        breakdown = await FindingRepository(ctx.db).get_severity_distribution([head_scan_id], finding_type=None)
+        return {"breakdown": breakdown}
 
     async def _tool_get_findings_by_type(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
@@ -549,7 +549,7 @@ class ChatToolRegistry:
         if not head_scan_id:
             return {"breakdown": {}}
         pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": head_scan_id}},
+            {"$match": {"scan_id": head_scan_id, "waived": {"$ne": True}}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
         ]
         results = await ctx.db["findings"].aggregate(pipeline).to_list(length=_FINDING_TYPE_BUCKETS)
@@ -560,11 +560,9 @@ class ChatToolRegistry:
         if not names:
             return {"total_projects": 0, "total_findings": 0, "severity_breakdown": {}}
         stats_by_project = await self._head_scan_stats(ctx.db, head)
-        sev_pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": {"$in": list(head.values())}}},
-            {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
-        ]
-        sev_results = await ctx.db["findings"].aggregate(sev_pipeline).to_list(length=_SEVERITY_BUCKETS)
+        severity_counts = await FindingRepository(ctx.db).get_severity_distribution(
+            list(head.values()), finding_type=None
+        )
         ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:_TOP_RISKY]
         top3 = [
             {
@@ -577,8 +575,8 @@ class ChatToolRegistry:
         ]
         return {
             "total_projects": len(names),
-            "severity_breakdown": {r["_id"]: r["count"] for r in sev_results},
-            "total_findings": sum(r["count"] for r in sev_results),
+            "severity_breakdown": severity_counts,
+            "total_findings": sum(severity_counts.values()),
             "top_risky_projects": top3,
             "hint": (
                 "If the user asked 'where should I start' or 'what is worst', "
@@ -883,13 +881,8 @@ class ChatToolRegistry:
                     }
                     for v in entries
                 )
-            max_sev = max(
-                (_SEVERITY_RANK.get(f.get("severity") or "", 0) for f in g["findings"]),
-                default=0,
-            )
-            max_sev_label = next(
-                (k for k, v in _SEVERITY_RANK.items() if v == max_sev),
-                "UNKNOWN",
+            max_sev_label = (
+                max((f.get("severity") for f in g["findings"]), key=get_severity_value, default=None) or "UNKNOWN"
             )
             critical_count = sum(1 for r in resolved if r["severity"] == "CRITICAL")
 
@@ -1028,7 +1021,8 @@ class ChatToolRegistry:
             }
         if fix:
             reasons.append(f"a fix is available (upgrade to {fix})")
-        if isinstance(epss, (int, float)) and epss < 0.01:
+        low_epss = isinstance(epss, (int, float)) and bucket_epss(epss) == "low"
+        if low_epss:
             reasons.append(f"real-world exploit likelihood is low (EPSS={epss:.4f})")
         if sev in ("LOW", "NEGLIGIBLE", "INFO"):
             reasons.append(f"severity is {sev}")
@@ -1037,7 +1031,7 @@ class ChatToolRegistry:
             if reasons
             else "Accepted risk: insert justification here. No strong automatic signal found."
         )
-        expiry_days = 180 if (fix or (isinstance(epss, (int, float)) and epss < 0.01)) else 90
+        expiry_days = 180 if (fix or low_epss) else 90
         return {
             "suggested_reason": suggested_reason,
             "suggested_expiry_days": expiry_days,
@@ -1221,7 +1215,7 @@ class ChatToolRegistry:
         allowed_sev = [
             s
             for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
-            if _SEVERITY_RANK.get(s, 0) >= _SEVERITY_RANK.get(sev_min, 3)
+            if get_severity_value(s) >= SEVERITY_ORDER.get(sev_min, SEVERITY_ORDER["HIGH"])
         ]
         latest, names = await self._heads_in_scope(ctx)
         if not latest:
@@ -1300,7 +1294,7 @@ class ChatToolRegistry:
             limit=_EXPIRING_WAIVER_READ,
             sort=[("expiration_date", 1)],
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(r) for r in rows}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(r) for r in rows)
         out = []
         for w in rows:
             expires = w.get("expiration_date")
@@ -1487,8 +1481,8 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_system_settings(self, ctx: _ToolContext) -> dict[str, Any]:
-        doc = await ctx.db["system_settings"].find_one({"_id": "current"})
-        return {"settings": SystemSettingsResponse.model_validate(doc).model_dump(mode="json") if doc else {}}
+        stored = await SystemSettingsRepository(ctx.db).get()
+        return {"settings": SystemSettingsResponse.model_validate(stored).model_dump(mode="json")}
 
     async def _tool_get_system_health(self, ctx: _ToolContext) -> dict[str, Any]:
         from app.core.cache import cache_service
@@ -1747,13 +1741,3 @@ class ChatToolRegistry:
         projects = await read_scope_projects(ctx.db, ctx.user_project_query)
         heads = await resolve_scan_ids(ctx.db, [p.id for p in projects], projects=projects)
         return heads, {p.id: p.name for p in projects}
-
-    @staticmethod
-    async def _project_names(db: AsyncIOMotorDatabase, project_ids: list[str]) -> dict[str, str]:
-        cleaned = [pid for pid in project_ids if pid]
-        if not cleaned:
-            return {}
-        names: dict[str, str] = {}
-        async for p in db["projects"].find({"_id": {"$in": cleaned}}, {"name": 1}):
-            names[p["_id"]] = p.get("name", "")
-        return names

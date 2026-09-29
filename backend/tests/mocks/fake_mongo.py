@@ -19,7 +19,7 @@ Supported query operators
 Supported update operators
 --------------------------
 - ``$set`` (including ``a.$[ident].b`` paths with ``array_filters``), ``$setOnInsert``,
-  ``$unset``, ``$inc``, ``$addToSet``, ``$push``, ``$pull``
+  ``$unset``, ``$inc``, ``$max``, ``$addToSet``, ``$push``, ``$pull``
 - The aggregation-pipeline form, ``update_one(filter, [{"$set": ...}, ...])``, with the
   ``$set``/``$addFields``, ``$unset``, ``$project`` and ``$replaceRoot`` stages.
 - Two modifiers may not touch overlapping paths: the parse raises ``OperationFailure``
@@ -35,9 +35,9 @@ Server-side behaviour that tests rely on
 ----------------------------------------
 - Projections in ``find``/``find_one``, inclusion and exclusion, dotted paths
   included, so a too-narrow projection surfaces here instead of in production.
-- BSON datetimes: a written aware datetime is stored (and read back) as naive
-  UTC truncated to the millisecond, and a query value is normalised the same way
-  before comparison, matching what the driver puts on the wire.
+- BSON datetimes: a written datetime is stored and read back as aware UTC truncated
+  to the millisecond, a naive one counting as UTC, and a query value is normalised the
+  same way before comparison, matching the tz_aware client in ``app.db.mongodb``.
 - BSON compares by type before value, so a bool never equals the number Python
   would call it equal to: ``{"$ne": True}`` keeps a document holding ``1``.
 - Cross-type BSON ordering: sorts, ``$min`` and ``$max`` rank a mixed column
@@ -139,13 +139,12 @@ _MICROSECONDS_PER_MILLISECOND = 1000
 # ---------------------------------------------------------------------------
 
 
-def _naive_utc(value: Any) -> Any:
-    """BSON has no offsets and dates are int64 milliseconds: an aware datetime is stored (and read
-    back) as naive UTC, and every datetime loses the sub-millisecond digits the wire cannot carry."""
+def _utc(value: Any) -> Any:
+    """BSON dates are int64 milliseconds since the epoch: every datetime comes back aware UTC and
+    loses the sub-millisecond digits the wire cannot carry."""
     if not isinstance(value, _datetime):
         return value
-    if value.tzinfo is not None:
-        value = value.astimezone(_timezone.utc).replace(tzinfo=None)
+    value = value.replace(tzinfo=_timezone.utc) if value.tzinfo is None else value.astimezone(_timezone.utc)
     return value.replace(microsecond=value.microsecond // _MICROSECONDS_PER_MILLISECOND * _MICROSECONDS_PER_MILLISECOND)
 
 
@@ -153,7 +152,7 @@ def _bson_equal(left: Any, right: Any) -> bool:
     """Equality with BSON's type ranking: bool is its own type, so ``1`` never equals ``True``."""
     if isinstance(left, bool) != isinstance(right, bool):
         return False
-    return bool(_naive_utc(left) == _naive_utc(right))
+    return bool(_utc(left) == _utc(right))
 
 
 def _bson_identical(left: Any, right: Any) -> bool:
@@ -184,7 +183,7 @@ def _bsonify(value: Any) -> Any:
         return {k: _bsonify(v) for k, v in value.items()}
     if isinstance(value, list):
         return [_bsonify(v) for v in value]
-    return _naive_utc(value)
+    return _utc(value)
 
 
 def _bson_type_rank(value: Any) -> int:
@@ -246,8 +245,8 @@ def _bson_sort_key(value: Any) -> tuple[int, Any]:
         return (rank, int(value))
     if rank == 7:
         # Equal ranks are all a tuple comparison ever reaches, so the datetimes
-        # only ever meet each other, and normalising to naive keeps that legal.
-        return (rank, _naive_utc(value))
+        # only ever meet each other, and normalising to UTC keeps that legal.
+        return (rank, _utc(value))
     if rank == 3:
         return (rank, value)
     # Documents and arrays have no total order in Python; their text form has one.
@@ -328,9 +327,9 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
         if op_key in ops_dict:
             if value is None:
                 return False
-            # The driver encodes an aware query value to UTC, so it compares
-            # against the stored naive datetime instead of raising.
-            left, right = _naive_utc(value), _naive_utc(ops_dict[op_key])
+            # The driver encodes a naive query value as UTC, so it compares
+            # against the stored aware datetime instead of raising.
+            left, right = _utc(value), _utc(ops_dict[op_key])
             # A range query is bracketed to the bound's BSON type, so a date
             # bound skips a document holding a string there rather than
             # widening the match.
@@ -870,7 +869,7 @@ def _eval_bool(doc: dict, expr) -> bool:
     for op, cmp_fn in (("$eq", _op.eq), ("$ne", _op.ne), *_CMP.items()):
         if op in expr:
             a, b = (_eval_expr(doc, e) for e in expr[op])
-            return cmp_fn(_bson_sort_key(_naive_utc(a)), _bson_sort_key(_naive_utc(b)))
+            return cmp_fn(_bson_sort_key(_utc(a)), _bson_sort_key(_utc(b)))
     return _truthy(_eval_expr(doc, expr))
 
 
@@ -1291,7 +1290,8 @@ def _apply_projection(doc: dict | None, projection: dict | None) -> dict | None:
     if doc is None or not projection:
         return doc
     fields = {path: spec for path, spec in projection.items() if path != "_id"}
-    if any(spec in (1, True) for spec in fields.values()):
+    # {"_id": 1} alone is an inclusion projection too, and keeps nothing but the key.
+    if any(spec in (1, True) for spec in fields.values()) or (not fields and projection.get("_id") in (1, True)):
         out: dict = {}
         for path, spec in fields.items():
             if spec in (1, True):
@@ -1363,6 +1363,14 @@ def _add_to_set_values(value: Any) -> list:
     return [value]
 
 
+def _duplicate_key_error(collision: str) -> Exception:
+    """Carries keyPattern like the driver's error, which is how callers tell the colliding index apart."""
+    from pymongo.errors import DuplicateKeyError
+
+    key_pattern = {field: 1 for field in collision.split(", ")}
+    return DuplicateKeyError(f"E11000 duplicate key error: {collision}", details={"keyPattern": key_pattern})
+
+
 def _matched_key(docs: dict, query: dict) -> Any:
     """Return the key of the first doc matching ``query`` (full operator support)."""
     for key, doc in docs.items():
@@ -1422,11 +1430,9 @@ class FakeCollection:
         return None
 
     async def insert_one(self, doc: dict):
-        from pymongo.errors import DuplicateKeyError
-
         collision = self._duplicate_key(doc)
         if collision is not None:
-            raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
+            raise _duplicate_key_error(collision)
         # The driver stamps the _id onto the caller's document, which is how code that needs the
         # new id reads it back without a round trip.
         doc.setdefault("_id", ObjectId())
@@ -1468,8 +1474,6 @@ class FakeCollection:
         depends on exactly that: a held lock fails the expiry condition, and the E11000
         is what tells the second holder it lost the race.
         """
-        from pymongo.errors import DuplicateKeyError
-
         doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
         if isinstance(update, list):
             self._apply_update(doc, update)
@@ -1479,7 +1483,7 @@ class FakeCollection:
         doc.setdefault("_id", ObjectId())
         collision = self._duplicate_key(doc)
         if collision is not None:
-            raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
+            raise _duplicate_key_error(collision)
         self._docs[doc["_id"]] = _bsonify(doc)
         return self._docs[doc["_id"]]
 
@@ -1514,10 +1518,6 @@ class FakeCollection:
         result.modified_count = modified
         result.matched_count = len(matched)
         return result
-
-    def with_options(self, **_kwargs) -> FakeCollection:
-        # Read-preference / write-concern variations are no-ops in-process.
-        return self
 
     async def find_one_and_update(self, query, update, return_document: bool = False, upsert: bool = False, **_kwargs):
         assert_no_path_conflict(update)
@@ -1555,6 +1555,11 @@ class FakeCollection:
                 for field, delta in payload.items():
                     parent, leaf = FakeCollection._resolve_parent(target, field)
                     parent[leaf] = parent.get(leaf, 0) + delta
+            elif op == "$max":
+                for field, value in payload.items():
+                    parent, leaf = FakeCollection._resolve_parent(target, field)
+                    if leaf not in parent or _bson_sort_key(value) > _bson_sort_key(parent[leaf]):
+                        parent[leaf] = value
             elif op == "$addToSet":
                 for field, value in payload.items():
                     bucket = FakeCollection._array_for_update(target, field, "$addToSet")
@@ -1725,9 +1730,7 @@ class FakeCollection:
                     modified += not _bson_identical(self._docs[key], before)
             elif upsert:
                 upserted += 1
-                doc: dict = {}
-                doc.update(upd.get(_SET_ON_INSERT, {}))
-                # The server applies every operator to the inserted document, not only $set.
+                doc: dict = dict(upd.get(_SET_ON_INSERT, {}))
                 self._apply_update(doc, upd, skip_set_on_insert=True)
                 if "_id" not in doc:
                     # Fall back to a deterministic composite key from filter fields
@@ -1841,6 +1844,3 @@ class FakeDatabase:
 
     def __getitem__(self, name: str) -> FakeCollection:
         return getattr(self, name)
-
-    def with_options(self, **_kwargs) -> FakeDatabase:
-        return self

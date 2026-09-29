@@ -74,7 +74,7 @@ async def test_a_scan_whose_project_is_gone_does_not_hold_up_shutdown():
 
     with (
         patch("app.core.worker.get_database", AsyncMock(return_value=db)),
-        patch("app.core.worker.run_analysis", AsyncMock(return_value=True)) as run_analysis,
+        patch("app.core.worker.run_analysis", AsyncMock()) as run_analysis,
     ):
         manager.workers.append(asyncio.create_task(manager.worker("worker-1")))
         await asyncio.wait_for(manager.queue.join(), timeout=5)

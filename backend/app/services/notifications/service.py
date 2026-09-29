@@ -3,7 +3,8 @@ import logging
 import os
 from typing import Any
 
-from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_ROLE_ADMIN
+from app.core import abatched
+from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_ROLE_ADMIN, NotificationEvent
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
@@ -31,7 +32,7 @@ class NotificationService:
         self,
         user: User,
         prefs: dict[str, list[str]],
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         system_settings: SystemSettings | None = None,
@@ -89,7 +90,7 @@ class NotificationService:
     async def notify_users(
         self,
         users: list[User],
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         db: Any = None,
@@ -106,7 +107,9 @@ class NotificationService:
 
         tasks = []
         for user in users:
-            prefs = {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
+            prefs: dict[str, list[str]] = (
+                {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
+            )
 
             tasks.append(
                 self._send_based_on_prefs(
@@ -133,7 +136,7 @@ class NotificationService:
         db: Any,
         *,
         permission: str | list[str],
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         forced_channels: list[str] | None = None,
@@ -146,7 +149,8 @@ class NotificationService:
         if not perms:
             return
 
-        async def flush(batch: list[User]) -> None:
+        users = (User(**doc) async for doc in db.users.find({"permissions": {"$in": perms}, "is_active": True}))
+        async for batch in abatched(users, _FAN_OUT_BATCH_SIZE):
             await self.notify_users(
                 batch,
                 event_type=event_type,
@@ -159,19 +163,10 @@ class NotificationService:
                 mattermost_props=mattermost_props,
             )
 
-        pending: list[User] = []
-        async for user_doc in db.users.find({"permissions": {"$in": perms}, "is_active": True}):
-            pending.append(User(**user_doc))
-            if len(pending) >= _FAN_OUT_BATCH_SIZE:
-                await flush(pending)
-                pending = []
-        if pending:
-            await flush(pending)
-
     async def notify_project_members(
         self,
         project: Project,
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         db: Any,
@@ -264,7 +259,7 @@ notification_service = NotificationService()
 async def safe_notify_project_event(
     db: Any,
     project_id: str | None,
-    event_type: str,
+    event_type: NotificationEvent,
     subject: str,
     message: str,
     *,

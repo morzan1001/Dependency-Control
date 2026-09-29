@@ -47,6 +47,13 @@ async def test_get_conversation_wrong_user(repo):
 
 
 @pytest.mark.asyncio
+async def test_add_message_returns_the_conversations_new_message_count(repo):
+    conv = await repo.create_conversation(user_id="user-1", title="My Chat")
+    assert await repo.add_message(conv["_id"], role="user", content="Hello") == 1
+    assert await repo.add_message(conv["_id"], role="assistant", content="Hi") == 2
+
+
+@pytest.mark.asyncio
 async def test_delete_conversation(repo):
     conv = await repo.create_conversation(user_id="user-1", title="My Chat")
     await repo.add_message(conv["_id"], role="user", content="Hello")

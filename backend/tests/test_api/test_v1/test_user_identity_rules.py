@@ -4,16 +4,15 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
-from fastapi import BackgroundTasks, HTTPException
+from fastapi import BackgroundTasks
 from pydantic import ValidationError
 
 from app.api.v1.endpoints import auth, invitations, users
 from app.core.permissions import Permissions
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.repositories.users import UserRepository
+from app.repositories.users import IdentityTakenError, UserRepository
 from app.schemas import user as user_schemas
-from app.schemas.system import SystemSettingsUpdate
 from tests.mocks.fake_mongo import FakeDatabase
 
 PASSWORD = "Sup3r!Secret"
@@ -24,13 +23,14 @@ ADMIN = User(
     email="admin@corp.com",
     permissions=[Permissions.USER_CREATE, Permissions.USER_UPDATE, Permissions.SYSTEM_MANAGE],
 )
-EMAIL_TAKEN = (400, "Email already registered")
-USERNAME_TAKEN = (400, "Username already taken")
+EMAIL_TAKEN = "Email already registered"
+USERNAME_TAKEN = "Username already taken"
 
 
 @pytest_asyncio.fixture
 async def db():
     database = FakeDatabase()
+    await database.users.create_index("username", unique=True)
     await UserRepository(database).create_raw(dict(TAKEN))
     return database
 
@@ -52,10 +52,10 @@ async def _invite(db, email):
         return await invitations.create_system_invitation(BackgroundTasks(), db, ADMIN, email)
 
 
-async def _refusal(call) -> tuple[int, str]:
-    with pytest.raises(HTTPException) as exc_info:
+async def _refusal(call) -> str:
+    with pytest.raises(IdentityTakenError) as exc_info:
         await call
-    return exc_info.value.status_code, exc_info.value.detail
+    return str(exc_info.value)
 
 
 class TestOneIdentityRule:
@@ -114,11 +114,3 @@ class TestOneLocalAccountRule:
 
         stored = await UserRepository(db).get_raw_by_id("u-blank")
         assert users.security.verify_password("An0ther!Secret", stored["hashed_password"])
-
-    def test_the_oidc_provider_cannot_be_named_like_local_accounts(self):
-        with pytest.raises(ValidationError):
-            SystemSettingsUpdate(oidc_provider_name="local")
-
-    def test_the_oidc_provider_needs_a_name(self):
-        with pytest.raises(ValidationError):
-            SystemSettingsUpdate(oidc_provider_name="")

@@ -8,7 +8,7 @@ from jose import JWTError, jwt
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import ValidationError
 
-from app.core import ensure_utc, security
+from app.core import security
 from app.core.config import settings
 from app.core.constants import (
     API_KEY_SURFACE_ADHOC,
@@ -27,18 +27,15 @@ from app.db.mongodb import get_database
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.repositories import (
-    ProjectRepository,
-    SystemSettingsRepository,
-    UserRepository,
-)
 from app.repositories.api_keys import ApiKeyRepository
 from app.repositories.projects import (
-    literal_set_stage,
+    ProjectRepository,
     owners_replaced_by,
     ownership_fields,
     replace_team_subset_pipeline,
 )
+from app.repositories.system_settings import SystemSettingsRepository
+from app.repositories.users import UserRepository
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
 
@@ -53,13 +50,8 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/acce
 optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token", auto_error=False)
 
 
-async def get_system_settings(
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    auto_init: bool = False,
-) -> SystemSettings:
-    """Get system settings; create defaults in DB when auto_init is True."""
-    repo = SystemSettingsRepository(db)
-    return await repo.get(auto_init=auto_init)
+async def get_system_settings(db: AsyncIOMotorDatabase = Depends(get_database)) -> SystemSettings:
+    return await SystemSettingsRepository(db).get()
 
 
 class TokenRejected(Exception):
@@ -73,7 +65,7 @@ class TokenRejected(Exception):
 async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabase) -> None:
     if not jti:
         return
-    from app.repositories import TokenBlacklistRepository
+    from app.repositories.token_blacklist import TokenBlacklistRepository
 
     blacklist_repo = TokenBlacklistRepository(db)
     if await blacklist_repo.is_blacklisted(jti):
@@ -82,7 +74,7 @@ async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabas
 
 def _check_logout_invalidation(user: dict, payload: dict) -> None:
     """Raise TokenRejected if the token was issued before the user's last logout."""
-    last_logout_at = ensure_utc(user.get("last_logout_at"))
+    last_logout_at = user.get("last_logout_at")
     if not last_logout_at:
         return
     iat = payload.get("iat")
@@ -288,22 +280,18 @@ async def _sync_project_name(
     The ownership half is a pipeline, which cannot be merged into the ``$set`` document the rename
     is: both become stages of one pipeline instead, so an ingest still writes the project once.
     """
-    stages: list[dict] = []
     renamed: dict = {}
     current_path = getattr(project, path_field, None)
     if current_path and current_path != new_path:
         renamed[path_field] = new_path
         if project.name == current_path:
             renamed["name"] = new_path
-    if renamed:
-        stages.append(literal_set_stage(renamed))
-    stages.extend(ownership_stages or [])
 
-    if not stages:
+    if not renamed and not ownership_stages:
         return project
-    await project_repo.update_raw(project.id, stages)
+    await project_repo.update_fields_and_owners(project.id, renamed, ownership_stages or [])
     # The owners are computed server-side, so the caller is handed what was stored, not a guess.
-    return await project_repo.get_by_id_strong(project.id) or project
+    return await project_repo.get_by_id(project.id) or project
 
 
 async def _handle_gitlab_oidc(

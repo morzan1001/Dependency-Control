@@ -15,15 +15,15 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
     scope_resolution_counts,
 )
+from app.api.v1.helpers.pagination import page_meta
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.cve import canonical_cve
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
 from app.core.permissions import Permissions
 from app.models.user import User
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
 from app.schemas.analytics import (
     DependencySearchResponse,
     DependencySearchResult,
@@ -49,10 +49,6 @@ async def _resolve_search_scope(
     project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
     resolved, without_release = scope_resolution_counts([p.id for p in projects], scan_ids)
     return project_name_map, scan_ids, {"resolved_projects": resolved, "projects_without_release": without_release}
-
-
-def _page_fields(skip: int, limit: int, counts: dict[str, int]) -> dict[str, int]:
-    return {"page": skip // limit + 1, "size": limit, **counts}
 
 
 def _passes_vuln_filter(
@@ -126,7 +122,7 @@ async def search_dependencies_advanced(
         str,
         Query(description="Sort field: name, version, type, project_name, license, direct"),
     ] = "name",
-    sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "asc",
+    sort_order: SortOrderQuery = "asc",
     release_environment: ReleaseEnvironmentQuery = None,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
@@ -134,7 +130,7 @@ async def search_dependencies_advanced(
     """Advanced dependency search with multiple filters and pagination."""
     project_name_map, scan_ids, counts = await _resolve_search_scope(current_user, db, project_ids, release_environment)
     if not scan_ids:
-        return DependencySearchResponse(items=[], total=0, **_page_fields(skip, limit, counts))
+        return DependencySearchResponse(items=[], **page_meta(0, skip, limit), **counts)
 
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
@@ -158,7 +154,7 @@ async def search_dependencies_advanced(
         "direct": "direct",
     }
     mongo_sort_field = sort_field_map.get(sort_by, "name")
-    sort_direction = 1 if sort_order == "asc" else -1
+    sort_direction = parse_sort_direction(sort_order)
 
     dependencies = await dep_repo.find_many(
         query,
@@ -199,7 +195,7 @@ async def search_dependencies_advanced(
 
     results = _build_search_results(dependencies, has_vulnerabilities, vuln_versions, project_name_map)
 
-    return DependencySearchResponse(items=results, total=total_count, **_page_fields(skip, limit, counts))
+    return DependencySearchResponse(items=results, **page_meta(total_count, skip, limit), **counts)
 
 
 def _get_description(vuln: dict, finding: Any) -> str | None:
@@ -365,7 +361,7 @@ async def search_vulnerabilities(
         str,
         Query(description="Sort field: severity, cvss, epss, component, project_name"),
     ] = "severity",
-    sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "desc",
+    sort_order: SortOrderQuery = "desc",
     release_environment: ReleaseEnvironmentQuery = None,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
@@ -373,7 +369,7 @@ async def search_vulnerabilities(
     """Search vulnerabilities by id, aliases and advisory ids; description matches reach non-vulnerability findings."""
     project_name_map, scan_ids, counts = await _resolve_search_scope(current_user, db, project_ids, release_environment)
     if not scan_ids:
-        return VulnerabilitySearchResponse(items=[], total=0, **_page_fields(skip, limit, counts))
+        return VulnerabilitySearchResponse(items=[], **page_meta(0, skip, limit), **counts)
 
     finding_repo = FindingRepository(db)
 
@@ -382,7 +378,7 @@ async def search_vulnerabilities(
     total_count = await finding_repo.count(query)
 
     mongo_sort_field = _VULN_SORT_FIELD_MAP.get(sort_by, "severity")
-    sort_direction = -1 if sort_order == "desc" else 1
+    sort_direction = parse_sort_direction(sort_order)
 
     findings = await finding_repo.find_many(
         query,
@@ -404,7 +400,7 @@ async def search_vulnerabilities(
     if sort_by == "severity":
         results.sort(
             key=lambda x: get_severity_value(x.severity),
-            reverse=(sort_order == "desc"),
+            reverse=sort_direction == -1,
         )
 
-    return VulnerabilitySearchResponse(items=results, total=total_count, **_page_fields(skip, limit, counts))
+    return VulnerabilitySearchResponse(items=results, **page_meta(total_count, skip, limit), **counts)

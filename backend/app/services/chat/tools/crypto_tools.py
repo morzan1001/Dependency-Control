@@ -9,8 +9,8 @@ from typing import Any, Literal, cast
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import ScopeName
 from app.models.user import User
-from app.schemas.analytics import ScopeKind
 from app.services.compliance.renderers.base import coverage_statement
 
 _NOISY_RULE_SAMPLE = 10
@@ -149,7 +149,8 @@ async def get_crypto_hotspots(
     group_by: str = "name",
     limit: int = 20,
 ) -> dict[str, Any]:
-    from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
+    from app.schemas.analytics import GroupBy
+    from app.services.analytics.crypto_hotspots import CryptoHotspotService
 
     pkg = _pkg()
     resolved = pkg.ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
@@ -169,21 +170,17 @@ async def get_crypto_trends(
     metric: str = "total_crypto_findings",
     days: int = 30,
 ) -> dict[str, Any]:
-    from app.services.analytics.crypto_trends import (
-        Bucket,
-        CryptoTrendService,
-        Metric,
-    )
+    from app.schemas.analytics import Metric
+    from app.services.analytics.crypto_trends import CryptoTrendService, auto_bucket
 
     pkg = _pkg()
     resolved = pkg.ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     now = datetime.now(timezone.utc)
     days = max(1, min(days, 365))
-    bucket: Bucket = "day" if days <= 14 else "week" if days <= 90 else "month"
     series = await CryptoTrendService(db).trend(
         resolved=resolved,
         metric=cast(Metric, metric),
-        bucket=bucket,
+        bucket=auto_bucket(timedelta(days=days)),
         range_start=now - timedelta(days=days),
         range_end=now,
     )
@@ -256,7 +253,7 @@ async def get_framework_evaluation_summary(
         return {"error": f"Unknown framework: {framework}"}
     resolver = pkg.ScopeResolver(db, user)
     resolved = await resolver.resolve(
-        scope=cast(ScopeKind, scope),
+        scope=cast(ScopeName, scope),
         scope_id=scope_id,
     )
 

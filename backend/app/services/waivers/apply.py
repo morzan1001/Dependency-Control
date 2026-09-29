@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 _FieldsById = dict[str, dict[str, Any]]
 
 # Pass bookkeeping, a future expiry and a load-defaulted creation time do not change what a scan is stamped with.
-_NOT_STAMPED = {"last_eval_scan_id", "last_match_count", "match", "expiration_date", "is_active", "created_at"}
+_NOT_STAMPED = {"last_eval_scan_id", "last_match_count", "match", "expiration_date", "created_at"}
 
 
 def waiver_fingerprint(waivers: list[Waiver]) -> str:

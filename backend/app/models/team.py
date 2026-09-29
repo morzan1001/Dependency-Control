@@ -1,16 +1,16 @@
 from datetime import datetime, timezone
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES, TEAM_SOURCE_MANUAL, team_binding_key
+from app.core.constants import TEAM_ROLE_MEMBER, TEAM_SOURCE_MANUAL, TeamRole, team_binding_key
 from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
 
 
 class TeamMember(BaseModel):
     user_id: str
-    role: str = TEAM_ROLE_MEMBER
+    role: TeamRole = TEAM_ROLE_MEMBER
     # Who put the member here: "manual", or "<provider>:<instance id>" naming the sync that
     # resolved them. A sync replaces only the entries naming its own instance, so a hand-added
     # member, another provider's and another instance of the same provider's all survive it. Any
@@ -19,13 +19,6 @@ class TeamMember(BaseModel):
     # Unconstrained on purpose: rejecting an unmigrated value here would 500 every read of every
     # team the member belongs to rather than leave the member in place.
     source: str = TEAM_SOURCE_MANUAL
-
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, v: str) -> str:
-        if v not in TEAM_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(TEAM_ROLES)}")
-        return v
 
 
 class _ProviderBinding(BaseModel):

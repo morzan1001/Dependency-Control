@@ -1,9 +1,10 @@
 """Teams Adaptive Card formatter for webhook payloads."""
 
+from app.models.finding import Severity
 from app.schemas.notification import AlertVulnerability
 
 _ACTION_OPEN_URL = "Action.OpenUrl"
-_SEVERITY_KEYS = ("critical", "high", "medium", "low", "info", "unknown")
+_SEVERITY_KEYS = tuple(s.value.lower() for s in Severity)
 
 
 class TeamsFormatter:

@@ -5,7 +5,6 @@ from typing import Any
 
 from pymongo import DESCENDING
 
-from app.core.metrics import track_db_operation
 from app.models.compliance_report import ComplianceReport
 from app.repositories.base import BaseRepository, and_filters
 from app.schemas.compliance import EvaluationCoverage, ReportFramework, ReportStatus
@@ -14,15 +13,6 @@ from app.schemas.compliance import EvaluationCoverage, ReportFramework, ReportSt
 class ComplianceReportRepository(BaseRepository[ComplianceReport]):
     collection_name = "compliance_reports"
     model_class = ComplianceReport
-
-    async def insert(self, report: ComplianceReport) -> None:
-        with track_db_operation(self.collection_name, "insert_one"):
-            await self.collection.insert_one(report.model_dump(by_alias=True))
-
-    async def get(self, report_id: str) -> ComplianceReport | None:
-        with track_db_operation(self.collection_name, "find_one"):
-            doc = await self.collection.find_one({"_id": report_id})
-        return ComplianceReport.model_validate(doc) if doc else None
 
     async def list(
         self,
@@ -42,13 +32,12 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
         if scope_id:
             query["scope_id"] = scope_id
         if framework:
-            query["framework"] = framework.value if hasattr(framework, "value") else framework
+            query["framework"] = framework
         if status:
-            query["status"] = status.value if hasattr(status, "value") else status
+            query["status"] = status
         query = and_filters(query, visibility)
-        with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find(query).sort("requested_at", DESCENDING).skip(skip).limit(limit)
-            docs = await cursor.to_list(length=limit)
+        cursor = self.collection.find(query).sort("requested_at", DESCENDING).skip(skip).limit(limit)
+        docs = await cursor.to_list(length=limit)
         return [ComplianceReport.model_validate(d) for d in docs]
 
     async def update_status(
@@ -82,27 +71,20 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
             "expires_at": expires_at,
         }
         update: dict[str, Any] = {
-            "status": status.value if hasattr(status, "value") else status,
+            "status": status,
             **{key: val for key, val in optional_fields.items() if val is not None},
         }
-        with track_db_operation(self.collection_name, "update_one"):
-            await self.collection.update_one({"_id": report_id}, {"$set": update})
+        await self.collection.update_one({"_id": report_id}, {"$set": update})
 
     async def count_pending_for_user(self, user_id: str) -> int:
-        with track_db_operation(self.collection_name, "count"):
-            return await self.collection.count_documents(
-                {
-                    "requested_by": user_id,
-                    "status": {
-                        "$in": [
-                            ReportStatus.PENDING.value,
-                            ReportStatus.GENERATING.value,
-                        ]
-                    },
-                }
-            )
-
-    async def delete(self, report_id: str) -> bool:
-        with track_db_operation(self.collection_name, "delete_one"):
-            result = await self.collection.delete_one({"_id": report_id})
-        return result.deleted_count > 0
+        return await self.collection.count_documents(
+            {
+                "requested_by": user_id,
+                "status": {
+                    "$in": [
+                        ReportStatus.PENDING.value,
+                        ReportStatus.GENERATING.value,
+                    ]
+                },
+            }
+        )

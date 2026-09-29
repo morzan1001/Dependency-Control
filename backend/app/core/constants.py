@@ -2,7 +2,9 @@
 
 import os
 import re
-from typing import Any, Final, Literal, get_args
+from typing import Any, Literal, get_args
+
+from app.models.finding import Severity
 
 # HOSTNAME alone repeats across the uvicorn processes of one pod.
 INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
@@ -12,16 +14,8 @@ INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
 DETAILS_KEY_IN_KEV = "in_kev"
 DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
 
-# Severity order for sorting (higher value = more severe)
-SEVERITY_ORDER: dict[str, int] = {
-    "CRITICAL": 5,
-    "HIGH": 4,
-    "MEDIUM": 3,
-    "LOW": 2,
-    "NEGLIGIBLE": 1,
-    "INFO": 0,
-    "UNKNOWN": 0,
-}
+# Higher = more severe, in Severity's declaration order; UNKNOWN (0) also ranks any unrecognised label.
+SEVERITY_ORDER: dict[str, int] = {level.value: rank for rank, level in enumerate(reversed(Severity))}
 
 
 def get_severity_value(severity: str | None) -> int:
@@ -64,61 +58,64 @@ SPDX_BSD_2_CLAUSE = "BSD-2-Clause"
 SPDX_MPL_2_0 = "MPL-2.0"
 SPDX_MPL_1_1 = "MPL-1.1"
 
-# License URL Patterns
-# Common license URL patterns to SPDX ID mapping
+# License URL patterns to SPDX ids, matched against the lowercased URL.
 LICENSE_URL_PATTERNS: dict[str, str] = {
-    # GNU Licenses
+    # GNU; the version 2 licences live under /old-licenses/.
     r"gnu\.org/licenses/gpl-3\.0": SPDX_GPL_3_0,
-    r"gnu\.org/licenses/gpl-2\.0": SPDX_GPL_2_0,
+    r"gnu\.org/licenses/(old-licenses/)?gpl-2\.0": SPDX_GPL_2_0,
     r"gnu\.org/licenses/lgpl-3\.0": SPDX_LGPL_3_0,
-    r"gnu\.org/licenses/lgpl-2\.1": SPDX_LGPL_2_1,
-    r"gnu\.org/licenses/lgpl-2\.0": SPDX_LGPL_2_0,
+    r"gnu\.org/licenses/(old-licenses/)?lgpl-2\.1": SPDX_LGPL_2_1,
+    r"gnu\.org/licenses/(old-licenses/)?lgpl-2\.0": SPDX_LGPL_2_0,
     r"gnu\.org/licenses/agpl-3\.0": SPDX_AGPL_3_0,
-    r"gnu\.org/licenses/fdl": "GFDL-1.3",
     # Apache
-    r"apache\.org/licenses/LICENSE-2\.0": SPDX_APACHE_2_0,
-    r"apache\.org/licenses/LICENSE-1\.1": SPDX_APACHE_1_1,
-    # MIT
-    r"opensource\.org/licenses/MIT": SPDX_MIT,
+    r"apache\.org/licenses/license-2\.0": SPDX_APACHE_2_0,
+    r"apache\.org/licenses/license-1\.1": SPDX_APACHE_1_1,
+    # opensource.org serves both /licenses/<id> and /license/<id>.
+    r"opensource\.org/licenses?/apache-2\.0": SPDX_APACHE_2_0,
+    r"opensource\.org/licenses?/mit": SPDX_MIT,
     r"mit-license\.org": SPDX_MIT,
-    # BSD
-    r"opensource\.org/licenses/BSD-3-Clause": SPDX_BSD_3_CLAUSE,
-    r"opensource\.org/licenses/BSD-2-Clause": SPDX_BSD_2_CLAUSE,
+    r"opensource\.org/licenses?/bsd-3-clause": SPDX_BSD_3_CLAUSE,
+    r"opensource\.org/licenses?/bsd-2-clause": SPDX_BSD_2_CLAUSE,
+    r"opensource\.org/licenses?/isc": "ISC",
     # Creative Commons
     r"creativecommons\.org/licenses/by/4\.0": "CC-BY-4.0",
     r"creativecommons\.org/licenses/by-sa/4\.0": "CC-BY-SA-4.0",
     r"creativecommons\.org/publicdomain/zero/1\.0": "CC0-1.0",
-    # Mozilla
-    r"mozilla\.org/MPL/2\.0": SPDX_MPL_2_0,
-    r"mozilla\.org/MPL/1\.1": SPDX_MPL_1_1,
+    # Mozilla, with or without a locale segment
+    r"mozilla\.org/([a-z-]+/)?mpl/2\.0": SPDX_MPL_2_0,
+    r"mozilla\.org/([a-z-]+/)?mpl/1\.1": SPDX_MPL_1_1,
     # Eclipse
     r"eclipse\.org/legal/epl-2\.0": "EPL-2.0",
     r"eclipse\.org/legal/epl-v10": "EPL-1.0",
-    # ISC
-    r"opensource\.org/licenses/ISC": "ISC",
-    # Unlicense
     r"unlicense\.org": "Unlicense",
-    # WTFPL
     r"wtfpl\.net": "WTFPL",
-    # Zlib
     r"zlib\.net/zlib_license\.html": "Zlib",
 }
 
-# License Aliases
-# Common license names to SPDX ID mapping
+# Licence names to SPDX ids, beyond the database's own names that normalize_license also accepts.
 LICENSE_ALIASES: dict[str, str] = {
     "MIT/X11": SPDX_MIT,
     "Expat": SPDX_MIT,
+    "The MIT License": SPDX_MIT,
     # Apache variations
+    "Apache 2": SPDX_APACHE_2_0,
     "Apache 2.0": SPDX_APACHE_2_0,
+    "Apache License": SPDX_APACHE_2_0,
     "Apache License 2.0": SPDX_APACHE_2_0,
     "Apache License, Version 2.0": SPDX_APACHE_2_0,
+    "Apache License Version 2.0": SPDX_APACHE_2_0,
+    "Apache Software License": SPDX_APACHE_2_0,
+    "The Apache Software License, Version 2.0": SPDX_APACHE_2_0,
     "ASL 2.0": SPDX_APACHE_2_0,
     # BSD variations
     "BSD": SPDX_BSD_3_CLAUSE,
     "BSD License": SPDX_BSD_3_CLAUSE,
     "BSD-2": SPDX_BSD_2_CLAUSE,
     "BSD-3": SPDX_BSD_3_CLAUSE,
+    "BSD 2-Clause": SPDX_BSD_2_CLAUSE,
+    "BSD 3-Clause": SPDX_BSD_3_CLAUSE,
+    'BSD 2-Clause "Simplified" License': SPDX_BSD_2_CLAUSE,
+    'BSD 3-Clause "New" or "Revised" License': SPDX_BSD_3_CLAUSE,
     "Simplified BSD": SPDX_BSD_2_CLAUSE,
     "New BSD": SPDX_BSD_3_CLAUSE,
     "Modified BSD": SPDX_BSD_3_CLAUSE,
@@ -133,12 +130,15 @@ LICENSE_ALIASES: dict[str, str] = {
     "GNU GPL": SPDX_GPL_2_0_OR_LATER,
     "GNU GPLv2": SPDX_GPL_2_0,
     "GNU GPLv3": SPDX_GPL_3_0,
+    "GNU General Public License, version 2": SPDX_GPL_2_0,
+    "GNU General Public License, version 3": SPDX_GPL_3_0,
     # LGPL variations
     "LGPL": SPDX_LGPL_2_1_OR_LATER,
     "LGPLv2": SPDX_LGPL_2_1,
     "LGPLv2.1": SPDX_LGPL_2_1,
     "LGPLv3": SPDX_LGPL_3_0,
     "GNU LGPL": SPDX_LGPL_2_1_OR_LATER,
+    "GNU Lesser General Public License": SPDX_LGPL_2_1_OR_LATER,
     # AGPL variations
     "AGPL": SPDX_AGPL_3_0,
     "AGPLv3": SPDX_AGPL_3_0,
@@ -147,6 +147,14 @@ LICENSE_ALIASES: dict[str, str] = {
     "MPL": SPDX_MPL_2_0,
     "MPL 2.0": SPDX_MPL_2_0,
     "Mozilla Public License 2.0": SPDX_MPL_2_0,
+    # Eclipse variations as Maven POMs spell them
+    "EPL 1.0": "EPL-1.0",
+    "EPL 2.0": "EPL-2.0",
+    "Eclipse Public License - v 1.0": "EPL-1.0",
+    "Eclipse Public License - v 2.0": "EPL-2.0",
+    "Eclipse Public License v1.0": "EPL-1.0",
+    "Eclipse Public License v2.0": "EPL-2.0",
+    "CDDL": "CDDL-1.0",
     # Other
     "Public Domain": "Unlicense",
     "CC0": "CC0-1.0",
@@ -221,6 +229,7 @@ def team_binding_key(provider: str, instance_id: str, external_id: int) -> str:
 
 # Upper bound on a user-entered policy comment, shared by the audit entry and the request bodies.
 POLICY_COMMENT_MAX_LENGTH = 1000
+POLICY_CHANGE_SUMMARY_MAX_LENGTH = 200
 
 # Team Roles. Ordered least- to most-privileged: helpers/teams.py compares by index.
 TeamRole = Literal["member", "admin"]
@@ -235,45 +244,27 @@ API_KEY_SURFACE_MCP: ApiKeySurface = "mcp"
 API_KEY_SURFACE_ADHOC: ApiKeySurface = "adhoc"
 API_KEY_SURFACES: frozenset[str] = frozenset(get_args(ApiKeySurface))
 
-# Weights for calculating risk scores
-SEVERITY_WEIGHTS: dict[str, float] = {
+# Per-finding base of the impact pre-score, before reach and threat-intel boosts.
+IMPACT_SEVERITY_WEIGHTS: dict[str, float] = {
     "CRITICAL": 10.0,
     "HIGH": 7.0,
     "MEDIUM": 4.0,
     "LOW": 1.0,
     "INFO": 0.0,
-    "UNKNOWN": 0.0,
+    # Not yet rated rather than harmless: the KEV/EPSS boosts multiply this base.
+    "UNKNOWN": 4.0,
 }
 
 
-# Common patterns for development dependencies
-DEV_DEPENDENCY_PATTERNS = [
-    r"jest",
-    r"mocha",
-    r"chai",
-    r"sinon",
-    r"enzyme",
-    r"testing-library",
-    r"eslint",
-    r"prettier",
-    r"tslint",
-    r"stylelint",
-    r"webpack-dev",
-    r"nodemon",
-    r"ts-node",
-    r"@types/",
-    r"typescript$",
-    r"storybook",
-    r"chromatic",
-    r"cypress",
-    r"playwright",
-    r"puppeteer",
-    r"husky",
-    r"lint-staged",
-    r"commitlint",
-    r"babel-jest",
-    r"ts-jest",
-]
+# npm packages that belong in devDependencies: a dev-only scope, or a tool's name alone or with a "-suffix".
+DEV_DEPENDENCY_PATTERN = re.compile(
+    r"^(?:@(?:types|testing-library|storybook|commitlint|eslint|typescript-eslint|jest|playwright|cypress|vitest)/.+"
+    r"|(?:@[^/]+/)?(?:jest|mocha|chai|sinon|enzyme|eslint|prettier|tslint|stylelint|webpack-dev|nodemon|ts-node"
+    r"|typescript|storybook|chromatic|cypress|playwright|puppeteer|husky|lint-staged|commitlint|babel-jest|ts-jest)"
+    r"(?:-[\w.-]+)?)$"
+)
+# Runtime packages that share a dev tool's prefix.
+DEV_DEPENDENCY_RUNTIME_PACKAGES = frozenset({"eslint-scope", "jest-worker", "playwright-core", "puppeteer-core"})
 
 
 # Scoring weights for identifying "Quick Win" updates
@@ -379,15 +370,16 @@ DEEP_CHAIN_MEDIUM_IMPACT_DEPTH: int = 8
 RECURRING_ISSUE_THRESHOLD: int = 3  # Min scans a CVE appears in to be "recurring"
 FINDING_DELTA_THRESHOLD: int = 10  # Min new findings to trigger regression warning
 MIN_VULNS_FOR_RECOMMENDATION: int = 3  # Min vulns to generate certain recommendations
-SIGNIFICANT_FRAGMENTATION_THRESHOLD: int = 3  # Min version count to be significant
 CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project patterns
 
 # EPSS very high threshold (for immediate action recommendations)
 EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploited
 
 # OpenSSF Scorecard thresholds
-SCORECARD_LOW_THRESHOLD: float = 4.0  # Packages below this are flagged as low quality
-SCORECARD_UNMAINTAINED_THRESHOLD: float = 5.0  # Used for critical risk correlation
+# deps_dev raises a scorecard finding below this unless a project sets its own scorecard_threshold.
+SCORECARD_FLAG_THRESHOLD: float = 5.0
+# Recommendations call a scored package poor quality below this.
+SCORECARD_POOR_QUALITY_THRESHOLD: float = 4.0
 
 # Maintainer risk thresholds (days since last release)
 STALE_PACKAGE_THRESHOLD_DAYS: int = 730  # 2 years = potentially abandoned
@@ -417,6 +409,9 @@ DEFAULT_ACTIVE_ANALYZERS: tuple[str, ...] = (
     "end_of_life",
     "epss_kev",
 )
+
+# Scanners that run in the CI pipeline; the pipeline reads their switch from the project's analyzers.
+CI_SCANNER_ANALYZERS: frozenset[str] = frozenset({"trufflehog", "opengrep", "kics", "bearer"})
 
 # Analyzer batch sizes for API rate limiting
 ANALYZER_BATCH_SIZES: dict[str, int] = {
@@ -451,18 +446,16 @@ ANALYZER_TIMEOUTS: dict[str, float] = {
 GHSA_CONCURRENT_REQUESTS_AUTHENTICATED: int = 10
 GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED: int = 2
 
-# Exploit maturity levels for risk prioritization (higher = more severe)
-EXPLOIT_MATURITY_ORDER: dict[str, int] = {
-    "unknown": 0,
-    "low": 1,
-    "medium": 2,
-    "high": 3,
-    "active": 4,
-    "weaponized": 5,
+# "low"/"medium"/"high" are the EPSS buckets; "active" is KEV, "weaponized" KEV with ransomware use.
+ExploitMaturity = Literal["unknown", "low", "medium", "high", "active", "weaponized"]
+
+# Higher = more mature, in ExploitMaturity's declaration order.
+EXPLOIT_MATURITY_ORDER: dict[ExploitMaturity, int] = {
+    level: rank for rank, level in enumerate(get_args(ExploitMaturity))
 }
 
 # Exploit maturity boost factors for impact score calculation
-EXPLOIT_MATURITY_BOOST: dict[str, float] = {
+EXPLOIT_MATURITY_BOOST: dict[ExploitMaturity, float] = {
     "weaponized": 1.4,
     "active": 1.3,
     "high": 1.2,
@@ -553,7 +546,7 @@ GITHUB_API_URL = "https://api.github.com"
 
 # Mapping from package/component names to endoflife.date product IDs
 # See https://endoflife.date/api for all available products
-NAME_TO_EOL_MAPPING: dict[str, str] = {
+NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     # Programming Languages & Runtimes
     "python": "python",
     "python3": "python",
@@ -565,15 +558,12 @@ NAME_TO_EOL_MAPPING: dict[str, str] = {
     "golang": "go",
     "ruby": "ruby",
     "php": "php",
-    "java": "java",
-    "openjdk": "java",
     "dotnet": "dotnet",
     "dotnet-runtime": "dotnet",
     "dotnet-sdk": "dotnet",
     ".net": "dotnet",
     "rust": "rust",
     "perl": "perl",
-    "swift": "swift",
     "kotlin": "kotlin",
     "elixir": "elixir",
     "erlang": "erlang",
@@ -590,23 +580,22 @@ NAME_TO_EOL_MAPPING: dict[str, str] = {
     "opensearch": "opensearch",
     "sqlite": "sqlite",
     "cassandra": "apache-cassandra",
-    "couchdb": "couchdb",
+    "couchdb": "apache-couchdb",
     "neo4j": "neo4j",
     # Web Servers & Proxies
     "nginx": "nginx",
-    "apache": "apache",
-    "httpd": "apache",
-    "tomcat": "apache-tomcat",
+    "apache": "apache-http-server",
+    "httpd": "apache-http-server",
+    "tomcat": "tomcat",
     "traefik": "traefik",
     "haproxy": "haproxy",
     "envoy": "envoy",
     # Container & Orchestration
     "kubernetes": "kubernetes",
     "k8s": "kubernetes",
-    "docker": "docker",
+    "docker": "docker-engine",
     "containerd": "containerd",
     "podman": "podman",
-    "helm": "helm",
     # Operating Systems
     "ubuntu": "ubuntu",
     "debian": "debian",
@@ -614,75 +603,60 @@ NAME_TO_EOL_MAPPING: dict[str, str] = {
     "rhel": "rhel",
     "rocky-linux": "rocky-linux",
     "almalinux": "almalinux",
-    "alpine": "alpine",
+    "alpine": "alpine-linux",
     "fedora": "fedora",
     "amazon-linux": "amazon-linux",
     "opensuse": "opensuse",
     "sles": "sles",
     "windows-server": "windows-server",
     # Frontend Frameworks
-    "angular": "angular",
+    # "angular" is AngularJS 1.x as an npm name but Angular 2+ as a CPE product; the cycle match separates them.
+    "angular": ("angularjs", "angular"),
     "@angular/core": "angular",
     "react": "react",
     "react-dom": "react",
-    "vue": "vuejs",
-    "vue.js": "vuejs",
-    "vuejs": "vuejs",
+    "vue": "vue",
+    "vue.js": "vue",
+    "vuejs": "vue",
     "svelte": "svelte",
     "next": "nextjs",
     "nextjs": "nextjs",
     "next.js": "nextjs",
     "nuxt": "nuxt",
     "nuxt.js": "nuxt",
-    "gatsby": "gatsby",
     "ember": "emberjs",
     "jquery": "jquery",
     # Backend Frameworks
     "django": "django",
-    "flask": "flask",
-    "fastapi": "fastapi",
     "rails": "rails",
     "ruby-on-rails": "rails",
     "spring-framework": "spring-framework",
     "spring-boot": "spring-boot",
     "spring": "spring-framework",
+    # NVD CPE product names
+    "spring_framework": "spring-framework",
+    "spring_boot": "spring-boot",
+    "http_server": "apache-http-server",
+    "ruby_on_rails": "rails",
     "laravel": "laravel",
     "symfony": "symfony",
     "express": "nodejs",
-    "nestjs": "nestjs",
-    "fastify": "fastify",
-    "gin": "gin",
-    "echo": "echo",
-    "actix": "actix-web",
     # Build Tools & Package Managers
-    "npm": "npm",
     "yarn": "yarn",
     "pnpm": "pnpm",
-    "pip": "pip",
-    "maven": "maven",
+    "maven": "apache-maven",
     "gradle": "gradle",
     "composer": "composer",
-    "bundler": "bundler",
-    "cargo": "cargo",
     # Cloud & Infrastructure
     "terraform": "terraform",
     "ansible": "ansible",
-    "pulumi": "pulumi",
-    "vagrant": "vagrant",
-    "packer": "packer",
+    "packer": "hashicorp-packer",
     "vault": "hashicorp-vault",
     "consul": "consul",
     # Message Queues
     "rabbitmq": "rabbitmq",
     "kafka": "apache-kafka",
     "activemq": "apache-activemq",
-    "nats": "nats-server",
-    # ML/AI Frameworks
-    "tensorflow": "tensorflow",
-    "pytorch": "pytorch",
-    "keras": "keras",
-    "scikit-learn": "scikit-learn",
-    "pandas": "pandas",
     "numpy": "numpy",
     # Other Tools
     "grafana": "grafana",
@@ -691,10 +665,8 @@ NAME_TO_EOL_MAPPING: dict[str, str] = {
     "logstash": "logstash",
     "jenkins": "jenkins",
     "gitlab": "gitlab",
-    "github-enterprise": "github-enterprise-server",
     "kong": "kong-gateway",
     "istio": "istio",
-    "linkerd": "linkerd",
 }
 
 # Severity aliases for normalizing different scanner output formats
@@ -705,28 +677,9 @@ SEVERITY_ALIASES: dict[str, str] = {
     "TRACE": "INFO",
 }
 
-# KICS (IaC scanner) severity mapping - only non-identity mappings needed
-# Standard severities (HIGH, MEDIUM, LOW, INFO) pass through via safe_severity()
-KICS_SEVERITY_MAP: dict[str, str] = {
-    "TRACE": "INFO",
-}
-
-# OpenGrep/Semgrep (SAST scanner) severity mapping
-OPENGREP_SEVERITY_MAP: dict[str, str] = {
-    "ERROR": "HIGH",
-    "WARNING": "MEDIUM",
-    "INFO": "LOW",
-}
-
-# Bearer (SAST scanner) severity mapping
-BEARER_SEVERITY_MAP: dict[str, str] = {
-    "critical": "CRITICAL",
-    "high": "HIGH",
-    "medium": "MEDIUM",
-    "low": "LOW",
-    "warning": "LOW",
-    "info": "INFO",
-}
+# Scanner-specific overrides applied before safe_severity and SEVERITY_ALIASES.
+OPENGREP_SEVERITY_MAP: dict[str, str] = {"INFO": "LOW"}
+BEARER_SEVERITY_MAP: dict[str, str] = {"warning": "LOW"}
 
 # Notification channel identifiers
 NOTIFICATION_CHANNEL_EMAIL = "email"
@@ -739,30 +692,29 @@ NOTIFICATION_CHANNELS = [
     NOTIFICATION_CHANNEL_MATTERMOST,
 ]
 
-# Per-user notification event types — events that flow through individual user
-# preferences (channel-toggleable in UI). Each entry has a matching webhook
-# event in WEBHOOK_EVENT_* below; users opt in to channels per event.
-NOTIFICATION_EVENT_ANALYSIS_COMPLETED = "analysis_completed"
-NOTIFICATION_EVENT_VULNERABILITY_FOUND = "vulnerability_found"
-NOTIFICATION_EVENT_ANALYSIS_FAILED = "analysis_failed"
-NOTIFICATION_EVENT_SBOM_INGESTED = "sbom_ingested"
-NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED = "crypto_asset_ingested"
-NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED = "crypto_policy_changed"
-NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED = "license_policy_changed"
-NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report_generated"
-NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan_generated"
+# Per-user notification events: each user picks channels per event in their preferences.
+NotificationEvent = Literal[
+    "analysis_completed",
+    "vulnerability_found",
+    "analysis_failed",
+    "sbom_ingested",
+    "crypto_asset_ingested",
+    "crypto_policy_changed",
+    "license_policy_changed",
+    "compliance_report_generated",
+    "pqc_migration_plan_generated",
+]
+NOTIFICATION_EVENT_ANALYSIS_COMPLETED: NotificationEvent = "analysis_completed"
+NOTIFICATION_EVENT_VULNERABILITY_FOUND: NotificationEvent = "vulnerability_found"
+NOTIFICATION_EVENT_ANALYSIS_FAILED: NotificationEvent = "analysis_failed"
+NOTIFICATION_EVENT_SBOM_INGESTED: NotificationEvent = "sbom_ingested"
+NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED: NotificationEvent = "crypto_asset_ingested"
+NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED: NotificationEvent = "crypto_policy_changed"
+NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED: NotificationEvent = "license_policy_changed"
+NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED: NotificationEvent = "compliance_report_generated"
+NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED: NotificationEvent = "pqc_migration_plan_generated"
 
-NOTIFICATION_EVENTS = {
-    NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
-    NOTIFICATION_EVENT_VULNERABILITY_FOUND,
-    NOTIFICATION_EVENT_ANALYSIS_FAILED,
-    NOTIFICATION_EVENT_SBOM_INGESTED,
-    NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
-    NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED,
-    NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED,
-    NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED,
-    NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED,
-}
+NOTIFICATION_EVENTS: frozenset[str] = frozenset(get_args(NotificationEvent))
 
 # SMTP timeout in seconds
 SMTP_TIMEOUT_SECONDS: int = 60
@@ -847,8 +799,8 @@ WEBHOOK_EVENT_LICENSE_POLICY_CHANGED = "license_policy.changed"
 WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report.generated"
 WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan.generated"
 
-# snake_case event names still stored by existing webhook subscriptions in MongoDB;
-# the dispatcher and validation treat both forms as equivalent (no DB migration needed).
+# snake_case event names clients may still send; validation stores their canonical form, and
+# dispatch also matches subscriptions stored before it did.
 WEBHOOK_EVENT_ALIASES: dict[str, str] = {
     "scan_completed": WEBHOOK_EVENT_SCAN_COMPLETED,
     "vulnerability_found": WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -867,7 +819,6 @@ WEBHOOK_VALID_EVENTS = [
     WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
 ]
 
-# Accepts both canonical dot-notation and snake_case names; the matcher normalizes both.
 WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.keys()]
 
 # Webhook HTTP headers
@@ -886,11 +837,15 @@ WEBHOOK_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # Cloud-metadata hostnames — never an allowed webhook target.
 WEBHOOK_BLOCKED_HOSTNAMES = frozenset({"metadata.google.internal", "metadata.goog", "metadata"})
 
-SCAN_STATUS_PENDING = "pending"
-SCAN_STATUS_PROCESSING = "processing"
-SCAN_STATUS_COMPLETED = "completed"
-SCAN_STATUS_COMPLETED_WITH_ERRORS = "completed_with_errors"
-SCAN_STATUS_FAILED = "failed"
+ScanStatus = Literal["pending", "processing", "completed", "completed_with_errors", "failed"]
+SCAN_STATUS_PENDING: ScanStatus = "pending"
+SCAN_STATUS_PROCESSING: ScanStatus = "processing"
+SCAN_STATUS_COMPLETED: ScanStatus = "completed"
+SCAN_STATUS_COMPLETED_WITH_ERRORS: ScanStatus = "completed_with_errors"
+SCAN_STATUS_FAILED: ScanStatus = "failed"
+
+# Scans a worker still owns or will claim; housekeeping neither rescans nor deletes them.
+SCAN_ACTIVE_STATUSES = [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]
 
 # Scans whose analysis results are usable for rollups, exports and analytics.
 SCAN_USABLE_STATUSES = [
@@ -898,13 +853,19 @@ SCAN_USABLE_STATUSES = [
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
 ]
 
+# BSON dates are milliseconds, so a date-ordered pick of scans tie-breaks on _id, lowest first.
+SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", -1), ("_id", 1)]
+
 # Version changes the "recent updates" list answers with, and the samples the delta writer keeps
 # per scan. One number for both: a writer keeping fewer than the readers show leaves a busy scan
 # unable to fill the list on its own, and the two read paths then answer with different events.
 RECENT_UPDATES_LIMIT: int = 30
+UpdateKind = Literal["major", "minor", "patch", "unknown", "downgrade"]
+# Downgrades are recorded but are not update activity.
+COUNTED_UPDATE_KINDS: tuple[UpdateKind, ...] = ("patch", "minor", "major", "unknown")
 # The order the cut is taken in, so a scan with more changes than the limit loses the same ones
-# on every path. Downgrades rank last: they are recorded but are not update activity.
-UPDATE_SAMPLE_RANK: dict[str, int] = {"major": 0, "minor": 1, "patch": 2, "unknown": 3, "downgrade": 4}
+# on every path; downgrades rank last.
+UPDATE_SAMPLE_RANK: dict[str, int] = {kind: rank for rank, kind in enumerate(get_args(UpdateKind))}
 
 # Rows of the slowest-to-update table. Both read paths rank by scans outdated and break ties on
 # the package name; without that, packages tied at the cap swap places between requests.
@@ -1016,13 +977,15 @@ AGG_KEY_QUALITY = "AGG:QUALITY"
 # produce a related-findings list no reader can use. Above this the group is left unlinked.
 MAX_CROSS_LINK_GROUP_SIZE: int = 100
 
-# Waiver status values
-WAIVER_STATUS_ACCEPTED_RISK: Final = "accepted_risk"
-WAIVER_STATUS_FALSE_POSITIVE: Final = "false_positive"
-
 WaiverStatus = Literal["accepted_risk", "false_positive"]
-# "finding" = exact match, "file" = same rule in same file, "rule" = same rule project-wide.
+WAIVER_STATUS_ACCEPTED_RISK: WaiverStatus = "accepted_risk"
+WAIVER_STATUS_FALSE_POSITIVE: WaiverStatus = "false_positive"
+
+# "finding" = exact match, "file" = same rule in the same file, "rule" = same rule project-wide.
 WaiverScope = Literal["finding", "file", "rule"]
+WAIVER_SCOPE_FINDING: WaiverScope = "finding"
+WAIVER_SCOPE_FILE: WaiverScope = "file"
+WAIVER_SCOPE_RULE: WaiverScope = "rule"
 
 # A waiver change restamps only the tips of branches built within this many days.
 WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS: int = 30
@@ -1035,7 +998,8 @@ CVSS_SEVERITY_SCORES: dict[str, float] = {
     "LOW": 1.0,
     "NEGLIGIBLE": 0.0,
     "INFO": 0.0,
-    "UNKNOWN": 0.0,
+    # The midpoint calculate_risk_score assumes for a CVE without a CVSS score.
+    "UNKNOWN": 5.0,
 }
 
 # Per-severity fallback risk score (0-100) for findings without EPSS/KEV enrichment.
@@ -1044,7 +1008,7 @@ CVSS_SEVERITY_SCORES: dict[str, float] = {
 SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
     sev: round((cvss / 10.0) * 40.0, 1) for sev, cvss in CVSS_SEVERITY_SCORES.items()
 }
-# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, NEGLIGIBLE/INFO/UNKNOWN=0.0
+# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, NEGLIGIBLE/INFO=0.0, UNKNOWN=20.0
 
 # GitLab JWKS cache TTLs (in seconds)
 GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour
@@ -1078,6 +1042,12 @@ HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS: int = 30
 # Maximum retries for stuck scans before marking as failed
 HOUSEKEEPING_MAX_SCAN_RETRIES: int = 3
 
+# Rescheduled analysis attempts before the worker stops re-queueing a scan
+ANALYSIS_MAX_RETRIES: int = 5
+
+# Pending scans a starting process queues, so a backlog cannot flood the queue
+HOUSEKEEPING_STARTUP_RECOVERY_LIMIT: int = 1000
+
 # Interval (seconds) for checking stale pending scans (fast loop for responsiveness)
 HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS: int = 10
 
@@ -1094,6 +1064,9 @@ HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6
 # europe-west1, so its repair writes do not land in the working day.
 HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
 
+# Usable rescans each build keeps; older runs are near-identical full copies of the same SBOM.
+RESCAN_HISTORY_RUNS: int = 7
+
 # TTL (seconds) of the per-source rescan-creation lock; only the insert runs under it.
 HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS: int = 60
 
@@ -1104,6 +1077,18 @@ RETENTION_ACTION_ARCHIVE: RetentionAction = "archive"
 RETENTION_ACTION_NONE: RetentionAction = "none"
 
 RETENTION_ACTIONS: list[str] = list(get_args(RetentionAction))
+
+DEFAULT_RETENTION_DAYS: int = 90
+# timedelta overflows near 740 000 days, and a cutoff housekeeping cannot compute stops the sweep.
+MAX_RETENTION_DAYS: int = 36500
+
+# The reach of an analytics, compliance or crypto query.
+ScopeName = Literal["project", "team", "global", "user"]
+
+# Whether a system setting is enforced for every project or left to each project.
+SettingsMode = Literal["project", "global"]
+SETTINGS_MODE_PROJECT: SettingsMode = "project"
+SETTINGS_MODE_GLOBAL: SettingsMode = "global"
 
 # Archive bundle wire format
 ARCHIVE_BUNDLE_VERSION = 2

@@ -7,6 +7,8 @@ access token that never reaches Mongo both stay green.
 
 import pytest
 
+from app.api.v1.helpers.vcs_instances import list_page
+
 from app.models.github_instance import GitHubInstance
 from app.models.gitlab_instance import GitLabInstance
 from app.repositories.github_instances import GitHubInstanceRepository
@@ -39,7 +41,9 @@ class TestSharedVcsInstanceBehaviour:
         assert await db[collection_name].find_one({"_id": "i-1"}) is not None
 
     @pytest.mark.asyncio
-    async def test_a_lookup_url_is_matched_with_its_trailing_slash_stripped(self, repo_class, model, collection_name):
+    async def test_an_issuer_claim_is_matched_with_its_trailing_slash_stripped(
+        self, repo_class, model, collection_name
+    ):
         db = FakeDatabase()
         repo = repo_class(db)
         await repo.create(_instance(model))
@@ -48,7 +52,6 @@ class TestSharedVcsInstanceBehaviour:
 
         assert found is not None
         assert found.id == "i-1"
-        assert await repo.exists_by_url(f"{_BASE_URL}/") is True
 
     @pytest.mark.asyncio
     async def test_the_access_token_reaches_mongo_despite_being_excluded_from_the_model_dump(
@@ -63,29 +66,18 @@ class TestSharedVcsInstanceBehaviour:
         assert (await repo.get_by_id("i-1")).access_token == _TOKEN
 
     @pytest.mark.asyncio
-    async def test_list_active_pages_through_the_active_rows_only(self, repo_class, model, collection_name):
+    async def test_a_page_of_active_instances_counts_the_active_ones_only(self, repo_class, model, collection_name):
         db = FakeDatabase()
         repo = repo_class(db)
         for index in range(_ACTIVE_COUNT):
             await repo.create(_instance(model, instance_id=f"a-{index}", name=f"Active {index}"))
         await repo.create(_instance(model, instance_id="inactive", name="Inactive", is_active=False))
 
-        page = await repo.list_active(skip=1, limit=1)
+        page, total, skip = await list_page(repo, page=2, size=1, active_only=True)
 
-        assert [instance.id for instance in page] == ["a-1"]
-        assert [instance.id for instance in await repo.list_active()] == [f"a-{i}" for i in range(_ACTIVE_COUNT)]
-        assert await repo.count_active() == _ACTIVE_COUNT
-        assert await repo.count_all() == _ACTIVE_COUNT + 1
-
-    @pytest.mark.asyncio
-    async def test_list_all_pages_through_every_row(self, repo_class, model, collection_name):
-        db = FakeDatabase()
-        repo = repo_class(db)
-        await repo.create(_instance(model, instance_id="a-0", name="Active"))
-        await repo.create(_instance(model, instance_id="inactive", name="Inactive", is_active=False))
-
-        assert [instance.id for instance in await repo.list_all()] == ["a-0", "inactive"]
-        assert [instance.id for instance in await repo.list_all(skip=1, limit=1)] == ["inactive"]
+        assert ([instance.id for instance in page], total, skip) == (["a-1"], _ACTIVE_COUNT, 1)
+        everything, total, _ = await list_page(repo, page=1, size=10, active_only=False)
+        assert ([instance.id for instance in everything][-1], total) == ("inactive", _ACTIVE_COUNT + 1)
 
     @pytest.mark.asyncio
     async def test_a_name_is_taken_unless_the_row_holding_it_is_the_excluded_one(
@@ -113,14 +105,15 @@ class TestSharedVcsInstanceBehaviour:
         assert await repo.exists_by_url(f"{_BASE_URL}/other") is False
 
     @pytest.mark.asyncio
-    async def test_update_and_delete_report_whether_a_row_was_touched(self, repo_class, model, collection_name):
+    async def test_update_answers_with_the_stored_row_and_delete_reports_a_touch(
+        self, repo_class, model, collection_name
+    ):
         db = FakeDatabase()
         repo = repo_class(db)
         await repo.create(_instance(model))
 
-        assert await repo.update("i-1", {"name": "Renamed"}) is True
-        assert (await repo.get_by_id("i-1")).name == "Renamed"
-        assert await repo.update("absent", {"name": "Renamed"}) is False
+        assert (await repo.update("i-1", {"name": "Renamed"})).name == "Renamed"
+        assert await repo.update("absent", {"name": "Renamed"}) is None
         assert await repo.delete("i-1") is True
         assert await repo.get_by_id("i-1") is None
         assert await repo.delete("i-1") is False

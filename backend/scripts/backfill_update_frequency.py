@@ -52,11 +52,11 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.config import settings
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.db.mongodb import create_client
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
+from app.repositories.scans import USABLE_BUILD_MATCH
 from app.services.update_frequency_rollup import record_scan_update_delta
 
 DEFAULT_CONCURRENCY = 2
@@ -78,8 +78,7 @@ Chain = tuple[str, str]
 def scan_filter(since: datetime | None, project_id: str | None) -> dict[str, Any]:
     """Scans the writer would accept: usable status, not a rescan, dated."""
     query: dict[str, Any] = {
-        "status": {"$in": SCAN_USABLE_STATUSES},
-        "is_rescan": {"$ne": True},
+        **USABLE_BUILD_MATCH,
         "created_at": {"$gte": since or _EPOCH},
     }
     if project_id:
@@ -226,7 +225,7 @@ async def run(args: argparse.Namespace) -> int:
         )
         return 2
 
-    client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
+    client = create_client(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
         since = datetime.now(tz=timezone.utc) - timedelta(days=args.since_days) if args.since_days else None

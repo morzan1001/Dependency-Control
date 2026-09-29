@@ -7,10 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class MigrationItemStatus(str, Enum):
-    MIGRATE_NOW = "migrate_now"  # priority >= 80
-    MIGRATE_SOON = "migrate_soon"  # 50..79
-    PLAN_MIGRATION = "plan_migration"  # 25..49
-    MONITOR = "monitor"  # 0..24
+    MIGRATE_NOW = "migrate_now"
+    MIGRATE_SOON = "migrate_soon"
+    PLAN_MIGRATION = "plan_migration"
+    MONITOR = "monitor"
 
 
 class MigrationItem(BaseModel):

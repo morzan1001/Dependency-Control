@@ -2,8 +2,9 @@
 
 from typing import Any, get_args
 
+from app.core.constants import ScopeName
 from app.core.permissions import Permissions
-from app.schemas.analytics import ScopeKind
+from app.schemas.analytics import GroupBy, Metric
 
 _DESC_PROJECT_ID = "The project ID"
 _DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."
@@ -916,10 +917,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "group_by": {
-                        "type": "string",
-                        "enum": ["name", "primitive", "asset_type", "weakness_tag", "severity"],
-                    },
+                    "group_by": {"type": "string", "enum": list(get_args(GroupBy))},
                     "limit": {"type": "integer", "default": 20, "maximum": 100},
                 },
                 "required": ["project_id"],
@@ -938,19 +936,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "metric": {
-                        "type": "string",
-                        "enum": [
-                            "total_crypto_findings",
-                            "quantum_vulnerable_findings",
-                            "weak_algo_findings",
-                            "weak_key_findings",
-                            "cert_expiring_soon",
-                            "cert_expired",
-                            "unique_algorithms",
-                            "unique_cipher_suites",
-                        ],
-                    },
+                    "metric": {"type": "string", "enum": list(get_args(Metric))},
                     "days": {"type": "integer", "default": 30, "minimum": 1, "maximum": 365},
                 },
                 "required": ["project_id"],
@@ -1065,7 +1051,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scope": {"type": "string", "enum": list(get_args(ScopeKind))},
+                    "scope": {"type": "string", "enum": list(get_args(ScopeName))},
                     "scope_id": {"type": "string"},
                     "framework": {
                         "type": "string",

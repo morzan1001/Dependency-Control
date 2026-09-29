@@ -15,9 +15,14 @@ from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
-from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
-from app.repositories import DependencyRepository, DistributedLocksRepository
-from app.repositories.distributed_locks import new_lock_holder
+from app.core.constants import (
+    NOTIFICATION_EVENT_SBOM_INGESTED,
+    SCAN_STATUS_PROCESSING,
+    WEBHOOK_EVENT_SBOM_INGESTED,
+)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
+from app.repositories.scans import ScanRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,
@@ -28,11 +33,12 @@ from app.schemas.ingest import (
 )
 from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
+from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.dependency_store import store_scan_dependencies
 from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, make_gridfs_ref
 from app.services.notifications.service import safe_notify_project_event
-from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
+from app.services.sbom_parser import parse_sbom
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
 
@@ -151,7 +157,7 @@ async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_i
     return make_gridfs_ref(file_id, filename)
 
 
-def _parse_one_sbom(sbom: Any, index: int, warnings: list[str]) -> Any:
+def _parse_one_sbom(sbom: Any, index: int, warnings: list[str]) -> ParsedSBOM:
     """Parse one SBOM; surfaces skipped-component loss as a response warning."""
     parsed_sbom = parse_sbom(sbom)
     logger.info(
@@ -179,22 +185,17 @@ async def _process_sboms(
     dep_repo: "DependencyRepository",
 ) -> tuple[list[dict[str, Any]], list[str], int, int, int]:
     """Upload and parse ALL SBOMs before the first dependency write; returns
-    (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted).
-
-    The scan's dependency inventory is replaced only when every SBOM uploaded and
-    parsed, so a mixed [good, malformed] payload cannot wipe a prior contribution.
-    """
+    (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted)."""
     sbom_refs: list[dict[str, Any]] = []
     warnings: list[str] = []
-    parsed_sboms: list[Any] = []
-    sboms_failed = 0
+    parsed_sboms: list[ParsedSBOM | None] = []
 
     for idx, sbom in enumerate(sboms):
         try:
             ref = await _upload_sbom_to_gridfs(fs, sbom, scan_id)
             sbom_refs.append(ref)
         except Exception as e:
-            sboms_failed += 1
+            parsed_sboms.append(None)
             warnings.append(f"SBOM {idx + 1}: Failed to upload to storage")
             logger.exception("Failed to upload SBOM to GridFS: %s", e)
             continue
@@ -202,25 +203,16 @@ async def _process_sboms(
         try:
             parsed_sboms.append(_parse_one_sbom(sbom, idx, warnings))
         except Exception as e:
-            sboms_failed += 1
+            parsed_sboms.append(None)
             warnings.append(f"SBOM {idx + 1}: Failed to parse dependencies")
             logger.exception("Failed to extract dependencies from SBOM: %s", e)
 
-    total_deps_inserted = 0
-    if sboms_failed:
-        if parsed_sboms:
-            warnings.append("Dependency inventory left unchanged: at least one SBOM of this payload failed to process")
-    else:
-        # The unique index spans the scan, so duplicates across the payload's SBOMs must be
-        # merged before the first insert or the later ones lose their locations/CPEs/parents.
-        dependencies, _ = merge_duplicate_dependencies(
-            [dep for parsed_sbom in parsed_sboms for dep in parsed_sbom.dependencies]
-        )
-        total_deps_inserted = await store_scan_dependencies(dependencies, project_id, scan_id, dep_repo)
-        if total_deps_inserted < len(dependencies):
-            warnings.append(f"Only {total_deps_inserted} of {len(dependencies)} parsed dependencies were stored")
+    sboms_failed = parsed_sboms.count(None)
+    total_deps_inserted = await store_scan_dependencies(parsed_sboms, project_id, scan_id, dep_repo)
+    if total_deps_inserted is None and sboms_failed < len(parsed_sboms):
+        warnings.append("Dependency inventory left unchanged: at least one SBOM of this payload failed to process")
 
-    return sbom_refs, warnings, len(parsed_sboms), sboms_failed, total_deps_inserted
+    return sbom_refs, warnings, len(parsed_sboms) - sboms_failed, sboms_failed, total_deps_inserted or 0
 
 
 @router.post(
@@ -284,6 +276,7 @@ async def ingest_sbom(
         # stored and re-analysed forever; superseded GridFS uploads are deleted below.
         if sbom_refs:
             scan_update["$set"]["sbom_refs"] = sbom_refs
+            scan_update["$inc"] = {"sbom_generation": 1}
         else:
             scan_update["$setOnInsert"]["sbom_refs"] = []
 
@@ -291,7 +284,8 @@ async def ingest_sbom(
             {"_id": scan_id}, scan_update, upsert=True, return_document=ReturnDocument.BEFORE
         )
 
-        if previous and sbom_refs:
+        # A run still on the old SBOM reads these files; the orphan reaper collects them after it.
+        if previous and sbom_refs and previous.get("status") != SCAN_STATUS_PROCESSING:
             new_ids = set(extract_gridfs_ids_from_refs(sbom_refs))
             superseded = [
                 gid for gid in extract_gridfs_ids_from_refs(previous.get("sbom_refs", [])) if gid not in new_ids
@@ -299,11 +293,7 @@ async def ingest_sbom(
             if superseded:
                 await cleanup_gridfs_files(db, superseded)
 
-        # Reset a finished scan to pending so re-ingest re-analyses it.
-        await db.scans.update_one(
-            {"_id": scan_id, "status": {"$in": SCAN_USABLE_STATUSES}},
-            {"$set": {"status": "pending", "retry_count": 0}},
-        )
+        await ScanRepository(db).reopen_finished(scan_id)
 
         await manager.register_result(scan_id, "sbom", trigger_analysis=True)
     finally:
@@ -331,7 +321,7 @@ async def ingest_sbom(
     await safe_notify_project_event(
         db,
         project_id=str(project.id),
-        event_type="sbom_ingested",
+        event_type=NOTIFICATION_EVENT_SBOM_INGESTED,
         subject=f"SBOM ingested: {project.name}",
         message=f"{sboms_processed} SBOM(s) ingested for project {project.name} ({total_deps_inserted} dependencies).",
         context="sbom_ingest",

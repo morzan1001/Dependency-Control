@@ -8,11 +8,7 @@ import pytest
 from app.core.constants import MAX_RESCAN_HOPS
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import LineageAnalysis, ScanRepository
-from app.services.releases import (
-    latest_release_scan,
-    released_scan_ids,
-    resolve_scan_ids,
-)
+from app.services.releases import released_scan_ids, resolve_scan_ids
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
@@ -36,26 +32,21 @@ _ONE_PROJECT = 1
 _MANY_PROJECTS = 50
 _COUNTED_COLLECTIONS = ("projects", "scans", "releases")
 _COUNTED_OPERATIONS = ("find", "find_one", "aggregate", "distinct")
-# Head resolution's second step walks the rescan lineage of the tip it picked: one read for the
-# whole scope, plus one per extra link, never one per project.
-_LINEAGE_READS = 1
+# One read validates every pointer in the scope; a project the pointer cannot answer costs one index
+# seek of its own. The lineage step starts from tips already in hand, so a tip without a rescan
+# link costs no further read.
 _POINTER_READS = 1
-_HEAD_QUERIES = {"projects.find": 1, "scans.aggregate": 1, "scans.find": _LINEAGE_READS}
-_HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1, "scans.find": _POINTER_READS + _LINEAGE_READS}
-_HEAD_QUERIES_WITH_A_DANGLING_POINTER = {
-    "projects.find": 1,
-    "scans.find": _POINTER_READS + _LINEAGE_READS,
-    "scans.aggregate": 1,
-}
+_HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1, "scans.find": _POINTER_READS}
+_HEAD_QUERIES_WITH_A_DANGLING_POINTER = {"projects.find": 1, "scans.find": _POINTER_READS, "scans.find_one": 1}
 _RELEASE_QUERIES = {"releases.aggregate": 1, "scans.find": 1}
 _RELEASE_QUERIES_WITH_RESCANS = {"releases.aggregate": 1, "scans.find": 2}
 _RELEASE_QUERIES_WITH_A_CHAIN = {"releases.aggregate": 1, "scans.find": 4}
 _CHAIN_DEPTH = 3
 _CHAIN_BEYOND_THE_BOUND = MAX_RESCAN_HOPS + 5
 _NO_RELEASES: dict[str, str] = {}
-_CYCLE_QUERIES = {"releases.find_one": 1, "scans.find": 2}
+_CYCLE_QUERIES = {"releases.aggregate": 1, "scans.find": 2}
 _NO_QUERIES: dict[str, int] = {}
-_NAMES_AND_HEAD_QUERIES = {"projects.find": 1, "scans.find": _POINTER_READS + _LINEAGE_READS}
+_NAMES_AND_HEAD_QUERIES = {"projects.find": 1, "scans.find": _POINTER_READS}
 _NAMES_AND_RELEASE_QUERIES = {"projects.find": 1, "releases.aggregate": 1, "scans.find": 1}
 _RETENTION_DELETED = "head-deleted-by-retention"
 _EXEMPTED_RELEASE = "exempted-release"
@@ -79,6 +70,7 @@ def _scan(scan_id: str, project_id: str, *, created_delta: int = 0, status: str 
         "branch": _MAIN,
         "status": status,
         "created_at": _NOW + timedelta(hours=created_delta),
+        "sbom_refs": [{"type": "gridfs_reference", "gridfs_id": f"g-{scan_id}"}],
         **extra,
     }
 
@@ -139,8 +131,6 @@ async def _seed_a_dangling_pointer(db: FakeDatabase) -> None:
 
 async def _scope(db: FakeDatabase, project_ids: list[str]) -> list:
     """What get_user_projects hands the analytics helpers for a caller who reads these projects."""
-    from app.repositories.projects import ProjectRepository
-
     return await ProjectRepository(db).find_many_with_scan_id({"_id": {"$in": project_ids}}, limit=len(project_ids))
 
 
@@ -151,6 +141,10 @@ async def _everything(db: FakeDatabase) -> list:
 
     reader = User(id="u-reader", username="r", email="r@corp.com", permissions=[Permissions.PROJECT_READ_ALL])
     return await get_user_projects(reader, db)
+
+
+async def _released(db: FakeDatabase, project_id: str, environment: str) -> str | None:
+    return (await resolve_scan_ids(db, [project_id], release_environment=environment)).get(project_id)
 
 
 def _count_queries(db: FakeDatabase) -> Counter:
@@ -170,108 +164,78 @@ def _count_queries(db: FakeDatabase) -> Counter:
 
 
 @pytest.mark.asyncio
-async def test_latest_release_scan_orders_by_released_at(db):
+async def test_release_mode_orders_by_released_at(db):
     await db.scans.insert_one(_scan("new-build", _PROJECT_A, created_delta=5))
     await db.scans.insert_one(_scan("rolled-back-to", _PROJECT_A, created_delta=-50))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "new-build"))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "rolled-back-to", released_delta=1))
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == "rolled-back-to"
+    assert await _released(db, _PROJECT_A, _PRODUCTION) == "rolled-back-to"
 
 
 @pytest.mark.asyncio
-async def test_latest_release_scan_is_scoped_to_one_environment_of_one_project(db):
+async def test_release_mode_is_scoped_to_one_environment_of_one_project(db):
     await db.scans.insert_one(_scan("staged", _PROJECT_A))
     await db.scans.insert_one(_scan("other-project-prod", _OTHER_PROJECT))
     await db.releases.insert_one(_release(_PROJECT_A, _STAGING, "staged"))
     await db.releases.insert_one(_release(_OTHER_PROJECT, _PRODUCTION, "other-project-prod"))
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) is None
+    assert await _released(db, _PROJECT_A, _PRODUCTION) is None
 
 
 @pytest.mark.asyncio
-async def test_latest_release_scan_follows_the_rescan(db):
-    await db.scans.insert_one(_scan("released", _PROJECT_A, latest_rescan_id="rescan"))
-    await db.scans.insert_one(_scan("rescan", _PROJECT_A, created_delta=9))
-    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
-
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == "rescan"
-
-
-@pytest.mark.parametrize("rescan_status", _UNUSABLE_STATUSES)
-@pytest.mark.asyncio
-async def test_latest_release_scan_keeps_the_original_while_the_rescan_is_unusable(db, rescan_status):
-    """latest_rescan_id is written when the rescan is created, so it points at an empty scan for as
-    long as the rescan runs; the released artefact's own analysis is the honest answer meanwhile."""
-    await db.scans.insert_one(_scan("released", _PROJECT_A, latest_rescan_id="rescan"))
-    await db.scans.insert_one(_scan("rescan", _PROJECT_A, created_delta=9, status=rescan_status))
-    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
-
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == "released"
-
-
-@pytest.mark.asyncio
-async def test_latest_release_scan_takes_a_partially_failed_rescan(db):
+async def test_release_mode_takes_a_partially_failed_rescan(db):
     await db.scans.insert_one(_scan("released", _PROJECT_A, latest_rescan_id="rescan"))
     await db.scans.insert_one(_scan("rescan", _PROJECT_A, created_delta=9, status=_COMPLETED_WITH_ERRORS))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == "rescan"
+    assert await _released(db, _PROJECT_A, _PRODUCTION) == "rescan"
 
 
 @pytest.mark.asyncio
-async def test_latest_release_scan_takes_the_rescan_that_repaired_a_failed_original(db):
+async def test_release_mode_takes_the_rescan_that_repaired_a_failed_original(db):
     await db.scans.insert_one(_scan("released", _PROJECT_A, status=_FAILED, latest_rescan_id="rescan"))
     await db.scans.insert_one(_scan("rescan", _PROJECT_A, created_delta=9))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == "rescan"
+    assert await _released(db, _PROJECT_A, _PRODUCTION) == "rescan"
 
 
 @pytest.mark.asyncio
-async def test_latest_release_scan_without_any_usable_analysis_is_none(db):
-    await db.scans.insert_one(_scan("released", _PROJECT_A, status=_FAILED, latest_rescan_id="rescan"))
-    await db.scans.insert_one(_scan("rescan", _PROJECT_A, created_delta=9, status=_PENDING))
-    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
-
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) is None
-
-
-@pytest.mark.asyncio
-async def test_latest_release_scan_of_an_unanalysed_release_is_none(db):
+async def test_release_mode_of_an_unanalysed_release_is_none(db):
     await db.scans.insert_one(_scan("released", _PROJECT_A, status=_PENDING))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) is None
+    assert await _released(db, _PROJECT_A, _PRODUCTION) is None
 
 
 @pytest.mark.asyncio
-async def test_latest_release_scan_walks_the_whole_rescan_chain(db):
+async def test_release_mode_walks_the_whole_rescan_chain(db):
     await db.scans.insert_one(_scan("released", _PROJECT_A))
     chain = await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED] * _CHAIN_DEPTH)
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == chain[-1]
+    assert await _released(db, _PROJECT_A, _PRODUCTION) == chain[-1]
 
 
 @pytest.mark.asyncio
-async def test_latest_release_scan_walks_through_a_failed_link_of_the_chain(db):
+async def test_release_mode_walks_through_a_failed_link_of_the_chain(db):
     """Stopping at the first unusable hop would answer with the released scan and ignore a fresher
     analysis of the same artefact that is sitting one link further along."""
     await db.scans.insert_one(_scan("released", _PROJECT_A))
     chain = await _seed_rescan_chain(db, _PROJECT_A, "released", [_FAILED, _COMPLETED])
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == chain[-1]
+    assert await _released(db, _PROJECT_A, _PRODUCTION) == chain[-1]
 
 
 @pytest.mark.asyncio
-async def test_latest_release_scan_keeps_the_freshest_usable_when_the_chain_ends_unusable(db):
+async def test_release_mode_keeps_the_freshest_usable_when_the_chain_ends_unusable(db):
     await db.scans.insert_one(_scan("released", _PROJECT_A))
     chain = await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED, _PENDING, _FAILED])
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == chain[0]
+    assert await _released(db, _PROJECT_A, _PRODUCTION) == chain[0]
 
 
 @pytest.mark.asyncio
@@ -280,7 +244,7 @@ async def test_a_chain_longer_than_the_bound_stops_at_the_bound(db):
     chain = await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED] * _CHAIN_BEYOND_THE_BOUND)
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
 
-    resolved = await latest_release_scan(db, _PROJECT_A, _PRODUCTION)
+    resolved = await _released(db, _PROJECT_A, _PRODUCTION)
 
     assert resolved == chain[MAX_RESCAN_HOPS - 1], "the walk stops at the bound instead of running the chain out"
 
@@ -314,15 +278,8 @@ async def test_a_cyclic_rescan_pointer_is_walked_once(db):
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
     counts = _count_queries(db)
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == "rescan"
+    assert await _released(db, _PROJECT_A, _PRODUCTION) == "rescan"
     assert dict(counts) == _CYCLE_QUERIES, "a scan already walked is not read again, so the cycle ends itself"
-
-
-@pytest.mark.asyncio
-async def test_latest_release_scan_of_a_deleted_scan_is_none(db):
-    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "retained-nowhere"))
-
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) is None
 
 
 @pytest.mark.asyncio
@@ -348,7 +305,7 @@ async def test_released_scan_ids_take_the_newest_release_of_an_environment(db):
 @pytest.mark.asyncio
 async def test_released_scan_ids_break_a_tie_the_way_every_other_release_read_does(db):
     """The rescanner keeps this answer warm, so a tie it settles differently from the list endpoint
-    and latest_release_scan leaves the scan every user-facing path calls deployed never rescanned."""
+    and the resolver leaves the scan every user-facing path calls deployed never rescanned."""
     await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A))
     await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
     # Inserted first, so insertion order alone would hand it the group.
@@ -358,7 +315,7 @@ async def test_released_scan_ids_break_a_tie_the_way_every_other_release_read_do
     marked = await released_scan_ids(db, _PROJECT_A)
 
     assert marked == {_PRODUCTION: _TIED_SCAN_LOW_ROW_ID}
-    assert marked[_PRODUCTION] == await latest_release_scan(db, _PROJECT_A, _PRODUCTION)
+    assert marked[_PRODUCTION] == await _released(db, _PROJECT_A, _PRODUCTION)
 
 
 @pytest.mark.asyncio
@@ -387,7 +344,7 @@ async def test_released_scan_ids_stay_on_the_marked_scan_rather_than_its_rescan(
     await db.scans.insert_one(_scan("rescan", _PROJECT_A, created_delta=9))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
 
-    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == "rescan"
+    assert await _released(db, _PROJECT_A, _PRODUCTION) == "rescan"
     assert await released_scan_ids(db, _PROJECT_A) == {_PRODUCTION: "released"}
 
 
@@ -547,21 +504,6 @@ async def test_resolve_scan_ids_release_mode_breaks_a_released_at_tie_on_the_row
 
 
 @pytest.mark.asyncio
-async def test_latest_release_scan_breaks_the_tie_the_way_the_analytics_path_does(db):
-    """BSON dates are milliseconds, so two marks of one environment can share a released_at. Two
-    resolvers answering "what is in production" differently is worse than either answer."""
-    await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A))
-    await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
-    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, _TIED_SCAN_HIGH_ROW_ID))
-    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, _TIED_SCAN_LOW_ROW_ID))
-
-    resolved = await latest_release_scan(db, _PROJECT_A, _PRODUCTION)
-
-    assert resolved == _TIED_SCAN_LOW_ROW_ID
-    assert await resolve_scan_ids(db, [_PROJECT_A], release_environment=_PRODUCTION) == {_PROJECT_A: resolved}
-
-
-@pytest.mark.asyncio
 async def test_the_lineage_walk_breaks_a_created_at_tie_on_the_scan_id(db):
     """A rescan stamped in the same millisecond as its source leaves the walk with two candidates
     of equal date; whichever the server hands over first must not decide the answer."""
@@ -584,13 +526,13 @@ async def test_resolve_scan_ids_empty_scope_reads_nothing(db):
 
 @pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])
 @pytest.mark.asyncio
-async def test_head_query_count_does_not_grow_with_the_scope(db, project_count):
+async def test_a_pointer_less_project_costs_one_index_seek(db, project_count):
     project_ids = await _seed_one_scan_each(db, project_count)
     counts = _count_queries(db)
 
     await resolve_scan_ids(db, project_ids)
 
-    assert dict(counts) == _HEAD_QUERIES
+    assert dict(counts) == {"projects.find": 1, "scans.find_one": project_count}
 
 
 @pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])

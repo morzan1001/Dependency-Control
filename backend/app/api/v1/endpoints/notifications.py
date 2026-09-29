@@ -15,18 +15,17 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import project_admin_ids
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from app.core.config import settings
+from app.core.constants import NOTIFICATION_EVENT_ANALYSIS_COMPLETED, NOTIFICATION_EVENT_VULNERABILITY_FOUND
 from app.core.permissions import Permissions
 from app.core.purl import package_identity, pep503_normalize
 from app.models.broadcast import Broadcast
 from app.models.project import Project
 from app.models.user import User
-from app.repositories import (
-    BroadcastRepository,
-    DependencyRepository,
-    ProjectRepository,
-    TeamRepository,
-    UserRepository,
-)
+from app.repositories.broadcasts import BroadcastRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.schemas.notification import (
     ECOSYSTEM_STORED_TYPES,
     AdvisoryPackage,
@@ -88,7 +87,6 @@ async def get_broadcast_history(
             created_by=creators_map.get(h.created_by, h.created_by),
             recipient_count=h.recipient_count,
             project_count=h.project_count,
-            unique_user_count=h.recipient_count,
             teams=[teams_map.get(tid, tid) for tid in h.teams] if h.teams else None,
         )
         for h in history
@@ -147,7 +145,7 @@ def _queue_announcement(
     background_tasks.add_task(
         notification_service.notify_users,
         users,
-        "analysis_completed",
+        NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
         subject,
         message,
         db=db,
@@ -350,7 +348,7 @@ def _queue_advisory_for_user(
     background_tasks.add_task(
         notification_service.notify_users,
         [data["user"]],
-        "vulnerability_found",
+        NOTIFICATION_EVENT_VULNERABILITY_FOUND,
         advisory_subject,
         context_message,
         db=db,
@@ -419,13 +417,6 @@ async def broadcast_message(
 
     forced_channels = payload.channels if payload.channels else None
 
-    valid_target_types: list[str] = ["global", "teams", "advisory"]
-    if payload.target_type not in valid_target_types:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid target_type. Must be one of: {', '.join(valid_target_types)}",
-        )
-
     # Escape raw HTML before Markdown to prevent XSS via embedded tags.
     safe_message = html.escape(payload.message)
     message_html_content = markdown.markdown(safe_message)
@@ -476,7 +467,7 @@ async def broadcast_message(
 
     if not payload.dry_run:
         history_entry = Broadcast(
-            type=payload.type,
+            type="advisory" if payload.target_type == "advisory" else "general",
             target_type=payload.target_type,
             subject=payload.subject,
             message=payload.message,
@@ -492,6 +483,5 @@ async def broadcast_message(
     return BroadcastResult(
         recipient_count=unique_user_count,
         project_count=project_count,
-        unique_user_count=unique_user_count,
         uncomparable_versions=uncomparable,
     )

@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectSettings } from '../ProjectSettings'
 import type { Project } from '@/types/project'
+import type { AppConfig } from '@/types/system'
 import type { User } from '@/types/user'
 
 const mockUpdate = vi.fn().mockResolvedValue({})
@@ -11,6 +12,7 @@ const mockUseGitHubInstances = vi.fn()
 const mockUseGitLabInstances = vi.fn()
 const mockUseTeams = vi.fn()
 const mockUseAuth = vi.fn()
+const mockUseAppConfig = vi.fn()
 
 vi.mock('@/api/projects', () => ({
   projectApi: {
@@ -19,7 +21,7 @@ vi.mock('@/api/projects', () => ({
     rotateApiKey: vi.fn(),
   },
 }))
-vi.mock('@/hooks/queries/use-system', () => ({ useAppConfig: () => ({ data: undefined }) }))
+vi.mock('@/hooks/queries/use-system', () => ({ useAppConfig: () => mockUseAppConfig() }))
 vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => mockUseTeams() }))
 vi.mock('@/hooks/queries/use-projects', () => ({
   projectKeys: { detail: (id: string) => ['project', id] },
@@ -54,6 +56,7 @@ const USER: User = {
 beforeEach(() => {
   mockUseAuth.mockReturnValue({ permissions: [] })
   mockUseGitLabInstances.mockReturnValue({ data: { items: [] } })
+  mockUseAppConfig.mockReturnValue({ data: undefined })
 })
 
 function githubInstances(hasToken: boolean) {
@@ -351,5 +354,55 @@ describe('ProjectSettings GitLab binding', () => {
       gitlab_project_id: null,
       gitlab_project_path: null,
     })
+  })
+})
+
+function appConfig(rescan: Pick<AppConfig, 'global_rescan_enabled' | 'global_rescan_interval'>): AppConfig {
+  return {
+    archive_enabled: false,
+    project_limit_per_user: 0,
+    retention_mode: 'project',
+    global_retention_days: 90,
+    global_retention_action: 'delete',
+    rescan_mode: 'project',
+    notifications: { email: false, slack: false, mattermost: false },
+    default_project_analyzers: [],
+    ...rescan,
+  }
+}
+
+describe('ProjectSettings periodic re-scanning', () => {
+  beforeEach(() => {
+    mockUpdate.mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
+    mockUseGitHubInstances.mockReturnValue(githubInstances(true))
+  })
+
+  it('shows the global schedule a project without its own inherits, and saves it still inheriting', async () => {
+    mockUseAppConfig.mockReturnValue({ data: appConfig({ global_rescan_enabled: true, global_rescan_interval: 12 }) })
+    renderSettings(githubProject())
+
+    expect(screen.getByLabelText('Enable Re-scanning')).toBeChecked()
+    expect(screen.getByLabelText('Interval (Hours)')).toHaveValue(12)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1].rescan_enabled).toBeUndefined()
+    expect(mockUpdate.mock.calls[0][1].rescan_interval).toBeUndefined()
+  })
+
+  it("shows a project's own schedule over the global one", () => {
+    mockUseAppConfig.mockReturnValue({ data: appConfig({ global_rescan_enabled: false, global_rescan_interval: 12 }) })
+    renderSettings(githubProject({ rescan_enabled: true, rescan_interval: 48 }))
+
+    expect(screen.getByLabelText('Enable Re-scanning')).toBeChecked()
+    expect(screen.getByLabelText('Interval (Hours)')).toHaveValue(48)
+  })
+
+  it("shows a project's own opt-out over a globally enabled schedule", () => {
+    mockUseAppConfig.mockReturnValue({ data: appConfig({ global_rescan_enabled: true, global_rescan_interval: 12 }) })
+    renderSettings(githubProject({ rescan_enabled: false }))
+
+    expect(screen.getByLabelText('Enable Re-scanning')).not.toBeChecked()
   })
 })

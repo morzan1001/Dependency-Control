@@ -401,7 +401,7 @@ class TestRun:
         db = FakeDatabase()
         db.name = "testdb"
         await _seed_history(db, count=3)
-        monkeypatch.setattr(backfill_script, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
+        monkeypatch.setattr(backfill_script, "create_client", lambda _url: _FakeClient(db))
 
         assert await run(_args(execute=True)) == 0
         assert write_order == ["s1", "s2", "s3"]
@@ -412,7 +412,7 @@ class TestRun:
         db.name = "testdb"
         await _seed_scan(db, "old", _days_ago(200), {"requests": "1.0.0"})
         await _seed_history(db, count=2)
-        monkeypatch.setattr(backfill_script, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
+        monkeypatch.setattr(backfill_script, "create_client", lambda _url: _FakeClient(db))
 
         assert await run(_args(execute=True, since_days=90)) == 0
         assert write_order == ["s1", "s2"]
@@ -421,7 +421,7 @@ class TestRun:
     async def test_a_failing_query_exits_one(self, monkeypatch, capsys):
         db = FakeDatabase()
         db.name = "testdb"
-        monkeypatch.setattr(backfill_script, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
+        monkeypatch.setattr(backfill_script, "create_client", lambda _url: _FakeClient(db))
 
         async def _explode(*_args: Any, **_kwargs: Any):
             raise RuntimeError("no route to mongod")

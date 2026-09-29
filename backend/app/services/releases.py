@@ -1,14 +1,16 @@
 """Release lookup and the single resolver for 'which scan counts for this project'."""
 
 import logging
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core import abatched
 from app.core.constants import RELEASE_FLAG_RECONCILE_BATCH_SIZE
-from app.core.init_db import RELEASES_LATEST_SORT
-from app.repositories import ScanRepository
+from app.core.init_db import RELEASES_ENVIRONMENT_SORT, RELEASES_LATEST_LOOKUP_KEY
+from app.repositories.releases import ReleaseRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.projections import ProjectWithScanId
 from app.services.analytics.scopes import read_scope_projects
 
@@ -29,27 +31,13 @@ async def release_protected_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Sequenc
     # Both rescan creators re-root original_scan_id at the lineage root, so a release's chain is one
     # link deep and one backward hop reaches every scan freshest_in_lineage can answer with.
     chain_parents = await db.scans.distinct("_id", {"latest_rescan_id": {"$in": candidates}})
-    marked = set(await db.releases.distinct("scan_id", {"scan_id": {"$in": candidates + chain_parents}}))
+    marked = await ReleaseRepository(db).released_among(candidates + chain_parents)
     protected = candidate_set & marked
     released_parents = sorted(marked & set(chain_parents))
     if not released_parents:
         return protected
     current_analysis = await db.scans.distinct("latest_rescan_id", {"_id": {"$in": released_parents}})
     return protected | (candidate_set & set(current_analysis))
-
-
-async def _batched(cursor: Any, field: str) -> AsyncIterator[list[str]]:
-    batch: list[str] = []
-    async for doc in cursor:
-        value = doc.get(field)
-        if value is None:
-            continue
-        batch.append(str(value))
-        if len(batch) >= RELEASE_FLAG_RECONCILE_BATCH_SIZE:
-            yield batch
-            batch = []
-    if batch:
-        yield batch
 
 
 async def reconcile_release_flags(db: AsyncIOMotorDatabase) -> tuple[int, int]:
@@ -59,19 +47,23 @@ async def reconcile_release_flags(db: AsyncIOMotorDatabase) -> tuple[int, int]:
     directions are reconciled, so a clear that races an in-flight mark is itself repaired on the
     next pass instead of becoming the next divergence.
     """
+    release_repo = ReleaseRepository(db)
     cleared = 0
     # Exactly true, so the scans_released_list partial index serves the sweep; another spelling
     # costs a listing row, not a scan, because retention keys its exemption on db.releases.
-    flagged = db.scans.find({"is_release": True}, {"_id": 1})
-    async for scan_ids in _batched(flagged, "_id"):
-        released = set(await db.releases.distinct("scan_id", {"scan_id": {"$in": scan_ids}}))
+    flagged = (str(doc["_id"]) async for doc in db.scans.find({"is_release": True}, {"_id": 1}))
+    async for scan_ids in abatched(flagged, RELEASE_FLAG_RECONCILE_BATCH_SIZE):
+        released = await release_repo.released_among(scan_ids)
         stale = [scan_id for scan_id in scan_ids if scan_id not in released]
         if stale:
             result = await db.scans.update_many({"_id": {"$in": stale}}, {"$set": {"is_release": False}})
             cleared += result.modified_count
 
     restored = 0
-    async for scan_ids in _batched(db.releases.find({}, {"scan_id": 1}), "scan_id"):
+    marked = (
+        str(doc["scan_id"]) async for doc in db.releases.find({}, {"scan_id": 1}) if doc.get("scan_id") is not None
+    )
+    async for scan_ids in abatched(marked, RELEASE_FLAG_RECONCILE_BATCH_SIZE):
         result = await db.scans.update_many(
             {"_id": {"$in": scan_ids}, "is_release": {"$ne": True}}, {"$set": {"is_release": True}}
         )
@@ -82,29 +74,12 @@ async def reconcile_release_flags(db: AsyncIOMotorDatabase) -> tuple[int, int]:
     return cleared, restored
 
 
-async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environment: str) -> str | None:
-    """The scan running in one environment. Ordered by released_at, so re-marking an older scan is
-    the rollback path and needs no extra flag."""
-    row = await db.releases.find_one(
-        {"project_id": project_id, "environment": environment},
-        # Same tie-break as the analytics path, or two marks landing in one millisecond answer
-        # "what is in production" differently depending on which endpoint is asked.
-        sort=RELEASES_LATEST_SORT,
-    )
-    if row is None:
-        return None
-    resolved = (await ScanRepository(db).freshest_in_lineage([row["scan_id"]])).get(row["scan_id"])
-    return resolved.scan_id if resolved else None
-
-
 async def released_scan_ids(db: AsyncIOMotorDatabase, project_id: str) -> dict[str, str]:
     """environment -> the scan that was marked for it, before any rescan chain."""
     pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
-        # The residual releases_latest_lookup order after the project_id equality, so the sort is
-        # index-served instead of ranking every release row the project ever had — and the _id
-        # tie-break its two siblings carry, so a tie is decided by the query rather than the plan.
-        {"$sort": {"environment": 1, "released_at": -1, "_id": 1}},
+        # Index-served per-environment pick.
+        {"$sort": dict(RELEASES_ENVIRONMENT_SORT)},
         {"$group": {"_id": "$environment", "scan_id": {"$first": "$scan_id"}}},
     ]
     marked = {row["_id"]: row["scan_id"] async for row in db.releases.aggregate(pipeline)}
@@ -119,12 +94,8 @@ async def _release_scan_ids(
         match["project_id"] = {"$in": list(project_ids)}
     pipeline: list[dict[str, Any]] = [
         {"$match": match},
-        # The full releases_latest_lookup order, so the pick is one index seek per project instead
-        # of a blocking sort over every release row the accessible projects ever recorded — this
-        # runs in front of the analytics cache, so its cost is on every request. _id breaks
-        # released_at ties, or a rollback marked with an explicit timestamp picks a different scan
-        # per request.
-        {"$sort": {"project_id": 1, "environment": 1, "released_at": -1, "_id": 1}},
+        # Index-served per-project pick.
+        {"$sort": dict(RELEASES_LATEST_LOOKUP_KEY)},
         {"$group": {"_id": "$project_id", "scan_id": {"$first": "$scan_id"}}},
     ]
     released = {row["_id"]: row["scan_id"] async for row in db.releases.aggregate(pipeline)}

@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import UpdateKind
 from app.models.types import MongoDocument, PyObjectId
 
 UPDATE_DELTA_SCHEMA_VERSION = 1
@@ -29,7 +30,7 @@ class UpdateSample(BaseModel):
     p: str | None = None  # purl
     ov: str  # old version
     nv: str  # new version
-    k: str  # kind: patch|minor|major|unknown|downgrade
+    k: UpdateKind
     wo: bool  # was flagged outdated in the previous scan
 
 
@@ -47,8 +48,6 @@ class ScanUpdateDelta(MongoDocument):
     # 0 marks an SBOM-less scan; such a scan is never chosen as a predecessor.
     dep_count: int = 0
     updates: UpdateCounts = Field(default_factory=UpdateCounts)
-    # Downgrades are excluded: a rollback is not update activity.
-    total_updates: int = 0
     # None marks a scan without outdated analysis; 0 means the analysis found nothing.
     outdated_count: int | None = None
     # Packages outdated here that the predecessor did not report as outdated,

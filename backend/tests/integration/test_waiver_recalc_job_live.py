@@ -29,7 +29,7 @@ def _waiver(**fields) -> Waiver:
 async def test_a_queued_change_is_worked_off_and_an_expiry_is_swept_once(db, monkeypatch):
     await _seed(db)
     active = _waiver()
-    await db.waivers.insert_one(active.model_dump(by_alias=True, exclude={"is_active"}))
+    await db.waivers.insert_one(active.model_dump(by_alias=True))
     await request_waiver_recalc(db, active)
 
     await run_waiver_recalc(db)

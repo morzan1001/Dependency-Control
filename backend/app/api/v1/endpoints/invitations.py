@@ -10,14 +10,14 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_system_invitation_email
 from app.api.v1.helpers.responses import RESP_400, RESP_404, RESP_AUTH, RESP_AUTH_400, RESP_AUTH_404
-from app.api.v1.helpers.users import ensure_identity_available
 from app.core import security
 from app.core.config import settings
 from app.core.permissions import Permissions
 from app.models.invitation import SystemInvitation
 from app.models.user import User
-from app.repositories import InvitationRepository, UserRepository
-from app.schemas.user import LowercaseEmail, UserResponse
+from app.repositories.invitations import InvitationRepository
+from app.repositories.users import IdentityTakenError, UserRepository
+from app.schemas.user import LowercaseEmail, Username, UserResponse
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -43,10 +43,11 @@ async def create_system_invitation(
     email: Annotated[LowercaseEmail, Body(..., embed=True)],
 ) -> dict[str, Any]:
     """Create a system invitation for a new user. Requires 'user:create' permission."""
-    user_repo = UserRepository(db)
     invitation_repo = InvitationRepository(db)
 
-    await ensure_identity_available(user_repo, email=email)
+    # An invitation writes no user, so no unique index refuses a registered address here.
+    if await UserRepository(db).exists_by_email(email):
+        raise IdentityTakenError("email")
 
     existing_invite = await invitation_repo.get_system_invitation_by_email(email)
 
@@ -111,19 +112,16 @@ async def validate_system_invitation(token: str, db: DatabaseDep) -> dict[str, A
 async def accept_system_invitation(
     db: DatabaseDep,
     token: Annotated[str, Body(...)],
-    username: Annotated[str, Body(...)],
+    username: Annotated[Username, Body(...)],
     password: Annotated[str, Body(...)],
 ) -> User:
     """Accept a system invitation and create a user account."""
-    user_repo = UserRepository(db)
     invitation_repo = InvitationRepository(db)
 
     invitation = await invitation_repo.get_system_invitation_by_token(token)
 
     if not invitation:
         raise HTTPException(status_code=400, detail="Invalid or expired invitation token")
-
-    await ensure_identity_available(user_repo, email=invitation["email"], username=username)
 
     hashed_password = security.get_password_hash(password)
     new_user = User(
@@ -135,7 +133,7 @@ async def accept_system_invitation(
         permissions=[],
     )
 
-    await user_repo.create(new_user)
+    await UserRepository(db).create(new_user)
 
     await invitation_repo.mark_system_invitation_used(invitation["_id"])
 

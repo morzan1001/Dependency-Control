@@ -7,8 +7,6 @@ from urllib.parse import quote, urlparse
 
 from app.core.constants import (
     APP_PACKAGE_TYPES,
-    LICENSE_URL_PATTERNS,
-    OS_PACKAGE_TYPES,
     SOURCE_TYPE_APPLICATION,
     SOURCE_TYPE_DIRECTORY,
     SOURCE_TYPE_FILE,
@@ -17,7 +15,8 @@ from app.core.constants import (
     SPDX_ORGANIZATION_PREFIX,
 )
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
-from app.core.purl import dependency_node_key, get_purl_type, parse_purl
+from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type, parse_purl
+from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
 from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
@@ -85,20 +84,6 @@ def is_url(value: str) -> bool:
         return result.scheme in ("http", "https") and bool(result.netloc)
     except Exception:
         return False
-
-
-def extract_license_from_url(url: str) -> str | None:
-    """Try to extract a license SPDX ID from a license URL."""
-    if not url:
-        return None
-
-    url_lower = url.lower()
-
-    for pattern, spdx_id in LICENSE_URL_PATTERNS.items():
-        if re.search(pattern, url_lower):
-            return spdx_id
-
-    return None
 
 
 class SBOMParser:
@@ -477,13 +462,10 @@ class SBOMParser:
         global_source_type: str | None,
     ) -> str | None:
         """Determine a component's likely source: image, application, file, or None."""
-        purl_type = get_purl_type(purl)
-        effective_type = (purl_type or pkg_type or "").lower()
-
-        if effective_type in OS_PACKAGE_TYPES and (layer_digest or global_source_type == SOURCE_TYPE_IMAGE):
+        if is_os_package_type(purl, pkg_type) and (layer_digest or global_source_type == SOURCE_TYPE_IMAGE):
             return SOURCE_TYPE_IMAGE
 
-        if effective_type in APP_PACKAGE_TYPES:
+        if (get_purl_type(purl) or pkg_type or "").lower() in APP_PACKAGE_TYPES:
             return SOURCE_TYPE_APPLICATION
 
         if layer_digest:
@@ -784,7 +766,7 @@ class SBOMParser:
         if "license" in lic:
             inner = lic["license"]
             if isinstance(inner, dict):
-                name_or_id = inner.get("id") or inner.get("name", "")
+                name_or_id = inner.get("id") or inner.get("name") or inner.get("url", "")
                 name, new_url = self._classify_license_value(name_or_id, license_url, inner.get("url"))
                 if name:
                     license_names.append(name)
@@ -1133,7 +1115,8 @@ class SBOMParser:
         self, lic: dict[str, Any], license_names: list[str], license_url: str | None
     ) -> str | None:
         """Handle a single syft license-dict entry; returns possibly updated url."""
-        value = lic.get("value") or lic.get("spdxExpression") or lic.get("type", "")
+        # Syft fills spdxExpression only when it resolved the value to an SPDX id.
+        value = lic.get("spdxExpression") or lic.get("value") or lic.get("type", "")
         if value:
             name, new_url = self._classify_license_value(value, license_url)
             if name:

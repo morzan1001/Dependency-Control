@@ -1,20 +1,22 @@
-"""Replaces a scan's dependency documents with the parsed SBOM's, in chunked batches."""
+"""Replaces a scan's dependency documents with the parsed SBOMs', in chunked batches."""
 
-import logging
+from datetime import datetime, timezone
 
 from app.models.dependency import Dependency
-from app.repositories import DependencyRepository
-from app.schemas.sbom import ParsedDependency
-
-logger = logging.getLogger(__name__)
+from app.repositories.dependencies import DependencyRepository
+from app.schemas.sbom import ParsedDependency, ParsedSBOM
+from app.services.sbom_parser import merge_duplicate_dependencies
 
 _DEP_CHUNK_SIZE = 500
 
 
-def _parsed_dep_to_dependency(parsed_dep: ParsedDependency, project_id: str, scan_id: str) -> Dependency:
+def _parsed_dep_to_dependency(
+    parsed_dep: ParsedDependency, project_id: str, scan_id: str, written_at: datetime
+) -> Dependency:
     return Dependency(
         project_id=project_id,
         scan_id=scan_id,
+        created_at=written_at,
         name=parsed_dep.name,
         version=parsed_dep.version,
         purl=parsed_dep.purl,
@@ -43,40 +45,23 @@ def _parsed_dep_to_dependency(parsed_dep: ParsedDependency, project_id: str, sca
     )
 
 
-async def _insert_dependencies_chunked(
-    dependencies: list[ParsedDependency],
-    project_id: str,
-    scan_id: str,
-    dep_repo: DependencyRepository,
-) -> int:
-    total_inserted = 0
-    chunk: list[dict] = []
-    for parsed_dep in dependencies:
-        dep = _parsed_dep_to_dependency(parsed_dep, project_id, scan_id)
-        chunk.append(dep.model_dump(by_alias=True))
-        if len(chunk) >= _DEP_CHUNK_SIZE:
-            total_inserted += await dep_repo.create_many_raw(chunk)
-            chunk.clear()
-    if chunk:
-        total_inserted += await dep_repo.create_many_raw(chunk)
-        chunk.clear()
-    return total_inserted
-
-
 async def store_scan_dependencies(
-    dependencies: list[ParsedDependency],
+    parsed_sboms: list[ParsedSBOM | None],
     project_id: str,
     scan_id: str,
     dep_repo: DependencyRepository,
-) -> int:
-    """Replace the scan's dependency inventory with ``dependencies``, deduplicated by the caller.
-
-    Called once per scan with every SBOM's dependencies merged: the unique index spans the
-    whole scan, so storing one SBOM at a time makes the later SBOMs' rows duplicate-key
-    failures and discards the evidence they carried.
-    """
-    deleted_count = await dep_repo.delete_by_scan(scan_id)
-    if deleted_count:
-        logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
-
-    return await _insert_dependencies_chunked(dependencies, project_id, scan_id, dep_repo)
+) -> int | None:
+    """Replace the scan's inventory with the payload's merged dependencies; writes nothing and returns None
+    when an SBOM failed (None), so a re-run cannot swap a stored complete inventory for a partial one."""
+    sboms = [sbom for sbom in parsed_sboms if sbom is not None]
+    if not sboms or len(sboms) < len(parsed_sboms):
+        return None
+    merged, _ = merge_duplicate_dependencies([dep for sbom in sboms for dep in sbom.dependencies])
+    # Deletes only rows no write since this one has touched, so after a failure part-way or an
+    # overlapping store of the same scan the newest write's rows are all still there.
+    written_at = datetime.now(timezone.utc)
+    for start in range(0, len(merged), _DEP_CHUNK_SIZE):
+        chunk = merged[start : start + _DEP_CHUNK_SIZE]
+        await dep_repo.upsert_many([_parsed_dep_to_dependency(dep, project_id, scan_id, written_at) for dep in chunk])
+    await dep_repo.delete_older_writes(scan_id, written_at)
+    return len(merged)

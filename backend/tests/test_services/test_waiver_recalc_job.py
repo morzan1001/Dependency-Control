@@ -4,14 +4,13 @@ until its pass is done."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from pymongo import ReadPreference
 
 import app.services.stats as stats_module
 from app.models.waiver import Waiver
-from app.repositories import DistributedLocksRepository
+from app.repositories.distributed_locks import DistributedLocksRepository
 from app.services.stats import request_waiver_recalc, run_waiver_recalc
 from app.services.waivers.apply import waiver_fingerprint
-from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
+from tests.mocks.fake_mongo import FakeDatabase
 
 pytestmark = pytest.mark.asyncio
 
@@ -49,7 +48,7 @@ def _gpl_waiver(**fields) -> Waiver:
 
 
 async def _store(db: FakeDatabase, waiver: Waiver) -> Waiver:
-    await db.waivers.insert_one(waiver.model_dump(by_alias=True, exclude={"is_active"}))
+    await db.waivers.insert_one(waiver.model_dump(by_alias=True))
     return waiver
 
 
@@ -57,9 +56,9 @@ def _record_recalcs(monkeypatch) -> list[str]:
     visited: list[str] = []
     original = stats_module.recalculate_project_stats
 
-    async def recording(project_id, db, reach=None):
+    async def recording(project_id, db, reach=None, **kwargs):
         visited.append(project_id)
-        return await original(project_id, db, reach)
+        return await original(project_id, db, reach, **kwargs)
 
     monkeypatch.setattr(stats_module, "recalculate_project_stats", recording)
     return visited
@@ -113,7 +112,7 @@ async def test_one_failing_project_does_not_stop_the_recalculation_of_the_others
         await _seed_project(db, project_id, _GPL)
     visited: list[str] = []
 
-    async def recalculate(project_id, database, reach=None):
+    async def recalculate(project_id, database, reach=None, **kwargs):
         visited.append(project_id)
         if project_id == "p-broken":
             raise RuntimeError("legacy document")
@@ -204,31 +203,6 @@ async def test_the_first_sweep_takes_every_waiver_that_ever_expired():
 
     assert (await db.findings.find_one({"_id": "f-p-1"}))["waived"] is False
     assert (await db.waiver_recalc.find_one({"_id": "expiry_sweep"}))["swept_until"] is not None
-
-
-class _LaggingSecondary(FakeDatabase):
-    """Default reads of waivers see a secondary that has not replicated the change yet; PRIMARY sees it."""
-
-    def __init__(self, primary: FakeDatabase) -> None:
-        object.__setattr__(self, "primary", primary)
-        object.__setattr__(self, "waivers", FakeCollection(primary))
-
-    def __getattr__(self, name: str) -> FakeCollection:
-        return getattr(self.primary, name)
-
-    def with_options(self, read_preference=None, **_kwargs) -> FakeDatabase:
-        return self.primary if read_preference == ReadPreference.PRIMARY else self
-
-
-async def test_a_waiver_change_a_lagging_secondary_has_not_seen_is_not_dropped_as_done():
-    primary = FakeDatabase()
-    await _seed_project(primary, "p-1", _GPL)
-    await primary.scans.update_one({"_id": "scan-p-1"}, {"$set": {"waiver_fingerprint": waiver_fingerprint([])}})
-    await request_waiver_recalc(primary, await _store(primary, _gpl_waiver(project_id="p-1")))
-
-    await run_waiver_recalc(_LaggingSecondary(primary))
-
-    assert (await primary.findings.find_one({"_id": "f-p-1"}))["waived"] is True
 
 
 async def test_the_operator_restamp_entry_clears_flags_stamped_under_older_rules():

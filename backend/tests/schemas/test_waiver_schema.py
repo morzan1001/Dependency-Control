@@ -1,9 +1,11 @@
 """WaiverCreate.finding_type validates against the FindingType enum."""
 
+from typing import get_args
+
 import pytest
 from pydantic import ValidationError
 
-from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK, WAIVER_STATUS_FALSE_POSITIVE
+from app.core.constants import WaiverStatus
 from app.models.finding import FindingType
 from app.schemas.waiver import WaiverCreate, WaiverUpdate
 
@@ -30,7 +32,7 @@ def test_unknown_status_rejected_at_schema_level():
 
 
 def test_every_known_status_is_accepted():
-    for status in (WAIVER_STATUS_ACCEPTED_RISK, WAIVER_STATUS_FALSE_POSITIVE):
+    for status in get_args(WaiverStatus):
         assert WaiverCreate(reason="ok", status=status).status == status
 
 
@@ -47,11 +49,11 @@ def test_the_forms_unknown_package_placeholder_is_no_package():
     assert WaiverCreate(reason="ok", package_name="unknown").package_name == "unknown"
 
 
-@pytest.mark.parametrize("field", ["status", "reason"])
-def test_an_update_cannot_null_a_field_every_waiver_carries(field):
+@pytest.mark.parametrize("update", [{"status": "wont_fix"}, {"status": None}, {"reason": None}])
+def test_an_update_refuses_a_status_outside_the_vocabulary_and_nulls_the_stored_waiver_requires(update):
     # A stored null status or reason makes every later load of the waiver fail.
     with pytest.raises(ValidationError):
-        WaiverUpdate(**{field: None})
+        WaiverUpdate(**update)
 
 
 def test_an_update_may_clear_the_expiry():

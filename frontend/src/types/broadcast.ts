@@ -6,10 +6,8 @@ export interface AdvisoryPackage {
 
 export type BroadcastTargetType = 'global' | 'teams' | 'advisory';
 export type NotificationChannel = 'email' | 'slack' | 'mattermost' | 'teams';
-export type BroadcastType = 'general' | 'advisory';
 
 export interface BroadcastRequest {
-  type: BroadcastType;
   target_type: BroadcastTargetType;
   target_teams?: string[];
   packages?: AdvisoryPackage[];
@@ -22,7 +20,6 @@ export interface BroadcastRequest {
 export interface BroadcastResult {
   recipient_count: number;
   project_count?: number;
-  unique_user_count?: number;
   // Matched dependencies whose version could not be compared with the max version.
   uncomparable_versions?: string[];
 }
@@ -36,7 +33,6 @@ export interface BroadcastHistoryItem {
   created_by?: string;
   recipient_count: number;
   project_count: number;
-  unique_user_count?: number;
   teams?: string[];
 }
 

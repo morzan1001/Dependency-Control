@@ -2,6 +2,7 @@ from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import get_available_channels
+from app.api.v1.helpers.projects import reject_unknown_analyzers
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.config import settings as app_settings
 from app.core.constants import (
@@ -30,7 +31,7 @@ async def get_settings(
     db: DatabaseDep,
 ) -> SystemSettings:
     """Get system settings. Requires 'system:manage' permission."""
-    return await deps.get_system_settings(db, auto_init=True)
+    return await deps.get_system_settings(db)
 
 
 @router.put("/", response_model=SystemSettingsResponse, responses=RESP_AUTH)
@@ -43,6 +44,7 @@ async def update_settings(
     """Update system settings. Requires 'system:manage' permission."""
     repo = SystemSettingsRepository(db)
     update_data = settings_in.model_dump(exclude_unset=True)
+    reject_unknown_analyzers(update_data.get("default_active_analyzers"))
 
     if "slack_bot_token" in update_data:
         current_settings = await repo.get()

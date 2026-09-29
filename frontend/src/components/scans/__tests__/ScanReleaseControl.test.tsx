@@ -18,7 +18,6 @@ const PRODUCTION_VERSION = 'v1.2.3'
 const STAGING_VERSION = 'v1.3.0-rc1'
 const PRODUCTION_RELEASED_AT = '2026-09-01T10:00:00Z'
 const STAGING_RELEASED_AT = '2026-09-02T11:00:00Z'
-const GENERIC_RELEASE_LABEL = 'Release'
 const UNCOVERED_SCAN_ID = 'scan-old'
 const UNCOVERED_VERSION = 'v0.9.0'
 const UNCOVERED_RELEASED_AT = '2026-08-05T16:49:16Z'
@@ -162,11 +161,10 @@ describe('ScanReleaseControl', () => {
     expect(screen.getByText(`Released ${formatDateTime(PRODUCTION_RELEASED_AT)}`)).toBeInTheDocument()
   })
 
-  it('keeps the badge for a release whose record it cannot see', () => {
-    renderControl(releasedScan([]))
+  it('renders nothing for a release flag no release record backs', () => {
+    const { container } = renderControl(releasedScan([]))
 
-    expect(screen.getByLabelText(GENERIC_RELEASE_LABEL)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /^Withdraw from/ })).not.toBeInTheDocument()
+    expect(container).toBeEmptyDOMElement()
   })
 
   it('renders nothing at all for a scan that is not a release', () => {

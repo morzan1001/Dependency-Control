@@ -48,7 +48,7 @@ export interface SystemSettings {
   oidc_client_secret_configured?: boolean;
   gitlab_access_token_configured?: boolean;
   mattermost_bot_token_configured?: boolean;
-  default_active_analyzers?: string[];
+  default_active_analyzers: string[];
   chat_rate_limit_per_minute?: number;
   chat_rate_limit_per_hour?: number;
   chat_max_tool_rounds?: number;
@@ -81,6 +81,7 @@ export interface AppConfig {
   slack_client_id?: string;
   slack_oauth_scopes?: string;
   chat_enabled?: boolean;
+  default_project_analyzers: string[];
 }
 
 export interface SettingsTabProps {

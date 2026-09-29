@@ -1,11 +1,12 @@
 import asyncio
 import logging
+from collections import Counter
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
-from pymongo import ReadPreference
 
-from app.core import ensure_utc
+from app.core import abatched
 from app.core.cache import update_cache_stats
 from app.core.config import settings
 from app.core.constants import (
@@ -15,19 +16,23 @@ from app.core.constants import (
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
     HOUSEKEEPING_MAX_SCAN_RETRIES,
-    HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS,
     HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS,
     HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS,
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
     HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC,
+    RESCAN_HISTORY_RUNS,
+    RETENTION_ACTIONS,
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
     RETENTION_ACTION_NONE,
-    RETENTION_ACTIONS,
     RETENTION_PROTECTED_FLAG_VALUES,
+    SCAN_ACTIVE_STATUSES,
+    SCAN_STATUS_PENDING,
+    SCAN_STATUS_PROCESSING,
     SCAN_USABLE_STATUSES,
+    SCANS_TIP_SORT,
+    SETTINGS_MODE_GLOBAL,
 )
-from app.core.init_db import SCANS_TIP_SORT
 from app.core.metrics import (
     archive_housekeeping_batch_total,
     archive_housekeeping_scans_processed_total,
@@ -38,12 +43,15 @@ from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
+from app.services.analysis.notifications import notify_analysis_failed
 from app.services.audit.retention import prune_old_audit_entries
+from app.services.branch_sync import sync_project_branches
 from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.releases import reconcile_release_flags, release_protected_scan_ids
+from app.services.rescan import RESCAN_SOURCE_PROJECTION, create_rescan
 from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.stats import run_waiver_recalc
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
@@ -98,34 +106,26 @@ async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE)
             logger.info(f"Reaped {count} orphan callgraph(s) belonging to {len(orphaned)} missing scan(s)")
         return count
 
-    deleted = 0
-    batch: list[str] = []
-    cursor = db.callgraphs.find(
-        {"created_at": {"$lt": cutoff}, "scan_id": {"$ne": None}},
-        {"scan_id": 1},
-    )
-    async for callgraph in cursor:
-        scan_id = callgraph.get("scan_id")
-        if not scan_id:
-            continue
-        batch.append(scan_id)
-        if len(batch) >= batch_size:
-            deleted += await _reap_batch(batch)
-            batch = []
-    if batch:
-        deleted += await _reap_batch(batch)
-    return deleted
+    cursor = db.callgraphs.find({"created_at": {"$lt": cutoff}, "scan_id": {"$ne": None}}, {"scan_id": 1})
+    scan_ids = (callgraph["scan_id"] async for callgraph in cursor if callgraph.get("scan_id"))
+    return sum([await _reap_batch(batch) async for batch in abatched(scan_ids, batch_size)])
+
+
+_RESCAN_PROJECT_PROJECTION = dict.fromkeys(
+    ("_id", "name", "default_branch", "deleted_branches", "rescan_enabled", "rescan_interval"), 1
+)
 
 
 def _resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
     """Return effective rescan interval hours, or None if rescans are disabled."""
-    enabled = project.rescan_enabled
+    project_decides = system_settings.rescan_mode != SETTINGS_MODE_GLOBAL
+    enabled = project.rescan_enabled if project_decides else None
     if enabled is None:
         enabled = system_settings.global_rescan_enabled
     if not enabled:
         return None
 
-    interval_hours = project.rescan_interval
+    interval_hours = project.rescan_interval if project_decides else None
     if interval_hours is None:
         interval_hours = system_settings.global_rescan_interval
 
@@ -143,63 +143,11 @@ def _rescan_clock(source_scan: dict) -> datetime | None:
 
 def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
     """Whether this source scan has gone interval_hours without a rescan."""
-    last_rescan_aware = ensure_utc(_rescan_clock(source_scan))
-    if not last_rescan_aware:
+    last_rescan = _rescan_clock(source_scan)
+    if not last_rescan:
         return False
-    next_rescan_due = last_rescan_aware + timedelta(hours=interval_hours)
+    next_rescan_due = last_rescan + timedelta(hours=interval_hours)
     return datetime.now(timezone.utc) >= next_rescan_due
-
-
-async def _create_rescan_for_project(
-    project: Project, source_scan: dict, db: Any, worker_manager: "WorkerManager"
-) -> None:
-    """Atomically create a rescan after acquiring the distributed lock."""
-    from app.repositories import DistributedLocksRepository
-    from app.repositories.distributed_locks import new_lock_holder
-    from app.services.scan_manager import queue_rescan  # scan_manager imports the worker, which imports this module
-
-    source_scan_id = str(source_scan["_id"])
-    lock_repo = DistributedLocksRepository(db)
-    lock_name = f"rescan_create:{project.id}:{source_scan_id}"
-    holder_id = new_lock_holder()
-
-    if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS):
-        logger.debug(f"Could not acquire lock for rescanning {project.name}/{source_scan_id}.")
-        return
-
-    try:
-        rescan, queued = await queue_rescan(db, source_scan, project.id, worker_manager)
-        if queued:
-            logger.info(f"Rescan {rescan.id} of {source_scan_id} is queued for project {project.name}")
-        else:
-            logger.debug(f"Project {project.name} already has an active rescan {rescan.id} of {source_scan_id}")
-    finally:
-        await lock_repo.release_lock(lock_name, holder_id)
-
-
-async def _branch_tip(project: Project, tip_source: dict[str, Any], db: Any) -> dict | None:
-    """The newest build that stands for the project's branch tip, picked the way the head rule
-    picks its commit: the default branch while the VCS still has one, else any branch it has not
-    deleted. The rule's second step is deliberately left out — a rescan target has to be the build,
-    or each interval would rescan the previous interval's output.
-
-    A tag pipeline names its tag as its branch, so it can hold a release slot but never the tip
-    slot — otherwise a project that tags every release stops having its default branch
-    re-evaluated, and where the tag build is also the release the two targets collapse to one.
-    """
-    deleted = project.deleted_branches or []
-    if project.default_branch and project.default_branch not in deleted:
-        on_default: dict | None = await db.scans.find_one(
-            {**tip_source, "branch": project.default_branch}, sort=SCANS_TIP_SORT
-        )
-        if on_default:
-            return on_default
-
-    any_branch: dict[str, Any] = {**tip_source, "$expr": {"$ne": ["$branch", "$commit_tag"]}}
-    if deleted:
-        any_branch["branch"] = {"$nin": deleted}
-    tip: dict | None = await db.scans.find_one(any_branch, sort=SCANS_TIP_SORT)
-    return tip
 
 
 async def _rescan_targets(project: Project, db: Any) -> list[dict]:
@@ -212,34 +160,27 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     """
     from app.services.releases import released_scan_ids
 
-    usable_source = {
-        "project_id": project.id,
-        "status": {"$in": SCAN_USABLE_STATUSES},
-        "sbom_refs": {"$exists": True, "$ne": []},
-    }
-
-    # Tri-state: scans predating the flag carry no is_rescan field and are originals.
-    tip_source = {**usable_source, "is_rescan": {"$ne": True}}
-
-    targets: list[dict] = []
-    targeted_ids: set[str] = set()
-
-    # BSON dates are milliseconds, so two scans of one project can share a created_at; _id decides
-    # between them, or the tip alternates between passes and each alternate falls due immediately.
-    tip = await _branch_tip(project, tip_source, db)
-    if tip:
-        targets.append(tip)
-        targeted_ids.add(str(tip["_id"]))
+    # Head's own tip build, so the rescan refreshes the analysis head reports; the lineage step is
+    # left out because a rescan target has to be the build, not the previous interval's output.
+    tip = await ScanRepository(db).head_build(
+        project, {**HAS_SBOM_MATCH, **USABLE_BUILD_MATCH}, RESCAN_SOURCE_PROJECTION
+    )
+    targets = [tip] if tip else []
 
     # The marked scan itself, never its rescan: rescanning the rescan would grow the chain past
-    # the bound effective_scan_ids walks.
-    for marked_id in (await released_scan_ids(db, project.id)).values():
-        marked = await db.scans.find_one({**usable_source, "_id": marked_id})
-        if not marked or str(marked["_id"]) in targeted_ids:
-            continue
-        targets.append(marked)
-        targeted_ids.add(str(marked["_id"]))
-
+    # the bound effective_scan_ids walks. A failed one is retried, as nothing else analyses it.
+    marked_ids = set((await released_scan_ids(db, project.id)).values()) - {target["_id"] for target in targets}
+    if marked_ids:
+        marked = db.scans.find(
+            {
+                "project_id": project.id,
+                "_id": {"$in": sorted(marked_ids)},
+                "status": {"$nin": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
+                **HAS_SBOM_MATCH,
+            },
+            RESCAN_SOURCE_PROJECTION,
+        )
+        targets.extend(await marked.to_list(None))
     return targets
 
 
@@ -259,8 +200,9 @@ async def _process_project_rescan(
         return
 
     for source_scan in targets:
-        if _is_rescan_due(source_scan, interval_hours):
-            await _create_rescan_for_project(project, source_scan, db, worker_manager)
+        if _is_rescan_due(source_scan, interval_hours) and not worker_manager.is_saturated():
+            logger.info(f"Re-scan due for project {project.name} from source scan {source_scan['_id']}")
+            await create_rescan(db, source_scan, worker_manager)
 
 
 async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:
@@ -278,7 +220,10 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         system_settings = await repo.get()
 
         # Pre-filter to projects that have been scanned at least once.
-        async for project_data in db.projects.find({"last_scan_at": {"$ne": None}}):
+        async for project_data in db.projects.find({"last_scan_at": {"$ne": None}}, _RESCAN_PROJECT_PROJECTION):
+            # The due targets left over stay due, so a later pass, in whichever process has room, takes them.
+            if worker_manager.is_saturated():
+                break
             try:
                 await _process_project_rescan(project_data, system_settings, db, worker_manager)
             except Exception as e:
@@ -332,18 +277,9 @@ async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) ->
             logger.warning(f"Failed to delete stale metadata for scans {stale_scan_ids}: {e}")
             return 0
 
-    deleted = 0
-    batch: list[dict[str, Any]] = []
-    async for meta in db.archive_metadata.find({}, {"_id": 1, "scan_id": 1, "archived_at": 1}):
-        if not meta.get("scan_id"):
-            continue
-        batch.append(meta)
-        if len(batch) >= batch_size:
-            deleted += await _reap_batch(batch)
-            batch = []
-    if batch:
-        deleted += await _reap_batch(batch)
-    return deleted
+    cursor = db.archive_metadata.find({}, {"_id": 1, "scan_id": 1, "archived_at": 1})
+    metas = (meta async for meta in cursor if meta.get("scan_id"))
+    return sum([await _reap_batch(batch) async for batch in abatched(metas, batch_size)])
 
 
 async def _reap_orphan_s3_objects(db: Any) -> int:
@@ -455,27 +391,120 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
         )
 
 
-async def _unreferenced(db: Any, scan_ids: list[str]) -> list[str]:
-    """The batch minus every scan something still points at: a rescan's source, and either end of a
-    release's analysis chain."""
+async def _project_heads(db: Any, project_ids: set[str]) -> set[str]:
+    projects = await db.projects.find(
+        {"_id": {"$in": sorted(project_ids)}}, {"latest_scan_id": 1, "default_branch": 1, "deleted_branches": 1}
+    ).to_list(None)
+    return set((await ScanRepository(db).get_latest_active_scan_ids(projects)).values())
+
+
+async def _unreferenced(db: Any, scans: list[dict[str, Any]]) -> list[str]:
+    """The batch minus every scan something still points at: a rescan's source, either end of a
+    release's analysis chain, and a project's head, which otherwise passes to an older or feature build."""
+    scan_ids = [str(doc["_id"]) for doc in scans]
     protected = await _referenced_scan_ids(db, scan_ids)
     protected |= await release_protected_scan_ids(db, scan_ids)
+    protected |= await _project_heads(db, {doc["project_id"] for doc in scans if doc.get("project_id")})
     return [scan_id for scan_id in scan_ids if scan_id not in protected]
 
 
 async def _process_scans_in_batches(
     db: Any, cursor: Any, action: str, label: str, batch_size: int = ARCHIVE_BATCH_SIZE
 ) -> None:
-    """Stream scan IDs from cursor and process retention in batches, dropping the ones a rescan
-    still points at."""
-    batch: list[str] = []
-    async for doc in cursor:
-        batch.append(str(doc["_id"]))
-        if len(batch) >= batch_size:
-            await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
-            batch = []
-    if batch:
+    async for batch in abatched(cursor, batch_size):
         await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
+
+
+async def _superseded_rescans(db: Any, scope: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    """Each build's rescans older than its newest RESCAN_HISTORY_RUNS usable ones, except the one its
+    latest_rescan_id names."""
+    # Keyed on original_scan_id so its index, not a pass over every build, finds the rescans.
+    runs = {
+        **scope,
+        "original_scan_id": {"$ne": None},
+        "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
+        "status": {"$nin": SCAN_ACTIVE_STATUSES},
+    }
+    crowded = db.scans.aggregate(
+        [
+            {"$match": runs},
+            {"$group": {"_id": "$original_scan_id", "runs": {"$sum": 1}}},
+            {"$match": {"runs": {"$gt": RESCAN_HISTORY_RUNS}}},
+        ]
+    )
+    async for groups in abatched(crowded, ARCHIVE_BATCH_SIZE):
+        roots = [group["_id"] for group in groups]
+        current = set(await db.scans.distinct("latest_rescan_id", {"_id": {"$in": roots}}))
+        usable_kept: Counter[str] = Counter()
+        cursor = db.scans.find(
+            {**runs, "original_scan_id": {"$in": roots}}, {"project_id": 1, "original_scan_id": 1, "status": 1}
+        )
+        async for run in cursor.sort(SCANS_TIP_SORT):
+            root = run["original_scan_id"]
+            if usable_kept[root] < RESCAN_HISTORY_RUNS:
+                usable_kept[root] += run.get("status") in SCAN_USABLE_STATUSES
+            elif run["_id"] not in current:
+                yield run
+
+
+async def _expire_group(db: Any, days: int, scope: dict[str, Any], action: str, label: str) -> None:
+    """Retention for one group: scans past its age and rescans past the history cap. A stored retention no
+    cutoff can be computed for fails only its own group."""
+    try:
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
+        cursor = db.scans.find(
+            {
+                **scope,
+                "created_at": {"$lt": cutoff_date},
+                "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
+                "status": {"$nin": SCAN_ACTIVE_STATUSES},
+            },
+            {"_id": 1, "project_id": 1},
+        )
+        await _process_scans_in_batches(db, cursor, action, label)
+        await _process_scans_in_batches(db, _superseded_rescans(db, scope), action, f"{label} rescan history")
+    except Exception:
+        logger.exception("Housekeeping: %s failed", label)
+
+
+async def _run_retention(db: Any) -> None:
+    system_settings = await SystemSettingsRepository(db).get()
+
+    if system_settings.retention_mode == SETTINGS_MODE_GLOBAL:
+        retention_days = system_settings.global_retention_days
+        retention_action = system_settings.global_retention_action
+        if retention_days > 0 and retention_action != RETENTION_ACTION_NONE:
+            logger.info(f"Running global housekeeping (action={retention_action}, older than {retention_days} days)")
+            await _expire_group(db, retention_days, {}, retention_action, "Global housekeeping")
+        return
+
+    logger.info("Running project-specific housekeeping...")
+
+    # Group projects by (retention_days, retention_action) to minimize DB queries
+    pipeline: list[dict[str, Any]] = [
+        {
+            "$match": {
+                "retention_days": {"$gt": 0},
+                "retention_action": {"$ne": RETENTION_ACTION_NONE},
+            }
+        },
+        {
+            "$group": {
+                "_id": {
+                    "days": "$retention_days",
+                    "action": {"$ifNull": ["$retention_action", RETENTION_ACTION_DELETE]},
+                },
+                "project_ids": {"$push": "$_id"},
+            }
+        },
+    ]
+
+    async for group in db.projects.aggregate(pipeline):
+        days = group["_id"]["days"]
+        action = group["_id"]["action"]
+        project_ids = group["project_ids"]
+        label = f"Retention {days}d/{action} ({len(project_ids)} projects)"
+        await _expire_group(db, days, {"project_id": {"$in": project_ids}}, action, label)
 
 
 async def run_housekeeping() -> None:
@@ -493,78 +522,10 @@ async def run_housekeeping() -> None:
         except Exception as e:
             logger.exception("Housekeeping: release flag reconcile failed: %s", e)
 
-        repo = SystemSettingsRepository(db)
-        system_settings = await repo.get()
-
-        if system_settings.retention_mode == "global":
-            retention_days = system_settings.global_retention_days
-            retention_action = system_settings.global_retention_action
-
-            if retention_days > 0 and retention_action != "none":
-                cutoff_date = datetime.now(timezone.utc) - timedelta(days=retention_days)
-                logger.info(
-                    f"Running global housekeeping (action={retention_action}). "
-                    f"Processing scans older than {cutoff_date}"
-                )
-
-                cursor = db.scans.find(
-                    {
-                        "created_at": {"$lt": cutoff_date},
-                        "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-                        "status": {"$nin": ["pending", "processing"]},
-                    },
-                    {"_id": 1},
-                )
-
-                await _process_scans_in_batches(db, cursor, retention_action, "Global housekeeping")
-
-        else:
-            logger.info("Running project-specific housekeeping...")
-
-            # Group projects by (retention_days, retention_action) to minimize DB queries
-            pipeline: list[dict[str, Any]] = [
-                {
-                    "$match": {
-                        "retention_days": {"$gt": 0},
-                        "$or": [
-                            {"retention_action": {"$exists": False}},
-                            {"retention_action": {"$ne": "none"}},
-                        ],
-                    }
-                },
-                {
-                    "$group": {
-                        "_id": {
-                            "days": "$retention_days",
-                            "action": {"$ifNull": ["$retention_action", "delete"]},
-                        },
-                        "project_ids": {"$push": "$_id"},
-                    }
-                },
-            ]
-
-            async for group in db.projects.aggregate(pipeline):
-                days = group["_id"]["days"]
-                action = group["_id"]["action"]
-                project_ids = group["project_ids"]
-
-                if not days or days <= 0:
-                    continue
-
-                cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
-
-                cursor = db.scans.find(
-                    {
-                        "project_id": {"$in": project_ids},
-                        "created_at": {"$lt": cutoff_date},
-                        "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-                        "status": {"$nin": ["pending", "processing"]},
-                    },
-                    {"_id": 1},
-                )
-
-                label = f"Retention {days}d/{action} ({len(project_ids)} projects)"
-                await _process_scans_in_batches(db, cursor, action, label)
+        try:
+            await _run_retention(db)
+        except Exception as e:
+            logger.exception("Housekeeping: retention failed: %s", e)
 
         try:
             await prune_old_audit_entries(db)
@@ -615,7 +576,7 @@ async def trigger_stale_pending_scans(
 
         cursor = db.scans.find(
             {
-                "status": "pending",
+                "status": SCAN_STATUS_PENDING,
                 "last_result_at": {"$lt": stale_threshold, "$exists": True},
                 "received_results": {"$exists": True, "$ne": []},
             }
@@ -656,12 +617,11 @@ async def recover_stuck_scans(
             seconds=settings.HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS
         )
         max_retries = HOUSEKEEPING_MAX_SCAN_RETRIES
+        scan_repo = ScanRepository(db)
 
-        # Strong read: avoid resetting scans whose "completed" hasn't replicated yet.
-        scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-        cursor = scans_primary.find(
+        cursor = db.scans.find(
             {
-                "status": "processing",
+                "status": SCAN_STATUS_PROCESSING,
                 "$or": [
                     {"analysis_started_at": {"$lt": timeout_threshold}},
                     {"analysis_started_at": {"$exists": False}},
@@ -672,189 +632,25 @@ async def recover_stuck_scans(
 
         async for scan in cursor:
             scan_id = scan["_id"]
-            retry_count = scan.get("retry_count", 0)
+            retry_count = scan.get("stuck_retry_count", 0)
 
             if retry_count < max_retries:
                 logger.warning(
                     f"Scan {scan_id} stuck in processing. Resetting to pending (Retry {retry_count + 1}/{max_retries})."
                 )
-                result = await db.scans.update_one(
-                    {"_id": scan_id, "status": "processing"},
-                    {
-                        "$set": {
-                            "status": "pending",
-                            "worker_id": None,
-                            "analysis_started_at": None,
-                        },
-                        "$inc": {"retry_count": 1},
-                    },
-                )
-
-                if worker_manager and result.modified_count > 0:
+                requeued = await scan_repo.requeue(scan_id, scan.get("worker_id"), counter="stuck_retry_count")
+                if requeued and worker_manager:
                     await worker_manager.add_job(str(scan_id))
 
             else:
                 logger.error(f"Scan {scan_id} failed after {max_retries} retries.")
-                await db.scans.update_one(
-                    {"_id": scan_id, "status": "processing"},
-                    {
-                        "$set": {
-                            "status": "failed",
-                            "error": "Analysis timed out or worker crashed multiple times.",
-                        }
-                    },
-                )
+                error = "Analysis timed out or worker crashed multiple times."
+                # Every pod runs this loop; only the one whose write lands announces the failure.
+                if await scan_repo.mark_failed(scan_id, error, worker_id=scan.get("worker_id")):
+                    await notify_analysis_failed(db, scan_id, scan.get("project_id"), error)
 
     except Exception as e:
         logger.exception("Stuck scan recovery failed: %s", e)
-
-
-async def _fetch_gitlab_branches(db: Any, instance_id: str, project_id: str) -> list | None:
-    from app.repositories.gitlab_instances import GitLabInstanceRepository
-    from app.services.gitlab import GitLabService
-
-    instance = await GitLabInstanceRepository(db).get_by_id(instance_id)
-    if not instance or not instance.access_token:
-        return None
-    try:
-        numeric_project_id = int(project_id)
-    except (TypeError, ValueError):
-        return None
-    return await GitLabService(instance).list_branches(numeric_project_id)
-
-
-async def _fetch_github_branches(db: Any, instance_id: str, repo_path: str) -> list | None:
-    from app.repositories.github_instances import GitHubInstanceRepository
-    from app.services.github import GitHubService
-
-    gh_instance = await GitHubInstanceRepository(db).get_by_id(instance_id)
-    if not gh_instance or not gh_instance.access_token:
-        return None
-    parts = repo_path.split("/", 1)
-    if len(parts) != 2:
-        return None
-    return await GitHubService(gh_instance).list_branches(parts[0], parts[1])
-
-
-async def _fetch_vcs_branches(project_data: dict, db: Any) -> list | None:
-    """Resolve the VCS provider and return its branch list, or None if unavailable."""
-    gitlab_instance_id = project_data.get("gitlab_instance_id")
-    gitlab_project_id = project_data.get("gitlab_project_id")
-    if gitlab_instance_id and gitlab_project_id:
-        return await _fetch_gitlab_branches(db, gitlab_instance_id, gitlab_project_id)
-
-    github_instance_id = project_data.get("github_instance_id")
-    github_repo_path = project_data.get("github_repository_path")
-    if github_instance_id and github_repo_path:
-        return await _fetch_github_branches(db, github_instance_id, github_repo_path)
-
-    return None
-
-
-async def _fetch_vcs_default_branch(project_data: dict, db: Any) -> str | None:
-    """The provider's default branch, so project views need not guess one from scan recency."""
-    from app.repositories.github_instances import GitHubInstanceRepository
-    from app.repositories.gitlab_instances import GitLabInstanceRepository
-    from app.services.github import GitHubService
-    from app.services.gitlab import GitLabService
-
-    gitlab_instance_id = project_data.get("gitlab_instance_id")
-    gitlab_project_id = project_data.get("gitlab_project_id")
-    if gitlab_instance_id and gitlab_project_id:
-        instance = await GitLabInstanceRepository(db).get_by_id(gitlab_instance_id)
-        if not instance or not instance.access_token:
-            return None
-        try:
-            numeric_project_id = int(gitlab_project_id)
-        except (TypeError, ValueError):
-            return None
-        details = await GitLabService(instance).get_project_details(numeric_project_id)
-        return details.default_branch if details else None
-
-    github_instance_id = project_data.get("github_instance_id")
-    github_repo_path = project_data.get("github_repository_path")
-    if github_instance_id and github_repo_path:
-        gh_instance = await GitHubInstanceRepository(db).get_by_id(github_instance_id)
-        if not gh_instance or not gh_instance.access_token:
-            return None
-        parts = github_repo_path.split("/", 1)
-        if len(parts) != 2:
-            return None
-        return await GitHubService(gh_instance).get_default_branch(parts[0], parts[1])
-
-    return None
-
-
-async def _resolve_latest_scan_after_branch_deletion(
-    project_data: dict, deleted: list, db: Any, project_name: str
-) -> dict:
-    """If the project's latest scan is on a deleted branch, find a replacement.
-
-    Returns a dict of update fields (may be empty).
-    """
-    current_scan_id = project_data.get("latest_scan_id")
-    if not current_scan_id:
-        return {}
-    scan_doc = await db.scans.find_one({"_id": current_scan_id}, {"branch": 1})
-    if not scan_doc or scan_doc.get("branch") not in deleted:
-        return {}
-
-    # ``deleted`` is the freshly-computed set, not yet persisted on the project.
-    active_scan = await ScanRepository(db).get_latest_active_scan(project_data, deleted_branches=deleted)
-    if active_scan:
-        updates: dict = {
-            "latest_scan_id": active_scan.id,
-            "last_scan_at": ensure_utc(active_scan.created_at),
-        }
-        if active_scan.stats:
-            updates["stats"] = active_scan.stats.model_dump()
-        logger.info(f"Project {project_name}: updated latest_scan_id to active branch '{active_scan.branch}'")
-        return updates
-
-    logger.info(f"Project {project_name}: no active branch scans, cleared stats")
-    return {"latest_scan_id": None, "stats": None}
-
-
-async def sync_project_branches(project_data: dict, db: Any) -> None:
-    """Sync branch status for a single project against its VCS provider."""
-    project_id = project_data["_id"]
-    project_name = project_data.get("name", project_id)
-
-    try:
-        vcs_branches = await _fetch_vcs_branches(project_data, db)
-        if not vcs_branches:
-            return
-
-        # A scan whose branch is its own commit tag came off a tag pipeline and names no branch,
-        # so counting it would file the tag as a branch the VCS has deleted.
-        our_branches = await db.scans.distinct(
-            "branch", {"project_id": project_id, "$expr": {"$ne": ["$branch", "$commit_tag"]}}
-        )
-        vcs_set = set(vcs_branches)
-        deleted = sorted(b for b in our_branches if b not in vcs_set)
-
-        update_fields: dict = {
-            "deleted_branches": deleted,
-            "branches_checked_at": datetime.now(timezone.utc),
-        }
-
-        if not project_data.get("default_branch"):
-            vcs_default = await _fetch_vcs_default_branch(project_data, db)
-            if vcs_default:
-                update_fields["default_branch"] = vcs_default
-
-        if deleted:
-            update_fields.update(
-                await _resolve_latest_scan_after_branch_deletion(project_data, deleted, db, project_name)
-            )
-
-        await db.projects.update_one({"_id": project_id}, {"$set": update_fields})
-
-        if deleted:
-            logger.info(f"Project {project_name}: {len(deleted)} deleted branch(es) detected")
-
-    except Exception as e:
-        logger.exception("Branch sync failed for project %s: %s", project_name, e)
 
 
 async def sync_branch_status() -> None:
@@ -885,7 +681,10 @@ async def sync_branch_status() -> None:
 
         count = 0
         async for project_data in cursor:
-            await sync_project_branches(project_data, db)
+            try:
+                await sync_project_branches(project_data, db)
+            except Exception as e:
+                logger.exception("Branch sync failed for project %s: %s", project_data.get("name"), e)
             count += 1
 
         logger.info(f"Branch status sync completed for {count} project(s)")

@@ -32,11 +32,11 @@ _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "license": 1, "license_ca
 
 async def _lifecycle_by_component(db: AsyncIOMotorDatabase, scan_id: str) -> dict[str, dict[str, Any]]:
     lifecycle: dict[str, dict[str, Any]] = {}
-    cursor = FindingRepository(db).collection.find(
+    docs = FindingRepository(db).iterate_raw(
         {"scan_id": scan_id, "type": {"$in": [FindingType.EOL.value, FindingType.OUTDATED.value]}},
         {"component": 1, "version": 1, "type": 1, "details.fixed_version": 1},
     )
-    async for doc in cursor:
+    async for doc in docs:
         key = f"{doc.get('component')}@{doc.get('version')}"
         entry = lifecycle.setdefault(key, {})
         if doc.get("type") == FindingType.EOL.value:
@@ -80,15 +80,20 @@ async def get_components_page(
     page_size: int,
     search: str | None,
     sort_by: str,
-    sort_order: str,
+    direction: int,
 ) -> tuple[list[ComponentItem], int]:
     deps = DependencyRepository(db)
     query = _query(scan.id, search)
     total = await deps.count(query)
     sort_field = sort_by if sort_by in _SORT_FIELDS else "name"
-    direction = -1 if sort_order == "desc" else 1
 
-    sort_spec = [(sort_field, direction)] if sort_field == "name" else [(sort_field, direction), ("name", 1)]
+    # The unique (scan_id, name, version, purl) index serves the name sort in either direction;
+    # the other sorts are blocking anyway, so a unique tail costs nothing.
+    sort_spec = (
+        [("name", direction), ("version", direction), ("purl", direction)]
+        if sort_field == "name"
+        else [(sort_field, direction), ("name", 1), ("version", 1), ("_id", 1)]
+    )
     cursor = deps.collection.find(query, _DEP_PROJECTION).sort(sort_spec).skip((page - 1) * page_size).limit(page_size)
     docs = await cursor.to_list(page_size)
 
@@ -98,6 +103,5 @@ async def get_components_page(
 
 async def iter_component_rows(db: AsyncIOMotorDatabase, scan: Scan) -> AsyncIterator[dict[str, Any]]:
     lifecycle = await _lifecycle_by_component(db, scan.id)
-    cursor = DependencyRepository(db).collection.find(_query(scan.id, None), _DEP_PROJECTION).sort("name", 1)
-    async for doc in cursor:
+    async for doc in DependencyRepository(db).iterate_raw(_query(scan.id, None), _DEP_PROJECTION, [("name", 1)]):
         yield _to_item(doc, lifecycle).model_dump()

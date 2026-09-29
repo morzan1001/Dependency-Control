@@ -17,6 +17,8 @@ from urllib.parse import quote
 
 from packaging.version import InvalidVersion, Version
 
+from app.core import ensure_utc
+
 logger = logging.getLogger(__name__)
 
 # Bounded concurrency for per-package release-history fetches: high enough
@@ -202,9 +204,7 @@ def parse_deps_dev_response(payload: dict[str, Any]) -> list[ReleaseInfo]:
         if not version or not published_at_str:
             continue
         try:
-            published_at = datetime.fromisoformat(published_at_str.replace("Z", "+00:00"))
-            if published_at.tzinfo is None:
-                published_at = published_at.replace(tzinfo=timezone.utc)
+            published_at = ensure_utc(datetime.fromisoformat(published_at_str.replace("Z", "+00:00")))
         except ValueError:
             continue
         out.append(ReleaseInfo(version=str(version), published_at=published_at))
@@ -286,9 +286,7 @@ def _release_list_from_cache(raw: Any) -> list[ReleaseInfo]:
         if not version or not published_at_str:
             continue
         try:
-            published_at = datetime.fromisoformat(str(published_at_str))
-            if published_at.tzinfo is None:
-                published_at = published_at.replace(tzinfo=timezone.utc)
+            published_at = ensure_utc(datetime.fromisoformat(str(published_at_str)))
         except ValueError:
             continue
         out.append(ReleaseInfo(version=str(version), published_at=published_at))

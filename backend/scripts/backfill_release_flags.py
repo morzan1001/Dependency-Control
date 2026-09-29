@@ -28,13 +28,13 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core import ensure_utc
 from app.core.config import settings
+from app.db.mongodb import create_client
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, SCAN_USABLE_STATUSES
 from app.models.release import Release
-from app.repositories import ReleaseRepository
+from app.repositories.releases import ReleaseRepository
 
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50
@@ -285,7 +285,7 @@ def _report(plan: BackfillPlan, mode: str) -> None:
 
 
 async def run(args: argparse.Namespace) -> int:
-    client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
+    client = create_client(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
         mode = "EXECUTE" if args.execute else "DRY-RUN"

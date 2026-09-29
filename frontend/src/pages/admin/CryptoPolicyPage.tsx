@@ -4,6 +4,7 @@ import { getSystemPolicy, putSystemPolicy } from "@/api/cryptoPolicy";
 import { CryptoPolicyEditor } from "@/components/crypto/CryptoPolicyEditor";
 import { PolicyAuditTimeline } from "@/components/audit/PolicyAuditTimeline";
 import type { CryptoRule } from "@/types/cryptoPolicy";
+import { getErrorMessage } from "@/lib/utils";
 
 export function CryptoPolicyPage() {
   const qc = useQueryClient();
@@ -18,7 +19,7 @@ export function CryptoPolicyPage() {
       toast.success("System policy saved");
       qc.invalidateQueries({ queryKey: ["crypto-policy-system"] });
     },
-    onError: (e: Error) => toast.error(`Save failed: ${e.message}`),
+    onError: (e: unknown) => toast.error(`Save failed: ${getErrorMessage(e)}`),
   });
 
   if (isLoading) return <div>Loading…</div>;

@@ -25,7 +25,7 @@ def _run_update(instance, current_user, **fields):
     from app.api.v1.endpoints.github_instances import update_instance
     from app.schemas.github_instance import GitHubInstanceUpdate
 
-    mock_repo = _make_repo_mock(get_by_id=instance, exists_by_url=False, exists_by_name=False, update=True)
+    mock_repo = _make_repo_mock(get_by_id=instance, exists_by_url=False, exists_by_name=False, update=instance)
 
     with patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo):
         asyncio.run(
@@ -44,7 +44,7 @@ class TestGitHubInstancePagination:
         """build_pagination_response must receive skip, not the 1-based page (else page=2/size=100 collapses to 1)."""
         from app.api.v1.endpoints.github_instances import list_instances
 
-        mock_repo = _make_repo_mock(list_all=[], count_all=250)
+        mock_repo = _make_repo_mock(find_many=[], count=250)
 
         with patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo):
             result = asyncio.run(

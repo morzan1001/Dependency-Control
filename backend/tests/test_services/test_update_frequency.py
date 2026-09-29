@@ -12,7 +12,9 @@ import pytest
 import app.services.update_frequency as update_frequency_module
 from app.core.purl import parse_purl
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
-from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     BranchWindowActivity,
     ScanOutdatedSetRepository,
@@ -345,7 +347,7 @@ class FakeScanRepo:
     async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
         # Run the real pipeline through the fake Mongo engine rather than
         # reimplementing it: a pipeline that would not answer in Mongo must not
-        # answer here either, down to the naive UTC datetimes it stores.
+        # answer here either, down to the UTC datetimes it stores.
         db = FakeDatabase()
         for scan in self._scans:
             await db.scans.insert_one(dict(scan))
@@ -355,14 +357,9 @@ class FakeScanRepo:
 class FakeDepRepo:
     def __init__(self, deps_by_scan: dict[str, list[dict[str, Any]]]):
         self._deps_by_scan = deps_by_scan
-        self.calls: list[str] = []  # tracks every find_all query for assertions
+        self.calls: list[str] = []
 
-    async def find_all(
-        self,
-        query: dict[str, Any],
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        scan_id = query.get("scan_id")
+    async def find_raw_by_scan(self, scan_id: str, projection: dict[str, int]) -> list[dict[str, Any]]:
         self.calls.append(scan_id)
         return [_apply_projection(d, projection) for d in self._deps_by_scan.get(scan_id, [])]
 
@@ -736,24 +733,6 @@ class TestBranchScopedScanSelection:
         m = await self._compute(scans, deps, deleted_branches=["gone"])
         assert m.branch == "main"
         assert m.scan_count == 2
-
-    @pytest.mark.asyncio
-    async def test_naive_created_at_is_coerced_to_utc(self):
-        # Motor returns naive UTC datetimes; the tz-aware window cutoff and the
-        # downstream date math must both survive that.
-        naive = (datetime.now(tz=timezone.utc) - timedelta(days=40)).replace(tzinfo=None)
-        scans = [
-            {**_make_scan("s1", 0), "created_at": naive},
-            {**_make_scan("s2", 30), "created_at": naive + timedelta(days=30)},
-        ]
-        deps = {
-            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
-            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
-        }
-        m = await self._compute(scans, deps, window_days=60)
-        assert m.scan_count == 2
-        assert m.first_scan_date.endswith("+00:00")
-        assert m.last_scan_date.endswith("+00:00")
 
     @pytest.mark.asyncio
     async def test_a_textual_created_at_drops_the_scan(self):
@@ -1763,9 +1742,9 @@ class TestStreamingOrchestrator:
                 return await super().find_many_raw(*args, **kwargs)
 
         class _SuspendingDepRepo(FakeDepRepo):
-            async def find_all(self, *args, **kwargs):
+            async def find_raw_by_scan(self, *args, **kwargs):
                 await asyncio.sleep(0)
-                return await super().find_all(*args, **kwargs)
+                return await super().find_raw_by_scan(*args, **kwargs)
 
         projects = [{"_id": f"proj-{i}", "name": f"Project {i}"} for i in range(n_projects)]
         all_scans: list[dict[str, Any]] = []

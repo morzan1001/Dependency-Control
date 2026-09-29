@@ -6,7 +6,8 @@ from fastapi import HTTPException
 
 from app.api.deps import DatabaseDep
 from app.models.project import Project
-from app.repositories import DependencyEnrichmentRepository, ScanRepository
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
+from app.repositories.scans import ScanRepository
 
 SCAN_NOT_IN_PROJECT = "No scan found for this project"
 

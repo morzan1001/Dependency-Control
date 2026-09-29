@@ -194,10 +194,9 @@ that completes mid-rollout carries whichever version's pod finished it. Rolling 
 leaves those blocks exactly as they were written — the image is the code, not the data. This run
 is what says whether any of them disagree.
 
-**Throttle it**, because unlike section 2 it reads the live cluster — and it reads the PRIMARY.
-The stats cursor sets `ReadPreference.PRIMARY` so it cannot miss findings written milliseconds
-earlier, which also means none of this load can be pushed onto a secondary: it lands on the same
-node serving ingest.
+**Throttle it**, because unlike section 2 it reads the live cluster — and it reads the primary.
+Every client reads the primary so it cannot miss findings written milliseconds earlier, which also
+means none of this load can be pushed onto a secondary: it lands on the same node serving ingest.
 
 `--sleep-ms` (default 50) sleeps only *between* batches, so at the default `--batch-size` of 500
 you still get 500 scan-wide reads back to back before anything pauses. **`--batch-size` is the

@@ -10,15 +10,6 @@ class TestParseSortDirection:
     def test_asc(self):
         assert parse_sort_direction("asc") == 1
 
-    def test_case_insensitive_desc(self):
-        assert parse_sort_direction("DESC") == -1
-
-    def test_case_insensitive_asc(self):
-        assert parse_sort_direction("ASC") == 1
-
-    def test_unknown_defaults_to_asc(self):
-        assert parse_sort_direction("random") == 1
-
 
 class TestGetSortField:
     def test_valid_project_field(self):

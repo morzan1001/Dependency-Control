@@ -97,7 +97,6 @@ export default function Broadcasts() {
     try {
       if (activeTab === "announcement") {
          const result = await sendBroadcast({
-            type: "general",
             target_type: announcementTarget,
             target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
             subject: "Dry Run",
@@ -112,7 +111,6 @@ export default function Broadcasts() {
          if (validPackages.length === 0) return
 
          const result = await sendBroadcast({
-            type: "advisory",
             target_type: "advisory",
             packages: validPackages,
             subject: "Dry Run",
@@ -134,7 +132,6 @@ export default function Broadcasts() {
   const handleSendAnnouncement = async () => {
     try {
       const result = await sendBroadcast({
-        type: "general",
         target_type: announcementTarget,
         target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
         subject: announcementSubject,
@@ -161,7 +158,6 @@ export default function Broadcasts() {
       const validPackages = packages.filter(p => p.name.trim() !== "")
 
       const result = await sendBroadcast({
-        type: "advisory",
         target_type: "advisory",
         packages: validPackages,
         subject: advisorySubject,
@@ -520,7 +516,7 @@ export default function Broadcasts() {
                          </TableCell>
                          <TableCell>
                             <div className="flex flex-col text-xs gap-1">
-                               <Badge variant="outline" className="w-fit">{item.unique_user_count ?? item.recipient_count} Users</Badge>
+                               <Badge variant="outline" className="w-fit">{item.recipient_count} Users</Badge>
                                {item.project_count > 0 && <span className="text-muted-foreground">{item.project_count} Projects</span>}
                             </div>
                          </TableCell>

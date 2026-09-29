@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from app.repositories import AnalysisResultRepository
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _aggregate_external_results
 

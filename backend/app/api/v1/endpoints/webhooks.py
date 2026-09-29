@@ -19,7 +19,7 @@ from app.api.v1.helpers import (
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
 from app.core.permissions import Permissions
 from app.models.webhook import Webhook
-from app.repositories import WebhookRepository
+from app.repositories.webhooks import GLOBAL_WEBHOOK_SCOPE, WebhookRepository
 from app.schemas.webhook import (
     WebhookCreate,
     WebhookResponse,
@@ -68,8 +68,9 @@ async def list_webhooks(
     await check_webhook_list_permission(project_id, current_user, db)
 
     webhook_repo = WebhookRepository(db)
-    total = await webhook_repo.count_by_project(project_id)
-    webhooks = await webhook_repo.find_by_project(project_id, skip=skip, limit=limit)
+    scope = {"project_id": project_id}
+    total = await webhook_repo.count(scope)
+    webhooks = await webhook_repo.list_scope(scope, skip=skip, limit=limit)
 
     items = _response_items(webhooks)
     return build_pagination_response(items, total, skip, limit)
@@ -99,8 +100,8 @@ async def list_global_webhooks(
 ) -> dict[str, Any]:
     """List global webhooks with pagination."""
     webhook_repo = WebhookRepository(db)
-    total = await webhook_repo.count_global()
-    webhooks = await webhook_repo.find_global(skip=skip, limit=limit)
+    total = await webhook_repo.count(GLOBAL_WEBHOOK_SCOPE)
+    webhooks = await webhook_repo.list_scope(GLOBAL_WEBHOOK_SCOPE, skip=skip, limit=limit)
 
     items = _response_items(webhooks)
     return build_pagination_response(items, total, skip, limit)
@@ -136,8 +137,9 @@ async def list_team_webhooks(
     await check_team_webhook_list_permission(team_id, current_user, db)
 
     webhook_repo = WebhookRepository(db)
-    total = await webhook_repo.count_by_team(team_id)
-    webhooks = await webhook_repo.find_by_team(team_id, skip=skip, limit=limit)
+    scope = {"team_id": team_id}
+    total = await webhook_repo.count(scope)
+    webhooks = await webhook_repo.list_scope(scope, skip=skip, limit=limit)
 
     items = _response_items(webhooks)
     return build_pagination_response(items, total, skip, limit)

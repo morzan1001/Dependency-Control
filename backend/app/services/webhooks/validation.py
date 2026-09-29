@@ -14,6 +14,7 @@ from app.core.config import settings
 from app.core.constants import (
     WEBHOOK_ACCEPTED_EVENT_NAMES,
     WEBHOOK_BLOCKED_HOSTNAMES,
+    WEBHOOK_EVENT_ALIASES,
     WEBHOOK_LOOPBACK_HOSTS,
     WEBHOOK_VALID_EVENTS,
     WebhookType,
@@ -161,7 +162,7 @@ def validate_webhook_events(events: list[str], allow_empty: bool = False) -> lis
     invalid_events = [e for e in events if e not in WEBHOOK_ACCEPTED_EVENT_NAMES]
     if invalid_events:
         raise ValueError(f"Invalid event types: {invalid_events}. Valid events: {WEBHOOK_VALID_EVENTS}")
-    return events
+    return list(dict.fromkeys(WEBHOOK_EVENT_ALIASES.get(e, e) for e in events))
 
 
 def validate_webhook_events_optional(
@@ -175,7 +176,7 @@ def validate_webhook_events_optional(
 def validate_webhook_event_type(event_type: str) -> str:
     if event_type not in WEBHOOK_ACCEPTED_EVENT_NAMES:
         raise ValueError(f"Invalid event type: {event_type}. Valid events: {WEBHOOK_VALID_EVENTS}")
-    return event_type
+    return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
 
 
 def detect_webhook_type(url: str) -> WebhookType:

@@ -6,39 +6,24 @@ from app.core.constants import (
     get_severity_value,
     sort_by_severity,
 )
+from app.models.finding import Severity
 
 
 class TestGetSeverityValue:
-    def test_critical(self):
-        assert get_severity_value("CRITICAL") == 5
+    def test_every_level_outranks_the_next_one_in_the_severity_enum(self):
+        ranks = [get_severity_value(level.value) for level in Severity]
+        assert ranks == sorted(ranks, reverse=True)
+        assert len(set(ranks)) == len(ranks)
 
-    def test_high(self):
-        assert get_severity_value("HIGH") == 4
-
-    def test_medium(self):
-        assert get_severity_value("MEDIUM") == 3
-
-    def test_low(self):
-        assert get_severity_value("LOW") == 2
-
-    def test_info(self):
-        assert get_severity_value("INFO") == 0
-
-    def test_unknown(self):
+    def test_unrated_and_unrecognised_rank_lowest(self):
         assert get_severity_value("UNKNOWN") == 0
+        assert get_severity_value(None) == 0
+        assert get_severity_value("") == 0
+        assert get_severity_value("INVALID") == 0
 
     def test_case_insensitive(self):
-        assert get_severity_value("critical") == 5
-        assert get_severity_value("High") == 4
-
-    def test_none_returns_zero(self):
-        assert get_severity_value(None) == 0
-
-    def test_empty_string_returns_zero(self):
-        assert get_severity_value("") == 0
-
-    def test_invalid_returns_zero(self):
-        assert get_severity_value("INVALID") == 0
+        assert get_severity_value("critical") == get_severity_value("CRITICAL")
+        assert get_severity_value("High") == get_severity_value("HIGH")
 
 
 class TestSortBySeverity:

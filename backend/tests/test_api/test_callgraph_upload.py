@@ -559,6 +559,36 @@ class TestReachabilityVerdicts:
         assert (await db.findings.find_one({"_id": "f-CVE-PY"}))["reachable"] is True
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["pending", "processing"])
+    async def test_an_upload_for_a_scan_under_analysis_is_left_to_that_analysis(self, client, db, status):
+        """Its findings are about to be replaced, so enriching them now would lose the verdicts."""
+        await _seed_scan_with_findings(db)
+        await db.scans.update_one({"_id": _SCAN_ID}, {"$set": {"status": status, "reachability_pending": False}})
+
+        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert (await db.scans.find_one({"_id": _SCAN_ID}))["reachability_pending"] is True
+        assert "reachable" not in await db.findings.find_one({"_id": "f-CVE-PY"})
+
+    @pytest.mark.asyncio
+    async def test_an_upload_leaves_a_rescan_under_analysis_to_that_analysis(self, client, db):
+        await db.scans.insert_one(
+            {
+                "_id": _SCAN_ID,
+                "project_id": _PROJECT_ID,
+                "branch": _BRANCH,
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        await _seed_rescan(db)
+        await db.scans.update_one({"_id": _RESCAN_ID}, {"$set": {"status": "processing"}})
+
+        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert "reachable" not in await db.findings.find_one({"_id": "f-CVE-PY"})
+
+    @pytest.mark.asyncio
     async def test_analyzed_but_unimported_package_is_unreachable(self, client, db):
         await _seed_scan_with_findings(db)
         data = {

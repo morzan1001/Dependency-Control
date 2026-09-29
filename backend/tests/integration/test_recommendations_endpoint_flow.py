@@ -196,7 +196,6 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         (t.UPGRADE_PROTOCOL, 300),
         (t.PQC_MIGRATION, 400),
         (t.ROTATE_CERTIFICATE, 500),
-        (t.REPLACE_WEAK_CIPHER_SUITE, 600),
         (t.LICENSE_DRIFT, 77),
         (t.CRITICAL_HOTSPOT, 88),
     ]
@@ -224,7 +223,7 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         "iac_issues": 128,
         "license_issues": 256,
         "quality_issues": 512,
-        "crypto_issues": 2100,
+        "crypto_issues": 1500,
         "outdated_deps": 3072,
         "fragmentation_issues": 100,
         "trend_alerts": 2,
@@ -239,3 +238,18 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
             "crypto": 1,
         },
     }
+
+
+@pytest.mark.asyncio
+async def test_a_saturated_findings_read_reports_what_the_scan_holds(client, db, owner_auth_headers_proj, monkeypatch):
+    await _insert_scan(db, "s")
+    for index in range(3):
+        await db.findings.insert_one(_finding(f"f{index}", "vulnerability"))
+    monkeypatch.setattr(rec_module, "ANALYTICS_MAX_QUERY_LIMIT", 2)
+    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], {}))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_findings"] == 2
+    assert resp.json()["findings_total"] == 3

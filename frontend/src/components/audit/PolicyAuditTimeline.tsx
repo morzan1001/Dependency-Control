@@ -52,7 +52,7 @@ export function PolicyAuditTimeline({ policyScope, projectId, canRevert = false 
       qc.invalidateQueries({ queryKey: ["policy-audit"] });
       qc.invalidateQueries({ queryKey: ["crypto-policy", policyScope, projectId] });
     },
-    onError: (e: Error) => toast.error(`Revert failed: ${e.message}`),
+    onError: (e: unknown) => toast.error(`Revert failed: ${getErrorMessage(e)}`),
   });
 
   const doPrune = useMutation({

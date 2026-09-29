@@ -15,6 +15,7 @@ from app.services.aggregation.merging import (
 )
 from app.services.aggregation.versions import (
     aggregate_fixed_version,
+    newest_first,
     normalize_version,
     parse_version_key,
 )
@@ -24,30 +25,12 @@ _CROWDED_FILE = "app/handlers.py"
 
 
 class TestParseVersionKey:
-    """Tests for parse_version_key."""
+    @pytest.mark.parametrize("spelling", ["v1.2.3", "V1.2.3", "1.2.3"])
+    def test_a_v_prefix_does_not_change_the_key(self, spelling):
+        assert parse_version_key(spelling) == parse_version_key("1.2.3")
 
-    def setup_method(self):
-        self.agg = ResultAggregator()
-
-    @pytest.mark.parametrize(
-        ("version", "expected"),
-        [
-            pytest.param("1.2.3", ((0, 1), (0, 2), (0, 3)), id="simple-semver"),
-            pytest.param("v1.2.3", ((0, 1), (0, 2), (0, 3)), id="v-prefix-stripped"),
-            pytest.param("V1.2.3", ((0, 1), (0, 2), (0, 3)), id="uppercase-v-prefix"),
-            pytest.param("1.2.3-beta", ((0, 1), (0, 2), (0, 3), (1, "beta")), id="prerelease-label"),
-            # "rc1" splits into "rc" + "1" for safe comparison
-            pytest.param("1.2.3-rc1", ((0, 1), (0, 2), (0, 3), (1, "rc"), (0, 1)), id="prerelease-with-number"),
-            pytest.param("", (), id="empty-string"),
-            pytest.param("42", ((0, 42),), id="single-number"),
-        ],
-    )
-    def test_version_parses_to_expected_key(self, version, expected):
-        assert parse_version_key(version) == expected
-
-    def test_numeric_parts_have_int_values(self):
-        result = parse_version_key("10.20.30")
-        assert all(flag == 0 and isinstance(val, int) for flag, val in result)
+    def test_an_empty_version_has_an_empty_key(self):
+        assert parse_version_key("") == ()
 
     @pytest.mark.parametrize(
         ("lower", "higher"),
@@ -55,23 +38,49 @@ class TestParseVersionKey:
             pytest.param("1.2.3", "1.2.4", id="patch-bump"),
             pytest.param("1.9.9", "2.0.0", id="major-bump"),
             pytest.param("0.6.0+incompatible", "0.7.0", id="go-incompatible-suffix"),
+            pytest.param("1.0.0-alpha", "1.0.0", id="prerelease-below-release"),
+            pytest.param("3.0.0a1", "3.0.0", id="pep440-prerelease-below-release"),
+            pytest.param("5.0.0-beta.2", "5.0.0-rc.1", id="rc-above-beta"),
+            pytest.param("1.0.0-rc1", "1.0.0-rc2", id="prerelease-number"),
+            pytest.param("1.0.0-rc", "1.0.0.1", id="longer-release-above-prerelease"),
+            pytest.param("1.0.0", "1.0.0.1", id="longer-release-above-release"),
+            pytest.param("1.0.0-SNAPSHOT", "1.0.0", id="maven-snapshot-below-release"),
+            pytest.param("1.0.0-M1", "1.0.0", id="maven-milestone-below-release"),
+            pytest.param("5.0.0.CR1", "5.0.0", id="maven-candidate-release-below-release"),
+            pytest.param("1.0.dev1", "1.0a1", id="pep440-dev-below-alpha"),
+            pytest.param("1.0", "1.0.post1", id="pep440-post-release-above-release"),
+            pytest.param("1.0.post1", "1.0.1", id="post-release-below-next-number"),
+            pytest.param("2.36-9", "2.36-9+deb12u4", id="debian-security-update-above-its-base"),
+            pytest.param("3.4-1", "3.4-1+b6", id="debian-binnmu-above-its-base"),
+            pytest.param("3.4-1+b6", "3.4-2", id="debian-binnmu-below-the-next-revision"),
+            pytest.param("1.1.1", "1.1.1n", id="openssl-letter-release-above-base"),
+            pytest.param("1.1.1", "1.1.1a", id="openssl-letter-a-is-no-alpha"),
+            pytest.param("1.1.1n", "1.1.2", id="openssl-letter-release-below-next-patch"),
+            pytest.param("5.2.20", "5.2.20.RELEASE", id="maven-qualifier-above-bare"),
+            pytest.param("0.6.0", "0.6.0+incompatible", id="go-incompatible-above-bare"),
         ],
     )
     def test_higher_version_compares_as_greater(self, lower, higher):
         assert parse_version_key(higher) > parse_version_key(lower)
 
-    @pytest.mark.parametrize(
-        ("left", "right"),
-        [
-            pytest.param("3.0.0a1", "3.0.0", id="alphanumeric-vs-release"),
-            pytest.param("1.2.3", "1.2.3rc1", id="release-vs-prerelease"),
-        ],
-    )
-    def test_mixed_version_shapes_compare_without_raising(self, left, right):
-        """A TypeError, not an unexpected ordering, is what these guard against."""
-        parsed_left = parse_version_key(left)
-        parsed_right = parse_version_key(right)
-        assert (parsed_left > parsed_right) or (parsed_left <= parsed_right)
+
+class TestNewestFirst:
+    def test_prereleases_rank_by_tag_below_their_release(self):
+        assert newest_first({"5.0.0-beta.2", "5.0.0", "5.0.0-rc.1", "4.9.0"}) == [
+            "5.0.0",
+            "5.0.0-rc.1",
+            "5.0.0-beta.2",
+            "4.9.0",
+        ]
+
+    def test_a_post_release_ranks_above_its_release(self):
+        assert newest_first(["1.0", "1.0.post1"]) == ["1.0.post1", "1.0"]
+
+    def test_a_debian_binnmu_ranks_between_its_base_and_the_next_revision(self):
+        assert newest_first(["3.4-1", "3.4-1+b6", "3.4-2"]) == ["3.4-2", "3.4-1+b6", "3.4-1"]
+
+    def test_spellings_of_one_version_order_the_same_whatever_the_input_order(self):
+        assert newest_first(["v1.0.0", "1.0.0"]) == newest_first(["1.0.0", "v1.0.0"])
 
 
 class TestNormalizeVersion:
@@ -170,6 +179,20 @@ class TestAggregateFixedVersion:
 
     def test_no_entries_returns_none(self):
         assert aggregate_fixed_version([], None) is None
+
+    @pytest.mark.parametrize(
+        ("fixes", "expected"),
+        [
+            pytest.param(["2.0.0-rc1, 2.0.0"], "2.0.0", id="release-beside-its-rc"),
+            pytest.param(["1.2.3rc1, 1.2.4"], "1.2.4", id="release-over-a-lower-rc"),
+            pytest.param(["3.0.0a1"], "3.0.0a1", id="prerelease-when-no-release-fixes"),
+            pytest.param(["1.0.0-M1, 1.0.1"], "1.0.1", id="release-over-a-milestone"),
+            pytest.param(["5.2.20.RELEASE, 5.3.18"], "5.2.20.RELEASE", id="maven-qualifier-is-a-release"),
+            pytest.param(["2.36-9", "2.36-9+deb12u4"], "2.36-9+deb12u4", id="debian-security-update-fixes-both"),
+        ],
+    )
+    def test_a_release_fix_is_preferred_over_a_prerelease(self, fixes, expected):
+        assert aggregate_fixed_version(_entries(*fixes), None) == expected
 
     def test_major_must_cover_all_vulns(self):
         assert aggregate_fixed_version(_entries("1.5.0, 2.0.1", "2.0.3"), None) == "2.0.3"

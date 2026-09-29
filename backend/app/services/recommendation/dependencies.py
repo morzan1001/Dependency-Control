@@ -1,10 +1,9 @@
-import re
 from collections import defaultdict
 from typing import Any
 
 from app.core.constants import (
-    DEV_DEPENDENCY_PATTERNS,
-    SIGNIFICANT_FRAGMENTATION_THRESHOLD,
+    DEV_DEPENDENCY_PATTERN,
+    DEV_DEPENDENCY_RUNTIME_PACKAGES,
 )
 from app.core.purl import package_identity
 from app.schemas.recommendation import (
@@ -12,14 +11,21 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.versions import newest_first
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
-    newest_first,
     sample_components,
 )
+
+# A package held at this many versions is fragmented, at the second count heavily so.
+_FRAGMENTATION_MIN_VERSIONS = 3
+_FRAGMENTATION_HIGH_VERSIONS = 5
+# Counts that must be exceeded: fragmented packages for a MEDIUM card, outdated transitives for a card at all.
+_FRAGMENTED_PACKAGES_FOR_MEDIUM = 3
+_OUTDATED_TRANSITIVE_CARD_MIN = 3
 
 
 def analyze_outdated_dependencies(
@@ -91,7 +97,7 @@ def analyze_outdated_dependencies(
             )
         )
 
-    if len(transitive_outdated) > SIGNIFICANT_FRAGMENTATION_THRESHOLD:
+    if len(transitive_outdated) > _OUTDATED_TRANSITIVE_CARD_MIN:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.OUTDATED_DEPENDENCY,
@@ -151,12 +157,10 @@ def analyze_version_fragmentation(
 
     fragmented.sort(key=lambda x: x["count"], reverse=True)
 
-    significant_fragmented = [f for f in fragmented if f["count"] >= SIGNIFICANT_FRAGMENTATION_THRESHOLD]
+    significant_fragmented = [f for f in fragmented if f["count"] >= _FRAGMENTATION_MIN_VERSIONS]
 
     if significant_fragmented:
-        priority = (
-            Priority.MEDIUM if len(significant_fragmented) > SIGNIFICANT_FRAGMENTATION_THRESHOLD else Priority.LOW
-        )
+        priority = Priority.MEDIUM if len(significant_fragmented) > _FRAGMENTED_PACKAGES_FOR_MEDIUM else Priority.LOW
 
         fragmented_shown, fragmented_total = sample_components(
             f"{f['name']} ({f['count']} versions)" for f in significant_fragmented
@@ -172,16 +176,20 @@ def analyze_version_fragmentation(
                     f"({sum(f['count'] for f in significant_fragmented)} total versions)"
                 ),
                 description=(
-                    f"These packages have {SIGNIFICANT_FRAGMENTATION_THRESHOLD} or more "
+                    f"These packages have {_FRAGMENTATION_MIN_VERSIONS} or more "
                     "versions in your dependency tree. This can increase bundle size "
                     "and cause subtle bugs. Consider deduplication or pinning to a "
                     "single version."
                 ),
                 impact={
                     "critical": 0,
-                    "high": len([f for f in significant_fragmented if f["count"] >= 5]),
+                    "high": len([f for f in significant_fragmented if f["count"] >= _FRAGMENTATION_HIGH_VERSIONS]),
                     "medium": len(
-                        [f for f in significant_fragmented if SIGNIFICANT_FRAGMENTATION_THRESHOLD <= f["count"] < 5]
+                        [
+                            f
+                            for f in significant_fragmented
+                            if _FRAGMENTATION_MIN_VERSIONS <= f["count"] < _FRAGMENTATION_HIGH_VERSIONS
+                        ]
                     ),
                     "low": 0,
                     "total": len(significant_fragmented),
@@ -226,25 +234,19 @@ def analyze_dev_in_production(
     potential_dev_deps: list[dict[str, Any]] = []
 
     for dep in dependencies:
-        # The qualified name, so scoped patterns such as '@types/' match a scope the SBOM kept apart.
-        _, name = package_identity(
-            get_attr(dep, "purl"), get_attr(dep, "name") or "", get_attr(dep, "type"), get_attr(dep, "group")
-        )
         scope = str(get_attr(dep, "scope") or "").lower()
-
         if scope in ("dev", "development", "test"):
             continue
 
-        for pattern in DEV_DEPENDENCY_PATTERNS:
-            if re.search(pattern, name, re.IGNORECASE):
-                potential_dev_deps.append(
-                    {
-                        "name": name,
-                        "version": get_attr(dep, "version"),
-                        "reason": f"Matches dev pattern: {pattern}",
-                    }
-                )
-                break
+        # The qualified name, so a dev-only scope matches where the SBOM split it into group and name.
+        ecosystem, name = package_identity(
+            get_attr(dep, "purl"), get_attr(dep, "name") or "", get_attr(dep, "type"), get_attr(dep, "group")
+        )
+        # The patterns and the devDependencies advice are npm's.
+        if ecosystem != "npm":
+            continue
+        if name.lower() not in DEV_DEPENDENCY_RUNTIME_PACKAGES and DEV_DEPENDENCY_PATTERN.match(name.lower()):
+            potential_dev_deps.append({"name": name, "version": get_attr(dep, "version")})
 
     dev_deps_shown, dev_deps_total = sample_components(f"{d['name']}@{d['version']}" for d in potential_dev_deps)
     if potential_dev_deps:

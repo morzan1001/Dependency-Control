@@ -8,11 +8,11 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.versions import newest_first
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     calculate_best_fix_version,
     calculate_score,
-    newest_first,
     get_attr,
     live_cves,
     name_some,
@@ -227,6 +227,8 @@ class TestCalculateBestFixVersion:
             pytest.param(["1.2.3", "1.2.4", "1.3.0"], "1.3.0", id="complex_versions"),
             pytest.param(["1.0.0, 1.5.0", "2.0.0"], "2.0.0", id="comma_separated_in_multiple_entries"),
             pytest.param(["1.0.0, 3.0.0, 2.0.0"], "3.0.0", id="single_comma_separated_entry"),
+            pytest.param(["5.0.0-beta.2", "5.0.0-rc.1"], "5.0.0-rc.1", id="rc_above_beta"),
+            pytest.param(["1.0.0-alpha", "1.0.0"], "1.0.0", id="release_above_its_prerelease"),
         ],
     )
     def test_calculate_best_fix_version(self, candidates, expected):

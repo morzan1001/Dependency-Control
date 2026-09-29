@@ -1,26 +1,12 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from app.models.finding import Severity
-
 
 def normalize_hash_algorithm(alg: str) -> str:
     """Normalize a hash algorithm name (lowercase, no hyphens): "SHA-256" -> "sha256"."""
     if not alg:
         return ""
     return alg.lower().replace("-", "")
-
-
-def map_vendor_severity(raw_severity: str | None) -> str:
-    """Map a vendor severity label to the internal Severity enum; unknown labels fall back to MEDIUM."""
-    return {
-        "CRITICAL": Severity.CRITICAL.value,
-        "HIGH": Severity.HIGH.value,
-        "MEDIUM": Severity.MEDIUM.value,
-        "LOW": Severity.LOW.value,
-        "NEGLIGIBLE": Severity.INFO.value,
-        "UNKNOWN": Severity.INFO.value,
-    }.get((raw_severity or "").upper(), Severity.MEDIUM.value)
 
 
 class Analyzer(ABC):

@@ -1,13 +1,13 @@
 """Pydantic models and TypedDicts for analytics API endpoints."""
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.core.constants import ExploitMaturity, ScopeName
 from app.schemas.team import TeamRef
-
-ScopeKind = Literal["project", "team", "global", "user"]
 
 
 class CVEEnrichmentResult(BaseModel):
@@ -20,7 +20,7 @@ class CVEEnrichmentResult(BaseModel):
     kev_count: int = 0
     kev_ransomware_use: bool = False
     kev_due_date: str | None = None
-    exploit_maturity: str = "unknown"
+    exploit_maturity: ExploitMaturity = "unknown"
     days_until_due: int | None = None
 
 
@@ -34,6 +34,15 @@ class SeverityBreakdown(BaseModel):
     negligible: int = 0
     info: int = 0
     unknown: int = 0
+
+    @classmethod
+    def from_counts(cls, counts: Mapping[str, int]) -> "SeverityBreakdown":
+        """Keys in any case; one without its own field counts as unknown, so the fields sum to the counts."""
+        buckets = dict.fromkeys(cls.model_fields, 0)
+        for severity, count in counts.items():
+            key = severity.lower()
+            buckets[key if key in buckets else "unknown"] += count
+        return cls(**buckets)
 
 
 class DependencyUsage(BaseModel):
@@ -316,8 +325,9 @@ class RecommendationsResponse(BaseModel):
     total_vulnerabilities: int
     recommendations: list[RecommendationResponse]
     summary: dict[str, Any]
-    # Dependency rows the engine reasoned over against what the scan holds; equal unless the
-    # read saturated, in which case component-wide advice is scoped to the rows that were read.
+    # Rows the engine reasoned over (total_findings, dependencies_read) against what the scan holds;
+    # each pair is equal unless its read saturated, and then the advice is scoped to the rows read.
+    findings_total: int = 0
     dependencies_read: int = 0
     dependencies_total: int = 0
 
@@ -483,6 +493,19 @@ class UpdateFrequencyComparison(BaseModel):
 
 # Crypto analytics schemas
 
+GroupBy = Literal["name", "primitive", "asset_type", "weakness_tag", "severity"]
+Metric = Literal[
+    "total_crypto_findings",
+    "quantum_vulnerable_findings",
+    "weak_algo_findings",
+    "weak_key_findings",
+    "cert_expiring_soon",
+    "cert_expired",
+    "unique_algorithms",
+    "unique_cipher_suites",
+]
+Bucket = Literal["day", "week", "month"]
+
 
 class HotspotEntry(BaseModel):
     """A single entry in a crypto hotspot report."""
@@ -506,7 +529,7 @@ class HotspotEntry(BaseModel):
 class HotspotResponse(BaseModel):
     """Paginated hotspot response for a given scope."""
 
-    scope: ScopeKind
+    scope: ScopeName
     scope_id: str | None = None
     grouping_dimension: str
     items: list[HotspotEntry] = Field(default_factory=list)
@@ -529,7 +552,7 @@ class TrendSeries(BaseModel):
     scope: str
     scope_id: str | None = None
     metric: str
-    bucket: Literal["day", "week", "month"]
+    bucket: Bucket
     points: list[TrendPoint] = Field(default_factory=list)
     range_start: datetime
     range_end: datetime

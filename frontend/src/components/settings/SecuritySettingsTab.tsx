@@ -97,7 +97,7 @@ export function SecuritySettingsTab({
                 <Input 
                   id="oidc-provider-name" 
                   placeholder="GitLab" 
-                  value={formData.oidc_provider_name || 'GitLab'}
+                  value={formData.oidc_provider_name ?? ''}
                   onChange={(e) => handleInputChange('oidc_provider_name', e.target.value)}
                 />
                 <p className="text-xs text-muted-foreground">Displayed on the login button (e.g. "Login with GitLab")</p>

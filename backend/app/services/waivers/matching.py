@@ -4,7 +4,12 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from app.core.constants import WAIVER_STATUS_FALSE_POSITIVE, get_severity_value
+from app.core.constants import (
+    WAIVER_SCOPE_FINDING,
+    WAIVER_SCOPE_RULE,
+    WAIVER_STATUS_FALSE_POSITIVE,
+    get_severity_value,
+)
 from app.core.cve import advisory_ids, advisory_match
 from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.match_signature import MatchSignature
@@ -29,11 +34,11 @@ def waiver_criteria(waiver: Waiver) -> dict[str, Any]:
     """The finding fields a waiver constrains; a file or rule scope widens to its rule_id, else stays on its finding."""
     # An advisory lives only in vulnerability documents, whatever type or rule the waiver names.
     advisory = bool(waiver.vulnerability_id)
-    widened = waiver.scope != "finding" and bool(waiver.rule_id)
+    widened = waiver.scope != WAIVER_SCOPE_FINDING and bool(waiver.rule_id)
     criteria: dict[str, Any] = {}
     if waiver.finding_id and not widened:
         criteria["finding_id"] = waiver.finding_id
-    if waiver.package_name and waiver.scope != "rule":
+    if waiver.package_name and waiver.scope != WAIVER_SCOPE_RULE:
         criteria["component"] = waiver.package_name
     if waiver.package_version:
         criteria["version"] = waiver.package_version
@@ -77,7 +82,7 @@ def route_waiver(waiver: Waiver) -> WaiverRoute:
     if waiver.vulnerability_id:
         return "vulnerability"
     # A widened scope keeps its criteria: one signature would narrow it to the location it was taken from.
-    if waiver.scope == "finding" and waiver.match is not None:
+    if waiver.scope == WAIVER_SCOPE_FINDING and waiver.match is not None:
         return "signature"
     return "query"
 
@@ -86,7 +91,7 @@ def may_bind_signature(waiver: Waiver) -> bool:
     """A waiver without a signature that names a location finding it could take one from."""
     return (
         waiver.match is None
-        and waiver.scope == "finding"
+        and waiver.scope == WAIVER_SCOPE_FINDING
         and not waiver.vulnerability_id
         and bool(waiver.finding_id)
         and (waiver.finding_type is None or waiver.finding_type in LOCATION_FINDING_TYPES)

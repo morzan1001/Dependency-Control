@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
 from app.models.waiver import Waiver, is_waiver_active
+from app.schemas.waiver import WaiverResponse
 
 
 class TestWaiverModel:
@@ -43,7 +44,7 @@ class TestWaiverModel:
 
 
 class TestWaiverExpiry:
-    # Motor hands back tz-naive datetimes, so every expiration_date loaded from Mongo takes this path.
+    # A request may send expiration_date without an offset, and the model keeps it naive.
     _NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
     def test_naive_expiration_in_the_future_stays_active(self):
@@ -55,7 +56,7 @@ class TestWaiverExpiry:
     def test_is_active_reads_a_naive_expiration_without_raising(self):
         waiver = Waiver(reason="Test", created_by="admin", expiration_date=datetime(2030, 1, 1))
         assert waiver.expiration_date.tzinfo is None
-        assert waiver.is_active is True
+        assert WaiverResponse.model_validate(waiver).is_active is True
 
     def test_missing_expiration_never_expires(self):
         assert is_waiver_active(None) is True

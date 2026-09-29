@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.constants import get_severity_value
 from app.models.finding import Severity
 from app.models.license import (
     DeploymentModel,
@@ -16,7 +17,6 @@ from app.models.license import (
 
 from .constants import (
     POLICY_VIOLATION_MIN_RANK,
-    SEVERITY_RANK,
     UNDETERMINED_LICENSE_ID,
     UNDETERMINED_LICENSE_MESSAGE,
 )
@@ -26,7 +26,7 @@ def is_acceptable_under_policy(issue: dict[str, Any] | None) -> bool:
     """Whether a consumer could actually take this licence: no finding, or one a policy escape already softened."""
     if issue is None:
         return True
-    return SEVERITY_RANK[issue["severity"]] < POLICY_VIOLATION_MIN_RANK
+    return get_severity_value(issue["severity"]) < POLICY_VIOLATION_MIN_RANK
 
 
 def evaluate_license(

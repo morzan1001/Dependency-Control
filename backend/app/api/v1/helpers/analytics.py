@@ -22,6 +22,7 @@ from app.core.constants import (
     IMPACT_FIX_AVAILABLE_BOOST,
     IMPACT_MAX_SCORE_BOOST,
     IMPACT_REACH_MULTIPLIER_CAP,
+    IMPACT_SEVERITY_WEIGHTS,
     KEV_DEFAULT_BOOST,
     KEV_DUE_SOON_BOOST,
     KEV_DUE_SOON_DAYS,
@@ -29,7 +30,6 @@ from app.core.constants import (
     KEV_RANSOMWARE_BOOST,
     RELEASE_ENVIRONMENT_PATTERN,
     SEVERITY_ORDER,
-    SEVERITY_WEIGHTS,
     get_severity_value,
 )
 from app.core.cve import counted_cves
@@ -181,12 +181,9 @@ def calculate_days_until_due(kev_due_date: str | None) -> int | None:
 
 def calculate_days_known(first_seen: datetime | None) -> int | None:
     """Calculate how many days a vulnerability has been known."""
-    if not first_seen or not isinstance(first_seen, datetime):
+    if not isinstance(first_seen, datetime):
         return None
-    try:
-        return (datetime.now(first_seen.tzinfo or None) - first_seen).days
-    except Exception:
-        return None
+    return (datetime.now(timezone.utc) - first_seen).days
 
 
 def extract_fix_versions(details_list: list[Any], installed_version: str | None) -> set[str]:
@@ -257,7 +254,7 @@ def impact_pre_score(severity_counts: dict[str, int], affected_projects: int) ->
     # severity_counts may use lowercase or original-case keys
     severity_score = sum(
         severity_counts.get(sev.lower(), severity_counts.get(sev, 0)) * weight
-        for sev, weight in SEVERITY_WEIGHTS.items()
+        for sev, weight in IMPACT_SEVERITY_WEIGHTS.items()
     )
     reach_multiplier = min(affected_projects, IMPACT_REACH_MULTIPLIER_CAP)
     return float(severity_score * reach_multiplier)
@@ -482,12 +479,10 @@ async def gather_cross_project_data(
 
     Returns None if the user has one project or fewer.
     """
-    from app.repositories import (
-        DependencyRepository,
-        FindingRepository,
-        ProjectRepository,
-        ScanRepository,
-    )
+    from app.repositories.dependencies import DependencyRepository
+    from app.repositories.findings import FindingRepository
+    from app.repositories.projects import ProjectRepository
+    from app.repositories.scans import ScanRepository
 
     if len(user_project_ids) <= 1:
         return None

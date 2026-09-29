@@ -18,11 +18,9 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
-from app.repositories import (
-    DependencyEnrichmentRepository,
-    DependencyRepository,
-    FindingRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
+from app.repositories.findings import FindingRepository
 from app.schemas.analytics import (
     DependencyGraph,
     DependencyMetadata,
@@ -39,7 +37,7 @@ from app.services.component_identity import (
     lookup_component,
     normalize_component,
 )
-from app.services.aggregation.versions import parse_version_key
+from app.services.aggregation.versions import newest_first, parse_version_key
 from app.services.recommendation.common import get_attr, live_cves
 from app.services.recommendation.graph import build_dependency_edges
 
@@ -82,7 +80,7 @@ def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]], *, direc
         direct_inferred=get_attr(dep, "direct_inferred", False),
         has_findings=findings_count > 0,
         findings_count=findings_count,
-        findings_severity=SeverityBreakdown(**finding_info) if finding_info else None,
+        findings_severity=SeverityBreakdown.from_counts(finding_info) if finding_info else None,
         source_type=get_attr(dep, "source_type"),
         source_target=get_attr(dep, "source_target"),
         layer_digest=get_attr(dep, "layer_digest"),
@@ -344,7 +342,7 @@ async def get_dependency_metadata_endpoint(
     return DependencyMetadata(
         name=get_attr(first_dep, "name", component),
         version=get_attr(first_dep, "version", version or "unknown"),
-        versions=sorted((v for v in projects_by_version if v), key=lambda v: (parse_version_key(v), v), reverse=True),
+        versions=newest_first(v for v in projects_by_version if v),
         type=get_attr(first_dep, "type", "unknown"),
         purl=dep_purl,
         description=_first_dep_value(dependencies, "description") or enrichment_info["description"],

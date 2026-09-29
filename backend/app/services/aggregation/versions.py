@@ -9,22 +9,57 @@ from typing import Any
 
 VersionKey = tuple[tuple[int, int | str], ...]
 
+# Flags that give 1.0-rc1 < 1.0 < 1.0.post1 < 1.0.1: a prerelease tag, the end, any other tag, one more number.
+_PRERELEASE, _END, _SUFFIX, _NUMBER = 0, 1, 2, 3
+
+# Ranked to agree with both PEP 440 (dev < a < b < rc) and Maven (alpha < beta < milestone < rc < snapshot).
+_PRERELEASE_RANK = {
+    "dev": 0,
+    "alpha": 1,
+    "a": 1,
+    "beta": 2,
+    "b": 2,
+    "milestone": 3,
+    "m": 3,
+    "pre": 4,
+    "preview": 4,
+    "rc": 5,
+    "cr": 5,
+    "c": 5,
+    "snapshot": 6,
+}
+
+
+def _token_key(token: str, prev_char: str, next_char: str) -> tuple[int, int | str]:
+    if token.isdigit():
+        return (_NUMBER, int(token))
+    rank = _PRERELEASE_RANK.get(token)
+    # A lone letter is a prerelease only before a number (1.0a1, 1.0-M2); OpenSSL's 1.1.1a follows 1.1.1,
+    # and a Debian binNMU's +b6 follows its base.
+    if rank is None or (len(token) == 1 and (prev_char == "+" or not next_char.isdigit())):
+        return (_SUFFIX, token)
+    return (_PRERELEASE, rank)
+
 
 def parse_version_key(v: str) -> VersionKey:
-    """Parse a version into (type_flag, value) pairs so numeric parts always sort before string parts."""
-    v = v.lower()
-    v = v.removeprefix("v")
+    """Parse a version into (flag, value) pairs that compare in version order; the first carries the major."""
+    text = v.lower().removeprefix("v")
+    parts = [
+        _token_key(m.group(), text[m.start() - 1 : m.start()], text[m.end() : m.end() + 1])
+        for m in re.finditer(r"[a-z]+|\d+", text)
+    ]
+    if not parts:
+        return ()
+    return (*parts, (_END, ""))
 
-    parts: list[tuple[int, int | str]] = []
-    for part in re.split(r"[^a-z0-9]+", v):
-        if not part:
-            continue
-        for subpart in re.findall(r"[a-z]+|\d+", part):
-            if subpart.isdigit():
-                parts.append((0, int(subpart)))
-            else:
-                parts.append((1, subpart))
-    return tuple(parts)
+
+def _is_prerelease(key: VersionKey) -> bool:
+    return any(flag == _PRERELEASE for flag, _ in key)
+
+
+def newest_first(versions: Iterable[Any]) -> list[str]:
+    """Versions ranked newest first; the raw string breaks ties, so a set-derived input orders the same every run."""
+    return sorted((str(v) for v in versions), key=lambda v: (parse_version_key(v), v), reverse=True)
 
 
 def split_fixed_versions(value: Any) -> list[str]:
@@ -50,8 +85,15 @@ def aggregate_fixed_version(entries: Iterable[Mapping[str, Any]], installed_vers
     for index, candidates in enumerate(advisories):
         for key, candidate in candidates:
             by_major.setdefault(key[0][1], {}).setdefault(index, []).append((key, candidate))
+    # A prerelease fix counts only where the line offers no release fix.
     line_fixes = [
-        (major, max((min(fixes, key=itemgetter(0)) for fixes in per_advisory.values()), key=itemgetter(0))[1])
+        (
+            major,
+            max(
+                (min(fixes, key=lambda fix: (_is_prerelease(fix[0]), fix[0])) for fixes in per_advisory.values()),
+                key=itemgetter(0),
+            )[1],
+        )
         for major, per_advisory in by_major.items()
         if len(per_advisory) == len(advisories)
     ]

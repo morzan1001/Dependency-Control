@@ -496,7 +496,7 @@ class TestExitCodes:
     async def test_agreement_exits_zero(self, monkeypatch, capsys):
         db = FakeDatabase()
         await _seed_agreeing_history(db)
-        monkeypatch.setattr(parity, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
+        monkeypatch.setattr(parity, "create_client", lambda _url: _FakeClient(db))
 
         assert await run(_args()) == 0
         out = capsys.readouterr().out
@@ -508,7 +508,7 @@ class TestExitCodes:
         db = FakeDatabase()
         await _seed_agreeing_history(db)
         await db.scan_update_deltas.update_one({"_id": "s3"}, {"$set": {"updates.patch": 7}})
-        monkeypatch.setattr(parity, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
+        monkeypatch.setattr(parity, "create_client", lambda _url: _FakeClient(db))
 
         assert await run(_args()) == 2
         out = capsys.readouterr().out
@@ -524,7 +524,7 @@ class TestExitCodes:
         await _seed_scan(db, "t1", _days_ago(60), {"flask": "3.0.0"}, (), project_id="proj-2")
         await _seed_scan(db, "t2", _days_ago(50), {"flask": "4.0.0"}, (), project_id="proj-2")
         await _seed_project(db, "proj-2", "Project Two")
-        monkeypatch.setattr(parity, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
+        monkeypatch.setattr(parity, "create_client", lambda _url: _FakeClient(db))
 
         assert await run(_args()) == 2
         out = capsys.readouterr().out
@@ -551,7 +551,7 @@ class TestExitCodes:
             }
         )
         await _seed_project(db)
-        monkeypatch.setattr(parity, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
+        monkeypatch.setattr(parity, "create_client", lambda _url: _FakeClient(db))
 
         assert await run(_args()) == 0
         out = capsys.readouterr().out
@@ -561,7 +561,7 @@ class TestExitCodes:
     @pytest.mark.asyncio
     async def test_an_empty_sample_exits_three(self, monkeypatch, capsys):
         db = FakeDatabase()
-        monkeypatch.setattr(parity, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
+        monkeypatch.setattr(parity, "create_client", lambda _url: _FakeClient(db))
 
         assert await run(_args()) == 3
         assert "nothing compared" in capsys.readouterr().err
@@ -569,7 +569,7 @@ class TestExitCodes:
     @pytest.mark.asyncio
     async def test_a_failing_query_exits_one(self, monkeypatch, capsys):
         db = FakeDatabase()
-        monkeypatch.setattr(parity, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
+        monkeypatch.setattr(parity, "create_client", lambda _url: _FakeClient(db))
 
         async def _explode(*_args: Any, **_kwargs: Any):
             raise RuntimeError("no route to mongod")

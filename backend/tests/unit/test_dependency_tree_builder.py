@@ -1,6 +1,7 @@
 """Unit tests for _build_dependency_graph, the flat-nodes + adjacency dependency graph."""
 
 from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
+from app.api.v1.helpers.analytics import severity_counts_from_details
 
 
 def _graph(dependencies, findings_map):
@@ -210,6 +211,22 @@ class TestDependencyGraphBuilder:
 
         assert sorted(_root_names(graph)) == ["a", "x"]
         assert _by_name(graph)["x"].direct is True
+
+    def test_every_severity_is_in_the_breakdown_the_count_sums(self):
+        advisories = [
+            {"id": f"CVE-2024-100{i}", "severity": sev} for i, sev in enumerate(("HIGH", "NEGLIGIBLE", "UNKNOWN"))
+        ]
+        findings_map = {"a": severity_counts_from_details([{"vulnerabilities": advisories}])}
+
+        node = _by_name(_graph([_dep("a", direct=True)], findings_map))["a"]
+
+        assert node.findings_severity is not None
+        assert (node.findings_severity.high, node.findings_severity.negligible, node.findings_severity.unknown) == (
+            1,
+            1,
+            1,
+        )
+        assert node.findings_count == sum(node.findings_severity.model_dump().values()) == 3
 
     def test_findings_absent_yields_no_severity(self):
         node = _by_name(_graph([_dep("a", direct=True)], {}))["a"]

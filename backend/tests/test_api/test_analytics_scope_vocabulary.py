@@ -8,8 +8,8 @@ from httpx import ASGITransport, AsyncClient
 
 from app.api.deps import get_current_active_user, get_database
 from app.api.v1.endpoints import compliance_reports, crypto_analytics, pqc_migration
+from app.core.constants import ScopeName
 from app.models.user import User
-from app.schemas.analytics import ScopeKind
 from app.services.chat.tools.definitions import TOOL_DEFINITIONS
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -41,4 +41,4 @@ async def test_an_unknown_scope_is_rejected_before_resolution(route):
 def test_the_chat_tool_offers_exactly_the_api_scopes():
     tool = next(t for t in TOOL_DEFINITIONS if t["function"]["name"] == "get_framework_evaluation_summary")
 
-    assert tool["function"]["parameters"]["properties"]["scope"]["enum"] == list(get_args(ScopeKind))
+    assert tool["function"]["parameters"]["properties"]["scope"]["enum"] == list(get_args(ScopeName))

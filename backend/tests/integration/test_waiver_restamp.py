@@ -1,10 +1,8 @@
 """The one waiver restamp, through the ingest persist, the recalculation and the ad-hoc gate."""
 
-import copy
 from datetime import datetime, timezone
 
 import pytest
-from pymongo import ReadPreference
 
 from app.core.metrics import analysis_waivers_applied_total
 from app.models.finding import Finding, FindingType, Severity
@@ -15,7 +13,7 @@ from app.repositories.waivers import WaiverRepository
 from app.services.analysis.adhoc import apply_global_waivers_in_memory
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.stats import recalculate_project_stats
-from tests.mocks.fake_mongo import FakeCollection, FakeDatabase, _match_doc
+from tests.mocks.fake_mongo import FakeDatabase
 
 pytestmark = pytest.mark.asyncio
 
@@ -158,51 +156,6 @@ async def test_the_stored_scan_and_the_adhoc_gate_agree_on_the_same_waivers(db, 
         return doc.get("waived"), doc.get("waiver_reason"), doc.get("severity")
 
     assert outcome(stored) == outcome(record) == (True, _FIELD_REASON, "LOW")
-
-
-class _LaggingFindings(FakeCollection):
-    """A secondary that has seen nothing since ``freeze``; primary reads see every write."""
-
-    def freeze(self) -> None:
-        self._stale = copy.deepcopy(self._docs)
-
-    def with_options(self, read_preference=None, **_kwargs):
-        if read_preference != ReadPreference.PRIMARY:
-            return self
-        primary = FakeCollection(self._db)
-        primary._docs = self._docs
-        return primary
-
-    def find(self, query=None, projection=None, **kwargs):
-        live, self._docs = self._docs, self._stale
-        try:
-            return super().find(query, projection, **kwargs)
-        finally:
-            self._docs = live
-
-    async def count_documents(self, query, limit: int = 0, **_kwargs):
-        return sum(1 for doc in self._stale.values() if _match_doc(doc, query))
-
-
-def _lagging_database() -> FakeDatabase:
-    db = FakeDatabase()
-    findings = _LaggingFindings(db)
-    findings.freeze()
-    object.__setattr__(db, "findings", findings)
-    return db
-
-
-async def test_the_restamp_reads_the_findings_it_just_wrote_from_the_primary():
-    db = _lagging_database()
-    await WaiverRepository(db).create(_partial_cve_waiver())
-    await WaiverRepository(db).create(
-        Waiver(project_id=_PROJECT, vulnerability_id=_CVE_LOW, package_name="express", reason="r", created_by="u")
-    )
-
-    await _persist(db, _FEATURE, _vulnerable_component())
-
-    (doc,) = db.findings._docs.values()
-    assert doc["waived"] is True
 
 
 class _WriteCounter:

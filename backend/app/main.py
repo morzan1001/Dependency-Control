@@ -45,6 +45,7 @@ from app.core.metrics import PrometheusMiddleware, metrics_endpoint
 from app.core.middleware import RelativeLocationMiddleware
 from app.core.worker import worker_manager
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
+from app.repositories.users import IdentityTakenError
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError
 
 logging.basicConfig(
@@ -94,6 +95,11 @@ async def scope_resolution_exception_handler(request: Request, exc: ScopeResolut
 async def scope_too_large_exception_handler(request: Request, exc: ScopeTooLargeError) -> JSONResponse:
     """A scope analytics cannot materialise is refused, not answered over an arbitrary subset."""
     return JSONResponse(status_code=413, content={"detail": str(exc)})
+
+
+@app.exception_handler(IdentityTakenError)
+async def identity_taken_exception_handler(request: Request, exc: IdentityTakenError) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
 @app.exception_handler(Exception)

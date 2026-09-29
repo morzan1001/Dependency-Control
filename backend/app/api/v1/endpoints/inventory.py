@@ -4,12 +4,15 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.models.project import Project, Scan
+from app.repositories.scans import ScanRepository
 from app.schemas.inventory import (
     ComponentsPageResponse,
     CryptoPageResponse,
@@ -32,10 +35,23 @@ from app.services.inventory.licenses import (
     build_license_rows,
     iter_license_rows,
 )
-from app.services.inventory.scan_resolution import resolve_inventory_scan
 from app.services.inventory.stats import build_inventory_stats, scan_context
 
 router = CustomAPIRouter(tags=["inventory"])
+
+
+async def _resolve_scan_or_404(db: AsyncIOMotorDatabase, project: Project, branch: str | None) -> Scan:
+    scan_repo = ScanRepository(db)
+    if not branch:
+        scan = await scan_repo.get_latest_active_scan(project)
+    elif branch in (project.deleted_branches or []):
+        scan = None
+    else:
+        scan = await scan_repo.branch_tip(project.id, branch)
+    if scan is None:
+        target = branch or project.default_branch or "any active branch"
+        raise HTTPException(status_code=404, detail=f"No completed scan found for branch '{target}'")
+    return scan
 
 
 async def _inventory_scope(
@@ -43,11 +59,7 @@ async def _inventory_scope(
 ) -> tuple[Project, Scan]:
     """The project the caller may view and the scan of the requested branch it reads."""
     project = await check_project_access(project_id, current_user, db)
-    scan = await resolve_inventory_scan(db, project, branch)
-    if scan is None:
-        target = branch or project.default_branch or "any active branch"
-        raise HTTPException(status_code=404, detail=f"No completed scan found for branch '{target}'")
-    return project, scan
+    return project, await _resolve_scan_or_404(db, project, branch)
 
 
 InventoryScopeDep = Annotated[tuple[Project, Scan], Depends(_inventory_scope)]
@@ -70,11 +82,17 @@ async def inventory_components(
     page_size: int = Query(25, ge=1, le=200),
     search: str | None = Query(None),
     sort_by: str = Query("name"),
-    sort_order: str = Query("asc"),
+    sort_order: SortOrderQuery = "asc",
 ) -> ComponentsPageResponse:
     _, scan = scope
     items, total = await get_components_page(
-        db, scan, page=page, page_size=page_size, search=search, sort_by=sort_by, sort_order=sort_order
+        db,
+        scan,
+        page=page,
+        page_size=page_size,
+        search=search,
+        sort_by=sort_by,
+        direction=parse_sort_direction(sort_order),
     )
     return ComponentsPageResponse(scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size)
 

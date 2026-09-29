@@ -1,6 +1,8 @@
 """Shared utilities for sorting across endpoints."""
 
-from typing import Literal
+from typing import Annotated, Literal
+
+from fastapi import Query
 
 SORT_FIELDS: dict[str, dict[str, str]] = {
     "projects": {
@@ -33,9 +35,13 @@ SORT_FIELDS: dict[str, dict[str, str]] = {
 }
 
 
-def parse_sort_direction(sort_order: str) -> int:
-    """Convert a sort order string ("asc"/"desc") to a MongoDB direction (1/-1)."""
-    return -1 if sort_order.lower() == "desc" else 1
+SortOrder = Literal["asc", "desc"]
+SortOrderQuery = Annotated[SortOrder, Query(description="Sort order: asc or desc")]
+
+
+def parse_sort_direction(sort_order: SortOrder) -> int:
+    """The MongoDB direction (1/-1) of a sort order."""
+    return -1 if sort_order == "desc" else 1
 
 
 def get_sort_field(

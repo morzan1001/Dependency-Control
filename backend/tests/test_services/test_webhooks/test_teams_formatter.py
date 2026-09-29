@@ -167,6 +167,21 @@ class TestBuildScanCompletedCard:
         assert "Critical" in titles
         assert "High" in titles
 
+    def test_every_severity_count_gets_a_fact_in_severity_order(self):
+        card = _get_card(
+            TeamsFormatter.build_scan_completed_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                findings={"total": 4, "stats": {"unknown": 1, "negligible": 2, "high": 1}},
+            )
+        )
+        factset = next(b for b in card["body"] if b["type"] == "FactSet")
+        assert [(f["title"], f["value"]) for f in factset["facts"][2:]] == [
+            ("High", "1"),
+            ("Negligible", "2"),
+            ("Unknown", "1"),
+        ]
+
 
 class TestBuildVulnerabilityFoundCard:
     def test_attention_style_when_critical(self):

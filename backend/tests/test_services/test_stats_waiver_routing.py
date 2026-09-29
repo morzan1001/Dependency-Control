@@ -286,7 +286,7 @@ class TestRecalculateReachesTheReleasedBuild:
     @pytest.mark.asyncio
     async def test_a_revoked_waiver_stops_hiding_a_critical_that_is_in_production(self, released_db):
         """Nothing waives this finding any more, so "what is in production" must stop reading zero."""
-        from app.repositories import FindingRepository
+        from app.repositories.findings import FindingRepository
 
         await recalculate_project_stats(PROJECT_ID, released_db)
 
@@ -392,6 +392,26 @@ class TestRecalculateReachesTheReleasedBuild:
         assert (await released_db.findings.find_one({"_id": "loc-shipped"}))["waived"] is True
 
 
+BRANCH_SCAN_ID = "scan-w4-feature"
+
+
+class TestRecalculateReachesANamedScan:
+    @pytest.mark.asyncio
+    async def test_the_scan_a_waiver_was_written_from_is_restamped(self, seeded_db):
+        """A waiver created from a feature-branch scan shows on that scan now, not after its next pipeline."""
+        await seeded_db.scans.insert_one({"_id": BRANCH_SCAN_ID, "project_id": PROJECT_ID, "status": "completed"})
+        branch_finding = _finding("f-branch", "CRITICAL", cvss_score=9.0, risk_score=90.0)
+        branch_finding.update(scan_id=BRANCH_SCAN_ID, finding_id="f-waived")
+        await seeded_db.findings.insert_one(branch_finding)
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db, restamp=[BRANCH_SCAN_ID])
+
+        assert (await seeded_db.findings.find_one({"_id": "f-branch"}))["waived"] is True
+        branch_scan = await seeded_db.scans.find_one({"_id": BRANCH_SCAN_ID})
+        assert (branch_scan["stats"]["critical"], branch_scan["ignored_count"]) == (0, 1)
+        assert (await seeded_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == SCAN_ID
+
+
 # ---------------------------------------------------------------------------
 # A waiver with no matching criteria must NOT waive every finding: an empty
 # waiver query ({}) would match all findings, so the restamp must
@@ -456,7 +476,7 @@ class TestRecalculateReachesEveryBranchTip:
 
     @pytest.mark.asyncio
     async def test_a_recalc_that_lost_its_lock_stops_before_the_next_scan(self, branch_db, monkeypatch):
-        from app.repositories import DistributedLocksRepository
+        from app.repositories.distributed_locks import DistributedLocksRepository
 
         async def taken_over(self, lock_name, holder_id, ttl_seconds=30):
             return False
@@ -511,7 +531,7 @@ class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
 class TestLockContentionRetry:
     @pytest.mark.asyncio
     async def test_recalc_retries_lock_then_succeeds(self, seeded_db, monkeypatch):
-        from app.repositories import DistributedLocksRepository
+        from app.repositories.distributed_locks import DistributedLocksRepository
 
         calls = {"n": 0}
         real_acquire = DistributedLocksRepository.acquire_lock
@@ -543,7 +563,7 @@ class TestLockContentionRetry:
 
     @pytest.mark.asyncio
     async def test_recalc_returns_none_after_exhausting_retries(self, seeded_db, monkeypatch):
-        from app.repositories import DistributedLocksRepository
+        from app.repositories.distributed_locks import DistributedLocksRepository
 
         calls = {"n": 0}
 

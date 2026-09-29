@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
 
-from pydantic import computed_field
-
-from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
+from app.core import ensure_utc
+from app.core.constants import WAIVER_SCOPE_FINDING, WAIVER_STATUS_ACCEPTED_RISK
 from app.models.base import CreatedAtModel
 from app.models.finding import FindingType
 from app.models.match_signature import MatchSignature
@@ -10,13 +9,10 @@ from app.models.types import MongoDocument
 
 
 def is_waiver_active(expiration_date: datetime | None, now: datetime | None = None) -> bool:
-    """Return True if the waiver is still active. Mirrors non_expired_waiver_filter; treats naive datetimes as UTC."""
+    """Return True if the waiver is still active. Mirrors non_expired_waiver_filter."""
     if expiration_date is None:
         return True
-    reference = now or datetime.now(timezone.utc)
-    if expiration_date.tzinfo is None:
-        expiration_date = expiration_date.replace(tzinfo=timezone.utc)
-    return expiration_date > reference
+    return ensure_utc(expiration_date) > (now or datetime.now(timezone.utc))
 
 
 class Waiver(MongoDocument, CreatedAtModel):
@@ -28,7 +24,7 @@ class Waiver(MongoDocument, CreatedAtModel):
     package_version: str | None = None  # e.g. "2.26.0"
     finding_type: FindingType | None = None  # e.g. "vulnerability", "license", "malware", "eol"
     vulnerability_id: str | None = None  # e.g. "CVE-2021-23337"
-    scope: str = "finding"  # "finding" = exact, "file" = same rule+file, "rule" = same rule project-wide
+    scope: str = WAIVER_SCOPE_FINDING
     rule_id: str | None = None  # e.g. "javascript_lang_insufficiently_random_values"
     match: MatchSignature | None = None  # snapshot of the matched finding's signature
     last_eval_scan_id: str | None = None  # scan the signature path last evaluated this waiver against
@@ -38,8 +34,3 @@ class Waiver(MongoDocument, CreatedAtModel):
     status: str = WAIVER_STATUS_ACCEPTED_RISK
     expiration_date: datetime | None = None
     created_by: str
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def is_active(self) -> bool:
-        return is_waiver_active(self.expiration_date)

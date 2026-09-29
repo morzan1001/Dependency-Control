@@ -46,7 +46,6 @@ def _delta(
     eco: dict[str, int] | None = None,
     samples: Sequence[dict[str, Any]] = (),
     error: str | None = None,
-    naive: bool = False,
     project_id: str = "p1",
     branch: str = "main",
 ) -> dict[str, Any]:
@@ -55,8 +54,6 @@ def _delta(
     Predecessor links are left unset; ``_chain`` fills them the way the writer does.
     """
     created = _at(day)
-    if naive:
-        created = created.replace(tzinfo=None)
     return {
         "_id": scan_id,
         "project_id": project_id,
@@ -74,7 +71,6 @@ def _delta(
             "unknown": unknown,
             "downgrade": downgrade,
         },
-        "total_updates": patch + minor + major + unknown,
         "outdated_count": outdated_count,
         "outdated_added": list(added),
         "outdated_resolved": list(resolved),
@@ -675,19 +671,6 @@ class TestDominantEcosystem:
     def test_from_the_newest_scan(self, eco: dict[str, int], expected: str | None) -> None:
         deltas = _chain([_delta("s0", 0, eco={"maven": 999}), _delta("s1", 10, eco=eco)])
         assert _fold(deltas).dominant_ecosystem == expected
-
-
-class TestNaiveDatetimes:
-    def test_mongo_naive_datetimes_are_read_as_utc(self) -> None:
-        deltas = _chain([_delta("s0", 0, naive=True), _delta("s1", 10, patch=1, samples=[_sample("a")], naive=True)])
-        folded = _fold(deltas)
-        assert folded.first_scan_date == _at(0).isoformat()
-        assert folded.recent_updates[0].previous_scan_date == _at(0).isoformat()
-        assert folded.avg_days_between_scans == 10.0
-
-    def test_mixed_naive_and_aware_datetimes(self) -> None:
-        deltas = _chain([_delta("s0", 0, naive=True), _delta("s1", 10, patch=1)])
-        assert _fold(deltas).time_range_days == 10.0
 
 
 def _timeline(updates: Sequence[int], outdated: Sequence[int | None]) -> list[ScanTimelineEntry]:

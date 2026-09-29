@@ -4,13 +4,11 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorCollection
-from pymongo import ReadPreference, UpdateOne
+from pymongo import UpdateOne
 
-from app.core import ensure_utc
 from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.finding_record import FindingRecord
-from app.repositories.base import BaseRepository
+from app.repositories.base import BaseRepository, find_window
 
 # What names a CVE, plus the fields a recurrence row reports back.
 _VULNERABILITY_IDENTITY_PROJECTION = {
@@ -40,17 +38,14 @@ class FindingRepository(BaseRepository[FindingRecord]):
     collection_name = "findings"
     model_class = FindingRecord
 
-    def _primary(self) -> AsyncIOMotorCollection:
-        return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-
     async def find_waiver_state(self, scan_id: str) -> list[dict[str, Any]]:
-        """The scan's findings that carry a waived or lapsed flag, read from the primary behind the last write."""
+        """The scan's findings that carry a waived or lapsed flag."""
         query = {"scan_id": scan_id, "$or": [{"waived": True}, {"waiver_lapsed": True}]}
         projection = {"waived": 1, "waiver_reason": 1, "waiver_lapsed": 1, "lapsed_waiver_id": 1}
-        return await self._primary().find(query, projection).to_list(None)
+        return await self.collection.find(query, projection).to_list(None)
 
     async def find_ids(self, scan_id: str, query: dict[str, Any]) -> list[str]:
-        return [doc["_id"] async for doc in self._primary().find({"scan_id": scan_id, **query}, {"_id": 1})]
+        return [doc["_id"] async for doc in self.collection.find({"scan_id": scan_id, **query}, {"_id": 1})]
 
     async def find_advisory_state(self, scan_id: str, clause: dict[str, Any]) -> list[dict[str, Any]]:
         """Vulnerability documents matching ``clause``: waiver scope fields and advisories, in stored order."""
@@ -61,10 +56,8 @@ class FindingRepository(BaseRepository[FindingRecord]):
             "severity": 1,
             **{f"details.vulnerabilities.{f}": 1 for f in _ADVISORY_WAIVER_FIELDS},
         }
-        return (
-            await self._primary()
-            .find({"scan_id": scan_id, "type": "vulnerability", **clause}, projection)
-            .to_list(None)
+        return await self.collection.find({"scan_id": scan_id, "type": "vulnerability", **clause}, projection).to_list(
+            None
         )
 
     async def set_fields(self, scan_id: str, fields_by_id: Mapping[str, dict[str, Any]]) -> None:
@@ -77,18 +70,11 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def any_in_scans(self, scan_ids: list[str], query: dict[str, Any]) -> bool:
         return await self.collection.find_one({"scan_id": {"$in": scan_ids}, **query}, {"_id": 1}) is not None
 
-    async def find_by_scan(
-        self,
-        scan_id: str,
-        limit: int,
-        skip: int = 0,
-        query_filter: dict[str, Any] | None = None,
-    ) -> list[FindingRecord]:
-        """``limit`` is required: a default here is a cap the caller never chose and cannot see."""
-        query: dict[str, Any] = {"scan_id": scan_id}
-        if query_filter:
-            query.update(query_filter)
-        return await self.find_many(query, skip=skip, limit=limit)
+    async def find_by_scan(self, scan_id: str, limit: int) -> tuple[list[FindingRecord], int]:
+        """The scan's findings up to ``limit``, and how many it holds. ``limit`` is required: a default
+        here is a cap the caller never chose and cannot see."""
+        rows, total = await find_window(self.collection, {"scan_id": scan_id}, limit)
+        return self._to_model_list(rows), total
 
     async def iter_vulnerability_identities(self, scan_ids: Sequence[str]) -> AsyncGenerator[dict[str, Any], None]:
         """Every vulnerability finding of these scans, projected to what names a CVE.
@@ -132,9 +118,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         ]
         rows = await self.aggregate(pipeline, allow_disk_use=True)
         return {
-            finding_identity(row["_id"]): first_seen
-            for row in rows
-            if (first_seen := ensure_utc(row["first_seen_at"])) is not None
+            finding_identity(row["_id"]): first_seen for row in rows if (first_seen := row["first_seen_at"]) is not None
         }
 
     async def delete_by_scan(self, scan_id: str) -> int:
@@ -143,39 +127,29 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def count_by_scan(self, scan_id: str) -> int:
         return await self.count({"scan_id": scan_id})
 
-    async def bulk_upsert(self, operations: list[UpdateOne]) -> int:
-        if not operations:
-            return 0
-        result = await self.collection.bulk_write(operations)
-        return result.upserted_count + result.modified_count
-
     async def find_location_findings(self, scan_id: str) -> list[dict[str, Any]]:
         """A scan's location findings, with details only where the match signature must be recomputed from them."""
-        primary = self._primary()
-        docs = await primary.find(
-            {"scan_id": scan_id, "type": {"$in": [t.value for t in LOCATION_FINDING_TYPES]}},
+        docs = await self.collection.find(
+            {"scan_id": scan_id, "type": {"$in": sorted(LOCATION_FINDING_TYPES)}},
             {"_id": 1, "finding_id": 1, "component": 1, "match": 1},
         ).to_list(None)
         unsigned = {d["_id"]: d for d in docs if not d.get("match")}
         if unsigned:
-            async for doc in primary.find({"scan_id": scan_id, "_id": {"$in": list(unsigned)}}, {"details": 1}):
+            async for doc in self.collection.find({"scan_id": scan_id, "_id": {"$in": list(unsigned)}}, {"details": 1}):
                 unsigned[doc["_id"]]["details"] = doc.get("details")
         return docs
 
     async def get_severity_distribution(
         self,
         scan_ids: list[str],
-        finding_type: str = "vulnerability",
+        finding_type: str | None = "vulnerability",
     ) -> dict[str, int]:
-        """Returns {severity: count} of non-waived findings aggregated across `scan_ids`."""
+        """Returns {severity: count} of non-waived findings aggregated across `scan_ids`; None counts every type."""
+        match: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}}
+        if finding_type is not None:
+            match["type"] = finding_type
         pipeline: list[dict[str, Any]] = [
-            {
-                "$match": {
-                    "scan_id": {"$in": scan_ids},
-                    "type": finding_type,
-                    "waived": {"$ne": True},
-                }
-            },
+            {"$match": match},
             {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
         ]
         results = await self.aggregate(pipeline)

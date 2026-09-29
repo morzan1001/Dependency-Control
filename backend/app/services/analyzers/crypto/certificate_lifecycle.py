@@ -7,6 +7,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core import ensure_utc
 from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
@@ -29,29 +30,10 @@ _MIN_KEY_SIZES = {
 }
 
 
-def _coerce_primitive(prim: Any) -> CryptoPrimitive | None:
-    if isinstance(prim, CryptoPrimitive):
-        return prim
-    if isinstance(prim, str):
-        try:
-            return CryptoPrimitive(prim)
-        except ValueError:
-            return None
-    return None
-
-
-def _rule_severity(rule: CryptoRule) -> Severity:
-    raw = rule.default_severity
-    try:
-        return Severity(raw) if isinstance(raw, str) else raw
-    except ValueError:
-        return Severity.MEDIUM
-
-
 def _matching_hash_rule(algo: CryptoAsset, rules: list[CryptoRule]) -> CryptoRule | None:
     """First enabled hash-primitive rule matching this algorithm via glob-aware matcher."""
     for rule in rules:
-        if not rule.enabled or _coerce_primitive(rule.match_primitive) != CryptoPrimitive.HASH:
+        if not rule.enabled or rule.match_primitive != CryptoPrimitive.HASH:
             continue
         if rule_matches(algo, rule):
             return rule
@@ -59,7 +41,7 @@ def _matching_hash_rule(algo: CryptoAsset, rules: list[CryptoRule]) -> CryptoRul
 
 
 def _has_hash_rule(rules: list[CryptoRule]) -> bool:
-    return any(r.enabled and _coerce_primitive(r.match_primitive) == CryptoPrimitive.HASH for r in rules)
+    return any(r.enabled and r.match_primitive == CryptoPrimitive.HASH for r in rules)
 
 
 def _is_static_weak_hash(algo: CryptoAsset) -> bool:
@@ -72,7 +54,7 @@ def _min_key_sizes(rules: list[CryptoRule]) -> dict[CryptoPrimitive, int]:
     for rule in rules:
         if not rule.enabled or rule.match_min_key_size_bits is None:
             continue
-        prim = _coerce_primitive(rule.match_primitive)
+        prim = rule.match_primitive
         if prim is None:
             continue
         mins[prim] = max(mins.get(prim, 0), rule.match_min_key_size_bits)
@@ -149,7 +131,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
     ) -> list[dict[str, Any]]:
         if cert.not_valid_after is None:
             return []
-        na = _ensure_aware(cert.not_valid_after)
+        na = ensure_utc(cert.not_valid_after)
         delta = now - na
         if delta.total_seconds() <= 0:
             return []
@@ -173,7 +155,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
     ) -> list[dict[str, Any]]:
         if cert.not_valid_after is None:
             return []
-        na = _ensure_aware(cert.not_valid_after)
+        na = ensure_utc(cert.not_valid_after)
         remaining = (na - now).total_seconds()
         if remaining < 0:
             return []
@@ -195,7 +177,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
                     description=f"Certificate expires in {days} days",
                     details={
                         "days_until_expiry": days,
-                        "threshold_matched": sev.value if hasattr(sev, "value") else sev,
+                        "threshold_matched": sev.value,
                         "rule_id": rule.rule_id,
                     },
                 )
@@ -211,7 +193,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
     ) -> list[dict[str, Any]]:
         if cert.not_valid_before is None:
             return []
-        nb = _ensure_aware(cert.not_valid_before)
+        nb = ensure_utc(cert.not_valid_before)
         remaining = (nb - now).total_seconds()
         if remaining <= 0:
             return []
@@ -238,12 +220,12 @@ class CertificateLifecycleAnalyzer(Analyzer):
         algo = algo_by_ref.get(cert.signature_algorithm_ref)
         if algo is None:
             return []
-        if _coerce_primitive(algo.primitive) != CryptoPrimitive.HASH:
+        if algo.primitive != CryptoPrimitive.HASH:
             return []
 
         matched = _matching_hash_rule(algo, rules)
         if matched is not None:
-            severity = _rule_severity(matched)
+            severity = Severity(matched.default_severity)
             rule_id: str | None = matched.rule_id
         elif not _has_hash_rule(rules) and _is_static_weak_hash(algo):
             severity = Severity.HIGH
@@ -277,7 +259,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
         algo = algo_by_ref.get(cert.subject_public_key_ref)
         if algo is None or algo.key_size_bits is None:
             return []
-        prim = _coerce_primitive(algo.primitive)
+        prim = algo.primitive
         if prim is None:
             return []
         min_size = _min_key_sizes(rules).get(prim)
@@ -330,8 +312,8 @@ class CertificateLifecycleAnalyzer(Analyzer):
     ) -> list[dict[str, Any]]:
         if cert.not_valid_before is None or cert.not_valid_after is None:
             return []
-        nb = _ensure_aware(cert.not_valid_before)
-        na = _ensure_aware(cert.not_valid_after)
+        nb = ensure_utc(cert.not_valid_before)
+        na = ensure_utc(cert.not_valid_after)
         total = (na - nb).days
         if total <= 0:
             return []
@@ -342,16 +324,11 @@ class CertificateLifecycleAnalyzer(Analyzer):
             threshold = rule.validity_too_long_days
             if threshold is None or total <= threshold:
                 continue
-            sev_raw = rule.default_severity
-            try:
-                sev = Severity(sev_raw) if isinstance(sev_raw, str) else sev_raw
-            except ValueError:
-                sev = Severity.LOW
             out.append(
                 _build(
                     cert,
                     type_=FindingType.CRYPTO_CERT_VALIDITY_TOO_LONG,
-                    severity=sev,
+                    severity=Severity(rule.default_severity),
                     description=(f"Certificate validity ({total} days) exceeds policy limit of {threshold} days"),
                     details={
                         "validity_days": total,
@@ -361,10 +338,6 @@ class CertificateLifecycleAnalyzer(Analyzer):
                 )
             )
         return out
-
-
-def _ensure_aware(d: datetime) -> datetime:
-    return d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
 
 
 def _is_expiry_rule(rule: CryptoRule) -> bool:
@@ -397,8 +370,8 @@ def _build(
     comp_label = f"{cert.subject_name or cert.name} [bom-ref:{cert.bom_ref}]"
     return {
         "id": str(uuid.uuid4()),
-        "type": type_.value if hasattr(type_, "value") else type_,
-        "severity": severity.value if hasattr(severity, "value") else severity,
+        "type": type_.value,
+        "severity": severity.value,
         "component": comp_label,
         "version": "",
         "description": description,

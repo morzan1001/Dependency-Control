@@ -1,7 +1,7 @@
 """Identity fields: usernames stay with their owner, email changes are proven by the new mailbox, and emails compare case-insensitively."""
 
 import re
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
@@ -13,7 +13,7 @@ from app.core import security
 from app.core.permissions import Permissions
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.repositories.users import UserRepository
+from app.repositories.users import IdentityTakenError, UserRepository
 from app.schemas import user as user_schemas
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -145,10 +145,9 @@ class TestUpdateUserIdentityFields:
 
     @pytest.mark.asyncio
     async def test_a_case_variant_of_a_registered_email_is_refused(self, db):
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(IdentityTakenError):
             await _put(db, ADMIN, LOCAL_ID, email="tara@corp.com")
 
-        assert exc_info.value.status_code == 400
         assert await _stored(db, LOCAL_ID) == LOCAL
 
     @pytest.mark.asyncio
@@ -162,6 +161,16 @@ class TestUpdateUserIdentityFields:
     def test_identity_fields_cannot_be_blanked(self, fields):
         with pytest.raises(ValidationError):
             user_schemas.UserUpdate.model_validate(fields)
+
+    @pytest.mark.parametrize("field", ["is_active", "permissions"])
+    def test_a_field_the_stored_user_requires_cannot_be_written_as_null(self, field):
+        with pytest.raises(ValidationError):
+            user_schemas.UserUpdate.model_validate({field: None})
+
+    @pytest.mark.parametrize("field", ["slack_username", "mattermost_username", "notification_preferences"])
+    def test_a_nullable_field_can_still_be_cleared(self, field):
+        cleared = user_schemas.UserUpdate.model_validate({field: None}).model_dump(exclude_unset=True)
+        User(username="u", email="u@corp.com", **cleared)
 
 
 class TestEmailChangeRequest:
@@ -251,10 +260,9 @@ class TestEmailChangeConfirm:
         _, background_tasks = await _request_change(db, LOCAL, "lena.new@corp.com")
         await UserRepository(db).create_raw({"_id": "u-late", "username": "late", "email": "Lena.New@corp.com"})
 
-        with pytest.raises(HTTPException) as exc_info:
+        with pytest.raises(IdentityTakenError):
             await auth.confirm_email_change(_mailed_token(background_tasks)[1], db)
 
-        assert exc_info.value.status_code == 400
         assert (await _stored(db, LOCAL_ID))["email"] == "lena@corp.com"
 
     @pytest.mark.asyncio
@@ -281,17 +289,73 @@ class TestCaseInsensitiveEmails:
 
     @pytest.mark.asyncio
     async def test_signup_refuses_a_case_variant_of_a_registered_email(self, db):
-        with _system(NO_MAIL), pytest.raises(HTTPException) as exc_info:
+        with _system(NO_MAIL), pytest.raises(IdentityTakenError):
             await auth.create_user(
                 BackgroundTasks(),
                 user_schemas.UserSignup(email="tara@corp.com", username="tara2", password=PASSWORD),
                 db,
             )
 
-        assert exc_info.value.status_code == 400
-
     @pytest.mark.asyncio
     async def test_a_user_logs_in_with_their_email_in_any_case(self, db):
         user = await auth._lookup_user_for_login(UserRepository(db), "tara@CORP.com")
 
         assert user["_id"] == LEGACY_ID
+
+    @pytest.mark.asyncio
+    async def test_a_returning_sso_user_whose_provider_capitalises_the_domain_keeps_their_account(self, db):
+        await _oidc_login(db, email="Max.Mustermann@REWE-Digital.COM", preferred_username="max")
+        await _oidc_login(db, email="Max.Mustermann@REWE-Digital.COM", preferred_username="max")
+
+        assert await db.users.count_documents({"username": {"$regex": "^max"}}) == 1
+
+
+OIDC = SystemSettings(
+    oidc_enabled=True,
+    oidc_token_endpoint="https://idp.example/token",
+    oidc_userinfo_endpoint="https://idp.example/userinfo",
+)
+
+
+async def _oidc_login(db, **claims):
+    with (
+        _system(OIDC),
+        patch("app.api.v1.endpoints.auth._validate_oidc_state", new_callable=AsyncMock),
+        patch("app.api.v1.endpoints.auth._fetch_oidc_user_info", new=AsyncMock(return_value=claims)),
+    ):
+        return await auth.login_oidc_callback(request=MagicMock(), code="code", db=db, state="state")
+
+
+class TestUsernames:
+    """A username is looked up at login before the email, so it must never be empty or read as one."""
+
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda username: user_schemas.UserCreate(email="n@corp.com", username=username, password=PASSWORD),
+            lambda username: user_schemas.UserSignup(email="n@corp.com", username=username, password=PASSWORD),
+            lambda username: user_schemas.UserUpdate(username=username),
+        ],
+        ids=["UserCreate", "UserSignup", "UserUpdate"],
+    )
+    @pytest.mark.parametrize("username", ["", "   ", "lena@corp.com"], ids=["empty", "blank", "email-shaped"])
+    def test_an_unusable_username_is_refused(self, build, username):
+        with pytest.raises(ValidationError):
+            build(username)
+
+    def test_a_new_username_is_stored_trimmed(self):
+        assert user_schemas.UserSignup(email="n@corp.com", username=" nora ", password=PASSWORD).username == "nora"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("preferred_username", ["lena@corp.com", None, ""], ids=["email-shaped", "null", "empty"])
+    async def test_an_sso_account_without_a_usable_preferred_username_is_named_after_its_mailbox(
+        self, db, preferred_username
+    ):
+        await _oidc_login(db, email="Nora.New@corp.com", preferred_username=preferred_username)
+
+        assert (await UserRepository(db).get_raw_by_email("nora.new@corp.com"))["username"] == "Nora.New"
+
+
+def test_creating_a_user_requires_a_password():
+    with pytest.raises(ValidationError):
+        user_schemas.UserCreate(email="n@corp.com", username="n")

@@ -5,9 +5,10 @@ from operator import itemgetter
 from typing import Any
 
 from app.core.config import settings
-from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
 from app.core.cve import advisory_ids, canonical_cve, canonical_cves
 from app.core.risk_scoring import calculate_exploit_maturity
+from app.repositories.base import find_window
 from app.services.component_identity import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
 from app.services.aggregation.versions import parse_version_key
@@ -54,16 +55,6 @@ _FINDING_DETAILS_FIELDS = (
 _ROW_ADVISORY_FIELDS = ("id", "severity", DETAILS_KEY_IN_KEV, "epss_score", "fixed_version", "waived")
 _ROW_ADVISORIES = 3
 
-_SEVERITY_RANK = {
-    "CRITICAL": 4,
-    "HIGH": 3,
-    "MEDIUM": 2,
-    "LOW": 1,
-    "NEGLIGIBLE": 0,
-    "INFO": 0,
-    "UNKNOWN": 0,
-}
-
 
 # Clamps applied while one tool call runs, so the answer can say it was not the one asked for.
 _CLAMPED_LIMITS: ContextVar[list[tuple[int, int]] | None] = ContextVar("chat_tool_clamped_limits", default=None)
@@ -89,16 +80,11 @@ async def bounded_read(
 ) -> tuple[list[dict[str, Any]], int]:
     """The first `limit` rows matching `query`, and how many rows match in total.
 
-    The count costs a round trip only once the read saturates, which is the only time the two
-    can differ. A saturated read is recorded so the answer says so even where the caller never
-    named a limit.
+    A truncated read is recorded so the answer says so even where the caller never named a limit.
     """
-    rows: list[dict[str, Any]] = await collection.find(query, limit=limit, **find_kwargs).to_list(length=limit)
-    if len(rows) < limit:
-        return rows, len(rows)
-    total = await collection.count_documents(query)
+    rows, total = await find_window(collection, query, limit, **find_kwargs)
     ledger = _BOUNDED_READS.get()
-    if ledger is not None:
+    if ledger is not None and total > len(rows):
         ledger.append((subject, len(rows), total))
     return rows, total
 
@@ -200,7 +186,7 @@ def ranked_advisories(details: Any, first: str | None = None) -> list[dict[str, 
             not v.get("waived"),
             bool(v.get(DETAILS_KEY_IN_KEV)),
             bool(v.get(DETAILS_KEY_KEV_RANSOMWARE)),
-            _SEVERITY_RANK.get(str(v.get("severity") or "").upper(), 0),
+            get_severity_value(v.get("severity")),
             _number(v.get("epss_score")),
             _number(v.get("cvss_score")),
         ),

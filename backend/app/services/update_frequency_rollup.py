@@ -11,18 +11,17 @@ from datetime import datetime
 from typing import Any
 
 from app.core.config import settings
-from app.core.constants import RECENT_UPDATES_LIMIT, SCAN_USABLE_STATUSES, UPDATE_SAMPLE_RANK
+from app.core.constants import RECENT_UPDATES_LIMIT, UPDATE_SAMPLE_RANK
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import update_frequency_delta_writes_total
 from app.models.update_frequency import ScanOutdatedSet, ScanUpdateDelta, UpdateCounts, UpdateSample
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
+from app.repositories.scans import is_usable_build
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
 from app.services.update_frequency import (
-    DEP_PROJECTION,
-    as_utc,
     classify_version_change,
-    fold_scan_deps,
+    load_scan_deps,
     load_outdated_entries,
 )
 
@@ -63,16 +62,7 @@ class _Diff:
     outdated_resolved: list[str] = field(default_factory=list)
 
     def to_counts(self) -> UpdateCounts:
-        return UpdateCounts(
-            patch=self.counts["patch"],
-            minor=self.counts["minor"],
-            major=self.counts["major"],
-            unknown=self.counts["unknown"],
-            downgrade=self.counts["downgrade"],
-        )
-
-    def total_updates(self) -> int:
-        return sum(count for kind, count in self.counts.items() if kind != "downgrade")
+        return UpdateCounts(**self.counts)
 
 
 async def record_scan_update_delta(db: Any, scan_id: str) -> None:
@@ -138,14 +128,14 @@ async def _load_scan(db: Any, scan_id: str) -> _ScanRef | None:
         scan_id=scan_id,
         project_id=doc.get("project_id", ""),
         branch=doc.get("branch", ""),
-        created_at=as_utc(created_at),
+        created_at=created_at,
         commit_hash=doc.get("commit_hash"),
-        usable=doc.get("status") in SCAN_USABLE_STATUSES and not doc.get("is_rescan"),
+        usable=is_usable_build(doc),
     )
 
 
 async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[str] | None]:
-    deps = await _load_deps(db, scan.scan_id)
+    deps = await load_scan_deps(DependencyRepository(db), scan.scan_id)
     outdated = await _load_outdated(db, scan.scan_id)
 
     prev, prev_deps = await _resolve_predecessor(db, scan)
@@ -162,11 +152,10 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
         scan_created_at=scan.created_at,
         commit_hash=scan.commit_hash,
         prev_scan_id=prev["_id"] if prev else None,
-        prev_created_at=as_utc(prev["scan_created_at"]) if prev else None,
+        prev_created_at=prev["scan_created_at"] if prev else None,
         is_baseline=prev is None,
         dep_count=len(deps),
         updates=diff.to_counts(),
-        total_updates=diff.total_updates(),
         outdated_count=len(outdated) if outdated is not None else None,
         outdated_added=diff.outdated_added,
         outdated_resolved=diff.outdated_resolved,
@@ -189,7 +178,7 @@ async def _resolve_predecessor(db: Any, scan: _ScanRef) -> tuple[dict[str, Any] 
         prev = await repo.find_predecessor(scan.project_id, scan.branch, scan.created_at, scan.scan_id)
         if prev is None:
             return None, {}
-        prev_deps = await _load_deps(db, prev["_id"])
+        prev_deps = await load_scan_deps(DependencyRepository(db), prev["_id"])
         if len(prev_deps) == prev.get("dep_count"):
             return prev, prev_deps
         logger.warning(
@@ -203,7 +192,7 @@ async def _resolve_predecessor(db: Any, scan: _ScanRef) -> tuple[dict[str, Any] 
                 id=prev["_id"],
                 project_id=scan.project_id,
                 branch=scan.branch,
-                scan_created_at=as_utc(prev["scan_created_at"]),
+                scan_created_at=prev["scan_created_at"],
                 error=_STALE_DEPENDENCIES_ERROR,
             )
         )
@@ -281,11 +270,6 @@ def _diff_scans(
 
 def _eco_counts(deps: dict[str, dict[str, str]]) -> dict[str, int]:
     return dict(Counter(info["type"] for info in deps.values()))
-
-
-async def _load_deps(db: Any, scan_id: str) -> dict[str, dict[str, str]]:
-    docs = await DependencyRepository(db).find_all({"scan_id": scan_id}, projection=DEP_PROJECTION)
-    return fold_scan_deps(docs)
 
 
 async def _load_outdated(db: Any, scan_id: str) -> set[str] | None:
@@ -368,7 +352,7 @@ async def _repair_successors(
             return
         # A failed recomputation leaves an error document, which is never a
         # predecessor either, so the scan behind it is affected as well.
-        after = as_utc(successor["scan_created_at"])
+        after = successor["scan_created_at"]
         after_id = successor["_id"]
     logger.warning(
         "Update-frequency repair stopped after %d hops from scan %s; later deltas may keep a stale predecessor",

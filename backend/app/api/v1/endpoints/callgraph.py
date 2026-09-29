@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -16,9 +17,10 @@ from app.api.v1.helpers.callgraph import (
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
-from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR
+from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR, SCAN_ACTIVE_STATUSES, SCANS_TIP_SORT
 from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
-from app.repositories import CallgraphRepository, ScanRepository
+from app.repositories.callgraphs import CallgraphRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.callgraph import (
     CallgraphResponse,
     CallgraphUploadRequest,
@@ -84,7 +86,7 @@ async def _resolve_scan_id(
     if await scans.find_one({"_id": derived, "project_id": project_id}, {"_id": 1}):
         return derived, True
     newest = await scans.find_one(
-        {"project_id": project_id, "pipeline_id": pipeline_id}, {"_id": 1}, sort=[("created_at", -1)]
+        {"project_id": project_id, "pipeline_id": pipeline_id}, {"_id": 1}, sort=SCANS_TIP_SORT
     )
     return (newest["_id"], True) if newest else (derived, False)
 
@@ -186,11 +188,19 @@ async def upload_callgraph(
     )
 
     if scan_exists:
+        scan_repo = ScanRepository(db)
         # Rescans created before this upload read the callgraph through their lineage root.
-        pending_rescans = await ScanRepository(db).distinct(
+        pending_rescans = await scan_repo.distinct(
             "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
         )
         for target_scan_id in [scan_id, *pending_rescans]:
+            # A queued or running analysis is about to replace the findings, so it applies the callgraph once final.
+            if await scan_repo.update_raw(
+                target_scan_id,
+                {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
+                guard={"status": {"$in": SCAN_ACTIVE_STATUSES}},
+            ):
+                continue
             try:
                 reachability_result = await run_pending_reachability_for_scan(
                     scan_id=target_scan_id,

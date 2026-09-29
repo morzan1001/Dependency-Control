@@ -9,12 +9,14 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import SCAN_STATUS_PENDING, SCAN_USABLE_STATUSES
-from app.core.worker import AnalysisWorkerManager, worker_manager
+from app.core.worker import worker_manager
 from app.models.finding import Finding
-from app.models.project import Project, Scan
+from app.models.project import Project
 from app.models.release import Release
 from app.models.waiver import Waiver
-from app.repositories import ReleaseRepository, ScanRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.releases import ReleaseRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.ingest import BaseIngest
 from app.services.waivers.matching import record_matches, route_waiver, waiver_criteria, waiver_strong_match
 
@@ -27,62 +29,6 @@ def deterministic_scan_id(project_id: str, pipeline_id: int | None, commit_hash:
         return None
     seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))
-
-
-def _lineage_root(scan: dict[str, Any]) -> str:
-    return scan.get("original_scan_id") or str(scan["_id"])
-
-
-def build_rescan(source_scan: dict[str, Any], project_id: str) -> Scan:
-    """A pending re-analysis of the source's SBOMs, rooted at the original scan of its lineage."""
-    return Scan(
-        project_id=project_id,
-        branch=source_scan.get("branch", "unknown"),
-        commit_hash=source_scan.get("commit_hash"),
-        pipeline_id=None,  # Don't collide with ingest
-        pipeline_iid=source_scan.get("pipeline_iid"),
-        project_url=source_scan.get("project_url"),
-        pipeline_url=source_scan.get("pipeline_url"),
-        job_id=source_scan.get("job_id"),
-        job_started_at=source_scan.get("job_started_at"),
-        project_name=source_scan.get("project_name"),
-        commit_message=source_scan.get("commit_message"),
-        commit_tag=source_scan.get("commit_tag"),
-        sbom_refs=source_scan.get("sbom_refs", []),
-        # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
-        scan_type=source_scan.get("scan_type"),
-        status=SCAN_STATUS_PENDING,
-        created_at=datetime.now(timezone.utc),
-        is_rescan=True,
-        original_scan_id=_lineage_root(source_scan),
-    )
-
-
-async def queue_rescan(
-    db: AsyncIOMotorDatabase, source_scan: dict[str, Any], project_id: str, queue: AnalysisWorkerManager
-) -> tuple[Scan, bool]:
-    """Queue a rescan of the lineage (the root shows it pending, its clock restarts); an active one returns unqueued."""
-    scan_repo = ScanRepository(db)
-    root = _lineage_root(source_scan)
-    active = await scan_repo.find_active_rescan(project_id, root)
-    if active:
-        return Scan(**active), False
-
-    rescan = build_rescan(source_scan, project_id)
-    await scan_repo.create(rescan)
-    now = datetime.now(timezone.utc)
-    await scan_repo.update_raw(
-        root,
-        {
-            "$set": {
-                "latest_rescan_id": rescan.id,
-                "latest_run": {"scan_id": rescan.id, "status": SCAN_STATUS_PENDING, "created_at": now},
-                "last_rescanned_at": now,
-            }
-        },
-    )
-    await queue.add_job(rescan.id)
-    return rescan, True
 
 
 class ScanManager:
@@ -125,7 +71,7 @@ class ScanManager:
                 "project_id": str(self.project.id),
                 "pipeline_id": data.pipeline_id,
                 "pipeline_iid": data.pipeline_iid,
-                "status": "pending",
+                "status": SCAN_STATUS_PENDING,
                 "created_at": now,
             },
         }
@@ -143,18 +89,21 @@ class ScanManager:
         # pipeline_id 0 derives nothing and still needs a scan of its own.
         return deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
-    async def find_or_create_scan(self, data: BaseIngest) -> str:
-        """The run's scan id; the upsert lets concurrent scanners of one run share it across pods."""
+    async def find_or_create_scan(self, data: BaseIngest, scan_type: str | None = None) -> str:
+        """The run's scan id; the upsert lets concurrent scanners of one run share it across pods.
+        ``scan_type`` is only ever set, never cleared, since the run's other scanners pass none."""
         scan_id = self.run_scan_id(data)
         update = await self.scan_upsert(data, scan_id, datetime.now(timezone.utc))
         update["$setOnInsert"]["sbom_refs"] = []
+        if scan_type is not None:
+            update["$set"]["scan_type"] = scan_type
         await ScanRepository(self.db).upsert({"_id": scan_id}, update)
         return scan_id
 
     async def _get_waivers(self) -> list[Waiver]:
         """Fetch active waivers for this project, memoized for this request-scoped instance."""
         if self._waivers is None:
-            from app.repositories import WaiverRepository
+            from app.repositories.waivers import WaiverRepository
 
             waiver_repo = WaiverRepository(self.db)
             self._waivers = await waiver_repo.find_active_for_project(str(self.project.id))
@@ -211,23 +160,10 @@ class ScanManager:
 
         return final_findings, waived_count
 
-    async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> str:
-        """Store analysis results in the database using AnalysisResultRepository."""
-        from app.repositories import AnalysisResultRepository
+    async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> None:
+        from app.repositories.analysis_results import AnalysisResultRepository
 
-        result_id = str(uuid.uuid4())
-        result_repo = AnalysisResultRepository(self.db)
-
-        await result_repo.create_raw(
-            {
-                "_id": result_id,
-                "scan_id": scan_id,
-                "analyzer_name": analyzer_name,
-                "result": result,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
-        return result_id
+        await AnalysisResultRepository(self.db).insert_result(scan_id, analyzer_name, result)
 
     async def trigger_aggregation(self, scan_id: str) -> None:
         """Add scan to worker queue for aggregation."""
@@ -248,8 +184,12 @@ class ScanManager:
             },
             "$addToSet": {"received_results": analyzer_name},
         }
+        if analyzer_name == "cbom":
+            # The crypto analyzers read the assets this post replaced, so a run under way must start over.
+            update_ops["$inc"] = {"sbom_generation": 1}
 
         scan_repo = ScanRepository(self.db)
+        await ProjectRepository(self.db).update_raw(str(self.project.id), {"$set": {"last_scan_at": now}})
 
         scan = await self.db.scans.find_one_and_update(
             {"_id": scan_id},
@@ -261,26 +201,14 @@ class ScanManager:
             logger.warning(f"Scan {scan_id} not found during register_result")
             return
 
-        current_status = scan.get("status", "pending")
         should_reaggregate = False
-
-        if current_status in SCAN_USABLE_STATUSES:
+        if scan.get("status") in SCAN_USABLE_STATUSES:
             logger.info(
                 f"Late result from {analyzer_name} for completed scan {scan_id}. "
                 f"Resetting to pending for re-aggregation."
             )
-            await scan_repo.update_raw(
-                scan_id,
-                {"$set": {"status": "pending", "retry_count": 0}},
-            )
-            should_reaggregate = True
+            # Acting on the write rather than on the status read above, so two late results queue one run.
+            should_reaggregate = await scan_repo.reopen_finished(scan_id)
 
         if trigger_analysis or should_reaggregate:
             await self.trigger_aggregation(scan_id)
-
-    async def update_project_last_scan(self) -> None:
-        """Update the project's last_scan_at timestamp via repository."""
-        from app.repositories import ProjectRepository
-
-        project_repo = ProjectRepository(self.db)
-        await project_repo.update_raw(str(self.project.id), {"$set": {"last_scan_at": datetime.now(timezone.utc)}})

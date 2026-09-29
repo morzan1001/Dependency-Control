@@ -1,5 +1,5 @@
 import re
-from typing import cast
+from typing import Literal, cast
 
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, Field, field_validator
@@ -104,8 +104,7 @@ class AdvisoryPackage(BaseModel):
 
 
 class BroadcastRequest(BaseModel):
-    type: str = Field(..., description="Type of message: 'general' or 'advisory'")
-    target_type: str = Field(..., description="Target audience: 'global', 'teams', 'advisory'")
+    target_type: Literal["global", "teams", "advisory"] = Field(..., description="Target audience")
     target_teams: list[str] | None = Field(None, description="List of Team IDs if target_type is 'teams'")
     channels: list[str] | None = Field(None, description="Channels to send to (email, slack, mattermost)")
 
@@ -120,7 +119,6 @@ class BroadcastRequest(BaseModel):
 class BroadcastResult(BaseModel):
     recipient_count: int
     project_count: int = 0
-    unique_user_count: int = 0
     uncomparable_versions: list[str] = Field(
         default_factory=list,
         description="Matched dependencies whose version could not be compared with the max version; "
@@ -137,7 +135,6 @@ class BroadcastHistoryItem(BaseModel):
     created_by: str | None = None
     recipient_count: int
     project_count: int
-    unique_user_count: int = 0
     teams: list[str] | None = None
 
 

@@ -21,7 +21,7 @@ class WebhookDeliveriesRepository:
         status_code: int | None = None,
         error: str | None = None,
         retry_count: int = 0,
-    ) -> str:
+    ) -> None:
         log_entry = {
             "_id": str(uuid.uuid4()),
             "webhook_id": webhook_id,
@@ -35,4 +35,3 @@ class WebhookDeliveriesRepository:
         }
 
         await self.collection.insert_one(log_entry)
-        return str(log_entry["_id"])

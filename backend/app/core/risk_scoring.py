@@ -7,6 +7,7 @@ from app.core.constants import (
     EPSS_MEDIUM_THRESHOLD,
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_SYMBOL,
+    ExploitMaturity,
 )
 from app.core.epss import bucket_epss
 
@@ -89,7 +90,7 @@ def reachability_risk_modifier(is_reachable: bool | None, analysis_level: str | 
 ACTIVELY_EXPLOITED_MATURITY = ("active", "weaponized")
 
 
-def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: float | None) -> str:
+def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: float | None) -> ExploitMaturity:
     """Maturity level: weaponized > active > high/medium/low (EPSS) > unknown."""
     if kev_ransomware:
         return "weaponized"

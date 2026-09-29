@@ -202,6 +202,8 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const { data: teams } = useTeams();
   const { data: branches } = useProjectBranches(projectId);
   const { data: appConfig } = useAppConfig();
+  // A project without its own schedule runs on the global one, so that is what it shows.
+  const effectiveRescanEnabled = (rescanEnabled ?? appConfig?.global_rescan_enabled) === true
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
 
   const { data: gitlabInstances } = useGitLabInstances({ active_only: true });
@@ -400,6 +402,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                                     id="retention"
                                     type="number"
                                     min="1"
+                                    max="36500"
                                     value={retentionDays}
                                     onChange={(e) => setRetentionDays(Number.parseInt(e.target.value) || 90)}
                                 />
@@ -440,25 +443,26 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                         <div className="border rounded-md p-4 space-y-4">
                             <div className="flex items-center justify-between">
                                 <div className="space-y-0.5">
-                                    <Label className="text-base">Enable Re-scanning</Label>
+                                    <Label htmlFor="rescanEnabled" className="text-base">Enable Re-scanning</Label>
                                     <p className="text-sm text-muted-foreground">
                                         Automatically re-scan the latest SBOMs periodically.
                                     </p>
                                 </div>
                                 <Switch
-                                    checked={rescanEnabled === true}
+                                    id="rescanEnabled"
+                                    checked={effectiveRescanEnabled}
                                     onCheckedChange={(checked) => setRescanEnabled(checked)}
                                 />
                             </div>
                             
-                            {rescanEnabled === true && (
+                            {effectiveRescanEnabled && (
                                 <div className="grid gap-2">
                                     <Label htmlFor="rescanInterval">Interval (Hours)</Label>
                                     <Input 
                                         id="rescanInterval" 
                                         type="number" 
                                         min="1"
-                                        value={rescanInterval || 24} 
+                                        value={rescanInterval ?? appConfig?.global_rescan_interval ?? 24} 
                                         onChange={(e) => setRescanInterval(Number.parseInt(e.target.value) || 24)} 
                                     />
                                     <p className="text-xs text-muted-foreground">

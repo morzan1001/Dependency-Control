@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.core.constants import ANALYSIS_MAX_RETRIES, SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.models.project import Scan
 from app.services.analysis.engine import run_analysis
 
 _PROJECT_ID = "test-project-id"
+_WORKER = "pod-a/worker-0"
 _FILE_ID_OLD = "69d5332257c8763c8d8c82d7"
 _FILE_ID_NEW = "69d5332357c8763c8d8c82de"
 
@@ -55,14 +57,16 @@ def _gridfs_patched(monkeypatch):
         return stream
 
     fs.open_download_stream = AsyncMock(side_effect=_open)
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     return fs
 
 
 async def _ingest(db, file_id: str) -> str:
-    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref(file_id)], status="processing")
+    scan = Scan(
+        project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref(file_id)], status="processing", worker_id=_WORKER
+    )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
-    assert await run_analysis(scan.id, [_gridfs_ref(file_id)], [], db) is True
+    assert await run_analysis(scan.id, [_gridfs_ref(file_id)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
     return scan.id
 
 
@@ -80,8 +84,7 @@ async def test_ingest_records_delta_for_each_scan(db, _gridfs_patched):
     assert delta is not None, "the ingest path never wrote a delta for the second scan"
     assert delta["prev_scan_id"] == first
     assert delta["is_baseline"] is False
-    assert delta["updates"]["minor"] == 1
-    assert delta["total_updates"] == 1
+    assert delta["updates"] == {"patch": 0, "minor": 1, "major": 0, "unknown": 0, "downgrade": 0}
     assert [s["n"] for s in delta["updates_sample"]] == ["requests"]
 
     # No analyzer ran, so the scan has no outdated measurement to store.
@@ -90,19 +93,21 @@ async def test_ingest_records_delta_for_each_scan(db, _gridfs_patched):
 
 
 @pytest.mark.asyncio
-async def test_re_ingest_that_fails_drops_the_delta_of_the_scan(db, _gridfs_patched):
+async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_scan_and_its_delta(db, _gridfs_patched):
     first = await _ingest(db, _FILE_ID_OLD)
     second = await _ingest(db, _FILE_ID_NEW)
-    assert (await db.scan_update_deltas.find_one({"_id": second}))["prev_scan_id"] == first
 
-    await db.scans.update_one({"_id": first}, {"$set": {"status": "processing"}})
-    assert await run_analysis(first, [_gridfs_ref("69d5332457c8763c8d8c82df")], [], db) is True
-    assert (await db.scans.find_one({"_id": first}))["status"] == "failed"
+    await db.scans.update_one(
+        {"_id": first}, {"$set": {"status": "processing", "retry_count": ANALYSIS_MAX_RETRIES - 1}}
+    )
+    assert (
+        await run_analysis(first, [_gridfs_ref("69d5332457c8763c8d8c82df")], [], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
 
-    assert await db.scan_update_deltas.find_one({"_id": first}) is None
+    assert await db.scan_update_deltas.find_one({"_id": first}) is not None
     successor = await db.scan_update_deltas.find_one({"_id": second})
-    assert successor["is_baseline"] is True, "the successor still compares against a scan that failed"
-    assert successor["total_updates"] == 0
+    assert (successor["prev_scan_id"], successor["updates"]["minor"]) == (first, 1)
 
 
 @pytest.mark.asyncio
@@ -111,10 +116,16 @@ async def test_scan_still_completes_when_the_delta_write_fails(db, _gridfs_patch
     failing_write = AsyncMock(side_effect=RuntimeError("no space left on device"))
     db.scan_update_deltas.update_one = failing_write
 
-    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref(_FILE_ID_OLD)], status="processing")
+    scan = Scan(
+        project_id=_PROJECT_ID,
+        branch="main",
+        sbom_refs=[_gridfs_ref(_FILE_ID_OLD)],
+        status="processing",
+        worker_id=_WORKER,
+    )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
 
-    assert await run_analysis(scan.id, [_gridfs_ref(_FILE_ID_OLD)], [], db) is True
+    assert await run_analysis(scan.id, [_gridfs_ref(_FILE_ID_OLD)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
     failing_write.assert_awaited()
     stored = await db.scans.find_one({"_id": scan.id})
     assert stored["status"] == "completed"

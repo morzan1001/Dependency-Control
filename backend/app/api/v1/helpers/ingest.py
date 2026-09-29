@@ -31,8 +31,6 @@ async def process_findings_ingest(
 
     await manager.register_result(scan_id, analyzer_name, trigger_analysis=False)
 
-    await manager.update_project_last_scan()
-
     return {
         "scan_id": scan_id,
         "findings_count": len(final_findings),

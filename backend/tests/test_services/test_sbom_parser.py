@@ -5,9 +5,9 @@ import re
 import pytest
 
 from app.schemas.sbom import ParsedDependency, SBOMFormat
+from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
 from app.services.sbom_parser import (
     SBOMParser,
-    extract_license_from_url,
     is_url,
     merge_duplicate_dependencies,
     parse_sbom,
@@ -40,7 +40,6 @@ class TestIsUrl:
 
 class TestExtractLicenseFromUrl:
     def test_mit_license_org(self):
-        # mit-license.org pattern matches because url.lower() keeps it lowercase
         assert extract_license_from_url("https://mit-license.org") == "MIT"
 
     def test_gpl3_url(self):
@@ -56,9 +55,8 @@ class TestExtractLicenseFromUrl:
     def test_none(self):
         assert extract_license_from_url(None) is None  # type: ignore[arg-type]  # Testing None handling
 
-    def test_case_sensitive_patterns_not_matching_uppercase(self):
-        # url.lower() converts MIT to mit, but the pattern has uppercase MIT, so it won't match.
-        assert extract_license_from_url("https://opensource.org/licenses/MIT") is None
+    def test_an_uppercase_url_segment_still_matches(self):
+        assert extract_license_from_url("https://opensource.org/licenses/MIT") == "MIT"
 
     def test_unlicense_org(self):
         assert extract_license_from_url("https://unlicense.org") == "Unlicense"
@@ -2393,3 +2391,18 @@ class TestCycloneDXParentRefs:
             "Circular dependencies detected (2 packages)",
             "Deep dependency chains detected (max depth: 4)",
         ]
+
+
+class TestComponentSource:
+    @pytest.mark.parametrize(
+        ("purl", "pkg_type", "layer_digest", "scan_source", "expected"),
+        [
+            pytest.param("pkg:deb/debian/libssl@1.0", "library", None, "directory", "directory", id="deb-dir-scan"),
+            pytest.param("pkg:deb/debian/libssl@1.0", "library", "sha256:ab", None, "image", id="deb-in-a-layer"),
+            pytest.param("pkg:rpm/redhat/bash@5", "library", None, "image", "image", id="rpm-image-scan"),
+            pytest.param(None, "APK", None, "image", "image", id="declared-os-type"),
+            pytest.param("pkg:npm/lodash@4", "deb", None, "image", "application", id="purl-type-wins"),
+        ],
+    )
+    def test_os_packages_are_image_only_in_an_image_context(self, purl, pkg_type, layer_digest, scan_source, expected):
+        assert SBOMParser()._determine_component_source(purl, pkg_type, layer_digest, scan_source) == expected

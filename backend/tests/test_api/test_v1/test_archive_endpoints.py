@@ -86,8 +86,8 @@ class TestListArchives:
         ]
 
         mock_repo = MagicMock()
-        mock_repo.count_by_project = AsyncMock(return_value=2)
-        mock_repo.find_by_project = AsyncMock(return_value=archives)
+        mock_repo.count_all = AsyncMock(return_value=2)
+        mock_repo.find_all = AsyncMock(return_value=archives)
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -124,8 +124,8 @@ class TestListArchives:
         ]
 
         mock_repo = MagicMock()
-        mock_repo.count_by_project = AsyncMock(return_value=1)
-        mock_repo.find_by_project = AsyncMock(return_value=archives)
+        mock_repo.count_all = AsyncMock(return_value=1)
+        mock_repo.find_all = AsyncMock(return_value=archives)
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -153,8 +153,8 @@ class TestListArchives:
         from app.api.v1.endpoints.archives import list_archives
 
         mock_repo = MagicMock()
-        mock_repo.count_by_project = AsyncMock(return_value=0)
-        mock_repo.find_by_project = AsyncMock(return_value=[])
+        mock_repo.count_all = AsyncMock(return_value=0)
+        mock_repo.find_all = AsyncMock(return_value=[])
 
         date_from = datetime(2025, 1, 1, tzinfo=timezone.utc)
         date_to = datetime(2025, 6, 1, tzinfo=timezone.utc)
@@ -177,9 +177,9 @@ class TestListArchives:
                 )
             )
 
-        count_kwargs = mock_repo.count_by_project.call_args
-        assert count_kwargs[1]["branch"] == "develop" or count_kwargs[0][1] == "develop"
-        find_kwargs = mock_repo.find_by_project.call_args
+        count_kwargs = mock_repo.count_all.call_args
+        assert count_kwargs.kwargs["branch"] == "develop"
+        find_kwargs = mock_repo.find_all.call_args
         assert "branch" in str(find_kwargs)
 
     def test_page_number_skips_whole_pages_starting_at_zero(self, admin_user):
@@ -187,8 +187,8 @@ class TestListArchives:
         from app.api.v1.endpoints.archives import list_archives
 
         mock_repo = MagicMock()
-        mock_repo.count_by_project = AsyncMock(return_value=0)
-        mock_repo.find_by_project = AsyncMock(return_value=[])
+        mock_repo.count_all = AsyncMock(return_value=0)
+        mock_repo.find_all = AsyncMock(return_value=[])
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -205,7 +205,7 @@ class TestListArchives:
                         size=5,
                     )
                 )
-                assert mock_repo.find_by_project.call_args.kwargs["skip"] == expected_skip
+                assert mock_repo.find_all.call_args.kwargs["skip"] == expected_skip
 
     def test_raises_501_when_s3_not_configured(self, admin_user):
         from app.api.v1.endpoints.archives import list_archives
@@ -223,8 +223,8 @@ class TestListArchives:
         from app.api.v1.endpoints.archives import list_archives
 
         mock_repo = MagicMock()
-        mock_repo.count_by_project = AsyncMock(return_value=0)
-        mock_repo.find_by_project = AsyncMock(return_value=[])
+        mock_repo.count_all = AsyncMock(return_value=0)
+        mock_repo.find_all = AsyncMock(return_value=[])
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -249,8 +249,8 @@ class TestListArchives:
         from app.api.v1.endpoints.archives import list_archives
 
         mock_repo = MagicMock()
-        mock_repo.count_by_project = AsyncMock(return_value=45)
-        mock_repo.find_by_project = AsyncMock(return_value=[])
+        mock_repo.count_all = AsyncMock(return_value=45)
+        mock_repo.find_all = AsyncMock(return_value=[])
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -490,8 +490,7 @@ class TestPinScan:
         from app.api.v1.endpoints.archives import pin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1", "project_id": "proj-1"})
-        mock_db.scans.update_one = AsyncMock()
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -507,13 +506,15 @@ class TestPinScan:
 
         assert result.scan_id == "scan-1"
         assert result.pinned is True
-        mock_db.scans.update_one.assert_called_once_with({"_id": "scan-1"}, {"$set": {"pinned": True}})
+        mock_db.scans.update_one.assert_called_once_with(
+            {"_id": "scan-1", "project_id": "proj-1"}, {"$set": {"pinned": True}}
+        )
 
     def test_raises_404_when_scan_not_found(self, admin_user):
         from app.api.v1.endpoints.archives import pin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value=None)
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=0))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -554,8 +555,7 @@ class TestUnpinScan:
         from app.api.v1.endpoints.archives import unpin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1", "project_id": "proj-1"})
-        mock_db.scans.update_one = AsyncMock()
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -571,13 +571,15 @@ class TestUnpinScan:
 
         assert result.scan_id == "scan-1"
         assert result.pinned is False
-        mock_db.scans.update_one.assert_called_once_with({"_id": "scan-1"}, {"$set": {"pinned": False}})
+        mock_db.scans.update_one.assert_called_once_with(
+            {"_id": "scan-1", "project_id": "proj-1"}, {"$set": {"pinned": False}}
+        )
 
     def test_raises_404_when_scan_not_found(self, admin_user):
         from app.api.v1.endpoints.archives import unpin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value=None)
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=0))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
@@ -613,19 +615,9 @@ class TestListAllArchives:
         mock_repo.count_all = AsyncMock(return_value=2)
         mock_repo.find_all = AsyncMock(return_value=archives)
 
-        mock_db = MagicMock()
-        project_docs = [
-            {"_id": "proj-1", "name": "Project Alpha"},
-            {"_id": "proj-2", "name": "Project Beta"},
-        ]
-
-        async def async_iter():
-            for doc in project_docs:
-                yield doc
-
-        mock_cursor = MagicMock()
-        mock_cursor.__aiter__ = lambda self: async_iter()
-        mock_db.projects.find = MagicMock(return_value=mock_cursor)
+        db = FakeDatabase()
+        asyncio.run(db.projects.insert_one({"_id": "proj-1", "name": "Project Alpha"}))
+        asyncio.run(db.projects.insert_one({"_id": "proj-2", "name": "Project Beta"}))
 
         with (
             patch(f"{MODULE}.is_archive_enabled", return_value=True),
@@ -634,7 +626,7 @@ class TestListAllArchives:
             result = asyncio.run(
                 list_all_archives(
                     current_user=admin_user,
-                    db=mock_db,
+                    db=db,
                     page=1,
                     size=20,
                 )
@@ -889,8 +881,7 @@ class TestPinEmitsAuditLog:
         from app.api.v1.endpoints.archives import pin_scan
 
         mock_db = MagicMock()
-        mock_db.scans.find_one = AsyncMock(return_value={"_id": "scan-1", "project_id": "proj-1"})
-        mock_db.scans.update_one = AsyncMock()
+        mock_db.scans.update_one = AsyncMock(return_value=MagicMock(matched_count=1))
 
         with (
             patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),

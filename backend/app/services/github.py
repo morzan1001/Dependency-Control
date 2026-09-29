@@ -29,7 +29,8 @@ from app.core.log_utils import sanitize_for_log
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
 from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of
-from app.repositories import TeamRepository, UserRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.repositories.teams import MemberSubset
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -76,6 +77,12 @@ _WRITE_PERMISSIONS = ("push", "maintain", "admin")
 _AUTO_TEAM_NAME_PREFIX = "GitHub Team:"
 
 _org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+
+
+def split_repo_path(path: str | None) -> tuple[str, str] | None:
+    """``owner/repo`` as its two parts, or None unless both are present."""
+    owner, _, repo = (path or "").partition("/")
+    return (owner, repo) if owner and repo else None
 
 
 def _org_walk_gate() -> asyncio.Semaphore:

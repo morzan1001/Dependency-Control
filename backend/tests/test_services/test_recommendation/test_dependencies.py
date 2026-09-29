@@ -11,11 +11,12 @@ from app.services.recommendation.dependencies import (
 )
 
 
-def _dep(name="requests", version="2.28.0", latest_version=None, direct=True, scope=None):
+def _dep(name="requests", version="2.28.0", latest_version=None, direct=True, scope=None, **extra):
     d = {
         "name": name,
         "version": version,
         "direct": direct,
+        **extra,
     }
     if latest_version is not None:
         d["latest_version"] = latest_version
@@ -80,7 +81,7 @@ class TestAnalyzeOutdatedDependenciesDirectOutdated:
 
 
 class TestAnalyzeOutdatedDependenciesTransitive:
-    """Transitive outdated deps flagged only if above SIGNIFICANT_FRAGMENTATION_THRESHOLD."""
+    """Transitive outdated deps flagged only if above _OUTDATED_TRANSITIVE_CARD_MIN."""
 
     def test_few_transitive_not_flagged(self):
         deps = [
@@ -154,6 +155,22 @@ class TestAnalyzeVersionFragmentationSignificant:
         assert any("lodash" in c and "3 versions" in c for c in rec.affected_components)
 
 
+class TestAnalyzeVersionFragmentationCuts:
+    @staticmethod
+    def _fragmented(packages: int, versions: int) -> list:
+        return [_dep(name=f"pkg-{p}", version=f"1.0.{v}") for p in range(packages) for v in range(versions)]
+
+    @pytest.mark.parametrize(("packages", "priority"), [(3, Priority.LOW), (4, Priority.MEDIUM)])
+    def test_more_than_three_fragmented_packages_raise_the_priority(self, packages, priority):
+        (rec,) = analyze_version_fragmentation(self._fragmented(packages, 3))
+        assert rec.priority == priority
+
+    @pytest.mark.parametrize(("versions", "high", "medium"), [(4, 0, 1), (5, 1, 0)])
+    def test_five_versions_count_as_heavy_fragmentation(self, versions, high, medium):
+        (rec,) = analyze_version_fragmentation(self._fragmented(1, versions))
+        assert (rec.impact["high"], rec.impact["medium"]) == (high, medium)
+
+
 class TestAnalyzeVersionFragmentationBelowThreshold:
     def test_two_versions_no_recommendation(self):
         deps = [
@@ -201,28 +218,57 @@ class TestAnalyzeDevInProductionFlagged:
             ("prettier", "3.0.0"),
             ("@types/node", "20.0.0"),
             ("cypress", "13.0.0"),
+            ("@playwright/test", "1.47.0"),
+            ("@jest/globals", "29.0.0"),
+            ("@cypress/webpack-preprocessor", "6.0.0"),
+            ("@vitest/coverage-v8", "2.1.0"),
         ],
     )
     def test_a_dev_package_outside_a_dev_scope_is_flagged(self, name, version):
-        rec = analyze_dev_in_production([_dep(name=name, version=version)])
+        rec = analyze_dev_in_production([_dep(name=name, version=version, type="npm")])
 
         assert len(rec) == 1
         assert rec[0].type == RecommendationType.DEV_IN_PRODUCTION
 
     def test_multiple_dev_deps_single_recommendation(self):
         deps = [
-            _dep(name="jest", version="29.0.0"),
-            _dep(name="eslint", version="8.0.0"),
+            _dep(name="jest", version="29.0.0", type="npm"),
+            _dep(name="eslint", version="8.0.0", type="npm"),
         ]
         result = analyze_dev_in_production(deps)
         assert len(result) == 1
         assert result[0].impact["total"] == 2
 
+    def test_a_scoped_package_split_into_group_and_name_is_flagged(self):
+        # cdxgen writes @types/node as group "@types", name "node".
+        rec = analyze_dev_in_production([_dep(name="node", group="@types", version="20.0.0", type="npm")])
+
+        assert rec[0].action["packages"] == ["@types/node"]
+
 
 class TestAnalyzeDevInProductionNotFlagged:
     @pytest.mark.parametrize("scope", ["dev", "development", "test"])
     def test_a_dev_package_inside_a_dev_scope_is_not_flagged(self, scope):
-        assert analyze_dev_in_production([_dep(name="jest", version="29.0.0", scope=scope)]) == []
+        assert analyze_dev_in_production([_dep(name="jest", version="29.0.0", scope=scope, type="npm")]) == []
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "langchain",
+            "@langchain/openai",
+            "keychain",
+            "blockchain",
+            "chainlit",
+            "toolchain",
+            "majestic",
+            "eslint-scope",
+        ],
+    )
+    def test_a_runtime_package_that_merely_contains_a_dev_tool_name_is_not_flagged(self, name):
+        assert analyze_dev_in_production([_dep(name=name, version="1.0.0", type="npm")]) == []
+
+    def test_a_package_outside_npm_is_not_checked(self):
+        assert analyze_dev_in_production([_dep(name="pytest-mocha", version="1.0.0", type="pypi")]) == []
 
     def test_a_runtime_package_is_not_flagged(self):
         assert analyze_dev_in_production([_dep(name="express", version="4.18.0")]) == []

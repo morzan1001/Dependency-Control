@@ -1,19 +1,10 @@
 """Shared utilities for finding-related operations."""
 
-from typing import Any
-
-CATEGORY_TYPE_MAP: dict[str, Any] = {
-    "security": {"$in": ["vulnerability", "malware", "typosquatting"]},
-    "secret": "secret",
-    "sast": {"$in": ["sast", "iac"]},
-    "compliance": {"$in": ["license", "eol"]},
-    "quality": {"$in": ["outdated", "quality"]},
-}
+from app.models.finding import CRYPTO_FINDING_TYPES
 
 TYPE_CATEGORY_MAP: dict[str, str] = {
     "vulnerability": "security",
     "malware": "security",
-    "typosquatting": "security",
     "secret": "secret",
     "sast": "sast",
     "iac": "sast",
@@ -21,12 +12,17 @@ TYPE_CATEGORY_MAP: dict[str, str] = {
     "eol": "compliance",
     "outdated": "quality",
     "quality": "quality",
+    # crypto_key_management comes from SAST rules but belongs with the other crypto findings.
+    **dict.fromkeys(sorted(CRYPTO_FINDING_TYPES), "other"),
+    "system_warning": "other",
+    "other": "other",
 }
 
 
-def get_category_type_filter(category: str) -> Any | None:
+def get_category_type_filter(category: str) -> dict[str, list[str]] | None:
     """Get the MongoDB 'type' filter for a finding category, or None if unknown."""
-    return CATEGORY_TYPE_MAP.get(category)
+    types = [finding_type for finding_type, owner in TYPE_CATEGORY_MAP.items() if owner == category]
+    return {"$in": types} if types else None
 
 
 def get_category_for_type(finding_type: str) -> str:

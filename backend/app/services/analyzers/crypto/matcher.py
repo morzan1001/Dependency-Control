@@ -1,17 +1,10 @@
 """CryptoRule -> CryptoAsset matcher. AND semantics; glob matching is case-insensitive."""
 
 from fnmatch import fnmatchcase
-from typing import Any
 
 from app.models.crypto_asset import CryptoAsset
-from app.schemas.cbom import CryptoPrimitive
+from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
 from app.schemas.crypto_policy import CryptoRule
-
-_QUANTUM_VULNERABLE_PRIMITIVES = {
-    CryptoPrimitive.PKE,
-    CryptoPrimitive.SIGNATURE,
-    CryptoPrimitive.KEM,
-}
 
 
 def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
@@ -31,9 +24,7 @@ def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
 def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
     """True when the asset is within the rule's subject scope (primitive/name/curve/
     protocol/quantum class), ignoring threshold criteria; used for compliance applicability."""
-    if rule.match_primitive is not None and _coerce_primitive(asset.primitive) != _coerce_primitive(
-        rule.match_primitive
-    ):
+    if rule.match_primitive is not None and asset.primitive != rule.match_primitive:
         return False
 
     if rule.match_name_patterns and not _name_or_variant_matches(asset, rule.match_name_patterns):
@@ -48,20 +39,9 @@ def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
     # match_name_patterns is validator-guaranteed non-empty here, so only the
     # primitive gate remains.
     if rule.quantum_vulnerable is True:
-        return _coerce_primitive(asset.primitive) in _QUANTUM_VULNERABLE_PRIMITIVES
+        return asset.primitive in QUANTUM_VULNERABLE_PRIMITIVES
 
     return True
-
-
-def _coerce_primitive(v: Any) -> CryptoPrimitive | None:
-    if v is None:
-        return None
-    if isinstance(v, CryptoPrimitive):
-        return v
-    try:
-        return CryptoPrimitive(v)
-    except ValueError:
-        return None
 
 
 def _name_or_variant_matches(asset: CryptoAsset, patterns: list[str]) -> bool:

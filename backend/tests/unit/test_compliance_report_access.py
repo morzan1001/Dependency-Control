@@ -39,7 +39,7 @@ async def _stored_report(db, *, scope: str, scope_id: str | None, requested_by: 
         artifact_gridfs_id="65f000000000000000000001",
         artifact_filename="report.json",
     )
-    await ComplianceReportRepository(db).insert(report)
+    await ComplianceReportRepository(db).create(report)
     return report.id
 
 

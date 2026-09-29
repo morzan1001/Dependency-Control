@@ -1,10 +1,12 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK, WaiverScope, WaiverStatus
+from app.core.constants import WAIVER_SCOPE_FINDING, WAIVER_STATUS_ACCEPTED_RISK, WaiverScope, WaiverStatus
 from app.models.finding import FindingType
 from app.models.types import PyObjectId
+from app.models.waiver import is_waiver_active
+from app.schemas._not_null import reject_null
 
 
 class WaiverCreate(BaseModel):
@@ -21,12 +23,16 @@ class WaiverCreate(BaseModel):
     package_version: str | None = None
     finding_type: FindingType | None = None
     scope: WaiverScope = Field(
-        "finding",
+        WAIVER_SCOPE_FINDING,
         description="'finding' = exact match, 'file' = same rule in same file, 'rule' = same rule project-wide",
     )
     rule_id: str | None = Field(
         None,
         description="Scanner rule ID (e.g. 'javascript_lang_insufficiently_random_values'). Auto-populated from finding_id.",
+    )
+    scan_id: str | None = Field(
+        None,
+        description="Scan the waiver is written from; a finding-scope waiver is validated against it instead of the head build. Not stored.",
     )
     reason: str
     status: WaiverStatus = WAIVER_STATUS_ACCEPTED_RISK
@@ -52,20 +58,32 @@ class WaiverUpdate(BaseModel):
     expiration_date: datetime | None = None
     status: WaiverStatus | None = None
 
-    @field_validator("reason", "status")
-    @classmethod
-    def reject_null(cls, v: str | None) -> str:
-        """Left out keeps the stored value; an explicit null would store a waiver no reader can load."""
-        if v is None:
-            raise ValueError("may be omitted but not null")
-        return v
+    _not_null = field_validator("reason", "status")(reject_null)
 
 
-class WaiverResponse(WaiverCreate):
+class WaiverResponse(BaseModel):
+    """Lenient on purpose: a stored legacy status or scope must not fail a whole listing."""
+
     id: PyObjectId = Field(validation_alias="_id")
+    project_id: str | None = None
+    finding_id: str | None = None
+    vulnerability_id: str | None = None
+    package_name: str | None = None
+    package_version: str | None = None
+    finding_type: FindingType | None = None
+    scope: str = WAIVER_SCOPE_FINDING
+    rule_id: str | None = None
+    reason: str
+    status: str
+    expiration_date: datetime | None = None
     created_by: str
     created_at: datetime
     last_eval_scan_id: str | None = None
     last_match_count: int | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def is_active(self) -> bool:
+        return is_waiver_active(self.expiration_date)

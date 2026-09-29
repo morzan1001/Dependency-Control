@@ -16,6 +16,19 @@ class LicenseCategory(str, Enum):
     UNKNOWN = "unknown"
 
 
+# Higher = more restrictive; an unclassified license ranks below permissive. Keyed by the str-valued
+# enum, so the category string stored in finding details looks it up directly.
+CATEGORY_RESTRICTIVENESS: dict[str, int] = {
+    LicenseCategory.UNKNOWN: -1,
+    LicenseCategory.PERMISSIVE: 0,
+    LicenseCategory.PUBLIC_DOMAIN: 0,
+    LicenseCategory.WEAK_COPYLEFT: 1,
+    LicenseCategory.STRONG_COPYLEFT: 2,
+    LicenseCategory.NETWORK_COPYLEFT: 3,
+    LicenseCategory.PROPRIETARY: 4,
+}
+
+
 class DistributionModel(str, Enum):
     """How the project is distributed."""
 

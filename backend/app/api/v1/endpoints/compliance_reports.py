@@ -17,13 +17,14 @@ from app.api.router import CustomAPIRouter
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CONCURRENT_COMPLIANCE_REPORTS,
+    NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED,
     WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
+    ScopeName,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.schemas.analytics import ScopeKind
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
@@ -37,7 +38,7 @@ _REPORT_NOT_FOUND = "Report not found"
 
 
 class ReportRequest(BaseModel):
-    scope: ScopeKind
+    scope: ScopeName
     scope_id: str | None = None
     framework: ReportFramework
     format: ReportFormat
@@ -88,7 +89,7 @@ async def create_report(
         requested_at=datetime.now(timezone.utc),
         comment=req.comment,
     )
-    await repo.insert(report)
+    await repo.create(report)
 
     background_tasks.add_task(_run_and_webhook, db, report, current_user)
     return ReportAck(report_id=report.id, status=_status_str(report.status))
@@ -109,7 +110,7 @@ async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: Com
 async def list_reports(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    scope: ScopeKind | None = Query(None),
+    scope: ScopeName | None = Query(None),
     scope_id: str | None = None,
     framework: ReportFramework | None = None,
     status: ReportStatus | None = None,
@@ -137,7 +138,7 @@ async def get_report(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    r = await ComplianceReportRepository(db).get(report_id)
+    r = await ComplianceReportRepository(db).get_by_id(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     if not await _user_can_see_report(db, current_user, r):
@@ -159,7 +160,7 @@ async def download_report(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> StreamingResponse:
-    r = await ComplianceReportRepository(db).get(report_id)
+    r = await ComplianceReportRepository(db).get_by_id(report_id)
     if r is None or not await _user_can_see_report(db, current_user, r):
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     status_val = _status_str(r.status)
@@ -210,16 +211,14 @@ async def delete_report(
     db: DatabaseDep,
 ) -> None:
     repo = ComplianceReportRepository(db)
-    r = await repo.get(report_id)
+    r = await repo.get_by_id(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
-    if r.requested_by != current_user.id:
-        perms: frozenset[str] = getattr(current_user, "permissions", frozenset()) or frozenset()
-        if "system:manage" not in perms:
-            raise HTTPException(
-                status_code=403,
-                detail="Cannot delete a report you did not request",
-            )
+    if r.requested_by != current_user.id and not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot delete a report you did not request",
+        )
     if r.artifact_gridfs_id:
         bucket = AsyncIOMotorGridFSBucket(db)
         try:
@@ -241,7 +240,7 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
 
     from app.services.webhooks import webhook_service
 
-    fresh = await ComplianceReportRepository(db).get(report.id)
+    fresh = await ComplianceReportRepository(db).get_by_id(report.id)
     fresh_status = None
     fresh_summary: dict = {}
     if fresh is not None:
@@ -272,7 +271,7 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
         await safe_notify_project_event(
             db,
             project_id=report.scope_id,
-            event_type="compliance_report_generated",
+            event_type=NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED,
             subject=f"Compliance report ready ({_status_str(report.framework)})",
             message=f"A new {_status_str(report.framework)} compliance report ({_status_str(report.format)}) is available for this project.",
             context="compliance_reports",

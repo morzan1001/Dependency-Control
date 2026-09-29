@@ -5,13 +5,13 @@ from typing import Any
 
 from pydantic import Field
 
+from app.core.constants import ScopeName
 from app.models.types import MongoDocument
-from app.schemas.analytics import ScopeKind
 from app.schemas.compliance import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
 
 
 class ComplianceReport(MongoDocument):
-    scope: ScopeKind
+    scope: ScopeName
     scope_id: str | None = None
     framework: ReportFramework
     format: ReportFormat

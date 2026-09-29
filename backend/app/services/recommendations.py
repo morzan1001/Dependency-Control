@@ -5,6 +5,7 @@ from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation
 from app.services.recommendation import (
@@ -210,9 +211,7 @@ class RecommendationEngine:
         # 6b. Process CRYPTO issues (weak algorithms, key sizes, protocols,
         # cipher suites, certificate lifecycle, quantum-vulnerable primitives,
         # and key-management SAST hits).
-        crypto_findings = [
-            f for ft, group in findings_by_type.items() if ft in crypto_recs.CRYPTO_FINDING_TYPES for f in group
-        ]
+        crypto_findings = [f for ft, group in findings_by_type.items() if ft in CRYPTO_FINDING_TYPES for f in group]
         _safe_extend(
             recommendations,
             lambda: crypto_recs.process_crypto(crypto_findings),

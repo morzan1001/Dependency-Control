@@ -37,7 +37,7 @@ def _run_enrichment(monkeypatch, findings, enrich):
             scan_id="scan-1",
             project_id="proj-1",
             db=MagicMock(),
-            result_repo=SimpleNamespace(collection=SimpleNamespace(update_one=AsyncMock())),  # type: ignore[arg-type]
+            result_repo=SimpleNamespace(replace_result=AsyncMock()),  # type: ignore[arg-type]
             scan_repo=SimpleNamespace(update_raw=AsyncMock()),  # type: ignore[arg-type]
             results_summary=[],
         )

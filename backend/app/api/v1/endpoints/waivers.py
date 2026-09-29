@@ -16,15 +16,18 @@ from app.api.v1.helpers import (
     parse_sort_direction,
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
-from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR
+from app.api.v1.helpers.sorting import SortOrderQuery
+from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR, WAIVER_SCOPE_FILE, WAIVER_SCOPE_FINDING
 from app.core.permissions import Permissions, has_permission
 from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.match_signature import MatchSignature
+from app.models.project import Project
 from app.models.user import User
-from app.repositories.base import and_filters
 from app.models.waiver import Waiver
-from app.repositories import ScanRepository, WaiverRepository
-from app.repositories.waivers import non_expired_waiver_filter
+from app.repositories.base import and_filters
+from app.repositories.findings import FindingRepository
+from app.repositories.scans import ScanRepository
+from app.repositories.waivers import WaiverRepository, non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
 from app.services.normalizers.utils import FindingIdPrefix
@@ -40,7 +43,7 @@ def _invalidate_analytics_cache() -> None:
 
 _MSG_NO_CRITERIA = "A waiver names a finding, package, type, rule or vulnerability to match."
 _MSG_NO_MATCHING_FINDING = (
-    "Waiver criteria do not match any finding on the project's current build. "
+    "Waiver criteria do not match any finding on the given scan (default: the project's current build). "
     "Verify finding_id, finding_type, package_name and package_version. "
     "Use scope='rule' or 'file' to pre-emptively waive future findings."
 )
@@ -68,13 +71,13 @@ async def _resolve_widened_rule(waiver_in: WaiverCreate, db: AsyncIOMotorDatabas
     """A file or rule scope names its rule: as given, else the one its stored source finding reports."""
     if waiver_in.finding_type is not None and waiver_in.finding_type not in LOCATION_FINDING_TYPES:
         raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_LOCATION)
-    if waiver_in.scope == "file" and not waiver_in.package_name:
+    if waiver_in.scope == WAIVER_SCOPE_FILE and not waiver_in.package_name:
         raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_FILE)
     if waiver_in.rule_id:
         return
     finding = None
     if waiver_in.project_id and waiver_in.finding_id:
-        finding = await db.findings.find_one(
+        finding = await FindingRepository(db).find_one_raw(
             {"project_id": waiver_in.project_id, "finding_id": waiver_in.finding_id}, {"details": 1}
         )
     waiver_in.rule_id = finding_rule_id(finding.get("details")) if finding else None
@@ -94,22 +97,28 @@ def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
         raise HTTPException(status_code=422, detail=_MSG_NEEDS_PACKAGE_SCOPE.format(finding_type=finding_type))
 
 
-async def _ensure_waiver_matches_finding(waiver: Waiver, db: AsyncIOMotorDatabase) -> dict | None:
-    """Reject finding-scope project waivers matching no finding on the head build; return the matched finding doc, or None when validation is skipped."""
-    if not waiver.project_id or waiver.scope != "finding" or waiver.vulnerability_id:
+async def _named_scan_id(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> str | None:
+    """The scan the waiver was written from, refused unless it belongs to the waiver's project."""
+    if not waiver_in.scan_id:
+        return None
+    scan = await ScanRepository(db).get_minimal_by_id(waiver_in.scan_id)
+    if scan is None or scan.project_id != waiver_in.project_id:
+        raise HTTPException(status_code=404, detail="Scan not found in this project")
+    return waiver_in.scan_id
+
+
+async def _ensure_waiver_matches_finding(
+    waiver: Waiver, project: Project | None, scan_id: str | None, db: AsyncIOMotorDatabase
+) -> dict | None:
+    """Refuse a finding-scope project waiver that matches nothing on the named scan, else on head; return the match."""
+    if project is None or waiver.scope != WAIVER_SCOPE_FINDING or waiver.vulnerability_id:
+        return None
+    scan_id = scan_id or await ScanRepository(db).get_latest_active_scan_id(project)
+    if not scan_id:
         return None
 
-    project = await db.projects.find_one(
-        {"_id": waiver.project_id}, {"latest_scan_id": 1, "default_branch": 1, "deleted_branches": 1}
-    )
-    if not project:
-        return None
-    head_scan_id = await ScanRepository(db).get_latest_active_scan_id(project)
-    if not head_scan_id:
-        return None
-
-    finding_query = {**waiver_query(waiver), "scan_id": head_scan_id}
-    finding: dict | None = await db.findings.find_one(finding_query, {"match": 1, "type": 1, "component": 1})
+    finding_query = {**waiver_query(waiver), "scan_id": scan_id}
+    finding = await FindingRepository(db).find_one_raw(finding_query, {"match": 1, "type": 1, "component": 1})
     if finding is None:
         raise HTTPException(status_code=422, detail=_MSG_NO_MATCHING_FINDING)
     return finding
@@ -121,12 +130,13 @@ _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 _MSG_WAIVER_NOT_FOUND = "Waiver not found"
 
 
-async def _authorize_waiver_write(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> None:
-    """A project waiver is written by a project editor, a global one by a waiver:manage holder."""
+async def _authorize_waiver_write(project_id: str | None, user: User, db: AsyncIOMotorDatabase) -> Project | None:
+    """A project waiver is written by a project editor, a global one by a waiver:manage holder; returns the project."""
     if project_id:
-        await check_project_access(project_id, user, db, required_role=PROJECT_ROLE_EDITOR)
-    elif not has_permission(user.permissions, Permissions.WAIVER_MANAGE):
+        return await check_project_access(project_id, user, db, required_role=PROJECT_ROLE_EDITOR)
+    if not has_permission(user.permissions, Permissions.WAIVER_MANAGE):
         raise HTTPException(status_code=403, detail="Only admins can manage global waivers")
+    return None
 
 
 @router.post("/", response_model=WaiverResponse, status_code=201, responses=RESP_AUTH)
@@ -137,16 +147,17 @@ async def create_waiver(
     current_user: CurrentUserDep,
 ) -> Waiver:
     """Create a new waiver/exception for a vulnerability."""
-    await _authorize_waiver_write(waiver_in.project_id, current_user, db)
+    project = await _authorize_waiver_write(waiver_in.project_id, current_user, db)
 
     # Reject zombie and over-broad waivers early, before consuming a write and recalculating stats.
     _reject_unscoped_broad_waiver(waiver_in)
-    if waiver_in.scope != "finding":
+    scan_id = await _named_scan_id(waiver_in, db)
+    if waiver_in.scope != WAIVER_SCOPE_FINDING:
         await _resolve_widened_rule(waiver_in, db)
     waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
     if not waiver.vulnerability_id and not waiver_query(waiver):
         raise HTTPException(status_code=422, detail=_MSG_NO_CRITERIA)
-    matched_finding = await _ensure_waiver_matches_finding(waiver, db)
+    matched_finding = await _ensure_waiver_matches_finding(waiver, project, scan_id, db)
 
     waiver_repo = WaiverRepository(db)
     # Only a named finding is one location; criteria without a finding_id describe every finding they match.
@@ -156,7 +167,7 @@ async def create_waiver(
     await waiver_repo.create(waiver)
     _invalidate_analytics_cache()
 
-    await request_waiver_recalc(db, waiver)
+    await request_waiver_recalc(db, waiver, restamp=[scan_id] if scan_id else [])
     background_tasks.add_task(run_waiver_recalc, db)
 
     return waiver
@@ -175,7 +186,7 @@ async def list_waivers(
         bool, Query(description="Only return orphaned waivers (evaluated but matching 0 findings)")
     ] = False,
     sort_by: Annotated[str, Query(description="Field to sort by")] = "created_at",
-    sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "desc",
+    sort_order: SortOrderQuery = "desc",
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500, description="Number of items to return")] = 50,
 ) -> dict[str, Any]:
@@ -230,7 +241,7 @@ async def list_waivers(
     sort_direction = parse_sort_direction(sort_order)
     waivers = await waiver_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
 
-    items = [Waiver(**w).model_dump() for w in waivers]
+    items = [WaiverResponse.model_validate(w).model_dump() for w in waivers]
     return build_pagination_response(items, total, skip, limit)
 
 

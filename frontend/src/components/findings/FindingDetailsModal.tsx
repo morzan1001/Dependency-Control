@@ -158,6 +158,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                             finding={finding}
                             vulnId={selectedVulnId}
                             projectId={projectId}
+                            scanId={scanId}
                             onCancel={() => setShowWaiverForm(false)}
                             onSuccess={() => {
                                 setShowWaiverForm(false)

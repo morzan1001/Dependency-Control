@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from app.core.constants import LICENSE_ALIASES, UNKNOWN_LICENSE_PATTERNS
+from app.core.constants import LICENSE_ALIASES, LICENSE_URL_PATTERNS, UNKNOWN_LICENSE_PATTERNS
 
 from .constants import (
     LICENSE_DATABASE,
@@ -47,10 +47,46 @@ def normalize_license(lic_id: str) -> str:
     return lic_id
 
 
+def extract_license_from_url(url: str | None) -> str | None:
+    """The SPDX id a licence URL names, or None."""
+    if not url:
+        return None
+    url_lower = url.lower()
+    for pattern, spdx_id in LICENSE_URL_PATTERNS.items():
+        if re.search(pattern, url_lower):
+            return spdx_id
+    return None
+
+
+# Comma-separated parts in the longest known licence title; bounds the re-join window on untrusted input.
+_MAX_TITLE_PARTS = 1 + max(
+    title.count(",") for title in (*LICENSE_ALIASES, *(info.name for info in LICENSE_DATABASE.values()))
+)
+
+
+def split_license_list(raw: str) -> list[str]:
+    """Split a ', '-joined licence list without breaking a licence title that contains a comma."""
+    parts = [part.strip() for part in raw.split(",")]
+    names: list[str] = []
+    start = 0
+    while start < len(parts):
+        end = next(
+            (
+                stop
+                for stop in range(min(len(parts), start + _MAX_TITLE_PARTS), start + 1, -1)
+                if normalize_license(", ".join(parts[start:stop])) in LICENSE_DATABASE
+            ),
+            start + 1,
+        )
+        names.append(", ".join(parts[start:end]))
+        start = end
+    return [name for name in names if name]
+
+
 def tokenize_license_string(raw: str) -> list[str]:
     """Split a stored license value (SPDX expression or comma list) into constituent license units."""
     tokens: list[str] = []
-    for part in (raw or "").split(","):
+    for part in split_license_list(raw or ""):
         for or_part in SPDX_OR_SPLIT.split(part):
             for and_part in SPDX_AND_SPLIT.split(or_part):
                 lic = normalize_license(and_part.strip("() "))
@@ -92,13 +128,8 @@ def extract_licenses(component: dict[str, Any]) -> list[tuple[str, str | None]]:
                 lic_id = raw_id.strip("() ")
                 if lic_id:
                     licenses.append((lic_id, license_url))
-        elif "," in direct_license:
-            for raw_id in direct_license.split(","):
-                lic_id = raw_id.strip()
-                if lic_id:
-                    licenses.append((lic_id, license_url))
         else:
-            licenses.append((direct_license, license_url))
+            licenses.extend((lic_id, license_url) for lic_id in split_license_list(direct_license))
 
     return licenses
 
@@ -106,7 +137,9 @@ def extract_licenses(component: dict[str, Any]) -> list[tuple[str, str | None]]:
 def composite_license_expression(component: dict[str, Any]) -> str | None:
     """Return the raw license string when it declares more than one license (AND/WITH/comma list)."""
     direct_license = component.get("license")
-    if isinstance(direct_license, str) and (SPDX_EXPR_SPLIT.search(direct_license) or "," in direct_license):
+    if isinstance(direct_license, str) and (
+        SPDX_EXPR_SPLIT.search(direct_license) or len(split_license_list(direct_license)) > 1
+    ):
         return direct_license
 
     for lic_entry in component.get("licenses", []):

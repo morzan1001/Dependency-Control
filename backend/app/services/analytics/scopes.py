@@ -6,13 +6,12 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import ANALYTICS_MAX_SCOPE_PROJECTS
+from app.core.constants import ANALYTICS_MAX_SCOPE_PROJECTS, ScopeName
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.base import and_filters
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
-from app.schemas.analytics import ScopeKind
 from app.schemas.projections import ProjectWithScanId
 
 _SCOPE_TOO_LARGE = (
@@ -56,7 +55,7 @@ def team_scope_filter(user: User) -> dict[str, Any] | None:
 
 @dataclass
 class ResolvedScope:
-    scope: ScopeKind
+    scope: ScopeName
     scope_id: str | None
     project_ids: list[str] | None
     # The rows the resolver read for a user or team scope, handed to head resolution so it reads none.
@@ -68,7 +67,7 @@ class ScopeResolver:
         self.db = db
         self.user = user
 
-    async def resolve(self, *, scope: ScopeKind, scope_id: str | None) -> ResolvedScope:
+    async def resolve(self, *, scope: ScopeName, scope_id: str | None) -> ResolvedScope:
         if scope == "project":
             return await self._resolve_project(scope_id)
         if scope == "team":

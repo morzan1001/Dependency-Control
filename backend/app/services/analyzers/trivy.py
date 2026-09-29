@@ -1,12 +1,10 @@
 import asyncio
-import json
 import logging
 from pathlib import Path
 from typing import Any
 
 from app.core.config import settings
 
-from .base import map_vendor_severity
 from .cli_base import CLIAnalyzer, kill_and_reap
 
 logger = logging.getLogger(__name__)
@@ -100,80 +98,3 @@ class TrivyAnalyzer(CLIAnalyzer):
 
         logger.warning(f"Syft conversion failed: {stderr.decode()}. Proceeding with original file.")
         return tmp_sbom_path, []
-
-    def _parse_output(self, stdout: bytes) -> dict[str, Any]:
-        """Parse Trivy JSON output and normalize vulnerabilities."""
-        try:
-            output_str = stdout.decode()
-            if not output_str.strip():
-                return {self.empty_result_key: [], "trivy_vulnerabilities": []}
-
-            data = json.loads(output_str)
-            normalized_vulns = self._normalize_vulnerabilities(data)
-
-            return {
-                **data,
-                "trivy_vulnerabilities": normalized_vulns,
-            }
-        except json.JSONDecodeError:
-            output_str = stdout.decode()
-            return {
-                "error": f"Invalid JSON output from {self.name}",
-                "output": output_str,
-            }
-
-    def _normalize_vulnerabilities(self, data: dict[str, Any]) -> list[dict[str, Any]]:
-        """Normalize Trivy vulnerabilities with consistent severity and message."""
-        normalized = []
-        results = data.get("Results", [])
-
-        for result in results:
-            target = result.get("Target", "")
-            vulns = result.get("Vulnerabilities", [])
-
-            for vuln in vulns:
-                severity = self._map_severity(vuln.get("Severity", "UNKNOWN"))
-                vuln_id = vuln.get("VulnerabilityID", "")
-                pkg_name = vuln.get("PkgName", "")
-                installed_version = vuln.get("InstalledVersion", "")
-                fixed_version = vuln.get("FixedVersion", "")
-                title = vuln.get("Title", "")
-
-                message = self._create_message(vuln_id, pkg_name, installed_version, fixed_version, title)
-
-                normalized.append(
-                    {
-                        "id": vuln_id,
-                        "component": pkg_name,
-                        "version": installed_version,
-                        "fixed_version": fixed_version,
-                        "severity": severity,
-                        "message": message,
-                        "target": target,
-                        "title": title,
-                        "description": vuln.get("Description", ""),
-                        "references": vuln.get("References", []),
-                        "cvss": vuln.get("CVSS", {}),
-                    }
-                )
-
-        return normalized
-
-    def _map_severity(self, trivy_severity: str) -> str:
-        return map_vendor_severity(trivy_severity)
-
-    def _create_message(
-        self,
-        vuln_id: str,
-        pkg_name: str,
-        installed_version: str,
-        fixed_version: str,
-        title: str,
-    ) -> str:
-        """Create a human-readable message for the vulnerability."""
-        msg = f"{vuln_id}: {title}" if title else f"{vuln_id} in {pkg_name}@{installed_version}"
-
-        if fixed_version:
-            msg += f" (fix available: {fixed_version})"
-
-        return msg

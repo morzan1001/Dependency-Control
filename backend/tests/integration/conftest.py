@@ -46,10 +46,11 @@ async def db(request):
         yield FakeDatabase()
         return
 
-    from motor.motor_asyncio import AsyncIOMotorClient
     from pymongo.errors import PyMongoError
 
-    client = AsyncIOMotorClient(_LIVE_MONGO_URL, serverSelectionTimeoutMS=_SERVER_SELECTION_TIMEOUT_MS)
+    from app.db.mongodb import create_client
+
+    client = create_client(_LIVE_MONGO_URL, serverSelectionTimeoutMS=_SERVER_SELECTION_TIMEOUT_MS)
     try:
         await client.admin.command("ping")
     except PyMongoError as exc:

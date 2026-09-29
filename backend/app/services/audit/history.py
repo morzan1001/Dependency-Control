@@ -7,9 +7,14 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import (
+    NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED,
+    NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED,
+    POLICY_CHANGE_SUMMARY_MAX_LENGTH,
     WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED,
     WEBHOOK_EVENT_LICENSE_POLICY_CHANGED,
+    NotificationEvent,
 )
+from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry
 from app.repositories.policy_audit_entry import PolicyAuditRepository
@@ -40,7 +45,7 @@ _COMPARED_FIELDS: tuple[str, ...] = (
 
 
 def compute_change_summary(old: CryptoPolicy | None, new: CryptoPolicy) -> str:
-    """Deterministic human-readable diff summary (<=200 chars)."""
+    """Deterministic human-readable diff summary."""
     if old is None:
         return f"Initial policy ({len(new.rules)} rules)"
 
@@ -73,8 +78,7 @@ def compute_change_summary(old: CryptoPolicy | None, new: CryptoPolicy) -> str:
     if modified:
         parts.append(f"modified {len(modified)}")
 
-    summary = ", ".join(parts).capitalize() if parts else _NO_CHANGES_SUMMARY
-    return summary[:200]
+    return ", ".join(parts).capitalize() if parts else _NO_CHANGES_SUMMARY
 
 
 async def record_policy_change(
@@ -105,7 +109,7 @@ async def record_policy_change(
         reverted_from_version=reverted_from_version,
     )
     try:
-        await PolicyAuditRepository(db).insert(entry)
+        await PolicyAuditRepository(db).create(entry)
     except Exception:
         logger.exception("Policy audit persistence failed (non-blocking)")
     # A policy change invalidates cached analytics derived from it; flush the TTL cache.
@@ -152,15 +156,14 @@ async def _dispatch_webhook(
     """Fire a policy.changed webhook. Best-effort."""
     from app.services.webhooks import webhook_service
 
-    policy_type = getattr(entry, "policy_type", "crypto") or "crypto"
     payload = {
         "event": event_type,
         "timestamp": entry.timestamp.isoformat(),
-        "policy_type": policy_type,
+        "policy_type": entry.policy_type,
         "policy_scope": entry.policy_scope,
         "project_id": entry.project_id,
         "version": entry.version,
-        "action": entry.action.value if hasattr(entry.action, "value") else entry.action,
+        "action": entry.action,
         "actor": {
             "user_id": entry.actor_user_id,
             "display_name": entry.actor_display_name,
@@ -174,7 +177,7 @@ async def _dispatch_webhook(
         event_type=event_type,
         payload=payload,
         project_id=entry.project_id,
-        context=f"policy_audit:{policy_type}",
+        context=f"policy_audit:{entry.policy_type}",
     )
 
 
@@ -183,10 +186,10 @@ async def _notify_relevant_users(
     entry: PolicyAuditEntry,
     *,
     subject_noun: str = "crypto policy",
-    event_type: str = "crypto_policy_changed",
+    event_type: NotificationEvent = NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED,
 ) -> None:
     """Notify users affected by a policy change; system-scope hits system:manage/analytics:global holders, project-scope hits members. Skipped for SEED."""
-    if entry.action == PolicyAuditAction.SEED or entry.action == "seed":
+    if entry.action == PolicyAuditAction.SEED:
         return
 
     from app.services.notifications.service import notification_service
@@ -200,8 +203,7 @@ async def _notify_relevant_users(
             return
         from app.repositories.projects import ProjectRepository
 
-        # Primary read: the project can have been inserted just before this entry.
-        project = await ProjectRepository(db).get_by_id_strong(entry.project_id)
+        project = await ProjectRepository(db).get_by_id(entry.project_id)
         if project is None:
             return
         await notification_service.notify_project_members(
@@ -214,7 +216,7 @@ async def _notify_relevant_users(
     else:
         await notification_service.notify_users_with_permission(
             db,
-            permission=["system:manage", "analytics:global"],
+            permission=[Permissions.SYSTEM_MANAGE, Permissions.ANALYTICS_GLOBAL],
             event_type=event_type,
             subject=subject,
             message=message,
@@ -237,7 +239,7 @@ def compute_license_policy_change_summary(
     old: dict[str, Any] | None,
     new: dict[str, Any] | None,
 ) -> str:
-    """Deterministic one-line summary of a license-policy transition (<=200 chars)."""
+    """Deterministic one-line summary of a license-policy transition."""
     if old is None and new is None:
         return _NO_CHANGES_SUMMARY
     old = old or {}
@@ -261,7 +263,7 @@ def compute_license_policy_change_summary(
             parts.append(f"{field}: {old_v} -> {new_v}")
     if not parts:
         return _NO_CHANGES_SUMMARY
-    return ", ".join(parts)[:200]
+    return ", ".join(parts)[:POLICY_CHANGE_SUMMARY_MAX_LENGTH]
 
 
 async def record_license_policy_change(
@@ -301,7 +303,7 @@ async def record_license_policy_change(
         comment=comment,
     )
     try:
-        await repo.insert(entry)
+        await repo.create(entry)
     except Exception:
         logger.exception("License-policy audit persistence failed (non-blocking)")
     try:
@@ -313,7 +315,7 @@ async def record_license_policy_change(
             db,
             entry,
             subject_noun="license policy",
-            event_type="license_policy_changed",
+            event_type=NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED,
         )
     except Exception:
         logger.exception("License-policy notification failed (non-blocking)")

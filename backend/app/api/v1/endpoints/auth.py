@@ -24,7 +24,6 @@ from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_password_reset_email, send_verification_email
-from app.api.v1.helpers.users import ensure_identity_available
 from app.api.v1.helpers.responses import (
     RESP_400,
     RESP_400_401_500,
@@ -55,7 +54,7 @@ from app.core.metrics import (
 )
 from app.models.system import SystemSettings
 from app.models.user import User, is_local_account
-from app.repositories import UserRepository
+from app.repositories.users import UserRepository
 from app.schemas.auth import (
     EmailVerifyResponse,
     ForgotPasswordResponse,
@@ -279,10 +278,6 @@ async def create_user(
             detail="Signup is currently disabled.",
         )
 
-    user_repo = UserRepository(db)
-
-    await ensure_identity_available(user_repo, email=user_in.email, username=user_in.username)
-
     new_user = User(
         email=user_in.email,
         username=user_in.username,
@@ -295,7 +290,7 @@ async def create_user(
         is_verified=False,
         auth_provider=AUTH_PROVIDER_LOCAL,
     )
-    await user_repo.create(new_user)
+    await UserRepository(db).create(new_user)
 
     await send_verification_email(background_tasks, new_user.email, system_settings=system_config)
 
@@ -312,7 +307,8 @@ async def logout(
     db: DatabaseDep,
 ) -> LogoutResponse:
     """Logout the current user by blacklisting the token JTI and bumping last_logout_at."""
-    from app.repositories import TokenBlacklistRepository, UserRepository
+    from app.repositories.token_blacklist import TokenBlacklistRepository
+    from app.repositories.users import UserRepository
 
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
@@ -420,8 +416,6 @@ async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: Data
     # A newer request or an earlier confirmation replaced the pending address this link was mailed to.
     if not user or user.get("pending_email") != new_email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This email change is no longer pending")
-
-    await ensure_identity_available(user_repo, email=new_email)
 
     await user_repo.update(user_id, {"email": new_email, "pending_email": None, "is_verified": True})
 
@@ -608,7 +602,8 @@ async def _oidc_fetch_user_info(
 
 async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: dict, email: str) -> str:
     """Generate a unique username for a new OIDC user."""
-    base_username = str(user_info.get("preferred_username", email.split("@")[0]))
+    preferred = str(user_info.get("preferred_username") or "").strip()
+    base_username = preferred if preferred and "@" not in preferred else email.split("@")[0]
     username = base_username
     suffix = 0
     while await user_repo.exists_by_username(username):
@@ -621,7 +616,7 @@ async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: d
 
 
 async def _create_oidc_user(
-    db: Any, user_repo: UserRepository, user_info: dict, email: str, system_config: SystemSettings
+    user_repo: UserRepository, user_info: dict, email: str, system_config: SystemSettings
 ) -> dict:
     """Create a new OIDC user, return the persisted user dict."""
     username = await _generate_unique_oidc_username(user_repo, user_info, email)
@@ -635,16 +630,7 @@ async def _create_oidc_user(
     )
 
     await user_repo.create(new_user)
-    from pymongo import ReadPreference
-
-    users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    user = await users_primary.find_one({"_id": new_user.id})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create user",
-        )
-    return dict(user)
+    return new_user.model_dump(by_alias=True)
 
 
 def _validate_existing_oidc_user(user: dict, email: str) -> None:
@@ -734,7 +720,7 @@ async def login_oidc_callback(
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
     if not user:
-        user = await _create_oidc_user(db, user_repo, user_info, email, system_config)
+        user = await _create_oidc_user(user_repo, user_info, email, system_config)
     else:
         _validate_existing_oidc_user(user, email)
 
@@ -790,12 +776,7 @@ async def forgot_password(
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
 
-    # Skip OIDC users without a local password.
-    if (
-        user
-        and user.get("is_active", True)
-        and (is_local_account(user.get("auth_provider")) or user.get("hashed_password"))
-    ):
+    if user and user.get("is_active", True) and is_local_account(user.get("auth_provider")):
         await send_password_reset_email(
             background_tasks,
             user["email"],
@@ -855,12 +836,10 @@ async def reset_password(request: Request, reset_in: UserPasswordReset, db: Data
             detail=_MSG_USER_INACTIVE,
         )
 
-    auth_provider = user.get("auth_provider")
-    has_password = user.get("hashed_password") is not None
-    if not is_local_account(auth_provider) and not has_password:
+    if not is_local_account(user.get("auth_provider")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password reset not available for {auth_provider} accounts. Please use your identity provider.",
+            detail=f"Password reset not available for {user['auth_provider']} accounts. Please use your identity provider.",
         )
 
     hashed_password = security.get_password_hash(reset_in.new_password)

@@ -1,25 +1,23 @@
 from collections import defaultdict
 from typing import Any, cast
 
-from app.core.constants import (
-    CROSS_PROJECT_MIN_OCCURRENCES,
-    SCORECARD_UNMAINTAINED_THRESHOLD,
-)
+from app.core.constants import CROSS_PROJECT_MIN_OCCURRENCES
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.versions import newest_first
 from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     ModelOrDict,
     live_cves,
     get_attr,
-    newest_first,
     sample_components,
     sampled,
     scorecard_details,
+    scorecard_score,
 )
 
 # Advisories named per risky package, and packages detailed in the replace action; each is
@@ -45,10 +43,8 @@ def correlate_scorecard_with_vulnerabilities(
             continue
         details = get_attr(qf, "details", {})
         sc_details = scorecard_details(details)
-        overall_score = details.get("overall_score") if isinstance(details, dict) else None
         scorecard_by_component[component] = {
-            "overall_score": overall_score if overall_score is not None else 10,
-            "critical_issues": sc_details.get("critical_issues") or [],
+            "overall_score": scorecard_score(details),
             "project_url": sc_details.get("project_url"),
             "has_maintenance_issues": bool(details.get("has_maintenance_issues"))
             if isinstance(details, dict)
@@ -68,11 +64,11 @@ def correlate_scorecard_with_vulnerabilities(
         if not scorecard:
             continue
 
-        score = scorecard.get("overall_score", 10)
-        critical_issues = scorecard.get("critical_issues", [])
-        is_unmaintained = "Maintained" in critical_issues or scorecard.get("has_maintenance_issues", False)
+        score = scorecard["overall_score"]
+        is_unmaintained = scorecard["has_maintenance_issues"]
 
-        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score < SCORECARD_UNMAINTAINED_THRESHOLD):
+        # A score exists only where deps_dev flagged it under the project's own threshold.
+        if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score is not None):
             high_risk_vulns.append(
                 {
                     "component": component,
@@ -86,11 +82,14 @@ def correlate_scorecard_with_vulnerabilities(
             )
 
     if high_risk_vulns:
-        high_risk_vulns.sort(key=lambda x: (not x["unmaintained"], x["scorecard_score"]))
+        high_risk_vulns.sort(
+            key=lambda x: (not x["unmaintained"], x["scorecard_score"] is None, x["scorecard_score"] or 0.0)
+        )
 
         risky_shown, risky_total = sample_components(
-            f"{v['component']}@{v['version']} (score: {v['scorecard_score']:.1f}/10"
-            f"{', UNMAINTAINED' if v['unmaintained'] else ''})"
+            f"{v['component']}@{v['version']} ("
+            + ("no scorecard" if v["scorecard_score"] is None else f"score: {v['scorecard_score']:.1f}/10")
+            + f"{', UNMAINTAINED' if v['unmaintained'] else ''})"
             for v in high_risk_vulns
         )
         unmaintained_count = sum(1 for v in high_risk_vulns if v["unmaintained"])
@@ -105,7 +104,7 @@ def correlate_scorecard_with_vulnerabilities(
                     f"Found {len(high_risk_vulns)} critical/high vulnerabilities in packages "
                     f"with concerning OpenSSF Scorecard ratings. "
                     f"{unmaintained_count} are in unmaintained packages, "
-                    f"{low_score_count} are in packages with scores below {SCORECARD_UNMAINTAINED_THRESHOLD}/10. "
+                    f"{low_score_count} are in packages flagged by OpenSSF Scorecard. "
                     "These vulnerabilities may never receive fixes."
                 ),
                 impact={

@@ -35,8 +35,7 @@ export function DeltaSummaryCards({ added, removed, unchanged, changed, bySeveri
           <span className="text-muted-foreground">By severity:</span>
           {severities.map(([severity, count]) => (
             <span key={severity} className="flex items-center gap-1">
-              {/* delta API returns lowercase severities; SeverityBadge expects app-wide uppercase casing */}
-              <SeverityBadge severity={severity.toUpperCase()} /> {count}
+              <SeverityBadge severity={severity} /> {count}
             </span>
           ))}
         </div>

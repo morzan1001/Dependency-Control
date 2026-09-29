@@ -2,13 +2,13 @@
 
 import logging
 import time
-from collections.abc import Generator, Iterable
-from contextlib import AbstractContextManager, contextmanager
+from collections.abc import Iterable
 from importlib.metadata import version as get_version
 from typing import Any
 
 from fastapi import Request, Response
 from fastapi.concurrency import run_in_threadpool
+from pymongo import monitoring
 from prometheus_client import (
     CONTENT_TYPE_LATEST,
     REGISTRY,
@@ -644,23 +644,47 @@ def _route_template(scope: Scope) -> str:
     return path.rsplit("/", tail_slashes)[0] + path_format
 
 
-def track_db_operation(collection: str, operation: str) -> AbstractContextManager[None]:
-    """Context manager to track database operation metrics."""
+_DB_COMMANDS = frozenset(
+    {"find", "getMore", "aggregate", "count", "distinct", "insert", "update", "delete", "findAndModify"}
+)
 
-    @contextmanager
-    def _tracker() -> Generator[None, None, None]:
-        start_time = time.time()
-        try:
-            yield
-            duration = time.time() - start_time
-            db_operations_total.labels(collection=collection, operation=operation).inc()
-            db_operation_duration_seconds.labels(collection=collection, operation=operation).observe(duration)
-        except Exception as e:
-            error_type = type(e).__name__
-            db_errors_total.labels(error_type=error_type).inc()
-            raise
 
-    return _tracker()
+class DbCommandMetrics(monitoring.CommandListener):
+    """Counts and times every read and write the driver sends, labelled by collection and command."""
+
+    def __init__(self) -> None:
+        self._pending: dict[tuple[Any, int], tuple[str, str]] = {}
+
+    def started(self, event: monitoring.CommandStartedEvent) -> None:
+        name = event.command_name
+        if name not in _DB_COMMANDS:
+            return
+        target = event.command.get("collection" if name == "getMore" else name)
+        collection = target if isinstance(target, str) else event.database_name
+        self._pending[(event.connection_id, event.request_id)] = (collection, name)
+
+    def succeeded(self, event: monitoring.CommandSucceededEvent) -> None:
+        labels = self._pending.pop((event.connection_id, event.request_id), None)
+        if labels:
+            db_operations_total.labels(*labels).inc()
+            db_operation_duration_seconds.labels(*labels).observe(event.duration_micros / 1e6)
+
+    def failed(self, event: monitoring.CommandFailedEvent) -> None:
+        if self._pending.pop((event.connection_id, event.request_id), None):
+            db_errors_total.labels(error_type=str(event.failure.get("codeName", "unknown"))).inc()
+
+
+class DbHeartbeatFailures(monitoring.ServerHeartbeatListener):
+    """Counts failed heartbeats, since an unreachable server sends no command that could fail."""
+
+    def started(self, event: monitoring.ServerHeartbeatStartedEvent) -> None:
+        pass
+
+    def succeeded(self, event: monitoring.ServerHeartbeatSucceededEvent) -> None:
+        pass
+
+    def failed(self, event: monitoring.ServerHeartbeatFailedEvent) -> None:
+        db_errors_total.labels(error_type=type(event.reply).__name__).inc()
 
 
 async def update_db_stats(database: Any) -> None:

@@ -45,7 +45,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.api.v1.endpoints.analytics.update_frequency import (
     _DEFAULT_COMPARISON_WINDOW_DAYS,
@@ -54,9 +53,11 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _rollup_project_metrics,
 )
 from app.core.config import settings
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.db.mongodb import create_client
 from app.models.project import Project
-from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.update_frequency import WINDOW_HARD_LIMIT, ScanUpdateDeltaRepository
 from app.schemas.analytics import UpdateFrequencyMetrics
 from app.services.update_frequency import (
@@ -273,10 +274,9 @@ async def scan_set_diff(db: Any, project_id: str, branch: str, since: datetime) 
 
     docs = await db.scans.find(
         {
+            **USABLE_BUILD_MATCH,
             "project_id": project_id,
             "branch": branch,
-            "status": {"$in": SCAN_USABLE_STATUSES},
-            "is_rescan": {"$ne": True},
             "created_at": {"$gte": since},
         },
         {"_id": 1},
@@ -385,9 +385,8 @@ async def select_projects(db: Any, *, sample: int, project_id: str | None, since
         [
             {
                 "$match": {
+                    **USABLE_BUILD_MATCH,
                     "created_at": {"$gte": since},
-                    "status": {"$in": SCAN_USABLE_STATUSES},
-                    "is_rescan": {"$ne": True},
                 }
             },
             {"$group": {"_id": "$project_id", "scans": {"$sum": 1}}},
@@ -481,7 +480,7 @@ def print_totals(reports: Sequence[ProjectReport], comparison: Sequence[Deviatio
 
 
 async def run(args: argparse.Namespace) -> int:
-    client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
+    client = create_client(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
         since = cast(datetime, window_cutoff(args.window_days))

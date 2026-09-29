@@ -18,7 +18,7 @@ import pytest
 from app.core.constants import TEAM_SOURCE_GITLAB, team_source
 from app.models.gitlab_api import GitLabMember
 from app.models.team import GitLabGroupBinding, Team, TeamMember
-from app.repositories import UserRepository
+from app.repositories.users import UserRepository
 from app.repositories.teams import TeamRepository
 from app.services.gitlab import GitLabService
 from tests.mocks.gitlab import make_gitlab_instance, make_project_details

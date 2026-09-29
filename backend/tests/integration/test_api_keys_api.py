@@ -247,8 +247,8 @@ async def test_a_complete_listing_declares_no_truncation(client, db):
 
 @pytest.mark.asyncio
 async def test_every_listed_timestamp_carries_a_utc_offset(client, db):
-    # Mongo returns naive UTC. Serialised without an offset, a client parses the value as local
-    # time, which moves the active/expired boundary by the server's offset.
+    # Serialised without an offset, a client parses the value as local time, which moves the
+    # active/expired boundary by the server's offset.
     repo = ApiKeyRepository(db)
     doc, _ = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
     await repo.touch_last_used(doc["_id"])

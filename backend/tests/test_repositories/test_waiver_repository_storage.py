@@ -6,6 +6,7 @@ import pytest
 
 from app.models.waiver import Waiver
 from app.repositories.waivers import WaiverRepository
+from app.schemas.waiver import WaiverResponse
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -20,4 +21,4 @@ async def test_a_stored_waiver_carries_no_frozen_is_active():
 
     stored = await db.waivers.find_one({"_id": waiver.id})
     assert "is_active" not in stored
-    assert (await WaiverRepository(db).get_by_id(waiver.id)).is_active is True
+    assert WaiverResponse.model_validate(await WaiverRepository(db).get_by_id(waiver.id)).is_active is True

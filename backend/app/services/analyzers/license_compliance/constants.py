@@ -5,7 +5,7 @@ from __future__ import annotations
 import functools
 import re
 
-from app.core.constants import LICENSE_ALIASES
+from app.core.constants import LICENSE_ALIASES, SEVERITY_ORDER
 from app.models.finding import Severity
 from app.models.license import LicenseCategory, LicenseInfo
 
@@ -67,17 +67,8 @@ LICENSE_INCOMPATIBILITIES: dict[tuple, str] = {
     (SPDX_SSPL_1_0, SPDX_AGPL_3_0): f"{SPDX_SSPL_1_0} is not compatible with {SPDX_AGPL_3_0}.",
 }
 
-SEVERITY_RANK: dict[str | None, int] = {
-    None: 0,
-    Severity.INFO.value: 1,
-    Severity.LOW.value: 2,
-    Severity.MEDIUM.value: 3,
-    Severity.HIGH.value: 4,
-    Severity.CRITICAL.value: 5,
-}
-
 # Every policy escape in evaluate_license lands below HIGH, so HIGH is the first rank policy did not soften.
-POLICY_VIOLATION_MIN_RANK = SEVERITY_RANK[Severity.HIGH.value]
+POLICY_VIOLATION_MIN_RANK = SEVERITY_ORDER[Severity.HIGH.value]
 
 
 LICENSE_DATABASE: dict[str, LicenseInfo] = {
@@ -100,6 +91,14 @@ LICENSE_DATABASE: dict[str, LicenseInfo] = {
             "State changes",
             "Include NOTICE file if present",
         ],
+        compatible_with_proprietary=True,
+    ),
+    "Apache-1.1": LicenseInfo(
+        spdx_id="Apache-1.1",
+        category=LicenseCategory.PERMISSIVE,
+        name="Apache License 1.1",
+        description="Permissive license with an end-user acknowledgement clause.",
+        obligations=[INCLUDE_COPYRIGHT_NOTICE, INCLUDE_LICENSE_TEXT, "Include the acknowledgement in documentation"],
         compatible_with_proprietary=True,
     ),
     "BSD-2-Clause": LicenseInfo(
@@ -163,6 +162,16 @@ LICENSE_DATABASE: dict[str, LicenseInfo] = {
         risks=["May not be legally enforceable in all jurisdictions"],
         compatible_with_proprietary=True,
         requires_attribution=False,
+    ),
+    "LGPL-2.0": LicenseInfo(
+        spdx_id="LGPL-2.0",
+        category=LicenseCategory.WEAK_COPYLEFT,
+        name="GNU Library General Public License v2",
+        description="The predecessor of LGPL 2.1 with the same library copyleft.",
+        obligations=[SHARE_SOURCE_OF_MODIFICATIONS, "Allow relinking"],
+        risks=["Static linking may trigger full GPL terms"],
+        compatible_with_proprietary=True,
+        requires_source_disclosure=True,
     ),
     "LGPL-2.1": LicenseInfo(
         spdx_id="LGPL-2.1",
@@ -253,6 +262,15 @@ LICENSE_DATABASE: dict[str, LicenseInfo] = {
         requires_source_disclosure=True,
         viral=False,
         network_clause=False,
+    ),
+    "MPL-1.1": LicenseInfo(
+        spdx_id="MPL-1.1",
+        category=LicenseCategory.WEAK_COPYLEFT,
+        name="Mozilla Public License 1.1",
+        description="File-level copyleft; unlike MPL 2.0 not compatible with the GPL.",
+        obligations=["Share source of modified files", INCLUDE_LICENSE_TEXT, "Preserve copyright notices"],
+        compatible_with_proprietary=True,
+        requires_source_disclosure=True,
     ),
     SPDX_EPL_1_0: LicenseInfo(
         spdx_id=SPDX_EPL_1_0,
@@ -574,17 +592,8 @@ CATEGORY_STAT_KEY: dict[LicenseCategory, str] = {
 }
 
 
-CATEGORY_RESTRICTIVENESS: dict[LicenseCategory, int] = {
-    LicenseCategory.PERMISSIVE: 0,
-    LicenseCategory.PUBLIC_DOMAIN: 0,
-    LicenseCategory.WEAK_COPYLEFT: 1,
-    LicenseCategory.STRONG_COPYLEFT: 2,
-    LicenseCategory.NETWORK_COPYLEFT: 3,
-    LicenseCategory.PROPRIETARY: 4,
-}
-
-
 @functools.cache
 def get_lowercase_mappings() -> tuple[dict[str, str], dict[str, str]]:
-    """Return cached (db_lower, alias_lower) lookup tables for case-insensitive matching."""
-    return {k.lower(): k for k in LICENSE_DATABASE}, {k.lower(): v for k, v in LICENSE_ALIASES.items()}
+    """Return cached (db_lower, alias_lower) lookup tables; alias_lower also holds each licence's full name."""
+    names = {info.name.lower(): spdx_id for spdx_id, info in LICENSE_DATABASE.items()}
+    return {k.lower(): k for k in LICENSE_DATABASE}, names | {k.lower(): v for k, v in LICENSE_ALIASES.items()}

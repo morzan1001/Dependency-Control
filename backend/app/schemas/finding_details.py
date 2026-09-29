@@ -178,8 +178,6 @@ class VulnerabilityDetails(_DetailsModel):
     additional_finding_types: list[AdditionalFindingType] = []
     # scorecard (aggregation.scorecard)
     scorecard_context: ScorecardContext | None = None
-    maintenance_warning: bool | None = None
-    maintenance_warning_text: str | None = None
 
 
 class VulnerabilitySummaryDetails(_DetailsModel):

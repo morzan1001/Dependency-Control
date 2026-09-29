@@ -27,12 +27,11 @@ from app.api.v1.helpers.analytics import (
     SLIM_DETAILS_EXPR,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.core.permissions import Permissions
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
 from app.schemas.analytics import (
     ImpactAnalysisResult,
     SeverityBreakdown,
@@ -44,8 +43,9 @@ from app.services.component_identity import (
     lookup_component,
 )
 from app.services.analytics.cache import get_analytics_cache
+from app.services.aggregation.versions import newest_first
 from app.services.enrichment import get_cve_enrichment
-from app.services.recommendation.common import live_cves, newest_first
+from app.services.recommendation.common import live_cves
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +193,7 @@ async def get_impact_analysis(
                 version=r.get("version") or "unknown",
                 affected_projects=len(accessible_impact_project_ids),
                 total_findings=total_findings,
-                findings_by_severity=SeverityBreakdown(**severity_counts),
+                findings_by_severity=SeverityBreakdown.from_counts(severity_counts),
                 fix_impact_score=base_impact,
                 affected_project_names=[
                     project_name_map.get(pid, "Unknown")
@@ -265,7 +265,7 @@ def _build_hotspot(
         version=r["_id"].get("version") or "unknown",
         type=dep_type,
         finding_count=sum(severity_counts.values()),
-        severity_breakdown=SeverityBreakdown(**severity_counts),
+        severity_breakdown=SeverityBreakdown.from_counts(severity_counts),
         affected_projects=[
             project_name_map.get(pid, "Unknown") for pid in accessible_affected_projects[:_HOTSPOT_PROJECTS_SHOWN]
         ],
@@ -300,7 +300,7 @@ async def get_vulnerability_hotspots(
         str,
         Query(description="Sort field: finding_count, component, first_seen, epss, risk"),
     ] = "finding_count",
-    sort_order: Annotated[str, Query(description="Sort order: asc, desc")] = "desc",
+    sort_order: SortOrderQuery = "desc",
     release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[VulnerabilityHotspot]:
     """Get dependencies with the most vulnerabilities (hotspots)."""
@@ -324,7 +324,7 @@ async def get_vulnerability_hotspots(
     if hit:
         return [VulnerabilityHotspot.model_validate(r) for r in cached]
 
-    sort_direction = -1 if sort_order == "desc" else 1
+    sort_direction = parse_sort_direction(sort_order)
     # finding_count/epss/risk are derived in Python (from advisories / enrichment), so they are
     # sorted and paginated in Python; only component/first_seen can be ordered in Mongo.
     mongo_sort_field = {"component": "_id.component", "first_seen": "first_seen"}.get(sort_by)
@@ -408,7 +408,7 @@ async def get_vulnerability_hotspots(
         "risk": lambda x: x.max_risk_score or 0,
     }
     if post_sort_by:
-        hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=(sort_order == "desc"))
+        hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=sort_direction == -1)
         hotspots = hotspots[skip : skip + limit]
 
     # first_seen/days_known off the active scans is only the current scan's age; replace it on the

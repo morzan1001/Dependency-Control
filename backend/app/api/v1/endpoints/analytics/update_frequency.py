@@ -7,7 +7,7 @@ import logging
 from collections import Counter
 from collections.abc import Coroutine, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Annotated, Any, cast
 
 import httpx
@@ -28,12 +28,10 @@ from app.core.constants import SCAN_USABLE_STATUSES, SLOWEST_PACKAGES_LIMIT
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
 from app.models.project import Project
-from app.repositories import (
-    AnalysisResultRepository,
-    DependencyRepository,
-    ProjectRepository,
-    ScanRepository,
-)
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
@@ -53,11 +51,9 @@ from app.services.release_history import (
     ReleaseHistoryFetcher,
 )
 from app.services.update_frequency import (
-    DEP_PROJECTION,
-    as_utc,
     compute_update_frequency,
     compute_update_frequency_comparison,
-    fold_scan_deps,
+    load_scan_deps,
     load_outdated_entries,
     rank_summaries,
     select_primary_branch,
@@ -270,6 +266,7 @@ async def _scoped_projects(
 
     projects_raw = await ProjectRepository(db).find_many_raw(
         query,
+        sort_by="name",
         projection={"_id": 1, "name": 1, "team_ids": 1, "deleted_branches": 1, "default_branch": 1},
         limit=len(user_project_ids),
     )
@@ -358,7 +355,7 @@ def _spanned_days(bars: list[list[dict[str, Any]]]) -> int:
 
     Measured representative to representative, the two scans the bars are dated by.
     """
-    span = as_utc(bars[-1][-1]["scan_created_at"]) - as_utc(bars[0][-1]["scan_created_at"])
+    span: timedelta = bars[-1][-1]["scan_created_at"] - bars[0][-1]["scan_created_at"]
     return max(1, round(span.total_seconds() / 86400))
 
 
@@ -433,10 +430,6 @@ async def _compute_comparison_from_rollup(
     return rank_summaries(summaries).model_dump()
 
 
-async def _scan_deps(db: DatabaseDep, scan_id: str) -> dict[str, dict[str, str]]:
-    return fold_scan_deps(await DependencyRepository(db).find_all({"scan_id": scan_id}, projection=DEP_PROJECTION))
-
-
 async def _rollup_slowest_packages(
     db: DatabaseDep, bars: Sequence[Sequence[dict[str, Any]]]
 ) -> tuple[list[SlowPackage], int]:
@@ -453,11 +446,11 @@ async def _rollup_slowest_packages(
 
     entries = await load_outdated_entries(AnalysisResultRepository(db), latest_id) or []
     analyzer_info = {component: e for e in entries if (component := e.get("component"))}
-    deps = await _scan_deps(db, latest_id)
+    deps = await load_scan_deps(DependencyRepository(db), latest_id)
     types = {info["name"]: info["type"] for info in deps.values()}
     # current_version describes what the project holds now, so it comes from the newest bar
     # even when the backlog was last measured on an older one.
-    newest_deps = deps if scan_ids[-1] == latest_id else await _scan_deps(db, scan_ids[-1])
+    newest_deps = deps if scan_ids[-1] == latest_id else await load_scan_deps(DependencyRepository(db), scan_ids[-1])
     # An ambiguous bare name would show one purl sibling's version for the other.
     per_name = Counter(info["name"] for info in newest_deps.values())
     versions = {info["name"]: info["version"] for info in newest_deps.values() if per_name[info["name"]] == 1}

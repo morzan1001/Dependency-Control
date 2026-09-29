@@ -28,7 +28,7 @@ def fold_enrichments(enrichments: Iterable[VulnerabilityEnrichment]) -> Vulnerab
         kev_due_date=kev.kev_due_date if kev else None,
         kev_required_action=kev.kev_required_action if kev else None,
         kev_ransomware_use=any(e.kev_ransomware_use for e in items),
-        exploit_maturity=max((e.exploit_maturity for e in items), key=lambda m: EXPLOIT_MATURITY_ORDER.get(m, 0)),
+        exploit_maturity=max((e.exploit_maturity for e in items), key=lambda m: EXPLOIT_MATURITY_ORDER[m]),
         risk_score=max(e.risk_score for e in items),
     )
 

@@ -12,14 +12,16 @@ from app.core.constants import (
     PROJECT_ROLE_EDITOR,
     PROJECT_ROLE_VIEWER,
     PROJECT_ROLES,
+    SETTINGS_MODE_GLOBAL,
     TEAM_ROLE_ADMIN,
     ProjectRole,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
 from app.models.user import User
-from app.repositories import ProjectRepository, TeamRepository
-from app.repositories.projects import surviving_admin_filter
+from app.repositories.projects import ProjectRepository, surviving_admin_filter
+from app.repositories.teams import TeamRepository
+from app.services.analysis.registry import SELECTABLE_ANALYZERS
 
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 
@@ -223,12 +225,19 @@ def apply_system_settings_enforcement(
     """Strip globally-enforced fields from project update data when their mode is "global"."""
     result = update_data.copy()
 
-    if retention_mode == "global":
+    if retention_mode == SETTINGS_MODE_GLOBAL:
         result.pop("retention_days", None)
         result.pop("retention_action", None)
 
-    if rescan_mode == "global":
+    if rescan_mode == SETTINGS_MODE_GLOBAL:
         result.pop("rescan_enabled", None)
         result.pop("rescan_interval", None)
 
     return result
+
+
+def reject_unknown_analyzers(names: list[str] | None) -> None:
+    """The engine skips a name it does not know without a trace, so a typo would silently stop a scanner."""
+    unknown = sorted(set(names or ()) - SELECTABLE_ANALYZERS)
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unknown analyzers: {', '.join(unknown)}")

@@ -258,6 +258,26 @@ class TestBaseImageUpdate:
         assert len(base_recs) == 1
         assert base_recs[0].priority == Priority.CRITICAL
 
+    def test_os_packages_of_a_directory_scan_get_no_base_image_card(self):
+        finding = _make_finding(severity="CRITICAL", component="libssl")
+        dep = _make_dependency(
+            name="libssl", purl="pkg:deb/debian/libssl@1.0.0", direct=True, source_type="directory", dep_type="deb"
+        )
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], "/srv/rootfs")
+
+        assert [r.type for r in result] == [RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+
+    def test_os_packages_of_an_sbom_naming_no_source_count_as_image(self):
+        finding = _make_finding(severity="CRITICAL", component="libssl")
+        dep = _make_dependency(
+            name="libssl", purl="pkg:deb/debian/libssl@1.0.0", direct=False, source_type=None, dep_type="deb"
+        )
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], "debian:11")
+
+        assert [r.type for r in result] == [RecommendationType.BASE_IMAGE_UPDATE]
+
     def test_few_low_severity_os_vulns_no_recommendation(self):
         """Fewer than 3 low-severity OS vulns should NOT trigger base image update."""
         findings = [

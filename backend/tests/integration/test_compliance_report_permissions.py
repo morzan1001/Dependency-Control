@@ -29,7 +29,7 @@ async def _insert_report(
         requested_by=requested_by,
         requested_at=datetime.now(timezone.utc),
     )
-    await ComplianceReportRepository(db).insert(report)
+    await ComplianceReportRepository(db).create(report)
     return report.id
 
 
@@ -78,7 +78,7 @@ async def test_rate_limit_many_pending(
 ):
     repo = ComplianceReportRepository(db)
     for _ in range(10):
-        await repo.insert(
+        await repo.create(
             ComplianceReport(
                 scope="project",
                 scope_id="p",

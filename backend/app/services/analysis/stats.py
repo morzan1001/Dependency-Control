@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any, ClassVar, NamedTuple, cast
 
-from pymongo import ASCENDING, ReadPreference
+from pymongo import ASCENDING
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
@@ -27,7 +27,7 @@ from app.core.risk_scoring import (
     saturating_risk_score,
     severity_exposure,
 )
-from app.models.finding import FindingType
+from app.models.finding import FindingType, Severity
 from app.models.stats import (
     PrioritizedCounts,
     ReachabilityStats,
@@ -265,9 +265,8 @@ def build_reachability_summary(
 
 
 # Severities with a dedicated bucket; anything else is counted as unknown so buckets always sum to total.
-_BUCKETED_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")
-
-_UNKNOWN_SEVERITY = "UNKNOWN"
+_UNKNOWN_SEVERITY: str = Severity.UNKNOWN.value
+_BUCKETED_SEVERITIES: tuple[str, ...] = tuple(s.value for s in Severity if s is not Severity.UNKNOWN)
 
 
 def _numeric(raw: Any) -> float | None:
@@ -554,9 +553,7 @@ async def calculate_comprehensive_stats(
     if component_languages is None:
         component_languages = await build_component_language_map(db, scan_id)
     acc = StatsAccumulator(component_languages)
-    # PRIMARY: with secondaryPreferred the read can miss findings written milliseconds earlier.
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    cursor = findings_primary.find({"scan_id": scan_id}, _stats_projection(), hint=_STATS_CURSOR_HINT)
+    cursor = db.findings.find({"scan_id": scan_id}, _stats_projection(), hint=_STATS_CURSOR_HINT)
     try:
         async for doc in cursor:
             acc.add(doc)
