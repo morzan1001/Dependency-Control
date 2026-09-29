@@ -9,14 +9,13 @@ from app.core.config import settings
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
-    EPSS_HIGH_THRESHOLD,
     NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
     NOTIFICATION_EVENT_ANALYSIS_FAILED,
     NOTIFICATION_EVENT_VULNERABILITY_FOUND,
     get_severity_value,
 )
 from app.core.cve import canonical_cve
-from app.core.epss import HIGH_EPSS_LABEL
+from app.core.epss import HIGH_EPSS_LABEL, bucket_epss
 from app.models.finding import Finding, FindingType
 from app.models.project import Project
 from app.schemas.notification import PRIORITY_VULNS_LABEL, AlertVulnerability
@@ -60,7 +59,7 @@ def _extract_vulnerability_info(entry_details: dict[str, Any], finding: dict[str
 
 
 def _is_high_epss(vuln: dict[str, Any]) -> bool:
-    return (vuln["epss_score"] or 0) >= EPSS_HIGH_THRESHOLD
+    return bucket_epss(vuln["epss_score"] or 0) == "high"
 
 
 def _is_priority(vuln: dict[str, Any]) -> bool:
