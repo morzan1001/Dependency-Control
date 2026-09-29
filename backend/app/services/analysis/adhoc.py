@@ -43,6 +43,7 @@ from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator
+from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories, post_processor_factories
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
@@ -720,6 +721,7 @@ async def _enrich_vulnerabilities(records: list[dict[str, Any]], report: Analyze
         _record_errored(report, _ENRICHMENT, str(exc))
     finally:
         await service.close()
+    refresh_vulnerability_info(records)
     return dict(build_epss_kev_summary(vulnerabilities))
 
 

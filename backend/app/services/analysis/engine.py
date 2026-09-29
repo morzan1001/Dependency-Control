@@ -55,6 +55,7 @@ from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
 from app.schemas.sbom import ParsedDependency
 from app.services.aggregation import ResultAggregator
+from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.integrations import decorate_github_pr, decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
 from app.services.analysis.registry import (
@@ -1335,6 +1336,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         github_token,
         results_summary,
     )
+    refresh_vulnerability_info(findings_to_insert)
 
     persisted_findings_count, ignored_count, active_waivers = await _persist_findings_and_waivers(
         findings_to_insert, scan_id, project_id, finding_repo, db
