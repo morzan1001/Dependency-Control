@@ -43,18 +43,15 @@ _COMPONENT_VERSION = "1.0.0"
 
 
 def _vuln(component, severity="CRITICAL", is_kev=False, kev_ransomware=False, epss_score=0.0, cve_id="CVE-2024-001"):
-    """Aggregator shape: the document id is component:version and the CVE lives one level down."""
+    """Aggregator shape: the document id is component:version and the CVE lives one level down,
+    where enrichment marks it and rolls the document up from it."""
+    flags = {"in_kev": is_kev, "kev_ransomware_use": kev_ransomware, "epss_score": epss_score}
     return {
         "type": "vulnerability",
         "severity": severity,
         "component": component,
         "version": _COMPONENT_VERSION,
-        "details": {
-            "in_kev": is_kev,
-            "kev_ransomware_use": kev_ransomware,
-            "epss_score": epss_score,
-            "vulnerabilities": [{"id": cve_id}],
-        },
+        "details": {**flags, "vulnerabilities": [{"id": cve_id, **flags}]},
         "id": f"{component}:{_COMPONENT_VERSION}",
         "aliases": [],
     }
@@ -418,12 +415,6 @@ class TestIncidentCardsNameOnlyTheFlaggedAdvisories:
         card = self._card(finding, RecommendationType.ACTIVELY_EXPLOITED)
         assert card.action["cves"] == ["CVE-2022-0001"]
 
-    def test_a_document_only_flag_still_names_the_group(self):
-        finding = _vuln("log4j-core", is_kev=True, kev_ransomware=True)
-        finding["details"]["vulnerabilities"] = [{"id": "CVE-2021-44228"}, {"id": "CVE-2021-44832"}]
-        card = self._card(finding, RecommendationType.RANSOMWARE_RISK)
-        assert card.action["cves"] == ["CVE-2021-44228", "CVE-2021-44832"]
-
 
 class TestIncidentCardsBucketPerAdvisory:
     """Aggregation groups one record per (component, version), so one record can be about
@@ -474,11 +465,3 @@ class TestIncidentCardsBucketPerAdvisory:
         cards = self._cards(finding)
 
         assert RecommendationType.ACTIVELY_EXPLOITED not in cards
-
-    def test_a_document_only_flag_lands_in_one_card_as_before(self):
-        finding = _vuln("log4j-core", is_kev=True, kev_ransomware=True)
-        finding["details"]["vulnerabilities"] = [{"id": _RANSOMWARE_CVE}]
-
-        cards = self._cards(finding)
-
-        assert set(cards) == {RecommendationType.RANSOMWARE_RISK}

@@ -138,7 +138,9 @@ class VulnerabilityEntryDetails(_DetailsModel):
     epss_score: float | None = None
     epss_percentile: float | None = None
     in_kev: bool | None = None
+    kev_date_added: str | None = None
     kev_due_date: str | None = None
+    kev_required_action: str | None = None
     kev_ransomware_use: bool | None = None
     github_advisory_url: str | None = None
     resolved_cve: str | None = None

@@ -398,7 +398,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     const isCve = vulnId?.startsWith('CVE-');
                                                     const isGhsa = vulnId?.startsWith('GHSA-');
                                                     const resolvedCve = vuln.resolved_cve;
-                                                    const githubAdvisoryUrl = vuln.github_advisory_url || finding.details?.github_advisory_url;
+                                                    const githubAdvisoryUrl = vuln.github_advisory_url;
 
                                                     let vulnLink = null;
                                                     if (isCve) {

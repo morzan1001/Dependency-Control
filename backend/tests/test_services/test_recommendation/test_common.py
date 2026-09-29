@@ -505,10 +505,8 @@ class TestFindingCveIdsAdvisoryFilter:
         marked = finding_cve_ids(self._mixed(), lambda a: bool(a.get("kev_ransomware_use")))
         assert marked == ["CVE-2021-44228", "CVE-2021-45046"]
 
-    def test_an_unmarked_group_falls_back_to_every_cve(self):
+    def test_a_document_flag_alone_names_no_advisory(self):
         finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "CVE-2021-44832"}])
         finding["details"]["kev_ransomware_use"] = True
 
-        marked = finding_cve_ids(finding, lambda a: bool(a.get("kev_ransomware_use")))
-
-        assert marked == ["CVE-2021-44228", "CVE-2021-44832"]
+        assert finding_cve_ids(finding, lambda a: bool(a.get("kev_ransomware_use"))) == []

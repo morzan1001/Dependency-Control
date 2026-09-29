@@ -101,18 +101,17 @@ def finding_cve_ids(
     scan delta reads its identity from.
 
     ``advisory_filter`` narrows the list to the advisories a card is actually about, so a group of
-    seven log4j CVEs is not presented as seven ransomware CVEs. Enrichment marks each advisory and
-    the document, but a live refresh writes the document only, so a finding whose advisories carry
-    no mark falls back to naming the whole group rather than nothing.
+    seven log4j CVEs is not presented as seven ransomware CVEs.
     """
     details = get_attr(finding, "details", {})
     if not isinstance(details, dict):
         return []
-    if advisory_filter is not None:
-        entries = [e for e in details.get("vulnerabilities") or [] if isinstance(e, dict) and advisory_filter(e)]
-        if entries:
-            return canonical_cves([{"vulnerabilities": entries}])
-    return canonical_cves([details])
+    entries = [
+        e
+        for e in details.get("vulnerabilities") or []
+        if isinstance(e, dict) and (advisory_filter is None or advisory_filter(e))
+    ]
+    return canonical_cves([{"vulnerabilities": entries}])
 
 
 # Versions named per package inside an action block; version_count carries the population.

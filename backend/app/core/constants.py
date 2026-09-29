@@ -459,9 +459,8 @@ EXPLOIT_MATURITY_ORDER: dict[str, int] = {
     "low": 1,
     "medium": 2,
     "high": 3,
-    "poc": 4,  # Proof of concept
-    "active": 5,
-    "weaponized": 6,
+    "active": 4,
+    "weaponized": 5,
 }
 
 # Exploit maturity boost factors for impact score calculation

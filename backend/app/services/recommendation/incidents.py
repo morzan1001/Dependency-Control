@@ -135,14 +135,6 @@ def process_typosquatting(
     ]
 
 
-def _card_advisories(details: dict[str, Any]) -> list[dict[str, Any]]:
-    """The marked advisories a record carries. A live enrichment refresh marks the document
-    without rewriting its advisories, so an unmarked group falls back to the document."""
-    advisories = [a for a in details.get("vulnerabilities") or [] if isinstance(a, dict)]
-    marked = [a for a in advisories if _advisory_is_kev(a) or _advisory_has_very_high_epss(a)]
-    return marked or [details]
-
-
 def _classify_vuln_finding(
     f: ModelOrDict,
     kev_vulns: list[ModelOrDict],
@@ -159,7 +151,7 @@ def _classify_vuln_finding(
     if not isinstance(details, dict):
         return
 
-    advisories = _card_advisories(details)
+    advisories = [a for a in details.get("vulnerabilities") or [] if isinstance(a, dict)]
     if any(_advisory_is_ransomware(a) for a in advisories):
         ransomware_vulns.append(f)
     if any(_advisory_is_kev_only(a) for a in advisories):

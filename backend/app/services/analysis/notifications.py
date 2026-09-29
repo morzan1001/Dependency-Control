@@ -4,7 +4,7 @@ import logging
 from typing import Any
 
 from app.core.config import settings
-from app.core.constants import get_severity_value
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
 from app.models.finding import Finding
 from app.models.project import Project
 from app.schemas.notification import AlertVulnerability
@@ -39,10 +39,10 @@ def _extract_vulnerability_info(vuln: dict[str, Any], finding: dict[str, Any]) -
         severity=vuln.get("severity", finding.get("severity", "UNKNOWN")),
         package=finding.get("component", "Unknown"),
         version=finding.get("version", ""),
-        in_kev=vuln.get("in_kev", False),
+        in_kev=vuln.get(DETAILS_KEY_IN_KEV, False),
         epss_score=vuln.get("epss_score"),
         kev_due_date=vuln.get("kev_due_date"),
-        kev_ransomware_use=vuln.get("kev_ransomware_use", False),
+        kev_ransomware_use=vuln.get(DETAILS_KEY_KEV_RANSOMWARE, False),
     ).model_dump()
 
 
@@ -61,7 +61,7 @@ def _categorize_vulnerabilities(
         for vuln in vulns:
             vuln_info = _extract_vulnerability_info(vuln, finding)
 
-            if vuln.get("in_kev"):
+            if vuln.get(DETAILS_KEY_IN_KEV):
                 kev_vulns.append(vuln_info)
 
             epss_score = vuln.get("epss_score")
@@ -69,7 +69,7 @@ def _categorize_vulnerabilities(
                 high_epss_vulns.append(vuln_info)
 
             severity = vuln.get("severity")
-            if severity in ["CRITICAL", "HIGH"] or vuln.get("in_kev"):
+            if severity in ["CRITICAL", "HIGH"] or vuln.get(DETAILS_KEY_IN_KEV):
                 critical_vulns.append(vuln_info)
 
     return kev_vulns, high_epss_vulns, critical_vulns

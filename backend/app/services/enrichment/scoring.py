@@ -1,7 +1,15 @@
-from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
+from collections.abc import Iterable
+
+from app.core.constants import (
+    EPSS_HIGH_THRESHOLD,
+    EPSS_MEDIUM_THRESHOLD,
+    EXPLOIT_MATURITY_ORDER,
+    SEVERITY_CALCULATED_RISK_SCORES,
+)
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import is_deprioritized_secret
 from app.models.finding import Severity
+from app.schemas.enrichment import VulnerabilityEnrichment
 
 
 def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: float | None) -> str:
@@ -13,6 +21,28 @@ def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: f
     if epss_score is not None:
         return bucket_epss(epss_score)
     return "unknown"
+
+
+def fold_enrichments(enrichments: Iterable[VulnerabilityEnrichment]) -> VulnerabilityEnrichment | None:
+    """The worst case across CVEs: highest EPSS, risk and maturity, and the KEV entry due first."""
+    items = list(enrichments)
+    if not items:
+        return None
+    epss = max((e for e in items if e.epss_score is not None), key=lambda e: (e.epss_score, e.cve), default=None)
+    kev = min((e for e in items if e.is_kev), key=lambda e: (e.kev_due_date or "~", e.cve), default=None)
+    return VulnerabilityEnrichment(
+        cve=min(e.cve for e in items),
+        epss_score=epss.epss_score if epss else None,
+        epss_percentile=epss.epss_percentile if epss else None,
+        epss_date=epss.epss_date if epss else None,
+        is_kev=kev is not None,
+        kev_date_added=kev.kev_date_added if kev else None,
+        kev_due_date=kev.kev_due_date if kev else None,
+        kev_required_action=kev.kev_required_action if kev else None,
+        kev_ransomware_use=any(e.kev_ransomware_use for e in items),
+        exploit_maturity=max((e.exploit_maturity for e in items), key=lambda m: EXPLOIT_MATURITY_ORDER.get(m, 0)),
+        risk_score=max(e.risk_score for e in items),
+    )
 
 
 def _calculate_epss_contribution(epss_score: float) -> float:

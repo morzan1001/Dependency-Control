@@ -1,52 +1,113 @@
-"""Tests for finding-level enrichment application."""
+"""The per-advisory enrichment fold and how it lands on a finding's advisories."""
+
+import itertools
 
 import pytest
+from pydantic import ValidationError
 
+from app.core.constants import EXPLOIT_MATURITY_ORDER
 from app.schemas.enrichment import GHSAData, VulnerabilityEnrichment
-from app.services.enrichment.service import (
-    VulnerabilityEnrichmentService,
-    _apply_enrichment_to_finding,
-    _apply_ghsa_resolutions,
-)
+from app.services.enrichment.scoring import calculate_exploit_maturity, fold_enrichments
+from app.services.enrichment.service import VulnerabilityEnrichmentService, apply_enrichments
 
 
-def test_kev_ransomware_use_aggregates_monotonically():
-    """A later non-ransomware KEV CVE must not clobber the ransomware flag to False."""
-    finding: dict = {"details": {"vulnerabilities": []}}
-    ransomware = VulnerabilityEnrichment(cve="CVE-1", is_kev=True, kev_ransomware_use=True)
-    benign_kev = VulnerabilityEnrichment(cve="CVE-2", is_kev=True, kev_ransomware_use=False)
-
-    _apply_enrichment_to_finding(finding, ransomware)
-    _apply_enrichment_to_finding(finding, benign_kev)
-
-    assert finding["details"]["kev_ransomware_use"] is True
-    assert finding["details"]["in_kev"] is True
+def _enrichment(cve: str, **fields) -> VulnerabilityEnrichment:
+    return VulnerabilityEnrichment(cve=cve, risk_score=fields.pop("risk_score", 20.0), **fields)
 
 
-def test_ghsa_resolution_propagates_cvss_to_resolved_cve():
-    """CVSS under a GHSA id must carry to the resolved CVE key so risk scoring uses the real CVSS."""
-    finding = {
-        "_id": "f1",
-        "details": {"vulnerabilities": [{"id": "GHSA-xxxx", "cvss_score": 9.8}]},
+def _folded(*enrichments: VulnerabilityEnrichment) -> list[VulnerabilityEnrichment | None]:
+    return [fold_enrichments(order) for order in itertools.permutations(enrichments)]
+
+
+def test_the_fold_keeps_the_worst_case_whatever_the_order():
+    folds = _folded(
+        _enrichment("CVE-1", epss_score=0.2, epss_percentile=40.0, risk_score=91.0, exploit_maturity="medium"),
+        _enrichment(
+            "CVE-2",
+            is_kev=True,
+            kev_due_date="2025-06-01",
+            kev_date_added="2025-01-02",
+            kev_required_action="patch 2",
+            kev_ransomware_use=True,
+            exploit_maturity="weaponized",
+        ),
+        _enrichment(
+            "CVE-3",
+            epss_score=0.7,
+            epss_percentile=97.0,
+            is_kev=True,
+            kev_due_date="2022-01-01",
+            kev_date_added="2021-11-03",
+            kev_required_action="patch 3",
+            risk_score=12.0,
+        ),
+    )
+    assert all(fold == folds[0] for fold in folds)
+    fold = folds[0]
+    assert fold is not None
+    assert (fold.epss_score, fold.epss_percentile) == (0.7, 97.0)
+    assert (fold.kev_due_date, fold.kev_date_added, fold.kev_required_action) == ("2022-01-01", "2021-11-03", "patch 3")
+    assert fold.kev_ransomware_use is True
+    assert fold.exploit_maturity == "weaponized"
+    assert fold.risk_score == 91.0
+
+
+def test_a_kev_entry_without_a_due_date_yields_to_one_with_a_deadline():
+    [first, *rest] = _folded(
+        _enrichment("CVE-1", is_kev=True, kev_required_action="no deadline"),
+        _enrichment("CVE-2", is_kev=True, kev_due_date="2026-01-01", kev_required_action="deadline"),
+    )
+    assert all(fold == first for fold in rest)
+    assert first is not None
+    assert first.kev_required_action == "deadline"
+
+
+def test_nothing_to_fold_is_none():
+    assert fold_enrichments([]) is None
+
+
+def test_an_enrichment_always_carries_its_risk_score():
+    with pytest.raises(ValidationError):
+        VulnerabilityEnrichment(cve="CVE-1")
+
+
+def test_the_maturity_order_names_exactly_the_levels_scoring_produces():
+    produced = {
+        calculate_exploit_maturity(kev, ransomware, epss)
+        for kev, ransomware, epss in itertools.product([False, True], [False, True], [None, 0.001, 0.05, 0.9])
     }
-    cve_to_findings = {"GHSA-xxxx": [finding]}
-    cvss_scores = {"GHSA-xxxx": 9.8}
-    ghsa_resolutions = {"GHSA-xxxx": GHSAData(ghsa_id="GHSA-xxxx", cve_id="CVE-2024-1234")}
-
-    _apply_ghsa_resolutions(ghsa_resolutions, cve_to_findings, cvss_scores)
-
-    assert cvss_scores["CVE-2024-1234"] == 9.8
+    assert set(EXPLOIT_MATURITY_ORDER) == produced
 
 
-def test_ghsa_resolution_does_not_clobber_existing_cve_cvss():
-    finding = {"_id": "f1", "details": {"vulnerabilities": [{"id": "GHSA-yyyy"}]}}
-    cve_to_findings = {"GHSA-yyyy": [finding]}
-    cvss_scores = {"GHSA-yyyy": 4.0, "CVE-2024-9999": 7.5}
-    ghsa_resolutions = {"GHSA-yyyy": GHSAData(ghsa_id="GHSA-yyyy", cve_id="CVE-2024-9999")}
+def test_enrichment_reaches_the_entry_the_cve_names_and_no_other():
+    """A scanner may have filed the CVE under a GHSA id; EPSS and KEV belong on whichever entry
+    carries the CVE, on that one alone."""
+    details: dict = {
+        "vulnerabilities": [
+            {"id": "CVE-1"},
+            {"id": "GHSA-aaaa-bbbb-cccc", "aliases": ["CVE-1"]},
+            {"id": "CVE-2"},
+        ]
+    }
+    apply_enrichments(
+        details,
+        {"CVE-1": _enrichment("CVE-1", epss_score=0.42, epss_percentile=97.0, is_kev=True, kev_due_date="2026-01-01")},
+    )
 
-    _apply_ghsa_resolutions(ghsa_resolutions, cve_to_findings, cvss_scores)
+    by_id = {vuln["id"]: vuln for vuln in details["vulnerabilities"]}
+    assert by_id["CVE-1"]["epss_score"] == 0.42
+    assert by_id["CVE-1"]["in_kev"] is True
+    assert by_id["GHSA-aaaa-bbbb-cccc"]["epss_score"] == 0.42
+    assert by_id["GHSA-aaaa-bbbb-cccc"]["in_kev"] is True
+    assert "epss_score" not in by_id["CVE-2"]
+    assert "in_kev" not in by_id["CVE-2"]
+    assert details["in_kev"] is True
 
-    assert cvss_scores["CVE-2024-9999"] == 7.5
+
+def test_a_resolved_ghsa_scores_its_cve_on_the_advisorys_cvss():
+    details: dict = {"vulnerabilities": [{"id": "GHSA-xxxx", "resolved_cve": "CVE-2024-1234", "cvss_score": 9.8}]}
+    apply_enrichments(details, {"CVE-2024-1234": _enrichment("CVE-2024-1234", is_kev=True)})
+    assert details["risk_score"] == pytest.approx(59.2)
 
 
 @pytest.mark.asyncio
@@ -83,7 +144,7 @@ async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
     async def fake_resolve(ghsa_ids):
         return {"GHSA-3pjw-73gf-8qr5": GHSAData(ghsa_id="GHSA-3pjw-73gf-8qr5", cve_id="CVE-2026-59888")}
 
-    async def fake_enrich_cves(cves, cvss_scores=None):
+    async def fake_enrich_cves(cves):
         return {}
 
     monkeypatch.setattr(service, "resolve_ghsa_to_cve", fake_resolve)
@@ -102,49 +163,3 @@ async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
     assert merged["cvss_score"] == 7.7
     # Recomputed from the merged entry: the duplicate pair no longer forces 2.21.4 as covers-all fix.
     assert finding["details"]["fixed_version"] == "2.18.8"
-
-
-def test_enrichment_reaches_the_entry_the_cve_names_and_no_other():
-    """A finding holds one entry per vulnerability, and a scanner may have filed the CVE under a
-    GHSA id; EPSS and KEV belong on whichever entry carries the CVE, on that one alone."""
-    finding: dict = {
-        "details": {
-            "vulnerabilities": [
-                {"id": "CVE-1"},
-                {"id": "GHSA-aaaa-bbbb-cccc", "aliases": ["CVE-1"]},
-                {"id": "CVE-2"},
-            ]
-        }
-    }
-    enrichment = VulnerabilityEnrichment(
-        cve="CVE-1",
-        epss_score=0.42,
-        epss_percentile=97.0,
-        is_kev=True,
-        kev_due_date="2026-01-01",
-    )
-
-    _apply_enrichment_to_finding(finding, enrichment)
-
-    by_id = {vuln["id"]: vuln for vuln in finding["details"]["vulnerabilities"]}
-    assert by_id["CVE-1"]["epss_score"] == 0.42
-    assert by_id["CVE-1"]["in_kev"] is True
-    assert by_id["GHSA-aaaa-bbbb-cccc"]["epss_score"] == 0.42
-    assert by_id["GHSA-aaaa-bbbb-cccc"]["in_kev"] is True
-    assert "epss_score" not in by_id["CVE-2"]
-    assert "in_kev" not in by_id["CVE-2"]
-
-
-def test_the_highest_risk_score_of_a_multi_cve_finding_wins():
-    """The finding-level score is what ranking, hotspots and triage order read, so it has to be
-    the worst of the CVEs rather than whichever one was enriched last."""
-    descending: dict = {"details": {"vulnerabilities": []}}
-    _apply_enrichment_to_finding(descending, VulnerabilityEnrichment(cve="CVE-1", risk_score=91.0))
-    _apply_enrichment_to_finding(descending, VulnerabilityEnrichment(cve="CVE-2", risk_score=12.0))
-
-    ascending: dict = {"details": {"vulnerabilities": []}}
-    _apply_enrichment_to_finding(ascending, VulnerabilityEnrichment(cve="CVE-2", risk_score=12.0))
-    _apply_enrichment_to_finding(ascending, VulnerabilityEnrichment(cve="CVE-1", risk_score=91.0))
-
-    assert descending["details"]["risk_score"] == 91.0
-    assert ascending["details"]["risk_score"] == 91.0

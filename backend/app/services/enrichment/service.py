@@ -1,8 +1,10 @@
 import asyncio
 import logging
+from collections.abc import Mapping
 from typing import Any
 
-from app.core.constants import ANALYZER_TIMEOUTS, EXPLOIT_MATURITY_ORDER
+from app.core.constants import ANALYZER_TIMEOUTS, DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE
+from app.core.cve import entry_cves
 from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry, VulnerabilityEnrichment
 from app.services.aggregation.merging import dedupe_vulnerability_entries
@@ -13,17 +15,16 @@ from app.services.enrichment.kev import KEVProvider
 from app.services.enrichment.scoring import (
     calculate_exploit_maturity,
     calculate_risk_score,
+    fold_enrichments,
 )
 
 logger = logging.getLogger(__name__)
 
+# Enrichment the document carries only as the roll-up over its advisories.
+_ROLLUP_ONLY_KEYS = frozenset({"epss_date", "exploit_maturity", "risk_score"})
 
-def _build_enrichment(
-    cve: str,
-    kev_entry: KEVEntry | None,
-    epss_entry: EPSSData | None,
-    cvss: float | None,
-) -> VulnerabilityEnrichment:
+
+def _build_enrichment(cve: str, kev_entry: KEVEntry | None, epss_entry: EPSSData | None) -> VulnerabilityEnrichment:
     is_kev = kev_entry is not None
     kev_ransomware = kev_entry.known_ransomware_use if kev_entry else False
     epss_score = epss_entry.epss_score if epss_entry else None
@@ -39,209 +40,107 @@ def _build_enrichment(
         kev_required_action=kev_entry.required_action if kev_entry else None,
         kev_ransomware_use=kev_ransomware,
         exploit_maturity=calculate_exploit_maturity(is_kev, kev_ransomware, epss_score),
-        risk_score=calculate_risk_score(cvss, epss_score, is_kev, kev_ransomware),
+        risk_score=calculate_risk_score(None, epss_score, is_kev, kev_ransomware),
     )
 
 
-def _add_finding_to_map(
-    cve_to_findings: dict[str, list[dict[str, Any]]],
-    cve: str,
-    finding: dict[str, Any],
-) -> None:
-    if cve not in cve_to_findings:
-        cve_to_findings[cve] = []
-    if not any(f.get("_id") == finding.get("_id") for f in cve_to_findings[cve]):
-        cve_to_findings[cve].append(finding)
+def _vulnerabilities(finding: dict[str, Any]) -> list[dict[str, Any]]:
+    return (finding.get("details") or {}).get("vulnerabilities") or []
 
 
-def _extract_finding_id_cve(
-    finding: dict[str, Any],
-    details: dict[str, Any],
-    cve_to_findings: dict[str, list[dict[str, Any]]],
-    cvss_scores: dict[str, float],
-) -> None:
-    finding_id = finding.get("finding_id") or finding.get("id", "")
-    if not (finding_id and finding_id.startswith("CVE-")):
-        return
-    _add_finding_to_map(cve_to_findings, finding_id, finding)
-    if details.get("cvss_score") is not None:
-        cvss_scores[finding_id] = details["cvss_score"]
-
-
-def _extract_aliases(
-    aliases: list[str],
-    finding: dict[str, Any],
-    cve_to_findings: dict[str, list[dict[str, Any]]],
-) -> None:
-    for alias in aliases:
-        if alias.startswith("CVE-"):
-            _add_finding_to_map(cve_to_findings, alias, finding)
-
-
-def _extract_vuln_cves(
-    vuln: dict[str, Any],
-    finding: dict[str, Any],
-    cve_to_findings: dict[str, list[dict[str, Any]]],
-    cvss_scores: dict[str, float],
-) -> None:
-    cve = vuln.get("id", "")
-    if cve and (cve.startswith(("CVE-", "GHSA-"))):
-        _add_finding_to_map(cve_to_findings, cve, finding)
-        if vuln.get("cvss_score") is not None and cve not in cvss_scores:
-            cvss_scores[cve] = vuln["cvss_score"]
-    _extract_aliases(vuln.get("aliases", []), finding, cve_to_findings)
-
-
-def _extract_cves_from_finding(
-    finding: dict[str, Any],
-    cve_to_findings: dict[str, list[dict[str, Any]]],
-    cvss_scores: dict[str, float],
-) -> None:
-    details = finding.get("details", {})
-    if not isinstance(details, dict):
-        return
-
-    _extract_finding_id_cve(finding, details, cve_to_findings, cvss_scores)
-
-    for vuln in details.get("vulnerabilities", []):
-        _extract_vuln_cves(vuln, finding, cve_to_findings, cvss_scores)
-
-    _extract_aliases(finding.get("aliases", []), finding, cve_to_findings)
-
-
-def _apply_ghsa_to_vuln(
-    vuln: dict[str, Any],
-    ghsa_id: str,
-    ghsa_data: GHSAData,
-    cve_to_findings: dict[str, list[dict[str, Any]]],
-    finding: dict[str, Any],
-) -> None:
-    if vuln.get("id") != ghsa_id:
-        return
-
+def _resolve_ghsa(vuln: dict[str, Any], ghsa_data: GHSAData) -> bool:
+    """Record GitHub's CVE and aliases on a GHSA advisory; True when its identity grew."""
     vuln["github_advisory_url"] = ghsa_data.advisory_url
-
-    if ghsa_data.cve_id:
-        if "aliases" not in vuln:
-            vuln["aliases"] = []
-        if ghsa_data.cve_id not in vuln["aliases"]:
-            vuln["aliases"].append(ghsa_data.cve_id)
+    aliases = vuln.setdefault("aliases", [])
+    new_aliases = [a for a in dict.fromkeys([ghsa_data.cve_id, *ghsa_data.aliases]) if a and a not in aliases]
+    aliases.extend(new_aliases)
+    resolved = ghsa_data.cve_id is not None and vuln.get("resolved_cve") != ghsa_data.cve_id
+    if resolved:
         vuln["resolved_cve"] = ghsa_data.cve_id
-        _add_finding_to_map(cve_to_findings, ghsa_data.cve_id, finding)
-
-    for alias in ghsa_data.aliases:
-        if "aliases" not in vuln:
-            vuln["aliases"] = []
-        if alias not in vuln["aliases"]:
-            vuln["aliases"].append(alias)
-
-
-def _apply_ghsa_cve_alias_to_finding(
-    finding: dict[str, Any],
-    cve_id: str | None,
-) -> None:
-    if not cve_id:
-        return
-    if "aliases" not in finding:
-        finding["aliases"] = []
-    if cve_id not in finding["aliases"]:
-        finding["aliases"].append(cve_id)
-
-
-def _apply_ghsa_to_finding(
-    finding: dict[str, Any],
-    ghsa_id: str,
-    ghsa_data: GHSAData,
-    cve_to_findings: dict[str, list[dict[str, Any]]],
-) -> None:
-    if "details" not in finding:
-        finding["details"] = {}
-
-    finding["details"]["github_advisory_url"] = ghsa_data.advisory_url
-
-    for vuln in finding["details"].get("vulnerabilities", []):
-        _apply_ghsa_to_vuln(vuln, ghsa_id, ghsa_data, cve_to_findings, finding)
-
-    _apply_ghsa_cve_alias_to_finding(finding, ghsa_data.cve_id)
+    return bool(new_aliases) or resolved
 
 
 def _apply_ghsa_resolutions(
-    ghsa_resolutions: dict[str, GHSAData],
-    cve_to_findings: dict[str, list[dict[str, Any]]],
-    cvss_scores: dict[str, float],
-) -> None:
-    for ghsa_id, ghsa_data in ghsa_resolutions.items():
-        # GHSA-first ecosystems record cvss_score only under the GHSA id; carry it
-        # to the resolved CVE key so risk scoring uses the real CVSS, not the base.
-        if ghsa_data.cve_id and ghsa_id in cvss_scores:
-            cvss_scores.setdefault(ghsa_data.cve_id, cvss_scores[ghsa_id])
-        for finding in cve_to_findings.get(ghsa_id, []):
-            _apply_ghsa_to_finding(finding, ghsa_id, ghsa_data, cve_to_findings)
+    findings: list[dict[str, Any]], resolutions: Mapping[str, GHSAData]
+) -> list[dict[str, Any]]:
+    """Resolve every GHSA advisory; returns the findings whose advisories gained an id."""
+    touched = []
+    for finding in findings:
+        changed = False
+        for vuln in _vulnerabilities(finding):
+            ghsa_data = resolutions.get(vuln.get("id") or "")
+            if ghsa_data is None:
+                continue
+            changed = _resolve_ghsa(vuln, ghsa_data) or changed
+            aliases = finding.setdefault("aliases", [])
+            if ghsa_data.cve_id and ghsa_data.cve_id not in aliases:
+                aliases.append(ghsa_data.cve_id)
+        if changed:
+            touched.append(finding)
+    return touched
 
 
 def _dedupe_finding_vulnerabilities(findings: list[dict[str, Any]]) -> None:
     """GHSA->CVE resolution can link entries that were distinct at aggregation time."""
     for finding in findings:
-        vulns = finding.get("details", {}).get("vulnerabilities")
-        if not vulns or len(vulns) < 2:
-            continue
+        vulns = _vulnerabilities(finding)
         before = len(vulns)
         dedupe_vulnerability_entries(vulns)
         if len(vulns) != before:
             finding["details"]["fixed_version"] = aggregate_fixed_version(vulns, finding.get("version"))
 
 
-def _apply_enrichment_to_vuln(
-    vuln: dict[str, Any],
-    cve: str,
-    enrichment: VulnerabilityEnrichment,
-) -> None:
-    vuln_id = vuln.get("id", "")
-    if vuln_id != cve and cve not in vuln.get("aliases", []):
-        return
-
+def _enrichment_fields(enrichment: VulnerabilityEnrichment) -> dict[str, Any]:
+    fields: dict[str, Any] = {"risk_score": enrichment.risk_score}
     if enrichment.epss_score is not None:
-        vuln["epss_score"] = enrichment.epss_score
-        vuln["epss_percentile"] = enrichment.epss_percentile
+        fields |= {
+            "epss_score": enrichment.epss_score,
+            "epss_percentile": enrichment.epss_percentile,
+            "epss_date": enrichment.epss_date,
+        }
     if enrichment.is_kev:
-        vuln["in_kev"] = True
-        vuln["kev_due_date"] = enrichment.kev_due_date
-        vuln["kev_ransomware_use"] = enrichment.kev_ransomware_use
+        fields |= {
+            DETAILS_KEY_IN_KEV: True,
+            "kev_date_added": enrichment.kev_date_added,
+            "kev_due_date": enrichment.kev_due_date,
+            "kev_required_action": enrichment.kev_required_action,
+            DETAILS_KEY_KEV_RANSOMWARE: enrichment.kev_ransomware_use,
+        }
+    if enrichment.exploit_maturity != "unknown":
+        fields["exploit_maturity"] = enrichment.exploit_maturity
+    return fields
 
 
-def _apply_enrichment_to_finding(
-    finding: dict[str, Any],
-    enrichment: VulnerabilityEnrichment,
-) -> None:
-    details = finding.setdefault("details", {})
+def _advisory_enrichment(
+    vuln: dict[str, Any], enrichments: Mapping[str, VulnerabilityEnrichment]
+) -> VulnerabilityEnrichment | None:
+    """The advisory's CVEs folded, each scored on the advisory's own CVSS."""
+    cvss = vuln.get("cvss_score")
+    matched = [enrichments[cve] for cve in entry_cves(vuln) if cve in enrichments]
+    if not matched:
+        # GHSA-only, RUSTSEC, GO advisories still rank by their CVSS.
+        if cvss is None:
+            return None
+        return VulnerabilityEnrichment(
+            cve=str(vuln.get("id")), risk_score=calculate_risk_score(cvss, None, False, False)
+        )
+    return fold_enrichments(
+        e.model_copy(update={"risk_score": calculate_risk_score(cvss, e.epss_score, e.is_kev, e.kev_ransomware_use)})
+        for e in matched
+    )
 
-    for vuln in details.get("vulnerabilities", []):
-        _apply_enrichment_to_vuln(vuln, enrichment.cve, enrichment)
 
-    if enrichment.epss_score is not None:
-        max_epss = details.get("epss_score")
-        if max_epss is None or enrichment.epss_score > max_epss:
-            details["epss_score"] = enrichment.epss_score
-            details["epss_percentile"] = enrichment.epss_percentile
-            details["epss_date"] = enrichment.epss_date
-
-    if enrichment.is_kev:
-        details["in_kev"] = True
-        details["kev_date_added"] = enrichment.kev_date_added
-        details["kev_due_date"] = enrichment.kev_due_date
-        details["kev_required_action"] = enrichment.kev_required_action
-        # Stay flagged if any KEV CVE is ransomware-linked; don't clobber to False.
-        details["kev_ransomware_use"] = bool(details.get("kev_ransomware_use")) or enrichment.kev_ransomware_use
-
-    if enrichment.exploit_maturity and enrichment.exploit_maturity != "unknown":
-        current_maturity = details.get("exploit_maturity", "unknown")
-        if EXPLOIT_MATURITY_ORDER.get(enrichment.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(current_maturity, 0):
-            details["exploit_maturity"] = enrichment.exploit_maturity
-
-    if enrichment.risk_score is not None:
-        current_risk = details.get("risk_score")
-        if current_risk is None or enrichment.risk_score > current_risk:
-            details["risk_score"] = enrichment.risk_score
+def apply_enrichments(details: dict[str, Any], enrichments: Mapping[str, VulnerabilityEnrichment]) -> None:
+    """Mark each advisory with its own CVEs' enrichment, then roll the document up from its advisories."""
+    folded = []
+    for vuln in details.get("vulnerabilities") or []:
+        advisory = _advisory_enrichment(vuln, enrichments)
+        if advisory is not None:
+            vuln.update({k: v for k, v in _enrichment_fields(advisory).items() if k not in _ROLLUP_ONLY_KEYS})
+            folded.append(advisory)
+    rollup = fold_enrichments(folded)
+    if rollup is not None:
+        details.update(_enrichment_fields(rollup))
 
 
 class VulnerabilityEnrichmentService:
@@ -278,21 +177,13 @@ class VulnerabilityEnrichmentService:
         client = await self._get_client()
         return await self._ghsa_provider.resolve_ghsa_to_cve(client, ghsa_ids)
 
-    async def enrich_cves(
-        self,
-        cves: list[str],
-        cvss_scores: dict[str, float] | None = None,
-    ) -> dict[str, VulnerabilityEnrichment]:
-        """Enrich CVEs with EPSS and KEV data; returns {cve: VulnerabilityEnrichment}."""
-        if not cves:
-            return {}
-
+    async def enrich_cves(self, cves: list[str]) -> dict[str, VulnerabilityEnrichment]:
+        """Enrich CVEs with EPSS and KEV data; returns {cve: VulnerabilityEnrichment}, scored without CVSS."""
         unique_cves = list({cve for cve in cves if cve and cve.startswith("CVE-")})
 
         if not unique_cves:
             return {}
 
-        cvss_scores = cvss_scores or {}
         client = await self._get_client()
 
         kev_task = self._kev_provider.load_kev_catalog(client)
@@ -300,15 +191,7 @@ class VulnerabilityEnrichmentService:
 
         kev_catalog, epss_data = await asyncio.gather(kev_task, epss_task)
 
-        results = {
-            cve: _build_enrichment(
-                cve,
-                kev_catalog.get(cve),
-                epss_data.get(cve),
-                cvss_scores.get(cve),
-            )
-            for cve in unique_cves
-        }
+        results = {cve: _build_enrichment(cve, kev_catalog.get(cve), epss_data.get(cve)) for cve in unique_cves}
 
         kev_count = sum(1 for e in results.values() if e.is_kev)
         epss_count = sum(1 for e in results.values() if e.epss_score is not None)
@@ -317,29 +200,16 @@ class VulnerabilityEnrichmentService:
         return results
 
     async def enrich_findings(self, findings: list[dict[str, Any]]) -> None:
-        """Enrich vulnerability findings in-place with EPSS and KEV data."""
-        if not findings:
-            return
-
-        cve_to_findings: dict[str, list[dict[str, Any]]] = {}
-        cvss_scores: dict[str, float] = {}
-
-        for finding in findings:
-            _extract_cves_from_finding(finding, cve_to_findings, cvss_scores)
-
-        if not cve_to_findings:
-            return
-
-        ghsa_ids = [vid for vid in cve_to_findings if vid.startswith("GHSA-")]
+        """Resolve GHSA advisories to CVEs, then fold EPSS/KEV onto each advisory and finding in place."""
+        ghsa_ids = sorted(
+            {i for f in findings for v in _vulnerabilities(f) if (i := v.get("id") or "").startswith("GHSA-")}
+        )
         if ghsa_ids:
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
-            ghsa_resolutions = await self.resolve_ghsa_to_cve(ghsa_ids)
-            _apply_ghsa_resolutions(ghsa_resolutions, cve_to_findings, cvss_scores)
-            _dedupe_finding_vulnerabilities(findings)
+            resolutions = await self.resolve_ghsa_to_cve(ghsa_ids)
+            _dedupe_finding_vulnerabilities(_apply_ghsa_resolutions(findings, resolutions))
 
-        cves_to_enrich = [cve for cve in cve_to_findings if cve.startswith("CVE-")]
-        enrichments = await self.enrich_cves(cves_to_enrich, cvss_scores)
-
-        for cve, enrichment in enrichments.items():
-            for finding in cve_to_findings.get(cve, []):
-                _apply_enrichment_to_finding(finding, enrichment)
+        cves = sorted({cve for f in findings for v in _vulnerabilities(f) for cve in entry_cves(v)})
+        enrichments = await self.enrich_cves(cves)
+        for finding in findings:
+            apply_enrichments(finding.setdefault("details", {}), enrichments)

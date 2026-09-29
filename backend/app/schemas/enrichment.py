@@ -64,8 +64,8 @@ class VulnerabilityEnrichment(BaseModel):
     kev_required_action: str | None = None
     kev_ransomware_use: bool = False
 
-    exploit_maturity: str = "unknown"  # unknown, poc, active, weaponized
-    risk_score: float | None = None  # 0-100
+    exploit_maturity: str = "unknown"  # unknown, low, medium, high, active, weaponized
+    risk_score: float  # 0-100
 
 
 class ExtractedSymbols(BaseModel):

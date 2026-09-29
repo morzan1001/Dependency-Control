@@ -19,7 +19,6 @@ from app.core.constants import (
     EPSS_VERY_HIGH_BOOST,
     EPSS_VERY_HIGH_THRESHOLD,
     EXPLOIT_MATURITY_BOOST,
-    EXPLOIT_MATURITY_ORDER,
     IMPACT_AGE_BOOST,
     IMPACT_FIX_AVAILABLE_BOOST,
     IMPACT_MAX_SCORE_BOOST,
@@ -38,6 +37,7 @@ from app.models.user import User
 from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
 from app.services.component_identity import build_component_index
+from app.services.enrichment.scoring import fold_enrichments
 from app.services.recommendation.common import get_attr
 
 MONGO_MATCH = "$match"
@@ -199,34 +199,21 @@ def extract_fix_versions(details_list: list[Any]) -> set:
 
 
 def process_cve_enrichments(finding_ids: list[str], enrichments: dict[str, Any]) -> CVEEnrichmentResult:
-    """Process CVE enrichment data and extract the maximum/worst-case values."""
-    result = CVEEnrichmentResult()
-
-    for fid in finding_ids:
-        if fid not in enrichments:
-            continue
-
-        enr = enrichments[fid]
-
-        if enr.epss_score is not None and (result.max_epss is None or enr.epss_score > result.max_epss):
-            result.max_epss = enr.epss_score
-            result.max_percentile = enr.epss_percentile
-
-        if enr.risk_score is not None and (result.max_risk is None or enr.risk_score > result.max_risk):
-            result.max_risk = enr.risk_score
-
-        if enr.is_kev:
-            result.has_kev = True
-            result.kev_count += 1
-            if enr.kev_ransomware_use:
-                result.kev_ransomware_use = True
-            if enr.kev_due_date and (result.kev_due_date is None or enr.kev_due_date < result.kev_due_date):
-                result.kev_due_date = enr.kev_due_date
-
-        if EXPLOIT_MATURITY_ORDER.get(enr.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(result.exploit_maturity, 0):
-            result.exploit_maturity = enr.exploit_maturity
-
-    return result
+    """The worst case across a group's CVEs, by the fold scan-time enrichment stores."""
+    matched = [enrichments[fid] for fid in finding_ids if fid in enrichments]
+    worst = fold_enrichments(matched)
+    if worst is None:
+        return CVEEnrichmentResult()
+    return CVEEnrichmentResult(
+        max_epss=worst.epss_score,
+        max_percentile=worst.epss_percentile,
+        max_risk=worst.risk_score,
+        has_kev=worst.is_kev,
+        kev_count=sum(1 for enr in matched if enr.is_kev),
+        kev_ransomware_use=worst.kev_ransomware_use,
+        kev_due_date=worst.kev_due_date,
+        exploit_maturity=worst.exploit_maturity,
+    )
 
 
 def _calculate_kev_boost(enrichment_data: CVEEnrichmentResult) -> float:

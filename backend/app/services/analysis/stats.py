@@ -102,7 +102,7 @@ def finding_vulnerability_id(finding: dict[str, Any]) -> str:
 
 def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summary: EPSSKEVSummary) -> None:
     """Emit one row per known-exploited CVE of a finding."""
-    if not details.get("in_kev"):
+    if not details.get(DETAILS_KEY_IN_KEV):
         return
     component = finding.get("component", "")
     rows: list[KEVDetail] = [
@@ -110,10 +110,10 @@ def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summa
             "cve": canonical_cve(entry) or "",
             "component": component,
             "due_date": entry.get("kev_due_date"),
-            "ransomware": bool(entry.get("kev_ransomware_use")),
+            "ransomware": bool(entry.get(DETAILS_KEY_KEV_RANSOMWARE)),
         }
         for entry in (details.get("vulnerabilities") or [])
-        if isinstance(entry, dict) and entry.get("in_kev")
+        if isinstance(entry, dict) and entry.get(DETAILS_KEY_IN_KEV)
     ]
     if not rows:
         # The KEV CVE can come from the finding's own aliases, which match no nested entry.
@@ -122,7 +122,7 @@ def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summa
                 "cve": finding_vulnerability_id(finding),
                 "component": component,
                 "due_date": details.get("kev_due_date"),
-                "ransomware": bool(details.get("kev_ransomware_use")),
+                "ransomware": bool(details.get(DETAILS_KEY_KEV_RANSOMWARE)),
             }
         ]
     summary["kev_matches"] += len(rows)
@@ -150,7 +150,7 @@ def _process_finding_risk(
             "version": finding.get("version") or "",
             "risk_score": round(risk_score, 1),
             "epss_score": round(epss_score, 4) if epss_score is not None else None,
-            "in_kev": details.get("in_kev", False),
+            "in_kev": details.get(DETAILS_KEY_IN_KEV, False),
             "exploit_maturity": maturity,
         }
         summary["high_risk_cves"].append(high_risk_cve)
