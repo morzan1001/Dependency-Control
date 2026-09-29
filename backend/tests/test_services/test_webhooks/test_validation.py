@@ -290,12 +290,12 @@ class TestValidateWebhookEvents:
     @pytest.mark.parametrize(
         "events",
         [
-            pytest.param(["scan_completed"], id="single"),
-            pytest.param(["scan_completed", "vulnerability_found"], id="multiple"),
+            pytest.param(["scan.completed"], id="single"),
+            pytest.param(["scan.completed", "vulnerability.found"], id="multiple"),
             pytest.param(WEBHOOK_VALID_EVENTS, id="every-valid-event"),
         ],
     )
-    def test_valid_events_returned_unchanged(self, events):
+    def test_canonical_events_are_returned_unchanged(self, events):
         assert validate_webhook_events(events) == events
 
     @pytest.mark.parametrize(
@@ -322,9 +322,9 @@ class TestValidateWebhookEventsOptional:
     def test_none_returns_none(self):
         assert validate_webhook_events_optional(None) is None
 
-    def test_valid_events_returned(self):
-        result = validate_webhook_events_optional(["scan_completed"])
-        assert result == ["scan_completed"]
+    def test_a_legacy_event_name_is_stored_in_its_canonical_form(self):
+        result = validate_webhook_events_optional(["scan_completed", "scan.completed", "vulnerability_found"])
+        assert result == ["scan.completed", "vulnerability.found"]
 
     def test_invalid_events_raises(self):
         with pytest.raises(ValueError):
@@ -332,9 +332,8 @@ class TestValidateWebhookEventsOptional:
 
 
 class TestValidateWebhookEventType:
-    def test_valid_single_event(self):
-        result = validate_webhook_event_type("scan_completed")
-        assert result == "scan_completed"
+    def test_a_legacy_event_name_is_canonicalised(self):
+        assert validate_webhook_event_type("scan_completed") == "scan.completed"
 
     def test_invalid_single_event_raises(self):
         with pytest.raises(ValueError, match="Invalid event"):

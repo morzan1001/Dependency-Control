@@ -53,21 +53,10 @@ from app.services.webhooks.types import (
 from app.services.webhooks.validation import build_pinned_transport, validate_webhook_url
 
 
-def _normalize_event_name(event_type: str) -> str:
-    """Canonicalize a webhook event name to its dot-notation form."""
-    return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
-
-
 def _event_match_set(event_type: str) -> list[str]:
-    """Return both the canonical and alias forms so either stored subscription name matches."""
-    canonical = _normalize_event_name(event_type)
-    names = [canonical]
-    for alias, target in WEBHOOK_EVENT_ALIASES.items():
-        if target == canonical and alias not in names:
-            names.append(alias)
-    if event_type not in names:
-        names.append(event_type)
-    return names
+    """The canonical event plus its snake_case aliases, which subscriptions written before
+    validation canonicalised event names may still store."""
+    return [event_type, *(alias for alias, target in WEBHOOK_EVENT_ALIASES.items() if target == event_type)]
 
 
 logger = logging.getLogger(__name__)
@@ -265,18 +254,17 @@ class WebhookService:
         if effective_type != "teams":
             return raw_payload
 
-        normalized = _normalize_event_name(event_type)
         project_name = raw_payload.get("project", {}).get("name", "Unknown Project")
         scan_url = raw_payload.get("scan", {}).get("url")
 
-        if normalized == WEBHOOK_EVENT_SCAN_COMPLETED:
+        if event_type == WEBHOOK_EVENT_SCAN_COMPLETED:
             return TeamsFormatter.build_scan_completed_card(
                 project_name=project_name,
                 _scan_id=raw_payload.get("scan", {}).get("id", ""),
                 findings=raw_payload.get("findings", {"total": 0, "stats": {}}),
                 scan_url=scan_url,
             )
-        if normalized == WEBHOOK_EVENT_VULNERABILITY_FOUND:
+        if event_type == WEBHOOK_EVENT_VULNERABILITY_FOUND:
             return TeamsFormatter.build_vulnerability_found_card(
                 project_name=project_name,
                 _scan_id=raw_payload.get("scan", {}).get("id", ""),
@@ -285,18 +273,18 @@ class WebhookService:
                 ),
                 scan_url=scan_url,
             )
-        if normalized == WEBHOOK_EVENT_ANALYSIS_FAILED:
+        if event_type == WEBHOOK_EVENT_ANALYSIS_FAILED:
             return TeamsFormatter.build_analysis_failed_card(
                 project_name=project_name,
                 error=str(raw_payload.get("error", "Unknown error")),
                 scan_url=scan_url,
             )
-        if normalized in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
-            return self._build_policy_changed_card(normalized, raw_payload)
-        if event_type == "test":  # "test" has no alias; event_type == normalized here
+        if event_type in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
+            return self._build_policy_changed_card(event_type, raw_payload)
+        if event_type == "test":
             return TeamsFormatter.build_test_card()
         return TeamsFormatter.build_generic_card(
-            subject=normalized.replace(".", " ").title(),
+            subject=event_type.replace(".", " ").title(),
             message=f"Event for project **{project_name}**",
             url=scan_url,
         )

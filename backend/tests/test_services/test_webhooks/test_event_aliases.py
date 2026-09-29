@@ -1,4 +1,4 @@
-"""Tests for webhook event-name backward-compat aliases (snake_case <-> dot-notation)."""
+"""Legacy snake_case webhook event names: canonicalised on input, still matched on dispatch."""
 
 from __future__ import annotations
 
@@ -12,40 +12,24 @@ from app.services.webhooks.validation import (
     validate_webhook_event_type,
     validate_webhook_events,
 )
-from app.services.webhooks.webhook_service import (
-    WebhookService,
-    _event_match_set,
-    _normalize_event_name,
-)
+from app.services.webhooks.webhook_service import WebhookService, _event_match_set
 
 
-class TestEventNameNormalization:
-    def test_normalize_legacy_name_returns_dot_notation(self):
-        assert _normalize_event_name("scan_completed") == "scan.completed"
-        assert _normalize_event_name("vulnerability_found") == "vulnerability.found"
-        assert _normalize_event_name("analysis_failed") == "analysis.failed"
-
-    def test_normalize_dot_notation_is_unchanged(self):
-        assert _normalize_event_name("scan.completed") == "scan.completed"
-
-    def test_normalize_unknown_event_is_unchanged(self):
-        assert _normalize_event_name("something.else") == "something.else"
-
+class TestEventMatchSet:
     def test_match_set_includes_legacy_alias(self):
-        names = _event_match_set("scan.completed")
-        assert "scan.completed" in names
-        assert "scan_completed" in names
+        assert _event_match_set("scan.completed") == ["scan.completed", "scan_completed"]
 
-    def test_match_set_from_legacy_name_includes_canonical(self):
-        names = _event_match_set("scan_completed")
-        assert "scan.completed" in names
-        assert "scan_completed" in names
+    def test_an_event_without_an_alias_matches_only_itself(self):
+        assert _event_match_set("sbom.ingested") == ["sbom.ingested"]
 
 
 class TestValidationAcceptsBothForms:
     def test_subscribe_accepts_dot_notation(self):
         result = validate_webhook_events(["scan.completed"])
         assert result == ["scan.completed"]
+
+    def test_subscribe_stores_a_legacy_name_in_its_canonical_form(self):
+        assert validate_webhook_events(["scan_completed"]) == ["scan.completed"]
 
     def test_single_event_accepts_dot_notation(self):
         assert validate_webhook_event_type("vulnerability.found") == "vulnerability.found"

@@ -799,8 +799,8 @@ WEBHOOK_EVENT_LICENSE_POLICY_CHANGED = "license_policy.changed"
 WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report.generated"
 WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan.generated"
 
-# snake_case event names still stored by existing webhook subscriptions in MongoDB;
-# the dispatcher and validation treat both forms as equivalent (no DB migration needed).
+# snake_case event names clients may still send; validation stores their canonical form, and
+# dispatch also matches subscriptions stored before it did.
 WEBHOOK_EVENT_ALIASES: dict[str, str] = {
     "scan_completed": WEBHOOK_EVENT_SCAN_COMPLETED,
     "vulnerability_found": WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -819,7 +819,6 @@ WEBHOOK_VALID_EVENTS = [
     WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
 ]
 
-# Accepts both canonical dot-notation and snake_case names; the matcher normalizes both.
 WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.keys()]
 
 # Webhook HTTP headers
