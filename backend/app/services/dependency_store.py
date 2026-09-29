@@ -53,10 +53,11 @@ async def store_scan_dependencies(
 ) -> int:
     """Replace the scan's dependency inventory; merges cross-SBOM duplicates first (the unique index spans the scan)."""
     merged, _ = merge_duplicate_dependencies(dependencies)
-    # One created_at marks this write's rows, so a failure part-way leaves the old rows beside the new.
+    # Deletes only rows no write since this one has touched, so after a failure part-way or an
+    # overlapping store of the same scan the newest write's rows are all still there.
     written_at = datetime.now(timezone.utc)
     for start in range(0, len(merged), _DEP_CHUNK_SIZE):
         chunk = merged[start : start + _DEP_CHUNK_SIZE]
         await dep_repo.upsert_many([_parsed_dep_to_dependency(dep, project_id, scan_id, written_at) for dep in chunk])
-    await dep_repo.delete_other_writes(scan_id, written_at)
+    await dep_repo.delete_older_writes(scan_id, written_at)
     return len(merged)

@@ -2,6 +2,8 @@
 SBOMs must be merged before the first insert. 3,698 of 45,084 production scans (8.2%) carry
 two or more SBOMs; a 60-scan sample of them index-dropped 2,772 of 21,730 parsed dependencies."""
 
+import asyncio
+
 import pytest
 from bson import ObjectId
 
@@ -232,3 +234,39 @@ async def test_a_finished_store_leaves_exactly_the_new_inventory(db):
     assert sorted(inventory) == ["new", "shared", "vendored-blob"]
     assert (inventory["shared"]["_id"], inventory["shared"]["scope"]) == (kept_id, "runtime")
     assert all(isinstance(doc["_id"], str) for doc in inventory.values())
+
+
+class _CleanupAfterBothWrote(DependencyRepository):
+    """Holds each store's cleanup delete until both overlapping stores have written their rows."""
+
+    def __init__(self, db, both_written: asyncio.Barrier):
+        super().__init__(db)
+        self._both_written = both_written
+
+    async def delete_older_writes(self, scan_id, written_at):
+        await self._both_written.wait()
+        await super().delete_older_writes(scan_id, written_at)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    ("earlier", "later"),
+    [
+        pytest.param(["a", "b", "shared"], ["a", "b", "shared"], id="one-scan-claimed-by-two-workers"),
+        pytest.param(["old-only", "shared"], ["new-only", "shared"], id="re-ingest-during-the-analysis"),
+    ],
+)
+async def test_overlapping_stores_of_one_scan_leave_the_later_inventory(db, earlier, later):
+    await create_indexes(db)
+    repo = _CleanupAfterBothWrote(db, asyncio.Barrier(2))
+
+    async def later_store():
+        await asyncio.sleep(0.01)  # a later millisecond, so the two writes carry distinct markers
+        await store_scan_dependencies([_dep(name) for name in later], _PROJECT_ID, _SCAN_ID, repo)
+
+    await asyncio.gather(
+        store_scan_dependencies([_dep(name) for name in earlier], _PROJECT_ID, _SCAN_ID, repo), later_store()
+    )
+
+    assert sorted(await _inventory(db)) == sorted(later)

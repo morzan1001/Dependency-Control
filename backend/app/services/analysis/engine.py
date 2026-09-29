@@ -1122,9 +1122,6 @@ async def run_analysis(
             sboms_expected,
         )
 
-    # Rescans run under a fresh scan_id with no stored deps; delete-then-insert keeps
-    # ingest-origin re-runs idempotent. persist_deps=False (an SBOM of this run failed to
-    # resolve) skips the write entirely so stored deps are never wiped.
     deps_to_store = _ScanDependencies() if persist_deps else None
     for index, current_sbom in enumerate(resolved_sboms):
         if current_sbom is None:

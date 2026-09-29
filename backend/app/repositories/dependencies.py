@@ -26,12 +26,16 @@ class DependencyRepository(BaseRepository[Dependency]):
         return await self.collection.find({"scan_id": scan_id}, projection).to_list(None)
 
     async def upsert_many(self, dependencies: list[Dependency]) -> None:
-        """Write each dependency over its scan's row with the same (name, version, purl)."""
+        """Write each dependency over its scan's (name, version, purl) row; the row keeps its newest created_at."""
         await self.collection.bulk_write(
             [
                 UpdateOne(
                     {"scan_id": d.scan_id, "name": d.name, "version": d.version, "purl": d.purl},
-                    {"$set": d.model_dump(by_alias=True, exclude={"id"}), "$setOnInsert": {"_id": d.id}},
+                    {
+                        "$set": d.model_dump(by_alias=True, exclude={"id", "created_at"}),
+                        "$max": {"created_at": d.created_at},
+                        "$setOnInsert": {"_id": d.id},
+                    },
                     upsert=True,
                 )
                 for d in dependencies
@@ -39,8 +43,9 @@ class DependencyRepository(BaseRepository[Dependency]):
             ordered=False,
         )
 
-    async def delete_other_writes(self, scan_id: str, written_at: datetime) -> None:
-        await self.delete_many({"scan_id": scan_id, "created_at": {"$ne": written_at}})
+    async def delete_older_writes(self, scan_id: str, written_at: datetime) -> None:
+        """Delete the scan's rows no write since ``written_at`` has touched, undated rows included."""
+        await self.delete_many({"scan_id": scan_id, "$nor": [{"created_at": {"$gte": written_at}}]})
 
     async def count_by_scan(self, project_id: str, scan_id: str) -> int:
         return await self.count({"project_id": project_id, "scan_id": scan_id})

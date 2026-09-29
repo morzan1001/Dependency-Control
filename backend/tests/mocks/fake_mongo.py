@@ -19,7 +19,7 @@ Supported query operators
 Supported update operators
 --------------------------
 - ``$set`` (including ``a.$[ident].b`` paths with ``array_filters``), ``$setOnInsert``,
-  ``$unset``, ``$inc``, ``$addToSet``, ``$push``, ``$pull``
+  ``$unset``, ``$inc``, ``$max``, ``$addToSet``, ``$push``, ``$pull``
 - The aggregation-pipeline form, ``update_one(filter, [{"$set": ...}, ...])``, with the
   ``$set``/``$addFields``, ``$unset``, ``$project`` and ``$replaceRoot`` stages.
 - Two modifiers may not touch overlapping paths: the parse raises ``OperationFailure``
@@ -1526,6 +1526,11 @@ class FakeCollection:
                 for field, delta in payload.items():
                     parent, leaf = FakeCollection._resolve_parent(target, field)
                     parent[leaf] = parent.get(leaf, 0) + delta
+            elif op == "$max":
+                for field, value in payload.items():
+                    parent, leaf = FakeCollection._resolve_parent(target, field)
+                    if leaf not in parent or _bson_sort_key(value) > _bson_sort_key(parent[leaf]):
+                        parent[leaf] = value
             elif op == "$addToSet":
                 for field, value in payload.items():
                     bucket = FakeCollection._array_for_update(target, field, "$addToSet")
@@ -1696,9 +1701,8 @@ class FakeCollection:
                     modified += not _bson_identical(self._docs[key], before)
             elif upsert:
                 upserted += 1
-                doc: dict = {}
-                doc.update(upd.get(_SET_ON_INSERT, {}))
-                doc.update(upd.get("$set", {}))
+                doc: dict = dict(upd.get(_SET_ON_INSERT, {}))
+                self._apply_update(doc, upd, skip_set_on_insert=True)
                 if "_id" not in doc:
                     # Fall back to a deterministic composite key from filter fields
                     # (matches the unique-index strategy in crypto-asset upserts).
