@@ -172,7 +172,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_vulnerability_details",
-            "description": "Get details about a specific vulnerability/finding: CVE info, EPSS score, references, affected component.",
+            "description": (
+                "Get details about a specific vulnerability/finding and its affected component. advisories lists "
+                "the finding's worst advisories first, each with its own severity, CVSS, EPSS, KEV status and fix; "
+                "advisories_total says how many it has."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -351,14 +355,20 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "get_waiver_status",
             "description": (
                 "Check whether a finding is currently SUPPRESSED by a waiver in the latest scan. "
-                "Returns waived:false with waiver_present:true and suppressing:false when an active "
-                "waiver exists but the finding is not in the latest scan (fixed/moved/renamed or the "
-                "waiver is dormant)."
+                "Returns one entry per matching finding (a finding id such as a license id can cover "
+                "several components) with the advisories a per-CVE waiver suppresses; waived is true "
+                "only when it is waived on every one of them (for an advisory ID: that advisory). "
+                "Returns waived:false with waiver_present:true "
+                "and suppressing:false when an active waiver exists but the finding is not in the latest "
+                "scan (fixed/moved/renamed or the waiver is dormant)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "finding_id": {"type": "string", "description": "The finding ID"},
+                    "finding_id": {
+                        "type": "string",
+                        "description": "The finding ID, or a CVE/advisory ID to check its per-advisory waivers",
+                    },
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["finding_id", "project_id"],
@@ -449,8 +459,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_auto_fixable_findings",
             "description": (
-                "Return CRITICAL/HIGH findings that already have a known fix_version — "
+                "Return CRITICAL/HIGH findings whose every live CRITICAL/HIGH advisory has a fix — "
                 "the 'low-hanging fruit' a team can resolve with a simple dependency bump. "
+                "still_open names the lower-severity advisories the bump leaves open. "
                 "Use when the user asks 'what quick wins do I have?', 'what can I fix "
                 "easily?' or 'which updates are available?'."
             ),
@@ -537,8 +548,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_kev_findings",
             "description": (
-                "Return findings whose CVE is being ACTIVELY EXPLOITED in the wild "
-                "(threat-intel exploit_maturity = 'active' or 'weaponized'). These "
+                "Return findings with an unwaived advisory in CISA KEV, i.e. ACTIVELY "
+                "EXPLOITED in the wild; each row's cve names that advisory. These "
                 "should always be prioritised over a CVSS-based order. Use when the "
                 "user asks 'what is actively exploited?', 'which findings are in KEV?' "
                 "or 'show me the stuff with real-world exploits'."
@@ -583,8 +594,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "get_findings_by_cve",
             "description": (
                 "Find every finding that refers to a specific CVE across the user's "
-                "projects. Use when the user mentions a concrete CVE ID. Matches exact "
-                "CVE in the nested vulnerabilities list, not free-text."
+                "projects. Use when the user mentions a concrete CVE ID. Matches the exact "
+                "id under any of an advisory's identifiers (id, aliases, resolved CVE), not free-text."
             ),
             "parameters": {
                 "type": "object",
@@ -601,9 +612,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "get_cve_details",
             "description": (
                 "Return enriched information about a CVE ID: description, CVSS score, "
-                "EPSS, exploit_maturity, fix versions, external references. Derived "
-                "from the most informative occurrence across the user's projects. Use "
-                "when the user asks 'tell me about CVE-X' or 'is CVE-X exploitable?'."
+                "EPSS, KEV status, exploit_maturity, fix version, external references. Read "
+                "from one occurrence in the user's projects; its fixed_version applies to "
+                "affected_component only, so use get_findings_by_cve for every affected "
+                "component. Use when the user asks 'tell me about CVE-X' or 'is CVE-X exploitable?'."
             ),
             "parameters": {
                 "type": "object",

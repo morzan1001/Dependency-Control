@@ -5,10 +5,12 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import settings
-from app.core.cve import canonical_cves
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE
+from app.core.cve import advisory_ids, canonical_cve, canonical_cves
 from app.services.component_identity import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
 from app.services.aggregation.versions import parse_version_key
+from app.services.recommendation.common import finding_cve_ids
 
 
 def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bool:
@@ -56,8 +58,12 @@ _FINDING_DETAILS_FIELDS = (
     "epss_percentile",
     "exploit_maturity",
     "risk_score",
-    "cvss_score",
+    DETAILS_KEY_IN_KEV,
 )
+
+# A row's compact view of each advisory, and how many advisories it lists beside its primary.
+_ROW_ADVISORY_FIELDS = ("id", "severity", DETAILS_KEY_IN_KEV, "epss_score", "fixed_version", "waived")
+_ROW_ADVISORIES = 3
 
 _SEVERITY_RANK = {
     "CRITICAL": 4,
@@ -190,24 +196,50 @@ def _clip_value(value: Any) -> Any:
     return value
 
 
-def _flatten_primary_vuln(out: dict[str, Any], vulns: list[dict[str, Any]]) -> None:
-    """Mutate `out` with fields lifted from the first nested CVE."""
-    if not vulns:
-        return
-    primary = vulns[0]
-    if primary.get("id"):
-        out["cve"] = primary["id"]
-    for k in ("cvss_score", "fixed_version", "epss_score"):
-        if primary.get(k) is not None and k not in out:
-            out[k] = primary[k]
-    refs = primary.get("references") or []
-    if refs:
-        out["references"] = refs[:3]
-    out["cve_count"] = len(vulns)
+def _number(value: Any) -> float:
+    """A sort key for a stored number; missing or non-numeric sorts last."""
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
 
 
-def _serialize_finding_for_llm(doc: dict[str, Any]) -> dict[str, Any]:
-    """Compact LLM projection: flattens `details` and the first CVE to the top level."""
+def ranked_advisories(details: Any, first: str | None = None) -> list[dict[str, Any]]:
+    """A finding's advisories, the one its row is named after first: the one known as `first`, then
+    live before waived, KEV (ransomware first), severity, EPSS, CVSS."""
+    entries = (details.get("vulnerabilities") or []) if isinstance(details, dict) else []
+    return sorted(
+        entries,
+        key=lambda v: (
+            first in advisory_ids(v),
+            not v.get("waived"),
+            bool(v.get(DETAILS_KEY_IN_KEV)),
+            bool(v.get(DETAILS_KEY_KEV_RANSOMWARE)),
+            _SEVERITY_RANK.get(str(v.get("severity") or "").upper(), 0),
+            _number(v.get("epss_score")),
+            _number(v.get("cvss_score")),
+        ),
+        reverse=True,
+    )
+
+
+def advisory_view(entry: dict[str, Any], *, references: int) -> dict[str, Any]:
+    """One advisory's own values; a finding's details hold maxima over all its advisories and never stand in."""
+    return {
+        "id": canonical_cve(entry),
+        "severity": entry.get("severity"),
+        "cvss_score": entry.get("cvss_score"),
+        "cvss_vector": entry.get("cvss_vector"),
+        "epss_score": entry.get("epss_score"),
+        "epss_percentile": entry.get("epss_percentile"),
+        DETAILS_KEY_IN_KEV: bool(entry.get(DETAILS_KEY_IN_KEV)),
+        "fixed_version": entry.get("fixed_version"),
+        "waived": bool(entry.get("waived")),
+        "description": _clip_value(entry.get("description") or ""),
+        "references": (entry.get("references") or [])[:references],
+        "scanners": entry.get("scanners"),
+    }
+
+
+def _serialize_finding_for_llm(doc: dict[str, Any], *, cve: str | None = None) -> dict[str, Any]:
+    """Compact LLM projection: `details` flattened, the row named after its primary advisory (see ranked_advisories)."""
     if not doc:
         return {}
     out: dict[str, Any] = {}
@@ -221,7 +253,21 @@ def _serialize_finding_for_llm(doc: dict[str, Any]) -> dict[str, Any]:
         if details.get(key) is not None:
             out[key] = _clip_value(details[key])
 
-    _flatten_primary_vuln(out, details.get("vulnerabilities") or [])
+    advisories = ranked_advisories(details, first=cve)
+    if not advisories:
+        return out
+    primary = advisories[0]
+    if primary_id := canonical_cve(primary):
+        out["cve"] = primary_id
+    if primary.get("cvss_score") is not None:
+        out["cvss_score"] = primary["cvss_score"]
+    if refs := primary.get("references"):
+        out["references"] = refs[:3]
+    out["cve_count"] = len(finding_cve_ids(doc))
+    if len(advisories) > 1:
+        # The finding-level EPSS and exploit_maturity above are maxima; these say which advisory holds them.
+        views = (advisory_view(v, references=0) for v in advisories[:_ROW_ADVISORIES])
+        out["advisories"] = [{k: view[k] for k in _ROW_ADVISORY_FIELDS} for view in views]
     return out
 
 

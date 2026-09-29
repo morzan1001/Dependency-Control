@@ -196,7 +196,7 @@ class TestGetWaiverStatusFindingFlags:
         )
 
         assert result["waived"] is False
-        assert result.get("lapsed") is True
+        assert result["findings"][0]["lapsed"] is True
 
 
 class TestListProjectWaiversIsActive:
