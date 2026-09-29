@@ -1,15 +1,17 @@
-"""Tests that the PyPI hash verifier collects every file's digest per algorithm, not just the first."""
+"""Hash verification compares the parser's component hashes with the registry's digests for that exact version."""
 
 import asyncio
 from typing import Any, Self
 
 import pytest
 
-from app.core.constants import NPM_REGISTRY_URL
+from app.core.cache import CacheKeys
+from app.core.constants import ANALYZER_BATCH_SIZES, NPM_REGISTRY_URL
 from app.models.finding import Severity
+from app.services.aggregation import ResultAggregator
 from app.services.analyzers import hash_verification
-from app.services.analyzers.base import normalize_hash_algorithm
-from app.services.analyzers.hash_verification import HashVerificationAnalyzer
+from app.services.analyzers.hash_verification import HashVerificationAnalyzer, normalize_hash_algorithm
+from tests.helpers.analyzers import analyze_cyclonedx
 
 
 class _FakeResponse:
@@ -26,6 +28,12 @@ class _FakeClient:
         self._payload = payload
         self._status_code = status_code
         self.urls: list[str] = []
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
 
     async def get(self, url: str) -> _FakeResponse:
         self.urls.append(url)
@@ -50,6 +58,25 @@ class _HtmlErrorClient:
         return _HtmlErrorResponse(self._status_code)
 
 
+class _MemoryCache:
+    """Mirrors cache_service: a batched read, and a locked fetch that stores what the fetch returned."""
+
+    def __init__(self, entries: dict[str, Any] | None = None):
+        self.entries = dict(entries or {})
+        self.mget_calls: list[list[str]] = []
+
+    async def mget(self, keys: list[str]) -> dict[str, Any]:
+        self.mget_calls.append(list(keys))
+        return {key: self.entries.get(key) for key in keys}
+
+    async def get_or_fetch_with_lock(self, key: str, fetch_fn, ttl_seconds: int | None = None) -> Any:
+        if self.entries.get(key) is not None:
+            return self.entries[key]
+        value = await fetch_fn()
+        self.entries[key] = {} if value is None else value
+        return value
+
+
 # sha256 digests for three released files of the same version.
 _MAC_WHEEL_SHA256 = "a" * 64
 _MANYLINUX_WHEEL_SHA256 = "b" * 64
@@ -64,93 +91,158 @@ _PYPI_PAYLOAD = {
 }
 
 
+def _numpy(*hashes: tuple[str, str], version: str | None = "1.26.4") -> dict[str, Any]:
+    component: dict[str, Any] = {"type": "library", "name": "numpy", "purl": "pkg:pypi/numpy"}
+    if version:
+        component |= {"version": version, "purl": f"pkg:pypi/numpy@{version}"}
+    component["hashes"] = [{"alg": alg, "content": content} for alg, content in hashes]
+    return component
+
+
+def _left_pad(*hashes: tuple[str, str]) -> dict[str, Any]:
+    return {
+        "type": "library",
+        "name": "left-pad",
+        "version": "1.0.0",
+        "purl": "pkg:npm/left-pad@1.0.0",
+        "hashes": [{"alg": alg, "content": content} for alg, content in hashes],
+    }
+
+
+async def _verify(
+    monkeypatch, components: list[dict[str, Any]], client: Any, cache: _MemoryCache | None = None
+) -> dict[str, Any]:
+    monkeypatch.setattr(hash_verification, "InstrumentedAsyncClient", lambda *_a, **_k: client)
+    monkeypatch.setattr(hash_verification, "cache_service", cache or _MemoryCache())
+    return await analyze_cyclonedx(HashVerificationAnalyzer(), components)
+
+
 @pytest.mark.asyncio
 async def test_fetch_pypi_collects_all_file_digests():
-    analyzer = HashVerificationAnalyzer()
-    client = _FakeClient(_PYPI_PAYLOAD)
+    result = await HashVerificationAnalyzer()._fetch_registry_hashes(
+        _FakeClient(_PYPI_PAYLOAD), "pypi", "numpy", "1.26.4"
+    )
 
-    result = await analyzer._fetch_pypi_registry_hashes(client, "numpy", "1.26.4")
-
-    assert set(result["sha256"]) == {
-        _MAC_WHEEL_SHA256,
-        _MANYLINUX_WHEEL_SHA256,
-        _SDIST_SHA256,
-    }
+    assert set(result["sha256"]) == {_MAC_WHEEL_SHA256, _MANYLINUX_WHEEL_SHA256, _SDIST_SHA256}
 
 
 @pytest.mark.asyncio
-async def test_non_first_wheel_hash_is_verified_not_flagged():
-    """The manylinux wheel hash (2nd urls entry) must verify, not be flagged."""
-    analyzer = HashVerificationAnalyzer()
-    client = _FakeClient(_PYPI_PAYLOAD)
+async def test_non_first_wheel_hash_is_verified_not_flagged(monkeypatch):
+    result = await _verify(monkeypatch, [_numpy(("SHA-256", _MANYLINUX_WHEEL_SHA256))], _FakeClient(_PYPI_PAYLOAD))
 
-    registry_hashes_flat = await analyzer._fetch_pypi_registry_hashes(client, "numpy", "1.26.4")
-
-    sbom_hashes = {"sha256": _MANYLINUX_WHEEL_SHA256}
-    result = analyzer._evaluate_registry_hashes(registry_hashes_flat, sbom_hashes, "numpy", "1.26.4", "pypi")
-
-    assert result == {"verified": True}
+    assert result["hash_issues"] == []
+    assert result["summary"] == {"verified_count": 1, "unverifiable_count": 0, "mismatch_count": 0}
 
 
 @pytest.mark.asyncio
-async def test_genuinely_wrong_hash_still_flagged():
-    """A hash matching none of the files is still a CRITICAL mismatch."""
-    analyzer = HashVerificationAnalyzer()
-    client = _FakeClient(_PYPI_PAYLOAD)
+async def test_genuinely_wrong_hash_is_a_critical_finding(monkeypatch):
+    result = await _verify(monkeypatch, [_numpy(("SHA-256", "d" * 64))], _FakeClient(_PYPI_PAYLOAD))
+    aggregator = ResultAggregator()
+    aggregator.aggregate("hash_verification", result)
 
-    registry_hashes_flat = await analyzer._fetch_pypi_registry_hashes(client, "numpy", "1.26.4")
-
-    sbom_hashes = {"sha256": "d" * 64}
-    result = analyzer._evaluate_registry_hashes(registry_hashes_flat, sbom_hashes, "numpy", "1.26.4", "pypi")
-
-    assert result is not None
-    assert result["mismatch"] is True
-    assert result["severity"] == Severity.CRITICAL.value
-    assert set(result["expected_hashes"]) == {
-        _MAC_WHEEL_SHA256,
-        _MANYLINUX_WHEEL_SHA256,
-        _SDIST_SHA256,
-    }
+    [issue] = result["hash_issues"]
+    assert set(issue["expected_hashes"]) == {_MAC_WHEEL_SHA256, _MANYLINUX_WHEEL_SHA256, _SDIST_SHA256}
+    assert [finding.severity for finding in aggregator.get_findings()] == [Severity.CRITICAL]
 
 
 @pytest.mark.asyncio
-async def test_uppercase_registry_digest_verifies_against_the_sbom_hash():
-    """The comparison folds the SBOM side to lower case, so the registry side must be folded too."""
-    analyzer = HashVerificationAnalyzer()
+async def test_the_finding_takes_the_severity_the_analyzer_gave(monkeypatch):
+    result = await _verify(monkeypatch, [_numpy(("SHA-256", "d" * 64))], _FakeClient(_PYPI_PAYLOAD))
+    result["hash_issues"][0]["severity"] = Severity.HIGH.value
+    aggregator = ResultAggregator()
+
+    aggregator.aggregate("hash_verification", result)
+
+    assert [finding.severity for finding in aggregator.get_findings()] == [Severity.HIGH]
+
+
+@pytest.mark.asyncio
+async def test_uppercase_registry_digest_verifies_against_the_sbom_hash(monkeypatch):
     client = _FakeClient({"urls": [{"digests": {"sha256": _SDIST_SHA256.upper()}}]})
 
-    registry_hashes_flat = await analyzer._fetch_pypi_registry_hashes(client, "numpy", "1.26.4")
+    result = await _verify(monkeypatch, [_numpy(("SHA-256", _SDIST_SHA256))], client)
 
-    result = analyzer._evaluate_registry_hashes(
-        registry_hashes_flat, {"sha256": _SDIST_SHA256}, "numpy", "1.26.4", "pypi"
-    )
-    assert result == {"verified": True}
+    assert result["summary"]["verified_count"] == 1
 
 
 @pytest.mark.asyncio
 async def test_a_404_from_pypi_is_a_negative_result_not_a_transient_error():
     """{} and None are cached differently: the package is genuinely absent, not momentarily unreachable."""
-    analyzer = HashVerificationAnalyzer()
-
-    result = await analyzer._fetch_pypi_registry_hashes(_HtmlErrorClient(404), "nonexistent-pkg", "1.0.0")
+    result = await HashVerificationAnalyzer()._fetch_registry_hashes(
+        _HtmlErrorClient(404), "pypi", "nonexistent-pkg", "1.0.0"
+    )
 
     assert result == {}
 
 
 @pytest.mark.asyncio
 async def test_a_scoped_npm_package_is_requested_with_an_escaped_slash():
-    analyzer = HashVerificationAnalyzer()
     client = _FakeClient({"dist": {"shasum": "e" * 40}})
 
-    await analyzer._fetch_npm_registry_hashes(client, "@babel/core", "7.24.0")
+    await HashVerificationAnalyzer()._fetch_registry_hashes(client, "npm", "@babel/core", "7.24.0")
 
     assert client.urls == [f"{NPM_REGISTRY_URL}/@babel%2Fcore/7.24.0"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("sbom_sha1", "verified", "mismatches"),
+    [
+        pytest.param("E" * 40, 1, 0, id="same_digest_other_case"),
+        pytest.param("f" * 40, 0, 1, id="other_digest"),
+    ],
+)
+async def test_npm_single_digest_per_algorithm_is_compared(monkeypatch, sbom_sha1, verified, mismatches):
+    client = _FakeClient({"dist": {"shasum": "e" * 40}})
+
+    result = await _verify(monkeypatch, [_left_pad(("SHA-1", sbom_sha1))], client)
+
+    assert result["summary"]["verified_count"] == verified
+    assert result["summary"]["mismatch_count"] == mismatches
+
+
+@pytest.mark.asyncio
+async def test_a_component_without_a_hash_makes_no_registry_request(monkeypatch):
+    client = _FakeClient(_PYPI_PAYLOAD)
+
+    result = await _verify(monkeypatch, [_numpy()], client)
+
+    assert client.urls == []
+    assert result == {
+        "hash_issues": [],
+        "summary": {"verified_count": 0, "unverifiable_count": 1, "mismatch_count": 0},
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_component_without_a_version_makes_no_registry_request(monkeypatch):
+    client = _FakeClient(_PYPI_PAYLOAD)
+
+    result = await _verify(monkeypatch, [_numpy(("SHA-256", _SDIST_SHA256), version=None)], client)
+
+    assert client.urls == []
+    assert result["summary"]["unverifiable_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_all_registry_hashes_are_read_from_the_cache_in_one_batch(monkeypatch):
+    numpy_key = CacheKeys.package_hash("pypi", "numpy", "1.26.4")
+    left_pad_key = CacheKeys.package_hash("npm", "left-pad", "1.0.0")
+    cache = _MemoryCache({numpy_key: {"sha256": [_SDIST_SHA256]}, left_pad_key: {"sha1": "e" * 40}})
+    client = _FakeClient({})
+    components = [_numpy(("SHA-256", _SDIST_SHA256)), _left_pad(("SHA-1", "e" * 40))]
+
+    result = await _verify(monkeypatch, components, client, cache)
+
+    assert [sorted(keys) for keys in cache.mget_calls] == [sorted([numpy_key, left_pad_key])]
+    assert client.urls == []
+    assert result["summary"]["verified_count"] == 2
 
 
 class _ConcurrencyProbe:
     """Stands in for the registry client and records how many requests are in flight at once."""
 
-    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+    def __init__(self) -> None:
         self.live = 0
         self.peak = 0
 
@@ -168,39 +260,25 @@ class _ConcurrencyProbe:
         return _FakeResponse({}, status_code=404)
 
 
-_FAN_OUT_COMPONENTS = 200
-
-
 @pytest.mark.asyncio
 async def test_registry_fan_out_is_bounded(monkeypatch):
     """One outbound request per component, so an unbounded gather turns an SBOM into a fan-out amplifier."""
     probe = _ConcurrencyProbe()
-    monkeypatch.setattr(hash_verification, "InstrumentedAsyncClient", lambda *a, **k: probe)
-
-    async def _fetch_directly(key, fetch_fn, ttl_seconds=None):
-        return await fetch_fn()
-
-    monkeypatch.setattr(hash_verification.cache_service, "get_or_fetch_with_lock", _fetch_directly)
-
     components = [
-        {"name": f"pkg{i}", "version": "1.0.0", "purl": f"pkg:npm/pkg{i}@1.0.0"} for i in range(_FAN_OUT_COMPONENTS)
+        {
+            "type": "library",
+            "name": f"pkg{i}",
+            "version": "1.0.0",
+            "purl": f"pkg:npm/pkg{i}@1.0.0",
+            "hashes": [{"alg": "SHA-1", "content": "0" * 40}],
+        }
+        for i in range(200)
     ]
-    await HashVerificationAnalyzer().analyze({}, parsed_components=components)
 
-    assert probe.peak == HashVerificationAnalyzer.MAX_CONCURRENT
+    await _verify(monkeypatch, components, probe)
+
+    assert probe.peak == ANALYZER_BATCH_SIZES["hash_verification"]
     assert probe.live == 0
-
-
-def test_evaluate_still_handles_scalar_npm_style_dict():
-    """npm supplies one digest per algorithm as a plain str; keep it working."""
-    analyzer = HashVerificationAnalyzer()
-    registry_hashes_flat = {"sha1": "e" * 40}
-
-    verified = analyzer._evaluate_registry_hashes(registry_hashes_flat, {"sha1": "E" * 40}, "left-pad", "1.0.0", "npm")
-    assert verified == {"verified": True}
-
-    mismatch = analyzer._evaluate_registry_hashes(registry_hashes_flat, {"sha1": "f" * 40}, "left-pad", "1.0.0", "npm")
-    assert mismatch is not None and mismatch["mismatch"] is True
 
 
 @pytest.mark.parametrize(

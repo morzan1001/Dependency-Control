@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding_details import HashVerificationDetails, OsMalwareDetails
-from app.services.normalizers.utils import build_finding_id, safe_get
+from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
@@ -58,7 +58,7 @@ def normalize_hash_verification(
             Finding(
                 id=build_finding_id("HASH", component, algorithm),
                 type=FindingType.MALWARE,
-                severity=Severity.CRITICAL,
+                severity=safe_severity(item.get("severity"), default=Severity.CRITICAL),
                 component=component,
                 version=version,
                 description=f"Package integrity check failed! {item.get('message') or 'Hash mismatch detected'}",

@@ -1,6 +1,5 @@
 """Verifies package integrity by comparing SBOM hashes against registry hashes (PyPI, npm)."""
 
-import asyncio
 import base64
 import logging
 from typing import Any, ClassVar
@@ -10,18 +9,22 @@ import httpx
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, NPM_REGISTRY_URL, PYPI_API_URL
 from app.core.http_utils import InstrumentedAsyncClient
-from app.models.finding import Severity
-
-from .base import Analyzer, normalize_hash_algorithm
 from app.core.purl import parse_purl
+from app.models.finding import Severity
+from app.schemas.sbom import has_known_version
+
+from .base import Analyzer, gather_bounded
 
 logger = logging.getLogger(__name__)
 
 
+def normalize_hash_algorithm(alg: str | None) -> str:
+    """Normalize a hash algorithm name (lowercase, no hyphens): "SHA-256" -> "sha256"."""
+    return (alg or "").lower().replace("-", "")
+
+
 class HashVerificationAnalyzer(Analyzer):
     name = "hash_verification"
-
-    MAX_CONCURRENT = ANALYZER_BATCH_SIZES.get("hash_verification", 10)
 
     # Maven Central omitted: its checksums are served as separate files, not inline.
     REGISTRY_APIS: ClassVar[dict[str, str]] = {
@@ -35,133 +38,76 @@ class HashVerificationAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        """Verify component hashes against registries; fetch registry hashes when the SBOM has none."""
+        """Compare each component's SBOM hashes with its registry's digests for that exact version."""
         components = parsed_components or []
+        checks = []
+        for component in components:
+            parsed = parse_purl(component.get("purl") or "")
+            registry = parsed.registry_system if parsed else None
+            name, version, sbom_hashes = component.get("name"), component.get("version", ""), component.get("hashes")
+            if registry in self.REGISTRY_APIS and name and has_known_version(version) and sbom_hashes:
+                checks.append((CacheKeys.package_hash(registry, name, version), registry, name, version, sbom_hashes))
+
+        registry_hashes = await self._registry_hashes(
+            {key: (registry, name, version) for key, registry, name, version, _ in checks}
+        )
+
         issues = []
         verified_count = 0
-        unverifiable_count = 0
-        no_hash_in_sbom_count = 0
-        fetched_hashes = {}  # package@version -> {alg: hash}
-        timeout = ANALYZER_TIMEOUTS.get("hash_verification", ANALYZER_TIMEOUTS["default"])
-
-        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
-
-        async with InstrumentedAsyncClient("Package Registry API", timeout=timeout) as client:
-            tasks = [self._verify_component_with_limit(semaphore, client, component) for component in components]
-
-            results = await asyncio.gather(*tasks)
-
-            for result in results:
-                if result is None:
-                    unverifiable_count += 1
-                elif result.get("verified"):
-                    verified_count += 1
-                elif result.get("mismatch"):
-                    issues.append(result)
-                elif result.get("fetched_hashes"):
-                    no_hash_in_sbom_count += 1
-                    key = f"{result['component']}@{result['version']}"
-                    fetched_hashes[key] = result["fetched_hashes"]
+        for key, registry, name, version, sbom_hashes in checks:
+            outcome = self._compare_hashes(sbom_hashes, registry_hashes.get(key) or {}, name, version, registry)
+            if outcome and outcome.get("mismatch"):
+                issues.append(outcome)
+            elif outcome:
+                verified_count += 1
 
         return {
             "hash_issues": issues,
-            "fetched_hashes": fetched_hashes,
             "summary": {
                 "verified_count": verified_count,
-                "unverifiable_count": unverifiable_count,
+                "unverifiable_count": len(components) - verified_count - len(issues),
                 "mismatch_count": len(issues),
-                "no_hash_in_sbom": no_hash_in_sbom_count,
-                "hashes_fetched": len(fetched_hashes),
             },
         }
 
-    @staticmethod
-    def _hashes_from_cyclonedx_list(hashes: list[Any]) -> dict[str, str]:
-        """Extract hashes from a CycloneDX-style list."""
-        result: dict[str, str] = {}
-        for h in hashes:
-            if not isinstance(h, dict):
-                continue
-            alg_value = h.get("alg")
-            content_value = h.get("content")
-            if isinstance(alg_value, str) and isinstance(content_value, str):
-                result[normalize_hash_algorithm(alg_value)] = content_value
-        return result
+    async def _registry_hashes(self, lookups: dict[str, tuple[str, str, str]]) -> dict[str, Any]:
+        """Registry digests per cache key: one batched cache read, then a bounded fetch of the misses."""
+        registry_hashes = await cache_service.mget(list(lookups))
+        missing = [key for key, value in registry_hashes.items() if value is None]
+        timeout = ANALYZER_TIMEOUTS.get("hash_verification", ANALYZER_TIMEOUTS["default"])
 
-    @staticmethod
-    def _extract_sbom_hashes(component: dict[str, Any]) -> dict[str, str]:
-        """Extract hashes from a component, supporting Syft/CycloneDX/normalized formats."""
-        sbom_hashes: dict[str, str] = {}
-        syft_hashes = component.get("_hashes")
-        component_hashes = component.get("hashes")
+        async with InstrumentedAsyncClient("Package Registry API", timeout=timeout) as client:
 
-        if isinstance(syft_hashes, dict) and syft_hashes:
-            sbom_hashes = dict(syft_hashes)
-        elif isinstance(component_hashes, list) and component_hashes:
-            sbom_hashes = HashVerificationAnalyzer._hashes_from_cyclonedx_list(component_hashes)
-        elif isinstance(component_hashes, dict) and component_hashes:
-            sbom_hashes = dict(component_hashes)
+            async def fetch(key: str) -> Any:
+                return await cache_service.get_or_fetch_with_lock(
+                    key=key,
+                    fetch_fn=lambda: self._fetch_registry_hashes(client, *lookups[key]),
+                    ttl_seconds=CacheTTL.PACKAGE_HASH,
+                )
 
-        for ext_ref in component.get("externalReferences", []):
-            for h in ext_ref.get("hashes", []) or []:
-                if isinstance(h, dict) and h.get("alg") and h.get("content"):
-                    alg = normalize_hash_algorithm(h["alg"])
-                    if alg not in sbom_hashes:
-                        sbom_hashes[alg] = h["content"]
+            fetched = await gather_bounded(missing, fetch, ANALYZER_BATCH_SIZES["hash_verification"])
 
-        return sbom_hashes
-
-    async def _verify_component_with_limit(
-        self, semaphore: asyncio.Semaphore, client: InstrumentedAsyncClient, component: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        """One registry request per component, so the fan-out has to be bounded, not just gathered."""
-        async with semaphore:
-            return await self._verify_component(client, component)
-
-    async def _verify_component(
-        self, client: InstrumentedAsyncClient, component: dict[str, Any]
-    ) -> dict[str, Any] | None:
-        """Verify a single component's hash against the registry."""
-
-        name = component.get("name", "")
-        version = component.get("version", "")
-        purl = component.get("purl", "")
-
-        if not name or not version:
-            return None
-
-        parsed = parse_purl(purl)
-        registry = parsed.registry_system if parsed else None
-        if registry not in self.REGISTRY_APIS:
-            return None
-
-        sbom_hashes = self._extract_sbom_hashes(component)
-
-        try:
-            if registry == "pypi":
-                return await self._verify_pypi(client, name, version, sbom_hashes)
-            if registry == "npm":
-                return await self._verify_npm(client, name, version, sbom_hashes)
-        except Exception as e:
-            logger.debug(f"Hash verification failed for {name}@{version}: {e}")
-            return None
-
-        return None
+        registry_hashes.update(
+            (key, value) for key, value in zip(missing, fetched, strict=True) if isinstance(value, dict)
+        )
+        return registry_hashes
 
     @staticmethod
     def _compare_hashes(
         sbom_hashes: dict[str, str],
-        registry_hashes: dict[str, set],
+        registry_hashes: dict[str, Any],
         name: str,
         version: str,
         registry: str,
     ) -> dict[str, Any] | None:
         """Compare SBOM hashes to registry hashes; return mismatch/verified/None."""
         for sbom_alg, sbom_value in sbom_hashes.items():
-            sbom_alg_normalized = normalize_hash_algorithm(sbom_alg)
-            if sbom_alg_normalized not in registry_hashes:
+            registry_value = registry_hashes.get(normalize_hash_algorithm(sbom_alg))
+            if registry_value is None:
                 continue
-            if sbom_value.lower() not in registry_hashes[sbom_alg_normalized]:
+            # npm serves one digest per algorithm, PyPI one per released file.
+            expected_hashes = [registry_value] if isinstance(registry_value, str) else list(registry_value)
+            if sbom_value.lower() not in expected_hashes:
                 logger.warning(
                     f"HASH MISMATCH: {name}@{version} ({registry}) - "
                     f"SBOM hash does not match registry. Possible tampering!"
@@ -173,96 +119,39 @@ class HashVerificationAnalyzer(Analyzer):
                     "registry": registry,
                     "algorithm": sbom_alg,
                     "sbom_hash": sbom_value,
-                    "expected_hashes": list(registry_hashes[sbom_alg_normalized]),
+                    "expected_hashes": expected_hashes,
                     "severity": Severity.CRITICAL.value,
                     "message": "Hash mismatch detected! Package may be tampered.",
                 }
             return {"verified": True}
         return None
 
-    @staticmethod
-    def _evaluate_registry_hashes(
-        registry_hashes_flat: dict[str, Any] | None,
-        sbom_hashes: dict[str, str],
-        name: str,
-        version: str,
-        registry: str,
+    async def _fetch_registry_hashes(
+        self, client: InstrumentedAsyncClient, registry: str, name: str, version: str
     ) -> dict[str, Any] | None:
-        """Convert flat registry hashes and either enrich or compare against SBOM."""
-        if registry_hashes_flat is None or not registry_hashes_flat:
-            return None
-
-        # A registry value may be a single digest (npm) or a list (PyPI, one per file);
-        # normalize both into a set so any legitimate file hash matches.
-        registry_hashes: dict[str, set] = {}
-        for k, v in registry_hashes_flat.items():
-            registry_hashes[k] = set(v) if isinstance(v, (list, tuple, set)) else {v}
-
-        if not sbom_hashes:
-            return {
-                "fetched_hashes": registry_hashes_flat,
-                "component": name,
-                "version": version,
-                "registry": registry,
-            }
-
-        return HashVerificationAnalyzer._compare_hashes(sbom_hashes, registry_hashes, name, version, registry)
-
-    async def _fetch_pypi_registry_hashes(
-        self, client: InstrumentedAsyncClient, name: str, version: str
-    ) -> dict[str, list[str]] | None:
-        """Fetch PyPI registry hashes; empty dict = negative cache, None = transient error.
-
-        Collect every file's digest per algorithm (sdist plus each platform wheel) so an
-        SBOM built on any platform verifies against the matching wheel.
-        """
+        """Lower-cased digests per algorithm; {} = no such release, None = transient error."""
+        # npm scopes carry a slash; PyPI names never do.
+        url = self.REGISTRY_APIS[registry].format(package=name.replace("/", "%2F"), version=version)
         try:
-            url = self.REGISTRY_APIS["pypi"].format(package=name, version=version)
             response = await client.get(url)
             if response.status_code != 200:
                 return {}
-
             data = response.json()
-            registry_hashes_flat: dict[str, list[str]] = {}
-            for url_info in data.get("urls", []):
-                for alg, value in url_info.get("digests", {}).items():
-                    alg_normalized = normalize_hash_algorithm(alg)
-                    digest = value.lower()
-                    digests = registry_hashes_flat.setdefault(alg_normalized, [])
-                    if digest not in digests:
-                        digests.append(digest)
-            return registry_hashes_flat or {}
-        except httpx.TimeoutException:
-            logger.debug(f"PyPI API timeout for {name}@{version}")
-            return None
-        except httpx.ConnectError:
-            logger.debug(f"PyPI API connection error for {name}@{version}")
-            return None
-        except Exception as e:
-            logger.debug(f"PyPI hash fetch failed for {name}@{version}: {e}")
+        except (httpx.HTTPError, ValueError) as e:
+            logger.debug(f"{registry} hash fetch failed for {name}@{version}: {e}")
             return None
 
-    async def _verify_pypi(
-        self,
-        client: InstrumentedAsyncClient,
-        name: str,
-        version: str,
-        sbom_hashes: dict[str, str],
-    ) -> dict[str, Any] | None:
-        """Verify package hash against PyPI, or fetch hashes if none in SBOM."""
+        if registry == "npm":
+            return self._parse_npm_dist(data.get("dist", {}), name, version)
 
-        cache_key = CacheKeys.package_hash("pypi", name, version)
-
-        async def fetch_pypi_hashes() -> dict[str, list[str]] | None:
-            return await self._fetch_pypi_registry_hashes(client, name, version)
-
-        registry_hashes_flat = await cache_service.get_or_fetch_with_lock(
-            key=cache_key,
-            fetch_fn=fetch_pypi_hashes,
-            ttl_seconds=CacheTTL.PACKAGE_HASH,
-        )
-
-        return self._evaluate_registry_hashes(registry_hashes_flat, sbom_hashes, name, version, "pypi")
+        # Every file's digest (sdist plus each platform wheel), so an SBOM built on any platform verifies.
+        digests: dict[str, list[str]] = {}
+        for url_info in data.get("urls", []):
+            for alg, value in url_info.get("digests", {}).items():
+                algorithm_digests = digests.setdefault(normalize_hash_algorithm(alg), [])
+                if value.lower() not in algorithm_digests:
+                    algorithm_digests.append(value.lower())
+        return digests
 
     @staticmethod
     def _parse_npm_dist(dist: dict[str, Any], name: str, version: str) -> dict[str, str]:
@@ -280,49 +169,3 @@ class HashVerificationAnalyzer(Analyzer):
             except Exception as e:
                 logger.warning(f"Failed to decode npm integrity hash for {name}@{version}: {e}")
         return registry_hashes_flat
-
-    async def _fetch_npm_registry_hashes(
-        self, client: InstrumentedAsyncClient, name: str, version: str
-    ) -> dict[str, str] | None:
-        """Fetch npm registry hashes; empty dict = negative cache, None = transient error."""
-        try:
-            encoded_name = name.replace("/", "%2F") if "/" in name else name
-            url = self.REGISTRY_APIS["npm"].format(package=encoded_name, version=version)
-            response = await client.get(url)
-            if response.status_code != 200:
-                return {}
-
-            data = response.json()
-            registry_hashes_flat = self._parse_npm_dist(data.get("dist", {}), name, version)
-            return registry_hashes_flat or {}
-        except httpx.TimeoutException:
-            logger.debug(f"npm API timeout for {name}@{version}")
-            return None
-        except httpx.ConnectError:
-            logger.debug(f"npm API connection error for {name}@{version}")
-            return None
-        except Exception as e:
-            logger.debug(f"npm hash fetch failed for {name}@{version}: {e}")
-            return None
-
-    async def _verify_npm(
-        self,
-        client: InstrumentedAsyncClient,
-        name: str,
-        version: str,
-        sbom_hashes: dict[str, str],
-    ) -> dict[str, Any] | None:
-        """Verify package hash against npm registry, or fetch hashes if none in SBOM."""
-
-        cache_key = CacheKeys.package_hash("npm", name, version)
-
-        async def fetch_npm_hashes() -> dict[str, str] | None:
-            return await self._fetch_npm_registry_hashes(client, name, version)
-
-        registry_hashes_flat = await cache_service.get_or_fetch_with_lock(
-            key=cache_key,
-            fetch_fn=fetch_npm_hashes,
-            ttl_seconds=CacheTTL.PACKAGE_HASH,
-        )
-
-        return self._evaluate_registry_hashes(registry_hashes_flat, sbom_hashes, name, version, "npm")
