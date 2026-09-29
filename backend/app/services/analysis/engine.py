@@ -108,6 +108,11 @@ async def _get_github_instance_token(db: Database) -> str | None:
     return None
 
 
+def _regenerated_analyzer_names() -> list[str]:
+    """Rows the engine writes itself on every run, as opposed to results posted by external scanners."""
+    return [*analyzer_factories, *_POST_PROCESSOR_ANALYZERS]
+
+
 async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:
     """Copy non-SBOM analyzer results (e.g. Secret Scanning, SAST) from the original scan to a rescan."""
     if not (scan_doc and scan_doc.is_rescan and scan_doc.original_scan_id):
@@ -116,15 +121,10 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
     original_scan_id = scan_doc.original_scan_id
     logger.info(f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}")
 
-    # Internal analyzers and post-processors are regenerated per run, never carried over.
-    excluded_names = list(analyzer_factories) + list(_POST_PROCESSOR_ANALYZERS)
     try:
-        carried = await AnalysisResultRepository(db).carry_over(original_scan_id, scan_id, excluded_names)
+        await AnalysisResultRepository(db).carry_over(original_scan_id, scan_id, _regenerated_analyzer_names())
     except Exception as e:
-        logger.exception("Failed to bulk carry over external results: %s", e)
-        return
-    if carried:
-        logger.info(f"Carried over {carried} external results to rescan {scan_id}")
+        logger.exception("Failed to carry over external results: %s", e)
 
 
 async def _carry_over_crypto_assets(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:
@@ -632,38 +632,37 @@ async def _aggregate_external_results(
     results_summary: list[str],
 ) -> None:
     """Fetch external analyzer results and aggregate them; failures land in results_summary."""
-    external_results = await result_repo.find_by_scan(scan_id, limit=10000)
-    for res in external_results:
-        # Skip post-processor rows: they are engine outputs, not external scanner results.
-        if res.analyzer_name not in analyzer_factories and res.analyzer_name not in _POST_PROCESSOR_ANALYZERS:
-            try:
-                aggregator.aggregate(res.analyzer_name, res.result)
-                if isinstance(res.result, dict) and res.result.get("error"):
-                    # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
-                    results_summary.append(f"{res.analyzer_name}: Failed")
-                else:
-                    results_summary.append(f"{res.analyzer_name}: Success")
-            except Exception as exc:
-                logger.warning(
-                    "_aggregate_external_results: skipping malformed result for analyzer=%s scan=%s: %s",
-                    res.analyzer_name,
-                    scan_id,
-                    exc,
+    query = {"scan_id": scan_id, "analyzer_name": {"$nin": _regenerated_analyzer_names()}}
+    async for row in result_repo.iterate_raw(query, {"analyzer_name": 1, "result": 1}):
+        analyzer_name = row["analyzer_name"]
+        try:
+            result = row["result"]
+            aggregator.aggregate(analyzer_name, result)
+            if isinstance(result, dict) and result.get("error"):
+                # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
+                results_summary.append(f"{analyzer_name}: Failed")
+            else:
+                results_summary.append(f"{analyzer_name}: Success")
+        except Exception as exc:
+            logger.warning(
+                "_aggregate_external_results: skipping malformed result for analyzer=%s scan=%s: %s",
+                analyzer_name,
+                scan_id,
+                exc,
+            )
+            aggregator.add_finding(
+                Finding(
+                    id=f"SCAN-ERROR-{analyzer_name}",
+                    type=FindingType.SYSTEM_WARNING,
+                    severity=Severity.HIGH,
+                    component="Scanner System",
+                    version="",
+                    description=f"External result for '{analyzer_name}' could not be aggregated: {exc}",
+                    scanners=[analyzer_name],
+                    details=SystemWarningDetails(error_details=str(exc)).model_dump(exclude_none=True),
                 )
-                aggregator.add_finding(
-                    Finding(
-                        id=f"SCAN-ERROR-{res.analyzer_name}",
-                        type=FindingType.SYSTEM_WARNING,
-                        severity=Severity.HIGH,
-                        component="Scanner System",
-                        version="",
-                        description=f"External result for '{res.analyzer_name}' could not be aggregated: {exc}",
-                        scanners=[res.analyzer_name],
-                        details=SystemWarningDetails(error_details=str(exc)).model_dump(exclude_none=True),
-                    )
-                )
-                results_summary.append(f"{res.analyzer_name}: Failed")
-    del external_results
+            )
+            results_summary.append(f"{analyzer_name}: Failed")
 
 
 def _cleanup_analyzer_names(active_analyzers: list[str]) -> list[str]:

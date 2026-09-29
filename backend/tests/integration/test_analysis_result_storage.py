@@ -6,9 +6,11 @@ from typing import Any
 import pytest
 from pymongo.errors import WriteError
 
+from app.models.project import Scan
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
-from app.services.analysis.engine import process_analyzer
+from app.services.analysis.engine import _aggregate_external_results, _carry_over_external_results, process_analyzer
+from app.services.analysis.stats import build_epss_kev_summary
 from app.services.analyzers.outdated import OutdatedAnalyzer
 
 _RUN = {"pipeline_id": 616161, "commit_hash": "d" * 40, "branch": "main"}
@@ -221,3 +223,48 @@ async def test_a_raw_result_too_large_to_store_keeps_the_analyzer_findings(db):
     assert status == "outdated_packages: Success"
     assert [finding.type for finding in aggregator.get_findings()] == ["outdated"]
     assert await _rows(db, "scan-1") == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_rescan_copies_each_external_row_once_under_an_id_derived_from_the_original(db):
+    long_message = {**_OPENGREP_FINDING, "extra": {"message": "x" * (9 * 1024 * 1024), "severity": "WARNING"}}
+    kics = {"kics_version": "2.1.3", "queries": [_KICS_QUERY]}
+    outdated = {"outdated_dependencies": [], "ahead_of_default": [], "yanked_versions": []}
+    await db.analysis_results.insert_many(
+        [
+            {
+                "_id": "row-opengrep",
+                "scan_id": "scan-1",
+                "analyzer_name": "opengrep",
+                "result": {"findings": [long_message]},
+            },
+            {"_id": "row-kics", "scan_id": "scan-1", "analyzer_name": "kics", "result": kics, "source": None},
+            {"_id": "row-outdated", "scan_id": "scan-1", "analyzer_name": "outdated_packages", "result": outdated},
+            {"_id": "row-epss", "scan_id": "scan-1", "analyzer_name": "epss_kev", "result": build_epss_kev_summary([])},
+        ]
+    )
+    rescan = Scan(id="scan-2", project_id="p", branch="main", is_rescan=True, original_scan_id="scan-1")
+
+    await _carry_over_external_results("scan-2", rescan, db)
+    await _carry_over_external_results("scan-2", rescan, db)
+
+    copies = {row["_id"]: row for row in await _rows(db, "scan-2")}
+    assert sorted(copies) == ["scan-2:row-kics", "scan-2:row-opengrep"]
+    assert copies["scan-2:row-kics"]["result"] == kics
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_every_external_row_of_a_scan_is_aggregated(db):
+    await db.analysis_results.insert_many(
+        [
+            {"_id": f"row-{i}", "scan_id": "scan-1", "analyzer_name": "trufflehog", "result": {"findings": []}}
+            for i in range(10_001)
+        ]
+    )
+    summary: list[str] = []
+
+    await _aggregate_external_results(ResultAggregator(), AnalysisResultRepository(db), "scan-1", summary)
+
+    assert len(summary) == 10_001

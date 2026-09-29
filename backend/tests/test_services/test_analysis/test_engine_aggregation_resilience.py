@@ -2,20 +2,22 @@
 
 import asyncio
 from types import SimpleNamespace
-from typing import ClassVar
-from unittest.mock import AsyncMock
 
 from app.models.finding import FindingType
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _aggregate_external_results
 
 
-class FakeResult:
-    """Minimal stand-in for an AnalysisResult document."""
+def _row(analyzer_name: str, result: dict) -> dict:
+    return {"analyzer_name": analyzer_name, "result": result}
 
-    def __init__(self, analyzer_name: str, result: dict):
-        self.analyzer_name = analyzer_name
-        self.result = result
+
+def _repo_yielding(*rows: dict) -> SimpleNamespace:
+    async def iterate_raw(_query, _projection):
+        for row in rows:
+            yield row
+
+    return SimpleNamespace(iterate_raw=iterate_raw)
 
 
 class TestAggregateExternalResultsResilience:
@@ -31,7 +33,7 @@ class TestAggregateExternalResultsResilience:
         # 'trivy' absent from analyzers -> external results path
         monkeypatch.setattr("app.services.analysis.engine.analyzer_factories", {})
 
-        good_result = FakeResult(
+        good_result = _row(
             "trivy",
             {
                 "Results": [
@@ -52,15 +54,9 @@ class TestAggregateExternalResultsResilience:
         )
 
         # simulates corrupt stored data
-        class BoomResult:
-            analyzer_name = "bad_analyzer"
-            result: ClassVar[dict[str, object]] = {
-                "corrupt": object()
-            }  # not JSON-serialisable, triggers normaliser errors
+        bad_result = _row("bad_analyzer", {"corrupt": object()})
 
-        bad_result = BoomResult()
-
-        result_repo = SimpleNamespace(find_by_scan=AsyncMock(return_value=[bad_result, good_result]))
+        result_repo = _repo_yielding(bad_result, good_result)
 
         original_aggregate = aggregator.aggregate
 
@@ -98,7 +94,7 @@ class TestAggregateExternalResultsResilience:
 
         monkeypatch.setattr("app.services.analysis.engine.analyzer_factories", {})
 
-        good_result = FakeResult(
+        good_result = _row(
             "trivy",
             {
                 "Results": [
@@ -118,13 +114,9 @@ class TestAggregateExternalResultsResilience:
             },
         )
 
-        class BoomResult:
-            analyzer_name = "bad_analyzer"
-            result: ClassVar[dict[str, object]] = {}
+        bad_result = _row("bad_analyzer", {})
 
-        bad_result = BoomResult()
-
-        result_repo = SimpleNamespace(find_by_scan=AsyncMock(return_value=[bad_result, good_result]))
+        result_repo = _repo_yielding(bad_result, good_result)
 
         original_aggregate = aggregator.aggregate
 

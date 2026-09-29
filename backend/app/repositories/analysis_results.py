@@ -5,8 +5,6 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
-from pymongo import UpdateOne
-
 from app.models.project import AnalysisResult
 from app.repositories.base import BaseRepository
 
@@ -34,30 +32,18 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
             upsert=True,
         )
 
-    async def carry_over(self, from_scan_id: str, to_scan_id: str, exclude_names: list[str]) -> int:
-        """Copy a scan's rows onto a rescan, keyed on the whole result so a re-run copies nothing twice."""
-        old_results = await self.find_many(
-            {"scan_id": from_scan_id, "analyzer_name": {"$nin": exclude_names}}, limit=10000
-        )
-        if not old_results:
-            return 0
-        now = datetime.now(timezone.utc)
-        await self.collection.bulk_write(
+    async def carry_over(self, from_scan_id: str, to_scan_id: str, exclude_names: list[str]) -> None:
+        """Copy a scan's rows onto a rescan server-side; the derived ``_id`` makes a repeated copy a no-op."""
+        await self.aggregate(
             [
-                UpdateOne(
-                    {"scan_id": to_scan_id, "analyzer_name": old.analyzer_name, "result": old.result},
-                    {
-                        "$setOnInsert": {
-                            **old.model_dump(by_alias=True),
-                            "_id": str(uuid.uuid4()),
-                            "scan_id": to_scan_id,
-                            "created_at": now,
-                        }
-                    },
-                    upsert=True,
-                )
-                for old in old_results
-            ],
-            ordered=False,
+                {"$match": {"scan_id": from_scan_id, "analyzer_name": {"$nin": exclude_names}}},
+                {
+                    "$set": {
+                        "_id": {"$concat": [to_scan_id, ":", {"$toString": "$_id"}]},
+                        "scan_id": to_scan_id,
+                        "created_at": datetime.now(timezone.utc),
+                    }
+                },
+                {"$merge": {"into": self.collection_name, "on": "_id", "whenMatched": "keepExisting"}},
+            ]
         )
-        return len(old_results)
