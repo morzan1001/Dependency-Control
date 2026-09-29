@@ -8,6 +8,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
+from app.core.constants import SCAN_STATUS_FAILED, SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
     worker_active_count,
@@ -61,7 +62,9 @@ class AnalysisWorkerManager:
             db = await get_database()
             # Cap recovery so a backlog of stale pending scans doesn't flood the queue.
             recovery_limit = 1000
-            cursor = db.scans.find({"status": "pending"}, {"_id": 1}).sort("created_at", 1).limit(recovery_limit)
+            cursor = (
+                db.scans.find({"status": SCAN_STATUS_PENDING}, {"_id": 1}).sort("created_at", 1).limit(recovery_limit)
+            )
 
             count = 0
             async for scan in cursor:
@@ -229,7 +232,7 @@ class AnalysisWorkerManager:
                 {"_id": scan_id},
                 {
                     "$set": {
-                        "status": "failed",
+                        "status": SCAN_STATUS_FAILED,
                         "error": error_message,
                     }
                 },
@@ -282,10 +285,10 @@ class AnalysisWorkerManager:
                 # Atomic claim — flip 'pending' → 'processing' only if still pending.
                 # Prevents multiple workers across pods from processing the same scan.
                 scan = await db.scans.find_one_and_update(
-                    {"_id": scan_id, "status": "pending"},
+                    {"_id": scan_id, "status": SCAN_STATUS_PENDING},
                     {
                         "$set": {
-                            "status": "processing",
+                            "status": SCAN_STATUS_PROCESSING,
                             "worker_id": worker_id,
                             "analysis_started_at": datetime.now(timezone.utc),
                         }
@@ -306,7 +309,7 @@ class AnalysisWorkerManager:
                     logger.error(f"Project for scan {scan_id} not found, skipping.")
                     await db.scans.update_one(
                         {"_id": scan_id},
-                        {"$set": {"status": "failed", "error": "Project not found"}},
+                        {"$set": {"status": SCAN_STATUS_FAILED, "error": "Project not found"}},
                     )
                     self._untrack_scan(scan_id)
                     self.queue.task_done()
@@ -338,7 +341,7 @@ class AnalysisWorkerManager:
                     logger.exception("Error processing scan %s: %s", scan_id, e)
                     await db.scans.update_one(
                         {"_id": scan_id},
-                        {"$set": {"status": "failed", "error": str(e)}},
+                        {"$set": {"status": SCAN_STATUS_FAILED, "error": str(e)}},
                     )
                     if worker_jobs_processed_total:
                         worker_jobs_processed_total.labels(status="failed").inc()

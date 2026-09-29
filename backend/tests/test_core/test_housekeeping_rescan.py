@@ -13,6 +13,7 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
+    SETTINGS_MODE_GLOBAL,
 )
 from app.core.housekeeping import (
     _build_rescan,
@@ -358,6 +359,14 @@ class TestResolveRescanInterval:
         project = _project(rescan_enabled=True, rescan_interval=_NEGATIVE_INTERVAL_HOURS)
 
         assert _resolve_rescan_interval(project, _system_settings()) is None
+
+    def test_in_global_mode_the_project_settings_do_not_apply(self) -> None:
+        opted_out = _project(rescan_enabled=False, rescan_interval=_PROJECT_INTERVAL_HOURS)
+        own_interval = _project(rescan_interval=_PROJECT_INTERVAL_HOURS)
+        settings = _system_settings(rescan_mode=SETTINGS_MODE_GLOBAL, global_rescan_interval=_GLOBAL_INTERVAL_HOURS)
+
+        assert _resolve_rescan_interval(opted_out, settings) == _GLOBAL_INTERVAL_HOURS
+        assert _resolve_rescan_interval(own_interval, settings) == _GLOBAL_INTERVAL_HOURS
 
 
 class TestIsRescanDue:

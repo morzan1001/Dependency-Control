@@ -19,11 +19,13 @@ from app.core.constants import (
     HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS,
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
     HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC,
+    RETENTION_ACTIONS,
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
     RETENTION_ACTION_NONE,
-    RETENTION_ACTIONS,
     RETENTION_PROTECTED_FLAG_VALUES,
+    SCAN_ACTIVE_STATUSES,
+    SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
     SCAN_USABLE_STATUSES,
@@ -106,13 +108,14 @@ async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE)
 
 def _resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
     """Return effective rescan interval hours, or None if rescans are disabled."""
-    enabled = project.rescan_enabled
+    project_decides = system_settings.rescan_mode != SETTINGS_MODE_GLOBAL
+    enabled = project.rescan_enabled if project_decides else None
     if enabled is None:
         enabled = system_settings.global_rescan_enabled
     if not enabled:
         return None
 
-    interval_hours = project.rescan_interval
+    interval_hours = project.rescan_interval if project_decides else None
     if interval_hours is None:
         interval_hours = system_settings.global_rescan_interval
 
@@ -154,7 +157,7 @@ def _build_rescan(project: Project, source_scan: dict) -> Scan:
         sbom_refs=source_scan.get("sbom_refs", []),
         # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
         scan_type=source_scan.get("scan_type"),
-        status="pending",
+        status=SCAN_STATUS_PENDING,
         created_at=datetime.now(timezone.utc),
         is_rescan=True,
         original_scan_id=str(source_scan["_id"]),
@@ -185,7 +188,7 @@ async def _create_rescan_for_project(
             {
                 "project_id": project.id,
                 "original_scan_id": source_scan_id,
-                "status": {"$in": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
+                "status": {"$in": SCAN_ACTIVE_STATUSES},
             }
         )
         if active_rescan:
@@ -504,7 +507,7 @@ async def _expire_older_than(db: Any, days: int, scope: dict[str, Any], action: 
                 **scope,
                 "created_at": {"$lt": cutoff_date},
                 "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-                "status": {"$nin": ["pending", "processing"]},
+                "status": {"$nin": SCAN_ACTIVE_STATUSES},
             },
             {"_id": 1},
         )
@@ -519,7 +522,7 @@ async def _run_retention(db: Any) -> None:
     if system_settings.retention_mode == SETTINGS_MODE_GLOBAL:
         retention_days = system_settings.global_retention_days
         retention_action = system_settings.global_retention_action
-        if retention_days > 0 and retention_action != "none":
+        if retention_days > 0 and retention_action != RETENTION_ACTION_NONE:
             logger.info(f"Running global housekeeping (action={retention_action}, older than {retention_days} days)")
             await _expire_older_than(db, retention_days, {}, retention_action, "Global housekeeping")
         return
@@ -531,17 +534,14 @@ async def _run_retention(db: Any) -> None:
         {
             "$match": {
                 "retention_days": {"$gt": 0},
-                "$or": [
-                    {"retention_action": {"$exists": False}},
-                    {"retention_action": {"$ne": "none"}},
-                ],
+                "retention_action": {"$ne": RETENTION_ACTION_NONE},
             }
         },
         {
             "$group": {
                 "_id": {
                     "days": "$retention_days",
-                    "action": {"$ifNull": ["$retention_action", "delete"]},
+                    "action": {"$ifNull": ["$retention_action", RETENTION_ACTION_DELETE]},
                 },
                 "project_ids": {"$push": "$_id"},
             }
@@ -625,7 +625,7 @@ async def trigger_stale_pending_scans(
 
         cursor = db.scans.find(
             {
-                "status": "pending",
+                "status": SCAN_STATUS_PENDING,
                 "last_result_at": {"$lt": stale_threshold, "$exists": True},
                 "received_results": {"$exists": True, "$ne": []},
             }
@@ -669,7 +669,7 @@ async def recover_stuck_scans(
 
         cursor = db.scans.find(
             {
-                "status": "processing",
+                "status": SCAN_STATUS_PROCESSING,
                 "$or": [
                     {"analysis_started_at": {"$lt": timeout_threshold}},
                     {"analysis_started_at": {"$exists": False}},
@@ -687,10 +687,10 @@ async def recover_stuck_scans(
                     f"Scan {scan_id} stuck in processing. Resetting to pending (Retry {retry_count + 1}/{max_retries})."
                 )
                 result = await db.scans.update_one(
-                    {"_id": scan_id, "status": "processing"},
+                    {"_id": scan_id, "status": SCAN_STATUS_PROCESSING},
                     {
                         "$set": {
-                            "status": "pending",
+                            "status": SCAN_STATUS_PENDING,
                             "worker_id": None,
                             "analysis_started_at": None,
                         },
@@ -704,10 +704,10 @@ async def recover_stuck_scans(
             else:
                 logger.error(f"Scan {scan_id} failed after {max_retries} retries.")
                 await db.scans.update_one(
-                    {"_id": scan_id, "status": "processing"},
+                    {"_id": scan_id, "status": SCAN_STATUS_PROCESSING},
                     {
                         "$set": {
-                            "status": "failed",
+                            "status": SCAN_STATUS_FAILED,
                             "error": "Analysis timed out or worker crashed multiple times.",
                         }
                     },

@@ -1,6 +1,11 @@
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, DEFAULT_RETENTION_DAYS, SETTINGS_MODE_PROJECT
+from app.core.constants import (
+    DEFAULT_ACTIVE_ANALYZERS,
+    DEFAULT_RETENTION_DAYS,
+    RETENTION_ACTION_DELETE,
+    SETTINGS_MODE_PROJECT,
+)
 
 
 class SystemSettingsFields(BaseModel):
@@ -80,7 +85,7 @@ class SystemSettingsFields(BaseModel):
     # Retention
     retention_mode: str = SETTINGS_MODE_PROJECT
     global_retention_days: int = DEFAULT_RETENTION_DAYS  # 0 means keep forever
-    global_retention_action: str = "delete"  # "delete", "archive", or "none"
+    global_retention_action: str = RETENTION_ACTION_DELETE
 
     # Crypto policy enforcement
     # "project": each project may override the system rules.

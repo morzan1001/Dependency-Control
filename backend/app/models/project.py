@@ -3,7 +3,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, DEFAULT_RETENTION_DAYS, PROJECT_ROLE_VIEWER, ProjectRole
+from app.core.constants import (
+    DEFAULT_ACTIVE_ANALYZERS,
+    DEFAULT_RETENTION_DAYS,
+    PROJECT_ROLE_VIEWER,
+    RETENTION_ACTION_DELETE,
+    SCAN_STATUS_PENDING,
+    ProjectRole,
+)
 from app.core.notification_prefs import NotificationPreferences
 from app.models.base import CreatedAtModel
 from app.models.finding import Finding
@@ -42,7 +49,7 @@ class Project(MongoDocument, CreatedAtModel):
     last_scan_at: datetime | None = None
     latest_scan_id: str | None = None
     retention_days: int = DEFAULT_RETENTION_DAYS
-    retention_action: str = "delete"  # "delete", "archive", or "none"
+    retention_action: str = RETENTION_ACTION_DELETE
     default_branch: str | None = None
     enforce_notification_settings: bool = False
     # GitLab Integration (Multi-Instance Support)
@@ -121,7 +128,7 @@ class Scan(MongoDocument, CreatedAtModel):
     # forces crypto analyzers for these even when no SBOM was attached.
     scan_type: str | None = None
 
-    status: str = "pending"
+    status: str = SCAN_STATUS_PENDING
     retry_count: int = 0
     worker_id: str | None = None
     analysis_started_at: datetime | None = None

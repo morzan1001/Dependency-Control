@@ -17,7 +17,7 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
-from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
+from app.core.constants import SCAN_STATUS_PENDING, SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
 from app.models.project import Project
 from app.models.release import Release
 from app.repositories.dependencies import DependencyRepository
@@ -323,7 +323,7 @@ async def ingest_sbom(
                 "project_id": str(project.id),
                 "pipeline_id": data.pipeline_id,
                 "pipeline_iid": data.pipeline_iid,
-                "status": "pending",
+                "status": SCAN_STATUS_PENDING,
                 "created_at": now,
             },
         }
@@ -358,7 +358,7 @@ async def ingest_sbom(
         # Reset a finished scan to pending so re-ingest re-analyses it.
         await db.scans.update_one(
             {"_id": scan_id, "status": {"$in": SCAN_USABLE_STATUSES}},
-            {"$set": {"status": "pending", "retry_count": 0}},
+            {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0}},
         )
 
         await manager.register_result(scan_id, "sbom", trigger_analysis=True)

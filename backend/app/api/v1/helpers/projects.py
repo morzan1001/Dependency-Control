@@ -14,6 +14,7 @@ from app.core.constants import (
     PROJECT_ROLES,
     SETTINGS_MODE_GLOBAL,
     TEAM_ROLE_ADMIN,
+    ProjectRole,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
@@ -82,12 +83,12 @@ def may_read_projects(user: User) -> bool:
     return has_permission(user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL])
 
 
-def _is_write_request(required_role: str | None) -> bool:
+def _is_write_request(required_role: ProjectRole | None) -> bool:
     """Return True when ``required_role`` denotes a write (editor/admin) request."""
     return required_role in _WRITE_ROLES
 
 
-def max_project_role(role_a: str | None, role_b: str | None) -> str | None:
+def max_project_role(role_a: ProjectRole | None, role_b: ProjectRole | None) -> ProjectRole | None:
     """Return the higher of two project roles (by PROJECT_ROLES order); either may be None."""
     if role_a is None:
         return role_b
@@ -96,7 +97,7 @@ def max_project_role(role_a: str | None, role_b: str | None) -> str | None:
     return role_a if PROJECT_ROLES.index(role_a) >= PROJECT_ROLES.index(role_b) else role_b
 
 
-def _direct_member_role(project: Project, user_id: str) -> str | None:
+def _direct_member_role(project: Project, user_id: str) -> ProjectRole | None:
     """Return the user's direct project-member role, or ``None`` if not a member."""
     for member in project.members:
         if member.user_id == user_id:
@@ -108,13 +109,13 @@ async def team_derived_role(
     team_ids: list[str],
     user_id: str,
     team_repo: TeamRepository,
-) -> str | None:
+) -> ProjectRole | None:
     """The strongest project role any of these teams grants: team admin -> admin, member -> viewer.
 
     Strongest rather than first, because array order is set by whichever writer touched the field
     last and must not decide who may write.
     """
-    role: str | None = None
+    role: ProjectRole | None = None
     for team_id in team_ids:
         team = await team_repo.get_raw_by_id(team_id)
         if not team:
@@ -153,7 +154,7 @@ async def _resolve_effective_role(
     project: Project,
     user: User,
     team_repo: TeamRepository,
-) -> tuple[bool, str | None]:
+) -> tuple[bool, ProjectRole | None]:
     """Return (is_member, effective_role) where effective_role = MAX(direct, team-derived)."""
     user_id = str(user.id)
     direct_role = _direct_member_role(project, user_id)
@@ -166,7 +167,7 @@ async def check_project_access(
     project_id: str,
     user: User,
     db: AsyncIOMotorDatabase,
-    required_role: str | None = None,
+    required_role: ProjectRole | None = None,
     *,
     write: bool = False,
 ) -> Project:

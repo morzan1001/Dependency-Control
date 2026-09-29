@@ -20,6 +20,8 @@ from app.core.constants import (
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
+    SCAN_STATUS_PENDING,
+    ScanStatus,
     SCAN_USABLE_STATUSES,
 )
 from app.core.metrics import (
@@ -651,7 +653,7 @@ async def _check_race_condition(scan_id: str, external_load_start: datetime, sca
 
         await scan_repo.update_raw(
             scan_id,
-            {"$set": {"status": "pending"}, "$inc": {"retry_count": 1}},
+            {"$set": {"status": SCAN_STATUS_PENDING}, "$inc": {"retry_count": 1}},
         )
         return True
 
@@ -943,7 +945,7 @@ async def _finalize_scan_and_project(
     latest_run_summary: dict,
     scan_repo: ScanRepository,
     project_repo: ProjectRepository,
-    status: str = SCAN_STATUS_COMPLETED,
+    status: ScanStatus = SCAN_STATUS_COMPLETED,
     error: str | None = None,
     external_load_start: datetime | None = None,
     findings_summary: list[dict[str, Any]] | None = None,
@@ -998,7 +1000,7 @@ async def _finalize_scan_and_project(
                 analysis_race_conditions_total.inc()
             await scan_repo.update_raw(
                 scan_id,
-                {"$set": {"status": "pending"}, "$inc": {"retry_count": 1}},
+                {"$set": {"status": SCAN_STATUS_PENDING}, "$inc": {"retry_count": 1}},
             )
             return False
     else:
@@ -1119,7 +1121,9 @@ def _partial_run_reasons(
     return reasons
 
 
-def _final_scan_status(scan_id: str, sbom_load_failed: bool, partial_reasons: list[str]) -> tuple[str, str | None]:
+def _final_scan_status(
+    scan_id: str, sbom_load_failed: bool, partial_reasons: list[str]
+) -> tuple[ScanStatus, str | None]:
     if sbom_load_failed:
         return SCAN_STATUS_FAILED, "SBOM could not be loaded for analysis"
     if partial_reasons:
@@ -1158,7 +1162,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         logger.error(f"Scan {scan_id} not found, marking as failed")
         await scan_repo.update_raw(
             scan_id,
-            {"$set": {"status": "failed", "error": "scan not found"}},
+            {"$set": {"status": SCAN_STATUS_FAILED, "error": "scan not found"}},
         )
         return False
 

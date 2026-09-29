@@ -10,7 +10,12 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.core.constants import MAX_CBOM_BODY_BYTES, MAX_CRYPTO_ASSETS_PER_SCAN, WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED
+from app.core.constants import (
+    MAX_CBOM_BODY_BYTES,
+    MAX_CRYPTO_ASSETS_PER_SCAN,
+    SCAN_STATUS_FAILED,
+    WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
+)
 from app.core.metrics import cbom_ingests_total
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project
@@ -141,7 +146,7 @@ async def ingest_cbom(
     except Exception as exc:
         logger.exception("cbom_ingest failed for scan %s: %s", scan_id, exc)
         cbom_ingests_total.labels(status="error").inc()
-        await ScanRepository(db).update_raw(scan_id, {"$set": {"status": "failed"}})
+        await ScanRepository(db).update_raw(scan_id, {"$set": {"status": SCAN_STATUS_FAILED}})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist crypto assets. Please retry the upload.",

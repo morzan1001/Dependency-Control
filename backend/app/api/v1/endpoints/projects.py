@@ -48,10 +48,12 @@ from app.core.constants import (
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_VIEWER,
+    SCAN_STATUS_PENDING,
     SCAN_USABLE_STATUSES,
     SEVERITY_ORDER,
     TEAM_ROLE_ADMIN,
     TEAM_SOURCE_MANUAL,
+    ProjectRole,
 )
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
@@ -444,7 +446,7 @@ def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
     already named in the project's own members keeps that entry — it is theirs to be removed from.
     """
     existing_ids = {m["user_id"] for m in data["members"]}
-    roles: dict[str, str | None] = {}
+    roles: dict[str, ProjectRole | None] = {}
     owners: dict[str, set[str]] = {}
 
     # Teams by id and their names sorted below, so the same owners answer the same rows in the same
@@ -1024,7 +1026,7 @@ async def trigger_rescan(
         sbom_refs=scan.get("sbom_refs", []),
         # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
         scan_type=scan.get("scan_type"),
-        status="pending",
+        status=SCAN_STATUS_PENDING,
         created_at=datetime.now(timezone.utc),
         is_rescan=True,
         original_scan_id=original_scan_id,
@@ -1040,7 +1042,7 @@ async def trigger_rescan(
                 "latest_rescan_id": new_scan.id,
                 "latest_run": {
                     "scan_id": new_scan.id,
-                    "status": "pending",
+                    "status": SCAN_STATUS_PENDING,
                     "created_at": datetime.now(timezone.utc),
                 },
             }

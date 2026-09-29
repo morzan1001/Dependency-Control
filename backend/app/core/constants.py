@@ -866,11 +866,15 @@ WEBHOOK_LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 # Cloud-metadata hostnames — never an allowed webhook target.
 WEBHOOK_BLOCKED_HOSTNAMES = frozenset({"metadata.google.internal", "metadata.goog", "metadata"})
 
-SCAN_STATUS_PENDING = "pending"
-SCAN_STATUS_PROCESSING = "processing"
-SCAN_STATUS_COMPLETED = "completed"
-SCAN_STATUS_COMPLETED_WITH_ERRORS = "completed_with_errors"
-SCAN_STATUS_FAILED = "failed"
+ScanStatus = Literal["pending", "processing", "completed", "completed_with_errors", "failed"]
+SCAN_STATUS_PENDING: ScanStatus = "pending"
+SCAN_STATUS_PROCESSING: ScanStatus = "processing"
+SCAN_STATUS_COMPLETED: ScanStatus = "completed"
+SCAN_STATUS_COMPLETED_WITH_ERRORS: ScanStatus = "completed_with_errors"
+SCAN_STATUS_FAILED: ScanStatus = "failed"
+
+# Scans a worker still owns or will claim; housekeeping neither rescans nor deletes them.
+SCAN_ACTIVE_STATUSES = [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]
 
 # Scans whose analysis results are usable for rollups, exports and analytics.
 SCAN_USABLE_STATUSES = [

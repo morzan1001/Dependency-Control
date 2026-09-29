@@ -14,6 +14,7 @@ from app.api.v1.helpers.projects import (
 from app.core.constants import (
     PROJECT_ROLE_EDITOR,
     PROJECT_ROLES,
+    ProjectRole,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
@@ -27,7 +28,7 @@ _NODE_MODULES = "node_modules/"
 _ANALYZED_MODULES_KEY = "__analyzed_modules__"
 
 
-def _member_role(members: list[dict[str, Any]], user_id: str) -> str | None:
+def _member_role(members: list[dict[str, Any]], user_id: str) -> ProjectRole | None:
     """Return the role of ``user_id`` in a members list, or None if absent."""
     for member in members:
         if member.get("user_id") == user_id:
@@ -39,7 +40,7 @@ async def _effective_project_role(
     project: dict[str, Any],
     user_id: str,
     team_repo: TeamRepository,
-) -> str | None:
+) -> ProjectRole | None:
     """MAX(direct member role, role from any owning team), or None if not a member."""
     direct_role = _member_role(project.get("members", []), user_id)
     team_role = await team_derived_role(project.get("team_ids") or [], user_id, team_repo)

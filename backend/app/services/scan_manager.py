@@ -7,7 +7,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.core.constants import SCAN_STATUS_PENDING, SCAN_USABLE_STATUSES
 from app.core.worker import worker_manager
 from app.models.finding import Finding
 from app.models.project import Project
@@ -75,7 +75,7 @@ class ScanManager:
                 "project_id": str(self.project.id),
                 "pipeline_id": data.pipeline_id,
                 "pipeline_iid": data.pipeline_iid,
-                "status": "pending",
+                "status": SCAN_STATUS_PENDING,
                 "created_at": now,
                 "sbom_refs": [],
             },
@@ -194,7 +194,7 @@ class ScanManager:
             logger.warning(f"Scan {scan_id} not found during register_result")
             return
 
-        current_status = scan.get("status", "pending")
+        current_status = scan.get("status", SCAN_STATUS_PENDING)
         should_reaggregate = False
 
         if current_status in SCAN_USABLE_STATUSES:
@@ -204,7 +204,7 @@ class ScanManager:
             )
             await scan_repo.update_raw(
                 scan_id,
-                {"$set": {"status": "pending", "retry_count": 0}},
+                {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0}},
             )
             should_reaggregate = True
 
