@@ -691,7 +691,7 @@ class TestCardsWithoutVulnerabilitiesKeepTheirVersion:
         assert rec.action["versions"] == ["1.2.3"]
 
 
-class TestCardsNameOnlyTheVulnerableCopies:
+class TestCardsNameTheFlaggedCopies:
     def _lodash(self):
         return [
             _vuln("lodash", "CRITICAL", version="4.17.15", fixed_version="4.17.21", finding_id="CVE-1"),
@@ -702,18 +702,29 @@ class TestCardsNameOnlyTheVulnerableCopies:
             {**_eol("lodash"), "version": "3.10.1"},
         ]
 
-    def test_a_hotspot_does_not_list_a_copy_with_only_quality_or_eol_findings(self):
+    def test_a_hotspot_lists_the_vulnerable_and_the_eol_copy_but_not_a_quality_only_one(self):
         [rec] = _hotspots(self._lodash())
 
-        assert rec.affected_components == ["lodash@4.17.15"]
-        assert rec.action["current_versions"] == ["4.17.15"]
-        assert rec.description.startswith("**lodash@4.17.15** is a critical security hotspot")
+        assert rec.affected_components == ["lodash@4.17.15", "lodash@3.10.1"]
+        assert rec.action["current_versions"] == ["4.17.15", "3.10.1"]
+        assert rec.description.startswith("**lodash@4.17.15, lodash@3.10.1** is a critical security hotspot")
 
-    def test_a_toxic_card_does_not_list_a_copy_with_only_quality_or_eol_findings(self):
+    def test_a_toxic_card_lists_the_vulnerable_and_the_eol_copy_but_not_a_quality_only_one(self):
         [rec] = _toxic(self._lodash())
 
-        assert rec.affected_components == ["lodash@4.17.15"]
-        assert rec.action["versions"] == ["4.17.15"]
+        assert rec.affected_components == ["lodash@4.17.15", "lodash@3.10.1"]
+        assert rec.action["versions"] == ["4.17.15", "3.10.1"]
+
+    def test_the_malicious_copy_is_named_beside_the_vulnerable_one(self):
+        findings = [
+            _vuln("event-stream", "CRITICAL", version="3.3.4", is_kev=True),
+            {**_malware("event-stream"), "version": "3.3.6"},
+        ]
+
+        [hotspot] = _hotspots(findings)
+        [toxic] = _toxic(findings)
+
+        assert hotspot.affected_components == toxic.affected_components == ["event-stream@3.3.6", "event-stream@3.3.4"]
 
 
 class TestPackageFindingsJoinAcrossSpellings:

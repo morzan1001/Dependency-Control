@@ -42,6 +42,9 @@ TOXIC_DEPENDENCIES_SHOWN = 5
 # Parents named per transitive dependency on the attack-surface card before "and N more".
 _PARENTS_NAMED = 3
 
+# Scorecard and license findings land on every installed copy; these single one out.
+_COPY_FINDING_TYPES = frozenset({"vulnerability", "malware", "eol"})
+
 
 @dataclass
 class _PackageRisks:
@@ -49,6 +52,7 @@ class _PackageRisks:
 
     name: str
     finding_versions: set[str] = field(default_factory=set)
+    flagged_versions: set[str] = field(default_factory=set)
     vulns: list[VulnerabilityInfo] = field(default_factory=list)
     has_malware: bool = False
     is_eol: bool = False
@@ -69,8 +73,7 @@ class _PackageRisks:
 
     @property
     def versions(self) -> list[str]:
-        # Scorecard and EOL findings land on every installed copy; only vulnerabilities single one out.
-        return self.stats.versions if self.vulns else newest_first(self.finding_versions)
+        return newest_first(self.flagged_versions or self.finding_versions)
 
     @property
     def labels(self) -> list[str]:
@@ -110,8 +113,10 @@ def _roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
     for f in package_findings:
         component = get_attr(f, "component")
         pkg = packages.setdefault(representative[normalize_component(component)], _PackageRisks(name=component))
-        if get_attr(f, "version"):
-            pkg.finding_versions.add(get_attr(f, "version"))
+        if version := get_attr(f, "version"):
+            pkg.finding_versions.add(version)
+            if get_attr(f, "type") in _COPY_FINDING_TYPES:
+                pkg.flagged_versions.add(version)
         _record(pkg, f)
     return list(packages.values())
 
