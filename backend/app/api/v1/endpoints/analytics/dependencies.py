@@ -14,7 +14,7 @@ from app.api.v1.helpers.analytics import (
     live_cves,
     require_analytics_permission,
     severity_counts_from_details,
-    vuln_details_by_component,
+    vuln_details_by,
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
@@ -183,7 +183,9 @@ async def get_dependency_tree(
     if not dependencies:
         return DependencyGraph()
 
-    details_by_component = await vuln_details_by_component(finding_repo, {"project_id": project_id, "scan_id": scan_id})
+    details_by_component = await vuln_details_by(
+        finding_repo, "component", {"project_id": project_id, "scan_id": scan_id}
+    )
     findings_map = build_component_index(
         {component: severity_counts_from_details(details) for component, details in details_by_component.items()}
     )
@@ -357,7 +359,7 @@ async def get_dependency_metadata_endpoint(
 
     finding_query = await _package_finding_query(finding_repo, scan_ids, component, version)
     finding_count = await finding_repo.count(finding_query)
-    package_details = await vuln_details_by_component(finding_repo, finding_query)
+    package_details = await vuln_details_by(finding_repo, "component", finding_query)
     vuln_count = len(live_cves([details for per_component in package_details.values() for details in per_component]))
 
     return DependencyMetadata(

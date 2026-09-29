@@ -391,13 +391,13 @@ def severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
     return counts
 
 
-async def vuln_details_by_component(finding_repo: Any, match: dict[str, Any]) -> dict[str, list[Any]]:
-    """Each component's slim advisory lists across the unwaived vulnerability findings `match` selects."""
+async def vuln_details_by(finding_repo: Any, field: str, match: dict[str, Any]) -> dict[str, list[Any]]:
+    """Slim advisory lists of the unwaived vulnerability findings `match` selects, per value of `field`."""
     rows = await finding_repo.aggregate(
         [
             {MONGO_MATCH: {**match, "type": "vulnerability", "waived": {"$ne": True}}},
-            {"$project": {"component": 1, "details": SLIM_DETAILS_EXPR}},
-            {MONGO_GROUP: {"_id": "$component", "details_list": {"$addToSet": "$details"}}},
+            {"$project": {field: 1, "details": SLIM_DETAILS_EXPR}},
+            {MONGO_GROUP: {"_id": f"${field}", "details_list": {"$addToSet": "$details"}}},
         ],
         allow_disk_use=True,
     )
@@ -435,15 +435,6 @@ def build_hotspot_priority_reasons(
         reasons.append("fix_available:Fix available")
 
     return reasons
-
-
-def cross_project_cve_pipeline(scan_ids: list[str]) -> list[dict[str, Any]]:
-    """Each scan's slim advisory lists, for canonical CVE identity in Python."""
-    return [
-        {MONGO_MATCH: {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
-        {"$project": {"scan_id": 1, "details": SLIM_DETAILS_EXPR}},
-        {MONGO_GROUP: {"_id": "$scan_id", "details_list": {"$addToSet": "$details"}}},
-    ]
 
 
 def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> list[dict[str, Any]]:
@@ -529,8 +520,8 @@ async def gather_cross_project_data(
     )
     scan_stats_map = {s.id: s.stats for s in other_scans if s.stats}
 
-    cve_results = await finding_repo.aggregate(cross_project_cve_pipeline(other_scan_ids))
-    scan_cves_map = {r["_id"]: live_cves(r["details_list"]) for r in cve_results}
+    details_by_scan = await vuln_details_by(finding_repo, "scan_id", {"scan_id": {"$in": other_scan_ids}})
+    scan_cves_map = {scan_id: live_cves(details) for scan_id, details in details_by_scan.items()}
 
     cross_project_data["shared_packages"] = await dep_repo.aggregate(
         cross_project_package_pipeline(other_scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)

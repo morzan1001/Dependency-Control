@@ -15,7 +15,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
     require_any_analytics_permission,
     scope_resolution_counts,
-    vuln_details_by_component,
+    vuln_details_by,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.permissions import Permissions
@@ -211,8 +211,8 @@ async def get_top_dependencies(
 
     results = await dep_repo.aggregate(pipeline)
 
-    details_by_component = await vuln_details_by_component(
-        finding_repo, {"scan_id": {"$in": scan_ids}, "project_id": {"$in": project_ids}}
+    details_by_component = await vuln_details_by(
+        finding_repo, "component", {"scan_id": {"$in": scan_ids}, "project_id": {"$in": project_ids}}
     )
     vuln_count_map = build_component_index(
         {component: len(live_cves(details)) for component, details in details_by_component.items()}
