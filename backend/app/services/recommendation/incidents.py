@@ -11,6 +11,7 @@ from app.schemas.recommendation import (
 from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
+    live_advisories,
     name_some,
     sample_components,
 )
@@ -21,16 +22,13 @@ _CVES_NAMED = 5
 def _cve_signals(
     finding: ModelOrDict, threat_intel: Mapping[str, VulnerabilityEnrichment]
 ) -> Iterator[tuple[str, bool, bool, float]]:
-    """(cve, in KEV, ransomware, EPSS) per CVE; an advisory's marks speak for its CVEs only without live data,
-    since a bundled advisory is marked when any one of its CVEs is."""
-    details = get_attr(finding, "details", {})
-    if not isinstance(details, dict):
-        return
-    for advisory in details.get("vulnerabilities") or []:
-        if not isinstance(advisory, dict):
-            continue
-        for cve in counted_cves(advisory):
-            live = threat_intel.get(cve)
+    """(cve, in KEV, ransomware, EPSS) per CVE of the unwaived advisories. A single-CVE advisory's marks are
+    its CVE's (the refresh only raises them, as a KEV outage reads as an empty live catalog); a bundled
+    advisory is marked when any one of its CVEs is, so live data names those."""
+    for advisory in live_advisories(get_attr(finding, "details", {})):
+        cves = counted_cves(advisory)
+        for cve in cves:
+            live = threat_intel.get(cve) if len(cves) > 1 else None
             if live is not None:
                 yield cve, live.is_kev, live.kev_ransomware_use, live.epss_score or 0.0
             else:
@@ -277,7 +275,7 @@ def detect_known_exploits(
                 priority=Priority.CRITICAL,
                 title="Very High Exploitation Probability",
                 description=(
-                    f"Found {len(high_epss_vulns)} vulnerabilities with EPSS score > 50%. "
+                    f"Found {len(high_epss_vulns)} vulnerabilities with EPSS score >= {EPSS_VERY_HIGH_THRESHOLD:.0%}. "
                     f"These have a very high probability of being exploited in the next 30 days. "
                     f"Highest EPSS: {max_epss * 100:.1f}%"
                 ),

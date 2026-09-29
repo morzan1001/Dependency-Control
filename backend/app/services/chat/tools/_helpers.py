@@ -5,10 +5,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import settings
+from app.core.cve import canonical_cves
 from app.services.component_identity import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
 from app.services.aggregation.versions import parse_version_key
-from app.services.recommendation.common import finding_cve_ids
 
 
 def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bool:
@@ -164,7 +164,7 @@ def staleness_identities(finding: dict[str, Any]) -> set[tuple[str, str, str]]:
     """
     if (finding.get("type") or "") == _VULNERABILITY:
         component = extract_artifact_name(finding.get("component") or "")
-        advisories = finding_cve_ids(finding)
+        advisories = canonical_cves([finding.get("details")])
         if advisories:
             return {(_VULNERABILITY, component, advisory) for advisory in advisories}
     return {finding_identity_key(finding)}

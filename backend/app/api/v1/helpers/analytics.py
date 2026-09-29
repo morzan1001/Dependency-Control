@@ -1,6 +1,6 @@
 """Helper functions for analytics endpoints."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -39,6 +39,7 @@ from app.core.purl import package_identity_expr
 from app.models.user import User
 from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
 from app.services.enrichment.scoring import fold_enrichments
 from app.services.recommendation.common import live_advisories
@@ -197,9 +198,11 @@ def extract_fix_versions(details_list: list[Any], installed_version: str | None)
     return {part for vuln in advisories for part in split_fixed_versions(vuln.get("fixed_version"))}
 
 
-def process_cve_enrichments(finding_ids: list[str], enrichments: dict[str, Any]) -> CVEEnrichmentResult:
+def process_cve_enrichments(
+    cve_ids: list[str], enrichments: Mapping[str, VulnerabilityEnrichment]
+) -> CVEEnrichmentResult:
     """The worst case across a group's CVEs, by the fold scan-time enrichment stores."""
-    matched = [enrichments[fid] for fid in finding_ids if fid in enrichments]
+    matched = [enrichments[cve] for cve in cve_ids if cve in enrichments]
     worst = fold_enrichments(matched)
     if worst is None:
         return CVEEnrichmentResult()

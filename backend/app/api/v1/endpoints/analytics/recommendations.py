@@ -34,11 +34,10 @@ from app.schemas.analytics import (
 )
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
-from app.core.cve import canonical_cves
 from app.services.enrichment import get_cve_enrichment
 from app.services.enrichment.service import apply_enrichments
 from app.services.recommendation import trends
-from app.services.recommendation.common import get_attr
+from app.services.recommendation.common import finding_cve_ids, get_attr
 from app.services.recommendations import recommendation_engine
 
 from ._shared import _MSG_ACCESS_DENIED
@@ -82,12 +81,9 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
 
 
 async def _apply_live_threat_intel(findings: list[Any]) -> dict[str, VulnerabilityEnrichment]:
-    """Refresh each vulnerability finding's advisories with current KEV/EPSS and roll the finding up
-    from them; returns the per-CVE enrichment. Ingest rarely writes KEV to findings (in_kev is set
-    on ~0.2%), so the recommendation engine would otherwise almost never raise the KEV/exploit
-    recommendations."""
+    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan; returns the per-CVE enrichment."""
     vuln_findings = [f for f in findings if get_attr(f, "type") == "vulnerability"]
-    all_cves = list({c for f in vuln_findings for c in canonical_cves([get_attr(f, "details", {})])})
+    all_cves = list({c for f in vuln_findings for c in finding_cve_ids(f)})
     if not all_cves:
         return {}
     try:

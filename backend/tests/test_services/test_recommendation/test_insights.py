@@ -357,3 +357,15 @@ def test_scorecard_correlation_does_not_guess_an_ambiguous_artifact_name():
     )
 
     assert recs == []
+
+
+def test_scorecard_correlation_names_an_advisory_by_its_cve():
+    finding = _vuln_finding(component="log4j-core")
+    finding["details"]["vulnerabilities"] = [
+        {"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]},
+        {"id": "CVE-2021-45046", "waived": True},
+    ]
+
+    [rec] = correlate_scorecard_with_vulnerabilities([finding], [_quality_finding(component="log4j-core")])
+
+    assert rec.action["packages"][0]["cves"] == ["CVE-2021-44228"]

@@ -14,6 +14,7 @@ from app.services.component_identity import build_component_index, lookup_compon
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     ModelOrDict,
+    finding_cve_ids,
     get_attr,
     newest_first,
     sample_components,
@@ -25,12 +26,6 @@ from app.services.recommendation.common import (
 # paired with its population by `sampled` or by an explicit total.
 _RISKY_PACKAGE_CVES_SAMPLED = 3
 _RISKY_PACKAGES_SAMPLED = 10
-
-
-def _advisories(details: Any) -> list[dict[str, Any]]:
-    if not isinstance(details, dict):
-        return []
-    return [v for v in details.get("vulnerabilities") or [] if isinstance(v, dict)]
 
 
 def correlate_scorecard_with_vulnerabilities(
@@ -78,7 +73,6 @@ def correlate_scorecard_with_vulnerabilities(
         is_unmaintained = "Maintained" in critical_issues or scorecard.get("has_maintenance_issues", False)
 
         if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score < SCORECARD_UNMAINTAINED_THRESHOLD):
-            vf_details = get_attr(vf, "details", {})
             high_risk_vulns.append(
                 {
                     "component": component,
@@ -86,11 +80,7 @@ def correlate_scorecard_with_vulnerabilities(
                     "vuln_severity": severity,
                     "scorecard_score": score,
                     "unmaintained": is_unmaintained,
-                    **sampled(
-                        "cves",
-                        [v.get("id") for v in _advisories(vf_details)],
-                        _RISKY_PACKAGE_CVES_SAMPLED,
-                    ),
+                    **sampled("cves", finding_cve_ids(vf), _RISKY_PACKAGE_CVES_SAMPLED),
                     "project_url": scorecard.get("project_url"),
                 }
             )

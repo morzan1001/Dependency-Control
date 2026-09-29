@@ -142,6 +142,11 @@ class TestFindingCveIds:
                 id="a_cve_named_by_two_entries_is_listed_once",
             ),
             pytest.param([], [], id="empty_advisory_list_names_nothing"),
+            pytest.param(
+                [{"id": "CVE-2021-44228", "waived": True}, {"id": "CVE-2021-45046"}],
+                ["CVE-2021-45046"],
+                id="a_waived_advisory_is_not_named",
+            ),
         ],
     )
     def test_the_advisory_list_decides_which_cves_are_named(self, entries, expected):

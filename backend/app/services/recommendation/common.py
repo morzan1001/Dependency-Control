@@ -98,16 +98,13 @@ def live_advisories(details: Any) -> list[dict[str, Any]]:
 
 
 def finding_cve_ids(finding: ModelOrDict) -> list[str]:
-    """Every advisory a stored vulnerability finding names, collapsed to its CVE identity.
+    """Every unwaived advisory a stored vulnerability finding names, collapsed to its CVE identity.
 
     Aggregation groups one record per (component, version) and its top-level ``id`` is that pair,
     so the advisory identity only ever lives in ``details.vulnerabilities`` — the same place the
     scan delta reads its identity from.
     """
-    details = get_attr(finding, "details", {})
-    if not isinstance(details, dict):
-        return []
-    return canonical_cves([details])
+    return canonical_cves([{"vulnerabilities": live_advisories(get_attr(finding, "details", {}))}])
 
 
 # Versions named per package inside an action block; version_count carries the population.

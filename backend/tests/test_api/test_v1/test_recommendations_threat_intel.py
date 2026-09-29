@@ -1,5 +1,5 @@
 """The recommendations endpoint refreshes each finding's advisories with live KEV/EPSS before the
-engine runs, because ingest rarely writes KEV to findings (in_kev is set on ~0.2%)."""
+engine runs, so a CVE listed in KEV after the scan raises its card."""
 
 import asyncio
 from unittest.mock import patch

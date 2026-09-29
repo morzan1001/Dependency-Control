@@ -522,3 +522,41 @@ class TestIncidentCardsNameTheCvesLiveEnrichmentMarks:
         finding["details"]["kev_ransomware_use"] = True
 
         assert detect_known_exploits([finding]) == []
+
+
+class TestIncidentCardsLeaveWaivedAdvisoriesOut:
+    """A per-CVE waiver leaves the record live while its other advisories are."""
+
+    def test_a_waived_kev_advisory_raises_no_kev_card(self):
+        finding = _vuln("log4j-core", is_kev=True)
+        finding["details"]["vulnerabilities"] = [
+            {"id": "CVE-2021-44228", "in_kev": True, "waived": True},
+            {"id": "CVE-2021-44832"},
+        ]
+
+        assert detect_known_exploits([finding]) == []
+
+    def test_a_waived_cve_gets_no_card_from_live_data_either(self):
+        finding = _vuln("log4j-core")
+        finding["details"]["vulnerabilities"] = [{"id": _RANSOMWARE_CVE, "waived": True}]
+        live = {_RANSOMWARE_CVE: VulnerabilityEnrichment(cve=_RANSOMWARE_CVE, risk_score=90.0, is_kev=True)}
+
+        assert detect_known_exploits([finding], live) == []
+
+
+class TestIncidentCardsKeepStoredMarksWhenTheLiveFeedSaysLess:
+    """The KEV provider answers an outage with an empty catalog, so a live 'not in KEV' is no proof."""
+
+    def test_a_stored_kev_mark_survives_an_empty_live_catalog(self):
+        finding = _vuln("struts2-core", is_kev=True, cve_id=_KEV_ONLY_CVE)
+        live = {_KEV_ONLY_CVE: VulnerabilityEnrichment(cve=_KEV_ONLY_CVE, risk_score=40.0)}
+
+        cards = {r.type: r for r in detect_known_exploits([finding], live)}
+
+        assert cards[RecommendationType.KNOWN_EXPLOIT].action["cves"] == [_KEV_ONLY_CVE]
+
+
+def test_the_epss_card_states_the_threshold_it_compares_with():
+    [card] = detect_known_exploits([_vuln("pkg", epss_score=EPSS_VERY_HIGH_THRESHOLD)])
+
+    assert f"EPSS score >= {EPSS_VERY_HIGH_THRESHOLD:.0%}" in card.description
