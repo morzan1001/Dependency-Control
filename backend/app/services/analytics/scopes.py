@@ -11,7 +11,8 @@ from typing import TYPE_CHECKING, Any, TypeVar
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL, ScopeName
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, ScopeName
+from app.core.permissions import Permissions, has_permission
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +72,6 @@ class ResolvedScope:
 
 
 class ScopeResolver:
-    SYSTEM_MANAGE = "system:manage"
-
     def __init__(self, db: AsyncIOMotorDatabase, user: "User | Any") -> None:
         self.db = db
         self.user = user
@@ -104,8 +103,7 @@ class ScopeResolver:
         return ResolvedScope(scope="team", scope_id=scope_id, project_ids=project_ids)
 
     def _resolve_global(self) -> ResolvedScope:
-        perms: frozenset[str] = getattr(self.user, "permissions", frozenset()) or frozenset()
-        if PERMISSION_ANALYTICS_GLOBAL not in perms and self.SYSTEM_MANAGE not in perms:
+        if not has_permission(self.user.permissions, [Permissions.ANALYTICS_GLOBAL, Permissions.SYSTEM_MANAGE]):
             raise ScopeResolutionError("Global analytics requires analytics:global or system:manage")
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
 

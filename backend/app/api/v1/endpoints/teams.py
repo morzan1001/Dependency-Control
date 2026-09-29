@@ -95,9 +95,9 @@ async def read_teams(
     if search:
         query["name"] = {"$regex": re.escape(search), "$options": "i"}
 
-    if has_permission(current_user.permissions, "team:read_all"):
+    if has_permission(current_user.permissions, Permissions.TEAM_READ_ALL):
         final_query = query
-    elif has_permission(current_user.permissions, "team:read"):
+    elif has_permission(current_user.permissions, Permissions.TEAM_READ):
         permission_query = {"members.user_id": str(current_user.id)}
 
         final_query = {"$and": [query, permission_query]} if query else permission_query
@@ -156,7 +156,7 @@ async def delete_team(
     """Delete a team (admin role); unassigns it from projects and removes team webhooks."""
     from app.repositories.projects import ProjectRepository
 
-    if not has_permission(current_user.permissions, "team:delete"):
+    if not has_permission(current_user.permissions, Permissions.TEAM_DELETE):
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
     safe_team_id = sanitize_for_log(team_id)

@@ -14,6 +14,7 @@ from app.core.constants import (
     WEBHOOK_EVENT_LICENSE_POLICY_CHANGED,
     NotificationEvent,
 )
+from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry
 from app.repositories.policy_audit_entry import PolicyAuditRepository
@@ -215,7 +216,7 @@ async def _notify_relevant_users(
     else:
         await notification_service.notify_users_with_permission(
             db,
-            permission=["system:manage", "analytics:global"],
+            permission=[Permissions.SYSTEM_MANAGE, Permissions.ANALYTICS_GLOBAL],
             event_type=event_type,
             subject=subject,
             message=message,

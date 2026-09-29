@@ -22,6 +22,7 @@ from app.core.constants import (
     WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
     ScopeName,
 )
+from app.core.permissions import Permissions, has_permission
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
@@ -107,9 +108,7 @@ async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: Com
     if report.scope == "user":
         if report.requested_by == str(user.id):
             return True
-        from app.core.permissions import Permissions, has_permission
-
-        return has_permission(getattr(user, "permissions", []) or [], Permissions.SYSTEM_MANAGE)
+        return has_permission(user.permissions, Permissions.SYSTEM_MANAGE)
     try:
         await ScopeResolver(db, user).resolve(scope=report.scope, scope_id=report.scope_id)
         return True
@@ -120,11 +119,9 @@ async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: Com
 
 async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict[str, Any]:
     """Build the $or filter capturing every scope a user may see, so list pagination runs on already-filtered results."""
-    from app.core.permissions import Permissions, has_permission
     from app.repositories.teams import TeamRepository
 
-    perms = getattr(user, "permissions", []) or []
-    is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
+    is_super = has_permission(user.permissions, Permissions.SYSTEM_MANAGE)
     user_id = str(user.id)
 
     branches: list[dict[str, Any]] = []
@@ -144,7 +141,7 @@ async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict
     if team_ids:
         branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
 
-    if is_super or has_permission(perms, Permissions.ANALYTICS_GLOBAL):
+    if is_super or has_permission(user.permissions, Permissions.ANALYTICS_GLOBAL):
         branches.append({"scope": "global"})
 
     return {"$or": branches}
@@ -267,13 +264,11 @@ async def delete_report(
     r = await repo.get_by_id(report_id)
     if r is None:
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
-    if r.requested_by != current_user.id:
-        perms: frozenset[str] = getattr(current_user, "permissions", frozenset()) or frozenset()
-        if "system:manage" not in perms:
-            raise HTTPException(
-                status_code=403,
-                detail="Cannot delete a report you did not request",
-            )
+    if r.requested_by != current_user.id and not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
+        raise HTTPException(
+            status_code=403,
+            detail="Cannot delete a report you did not request",
+        )
     if r.artifact_gridfs_id:
         bucket = AsyncIOMotorGridFSBucket(db)
         try:

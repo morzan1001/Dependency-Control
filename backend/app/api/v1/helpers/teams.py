@@ -177,7 +177,7 @@ async def get_team_with_access(
     """Get a team via global 'team:update' permission or, failing that, role-based access."""
     team_repo = TeamRepository(db)
 
-    if has_permission(user.permissions, "team:update"):
+    if has_permission(user.permissions, Permissions.TEAM_UPDATE):
         team = await team_repo.get_by_id(team_id)
         if not team:
             raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)

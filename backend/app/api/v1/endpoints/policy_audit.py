@@ -5,11 +5,11 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
-from fastapi import HTTPException, Query
+from fastapi import Depends, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BeforeValidator, ValidationError
 
-from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.deps import CurrentUserDep, DatabaseDep, PermissionChecker
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import (
@@ -24,6 +24,7 @@ from app.api.v1.helpers.responses import (
 from app.core import ensure_utc
 from app.core.config import settings
 from app.core.constants import MAX_POLICY_AUDIT_PAGE
+from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
@@ -38,6 +39,7 @@ router = CustomAPIRouter(tags=["policy-audit"])
 
 # An unencoded '+HH:MM' offset arrives with its '+' decoded to a space.
 _SPACE_DECODED_OFFSET = re.compile(r"(:\d\d(?:\.\d+)?) (\d\d:?\d\d)$")
+AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]
 PruneCutoff = Annotated[
     datetime,
     BeforeValidator(lambda v: _SPACE_DECODED_OFFSET.sub(r"\1+\2", v) if isinstance(v, str) else v),
@@ -47,12 +49,11 @@ PruneCutoff = Annotated[
 
 @router.get("/crypto-policies/system/audit", responses=RESP_403)
 async def list_system_audit(
-    current_user: CurrentUserDep,
+    current_user: AdminUserDep,
     db: DatabaseDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
-    _require_admin(current_user)
     entries = await PolicyAuditRepository(db).list(
         policy_scope="system",
         skip=skip,
@@ -64,10 +65,9 @@ async def list_system_audit(
 @router.get("/crypto-policies/system/audit/{version}", responses=RESP_403_404)
 async def get_system_audit_entry(
     version: int,
-    current_user: CurrentUserDep,
+    current_user: AdminUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    _require_admin(current_user)
     entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope="system",
         project_id=None,
@@ -86,11 +86,10 @@ async def get_system_audit_entry(
     },
 )
 async def revert_system_policy(
-    current_user: CurrentUserDep,
+    current_user: AdminUserDep,
     db: DatabaseDep,
     body: PolicyRevertRequest,
 ) -> dict[str, Any]:
-    _require_admin(current_user)
     target_version = body.target_version
     comment = body.comment
     await _revert_policy(
@@ -109,11 +108,10 @@ async def revert_system_policy(
 
 @router.delete("/crypto-policies/system/audit", responses=RESP_400_403)
 async def prune_system_audit(
-    current_user: CurrentUserDep,
+    current_user: AdminUserDep,
     db: DatabaseDep,
     before: PruneCutoff,
 ) -> dict[str, Any]:
-    _require_admin(current_user)
     _enforce_min_prune_cutoff(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
         policy_scope="system",
@@ -255,12 +253,6 @@ def _enforce_min_prune_cutoff(cutoff: datetime) -> None:
             status_code=400,
             detail=(f"before must be at least {days} days in the past to preserve forensic history"),
         )
-
-
-def _require_admin(user: User) -> None:
-    perms: frozenset[str] = getattr(user, "permissions", frozenset()) or frozenset()
-    if "system:manage" not in perms:
-        raise HTTPException(status_code=403, detail="system:manage permission required")
 
 
 async def _revert_policy(

@@ -119,6 +119,20 @@ async def test_revert_denied_for_non_admin(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/v1/crypto-policies/system/audit"),
+        ("GET", "/api/v1/crypto-policies/system/audit/1"),
+        ("DELETE", "/api/v1/crypto-policies/system/audit?before=2020-01-01T00:00:00Z"),
+    ],
+)
+async def test_the_system_audit_is_refused_to_a_non_admin(client, db, member_auth_headers, method, path):
+    resp = await client.request(method, path, headers=member_auth_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
     "body",
     [
         pytest.param({"target_version": "abc"}, id="non-numeric-version"),

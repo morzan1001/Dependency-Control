@@ -1764,8 +1764,7 @@ class ChatToolRegistry:
         team_repo: TeamRepository,
     ) -> dict[str, Any]:
         """Build the ``$or`` visibility filter for compliance reports, mirroring compliance_reports._build_visibility_filter."""
-        perms = getattr(user, "permissions", []) or []
-        is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
+        is_super = has_permission(user.permissions, Permissions.SYSTEM_MANAGE)
         user_id = str(user.id)
 
         branches: list[dict[str, Any]] = []
@@ -1782,7 +1781,7 @@ class ChatToolRegistry:
         if team_ids:
             branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
 
-        if is_super or has_permission(perms, Permissions.ANALYTICS_GLOBAL):
+        if is_super or has_permission(user.permissions, Permissions.ANALYTICS_GLOBAL):
             branches.append({"scope": "global"})
 
         return {"$or": branches}
