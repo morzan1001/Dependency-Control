@@ -223,6 +223,7 @@ class TestRunHousekeepingArchive:
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}.release_protected_scan_ids", new_callable=AsyncMock, return_value=set()),
+            patch(f"{MODULE}._project_heads", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock) as mock_handle,
         ):
             asyncio.run(run_housekeeping())

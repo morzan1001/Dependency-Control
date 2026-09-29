@@ -381,20 +381,27 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
         )
 
 
-async def _unreferenced(db: Any, scan_ids: list[str]) -> list[str]:
-    """The batch minus every scan something still points at: a rescan's source, and either end of a
-    release's analysis chain."""
+async def _project_heads(db: Any, project_ids: set[str]) -> set[str]:
+    projects = await db.projects.find(
+        {"_id": {"$in": sorted(project_ids)}}, {"latest_scan_id": 1, "default_branch": 1, "deleted_branches": 1}
+    ).to_list(None)
+    return set((await ScanRepository(db).get_latest_active_scan_ids(projects)).values())
+
+
+async def _unreferenced(db: Any, scans: list[dict[str, Any]]) -> list[str]:
+    """The batch minus every scan something still points at: a rescan's source, either end of a
+    release's analysis chain, and a project's head, which otherwise passes to an older or feature build."""
+    scan_ids = [str(doc["_id"]) for doc in scans]
     protected = await _referenced_scan_ids(db, scan_ids)
     protected |= await release_protected_scan_ids(db, scan_ids)
+    protected |= await _project_heads(db, {doc["project_id"] for doc in scans if doc.get("project_id")})
     return [scan_id for scan_id in scan_ids if scan_id not in protected]
 
 
 async def _process_scans_in_batches(
     db: Any, cursor: Any, action: str, label: str, batch_size: int = ARCHIVE_BATCH_SIZE
 ) -> None:
-    """Stream scan IDs from cursor and process retention in batches, dropping the ones a rescan
-    still points at."""
-    async for batch in abatched((str(doc["_id"]) async for doc in cursor), batch_size):
+    async for batch in abatched(cursor, batch_size):
         await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
 
 
@@ -409,7 +416,7 @@ async def _expire_older_than(db: Any, days: int, scope: dict[str, Any], action: 
                 "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
                 "status": {"$nin": SCAN_ACTIVE_STATUSES},
             },
-            {"_id": 1},
+            {"_id": 1, "project_id": 1},
         )
         await _process_scans_in_batches(db, cursor, action, label)
     except Exception:
