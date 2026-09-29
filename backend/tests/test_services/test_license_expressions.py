@@ -270,8 +270,8 @@ class TestParseLicenseExpression:
 
 
 def test_the_or_partition_returns_the_ids_it_checked():
-    groups = normalizer.parse_license_expression("(GPL-2.0-only WITH Classpath-exception-2.0) OR Acme-1.0")
-    assert partition_or_groups(groups) == ([["GPL-2.0-only"]], ["Acme-1.0"])
+    groups = normalizer.parse_license_expression("(gpl-2.0-only WITH Classpath-exception-2.0) OR mit OR Acme-1.0")
+    assert partition_or_groups(groups) == ([["GPL-2.0-only"], ["MIT"]], ["Acme-1.0"])
 
 
 def test_inventory_keeps_a_with_exception_on_its_licence():
