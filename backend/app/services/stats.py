@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import WAIVER_SCOPE_FILE, WAIVER_SCOPE_FINDING, WAIVER_SCOPE_RULE
+from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.services.analysis.stats import calculate_comprehensive_stats
@@ -175,13 +176,11 @@ def _is_signature_waiver(waiver: Any) -> bool:
     path; within finding scope a location-typed waiver without a signature qualifies so the
     back-fill can give it one, and untyped non-location ones stay legacy so they are never
     silently dropped."""
-    from app.repositories.findings import FindingRepository
-
     if getattr(waiver, "scope", WAIVER_SCOPE_FINDING) != WAIVER_SCOPE_FINDING:
         return False
     if getattr(waiver, "match", None) is not None:
         return True
-    return waiver.finding_type in FindingRepository._LOCATION_TYPES
+    return waiver.finding_type in LOCATION_FINDING_TYPES
 
 
 def _safe_match_signature(raw: dict, context: str) -> Any | None:

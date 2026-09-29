@@ -173,7 +173,6 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         (t.UPGRADE_PROTOCOL, 300),
         (t.PQC_MIGRATION, 400),
         (t.ROTATE_CERTIFICATE, 500),
-        (t.REPLACE_WEAK_CIPHER_SUITE, 600),
         (t.LICENSE_DRIFT, 77),
         (t.CRITICAL_HOTSPOT, 88),
     ]
@@ -201,7 +200,7 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         "iac_issues": 128,
         "license_issues": 256,
         "quality_issues": 512,
-        "crypto_issues": 2100,
+        "crypto_issues": 1500,
         "outdated_deps": 3072,
         "fragmentation_issues": 100,
         "trend_alerts": 2,

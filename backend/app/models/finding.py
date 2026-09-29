@@ -45,6 +45,13 @@ class FindingType(str, Enum):
     OTHER = "other"
 
 
+CRYPTO_FINDING_TYPES = frozenset(t.value for t in FindingType if t.value.startswith("crypto_"))
+# Findings pinned to a file location, which waivers match by signature rather than by id.
+LOCATION_FINDING_TYPES = frozenset(
+    t.value for t in (FindingType.SAST, FindingType.IAC, FindingType.SECRET, FindingType.CRYPTO_KEY_MANAGEMENT)
+)
+
+
 class Finding(BaseModel):
     id: str = Field(..., description="Unique identifier for the finding")
     type: FindingType = Field(..., description="Type of finding")

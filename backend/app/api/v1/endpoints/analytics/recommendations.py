@@ -74,7 +74,6 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
     RecommendationType.UPGRADE_PROTOCOL: (None, "crypto_issues"),
     RecommendationType.PQC_MIGRATION: (None, "crypto_issues"),
     RecommendationType.ROTATE_CERTIFICATE: (None, "crypto_issues"),
-    RecommendationType.REPLACE_WEAK_CIPHER_SUITE: (None, "crypto_issues"),
 }
 
 

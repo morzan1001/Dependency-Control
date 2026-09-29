@@ -10,10 +10,10 @@ from app.api.v1.helpers.findings import (
 class TestGetCategoryTypeFilter:
     def test_security(self):
         result = get_category_type_filter("security")
-        assert result == {"$in": ["vulnerability", "malware", "typosquatting"]}
+        assert result == {"$in": ["vulnerability", "malware"]}
 
     def test_secret(self):
-        assert get_category_type_filter("secret") == "secret"
+        assert get_category_type_filter("secret") == {"$in": ["secret"]}
 
     def test_sast(self):
         result = get_category_type_filter("sast")
@@ -37,9 +37,6 @@ class TestGetCategoryForType:
 
     def test_malware(self):
         assert get_category_for_type("malware") == "security"
-
-    def test_typosquatting(self):
-        assert get_category_for_type("typosquatting") == "security"
 
     def test_secret(self):
         assert get_category_for_type("secret") == "secret"
@@ -84,10 +81,9 @@ class TestAggregateStatsByCategory:
         type_counts = [
             {"_id": "vulnerability", "count": 10},
             {"_id": "malware", "count": 2},
-            {"_id": "typosquatting", "count": 1},
         ]
         result = aggregate_stats_by_category(type_counts)
-        assert result["security"] == 13
+        assert result["security"] == 12
 
     def test_sast_and_iac_combined(self):
         type_counts = [

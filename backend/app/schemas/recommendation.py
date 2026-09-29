@@ -73,7 +73,6 @@ class RecommendationType(str, Enum):
     UPGRADE_PROTOCOL = "upgrade_protocol"  # Deprecated TLS / SSH / IPsec version
     PQC_MIGRATION = "pqc_migration"  # Quantum-vulnerable primitive
     ROTATE_CERTIFICATE = "rotate_certificate"  # Expiring or expired cert
-    REPLACE_WEAK_CIPHER_SUITE = "replace_weak_cipher_suite"  # Bad TLS suite
 
 
 class Priority(str, Enum):

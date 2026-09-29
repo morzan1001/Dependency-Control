@@ -7,6 +7,7 @@ from typing import Any
 from pymongo import UpdateOne
 
 from app.core.constants import get_severity_value
+from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository, find_window
 from app.services.aggregation.components import build_component_index
@@ -194,12 +195,10 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def count_by_scan(self, scan_id: str) -> int:
         return await self.count({"scan_id": scan_id})
 
-    _LOCATION_TYPES = ("sast", "iac", "secret", "crypto_key_management")
-
     async def find_location_findings(self, scan_id: str) -> list[dict[str, Any]]:
         """Raw docs for location-based findings of a scan (waiver-matchable)."""
         cursor = self.collection.find(
-            {"scan_id": scan_id, "type": {"$in": list(self._LOCATION_TYPES)}},
+            {"scan_id": scan_id, "type": {"$in": sorted(LOCATION_FINDING_TYPES)}},
             # "details" is needed to recompute a missing match signature.
             {"_id": 1, "finding_id": 1, "type": 1, "component": 1, "match": 1, "details": 1},
         )

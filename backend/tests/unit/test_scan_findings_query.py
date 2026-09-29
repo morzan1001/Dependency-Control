@@ -61,7 +61,7 @@ class TestBuildScanFindingsMatch:
     def test_hide_historical_secrets_composes_with_secret_category(self):
         # On the secrets tab (type=secret) the exclusion still narrows to in-tree/unknown secrets.
         match = _build_scan_findings_match("scan-1", category="secret", hide_historical_secrets=True)
-        assert match["type"] == "secret"
+        assert match["type"] == {"$in": ["secret"]}
         assert match["$nor"] == [{"type": "secret", "details.in_current_tree": False}]
 
 

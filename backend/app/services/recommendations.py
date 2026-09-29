@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from app.core.constants import MAX_DEPENDENCY_DEPTH, OUTDATED_DEPENDENCY_THRESHOLD_DAYS
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.recommendation import Recommendation
 from app.services.recommendation import (
     common,
@@ -213,9 +214,7 @@ class RecommendationEngine:
         # 6b. Process CRYPTO issues (weak algorithms, key sizes, protocols,
         # cipher suites, certificate lifecycle, quantum-vulnerable primitives,
         # and key-management SAST hits).
-        crypto_findings = [
-            f for ft, group in findings_by_type.items() if ft in crypto_recs.CRYPTO_FINDING_TYPES for f in group
-        ]
+        crypto_findings = [f for ft, group in findings_by_type.items() if ft in CRYPTO_FINDING_TYPES for f in group]
         _safe_extend(
             recommendations,
             lambda: crypto_recs.process_crypto(crypto_findings),
