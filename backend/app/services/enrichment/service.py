@@ -3,7 +3,12 @@ import logging
 from collections.abc import Mapping
 from typing import Any
 
-from app.core.constants import ANALYZER_TIMEOUTS, DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE
+from app.core.constants import (
+    ANALYZER_TIMEOUTS,
+    CVSS_SEVERITY_SCORES,
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
+)
 from app.core.cve import entry_cves
 from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry, VulnerabilityEnrichment
@@ -118,9 +123,9 @@ def _advisory_enrichment(
     cvss = vuln.get("cvss_score")
     matched = [enrichments[cve] for cve in entry_cves(vuln) if cve in enrichments]
     if not matched:
-        # GHSA-only, RUSTSEC, GO advisories still rank by their CVSS.
+        # GHSA-only, RUSTSEC, GO advisories rank by their CVSS, or by their severity without one.
         if cvss is None:
-            return None
+            cvss = CVSS_SEVERITY_SCORES.get(vuln.get("severity") or "UNKNOWN")
         return VulnerabilityEnrichment(
             cve=str(vuln.get("id")), risk_score=calculate_risk_score(cvss, None, False, False)
         )

@@ -160,6 +160,20 @@ async def test_an_advisory_without_a_cve_is_ranked_by_its_cvss(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_an_advisory_without_a_cve_or_cvss_is_ranked_by_its_severity(monkeypatch):
+    service = _service(monkeypatch)
+    finding = _vuln_finding(
+        "crate",
+        {"id": "RUSTSEC-2024-0001", "severity": "CRITICAL"},
+        {"id": "CVE-2024-3", "severity": "LOW", "cvss_score": 2.0},
+    )
+
+    await service.enrich_findings([finding])
+
+    assert finding["details"]["risk_score"] == pytest.approx(40.0)
+
+
+@pytest.mark.asyncio
 async def test_the_advisory_url_stays_on_its_own_advisory(monkeypatch):
     service = _service(
         monkeypatch,
