@@ -2,12 +2,21 @@ import asyncio
 import logging
 import os
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
-from app.core.constants import ANALYSIS_MAX_RETRIES, SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
+from app.core.constants import (
+    ANALYSIS_MAX_RETRIES,
+    HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
+    HOUSEKEEPING_STARTUP_RECOVERY_LIMIT,
+    SCAN_STATUS_FAILED,
+    SCAN_STATUS_PENDING,
+    SCAN_STATUS_PROCESSING,
+    ScanStatus,
+)
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
     worker_active_count,
@@ -37,6 +46,28 @@ async def _keep_claim(scan_repo: ScanRepository, scan_id: str, worker_id: str) -
                 return
         except Exception:
             logger.exception("Could not renew the claim on scan %s", scan_id)
+
+
+def _record_job(status: str, started: float) -> None:
+    if worker_jobs_processed_total:
+        worker_jobs_processed_total.labels(status=status).inc()
+    if worker_job_duration_seconds:
+        worker_job_duration_seconds.observe(time.time() - started)
+
+
+async def _fail_scan(
+    db: AsyncIOMotorDatabase,
+    scan: dict[str, Any],
+    error: str,
+    started: float,
+    *,
+    status: ScanStatus = SCAN_STATUS_PROCESSING,
+    worker_id: str | None = None,
+) -> None:
+    """Fail the scan while it is still in ``status`` (and ``worker_id``'s), then count and announce the failure."""
+    if await ScanRepository(db).mark_failed(scan["_id"], error, status=status, worker_id=worker_id):
+        _record_job("failed", started)
+        await notify_analysis_failed(db, scan["_id"], scan.get("project_id"), error)
 
 
 class AnalysisWorkerManager:
@@ -76,25 +107,31 @@ class AnalysisWorkerManager:
 
         try:
             db = await get_database()
-            # Cap recovery so a backlog of stale pending scans doesn't flood the queue.
-            recovery_limit = 1000
+            ready_before = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
+            # The stale loop owns scans holding results; a newer scan may still be registering its first one.
+            without_results: dict[str, Any] = {
+                "status": SCAN_STATUS_PENDING,
+                "received_results": {"$in": [None, []]},
+                "created_at": {"$lt": ready_before},
+            }
             cursor = (
-                db.scans.find({"status": SCAN_STATUS_PENDING}, {"_id": 1}).sort("created_at", 1).limit(recovery_limit)
+                db.scans.find(without_results, {"_id": 1})
+                .sort("created_at", 1)
+                .limit(HOUSEKEEPING_STARTUP_RECOVERY_LIMIT)
             )
 
             count = 0
             async for scan in cursor:
-                await self.queue.put(str(scan["_id"]))
+                await self.add_job(str(scan["_id"]))
                 count += 1
 
             if count > 0:
-                logger.info(f"Recovered {count} pending scans from database.")
-                if count >= recovery_limit:
-                    logger.warning(
-                        f"Recovery limit ({recovery_limit}) reached. "
-                        f"Some pending scans may not have been queued. "
-                        f"They will be picked up by housekeeping."
-                    )
+                logger.info(f"Recovered {count} pending scans without results from database.")
+            if count >= HOUSEKEEPING_STARTUP_RECOVERY_LIMIT:
+                logger.warning(
+                    f"Recovery limit ({HOUSEKEEPING_STARTUP_RECOVERY_LIMIT}) reached; "
+                    f"pending scans without results beyond it wait for the next process start."
+                )
         except Exception as e:
             logger.exception("Failed to recover pending jobs: %s", e)
 
@@ -203,24 +240,62 @@ class AnalysisWorkerManager:
 
         return True
 
-    async def _handle_rescheduled(self, scan: dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase) -> bool:
-        """Apply the retry ceiling. Engine owns status and retry_count writes."""
+    async def _handle_rescheduled(self, scan: dict[str, Any], db: AsyncIOMotorDatabase, started: float) -> None:
+        """Re-queue a scan the engine sent back to pending, or fail it once its retry budget is spent."""
+        scan_id = scan["_id"]
+        # Every reschedule follows exactly one engine requeue, which added one to the claimed retry_count.
         retry_count = scan.get("retry_count", 0) + 1
-        self._untrack_scan(scan_id)
+        if retry_count < ANALYSIS_MAX_RETRIES:
+            logger.info(f"Scan {scan_id} was rescheduled. Re-queueing (attempt {retry_count}/{ANALYSIS_MAX_RETRIES}).")
+            await self.queue.put(scan_id)
+            return
 
-        if retry_count >= ANALYSIS_MAX_RETRIES:
-            logger.error(
-                f"Scan {scan_id} failed after {retry_count} retries due to persistent race conditions. Marking as failed."
+        logger.error(f"Scan {scan_id} was rescheduled {retry_count} times. Marking as failed.")
+        error = f"Analysis failed after {retry_count} retry attempts: new input kept arriving or an SBOM failed to load"
+        # The engine sent it back to pending, so a scan another worker has claimed since is left alone.
+        await _fail_scan(db, scan, error, started, status=SCAN_STATUS_PENDING)
+
+    async def _process(self, scan_id: str, worker_id: str) -> None:
+        logger.info(f"Worker {worker_id} picked up scan {scan_id}")
+        if worker_queue_size:
+            worker_queue_size.set(self.queue.qsize())
+        started = time.time()
+
+        db = await get_database()
+        scan_repo = ScanRepository(db)
+        scan = await scan_repo.claim_pending(scan_id, worker_id)
+        if not scan:
+            logger.info(f"Scan {scan_id} already claimed or not found. Skipping.")
+            return
+
+        self._track_scan(scan_id)
+        claim_keeper = asyncio.create_task(_keep_claim(scan_repo, scan_id, worker_id))
+        try:
+            project = await db.projects.find_one({"_id": scan["project_id"]})
+            if not project:
+                logger.error(f"Project for scan {scan_id} not found, skipping.")
+                await _fail_scan(db, scan, "Project not found", started, worker_id=worker_id)
+                return
+
+            outcome = await run_analysis(
+                scan_id=scan_id,
+                sboms=scan.get("sbom_refs", []),
+                active_analyzers=project.get("active_analyzers", []),
+                db=db,
+                worker_id=worker_id,
+                sbom_generation=scan.get("sbom_generation"),
             )
-            error_message = f"Analysis failed after {retry_count} retry attempts due to race conditions."
-            # The engine sent it back to pending, so a scan another worker has claimed since is left alone.
-            if await ScanRepository(db).mark_failed(scan_id, error_message, status=SCAN_STATUS_PENDING):
-                await notify_analysis_failed(db, scan_id, scan.get("project_id"), error_message)
-            return True
-
-        logger.info(f"Scan {scan_id} was rescheduled. Re-queueing (attempt {retry_count}/{ANALYSIS_MAX_RETRIES}).")
-        await self.queue.put(scan_id)
-        return False
+            if outcome == SCAN_STATUS_PENDING:
+                await self._handle_rescheduled(scan, db, started)
+            elif outcome is not None:
+                _record_job("failed" if outcome == SCAN_STATUS_FAILED else "success", started)
+        except Exception as e:
+            logger.exception("Error processing scan %s: %s", scan_id, e)
+            await _fail_scan(db, scan, str(e), started, worker_id=worker_id)
+        finally:
+            claim_keeper.cancel()
+            self._untrack_scan(scan_id)
+        logger.info(f"Worker {worker_id} finished scan {scan_id}")
 
     async def worker(self, name: str) -> None:
         hostname = os.getenv("HOSTNAME", "unknown")
@@ -242,71 +317,14 @@ class AnalysisWorkerManager:
                         break
                     continue
 
-                if self._shutting_down:
-                    # Leave the scan as 'pending' in DB so other pods can pick it up.
-                    logger.info(f"Worker {worker_id} returning scan {scan_id} to queue - shutting down")
-                    self.queue.task_done()
-                    break
-
-                logger.info(f"Worker {worker_id} picked up scan {scan_id}")
-
-                if worker_queue_size:
-                    worker_queue_size.set(self.queue.qsize())
-
-                job_start_time = time.time()
-
-                db = await get_database()
-
-                scan_repo = ScanRepository(db)
-                scan = await scan_repo.claim_pending(scan_id, worker_id)
-
-                if not scan:
-                    logger.info(f"Scan {scan_id} already claimed or not found. Skipping.")
-                    self.queue.task_done()
-                    continue
-
-                # Track this scan as actively processing (for graceful shutdown)
-                self._track_scan(scan_id)
-
-                project = await db.projects.find_one({"_id": scan["project_id"]})
-                if not project:
-                    logger.error(f"Project for scan {scan_id} not found, skipping.")
-                    await scan_repo.mark_failed(scan_id, "Project not found", worker_id=worker_id)
-                    self._untrack_scan(scan_id)
-                    self.queue.task_done()
-                    continue
-
-                claim_keeper = asyncio.create_task(_keep_claim(scan_repo, scan_id, worker_id))
                 try:
-                    outcome = await run_analysis(
-                        scan_id=scan_id,
-                        sboms=scan.get("sbom_refs", []),
-                        active_analyzers=project.get("active_analyzers", []),
-                        db=db,
-                        worker_id=worker_id,
-                        sbom_generation=scan.get("sbom_generation"),
-                    )
-                    if outcome == SCAN_STATUS_PENDING:
-                        await self._handle_rescheduled(scan, scan_id, db)
-                    elif outcome is not None:
-                        if worker_jobs_processed_total:
-                            job_status = "failed" if outcome == SCAN_STATUS_FAILED else "success"
-                            worker_jobs_processed_total.labels(status=job_status).inc()
-                        if worker_job_duration_seconds:
-                            worker_job_duration_seconds.observe(time.time() - job_start_time)
-
-                except Exception as e:
-                    logger.exception("Error processing scan %s: %s", scan_id, e)
-                    if await scan_repo.mark_failed(scan_id, str(e), worker_id=worker_id):
-                        if worker_jobs_processed_total:
-                            worker_jobs_processed_total.labels(status="failed").inc()
-                        await notify_analysis_failed(db, scan_id, scan.get("project_id"), str(e))
+                    if self._shutting_down:
+                        # Leave the scan as 'pending' in DB so other pods can pick it up.
+                        logger.info(f"Worker {worker_id} returning scan {scan_id} to queue - shutting down")
+                        break
+                    await self._process(scan_id, worker_id)
                 finally:
-                    claim_keeper.cancel()
-
-                self._untrack_scan(scan_id)
-                self.queue.task_done()
-                logger.info(f"Worker {worker_id} finished scan {scan_id}")
+                    self.queue.task_done()
 
             except asyncio.CancelledError:
                 logger.info(f"Worker {worker_id} cancelled during shutdown")

@@ -1,6 +1,7 @@
 """Worker retry handling: the engine owns status/retry_count writes; the worker only enforces the ceiling."""
 
 import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.worker import AnalysisWorkerManager
@@ -32,42 +33,35 @@ def _db_with_requeued_scan() -> FakeDatabase:
 class TestHandleRescheduled:
     def test_under_limit_requeues_without_writing_retry_count(self):
         mgr = _build_manager()
-        mgr._active_scans = {"scan-1"}
         update_one = AsyncMock()
         db = _build_db_with_scans(update_one)
         scan = {"_id": "scan-1", "retry_count": 1}
 
-        terminal = asyncio.run(mgr._handle_rescheduled(scan, "scan-1", db))
+        asyncio.run(mgr._handle_rescheduled(scan, db, time.time()))
 
-        assert terminal is False
         assert mgr.queue.qsize() == 1
         assert mgr.queue.get_nowait() == "scan-1"
-        assert "scan-1" not in mgr._active_scans
         update_one.assert_not_awaited()
 
     def test_at_limit_marks_failed_and_does_not_requeue(self):
         mgr = _build_manager()
-        mgr._active_scans = {"scan-1"}
         db = _db_with_requeued_scan()
         # retry_count=4 in snapshot + 1 (engine inc) = 5, hits ceiling.
         scan = {"_id": "scan-1", "retry_count": 4}
 
-        terminal = asyncio.run(mgr._handle_rescheduled(scan, "scan-1", db))
+        asyncio.run(mgr._handle_rescheduled(scan, db, time.time()))
 
-        assert terminal is True
         assert mgr.queue.qsize() == 0
         assert asyncio.run(db.scans.find_one({"_id": "scan-1"}))["status"] == "failed"
 
     def test_at_limit_announces_the_failure(self):
         mgr = _build_manager()
-        mgr._active_scans = {"scan-1"}
         db = _db_with_requeued_scan()
         scan = {"_id": "scan-1", "project_id": "proj-1", "retry_count": 4}
 
         with patch("app.core.worker.notify_analysis_failed", new=AsyncMock()) as notify:
-            terminal = asyncio.run(mgr._handle_rescheduled(scan, "scan-1", db))
+            asyncio.run(mgr._handle_rescheduled(scan, db, time.time()))
 
-        assert terminal is True
         notify.assert_awaited_once()
         _, scan_id, project_id, error = notify.await_args.args
         assert (scan_id, project_id) == ("scan-1", "proj-1")
