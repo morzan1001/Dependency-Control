@@ -53,6 +53,7 @@ from app.repositories import (
     FindingRepository,
     ProjectRepository,
     ScanRepository,
+    WaiverRepository,
 )
 from app.repositories.findings import finding_identity
 from app.repositories.system_settings import SystemSettingsRepository
@@ -930,8 +931,6 @@ async def _persist_findings_and_waivers(
     for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
         persisted_count += await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
 
-    from app.repositories import WaiverRepository
-
     active_waivers: list[Waiver] = []
     if project_id:
         waiver_repo = WaiverRepository(db)
@@ -1168,27 +1167,6 @@ async def _send_integrations_and_notifications(
     await send_scan_notifications(scan_id, project, aggregated_findings, results_summary, db)
 
 
-async def _project_has_active_waivers(project_id: str, db: Database) -> bool:
-    """Cheap existence check: does the project (or a global waiver) have an active waiver?
-    Used to skip the post-analysis recalc when there is nothing to re-anchor/lapse."""
-    from datetime import datetime, timezone
-
-    now = datetime.now(timezone.utc)
-    query = {
-        "$and": [
-            {"$or": [{"project_id": project_id}, {"project_id": None}]},
-            {
-                "$or": [
-                    {"expiration_date": {"$exists": False}},
-                    {"expiration_date": None},
-                    {"expiration_date": {"$gt": now}},
-                ]
-            },
-        ]
-    }
-    return (await db.waivers.count_documents(query, limit=1)) > 0
-
-
 def _release_memory_to_os() -> None:
     """Force gc and release glibc heap pages back to OS (Linux-only)."""
     import gc
@@ -1231,7 +1209,7 @@ def _final_scan_status(scan_id: str, sbom_load_failed: bool, partial_reasons: li
 
 
 async def _notification_stats(project_id: str | None, stats: Stats, db: Database) -> Stats:
-    if project_id and await _project_has_active_waivers(project_id, db):
+    if project_id and await WaiverRepository(db).has_active_for_project(project_id):
         from app.services.stats import recalculate_project_stats
 
         recalced = await recalculate_project_stats(project_id, db)

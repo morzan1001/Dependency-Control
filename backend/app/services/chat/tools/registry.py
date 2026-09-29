@@ -31,6 +31,7 @@ from app.core.permissions import Permissions, has_permission
 from app.models.finding import FindingType, Severity
 from app.models.project import Project
 from app.models.user import User
+from app.models.waiver import is_waiver_active
 from app.models.webhook import Webhook
 from app.repositories.base import and_filters
 from app.repositories.scans import ScanRepository
@@ -62,7 +63,6 @@ from ._helpers import (
     _serialize_doc,
     _serialize_finding_for_llm,
     _truncate_if_too_large,
-    _waiver_is_active,
     begin_limit_ledger,
     bounded_read,
     bounded_read_note,
@@ -702,7 +702,7 @@ class ChatToolRegistry:
         ) or await ctx.db["waivers"].find_one({"finding_id": ctx.args["finding_id"], "project_id": None})
         if not waiver:
             return {"waived": False}
-        if _waiver_is_active(waiver, now):
+        if is_waiver_active(waiver.get("expiration_date"), now):
             return {
                 "waived": False,
                 "waiver_present": True,
@@ -722,7 +722,9 @@ class ChatToolRegistry:
             ctx.db["waivers"], {"project_id": project["_id"]}, subject="waivers", limit=_WAIVER_READ
         )
         return {
-            "waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers],
+            "waivers": [
+                {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
+            ],
             "waivers_total": waivers_total,
         }
 
@@ -732,7 +734,9 @@ class ChatToolRegistry:
             ctx.db["waivers"], {"project_id": None}, subject="global waivers", limit=_WAIVER_READ
         )
         return {
-            "waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers],
+            "waivers": [
+                {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
+            ],
             "waivers_total": waivers_total,
         }
 

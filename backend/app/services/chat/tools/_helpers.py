@@ -1,25 +1,12 @@
 """Stateless helpers for chat tool registry and crypto/compliance tool wrappers."""
 
 from contextvars import ContextVar
-from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import settings
 from app.services.aggregation.components import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
 from app.services.recommendation.common import finding_cve_ids
-
-
-def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bool:
-    """True if expiration_date is absent, null, or in the future; mirrors WaiverRepository._non_expired_filter."""
-    expiration: datetime | None = waiver.get("expiration_date")
-    if expiration is None:
-        return True
-    reference = now or datetime.now(timezone.utc)
-    # expiration_date may be tz-naive in the DB; normalize to UTC before comparing.
-    if expiration.tzinfo is None:
-        expiration = expiration.replace(tzinfo=timezone.utc)
-    return bool(expiration > reference)
 
 
 MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.

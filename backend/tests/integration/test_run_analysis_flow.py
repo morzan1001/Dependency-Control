@@ -35,10 +35,10 @@ def notified(monkeypatch) -> list[Stats]:
 
 
 def _waivers_active(monkeypatch, active: bool) -> None:
-    async def _has_active_waivers(project_id, db):
+    async def _has_active_waivers(self, project_id):
         return active
 
-    monkeypatch.setattr(engine, "_project_has_active_waivers", _has_active_waivers)
+    monkeypatch.setattr(engine.WaiverRepository, "has_active_for_project", _has_active_waivers)
 
 
 def _recalc_returns(monkeypatch, result: Stats | None) -> list[str]:

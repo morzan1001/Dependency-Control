@@ -22,6 +22,7 @@ from app.models.user import User
 from app.repositories.base import and_filters
 from app.models.waiver import Waiver
 from app.repositories import ScanRepository, WaiverRepository
+from app.repositories.waivers import non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
 from app.services.stats import recalculate_all_projects, recalculate_project_stats
@@ -208,11 +209,7 @@ async def list_waivers(
         orphaned_clause: dict[str, Any] = {
             "last_eval_scan_id": {"$ne": None},
             "last_match_count": 0,
-            "$or": [
-                {"expiration_date": {"$exists": False}},
-                {"expiration_date": None},
-                {"expiration_date": {"$gt": now}},
-            ],
+            **non_expired_waiver_filter(now),
         }
         query = and_filters(query, orphaned_clause)
 
