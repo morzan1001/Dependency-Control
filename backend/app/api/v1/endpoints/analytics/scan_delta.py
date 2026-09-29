@@ -15,7 +15,7 @@ from app.services.analytics.scan_delta import (
     compute_scan_delta_dispatch,
 )
 from app.services.analytics.scopes import ScopeResolver
-from app.services.releases import latest_release_scan, released_scan_ids, resolve_scan_ids
+from app.services.releases import released_scan_ids, resolve_scan_ids
 
 router = CustomAPIRouter()
 
@@ -41,9 +41,8 @@ async def _resolve_delta_ref(db: AsyncIOMotorDatabase, project_id: str, ref: _De
     The release side resolves through the rescan chain, so a delta compares the freshest analysis
     of the deployed artefact rather than what was known on the day it shipped.
     """
-    if ref == _REF_RELEASE:
-        return await latest_release_scan(db, project_id, environment)
-    return (await resolve_scan_ids(db, [project_id])).get(project_id)
+    release_environment = environment if ref == _REF_RELEASE else None
+    return (await resolve_scan_ids(db, [project_id], release_environment=release_environment)).get(project_id)
 
 
 async def _unresolved_ref_detail(db: AsyncIOMotorDatabase, project_id: str, ref: _DeltaRef, environment: str) -> str:

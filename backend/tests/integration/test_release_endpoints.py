@@ -24,7 +24,7 @@ from app.models.project import Project, ProjectMember
 from app.models.release import Release
 from app.models.user import User
 from app.repositories.releases import ReleaseRepository
-from app.services.releases import latest_release_scan
+from app.services.releases import resolve_scan_ids
 from tests.helpers.auth import bearer_headers
 
 _NOW = datetime(2026, 9, 1, 10, 0, tzinfo=timezone.utc)
@@ -119,6 +119,10 @@ async def _seed_scan(db, scan_id, *, commit=_COMMIT, created_delta=0, status=SCA
     await db.scans.insert_one(doc)
 
 
+async def _released(db, environment) -> str | None:
+    return (await resolve_scan_ids(db, [_PROJECT], release_environment=environment)).get(_PROJECT)
+
+
 async def _mark(client, headers, **payload):
     return await client.post(f"/api/v1/projects/{_PROJECT}/releases", json=payload, headers=headers)
 
@@ -148,7 +152,7 @@ async def test_mark_resolves_the_commit_to_its_newest_build_scan(client, db, api
 
     scan = await db.scans.find_one({"_id": "newest"})
     assert scan["is_release"] is True
-    assert await latest_release_scan(db, _PROJECT, DEFAULT_RELEASE_ENVIRONMENT) == "newest"
+    assert await _released(db, DEFAULT_RELEASE_ENVIRONMENT) == "newest"
 
 
 @pytest.mark.asyncio
@@ -186,7 +190,7 @@ async def test_mark_accepts_a_scan_that_has_not_finished_analysing(client, db, a
     assert body["scan_status"] == SCAN_STATUS_PENDING
     assert body["analysis_scan_id"] is None
     # The resolver still refuses to report a number for it, which is the point of the split.
-    assert await latest_release_scan(db, _PROJECT, DEFAULT_RELEASE_ENVIRONMENT) is None
+    assert await _released(db, DEFAULT_RELEASE_ENVIRONMENT) is None
 
 
 @pytest.mark.asyncio
@@ -252,7 +256,7 @@ async def test_marking_a_second_environment_leaves_the_first_intact(client, db, 
     assert {r["environment"] for r in records} == {DEFAULT_RELEASE_ENVIRONMENT, _STAGING}
     assert {r["version"] for r in records} == {_VERSION, _OTHER_VERSION}
     for environment in (DEFAULT_RELEASE_ENVIRONMENT, _STAGING):
-        assert await latest_release_scan(db, _PROJECT, environment) == "rel"
+        assert await _released(db, environment) == "rel"
 
 
 @pytest.mark.asyncio
@@ -262,11 +266,11 @@ async def test_re_marking_an_older_scan_rolls_the_environment_back(client, db, a
 
     await _mark(client, api_key_headers, commit_hash=_COMMIT, environment=_STAGING)
     await _mark(client, api_key_headers, commit_hash=_OTHER_COMMIT, environment=_STAGING)
-    assert await latest_release_scan(db, _PROJECT, _STAGING) == "second"
+    assert await _released(db, _STAGING) == "second"
 
     rollback = await _mark(client, api_key_headers, commit_hash=_COMMIT, environment=_STAGING)
     assert rollback.status_code == 201, rollback.text
-    assert await latest_release_scan(db, _PROJECT, _STAGING) == "first"
+    assert await _released(db, _STAGING) == "first"
     assert await db.releases.count_documents({"environment": _STAGING}) == _TWO_RECORDS
 
 
@@ -290,7 +294,7 @@ async def test_a_supplied_released_at_drives_the_ordering(client, db, api_key_he
     row = await db.releases.find_one({"scan_id": "backfilled"})
     assert row["released_at"] == _PAST
     # Recorded in the past, so it does not take the environment over from the live release.
-    assert await latest_release_scan(db, _PROJECT, _STAGING) == "current"
+    assert await _released(db, _STAGING) == "current"
 
 
 @pytest.mark.asyncio
@@ -346,8 +350,8 @@ async def test_unmark_of_one_environment_keeps_the_flag_while_another_holds_it(c
     assert body["remaining_environments"] == [DEFAULT_RELEASE_ENVIRONMENT]
     scan = await db.scans.find_one({"_id": "rel"})
     assert scan["is_release"] is True
-    assert await latest_release_scan(db, _PROJECT, DEFAULT_RELEASE_ENVIRONMENT) == "rel"
-    assert await latest_release_scan(db, _PROJECT, _STAGING) is None
+    assert await _released(db, DEFAULT_RELEASE_ENVIRONMENT) == "rel"
+    assert await _released(db, _STAGING) is None
 
 
 @pytest.mark.asyncio
@@ -367,7 +371,7 @@ async def test_unmark_names_the_release_it_uncovers(client, db, api_key_headers)
     assert uncovered["scan_id"] == "old"
     assert uncovered["version"] == _VERSION
     assert uncovered["environment"] == DEFAULT_RELEASE_ENVIRONMENT
-    assert await latest_release_scan(db, _PROJECT, DEFAULT_RELEASE_ENVIRONMENT) == uncovered["scan_id"]
+    assert await _released(db, DEFAULT_RELEASE_ENVIRONMENT) == uncovered["scan_id"]
 
 
 @pytest.mark.asyncio
@@ -500,7 +504,7 @@ async def test_a_release_still_being_analysed_is_listed_and_named(client, db, me
     assert item["scan_status"] == SCAN_STATUS_PROCESSING
     # The resolver omits this project entirely; the list is what tells a caller a deploy is in flight.
     assert item["analysis_scan_id"] is None
-    assert await latest_release_scan(db, _PROJECT, DEFAULT_RELEASE_ENVIRONMENT) is None
+    assert await _released(db, DEFAULT_RELEASE_ENVIRONMENT) is None
 
 
 @pytest.mark.asyncio

@@ -75,21 +75,11 @@ async def reconcile_release_flags(db: AsyncIOMotorDatabase) -> tuple[int, int]:
     return cleared, restored
 
 
-async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environment: str) -> str | None:
-    """The scan running in one environment. Ordered by released_at, so re-marking an older scan is
-    the rollback path and needs no extra flag."""
-    row = await ReleaseRepository(db).latest_for_environment(project_id, environment)
-    if row is None:
-        return None
-    resolved = (await ScanRepository(db).freshest_in_lineage([row["scan_id"]])).get(row["scan_id"])
-    return resolved.scan_id if resolved else None
-
-
 async def released_scan_ids(db: AsyncIOMotorDatabase, project_id: str) -> dict[str, str]:
     """environment -> the scan that was marked for it, before any rescan chain."""
     pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
-        # Index-served per-environment pick; tie-break shared with latest_release_scan.
+        # Index-served per-environment pick.
         {"$sort": dict(RELEASES_ENVIRONMENT_SORT)},
         {"$group": {"_id": "$environment", "scan_id": {"$first": "$scan_id"}}},
     ]
@@ -105,7 +95,7 @@ async def _release_scan_ids(
         match["project_id"] = {"$in": list(project_ids)}
     pipeline: list[dict[str, Any]] = [
         {"$match": match},
-        # Index-served per-project pick; tie-break shared with latest_release_scan.
+        # Index-served per-project pick.
         {"$sort": dict(RELEASES_LATEST_LOOKUP_KEY)},
         {"$group": {"_id": "$project_id", "scan_id": {"$first": "$scan_id"}}},
     ]
