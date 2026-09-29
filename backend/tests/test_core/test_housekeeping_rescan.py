@@ -975,6 +975,28 @@ class TestReleaseRescanTargets:
         marked = await db.scans.find_one({"_id": _RELEASED_SCAN_ID})
         assert marked["latest_run"]["scan_id"] == created[0]["_id"], "the chain stays one link deep"
 
+    @pytest.mark.asyncio
+    async def test_a_release_whose_scan_failed_is_rescanned(self, db: FakeDatabase, worker: AsyncMock) -> None:
+        """Otherwise the environment reports no analysis until someone re-marks it by hand."""
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER, status=SCAN_STATUS_FAILED)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+
+        targets = await _rescan_targets(_project(), db)
+
+        assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID, _RELEASED_SCAN_ID]
+
+    @pytest.mark.parametrize("status", [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING])
+    @pytest.mark.asyncio
+    async def test_a_release_still_being_analysed_is_not_a_target(
+        self, db: FakeDatabase, worker: AsyncMock, status: str
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER, status=status)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+
+        assert [t["_id"] for t in await _rescan_targets(_project(), db)] == [_SOURCE_SCAN_ID]
+
 
 class TestRescanClockIsIndependentOfCiTraffic:
     @pytest.mark.asyncio

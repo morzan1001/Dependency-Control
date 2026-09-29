@@ -14,7 +14,13 @@ from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_409
 from app.core import ensure_utc
-from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, PROJECT_ROLE_VIEWER, RELEASE_ENVIRONMENT_PATTERN
+from app.core.constants import (
+    DEFAULT_RELEASE_ENVIRONMENT,
+    PROJECT_ROLE_VIEWER,
+    RELEASE_ENVIRONMENT_PATTERN,
+    SCAN_STATUS_FAILED,
+    SCANS_TIP_SORT,
+)
 from app.models.release import Release
 from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import LineageAnalysis, ScanRepository
@@ -79,15 +85,13 @@ async def mark_release(
     because they copy the commit verbatim with a fresh created_at, so re-marking an already-rescanned
     commit would otherwise resolve to a different scan and open a second record for one deployment.
     Re-marking is the rollback path: the older scan's own record wins on a fresher released_at.
+    A failed build is marked only when the commit has no other build, as it holds no analysis.
     """
-    scan = await db.scans.find_one(
-        {
-            "project_id": project_id,
-            "commit_hash": payload.commit_hash,
-            "is_rescan": {"$ne": True},
-        },
-        sort=[("created_at", pymongo.DESCENDING)],
-    )
+    builds = {"project_id": project_id, "commit_hash": payload.commit_hash, "is_rescan": {"$ne": True}}
+    scan_repo = ScanRepository(db)
+    scan = await scan_repo.find_one(
+        {**builds, "status": {"$ne": SCAN_STATUS_FAILED}}, sort=SCANS_TIP_SORT
+    ) or await scan_repo.find_one(builds, sort=SCANS_TIP_SORT)
     if not scan:
         raise HTTPException(status_code=404, detail=f"No scan found for commit {payload.commit_hash}")
 
@@ -114,7 +118,7 @@ async def mark_release(
     # recorded, and that fallback belongs to the repository alone.
     if row is None:
         raise HTTPException(status_code=409, detail=f"The release of {scan_id} to {environment} was withdrawn")
-    return _to_item(row, scan, (await ScanRepository(db).freshest_in_lineage([scan_id])).get(scan_id))
+    return _to_item(row, scan, (await scan_repo.freshest_in_lineage([scan_id])).get(scan_id))
 
 
 @router.delete(

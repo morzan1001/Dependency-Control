@@ -26,7 +26,6 @@ from app.core.constants import (
     SCAN_ACTIVE_STATUSES,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
-    SCAN_USABLE_STATUSES,
     SETTINGS_MODE_GLOBAL,
 )
 from app.core.metrics import (
@@ -148,22 +147,27 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     """
     from app.services.releases import released_scan_ids
 
-    usable_source = {"project_id": project.id, "status": {"$in": SCAN_USABLE_STATUSES}, **HAS_SBOM_MATCH}
-
     targets: list[dict] = []
     targeted_ids: set[str] = set()
 
     # Head's own tip build, so the rescan refreshes the analysis head reports; the lineage step is
     # left out because a rescan target has to be the build, not the previous interval's output.
-    tip = await ScanRepository(db).head_build(project, {**usable_source, **USABLE_BUILD_MATCH})
+    tip = await ScanRepository(db).head_build(project, {**HAS_SBOM_MATCH, **USABLE_BUILD_MATCH})
     if tip:
         targets.append(tip)
         targeted_ids.add(str(tip["_id"]))
 
     # The marked scan itself, never its rescan: rescanning the rescan would grow the chain past
-    # the bound effective_scan_ids walks.
+    # the bound effective_scan_ids walks. A failed one is retried, as nothing else analyses it.
     for marked_id in (await released_scan_ids(db, project.id)).values():
-        marked = await db.scans.find_one({**usable_source, "_id": marked_id})
+        marked = await db.scans.find_one(
+            {
+                "project_id": project.id,
+                "_id": marked_id,
+                "status": {"$nin": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
+                **HAS_SBOM_MATCH,
+            }
+        )
         if not marked or str(marked["_id"]) in targeted_ids:
             continue
         targets.append(marked)

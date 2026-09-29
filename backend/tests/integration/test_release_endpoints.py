@@ -15,6 +15,7 @@ from app.core.constants import (
     PROJECT_ROLE_EDITOR,
     PROJECT_ROLE_VIEWER,
     SCAN_STATUS_COMPLETED,
+    SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
 )
@@ -153,6 +154,30 @@ async def test_mark_resolves_the_commit_to_its_newest_build_scan(client, db, api
     scan = await db.scans.find_one({"_id": "newest"})
     assert scan["is_release"] is True
     assert await _released(db, DEFAULT_RELEASE_ENVIRONMENT) == "newest"
+
+
+@pytest.mark.asyncio
+async def test_mark_passes_over_a_failed_rerun_of_the_commit(client, db, api_key_headers):
+    """A failed newest build would leave the release without an analysis while an analysed build of
+    the same commit exists."""
+    await _seed_scan(db, "analysed", created_delta=-2)
+    await _seed_scan(db, "failed-rerun", created_delta=0, status=SCAN_STATUS_FAILED)
+
+    resp = await _mark(client, api_key_headers, commit_hash=_COMMIT)
+
+    assert resp.status_code == 201, resp.text
+    assert (resp.json()["scan_id"], resp.json()["analysis_scan_id"]) == ("analysed", "analysed")
+
+
+@pytest.mark.asyncio
+async def test_mark_of_a_commit_whose_every_build_failed_still_records_the_newest(client, db, api_key_headers):
+    await _seed_scan(db, "failed-first", created_delta=-2, status=SCAN_STATUS_FAILED)
+    await _seed_scan(db, "failed-again", created_delta=0, status=SCAN_STATUS_FAILED)
+
+    resp = await _mark(client, api_key_headers, commit_hash=_COMMIT)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["scan_id"] == "failed-again"
 
 
 @pytest.mark.asyncio
