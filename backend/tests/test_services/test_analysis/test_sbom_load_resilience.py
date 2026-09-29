@@ -32,9 +32,9 @@ class TestFinalizeMarksFailed:
         return SimpleNamespace(model_dump=lambda: {"x": 1})
 
     def test_failed_status_persisted_and_project_not_clobbered(self):
-        scan_update = AsyncMock()
+        scan_update = AsyncMock(return_value={"_id": "scan-1"})
         project_update = AsyncMock()
-        scan_repo = SimpleNamespace(update_raw=scan_update)
+        scan_repo = SimpleNamespace(collection=SimpleNamespace(find_one_and_update=scan_update))
         project_repo = SimpleNamespace(update_raw=project_update)
         scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None)
 
@@ -62,8 +62,10 @@ class TestFinalizeMarksFailed:
 
     def test_completed_status_updates_project(self):
         project_update = AsyncMock()
+        scan_update = AsyncMock(return_value={"_id": "scan-1"})
         scan_repo = SimpleNamespace(
-            update_raw=AsyncMock(), head_fields=AsyncMock(return_value={"latest_scan_id": "scan-1", "stats": {}})
+            collection=SimpleNamespace(find_one_and_update=scan_update),
+            head_fields=AsyncMock(return_value={"latest_scan_id": "scan-1", "stats": {}}),
         )
         # no latest scan yet -> guard allows the update
         project_repo = SimpleNamespace(
@@ -86,7 +88,7 @@ class TestFinalizeMarksFailed:
             )
         )
 
-        scan_set = scan_repo.update_raw.await_args.args[1]["$set"]
+        scan_set = scan_update.await_args.args[1]["$set"]
         assert scan_set["status"] == "completed"
         assert "error" not in scan_set
         project_update.assert_awaited_once()

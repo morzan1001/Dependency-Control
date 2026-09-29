@@ -161,6 +161,27 @@ async def test_w14_reingest_replaces_sbom_refs_and_deletes_superseded_files(clie
     assert stored_files == 1, f"the superseded GridFS upload must be deleted, got {stored_files} files"
 
 
+@pytest.mark.asyncio
+async def test_a_reingest_during_the_analysis_marks_the_sbom_replaced_and_keeps_the_files_it_reads(
+    client, db, api_key_headers, monkeypatch
+):
+    from app.api.v1.endpoints import ingest as ingest_module
+    from app.services import gridfs_maintenance
+
+    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
+    monkeypatch.setattr(gridfs_maintenance, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
+    payload = {"pipeline_id": 424244, "commit_hash": "d" * 40, "branch": "main", "sboms": [_GOOD_SBOM]}
+
+    scan_id = (await client.post("/api/v1/ingest", json=payload, headers=api_key_headers)).json()["scan_id"]
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing"}})
+    resp = await client.post("/api/v1/ingest", json=payload, headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert (scan["status"], scan["sbom_generation"]) == ("processing", 2)
+    assert await db["fs.files"].count_documents({}) == 2, "the running analysis still reads the old upload"
+
+
 def _sbom_payload(**extra):
     return {
         "pipeline_id": 424243,

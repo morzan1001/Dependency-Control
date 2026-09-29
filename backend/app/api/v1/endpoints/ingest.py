@@ -20,6 +20,7 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import (
     NOTIFICATION_EVENT_SBOM_INGESTED,
     SCAN_STATUS_PENDING,
+    SCAN_STATUS_PROCESSING,
     WEBHOOK_EVENT_SBOM_INGESTED,
 )
 from app.models.project import Project
@@ -340,6 +341,7 @@ async def ingest_sbom(
         # stored and re-analysed forever; superseded GridFS uploads are deleted below.
         if sbom_refs:
             scan_update["$set"]["sbom_refs"] = sbom_refs
+            scan_update["$inc"] = {"sbom_generation": 1}
         else:
             scan_update["$setOnInsert"]["sbom_refs"] = []
 
@@ -347,7 +349,8 @@ async def ingest_sbom(
             {"_id": scan_id}, scan_update, upsert=True, return_document=ReturnDocument.BEFORE
         )
 
-        if previous and sbom_refs:
+        # A run still on the old SBOM reads these files; the orphan reaper collects them after it.
+        if previous and sbom_refs and previous.get("status") != SCAN_STATUS_PROCESSING:
             new_ids = {ref["gridfs_id"] for ref in sbom_refs}
             superseded = [
                 gid for gid in extract_gridfs_ids_from_refs(previous.get("sbom_refs", [])) if gid not in new_ids

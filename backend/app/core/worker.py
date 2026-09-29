@@ -305,6 +305,7 @@ class AnalysisWorkerManager:
                         sboms=sbom_refs,
                         active_analyzers=project.get("active_analyzers", []),
                         db=db,
+                        sbom_generation=scan.get("sbom_generation"),
                     )
 
                     if not success:

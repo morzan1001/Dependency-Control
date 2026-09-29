@@ -102,7 +102,7 @@ async def test_a_scan_that_is_not_finalized_is_not_notified(db, notified, monkey
 async def test_a_race_with_a_late_result_stops_before_finalizing(db, notified, monkeypatch):
     finalized: list[str] = []
 
-    async def _raced(scan_id, external_load_start, scan_repo):
+    async def _raced(scan_id, external_load_start, sbom_generation, scan_repo):
         return True
 
     async def _finalize(scan_id, *args, **kwargs):
@@ -247,3 +247,31 @@ async def test_a_run_whose_sboms_all_fail_to_load_is_failed_and_not_notified(db,
     stored = await db.scans.find_one({"_id": scan.id})
     assert (stored["status"], stored["error"]) == ("failed", "SBOM could not be loaded for analysis")
     assert notified == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_sbom_was_replaced_meanwhile_is_rescheduled_before_finalizing(db, notified):
+    """The re-ingested SBOM is only analysed if this run, still on the old one, gives the scan back."""
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[], status="processing")
+    await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_generation": 2})
+
+    assert await engine.run_analysis(scan.id, [], [], db, sbom_generation=1) is False
+
+    assert (await db.scans.find_one({"_id": scan.id}))["status"] == "pending"
+    assert notified == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_whose_old_sbom_failed_to_load_after_a_replace_is_rescheduled_not_failed(db, notified, monkeypatch):
+    async def _gridfs_outage(fs, file_id, **_kwargs):
+        raise OSError("gridfs outage")
+
+    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _gridfs_outage)
+    file_id = "69d5332257c8763c8d8c82d7"
+    ref = {"storage": "gridfs", "file_id": file_id, "type": "gridfs_reference", "gridfs_id": file_id}
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing")
+    await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_generation": 2})
+
+    assert await engine.run_analysis(scan.id, [ref], [], db, sbom_generation=1) is False
+
+    assert (await db.scans.find_one({"_id": scan.id}))["status"] == "pending"

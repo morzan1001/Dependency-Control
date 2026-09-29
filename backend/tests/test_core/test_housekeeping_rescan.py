@@ -81,6 +81,7 @@ _JOB_ID = 5
 _PIPELINE_USER = "ci-bot"
 _CBOM_SCAN_TYPE = "cbom"
 _RETRY_COUNT = 3
+_SBOM_GENERATION = 4
 _WORKER_ID = "worker-1"
 _SCAN_ERROR = "analyzer crashed"
 _FAILED_ANALYZER = "trivy"
@@ -109,6 +110,7 @@ _SCAN_MODEL_FIELDS = frozenset(
         "commit_tag",
         "pipeline_user",
         "sbom_refs",
+        "sbom_generation",
         "scan_type",
         "status",
         "retry_count",
@@ -150,6 +152,7 @@ _CARRIED_FROM_SOURCE = frozenset(
         "commit_message",
         "commit_tag",
         "sbom_refs",
+        "sbom_generation",
         "scan_type",
     }
 )
@@ -236,6 +239,7 @@ def _saturated_scan_doc() -> dict[str, Any]:
     whose value survives into the rescan is exactly a field the builder copied."""
     return _scan_doc(
         pipeline_user=_PIPELINE_USER,
+        sbom_generation=_SBOM_GENERATION,
         scan_type=_CBOM_SCAN_TYPE,
         retry_count=_RETRY_COUNT,
         worker_id=_WORKER_ID,

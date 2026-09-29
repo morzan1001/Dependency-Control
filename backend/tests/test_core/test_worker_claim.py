@@ -68,3 +68,17 @@ async def test_a_pending_scan_is_claimed_and_flipped_to_processing():
     scan = await db.scans.find_one({"_id": "scan-1"})
     assert scan["status"] == "processing"
     assert scan["worker_id"].endswith("/worker-1")
+
+
+@pytest.mark.asyncio
+async def test_the_analysis_is_told_which_sbom_generation_it_claimed():
+    """The engine compares it at finalize, so an SBOM replaced mid-run is re-analysed rather than lost."""
+    db = FakeDatabase()
+    await db.projects.insert_one({"_id": "proj-1", "active_analyzers": []})
+    await db.scans.insert_one(
+        {"_id": "scan-1", "project_id": "proj-1", "status": "pending", "sbom_refs": [], "sbom_generation": 3}
+    )
+
+    run_analysis = await _drain_one_job(db, "scan-1")
+
+    assert run_analysis.await_args.kwargs["sbom_generation"] == 3

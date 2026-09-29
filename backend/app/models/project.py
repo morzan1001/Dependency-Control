@@ -123,6 +123,8 @@ class Scan(MongoDocument, CreatedAtModel):
 
     # This allows us to keep the Scan document small while preserving the raw data.
     sbom_refs: list[dict[str, Any]] = Field(default_factory=list)
+    # Bumped with every replacement of sbom_refs, so a run can tell its SBOM was superseded.
+    sbom_generation: int | None = None
 
     # Marks scans whose only source is a CBOM (no SBOM); the analysis engine
     # forces crypto analyzers for these even when no SBOM was attached.

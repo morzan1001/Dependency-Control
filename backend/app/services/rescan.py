@@ -29,6 +29,7 @@ def build_rescan(source: dict[str, Any]) -> Scan:
         commit_message=source.get("commit_message"),
         commit_tag=source.get("commit_tag"),
         sbom_refs=source.get("sbom_refs", []),
+        sbom_generation=source.get("sbom_generation"),
         # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
         scan_type=source.get("scan_type"),
         status=SCAN_STATUS_PENDING,

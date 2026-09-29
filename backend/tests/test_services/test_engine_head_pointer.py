@@ -13,6 +13,7 @@ from app.models.stats import Stats
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.services.analysis.engine import _finalize_scan_and_project
+from app.services.rescan import build_rescan
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT_ID = "p1"
@@ -49,21 +50,15 @@ async def _scan(db, scan_id, created_at, branch=_MAIN, status=SCAN_STATUS_COMPLE
 
 
 async def _rescan(db, scan_id, root_id, created_at, status=SCAN_STATUS_COMPLETED):
-    """The production shape: rooted at the lineage root, which points only at a delivered rescan."""
-    root = await db.scans.find_one({"_id": root_id})
-    await _scan(
-        db,
-        scan_id,
-        created_at,
-        branch=root["branch"],
-        status=status,
-        is_rescan=True,
-        original_scan_id=root_id,
-        sbom_refs=root["sbom_refs"],
+    """The production shape: built from the lineage root, which points only at a delivered rescan."""
+    rescan = build_rescan(await db.scans.find_one({"_id": root_id}))
+    await db.scans.insert_one(
+        rescan.model_dump(by_alias=True)
+        | {"_id": scan_id, "created_at": created_at, "status": status, "stats": {"critical": 0}}
     )
 
 
-async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0):
+async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0, sbom_generation=None):
     scan_repo = ScanRepository(db)
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing"}})
     return await _finalize_scan_and_project(
@@ -77,6 +72,7 @@ async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0):
         scan_repo,
         ProjectRepository(db),
         status=status,
+        sbom_generation=sbom_generation,
     )
 
 
@@ -279,3 +275,44 @@ async def test_a_delivered_rescan_moves_the_lineage_onto_it(db):
     await _finalize(db, "r1")
 
     assert (await db.scans.find_one({"_id": "b1"}))["latest_rescan_id"] == "r1"
+
+
+@pytest.mark.asyncio
+async def test_a_build_reanalysed_on_a_new_sbom_takes_head_back_from_its_rescan_of_the_old_one(db):
+    await _project(db, "r1")
+    await _scan(db, "b1", _NOW, sbom_generation=1)
+    await _rescan(db, "r1", "b1", _NOW + _HOUR)
+    await db.scans.update_one({"_id": "b1"}, {"$set": {"latest_rescan_id": "r1"}, "$inc": {"sbom_generation": 1}})
+
+    await _finalize(db, "b1", critical=4, sbom_generation=2)
+
+    project = await db.projects.find_one({"_id": _PROJECT_ID})
+    assert (project["latest_scan_id"], project["stats"]["critical"]) == ("b1", 4)
+    assert (await ScanRepository(db).freshest_in_lineage(["b1"]))["b1"].scan_id == "b1"
+
+
+@pytest.mark.asyncio
+async def test_a_rescan_of_a_replaced_sbom_does_not_reattach_to_its_build(db):
+    await _project(db, "b1")
+    await _scan(db, "b1", _NOW, sbom_generation=1)
+    await _rescan(db, "r1", "b1", _NOW + _HOUR, status="processing")
+    await db.scans.update_one({"_id": "b1"}, {"$inc": {"sbom_generation": 1}})
+
+    await _finalize(db, "r1", sbom_generation=1)
+
+    assert "latest_rescan_id" not in await db.scans.find_one({"_id": "b1"})
+    assert await _pointer(db) == "b1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED])
+async def test_a_run_whose_sbom_was_replaced_meanwhile_is_rescheduled_not_finalized(db, status):
+    await _project(db, "b0")
+    await _scan(db, "b0", _NOW - _HOUR)
+    await _scan(db, "b1", _NOW, sbom_generation=2)
+
+    finalized = await _finalize(db, "b1", status=status, sbom_generation=1)
+
+    assert finalized is False
+    assert (await db.scans.find_one({"_id": "b1"}))["status"] == "pending"
+    assert await _pointer(db) == "b0"
