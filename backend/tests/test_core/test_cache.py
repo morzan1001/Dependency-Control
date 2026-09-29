@@ -3,11 +3,14 @@
 import asyncio
 import contextlib
 import hashlib
+import threading
 
 import fakeredis.aioredis
 import pytest
+import redis.asyncio as redis
+from fakeredis import TcpFakeServer
 
-from app.core.cache import CacheKeys, CacheService, CacheTTL, suppress_cache_writes
+from app.core.cache import CacheKeys, CacheService, CacheTTL, settings, suppress_cache_writes
 
 
 class TestCacheTTLValues:
@@ -401,3 +404,67 @@ class TestSuppressCacheWrites:
 
         assert await fake_cache.get(_SEEDED_KEY) == _SEEDED_VALUE
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
+
+
+@pytest.fixture
+def tcp_redis(monkeypatch):
+    """A Redis speaking RESP over a real socket, so the service builds its own connection pool."""
+    server = TcpFakeServer(("127.0.0.1", 0), server_type="redis")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address[:2]
+    monkeypatch.setattr(settings, "REDIS_URL", f"redis://{host}:{port}/0")
+    yield
+    server.shutdown()
+    server.server_close()
+
+
+class TestConnectionPoolBursts:
+    @pytest.mark.asyncio
+    async def test_more_concurrent_misses_than_pooled_connections_are_all_cached(self, tcp_redis):
+        svc = CacheService()
+        keys = [f"deps:npm:pkg{i}:1.0.0" for i in range(60)]
+
+        async def fetch():
+            return {"ok": True}
+
+        try:
+            await asyncio.gather(*(svc.get_or_fetch_with_lock(key, fetch, ttl_seconds=60) for key in keys))
+
+            assert svc._available is True
+            assert await svc.mget(keys) == {key: {"ok": True} for key in keys}
+        finally:
+            await svc.close()
+
+
+class TestFetchFailuresReachTheCaller:
+    """With reraise_fetch_errors a failed fetch raises exactly once, whatever the cache does."""
+
+    @pytest.mark.asyncio
+    async def test_a_redis_failure_on_the_lock_still_raises_the_fetch_error(self, fake_cache, monkeypatch):
+        async def lock_refused(*_a, **_kw):
+            raise redis.ConnectionError("connection reset")
+
+        monkeypatch.setattr(fake_cache._client, "set", lock_refused)
+        calls = []
+
+        async def fetch():
+            calls.append("fetch")
+            raise RuntimeError("upstream answered 503")
+
+        with pytest.raises(RuntimeError, match="503"):
+            await fake_cache.get_or_fetch_with_lock("deps:npm:a:1.0.0", fetch, reraise_fetch_errors=True)
+        assert calls == ["fetch"]
+
+    @pytest.mark.asyncio
+    async def test_a_fetch_after_the_lock_wait_times_out_raises_once(self, fake_cache):
+        key = "deps:npm:b:1.0.0"
+        await fake_cache._client.set(fake_cache._make_key(f"lock:{key}"), "peer-token")
+        calls = []
+
+        async def fetch():
+            calls.append("fetch")
+            raise RuntimeError("upstream answered 503")
+
+        with pytest.raises(RuntimeError, match="503"):
+            await fake_cache.get_or_fetch_with_lock(key, fetch, max_wait_seconds=0.3, reraise_fetch_errors=True)
+        assert calls == ["fetch"]

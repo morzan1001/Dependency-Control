@@ -16,7 +16,7 @@ from contextvars import ContextVar
 from typing import Any, TypeVar, cast
 
 import redis.asyncio as redis
-from redis.asyncio.connection import ConnectionPool
+from redis.asyncio.connection import BlockingConnectionPool
 
 from app.core.config import settings
 from app.core.metrics import (
@@ -190,7 +190,7 @@ class CacheService:
     RECONNECT_INTERVAL_SECONDS = 30
 
     def __init__(self) -> None:
-        self._pool: ConnectionPool | None = None
+        self._pool: BlockingConnectionPool | None = None
         self._client: redis.Redis | None = None
         self._available: bool = True
         self._lock: asyncio.Lock = asyncio.Lock()
@@ -206,7 +206,8 @@ class CacheService:
                 return self._client
 
             try:
-                self._pool = ConnectionPool.from_url(
+                # A burst waits for a free connection; a non-blocking pool would fail it and disable the cache.
+                self._pool = BlockingConnectionPool.from_url(
                     settings.REDIS_URL,
                     encoding="utf-8",
                     decode_responses=True,
@@ -445,13 +446,7 @@ class CacheService:
         # The stampede lock is itself a key derived from ``key``, so a suppressed caller has to
         # skip the whole locked path rather than only the ``set`` that publishes the result.
         if not self._available or _writes_suppressed.get():
-            try:
-                return await fetch_fn()
-            except Exception as e:
-                if reraise_fetch_errors:
-                    raise
-                logger.warning(f"Fetch failed (no cache): {key}: {e}")
-                return None
+            return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
 
         lock_key = self._make_key(f"lock:{key}")
         try:
@@ -493,14 +488,11 @@ class CacheService:
             logger.warning(f"Lock wait timeout for {key}, fetching anyway")
             try:
                 data = await fetch_fn()
-                if data is not None:
-                    await self.set(key, data, ttl_seconds)
-                return data
             except Exception as e:
-                if reraise_fetch_errors:
-                    raise
-                logger.warning(f"Fallback fetch failed for {key}: {e}")
-                return None
+                raise _FetchFailed(e) from e
+            if data is not None:
+                await self.set(key, data, ttl_seconds)
+            return data
 
         except _FetchFailed as e:
             if reraise_fetch_errors:
@@ -508,18 +500,22 @@ class CacheService:
             logger.warning(f"Fetch failed for {key}", exc_info=e.cause)
             return None
         except redis.ConnectionError:
-            self._available = False
-            try:
-                return await fetch_fn()
-            except Exception as e:
-                logger.warning(f"Fetch failed (redis down): {key}: {e}")
-                return None
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
+            self._mark_unavailable()
+            return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
         except Exception as e:
             logger.warning(f"get_or_fetch_with_lock error for {key}: {e}")
-            try:
-                return await fetch_fn()
-            except Exception:
-                return None
+            return await self._fetch_bypassing_cache(key, fetch_fn, reraise_fetch_errors)
+
+    @staticmethod
+    async def _fetch_bypassing_cache(key: str, fetch_fn: Callable[[], Any], reraise_fetch_errors: bool) -> Any | None:
+        try:
+            return await fetch_fn()
+        except Exception as e:
+            if reraise_fetch_errors:
+                raise
+            logger.warning(f"Uncached fetch failed for {key}: {e}")
+            return None
 
     async def _wait_for_lock_holder(
         self, client: "redis.Redis", key: str, full_lock_key: str, deadline: float
