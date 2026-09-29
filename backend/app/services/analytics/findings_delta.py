@@ -61,8 +61,7 @@ def _sast_identifier(details: dict[str, Any]) -> str:
 
 
 def _malware_identifier(details: dict[str, Any]) -> str:
-    """Typosquats carry ``imitated_package``; OSV malware ``osv_id``, kept whichever feed owns the
-    merged finding; os_malware alone only its report ``reference``."""
+    """A typosquat's ``imitated_package``, else ``osv_id`` (either merged feed keeps it), else ``reference``."""
     return _first_id(details, "imitated_package", "osv_id", "reference")
 
 

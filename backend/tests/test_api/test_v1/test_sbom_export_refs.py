@@ -14,7 +14,6 @@ _SBOM = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
 
 @pytest.mark.asyncio
 async def test_a_reference_carrying_only_its_gridfs_id_exports():
-    """Refs written before the storage/file_id duplicates existed carry type and gridfs_id alone."""
     scan = SimpleNamespace(sbom_refs=[{"type": "gridfs_reference", "gridfs_id": "66f0c0ffee", "filename": "sbom.json"}])
     scan_repo = MagicMock()
     scan_repo.get_latest_active_scan = AsyncMock(return_value=scan)

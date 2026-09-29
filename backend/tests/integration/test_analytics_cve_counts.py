@@ -1,8 +1,4 @@
-"""Every analytics surface counts a component's vulnerabilities the same way: distinct live CVEs.
-
-A vulnerability finding is one document per component version holding every advisory, so a
-count of documents says how many versions are affected, not how many vulnerabilities there are.
-"""
+"""Every analytics surface counts a component's distinct live CVEs, not its per-version finding documents."""
 
 from datetime import datetime, timezone
 

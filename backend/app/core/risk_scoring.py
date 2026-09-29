@@ -1,6 +1,4 @@
-"""Saturating severity-weighted risk score for scan stats and the projects dashboard fallback, plus
-the classifications (reachability tier and weight, exploit maturity, actionable/deprioritized) that
-stats, enrichment, recommendations, chat and secret scoring must agree on."""
+"""Risk score plus the reachability, exploit and actionability classifications all scoring consumers share."""
 
 from typing import Any
 

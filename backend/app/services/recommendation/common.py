@@ -229,8 +229,7 @@ def summarize_vulns(vulns: list[VulnerabilityInfo]) -> VulnStats:
 
 
 def vuln_priority(stats: VulnStats) -> Priority:
-    """How urgent acting on a set of vulnerabilities is: KEV or a reachable critical first, and
-    criticals that are all confirmed unreachable one tier lower."""
+    """Urgency of a set of vulnerabilities: KEV or a reachable critical first; all-unreachable criticals one lower."""
     critical = stats.severity["CRITICAL"]
     if stats.kev or stats.reachable_critical:
         return Priority.CRITICAL

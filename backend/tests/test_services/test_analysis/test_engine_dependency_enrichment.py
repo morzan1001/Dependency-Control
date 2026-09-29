@@ -219,7 +219,7 @@ def test_empty_payload_entries_are_skipped():
 
 
 def test_every_spelling_of_one_purl_receives_the_enrichment():
-    """Two SBOMs of one scan name the same purl differently; the enrichment kept only the first name."""
+    """Two SBOMs of one scan name the same purl differently."""
     db = FakeDatabase()
     purl = "pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1"
     _insert_dep(db, name="log4j-core", version="2.17.1", purl=purl)

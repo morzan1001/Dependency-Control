@@ -659,11 +659,7 @@ class ResultAggregator:
 
     @staticmethod
     def _merge_generic_into_existing(existing: Finding, finding: Finding, source: str | None) -> None:
-        """Merge a generic finding's fields into an existing aggregate.
-
-        The side whose scanners sort first owns description and conflicting detail keys, so two
-        feeds minting one id (OSV and os_malware for MALWARE-<pkg>) merge the same in any order.
-        """
+        """Merge order-free: the side whose scanners sort first owns description and conflicting detail keys."""
         incoming_owns = min(finding.scanners, default="") < min(existing.scanners, default="")
         existing.scanners = sorted(set(existing.scanners + finding.scanners))
 

@@ -167,10 +167,7 @@ def lookup_component(index: Mapping[str, _T], component: str, default: _T | None
 
 
 def component_match_query(component: str) -> dict[str, Any]:
-    """Mongo filter matching a stored component exactly, or as a qualified form of ``component``.
-
-    ``@scope/component`` is another npm package, not a qualified spelling, and is excluded.
-    """
+    """Mongo filter for ``component`` or a qualified form of it; ``@scope/component`` is another npm package."""
     escaped = re.escape(component)
     return {
         "$or": [

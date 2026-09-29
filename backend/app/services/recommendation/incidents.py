@@ -22,12 +22,11 @@ _CVES_NAMED = 5
 def _cve_signals(
     finding: ModelOrDict, threat_intel: Mapping[str, VulnerabilityEnrichment]
 ) -> Iterator[tuple[str, bool, bool, float]]:
-    """(cve, in KEV, ransomware, EPSS) per CVE of the unwaived advisories. A single-CVE advisory's marks are
-    its CVE's (the refresh only raises them, as a KEV outage reads as an empty live catalog); a bundled
-    advisory is marked when any one of its CVEs is, so live data names those."""
+    """(cve, KEV, ransomware, EPSS) per CVE of the unwaived advisories."""
     for advisory in live_advisories(get_attr(finding, "details", {})):
         cves = counted_cves(advisory)
         for cve in cves:
+            # A bundle's stored marks are any one CVE's; a single CVE keeps its own, which a KEV outage cannot clear.
             live = threat_intel.get(cve) if len(cves) > 1 else None
             if live is not None:
                 yield cve, live.is_kev, live.kev_ransomware_use, live.epss_score or 0.0
@@ -39,8 +38,7 @@ def _cve_signals(
 def _exploited_cves(
     finding: ModelOrDict, threat_intel: Mapping[str, VulnerabilityEnrichment]
 ) -> tuple[set[str], set[str], dict[str, float]]:
-    """The finding's ransomware CVEs, its other KEV CVEs, and its high-EPSS CVEs outside KEV
-    (confirmed exploitation outranks a prediction)."""
+    """Ransomware CVEs, other KEV CVEs, and high-EPSS CVEs outside KEV: confirmed exploitation outranks prediction."""
     ransomware: set[str] = set()
     kev: set[str] = set()
     epss: dict[str, float] = {}
@@ -152,10 +150,7 @@ def process_typosquatting(
 def detect_known_exploits(
     vuln_findings: list[ModelOrDict], threat_intel: Mapping[str, VulnerabilityEnrichment] | None = None
 ) -> list[Recommendation]:
-    """Detect vulnerabilities with known exploits (KEV, ransomware, high EPSS), per CVE.
-
-    A record groups one (component, version), so it can belong to several cards at once.
-    """
+    """Cards per CVE with a known exploit (KEV, ransomware, high EPSS); one record can join several."""
     recommendations = []
 
     kev_vulns: list[ModelOrDict] = []

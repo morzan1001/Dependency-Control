@@ -7,8 +7,7 @@ _SCANNER_KEYS = ("id", "severity", "fixed_version")
 
 
 def stored_vulnerability(component: str, version: str, advisories: list[dict[str, Any]]) -> dict[str, Any]:
-    """The document the aggregator writes for one component@version; keys beyond id, severity and
-    fixed_version are set on the stored advisory afterwards, as enrichment and waivers do."""
+    """The aggregator's document for one component@version; other advisory keys are set on it afterwards."""
     aggregator = ResultAggregator()
     for advisory in advisories:
         aggregator.add_finding(

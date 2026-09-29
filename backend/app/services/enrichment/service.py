@@ -200,8 +200,7 @@ class VulnerabilityEnrichmentService:
         return results
 
     async def enrich_findings(self, findings: list[dict[str, Any]]) -> dict[str, VulnerabilityEnrichment]:
-        """Resolve GHSA advisories to CVEs, then fold EPSS/KEV onto each advisory and finding in place;
-        returns the per-CVE enrichment."""
+        """Resolve GHSAs to CVEs, fold EPSS/KEV onto each advisory and finding in place; returns per-CVE enrichment."""
         ghsa_ids = sorted(
             {i for f in findings for v in _vulnerabilities(f) if (i := v.get("id") or "").startswith("GHSA-")}
         )

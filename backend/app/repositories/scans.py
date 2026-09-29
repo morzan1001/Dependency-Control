@@ -169,11 +169,7 @@ class ScanRepository:
         return Scan(**data) if data else None
 
     async def lineage_root(self, scan_id: str, scan_doc: Any) -> str:
-        """The scan a rescan lineage descends from, following original_scan_id upwards.
-
-        A pointer may name a rescan rather than the root, so one hop is not enough. Bounded, so a
-        cyclic pointer cannot hang the ingest path.
-        """
+        """The root of a rescan lineage over any number of hops, bounded so a cyclic pointer cannot hang ingest."""
         root_id = scan_id
         doc = scan_doc
         for _hop in range(MAX_RESCAN_HOPS):

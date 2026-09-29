@@ -204,8 +204,7 @@ def _number(value: Any) -> float:
 
 
 def ranked_advisories(details: Any, first: str | None = None) -> list[dict[str, Any]]:
-    """A finding's advisories, the one its row is named after first: the one known as `first`, then
-    live before waived, KEV (ransomware first), severity, EPSS, CVSS."""
+    """Advisories, the row's namesake first: known as `first`, live, KEV (ransomware first), severity, EPSS, CVSS."""
     entries = (details.get("vulnerabilities") or []) if isinstance(details, dict) else []
     return sorted(
         entries,

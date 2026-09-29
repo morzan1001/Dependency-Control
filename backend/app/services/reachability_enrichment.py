@@ -128,10 +128,7 @@ class _PreparedCallgraph:
 
 
 def _with_enclosing_packages(module_usage: dict[str, Any]) -> dict[str, Any]:
-    """Fold each Python submodule's usage (``urllib3.util.retry``) into every enclosing package key.
-
-    The producer emits a from-import's module path when it cannot resolve the distribution.
-    """
+    """Fold each submodule's usage into every enclosing package key, as unresolved from-imports name the module path."""
     locations: dict[str, dict[str, None]] = {}
     symbols: dict[str, dict[str, None]] = {}
     for key, usage in module_usage.items():
@@ -180,11 +177,7 @@ def _lists_package(prepared: _PreparedCallgraph, component: str) -> bool:
 def _falsifying_languages(
     component: str, prepared_graphs: list[_PreparedCallgraph], language_sets: list[frozenset[str]]
 ) -> list[str]:
-    """Languages whose callgraphs prove the package unused; empty unless every candidate ecosystem has one.
-
-    A graph counts only for a language covering that ecosystem and only when it listed the
-    package in its coverage universe; anything weaker means the package was never inspected.
-    """
+    """Languages whose callgraphs covered the package, unused; empty unless every candidate ecosystem has one."""
     falsifying: list[str] = []
     for langs in language_sets:
         covering = [
@@ -239,10 +232,7 @@ class ReachabilityResult(TypedDict, total=False):
 
 
 async def fetch_callgraphs(project_id: str, scan_id: str, db: AsyncIOMotorDatabase) -> list[Any]:
-    """Callgraphs (one per language) of the scan's lineage root, else of the root's pipeline.
-
-    Uploads land on the pipeline scan; a rescan is a later scan of its lineage with no pipeline id.
-    """
+    """Callgraphs of the scan's lineage root (uploads land on the pipeline scan), else of the root's pipeline."""
     from app.repositories import CallgraphRepository, ScanRepository
 
     callgraph_repo = CallgraphRepository(db)
@@ -291,10 +281,7 @@ def _enrich_single_finding(finding: dict[str, Any], prepared: _PreparedCallgraph
 
 
 def _is_package_in_callgraph(prepared: _PreparedCallgraph, component: str) -> bool:
-    """Whether the callgraph records usage of the package under its canonical module key.
-
-    Keys are whole packages, so a key merely starting with the package name is a different package.
-    """
+    """Whether the callgraph records usage under the package's whole canonical module key."""
     return _find_usage(prepared, component) is not None
 
 

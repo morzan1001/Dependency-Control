@@ -130,10 +130,7 @@ class RecommendationEngine:
         cross_project_data: dict[str, Any] | None = None,
         threat_intel: Mapping[str, VulnerabilityEnrichment] | None = None,
     ) -> list[Recommendation]:
-        """Generate prioritized remediation recommendations across all finding types.
-
-        ``threat_intel`` is the per-CVE KEV/EPSS the findings were just enriched with.
-        """
+        """Prioritized remediation across all finding types; ``threat_intel`` is the per-CVE KEV/EPSS just enriched."""
         findings_list: list[ModelOrDict] = list(findings) if findings else []
         dependencies_list: list[ModelOrDict] = list(dependencies) if dependencies else []
         previous_findings_list: list[ModelOrDict] | None = (

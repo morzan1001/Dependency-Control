@@ -90,10 +90,7 @@ _Target = tuple[dict[str, Any], str, dict[str, Any]]
 
 
 def _versioned_purl(component: dict[str, Any]) -> str | None:
-    """The component's purl carrying a version, or None when there is no version to ask about.
-
-    Without a version OSV answers with every advisory ever published for the package.
-    """
+    """The component's purl with its version, or None: unversioned, OSV answers with every advisory of the package."""
     purl = str(component.get("purl") or "")
     if not purl:
         return None
@@ -429,10 +426,7 @@ class OSVAnalyzer(Analyzer):
         rejection: str,
         resends: int,
     ) -> int:
-        """Resend a chunk without the query OSV rejected, bisecting when the rejection does not name it.
-
-        OSV rejects the whole batch for one invalid query; returns how many components stay lost.
-        """
+        """Resend a rejected chunk minus the named query, else bisected; returns how many components stay lost."""
         named = _REJECTED_QUERY.search(rejection)
         index = int(named[1]) if named and int(named[1]) < len(chunk) else None
         if index is None and len(chunk) > 1:
@@ -485,10 +479,7 @@ class OSVAnalyzer(Analyzer):
         }
 
     async def _get_cached_components(self, targets: list[_Target]) -> tuple[list[dict[str, Any]], list[_Target]]:
-        """``(cached result entries, uncached targets)`` from a batch Redis lookup.
-
-        A cached answer is per package version; the scanning component names the result.
-        """
+        """``(cached result entries, uncached targets)``; cached per package version, named for this component."""
         keys = [CacheKeys.osv(purl) for _, purl, _ in targets]
         cached_data = await cache_service.mget(list(dict.fromkeys(keys)))
         cached_results: list[dict[str, Any]] = []

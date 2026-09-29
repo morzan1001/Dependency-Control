@@ -101,12 +101,7 @@ def classify_version_change(old_version: str, new_version: str) -> str:
 
 
 def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
-    """``(identity, info)`` for one dependency document.
-
-    The identity is the package's :func:`package_identity`, the same notion of "same package"
-    the components delta uses; bare ``name`` stays in the info for joins against analyzer
-    results, which are keyed by that name.
-    """
+    """``(package_identity, info)`` of a dependency; info keeps the bare ``name`` analyzer results are keyed by."""
     name = dep.get("name", "")
     if not name:
         return None

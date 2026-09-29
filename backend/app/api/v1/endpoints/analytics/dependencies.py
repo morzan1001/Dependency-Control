@@ -54,11 +54,7 @@ router = CustomAPIRouter()
 async def _package_finding_query(
     finding_repo: FindingRepository, scan_ids: list[str], component: str, version: str | None
 ) -> dict[str, Any]:
-    """Finding filter for every stored spelling of ``component``'s package.
-
-    The bare artifact and its qualified forms are collected in scope (version included) first, so
-    a bare name joins its qualified package only when exactly one exists, whichever panel asks.
-    """
+    """Finding filter for every spelling of ``component``; a bare name joins a qualified package only if unique."""
     scope: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}}
     if version:
         scope["version"] = version
@@ -251,11 +247,7 @@ def _build_dep_query(scan_ids: list[str], component: str, version: str | None, t
 async def _package_projects_by_version(
     dep_repo: DependencyRepository, dep_query: dict[str, Any], component: str
 ) -> tuple[tuple[str, str], dict[str, list[dict[str, Any]]]] | None:
-    """The one package ``component`` names in the inventory, with the projects using each version.
-
-    A qualified component keeps the package whose identity is ``qualifier/artifact``; a name that
-    still spans several packages yields None rather than one package's data under another's name.
-    """
+    """The one package ``component`` names with its projects per version; None while the name spans several."""
     artifact = artifact_segment(component)
     wanted = None if artifact == component else f"{component[: -len(artifact) - 1]}/{artifact}".lower()
     rows = await dep_repo.aggregate(

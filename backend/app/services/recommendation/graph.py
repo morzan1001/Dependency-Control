@@ -109,8 +109,7 @@ def _cycle_members(edges: DependencyEdges) -> set[str]:
 
 
 def _shortest_depths(edges: DependencyEdges) -> tuple[dict[str, int], dict[str, str]]:
-    """Each reachable node's shortest nesting below a direct dependency (which is depth 1), and the
-    parent that shortest chain runs through."""
+    """Each reachable node's shortest depth (a direct dependency is 1) and the parent that chain runs through."""
     depths = {key: 1 for key in edges.dep_by_key if key in edges.direct_keys}
     via: dict[str, str] = {}
     queue = deque(depths)

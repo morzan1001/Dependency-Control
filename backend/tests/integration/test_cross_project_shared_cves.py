@@ -1,8 +1,4 @@
-"""The shared-vulnerability card joins projects on each advisory's CVE identity, not its raw id.
-
-One vulnerability is stored as its GHSA in one project and as its CVE in another, and a waived
-advisory is risk a team has accepted, not work shared across projects.
-"""
+"""The shared-vulnerability card joins projects on each live advisory's CVE identity, not its raw id."""
 
 from datetime import datetime, timezone
 

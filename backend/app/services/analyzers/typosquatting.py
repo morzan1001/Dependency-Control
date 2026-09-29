@@ -287,9 +287,5 @@ class TyposquattingAnalyzer(Analyzer):
         return None
 
     def _is_suspicious(self, name: str, popular: str) -> bool:
-        """Whether normalized ``name`` is a suspicious near-match of a different normalized ``popular``.
-
-        A prefix is legitimate only when a ``-`` follows it: ``react-dom`` is a real
-        sub-package, but ``expresss`` is a typosquat to flag.
-        """
+        """Whether ``name`` near-matches another ``popular``; a prefix then ``-`` (``react-dom``) is legitimate."""
         return not (_has_legitimate_prefix(name, popular) or _has_legitimate_prefix(popular, name))

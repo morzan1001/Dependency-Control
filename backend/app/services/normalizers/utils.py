@@ -101,10 +101,7 @@ def strip_line_number(finding_id: str) -> str | None:
 
 
 def extract_rule_prefix(finding_id: str, component: str) -> str | None:
-    """``{SCANNER}-{rule_id}`` of a ``{SCANNER}-{rule_id}-{file_path}[-{line}]`` id, given ``component = {file_path}``.
-
-    A hit at line 0 carries no line segment, because build_finding_id drops falsy parts.
-    """
+    """``{SCANNER}-{rule_id}`` of a ``{SCANNER}-{rule_id}-{component}[-{line}]`` id; line 0 carries no line segment."""
     file_prefix = strip_line_number(finding_id) or finding_id
     suffix = f"-{component}"
     if file_prefix.endswith(suffix):

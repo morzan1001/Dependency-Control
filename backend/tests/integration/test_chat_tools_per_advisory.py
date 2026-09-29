@@ -1,9 +1,4 @@
-"""Chat/MCP tools answer per advisory: a vulnerability finding holds every advisory of one
-component@version, and its details carry maxima over all of them.
-
-The consumer is a language model relaying the answer, so a CVE id paired with a sibling's KEV
-status, EPSS or fix reads as a confident, wrong security verdict.
-"""
+"""Chat/MCP tools answer per advisory, never pairing a CVE with a sibling advisory's KEV, EPSS or fix."""
 
 from datetime import datetime, timezone
 

@@ -63,10 +63,7 @@ class DepsDevAnalyzer(Analyzer):
         package_metadata: dict[str, Any],
         scorecard_issues: list[Any],
     ) -> None:
-        """Apply one package's payload under this scan's component, re-checking the threshold.
-
-        A payload from the cache or a peer pod names whichever component fetched it first.
-        """
+        """Apply a payload under this scan's component (a cached one names its fetcher), re-checking the threshold."""
         if isinstance(payload, Exception):
             logger.warning(f"deps_dev check failed: {payload}")
             return

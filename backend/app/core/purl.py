@@ -126,10 +126,7 @@ _IDENTITY_PATTERN = r"^pkg:([^/]+)/([^?#]*?)(?:(?<!/)@[^@?#]*)?(?:[?#].*)?$"
 
 
 def package_identity(purl: str | None, name: str, component_type: str | None, group: str | None) -> tuple[str, str]:
-    """Version-free package identity ``(type, namespace/name)`` under the purl spec's per-type rules.
-
-    Without a parseable purl the row is keyed by its component type and lowercased ``group/name``.
-    """
+    """Version-free ``(type, namespace/name)`` per the purl spec, else component type and lowercased group/name."""
     parsed = parse_purl(purl) if purl else None
     if parsed is None:
         namespace = (group or "").strip()

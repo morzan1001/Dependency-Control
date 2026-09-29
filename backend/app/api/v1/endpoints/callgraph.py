@@ -76,10 +76,7 @@ def _resolve_language(request_language: str | None, format_type: str) -> str:
 async def _resolve_scan_id(
     db: Any, project_id: str, pipeline_id: int | None, commit_hash: str | None
 ) -> tuple[str | None, bool]:
-    """``(scan_id, exists)`` of the scan the CI run produced, only ever one of the authorized project's.
-
-    An upload without the commit derives an id no ingest writes, so the run's newest scan stands in.
-    """
+    """``(scan_id, exists)`` of the CI run's scan in the authorized project; its newest scan when the derived id has none."""
     derived = deterministic_scan_id(project_id, pipeline_id, commit_hash)
     if derived is None:
         return None, False

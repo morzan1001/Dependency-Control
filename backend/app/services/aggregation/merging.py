@@ -68,8 +68,7 @@ def merge_sast_findings(findings: list[Finding]) -> Finding | None:
 
 
 def _same_advisory(a_ids: set[str], a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
-    """Shared ids make one advisory, but entries led by different CVEs must name the same CVEs:
-    a distro advisory bundling several CVEs lists the others as aliases."""
+    """Shared ids make one advisory unless led by different CVEs naming different sets (distro bundles alias CVEs)."""
     if a_ids.isdisjoint(advisory_ids(b)):
         return False
     cves_a, cves_b = entry_cves(a), entry_cves(b)
@@ -115,7 +114,7 @@ def _merged_fixed_version(a: Any, b: Any) -> str | None:
 
 
 def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Merge fixed_version (union of candidates) and CVSS (taking the higher score)."""
+    """Merge fixed_version (as _merged_fixed_version) and CVSS (taking the higher score)."""
     merged_fix = _merged_fixed_version(tv.get("fixed_version"), source_entry.get("fixed_version"))
     if merged_fix is not None:
         tv["fixed_version"] = merged_fix

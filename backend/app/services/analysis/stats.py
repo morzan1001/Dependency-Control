@@ -533,10 +533,7 @@ _STATS_CURSOR_HINT = [("scan_id", ASCENDING), ("type", ASCENDING)]
 async def calculate_comprehensive_stats(
     db: Database, scan_id: str, component_languages: ComponentLanguages | None = None
 ) -> Stats:
-    """Comprehensive statistics for a scan, folded from a single projected cursor.
-
-    Pass ``component_languages`` when the run already built it from this scan's inventory.
-    """
+    """Scan statistics from one projected cursor; pass ``component_languages`` when the run already built it."""
     if component_languages is None:
         component_languages = await build_component_language_map(db, scan_id)
     acc = StatsAccumulator(component_languages)

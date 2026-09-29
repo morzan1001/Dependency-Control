@@ -13,10 +13,7 @@ _SBOM: dict[str, Any] = {"bomFormat": "CycloneDX", "specVersion": "1.5", "compon
 
 
 def _client(rejected: frozenset[str] = frozenset(), names_index: bool = True) -> MagicMock:
-    """A querybatch stub answering with no vulnerabilities, recording the payloads.
-
-    Like OSV, it answers 400 for a batch holding a ``rejected`` purl and names the first one's index.
-    """
+    """A querybatch stub recording payloads; like OSV, a ``rejected`` purl fails the batch with 400 naming its index."""
     client = MagicMock()
     client.payloads = []
 
