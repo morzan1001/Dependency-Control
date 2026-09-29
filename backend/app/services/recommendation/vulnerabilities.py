@@ -1,6 +1,7 @@
 from collections import defaultdict
 
 from app.core.constants import EPSS_HIGH_THRESHOLD, OS_PACKAGE_TYPES
+from app.core.epss import HIGH_EPSS_LABEL
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -186,7 +187,7 @@ def _build_direct_description(component: str, current_version: str, stats: VulnS
     if stats.kev_ransomware > 0:
         desc_parts.append(f"{stats.kev_ransomware} are used in ransomware campaigns.")
     if stats.high_epss > 0:
-        desc_parts.append(f"{stats.high_epss} have high exploitation probability (EPSS >10%).")
+        desc_parts.append(f"{stats.high_epss} have high exploitation probability ({HIGH_EPSS_LABEL}).")
     if stats.reachable > 0:
         desc_parts.append(f"{stats.reachable} are confirmed reachable in your code.")
     if stats.unreachable > 0 and stats.unreachable == stats.total:

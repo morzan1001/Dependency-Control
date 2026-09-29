@@ -150,6 +150,10 @@ class PackageSuggestions(BaseModel):
     )
 
 
+# The alert's priority bucket, as every channel labels it.
+PRIORITY_VULNS_LABEL = "Priority (Critical/High/KEV/High EPSS)"
+
+
 class AlertVulnerability(BaseModel):
     """One vulnerability line in a "vulnerabilities found" alert.
 

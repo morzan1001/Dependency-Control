@@ -3,6 +3,10 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
+from app.core.constants import EPSS_HIGH_THRESHOLD
+from app.core.epss import HIGH_EPSS_LABEL
+from app.schemas.notification import PRIORITY_VULNS_LABEL
+
 APP_NAME = "Dependency Control"
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -63,7 +67,7 @@ def get_vulnerability_found_template(
     project_name: str,
     project_name_scanned: str,
     vulnerabilities: list,
-    critical_count: int,
+    priority_count: int,
     has_kev: bool = False,
     kev_count: int = 0,
     kev_vulnerabilities: list | None = None,
@@ -77,7 +81,10 @@ def get_vulnerability_found_template(
             "project_name": project_name,
             "project_name_scanned": project_name_scanned,
             "vulnerabilities": vulnerabilities,
-            "critical_count": critical_count,
+            "priority_count": priority_count,
+            "priority_label": PRIORITY_VULNS_LABEL,
+            "high_epss_label": HIGH_EPSS_LABEL,
+            "high_epss_threshold": EPSS_HIGH_THRESHOLD,
             "has_kev": has_kev,
             "kev_count": kev_count,
             "kev_vulnerabilities": kev_vulnerabilities or [],
