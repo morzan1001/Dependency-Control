@@ -1,6 +1,8 @@
 """Tests for SBOM parser - format detection, CycloneDX/SPDX/Syft parsing."""
 
+import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -62,41 +64,155 @@ class TestExtractLicenseFromUrl:
         assert extract_license_from_url("https://unlicense.org") == "Unlicense"
 
 
-class TestResolveCyclonedxDirectRefs:
-    """The fallback (root bom-ref doesn't match a graph node) must return the root's children (direct deps), not the roots themselves — and flag them as inferred."""
+FIXTURES = Path(__file__).parent.parent / "fixtures" / "sbom"
 
-    def test_fallback_returns_root_children_not_roots(self):
-        # app -> [A, B]; A -> [C]. "app" is the root (nothing depends on it).
-        deps_graph = {"app": ["A", "B"], "A": ["C"], "B": [], "C": []}
-        all_transitive_refs = {"A", "B", "C"}
-        # main_bom_ref does NOT match any graph node (e.g. a purl vs. plain refs).
-        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(
-            deps_graph, all_transitive_refs, "pkg:maven/com.acme/app@1.0"
-        )
-        assert direct_refs == {"A", "B"}  # NOT {"app"}
-        assert inferred is True
 
-    def test_fallback_with_no_main_bom_ref(self):
-        deps_graph = {"app": ["A", "B"], "A": [], "B": []}
-        all_transitive_refs = {"A", "B"}
-        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
-        assert direct_refs == {"A", "B"}
-        assert inferred is True
+def _fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text())
 
-    def test_matched_main_bom_ref_returns_root_depends_on(self):
-        deps_graph = {"app": ["A", "B"], "A": ["C"], "B": [], "C": []}
-        all_transitive_refs = {"A", "B", "C"}
-        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, "app")
-        assert direct_refs == {"A", "B"}
-        assert inferred is False
 
-    def test_flat_graph_treats_roots_as_direct(self):
-        # No real edges: every ref is a childless root -> treat all as direct (not empty).
-        deps_graph = {"X": [], "Y": []}
-        all_transitive_refs: set = set()
-        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
-        assert direct_refs == {"X", "Y"}
-        assert inferred is True
+def _fixture_with(name: str, field: str, entry: object) -> dict:
+    sbom = _fixture(name)
+    sbom[field] = [*sbom[field], entry]
+    return sbom
+
+
+def _directness(result) -> dict[str, tuple[bool, bool]]:
+    return {dep.name: (dep.direct, dep.direct_inferred) for dep in result.dependencies}
+
+
+_POETRY_TRANSITIVES = ("anyio", "certifi", "h11", "httpcore", "idna", "sniffio")
+_SYFT_MONOREPO = {
+    "debug": (True, True),
+    "ms": (False, True),
+    "httpx": (True, True),
+    **dict.fromkeys(_POETRY_TRANSITIVES, (False, True)),
+}
+
+
+class TestDirectnessOfRealGraphs:
+    """syft 1.42.1 and trivy 0.58.1 output for one npm + poetry monorepo, in every format they write."""
+
+    @pytest.mark.parametrize(
+        ("fixture", "expected", "skipped_roots"),
+        [
+            pytest.param("mono.syft.json", _SYFT_MONOREPO, 1, id="syft-json"),
+            pytest.param("mono.syft.cdx.json", _SYFT_MONOREPO, 1, id="syft-cyclonedx"),
+            # syft's SPDX output carries none of the lockfile metadata that marks myapp as the project.
+            pytest.param(
+                "mono.syft.spdx.json",
+                {**_SYFT_MONOREPO, "myapp": (True, True), "debug": (False, True)},
+                0,
+                id="syft-spdx",
+            ),
+            pytest.param(
+                "poetry.syft.json",
+                {"httpx": (True, True), **dict.fromkeys(_POETRY_TRANSITIVES, (False, True))},
+                0,
+                id="syft-json-poetry-only",
+            ),
+            pytest.param(
+                "mono.trivy.cdx.json",
+                {
+                    "debug": (True, False),
+                    "ms": (False, False),
+                    "httpx": (True, False),
+                    **dict.fromkeys(_POETRY_TRANSITIVES, (False, False)),
+                },
+                0,
+                id="trivy-cyclonedx",
+            ),
+        ],
+    )
+    def test_each_format_resolves_the_same_direct_set(self, fixture, expected, skipped_roots):
+        result = parse_sbom(_fixture(fixture))
+
+        assert _directness(result) == expected
+        assert result.skipped_reasons.get("root-component", 0) == skipped_roots
+
+    @pytest.mark.parametrize(
+        "fixture", ["mono.syft.json", "mono.syft.cdx.json", "mono.syft.spdx.json", "mono.trivy.cdx.json"]
+    )
+    def test_each_format_records_the_same_parents(self, fixture):
+        deps = {dep.name: dep for dep in parse_sbom(_fixture(fixture)).dependencies}
+
+        assert deps["ms"].parent_components == ["pkg:npm/debug@4.3.4"]
+        assert deps["h11"].parent_components == ["pkg:pypi/httpcore@1.0.5"]
+
+    def test_trivy_os_descriptor_passes_directness_to_the_top_level_os_packages(self):
+        directness = _directness(parse_sbom(_fixture("rootfs.trivy.cdx.json")))
+
+        direct = {name for name, value in directness.items() if value == (True, False)}
+        assert direct == {
+            "alpine",
+            "myapp",
+            "alpine-baselayout",
+            "alpine-keys",
+            "apk-tools",
+            "musl-utils",
+            "ssl_client",
+        }
+        assert all(value == (False, False) for name, value in directness.items() if name not in direct)
+
+    def test_spdx_image_root_sets_the_image_source(self):
+        result = parse_sbom(_fixture("alpine.syft.spdx.json"))
+
+        apk = [dep for dep in result.dependencies if dep.type == "apk"]
+        assert (result.source_type, result.source_target) == ("image", "alpine:3.20")
+        assert {(dep.source_type, dep.source_target) for dep in apk} == {("image", "alpine:3.20")}
+        assert {dep.name for dep in apk if dep.direct} == {
+            "alpine-baselayout",
+            "alpine-keys",
+            "apk-tools",
+            "musl-utils",
+            "ssl_client",
+        }
+
+
+class TestMalformedDependencyGraph:
+    """A graph entry of the wrong shape fails the document in every format instead of silently dropping an edge."""
+
+    @pytest.mark.parametrize(
+        ("sbom", "message"),
+        [
+            pytest.param(
+                _fixture_with("mono.trivy.cdx.json", "dependencies", None),
+                "dependencies must be a list of objects",
+                id="cyclonedx-entry",
+            ),
+            pytest.param(
+                _fixture_with(
+                    "mono.trivy.cdx.json",
+                    "dependencies",
+                    {"ref": "pkg:npm/debug@4.3.4", "dependsOn": "pkg:npm/ms@2.1.2"},
+                ),
+                "dependsOn",
+                id="cyclonedx-depends-on-string",
+            ),
+            pytest.param(
+                _fixture_with("mono.syft.spdx.json", "relationships", None),
+                "relationships must be a list of objects",
+                id="spdx-entry",
+            ),
+            pytest.param(
+                _fixture_with("mono.syft.json", "artifactRelationships", None),
+                "artifactRelationships must be a list of objects",
+                id="syft-entry",
+            ),
+        ],
+    )
+    def test_malformed_edge_fails_the_document(self, sbom, message):
+        with pytest.raises(ValueError, match=message):
+            parse_sbom(sbom)
+
+    def test_malformed_source_hints_leave_the_graph_intact(self):
+        sbom = _fixture("mono.trivy.cdx.json")
+        sbom["metadata"]["properties"] = [None]
+        sbom["metadata"]["component"] = None
+
+        result = parse_sbom(sbom)
+
+        assert len(result.dependencies) == 9
 
 
 def _cyclonedx_image_partial_graph() -> dict:
@@ -175,22 +291,29 @@ class TestCycloneDXDirectnessHonesty:
             assert deps[name].direct is True
             assert deps[name].direct_inferred is True
 
-    def test_roots_children_fallback_marks_direct_refs_inferred(self):
+    def test_roots_children_fallback_marks_the_whole_graph_inferred(self):
         sbom = _cyclonedx_image_partial_graph()
         # Main bom-ref absent from the graph (13 of 43 re-parsed prod SBOMs): the
-        # roots-children fallback resolves express as direct, but only as a guess.
+        # component-less root passes directness to express, but only as a guess.
         sbom["dependencies"] = [
             {"ref": "app-node", "dependsOn": ["pkg:npm/express@4.19.2"]},
             {"ref": "pkg:npm/express@4.19.2", "dependsOn": ["pkg:npm/body-parser@1.20.2"]},
         ]
         result = self.parser.parse(sbom)
-        deps = {d.name: d for d in result.dependencies}
-        assert deps["express"].direct is True
-        assert deps["express"].direct_inferred is True
-        assert deps["body-parser"].direct is False
-        assert deps["body-parser"].direct_inferred is False
-        assert deps["libssl3"].direct is True
-        assert deps["libssl3"].direct_inferred is True
+        assert _directness(result) == {
+            "express": (True, True),
+            "body-parser": (False, True),
+            "libssl3": (True, True),
+            "zlib1g": (True, True),
+        }
+
+    def test_main_component_named_by_purl_anchors_the_graph(self):
+        sbom = _cyclonedx_image_partial_graph()
+        root = sbom["metadata"]["component"]
+        del root["bom-ref"]
+        root["purl"] = sbom["dependencies"][0]["ref"] = "pkg:oci/service@sha256%3Aabc123"
+        result = self.parser.parse(sbom)
+        assert _directness(result)["express"] == (True, False)
 
     def test_no_graph_at_all_stays_fully_inferred(self):
         sbom = _cyclonedx_image_partial_graph()
@@ -778,6 +901,15 @@ class TestDuplicateComponentMerge:
         assert dep.hashes == {"sha1": "aaa", "sha256": "bbb"}
         assert set(dep.parent_components) == {"pkg:generic/parent-x@1.0", "pkg:generic/parent-y@1.0"}
 
+    @pytest.mark.parametrize("scopes", [("optional", "required"), ("required", "optional"), ("excluded", None)])
+    def test_merge_lets_a_runtime_scope_win(self, scopes):
+        component = {"type": "library", "name": "x", "version": "1.0.0", "purl": "pkg:npm/x@1.0.0"}
+        copies = [{**component, "bom-ref": f"x-{i}", "scope": scope} for i, scope in enumerate(scopes)]
+
+        [dep] = self.parser.parse(_cyclonedx_with(copies)).dependencies
+
+        assert dep.scope == next(scope for scope in scopes if scope not in ("optional", "excluded"))
+
     def test_merge_direct_anywhere_wins_over_transitive(self):
         sbom = {
             "bomFormat": "CycloneDX",
@@ -1031,11 +1163,16 @@ def _syft_json_project_sbom() -> dict:
             art["purl"] = purl
         return art
 
+    demo = _artifact("aaaa000000000001", "demo", "0.0.1-SNAPSHOT", "pkg:maven/com.example/demo@0.0.1-SNAPSHOT")
+    demo["metadata"] = {
+        "virtualPath": "",
+        "pomProject": {"path": "", "groupId": "com.example", "artifactId": "demo", "version": "0.0.1-SNAPSHOT"},
+    }
     return {
         "descriptor": {"name": "syft", "version": "1.42.3"},
         "source": {"id": _SYFT_SOURCE_ID, "type": "directory", "target": "/build", "name": "."},
         "artifacts": [
-            _artifact("aaaa000000000001", "demo", "0.0.1-SNAPSHOT", "pkg:maven/com.example/demo@0.0.1-SNAPSHOT"),
+            demo,
             _artifact("aaaa000000000002", "slf4j-api", "2.0.16", "pkg:maven/org.slf4j/slf4j-api@2.0.16"),
             _artifact("aaaa000000000003", "logback-core", "1.5.6", "pkg:maven/ch.qos.logback/logback-core@1.5.6"),
             _artifact("aaaa000000000004", "actions/checkout", "v4", "pkg:github/actions/checkout@v4", "github-action"),
@@ -1062,19 +1199,20 @@ class TestSyftRelationshipDirection:
         self.result = self.parser.parse(_syft_json_project_sbom())
         self.deps = {d.name: d for d in self.result.dependencies}
 
-    def test_single_root_children_are_direct(self):
+    def test_project_root_children_are_direct(self):
         assert self.deps["slf4j-api"].direct is True
 
     def test_transitive_dependency_is_not_direct(self):
         dep = self.deps["logback-core"]
         assert dep.direct is False
-        assert dep.direct_inferred is False
+        assert dep.direct_inferred is True
 
-    def test_root_project_does_not_list_its_dependencies_as_parents(self):
-        assert self.deps["demo"].parent_components == []
+    def test_pom_project_is_the_root_component_not_a_dependency(self):
+        assert "demo" not in self.deps
+        assert self.result.skipped_reasons.get("root-component") == 1
 
     def test_parents_point_at_dependents_not_dependencies(self):
-        assert self.deps["slf4j-api"].parent_components == ["pkg:maven/com.example/demo@0.0.1-SNAPSHOT"]
+        assert self.deps["slf4j-api"].parent_components == []
         assert self.deps["logback-core"].parent_components == ["pkg:maven/org.slf4j/slf4j-api@2.0.16"]
 
     def test_parent_refs_are_purls_not_syft_hex_ids(self):
@@ -1107,19 +1245,20 @@ class TestSyftRelationshipDirection:
         assert dep.direct is True
         assert dep.direct_inferred is False
 
-    def test_multiple_roots_do_not_promote_their_children(self):
-        # Two independent top-level packages: their children must stay transitive.
+    def test_roots_without_project_evidence_are_direct_and_their_children_transitive(self):
         sbom = _syft_json_project_sbom()
+        del sbom["artifacts"][0]["metadata"]
         sbom["artifactRelationships"] = [
             {"parent": "aaaa000000000002", "child": "aaaa000000000001", "type": "dependency-of"},
             {"parent": "aaaa000000000003", "child": "aaaa000000000004", "type": "dependency-of"},
         ]
         result = self.parser.parse(sbom)
-        deps = {d.name: d for d in result.dependencies}
-        assert deps["slf4j-api"].direct is False
-        assert deps["logback-core"].direct is False
-        assert deps["demo"].direct is True
-        assert deps["demo"].direct_inferred is True
+        assert _directness(result) == {
+            "demo": (True, True),
+            "actions/checkout": (True, True),
+            "slf4j-api": (False, True),
+            "logback-core": (False, True),
+        }
 
     def test_no_relationships_keeps_everything_direct_inferred(self):
         sbom = _syft_json_project_sbom()
@@ -1415,6 +1554,19 @@ class TestSPDXRootSkipAndFields:
 
     def test_dependencies_inherit_source_target(self):
         assert self.deps["npm:left-pad"].source_target == "com.github.acme/my-service"
+
+    def test_document_describes_array_names_the_root(self):
+        sbom = _spdx_github_export()
+        sbom["spdxVersion"] = "SPDX-2.2"
+        sbom["documentDescribes"] = ["SPDXRef-repo"]
+        sbom["relationships"] = [r for r in sbom["relationships"] if r["relationshipType"] != "DESCRIBES"]
+
+        result = self.parser.parse(sbom)
+        left_pad = {d.name: d for d in result.dependencies}["npm:left-pad"]
+
+        assert result.skipped_reasons.get("root-component") == 1
+        assert (result.source_type, result.source_target) == ("application", "com.github.acme/my-service")
+        assert (left_pad.direct, left_pad.direct_inferred, left_pad.parent_components) == (True, False, [])
 
     def test_minimal_describes_only_document_keeps_package(self):
         # A document that DESCRIBES a package with no DEPENDS_ON children is an

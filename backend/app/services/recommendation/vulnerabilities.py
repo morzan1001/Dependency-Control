@@ -2,7 +2,13 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
-from app.core.constants import DETAILS_KEY_IN_KEV, EPSS_HIGH_THRESHOLD, SOURCE_TYPE_IMAGE
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    EPSS_HIGH_THRESHOLD,
+    SOURCE_TYPE_DIRECTORY,
+    SOURCE_TYPE_FILE,
+    SOURCE_TYPE_IMAGE,
+)
 from app.core.cve import canonical_cves
 from app.core.epss import HIGH_EPSS_LABEL
 from app.core.purl import is_os_package_type
@@ -73,9 +79,10 @@ def _classify_category(vuln: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
         return "application"
 
     source_type = get_attr(dep, "source_type")
-    # The parser's source wins; only an SBOM naming no source leaves the package type to decide.
+    # An explicit filesystem source wins; otherwise an OS package ships with the base image.
     if source_type == SOURCE_TYPE_IMAGE or (
-        not source_type and is_os_package_type(get_attr(dep, "purl"), get_attr(dep, "type"))
+        source_type not in (SOURCE_TYPE_DIRECTORY, SOURCE_TYPE_FILE)
+        and is_os_package_type(get_attr(dep, "purl"), get_attr(dep, "type"))
     ):
         return "image"
     if get_attr(dep, "direct", False):

@@ -183,7 +183,7 @@ _ONE_BAD_SUBFIELD_SBOM = {
         }
         for index in range(_HEALTHY_COMPONENTS)
     ],
-    "dependencies": [{"ref": "pkg:pypi/c0@1.0.0", "dependsOn": None}],
+    "dependencies": [{"ref": "pkg:pypi/c0@1.0.0", "dependsOn": "pkg:pypi/c1@1.0.0"}],
 }
 
 # An explicit null name is a present key, so a dict default never fires.

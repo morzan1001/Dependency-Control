@@ -1,9 +1,13 @@
 """Tests for app.services.recommendation.vulnerabilities."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.vulnerabilities import process_vulnerabilities
+from app.services.sbom_parser import parse_sbom
 from tests.helpers.findings import stored_vulnerability
 
 
@@ -276,6 +280,17 @@ class TestBaseImageUpdate:
 
         result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], "debian:11")
 
+        assert [r.type for r in result] == [RecommendationType.BASE_IMAGE_UPDATE]
+
+    def test_os_packages_of_an_application_rooted_sbom_count_as_image(self):
+        # trivy rootfs names the scanned tree an application, so its apk rows inherit that label.
+        sbom = json.loads((Path(__file__).parents[2] / "fixtures" / "sbom" / "rootfs.trivy.cdx.json").read_text())
+        dep = next(d.to_dict() for d in parse_sbom(sbom).dependencies if d.name == "libssl3")
+        finding = _make_finding(severity="CRITICAL", component="libssl3", version=dep["version"])
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], None)
+
+        assert dep["source_type"] == "application"
         assert [r.type for r in result] == [RecommendationType.BASE_IMAGE_UPDATE]
 
     def test_few_low_severity_os_vulns_no_recommendation(self):

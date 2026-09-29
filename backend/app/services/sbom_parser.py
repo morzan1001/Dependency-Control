@@ -4,11 +4,13 @@ import base64
 import contextlib
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlparse
 
 from app.core.constants import (
     APP_PACKAGE_TYPES,
+    NON_RUNTIME_SCOPES,
     OS_PACKAGE_TYPES,
     SOURCE_TYPE_APPLICATION,
     SOURCE_TYPE_DIRECTORY,
@@ -64,18 +66,86 @@ def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[
             kept.direct, kept.direct_inferred = dep.direct, False
         elif kept.direct_inferred == dep.direct_inferred:
             kept.direct = kept.direct or dep.direct
+        if (kept.scope or "").lower() in NON_RUNTIME_SCOPES and (dep.scope or "").lower() not in NON_RUNTIME_SCOPES:
+            kept.scope = dep.scope
         merged += 1
     return list(by_key.values()), merged
 
 
-def _parent_refs(parent_ids: list[str], parsed_by_id: dict[str, ParsedDependency]) -> list[str]:
-    """The parsed parents' node keys, deduplicated in first-seen order; ids of skipped components drop out."""
-    parents = (parsed_by_id.get(parent_id) for parent_id in parent_ids)
-    return list(
-        dict.fromkeys(
-            dependency_node_key(parent.purl, parent.name, parent.version) for parent in parents if parent is not None
-        )
+def _graph_entries(value: Any, field: str) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or not all(isinstance(entry, dict) for entry in value):
+        raise ValueError(f"{field} must be a list of objects")
+    return value
+
+
+def _resolve_directness(
+    forward: dict[Any, list[Any]], anchors: set[Any], transparent: set[Any], project: set[Any]
+) -> tuple[Callable[[Any], tuple[bool, bool]], set[Any]]:
+    """(ref -> (direct, direct_inferred), root refs that are the scanned subject rather than a dependency)."""
+    targets = {child for children in forward.values() for child in children}
+    subjects = {ref for ref in anchors if forward.get(ref)}
+    inferred = not subjects
+    seeds: list[Any] = []
+    if inferred:
+        roots = [ref for ref, children in forward.items() if children and ref not in targets]
+        subjects = {ref for ref in roots if ref in project}
+        seeds = [ref for ref in roots if ref not in subjects]
+    seeds += [child for ref in subjects for child in forward[ref]]
+    direct: set[Any] = set()
+    while seeds:
+        ref = seeds.pop()
+        if ref not in direct:
+            direct.add(ref)
+            # Aggregator and OS-descriptor nodes are no dependency layer of their own.
+            if ref in transparent:
+                seeds.extend(forward.get(ref, ()))
+    resolved = dict.fromkeys(targets, (False, inferred))
+    resolved.update(dict.fromkeys(direct, (True, inferred)))
+    resolved.update(dict.fromkeys(anchors - subjects, (True, False)))
+    return lambda ref: resolved.get(ref, (True, True)), subjects
+
+
+def _resolve_parent_refs(parsed_by_ref: dict[Any, ParsedDependency], *edge_maps: dict[Any, list[Any]]) -> None:
+    """Set each parsed dependency's parents as node keys; refs of skipped components drop out."""
+    parents: dict[Any, dict[str, None]] = {}
+    for edges in edge_maps:
+        for parent_ref, child_refs in edges.items():
+            parent = parsed_by_ref.get(parent_ref)
+            if parent is None:
+                continue
+            key = dependency_node_key(parent.purl, parent.name, parent.version)
+            for child_ref in child_refs:
+                if child_ref in parsed_by_ref:
+                    parents.setdefault(child_ref, {})[key] = None
+    for ref, parsed in parsed_by_ref.items():
+        parsed.parent_components = list(parents.get(ref, {}))
+
+
+def _image_reference(name: Any, version: Any) -> str | None:
+    # An OCI tag never contains ':', so a version that does is a digest.
+    separator = "@" if ":" in str(version) else ":"
+    return f"{name}{separator}{version}" if version else name
+
+
+def _has_local_origin(metadata: Any) -> bool:
+    """Whether a syft lock-file entry is the checked-out project itself rather than a fetched package."""
+    if not isinstance(metadata, dict):
+        return False
+    return (
+        (metadata.get("resolved") == "" and not metadata.get("integrity"))
+        or (metadata.get("checksum") == "" and not metadata.get("source"))
+        or metadata.get("index") == "."
+        or ("pomProject" in metadata and not metadata.get("virtualPath"))
     )
+
+
+# Syft's CycloneDX output keeps no lock-file origin, so a root's cataloger marks it as the project.
+_SYFT_PROJECT_ROOT_PROPERTIES = (
+    ("syft:package:metadataType", "javascript-npm-package-lock-entry"),
+    ("syft:package:metadataType", "rust-cargo-lock-entry"),
+    ("syft:package:metadataType", "python-uv-lock-entry"),
+    ("syft:package:foundBy", "java-pom-cataloger"),
+)
 
 
 def is_url(value: str) -> bool:
@@ -291,43 +361,14 @@ class SBOMParser:
         return cls._normalize_version(parsed.version) if parsed else UNKNOWN_VERSION
 
     @staticmethod
-    def _build_cyclonedx_deps_graph(
-        dependencies_map: list[dict[str, Any]],
-    ) -> tuple[dict[str, list], dict[str, list], set]:
-        """Build forward/reverse cyclonedx dep graphs and the transitive ref set."""
-        deps_graph: dict[str, list] = {}
-        reverse_deps_graph: dict[str, list] = {}
-        all_transitive_refs: set = set()
-
-        for dep_entry in dependencies_map:
-            ref = dep_entry.get("ref", "")
-            depends_on = dep_entry.get("dependsOn", [])
-            deps_graph[ref] = depends_on
-            for transitive_ref in depends_on:
-                all_transitive_refs.add(transitive_ref)
-                reverse_deps_graph.setdefault(transitive_ref, []).append(ref)
-
-        return deps_graph, reverse_deps_graph, all_transitive_refs
-
-    @staticmethod
-    def _resolve_cyclonedx_direct_refs(
-        deps_graph: dict[str, list], all_transitive_refs: set, main_bom_ref: str | None
-    ) -> tuple[set, bool]:
-        """Resolve (direct_refs, inferred) given the dep graph and main component."""
-        if main_bom_ref and main_bom_ref in deps_graph:
-            return set(deps_graph[main_bom_ref]), False
-        # Fallback when the SBOM's metadata.component bom-ref does not match any graph node
-        # (varies by SBOM tool). The root(s) are the refs nothing depends on; the DIRECT
-        # dependencies are those roots' children — NOT the roots themselves (a root is the
-        # application/component, not one of its dependencies). Returning the roots marked
-        # every real dependency transitive.
-        roots = {ref for ref in deps_graph if ref not in all_transitive_refs and ref != main_bom_ref}
-        direct: set = set()
-        for root in roots:
-            direct.update(deps_graph.get(root, []))
-        # Degenerate graph (roots have no recorded children): treat the roots as direct so
-        # we don't mark everything transitive.
-        return direct or roots, True
+    def _build_cyclonedx_deps_graph(dependencies: Any) -> dict[Any, list[Any]]:
+        forward: dict[Any, list[Any]] = {}
+        for entry in _graph_entries(dependencies, "dependencies"):
+            ref, depends_on = entry.get("ref"), entry.get("dependsOn") or []
+            if not isinstance(depends_on, list) or not all(isinstance(r, str) for r in (ref, *depends_on)):
+                raise ValueError("dependencies entries need a string ref and a string list dependsOn")
+            forward.setdefault(ref, []).extend(depends_on)
+        return forward
 
     @classmethod
     def _flatten_cyclonedx_components(cls, components: Any, depth: int = 0) -> tuple[list[dict[str, Any]], int, int]:
@@ -365,32 +406,41 @@ class SBOMParser:
 
     # CycloneDX component types that are never software dependencies.
     _NON_DEPENDENCY_COMPONENT_TYPES = frozenset({"device", "device-driver", "data", "firmware"})
+    _NON_PACKAGE_COMPONENT_TYPES = _NON_DEPENDENCY_COMPONENT_TYPES | {"file", "cryptographic-asset", "operating-system"}
+
+    @classmethod
+    def _cyclonedx_graph_roles(
+        cls, components: list[dict[str, Any]], forward: dict[Any, list[Any]]
+    ) -> tuple[set[Any], set[Any]]:
+        """(graph refs that are no package, package refs that mark the scanned project)."""
+        packages: dict[str, dict[str, Any]] = {}
+        for comp in components:
+            ref, comp_type = comp.get("bom-ref") or comp.get("purl"), comp.get("type")
+            # Trivy groups each lock file's packages under a purl-less application node.
+            aggregator = comp_type == "application" and not comp.get("purl")
+            if isinstance(ref, str) and comp_type not in cls._NON_PACKAGE_COMPONENT_TYPES and not aggregator:
+                packages[ref] = comp
+        nodes = set(forward).union(*forward.values())
+        project = {
+            ref
+            for ref, comp in packages.items()
+            if any(
+                isinstance(prop, dict) and (prop.get("name"), prop.get("value")) in _SYFT_PROJECT_ROOT_PROPERTIES
+                for prop in comp.get("properties") or []
+            )
+        }
+        return nodes - packages.keys(), project
 
     def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
-        """Parse CycloneDX format SBOM."""
-
         metadata = sbom.get("metadata", {})
-
-        # Source/Subject info (global SBOM source)
-        global_source_type, source_target = self._extract_cyclonedx_source(metadata)
-        result.source_type = global_source_type
-        result.source_target = source_target
-
-        # Get the main component bom-ref (root of dependency tree)
-        main_bom_ref = metadata.get("component", {}).get("bom-ref")
-
-        # Parse the dependencies array to build dependency graph
-        dependencies_map = sbom.get("dependencies", [])
-        deps_graph, reverse_deps_graph, all_transitive_refs = self._build_cyclonedx_deps_graph(dependencies_map)
-        direct_refs, direct_refs_inferred = self._resolve_cyclonedx_direct_refs(
-            deps_graph, all_transitive_refs, main_bom_ref
-        )
-
-        logger.debug(
-            f"CycloneDX dependency analysis: has_graph={bool(dependencies_map)}, "
-            f"main_bom_ref={main_bom_ref}, "
-            f"direct_refs={len(direct_refs)}, transitive_refs={len(all_transitive_refs)}, "
-            f"reverse_deps_entries={len(reverse_deps_graph)}"
+        main_component = metadata.get("component")
+        if not isinstance(main_component, dict):
+            main_component = {}
+        main_refs = {
+            ref for ref in (main_component.get("bom-ref"), main_component.get("purl")) if isinstance(ref, str) and ref
+        }
+        result.source_type, result.source_target = self._extract_cyclonedx_source(
+            main_component, metadata.get("properties") or []
         )
 
         # cyclonedx-npm/-maven nest sub-dependencies in components[].components[].
@@ -405,87 +455,77 @@ class SBOMParser:
             )
         result.crypto_assets = parse_crypto_components(components)
 
-        main_component = metadata.get("component") if isinstance(metadata.get("component"), dict) else {}
-        main_refs = {ref for ref in (main_component.get("bom-ref"), main_component.get("purl")) if ref}
+        forward = self._build_cyclonedx_deps_graph(sbom.get("dependencies") or [])
+        transparent, project = self._cyclonedx_graph_roles(components, forward)
+        directness, subjects = _resolve_directness(forward, main_refs, transparent, project)
+        # A tuple compares by equality, so an unhashable bom-ref cannot fail the whole document.
+        root_refs = (*main_refs, *subjects)
 
-        parsed_by_ref: dict[str, ParsedDependency] = {}
-        parsed_here: list[ParsedDependency] = []
+        parsed_by_ref: dict[Any, ParsedDependency] = {}
         for comp in components:
             comp_type = comp.get("type")
-            if comp_type == "cryptographic-asset":
-                # Parsed into crypto_assets, not dependencies; still counted.
-                self._count_skipped(result, "cryptographic-asset")
-                continue
-            if comp_type == "file":
-                # File-catalog entries (e.g. syft filesystem scans) aren't dependencies.
-                self._count_skipped(result, "file")
-                continue
-            if comp_type in self._NON_DEPENDENCY_COMPONENT_TYPES:
+            if comp_type in ("cryptographic-asset", "file"):
+                # Crypto assets are parsed into crypto_assets; file-catalog entries aren't dependencies.
+                self._count_skipped(result, comp_type)
+            elif comp_type in self._NON_DEPENDENCY_COMPONENT_TYPES:
                 self._count_skipped(result, "non-dependency")
-                continue
-            if main_refs and (comp.get("bom-ref") in main_refs or comp.get("purl") in main_refs):
-                # The SBOM's own subject repeated in the component list is not a dependency.
+            elif comp.get("bom-ref") in root_refs or comp.get("purl") in root_refs:
                 self._count_skipped(result, "root-component")
-                continue
-            try:
-                parsed = self._parse_cyclonedx_component(
-                    comp,
-                    global_source_type,
-                    source_target,
-                    direct_refs,
-                    all_transitive_refs,
-                    reverse_deps_graph,
-                    direct_refs_inferred,
-                )
-            except Exception:
-                logger.warning("Skipping malformed CycloneDX component %r", comp.get("name"), exc_info=True)
-                self._count_skipped(result, "parse-error")
-                continue
-            if parsed:
-                result.dependencies.append(parsed)
-                parsed_here.append(parsed)
-                if ref := comp.get("bom-ref") or parsed.purl:
-                    parsed_by_ref[ref] = parsed
-            else:
-                self._count_skipped(result, "unidentifiable")
+            elif parsed := self._append_parsed(
+                result,
+                "CycloneDX component",
+                self._parse_cyclonedx_component,
+                comp,
+                result.source_type,
+                result.source_target,
+                directness,
+            ):
+                parsed_by_ref[comp.get("bom-ref") or parsed.purl] = parsed
+        _resolve_parent_refs(parsed_by_ref, forward)
 
-        # Graph refs are bom-refs; tree readers match node keys, so translate once all are parsed.
-        for parsed in parsed_here:
-            parsed.parent_components = _parent_refs(parsed.parent_components, parsed_by_ref)
+    def _append_parsed(
+        self,
+        result: ParsedSBOM,
+        label: str,
+        parse_one: Callable[..., ParsedDependency | None],
+        item: dict[str, Any],
+        *args: Any,
+    ) -> ParsedDependency | None:
+        try:
+            parsed = parse_one(item, *args)
+        except Exception:
+            logger.warning("Skipping malformed %s %r", label, item.get("name"), exc_info=True)
+            self._count_skipped(result, "parse-error")
+            return None
+        if parsed is None:
+            self._count_skipped(result, "unidentifiable")
+        else:
+            result.dependencies.append(parsed)
+        return parsed
 
-    def _extract_cyclonedx_source(self, metadata: dict[str, Any]) -> tuple[str | None, str | None]:
-        """Extract source information from CycloneDX metadata."""
-
+    @staticmethod
+    def _extract_cyclonedx_source(component: dict[str, Any], properties: Any) -> tuple[str | None, str | None]:
         source_type = None
         source_target = None
+        comp_type = component.get("type")
+        comp_name = component.get("name")
+        if comp_type == "container":
+            source_type = SOURCE_TYPE_IMAGE
+            source_target = _image_reference(comp_name, component.get("version"))
+        elif comp_type in ("application", "library"):
+            source_type = SOURCE_TYPE_APPLICATION
+            source_target = comp_name
+        elif comp_type == "file":
+            source_type = SOURCE_TYPE_FILE
+            source_target = comp_name
 
-        # Check component (main subject)
-        component = metadata.get("component", {})
-        if component:
-            comp_type = component.get("type", "")
-            comp_name = component.get("name", "")
-            comp_version = component.get("version", "")
-
-            if comp_type == "container":
-                source_type = SOURCE_TYPE_IMAGE
-                # An OCI tag never contains ':', so a version that does is a digest.
-                separator = "@" if ":" in str(comp_version) else ":"
-                source_target = f"{comp_name}{separator}{comp_version}" if comp_version else comp_name
-            elif comp_type in ["application", "library"]:
-                source_type = SOURCE_TYPE_APPLICATION
-                source_target = comp_name
-            elif comp_type == "file":
-                source_type = SOURCE_TYPE_FILE
-                source_target = comp_name
-
-        # Check properties for syft/trivy hints
-        for prop in metadata.get("properties", []):
+        for prop in properties:
+            if not isinstance(prop, dict):
+                continue
             name = prop.get("name", "")
-            value = prop.get("value", "")
-
             if name == "aquasecurity:trivy:ImageName":
                 source_type = SOURCE_TYPE_IMAGE
-                source_target = value
+                source_target = prop.get("value", "")
             elif "image" in name.lower() and not source_type:
                 source_type = SOURCE_TYPE_IMAGE
 
@@ -509,22 +549,6 @@ class SBOMParser:
             return SOURCE_TYPE_IMAGE
 
         return global_source_type
-
-    @staticmethod
-    def _resolve_cyclonedx_directness(
-        check_ref: str | None,
-        direct_refs: set | None,
-        all_transitive_refs: set | None,
-        direct_refs_inferred: bool,
-    ) -> tuple[bool, bool]:
-        """Return (direct, direct_inferred) for a cyclonedx component."""
-        if direct_refs and check_ref in direct_refs:
-            return True, direct_refs_inferred
-        if all_transitive_refs and check_ref in all_transitive_refs:
-            return False, False
-        # The graph says nothing about this ref (or there is no graph): keep it
-        # direct so inventory counts hold, but flag the guess.
-        return True, True
 
     _LAYER_DIGEST_PROPS = ("trivy:LayerDigest", "aquasecurity:trivy:LayerDigest")
     _LAYER_DIFFID_PROP = "aquasecurity:trivy:LayerDiffID"
@@ -658,10 +682,7 @@ class SBOMParser:
         comp: dict[str, Any],
         global_source_type: str | None,
         source_target: str | None,
-        direct_refs: set | None = None,
-        all_transitive_refs: set | None = None,
-        reverse_deps_graph: dict | None = None,
-        direct_refs_inferred: bool = False,
+        directness: Callable[[Any], tuple[bool, bool]],
     ) -> ParsedDependency | None:
         """Parse a single CycloneDX component with all available fields."""
 
@@ -696,15 +717,7 @@ class SBOMParser:
             if not keep:
                 return None
 
-        check_ref = bom_ref or purl
-        direct, direct_inferred = self._resolve_cyclonedx_directness(
-            check_ref, direct_refs, all_transitive_refs, direct_refs_inferred
-        )
-
-        parent_components = []
-        if reverse_deps_graph and check_ref in reverse_deps_graph:
-            parent_components = reverse_deps_graph[check_ref]
-
+        direct, direct_inferred = directness(bom_ref or purl)
         license_str, license_url = self._extract_cyclonedx_licenses_full(comp.get("licenses") or [])
 
         homepage, repository_url, download_url, distribution_hashes = self._extract_cyclonedx_external_refs(
@@ -733,7 +746,6 @@ class SBOMParser:
             scope=scope,
             direct=direct,
             direct_inferred=direct_inferred,
-            parent_components=parent_components,
             source_type=determined_source_type,
             source_target=source_target,
             layer_digest=layer_digest,
@@ -833,74 +845,24 @@ class SBOMParser:
 
     @staticmethod
     def _build_syft_dependency_graph(
-        relationships: list[dict[str, Any]], source_id: str
-    ) -> tuple[set, set, dict[str, list], dict[str, list]]:
-        """Return (confirmed_direct_ids, transitive_ids, forward_deps, parents_by_id).
-
-        In syft's model `dependency-of` means 'parent IS A DEPENDENCY OF child',
-        so the dependent is the child. `contains` only conveys containment, never
-        directness; between artifacts it still yields a parent edge.
-        """
-        confirmed_direct: set = set()
-        forward_deps: dict[str, list] = {}
-        parents_by_id: dict[str, list] = {}
-
-        for rel in relationships:
-            if not isinstance(rel, dict):
+        relationships: Any, node_ids: set[Any]
+    ) -> tuple[dict[Any, list[Any]], dict[Any, list[Any]]]:
+        """(dependency, containment) edges between artifacts; 'dependency-of' reads 'parent IS A DEPENDENCY OF child'."""
+        forward: dict[Any, list[Any]] = {}
+        contains: dict[Any, list[Any]] = {}
+        for rel in _graph_entries(relationships, "artifactRelationships"):
+            parent, child, rel_type = rel.get("parent"), rel.get("child"), rel.get("type")
+            if parent not in node_ids or child not in node_ids:
                 continue
-            parent = rel.get("parent", "")
-            child = rel.get("child", "")
-            rel_type = rel.get("type", "")
-            if not parent or not child:
-                continue
-
             if rel_type == "depends-on":
-                dependent, dependency = parent, child
+                forward.setdefault(parent, []).append(child)
             elif rel_type == "dependency-of":
-                dependent, dependency = child, parent
-            elif rel_type == "contains" and parent != source_id:
-                parents_by_id.setdefault(child, []).append(parent)
-                continue
-            else:
-                continue
-
-            if dependent == source_id:
-                confirmed_direct.add(dependency)
-            else:
-                forward_deps.setdefault(dependent, []).append(dependency)
-                parents_by_id.setdefault(dependency, []).append(dependent)
-
-        transitive_ids = {dep_id for children in forward_deps.values() for dep_id in children}
-        return confirmed_direct, transitive_ids, forward_deps, parents_by_id
-
-    @staticmethod
-    def _syft_fallback_direct_ids(forward_deps: dict[str, list], transitive_ids: set) -> set:
-        """When the source declares no dependencies, a single graph root is the scanned project; its children are the direct set."""
-        roots = [dep_id for dep_id in forward_deps if dep_id not in transitive_ids]
-        if len(roots) == 1:
-            return set(forward_deps[roots[0]])
-        return set()
-
-    @staticmethod
-    def _resolve_syft_directness(
-        artifact_id: str,
-        confirmed_direct: set,
-        fallback_direct: set,
-        transitive_ids: set,
-    ) -> tuple[bool, bool]:
-        if artifact_id in confirmed_direct:
-            return True, False
-        if artifact_id in fallback_direct:
-            return True, True
-        if artifact_id in transitive_ids:
-            return False, False
-        # The graph says nothing about this artifact (e.g. contains-only image
-        # catalogs): keep it direct so inventory counts hold, but flag the guess.
-        return True, True
+                forward.setdefault(child, []).append(parent)
+            elif rel_type == "contains":
+                contains.setdefault(parent, []).append(child)
+        return forward, contains
 
     def _parse_syft(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
-        """Parse Syft JSON format SBOM."""
-
         source = sbom.get("source", {})
         source_id = source.get("id", "")
         source_type, source_target = self._resolve_syft_source(source)
@@ -908,55 +870,25 @@ class SBOMParser:
             result.source_type = source_type
             result.source_target = source_target
 
-        artifacts = sbom.get("artifacts") or []
-        relationships = sbom.get("artifactRelationships") or []
+        raw_artifacts = sbom.get("artifacts") or []
+        artifacts = [artifact for artifact in raw_artifacts if isinstance(artifact, dict)]
+        self._count_skipped(result, "malformed", len(raw_artifacts) - len(artifacts))
         self._count_skipped(result, "file", len(sbom.get("files") or []))
 
-        confirmed_direct, transitive_ids, forward_deps, parents_by_id = self._build_syft_dependency_graph(
-            relationships, source_id
-        )
-        fallback_direct: set = set()
-        if not confirmed_direct:
-            fallback_direct = self._syft_fallback_direct_ids(forward_deps, transitive_ids)
+        node_ids = {source_id, *(artifact.get("id") for artifact in artifacts)}
+        forward, contains = self._build_syft_dependency_graph(sbom.get("artifactRelationships") or [], node_ids)
+        project = {artifact.get("id") for artifact in artifacts if _has_local_origin(artifact.get("metadata"))}
+        directness, subjects = _resolve_directness(forward, {source_id}, set(), project)
 
-        logger.debug(
-            f"Syft relationship analysis: {len(confirmed_direct)} confirmed direct, "
-            f"{len(fallback_direct)} fallback direct, {len(transitive_ids)} transitive "
-            f"from {len(relationships)} relationships"
-        )
-
-        parsed_by_id: dict[str, ParsedDependency] = {}
+        parsed_by_id: dict[Any, ParsedDependency] = {}
         for artifact in artifacts:
-            if not isinstance(artifact, dict):
-                self._count_skipped(result, "malformed")
-                continue
-            artifact_id = artifact.get("id", "")
-            is_direct, direct_inferred = self._resolve_syft_directness(
-                artifact_id, confirmed_direct, fallback_direct, transitive_ids
-            )
-
-            try:
-                parsed = self._parse_syft_artifact(
-                    artifact,
-                    result.source_type,
-                    result.source_target,
-                    is_direct,
-                    direct_inferred,
-                )
-            except Exception:
-                logger.warning("Skipping malformed Syft artifact %r", artifact.get("name"), exc_info=True)
-                self._count_skipped(result, "parse-error")
-                continue
-            if parsed:
-                result.dependencies.append(parsed)
-                if artifact_id:
-                    parsed_by_id[artifact_id] = parsed
-            else:
-                self._count_skipped(result, "unidentifiable")
-
-        # Parent ids resolve to node keys only once every artifact is parsed.
-        for artifact_id, parsed in parsed_by_id.items():
-            parsed.parent_components = _parent_refs(parents_by_id.get(artifact_id, []), parsed_by_id)
+            if artifact.get("id") in subjects:
+                self._count_skipped(result, "root-component")
+            elif parsed := self._append_parsed(
+                result, "Syft artifact", self._parse_syft_artifact, artifact, source_type, source_target, directness
+            ):
+                parsed_by_id[artifact.get("id")] = parsed
+        _resolve_parent_refs(parsed_by_id, forward, contains)
 
     @staticmethod
     def _extract_syft_locations(
@@ -989,20 +921,12 @@ class SBOMParser:
             entries.append({"algorithm": "sha256", "value": metadata.get("checksum")})
         return {**_hash_map(entries, "algorithm", "value"), **_hash_map(metadata.get("digest"), "algorithm", "value")}
 
-    @staticmethod
-    def _resolve_syft_direct(is_direct: bool, metadata: dict[str, Any]) -> bool:
-        """Combine relationship-based and metadata-flag directness."""
-        if is_direct:
-            return True
-        return bool(metadata and (metadata.get("directDependency") or metadata.get("direct")))
-
     def _parse_syft_artifact(
         self,
         artifact: dict[str, Any],
         source_type: str | None,
         source_target: str | None,
-        is_direct: bool = False,
-        direct_inferred: bool = False,
+        directness: Callable[[Any], tuple[bool, bool]],
     ) -> ParsedDependency | None:
         """Parse a single Syft artifact with all available fields."""
 
@@ -1039,6 +963,7 @@ class SBOMParser:
             None,
         )
         homepage = metadata.get("homepage") or (None if pkg_type == "npm" else metadata.get("url")) or None
+        is_direct, direct_inferred = directness(artifact.get("id"))
 
         return ParsedDependency(
             name=name,
@@ -1048,7 +973,7 @@ class SBOMParser:
             type=get_purl_type(purl) or pkg_type,
             license=license_str,
             license_url=license_url,
-            direct=self._resolve_syft_direct(is_direct, metadata),
+            direct=is_direct or bool(metadata.get("directDependency") or metadata.get("direct")),
             direct_inferred=direct_inferred,
             source_type=self._determine_component_source(
                 purl=purl,
@@ -1128,67 +1053,23 @@ class SBOMParser:
 
         return ", ".join(unique), license_url
 
-    def _build_spdx_dependency_graph(
-        self, relationships: list[dict[str, Any]], doc_spdx_id: str
-    ) -> tuple[set, dict[str, list], set]:
-        """Build SPDX dependency-graph data used to classify direct vs transitive deps.
-
-        In the canonical SPDX layout (e.g. a GitHub SBOM export) the document DESCRIBES a root
-        package (the application/repo); that root's DEPENDS_ON children are the DIRECT dependencies
-        and the root package itself is NOT a dependency. Only when a DESCRIBES target has no
-        DEPENDS_ON children (minimal SBOMs) is the described package itself the direct dep. Packages
-        the document points at directly via CONTAINS/DEPENDS_ON are treated as direct.
-
-        Returns (direct_package_ids, reverse_deps_graph, app_root_ids); ``app_root_ids`` are the
-        DESCRIBES targets with DEPENDS_ON children — the scanned application itself, which must not
-        be ingested as a dependency.
-        """
-        described_roots: set = set()  # application roots (DOCUMENT DESCRIBES ...)
-        doc_direct_targets: set = set()  # packages the DOCUMENT points at directly
-        forward_deps: dict[str, list] = {}  # element -> [children] via DEPENDS_ON
-        all_dependency_targets: set = set()  # every DEPENDS_ON target (transitive candidates)
-        packages_with_deps: set = set()  # elements that declare DEPENDS_ON edges
-        reverse_deps_graph: dict[str, list] = {}
-
-        for rel in relationships:
-            rel_type = rel.get("relationshipType", "")
-            element_id = rel.get("spdxElementId", "")
-            related_id = rel.get("relatedSpdxElement", "")
-
-            if element_id == doc_spdx_id:
-                if rel_type in ("DESCRIBES", "DOCUMENT_DESCRIBES"):
-                    described_roots.add(related_id)
-                elif rel_type in ("CONTAINS", "DEPENDS_ON"):
-                    doc_direct_targets.add(related_id)
-
+    @staticmethod
+    def _build_spdx_dependency_graph(relationships: Any, doc_spdx_id: Any) -> tuple[dict[Any, list[Any]], set[Any]]:
+        """(DEPENDS_ON edges with DEPENDENCY_OF reversed into them, the packages the document describes)."""
+        forward: dict[Any, list[Any]] = {}
+        described: set[Any] = set()
+        for rel in _graph_entries(relationships, "relationships"):
+            rel_type = rel.get("relationshipType")
+            element, related = rel.get("spdxElementId"), rel.get("relatedSpdxElement")
             if rel_type == "DEPENDS_ON":
-                forward_deps.setdefault(element_id, []).append(related_id)
-                all_dependency_targets.add(related_id)
-                packages_with_deps.add(element_id)
-                reverse_deps_graph.setdefault(related_id, []).append(element_id)
-
-        # Direct deps = (a) packages the document points at directly, plus (b) the
-        # DEPENDS_ON children of each described root (or the root itself if it has none).
-        direct_package_ids: set = set(doc_direct_targets)
-        for root in described_roots:
-            children = forward_deps.get(root)
-            if children:
-                direct_package_ids.update(children)
-            else:
-                direct_package_ids.add(root)
-
-        # Fallback for SBOMs with no document-level roots: infer roots as packages that
-        # have deps but are not themselves depended upon, and take their children.
-        if not direct_package_ids and packages_with_deps:
-            for root in packages_with_deps - all_dependency_targets:
-                direct_package_ids.update(forward_deps.get(root, []))
-
-        app_root_ids = {root for root in described_roots if forward_deps.get(root)}
-        return direct_package_ids, reverse_deps_graph, app_root_ids
+                forward.setdefault(element, []).append(related)
+            elif rel_type == "DEPENDENCY_OF":
+                forward.setdefault(related, []).append(element)
+            elif rel_type in ("DESCRIBES", "DOCUMENT_DESCRIBES") and element == doc_spdx_id:
+                described.add(related)
+        return forward, described
 
     def _parse_spdx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
-        """Parse SPDX format SBOM."""
-
         creation_info = sbom.get("creationInfo")
         creators = creation_info.get("creators") if isinstance(creation_info, dict) else None
         # osv reads a set found_by as "syft catalogued this", which only the syft creator tool can vouch for.
@@ -1201,53 +1082,44 @@ class SBOMParser:
             None,
         )
 
-        relationships = sbom.get("relationships") or []
         doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
-
-        direct_package_ids, reverse_deps_graph, app_root_ids = self._build_spdx_dependency_graph(
-            relationships, doc_spdx_id
-        )
+        forward, described = self._build_spdx_dependency_graph(sbom.get("relationships") or [], doc_spdx_id)
+        # SPDX 2.2 names the described packages in documentDescribes instead of DESCRIBES relationships.
+        described.update(ref for ref in sbom.get("documentDescribes") or [] if isinstance(ref, str))
+        directness, subjects = _resolve_directness(forward, {doc_spdx_id, *described}, set(), set())
 
         packages = sbom.get("packages") or []
-        inferred = not bool(relationships)
         self._count_skipped(result, "file", len(sbom.get("files") or []))
 
-        root_pkg = next((p for p in packages if isinstance(p, dict) and p.get("SPDXID") in app_root_ids), None)
-        if root_pkg is not None:
-            result.source_type = SOURCE_TYPE_APPLICATION
-            result.source_target = root_pkg.get("name")
+        for pkg in packages:
+            if not isinstance(pkg, dict) or pkg.get("SPDXID") not in described:
+                continue
+            if pkg.get("primaryPackagePurpose") == "CONTAINER":
+                result.source_type = SOURCE_TYPE_IMAGE
+                result.source_target = _image_reference(pkg.get("name"), _spdx_value(pkg, "versionInfo"))
+                break
+            if pkg.get("SPDXID") in subjects:
+                result.source_type, result.source_target = SOURCE_TYPE_APPLICATION, pkg.get("name")
+                break
 
-        parsed_by_id: dict[str, ParsedDependency] = {}
+        parsed_by_id: dict[Any, ParsedDependency] = {}
         for pkg in packages:
             if not isinstance(pkg, dict):
                 self._count_skipped(result, "malformed")
-                continue
-            pkg_spdx_id = pkg.get("SPDXID", "")
-            if pkg_spdx_id in app_root_ids:
+            elif pkg.get("SPDXID") in subjects:
                 self._count_skipped(result, "root-component")
-                continue
-
-            is_direct = inferred or pkg_spdx_id in direct_package_ids
-
-            try:
-                parsed = self._parse_spdx_package(
-                    pkg, is_direct, inferred, result.source_type, result.source_target, found_by
-                )
-            except Exception:
-                logger.warning("Skipping malformed SPDX package %r", pkg.get("name"), exc_info=True)
-                self._count_skipped(result, "parse-error")
-                continue
-            if parsed:
-                result.dependencies.append(parsed)
-                if pkg_spdx_id:
-                    parsed_by_id[pkg_spdx_id] = parsed
-            else:
-                self._count_skipped(result, "unidentifiable")
-
-        # SPDXRef parents resolve to node keys only once every package is parsed; refs to the
-        # skipped root drop out, leaving direct dependencies parentless as expected.
-        for pkg_spdx_id, parsed in parsed_by_id.items():
-            parsed.parent_components = _parent_refs(reverse_deps_graph.get(pkg_spdx_id, []), parsed_by_id)
+            elif parsed := self._append_parsed(
+                result,
+                "SPDX package",
+                self._parse_spdx_package,
+                pkg,
+                directness,
+                result.source_type,
+                result.source_target,
+                found_by,
+            ):
+                parsed_by_id[pkg.get("SPDXID")] = parsed
+        _resolve_parent_refs(parsed_by_id, forward)
 
     _SPDX_DOWNLOAD_LOC_TYPE_MAP = (
         (("npmjs.org", "registry.npmjs"), "npm"),
@@ -1321,11 +1193,10 @@ class SBOMParser:
     def _parse_spdx_package(
         self,
         pkg: dict[str, Any],
-        is_direct: bool = False,
-        direct_inferred: bool = False,
-        global_source_type: str | None = None,
-        source_target: str | None = None,
-        found_by: str | None = None,
+        directness: Callable[[Any], tuple[bool, bool]],
+        global_source_type: str | None,
+        source_target: str | None,
+        found_by: str | None,
     ) -> ParsedDependency | None:
         """Parse a single SPDX package with all available fields."""
 
@@ -1350,6 +1221,7 @@ class SBOMParser:
         pkg_type = get_purl_type(purl) or "unknown"
         author, publisher = self._resolve_spdx_originator(pkg)
         package_file_name = pkg.get("packageFileName")
+        is_direct, direct_inferred = directness(pkg.get("SPDXID"))
 
         return ParsedDependency(
             name=name,

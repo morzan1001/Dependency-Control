@@ -1,0 +1,761 @@
+{
+ "spdxVersion": "SPDX-2.3",
+ "dataLicense": "CC0-1.0",
+ "SPDXID": "SPDXRef-DOCUMENT",
+ "name": "/tmp/w3b-t2/mono",
+ "documentNamespace": "https://anchore.com/syft/dir/tmp/w3b-t2/mono-b8c916ee-9182-401a-a8ac-30f92f069676",
+ "creationInfo": {
+  "licenseListVersion": "3.27",
+  "creators": [
+   "Organization: Anchore, Inc",
+   "Tool: syft-1.42.1"
+  ],
+  "created": "2026-09-29T21:13:39Z"
+ },
+ "packages": [
+  {
+   "name": "anyio",
+   "SPDXID": "SPDXRef-Package-python-anyio-4370e91781766145",
+   "versionInfo": "4.4.0",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed python package manifest file: /backend/poetry.lock",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "NOASSERTION",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-anyio:python-anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-anyio:python_anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_anyio:python-anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_anyio:python_anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python-anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python_anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:anyio:python-anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:anyio:python_anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-anyio:anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_anyio:anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:anyio:anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:pypi/anyio@4.4.0"
+    }
+   ]
+  },
+  {
+   "name": "certifi",
+   "SPDXID": "SPDXRef-Package-python-certifi-b929298c0a8dba24",
+   "versionInfo": "2024.7.4",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed python package manifest file: /backend/poetry.lock",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "NOASSERTION",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:certifi:certifi:2024.7.4:*:*:*:*:python:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:pypi/certifi@2024.7.4"
+    }
+   ]
+  },
+  {
+   "name": "debug",
+   "SPDXID": "SPDXRef-Package-npm-debug-ce803f0c77037950",
+   "versionInfo": "4.3.4",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "https://registry.npmjs.org/debug/-/debug-4.3.4.tgz",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed node module manifest file: /frontend/package-lock.json",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "MIT",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:debug_project:debug:4.3.4:*:*:*:*:node.js:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:npm/debug@4.3.4"
+    }
+   ]
+  },
+  {
+   "name": "h11",
+   "SPDXID": "SPDXRef-Package-python-h11-3334efaa48c913cf",
+   "versionInfo": "0.14.0",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed python package manifest file: /backend/poetry.lock",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "NOASSERTION",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-h11:python-h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-h11:python_h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_h11:python-h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_h11:python_h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python-h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python_h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:h11:python-h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:h11:python_h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-h11:h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_h11:h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:h11:h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:pypi/h11@0.14.0"
+    }
+   ]
+  },
+  {
+   "name": "httpcore",
+   "SPDXID": "SPDXRef-Package-python-httpcore-3c64d01bc4308259",
+   "versionInfo": "1.0.5",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed python package manifest file: /backend/poetry.lock",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "NOASSERTION",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-httpcore:python-httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-httpcore:python_httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_httpcore:python-httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_httpcore:python_httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:httpcore:python-httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:httpcore:python_httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-httpcore:httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_httpcore:httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python-httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python_httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:httpcore:httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:pypi/httpcore@1.0.5"
+    }
+   ]
+  },
+  {
+   "name": "httpx",
+   "SPDXID": "SPDXRef-Package-python-httpx-68836da4d6175af3",
+   "versionInfo": "0.27.0",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed python package manifest file: /backend/poetry.lock",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "NOASSERTION",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:encode:httpx:0.27.0:*:*:*:*:python:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:pypi/httpx@0.27.0"
+    }
+   ]
+  },
+  {
+   "name": "idna",
+   "SPDXID": "SPDXRef-Package-python-idna-01a017eacc26c5b6",
+   "versionInfo": "3.7",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed python package manifest file: /backend/poetry.lock",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "NOASSERTION",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-idna:python-idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-idna:python_idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_idna:python-idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_idna:python_idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python-idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python_idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:idna:python-idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:idna:python_idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-idna:idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_idna:idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:idna:idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:pypi/idna@3.7"
+    }
+   ]
+  },
+  {
+   "name": "ms",
+   "SPDXID": "SPDXRef-Package-npm-ms-f6dde40e2affabcb",
+   "versionInfo": "2.1.2",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "https://registry.npmjs.org/ms/-/ms-2.1.2.tgz",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed node module manifest file: /frontend/package-lock.json",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "MIT",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:vercel:ms:2.1.2:*:*:*:*:node.js:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:npm/ms@2.1.2"
+    }
+   ]
+  },
+  {
+   "name": "myapp",
+   "SPDXID": "SPDXRef-Package-npm-myapp-62d3305559d9b148",
+   "versionInfo": "1.0.0",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed node module manifest file: /frontend/package-lock.json",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "MIT",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:myapp:myapp:1.0.0:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:npm/myapp@1.0.0"
+    }
+   ]
+  },
+  {
+   "name": "sniffio",
+   "SPDXID": "SPDXRef-Package-python-sniffio-477afa445824f209",
+   "versionInfo": "1.3.1",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "sourceInfo": "acquired package info from installed python package manifest file: /backend/poetry.lock",
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "NOASSERTION",
+   "copyrightText": "NOASSERTION",
+   "externalRefs": [
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-sniffio:python-sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-sniffio:python_sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_sniffio:python-sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_sniffio:python_sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python-sniffio:sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python_sniffio:sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:sniffio:python-sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:sniffio:python_sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python-sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:python_sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:sniffio:sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "SECURITY",
+     "referenceType": "cpe23Type",
+     "referenceLocator": "cpe:2.3:a:python:sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "referenceCategory": "PACKAGE-MANAGER",
+     "referenceType": "purl",
+     "referenceLocator": "pkg:pypi/sniffio@1.3.1"
+    }
+   ]
+  },
+  {
+   "name": "/tmp/w3b-t2/mono",
+   "SPDXID": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "supplier": "NOASSERTION",
+   "downloadLocation": "NOASSERTION",
+   "filesAnalyzed": false,
+   "licenseConcluded": "NOASSERTION",
+   "licenseDeclared": "NOASSERTION",
+   "copyrightText": "NOASSERTION",
+   "primaryPackagePurpose": "FILE"
+  }
+ ],
+ "files": [
+  {
+   "fileName": "backend/poetry.lock",
+   "SPDXID": "SPDXRef-File-backend-poetry.lock-5f5c52c9e4a2d497",
+   "fileTypes": [
+    "TEXT"
+   ],
+   "checksums": [
+    {
+     "algorithm": "SHA1",
+     "checksumValue": "051e0f3d6c2c7f42d0dd786a070d2355844ae4c0"
+    },
+    {
+     "algorithm": "SHA256",
+     "checksumValue": "2f3065d2da861ed58b3fa62a66c26069bf90c36951a1fce53f6a56bfb1298b90"
+    }
+   ],
+   "licenseConcluded": "NOASSERTION",
+   "licenseInfoInFiles": [
+    "NOASSERTION"
+   ],
+   "copyrightText": "NOASSERTION"
+  },
+  {
+   "fileName": "frontend/package-lock.json",
+   "SPDXID": "SPDXRef-File-frontend-package-lock.json-c9e3ffd6671019b2",
+   "fileTypes": [
+    "APPLICATION"
+   ],
+   "checksums": [
+    {
+     "algorithm": "SHA1",
+     "checksumValue": "9bc6f6237cb7b5ef91cdc6f48bd2e4442cb1b229"
+    },
+    {
+     "algorithm": "SHA256",
+     "checksumValue": "3d0a3e0d00d947eea932f02a0405e0a63e927781d99cacd01872917beae717e5"
+    }
+   ],
+   "licenseConcluded": "NOASSERTION",
+   "licenseInfoInFiles": [
+    "NOASSERTION"
+   ],
+   "copyrightText": "NOASSERTION"
+  }
+ ],
+ "relationships": [
+  {
+   "spdxElementId": "SPDXRef-Package-python-idna-01a017eacc26c5b6",
+   "relatedSpdxElement": "SPDXRef-Package-python-anyio-4370e91781766145",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-idna-01a017eacc26c5b6",
+   "relatedSpdxElement": "SPDXRef-Package-python-httpx-68836da4d6175af3",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-h11-3334efaa48c913cf",
+   "relatedSpdxElement": "SPDXRef-Package-python-httpcore-3c64d01bc4308259",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-httpcore-3c64d01bc4308259",
+   "relatedSpdxElement": "SPDXRef-Package-python-httpx-68836da4d6175af3",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-anyio-4370e91781766145",
+   "relatedSpdxElement": "SPDXRef-Package-python-httpx-68836da4d6175af3",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-sniffio-477afa445824f209",
+   "relatedSpdxElement": "SPDXRef-Package-python-anyio-4370e91781766145",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-sniffio-477afa445824f209",
+   "relatedSpdxElement": "SPDXRef-Package-python-httpx-68836da4d6175af3",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-certifi-b929298c0a8dba24",
+   "relatedSpdxElement": "SPDXRef-Package-python-httpcore-3c64d01bc4308259",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-certifi-b929298c0a8dba24",
+   "relatedSpdxElement": "SPDXRef-Package-python-httpx-68836da4d6175af3",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-npm-debug-ce803f0c77037950",
+   "relatedSpdxElement": "SPDXRef-Package-npm-myapp-62d3305559d9b148",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-npm-ms-f6dde40e2affabcb",
+   "relatedSpdxElement": "SPDXRef-Package-npm-debug-ce803f0c77037950",
+   "relationshipType": "DEPENDENCY_OF"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-idna-01a017eacc26c5b6",
+   "relatedSpdxElement": "SPDXRef-File-backend-poetry.lock-5f5c52c9e4a2d497",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-h11-3334efaa48c913cf",
+   "relatedSpdxElement": "SPDXRef-File-backend-poetry.lock-5f5c52c9e4a2d497",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-httpcore-3c64d01bc4308259",
+   "relatedSpdxElement": "SPDXRef-File-backend-poetry.lock-5f5c52c9e4a2d497",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-anyio-4370e91781766145",
+   "relatedSpdxElement": "SPDXRef-File-backend-poetry.lock-5f5c52c9e4a2d497",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-sniffio-477afa445824f209",
+   "relatedSpdxElement": "SPDXRef-File-backend-poetry.lock-5f5c52c9e4a2d497",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-npm-myapp-62d3305559d9b148",
+   "relatedSpdxElement": "SPDXRef-File-frontend-package-lock.json-c9e3ffd6671019b2",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-httpx-68836da4d6175af3",
+   "relatedSpdxElement": "SPDXRef-File-backend-poetry.lock-5f5c52c9e4a2d497",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-python-certifi-b929298c0a8dba24",
+   "relatedSpdxElement": "SPDXRef-File-backend-poetry.lock-5f5c52c9e4a2d497",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-npm-debug-ce803f0c77037950",
+   "relatedSpdxElement": "SPDXRef-File-frontend-package-lock.json-c9e3ffd6671019b2",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-Package-npm-ms-f6dde40e2affabcb",
+   "relatedSpdxElement": "SPDXRef-File-frontend-package-lock.json-c9e3ffd6671019b2",
+   "relationshipType": "OTHER",
+   "comment": "evident-by: indicates the package's existence is evident by the given file"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-python-anyio-4370e91781766145",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-python-certifi-b929298c0a8dba24",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-npm-debug-ce803f0c77037950",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-python-h11-3334efaa48c913cf",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-python-httpcore-3c64d01bc4308259",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-python-httpx-68836da4d6175af3",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-python-idna-01a017eacc26c5b6",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-npm-ms-f6dde40e2affabcb",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-npm-myapp-62d3305559d9b148",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relatedSpdxElement": "SPDXRef-Package-python-sniffio-477afa445824f209",
+   "relationshipType": "CONTAINS"
+  },
+  {
+   "spdxElementId": "SPDXRef-DOCUMENT",
+   "relatedSpdxElement": "SPDXRef-DocumentRoot-Directory--tmp-w3b-t2-mono",
+   "relationshipType": "DESCRIBES"
+  }
+ ]
+}
