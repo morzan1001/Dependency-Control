@@ -101,9 +101,15 @@ async def seeded_db():
     """A fake DB with a project, scan, and enriched findings (one waived)."""
     db = FakeDatabase()
     await db.projects.insert_one(
-        {"_id": PROJECT_ID, "name": "proj-w4", "latest_scan_id": SCAN_ID, "deleted_branches": []}
+        {
+            "_id": PROJECT_ID,
+            "name": "proj-w4",
+            "latest_scan_id": SCAN_ID,
+            "default_branch": "main",
+            "deleted_branches": [],
+        }
     )
-    await db.scans.insert_one({"_id": SCAN_ID, "project_id": PROJECT_ID, "status": "completed"})
+    await db.scans.insert_one({"_id": SCAN_ID, "project_id": PROJECT_ID, "branch": "main", "status": "completed"})
     findings = [
         _finding(
             "f-crit",
