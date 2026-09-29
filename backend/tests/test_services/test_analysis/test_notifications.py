@@ -56,13 +56,10 @@ def _finding(fid, severity, epss=None, in_kev=False):
     )
 
 
-class _FakeScans:
-    async def find_one(self, *_args, **_kwargs):
-        return None
-
-
-class _FakeDB:
-    scans = _FakeScans()
+async def _db_with_scan(scan_id: str = "scan-abc-123") -> FakeDatabase:
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": scan_id, "status": "completed"})
+    return db
 
 
 async def _capture_vuln_message(findings):
@@ -90,7 +87,7 @@ async def _capture_vuln_message(findings):
             project=project,
             aggregated_findings=findings,
             results_summary=["osv: ok"],
-            db=_FakeDB(),
+            db=await _db_with_scan(),
         )
     webhook_call = fake_webhook.trigger_vulnerability_found.call_args
     captured["webhook"] = webhook_call.kwargs if webhook_call else None
@@ -166,7 +163,7 @@ class TestAnalysisCompletedReachesSubscribers:
     async def test_a_member_subscribed_to_analysis_completed_is_emailed(self):
         """The event name is the key a member's preferences are looked up under, so one the
         preference sanitizer does not know silently reaches nobody."""
-        db = FakeDatabase()
+        db = await _db_with_scan()
         await db.users.insert_one(
             {
                 "_id": "user-1",
@@ -203,3 +200,52 @@ class TestAnalysisCompletedReachesSubscribers:
         send.assert_awaited_once()
         assert send.await_args.args[0] == "dev@example.com"
         assert "Analysis Completed: MyProject" in send.await_args.args[1]
+
+
+def _sast_finding(fid):
+    return SimpleNamespace(id=fid, type="sast", severity="HIGH", component="app.py", version="")
+
+
+async def _announce_twice(first, second):
+    """Two analyses of one scan, as a late scanner result that reopens it produces."""
+    db = await _db_with_scan()
+    project = SimpleNamespace(id="proj-1", name="MyProject")
+    notify = SimpleNamespace(notify_project_members=AsyncMock())
+    webhooks = SimpleNamespace(trigger_scan_completed=AsyncMock(), trigger_vulnerability_found=AsyncMock())
+    with (
+        patch.object(notifications, "notification_service", notify),
+        patch.object(notifications, "webhook_service", webhooks),
+    ):
+        for findings in (first, second):
+            await send_scan_notifications("scan-abc-123", project, findings, ["osv: ok"], db)
+    events = [call.kwargs["event_type"] for call in notify.notify_project_members.await_args_list]
+    return events, webhooks
+
+
+class TestReAnalysisAnnouncements:
+    @pytest.mark.asyncio
+    async def test_an_unchanged_re_analysis_announces_nothing_again(self):
+        events, webhooks = await _announce_twice([_finding("CVE-1", "CRITICAL")], [_finding("CVE-1", "CRITICAL")])
+
+        assert events == ["analysis_completed", "vulnerability_found"]
+        assert webhooks.trigger_scan_completed.await_count == 1
+        assert webhooks.trigger_vulnerability_found.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_late_sast_result_reports_the_completion_but_does_not_repeat_the_alert(self):
+        events, webhooks = await _announce_twice(
+            [_finding("CVE-1", "CRITICAL")], [_finding("CVE-1", "CRITICAL"), _sast_finding("SAST-1")]
+        )
+
+        assert events == ["analysis_completed", "vulnerability_found", "analysis_completed"]
+        assert webhooks.trigger_scan_completed.await_count == 2
+        assert webhooks.trigger_vulnerability_found.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_new_vulnerability_alerts_again(self):
+        events, webhooks = await _announce_twice(
+            [_finding("CVE-1", "CRITICAL")], [_finding("CVE-1", "CRITICAL"), _finding("CVE-2", "HIGH")]
+        )
+
+        assert events.count("vulnerability_found") == 2
+        assert webhooks.trigger_vulnerability_found.await_count == 2
