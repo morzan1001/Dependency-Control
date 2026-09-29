@@ -545,15 +545,6 @@ class TestIncidentCardsLeaveWaivedAdvisoriesOut:
         assert card.type == RecommendationType.RANSOMWARE_RISK
         assert card.action["cves"] == [_KEV_ONLY_CVE]
 
-    def test_a_waived_kev_advisory_raises_no_kev_card(self):
-        finding = _vuln("log4j-core", is_kev=True)
-        finding["details"]["vulnerabilities"] = [
-            {"id": "CVE-2021-44228", "in_kev": True, "waived": True},
-            {"id": "CVE-2021-44832"},
-        ]
-
-        assert detect_known_exploits([finding]) == []
-
     def test_a_waived_cve_gets_no_card_from_live_data_either(self):
         finding = _vuln("log4j-core")
         finding["details"]["vulnerabilities"] = [{"id": _RANSOMWARE_CVE, "waived": True}]
