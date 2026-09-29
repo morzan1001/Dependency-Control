@@ -93,6 +93,31 @@ async def test_a_project_waivers_change_recalculates_its_project_whatever_it_hol
     assert visited == ["p-own"]
 
 
+async def test_the_scan_a_waiver_was_written_from_is_restamped_though_no_branch_tip():
+    db = FakeDatabase()
+    await db.projects.insert_one({"_id": "p-own", "name": "p-own", "default_branch": "main"})
+    await db.scans.insert_one(
+        {"_id": "scan-head", "project_id": "p-own", "branch": "main", "status": "completed", "created_at": _NOW}
+    )
+    await db.scans.insert_one(
+        {
+            "_id": "scan-stale",
+            "project_id": "p-own",
+            "branch": "old-feature",
+            "status": "completed",
+            "created_at": _NOW - timedelta(days=400),
+        }
+    )
+    await db.findings.insert_one(
+        {"_id": "f-stale", "scan_id": "scan-stale", "type": "license", "component": "lib", "finding_id": _GPL}
+    )
+
+    await request_waiver_recalc(db, await _store(db, _gpl_waiver(project_id="p-own")), restamp=["scan-stale"])
+    await run_waiver_recalc(db)
+
+    assert (await db.findings.find_one({"_id": "f-stale"}))["waived"] is True
+
+
 async def test_changes_queued_together_share_one_pass_over_the_projects(monkeypatch):
     db = FakeDatabase()
     await _seed_project(db, "p-1", _GPL)
