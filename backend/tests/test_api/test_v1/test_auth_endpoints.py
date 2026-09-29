@@ -475,3 +475,19 @@ class TestRequestVerificationSmtpGate:
         assert result.message == "Verification email sent"
         background_tasks.add_task.assert_called_once()
         assert background_tasks.add_task.call_args.kwargs["system_settings"] is system_config
+
+
+class TestForgotPasswordLocalAccountsOnly:
+    def test_an_sso_account_with_a_password_gets_no_reset_mail(self):
+        send_mock = AsyncMock()
+        sso_user = {
+            "email": "user@test.com",
+            "username": "user",
+            "is_active": True,
+            "auth_provider": "gitlab",
+            "hashed_password": "x",
+        }
+
+        _run_forgot_password(user=sso_user, send_mock=send_mock)
+
+        send_mock.assert_not_awaited()

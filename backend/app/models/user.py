@@ -3,6 +3,7 @@ from datetime import datetime
 
 from pydantic import ConfigDict, EmailStr, Field
 
+from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.notification_prefs import NotificationPreferences
 from app.models.types import MongoDocument
 
@@ -16,7 +17,8 @@ class User(MongoDocument):
     hashed_password: str | None = None
     is_active: bool = True
     is_verified: bool = False
-    auth_provider: str = "local"  # "local", "gitlab", "google", etc.
+    # AUTH_PROVIDER_LOCAL, or the OIDC provider name the account signs in through.
+    auth_provider: str = AUTH_PROVIDER_LOCAL
     permissions: list[str] = Field(default_factory=list)  # e.g. "project:create", "user:read_all"
     last_logout_at: datetime | None = None
 

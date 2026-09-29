@@ -21,6 +21,7 @@ from app.api.v1.helpers import (
     send_email_change_email,
     send_password_reset_email,
 )
+from app.api.v1.helpers.users import is_local_account
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400,
@@ -144,7 +145,7 @@ async def request_email_change(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Park a new email as pending and mail it a confirmation link (local accounts only)."""
-    if current_user.auth_provider != AUTH_PROVIDER_LOCAL:
+    if not is_local_account(current_user):
         raise HTTPException(status_code=400, detail="Your email is managed by your identity provider")
 
     system_settings = await deps.get_system_settings(db)
@@ -236,7 +237,7 @@ async def update_user(
         )
 
     if "email" in update_data and update_data["email"] != existing_user["email"].lower():
-        if existing_user.get("auth_provider", AUTH_PROVIDER_LOCAL) != AUTH_PROVIDER_LOCAL:
+        if not is_local_account(existing_user):
             raise HTTPException(status_code=400, detail="This account's email is managed by its identity provider")
         update_data["is_verified"] = False
 
@@ -268,7 +269,7 @@ async def migrate_to_local(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Migrate SSO user to local account by setting a password."""
-    if current_user.auth_provider == AUTH_PROVIDER_LOCAL:
+    if is_local_account(current_user):
         raise HTTPException(status_code=400, detail="User is already a local account.")
 
     hashed_password = security.get_password_hash(password_in.new_password)
@@ -292,7 +293,7 @@ async def migrate_user_to_local(
     user = await get_user_or_404(user_id, db)
     ensure_can_manage_target(current_user, user)
 
-    if user.get("auth_provider") == AUTH_PROVIDER_LOCAL:
+    if is_local_account(user):
         raise HTTPException(status_code=400, detail="User is already a local account")
 
     user_repo = UserRepository(db)
@@ -312,7 +313,7 @@ async def reset_user_password(
     user = await get_user_or_404(user_id, db)
     ensure_can_manage_target(current_user, user)
 
-    if user.get("auth_provider", AUTH_PROVIDER_LOCAL) != AUTH_PROVIDER_LOCAL:
+    if not is_local_account(user):
         raise HTTPException(
             status_code=400,
             detail="Cannot reset password for non-local users. Please migrate user first.",
@@ -334,7 +335,7 @@ async def update_password_me(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Update current user password."""
-    if current_user.auth_provider != AUTH_PROVIDER_LOCAL:
+    if not is_local_account(current_user):
         raise HTTPException(
             status_code=400,
             detail="SSO users cannot change password. Please migrate to local account first.",
@@ -377,7 +378,7 @@ async def setup_2fa(
     db: DatabaseDep,
 ) -> dict[str, str]:
     """Generate a new 2FA secret and QR code (local auth users only)."""
-    if current_user.auth_provider and current_user.auth_provider != "local":
+    if not is_local_account(current_user):
         raise HTTPException(
             status_code=400,
             detail="2FA must be configured in your identity provider, not in this application",
@@ -410,7 +411,7 @@ async def enable_2fa(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Verify OTP and enable 2FA (local auth users only)."""
-    if current_user.auth_provider and current_user.auth_provider != "local":
+    if not is_local_account(current_user):
         raise HTTPException(
             status_code=400,
             detail="2FA must be configured in your identity provider, not in this application",

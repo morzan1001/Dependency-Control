@@ -1,6 +1,9 @@
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from typing import Annotated
+
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, computed_field
 
 from app.core.constants import (
+    AUTH_PROVIDER_LOCAL,
     DEFAULT_ACTIVE_ANALYZERS,
     DEFAULT_RETENTION_DAYS,
     MAX_RETENTION_DAYS,
@@ -12,9 +15,22 @@ from app.core.constants import (
 from app.models.system import SystemSettingsFields
 
 
+def _not_the_local_provider(name: str) -> str:
+    # OIDC users are stored under this name, so "local" would make them local accounts.
+    if name.lower() == AUTH_PROVIDER_LOCAL:
+        raise ValueError(f"The OIDC provider name must not be {AUTH_PROVIDER_LOCAL!r}")
+    return name
+
+
+OidcProviderName = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1), AfterValidator(_not_the_local_provider)
+]
+
+
 class SystemSettingsUpdate(SystemSettingsFields):
     # Narrowed only on the way in: the response shares these fields and must stay able to render a
     # setting that predates this constraint.
+    oidc_provider_name: OidcProviderName = "GitLab"
     retention_mode: SettingsMode = SETTINGS_MODE_PROJECT
     global_retention_days: int = Field(DEFAULT_RETENTION_DAYS, ge=0, le=MAX_RETENTION_DAYS)
     global_retention_action: RetentionAction = RETENTION_ACTION_DELETE

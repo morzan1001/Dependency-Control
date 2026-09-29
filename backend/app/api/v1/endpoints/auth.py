@@ -24,6 +24,7 @@ from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_password_reset_email, send_verification_email
+from app.api.v1.helpers.users import is_local_account
 from app.api.v1.helpers.responses import (
     RESP_400,
     RESP_400_401_500,
@@ -39,6 +40,7 @@ from app.core import security
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.core.constants import (
+    AUTH_PROVIDER_LOCAL,
     OIDC_HTTP_TIMEOUT_SECONDS,
     OIDC_STATE_TTL_SECONDS,
     TOTP_VALID_WINDOW,
@@ -128,9 +130,7 @@ def _enforce_2fa_setup_scope(user: dict, system_config: SystemSettings) -> list 
     if user.get("totp_enabled", False):
         return None
 
-    auth_provider = user.get("auth_provider")
-    is_local = not auth_provider or auth_provider == "local"
-    if system_config.enforce_2fa and is_local:
+    if system_config.enforce_2fa and is_local_account(user):
         return ["auth:setup_2fa"]
 
     return None
@@ -185,12 +185,7 @@ async def login_access_token(
     system_config = await deps.get_system_settings(db)
 
     # Skip email-verification gate for OIDC users; trust the provider.
-    auth_provider = user.get("auth_provider", "local")
-    if (
-        system_config.enforce_email_verification
-        and not user.get("is_verified", False)
-        and (not auth_provider or auth_provider == "local")
-    ):
+    if system_config.enforce_email_verification and not user.get("is_verified", False) and is_local_account(user):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Email not verified",
@@ -290,7 +285,7 @@ async def create_user(
         permissions=[],
         is_active=True,
         is_verified=False,
-        auth_provider="local",
+        auth_provider=AUTH_PROVIDER_LOCAL,
     )
     await UserRepository(db).create(new_user)
 
@@ -639,8 +634,7 @@ async def _create_oidc_user(
 
 def _validate_existing_oidc_user(user: dict, email: str) -> None:
     """Verify an existing user can use OIDC and is active."""
-    existing_auth_provider = user.get("auth_provider", "local")
-    if existing_auth_provider == "local" or existing_auth_provider is None:
+    if is_local_account(user):
         if auth_oidc_logins_total:
             auth_oidc_logins_total.labels(status="local_user_blocked").inc()
         logger.warning(f"OIDC login attempt blocked for local user: {email}")
@@ -783,11 +777,7 @@ async def forgot_password(
     user = await user_repo.get_raw_by_email(email)
 
     # Skip OIDC users without a local password.
-    if (
-        user
-        and user.get("is_active", True)
-        and (user.get("auth_provider", "local") == "local" or user.get("hashed_password"))
-    ):
+    if user and user.get("is_active", True) and is_local_account(user):
         await send_password_reset_email(
             background_tasks,
             user["email"],
@@ -847,12 +837,10 @@ async def reset_password(request: Request, reset_in: UserPasswordReset, db: Data
             detail=_MSG_USER_INACTIVE,
         )
 
-    auth_provider = user.get("auth_provider", "local")
-    has_password = user.get("hashed_password") is not None
-    if auth_provider != "local" and not has_password:
+    if not is_local_account(user):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password reset not available for {auth_provider} accounts. Please use your identity provider.",
+            detail=f"Password reset not available for {user['auth_provider']} accounts. Please use your identity provider.",
         )
 
     hashed_password = security.get_password_hash(reset_in.new_password)

@@ -3,6 +3,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator
 
+from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.notification_prefs import NotificationPreferences
 from app.models.types import PyObjectId
 from app.schemas._not_null import reject_null
@@ -38,7 +39,6 @@ class UserBase(BaseModel):
     email: EmailStr
     username: str
     is_active: bool | None = True
-    auth_provider: str | None = "local"
     permissions: list[str] = []
     slack_username: str | None = None
     mattermost_username: str | None = None
@@ -118,6 +118,7 @@ class UserMigrateToLocal(BaseModel):
 
 class UserInDBBase(UserBase):
     id: PyObjectId = Field(validation_alias="_id")
+    auth_provider: str | None = AUTH_PROVIDER_LOCAL
     totp_enabled: bool = False
     is_verified: bool = False
     pending_email: str | None = None

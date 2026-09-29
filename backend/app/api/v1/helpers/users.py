@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.users import UserRepository
@@ -54,3 +55,9 @@ def ensure_can_manage_target(caller: User, target: dict[str, Any]) -> None:
 def is_2fa_setup_mode(user: User) -> bool:
     """True if the user holds only 'auth:setup_2fa' (must finish 2FA setup for full access)."""
     return "auth:setup_2fa" in user.permissions and len(user.permissions) == 1
+
+
+def is_local_account(user: User | dict[str, Any]) -> bool:
+    """Whether the account signs in with a password here rather than through an identity provider."""
+    provider = user.get("auth_provider") if isinstance(user, dict) else user.auth_provider
+    return (provider or AUTH_PROVIDER_LOCAL) == AUTH_PROVIDER_LOCAL
