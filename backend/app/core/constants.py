@@ -1030,6 +1030,7 @@ CVSS_SEVERITY_SCORES: dict[str, float] = {
     "HIGH": 7.5,
     "MEDIUM": 4.0,
     "LOW": 1.0,
+    "NEGLIGIBLE": 0.0,
     "INFO": 0.0,
     "UNKNOWN": 0.0,
 }
@@ -1040,7 +1041,7 @@ CVSS_SEVERITY_SCORES: dict[str, float] = {
 SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
     sev: round((cvss / 10.0) * 40.0, 1) for sev, cvss in CVSS_SEVERITY_SCORES.items()
 }
-# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, INFO/UNKNOWN=0.0
+# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, NEGLIGIBLE/INFO/UNKNOWN=0.0
 
 # GitLab JWKS cache TTLs (in seconds)
 GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour

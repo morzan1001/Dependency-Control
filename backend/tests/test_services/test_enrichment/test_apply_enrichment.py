@@ -164,3 +164,17 @@ async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
     assert merged["cvss_score"] == 7.7
     # Recomputed from the merged entry: the duplicate pair no longer forces 2.21.4 as covers-all fix.
     assert finding["details"]["fixed_version"] == "2.18.8"
+
+
+def test_an_unenriched_negligible_advisory_ranks_below_a_low_one():
+    details = {
+        "vulnerabilities": [
+            {"id": "GHSA-negl-igib-le00", "severity": "NEGLIGIBLE"},
+            {"id": "GHSA-lowl-owlo-wlow", "severity": "LOW"},
+        ]
+    }
+
+    apply_enrichments(details, {})
+
+    negligible, low = details["vulnerabilities"]
+    assert negligible["risk_score"] < low["risk_score"]
