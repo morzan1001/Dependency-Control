@@ -30,10 +30,15 @@ def _make_finding(
         "version": version,
         "details": {
             "fixed_version": fixed_version,
-            "in_kev": is_kev,
-            "epss_score": epss_score,
-            "kev_ransomware_use": kev_ransomware,
-            "vulnerabilities": [{"id": finding_id, "aliases": aliases or []}],
+            "vulnerabilities": [
+                {
+                    "id": finding_id,
+                    "aliases": aliases or [],
+                    "in_kev": is_kev,
+                    "epss_score": epss_score,
+                    "kev_ransomware_use": kev_ransomware,
+                }
+            ],
         },
         "reachable": reachable,
         "reachability_level": reachability_level,
@@ -790,7 +795,7 @@ class TestCveIdOnTheStoredShape:
         result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
-        assert direct_recs[0].action["cves"] == ["unknown"]
+        assert (direct_recs[0].action["cves"], direct_recs[0].action["cves_total"]) == ([], 0)
 
 
 class TestUpdateCardsArePerInstalledVersion:
@@ -859,3 +864,37 @@ class TestInferredDirectnessIsNotPresentedAsDeclared:
         [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert card.action["direct_inferred"] is False
         assert card.effort == "low"
+
+
+class TestUpdateCardsReadTheLiveAdvisories:
+    def _direct_card(self, advisories, **details):
+        finding = _make_finding(component="log4j-core", version="2.14.1", severity="MEDIUM", fixed_version="2.17.1")
+        finding["details"] |= {**details, "vulnerabilities": advisories}
+        dep = _make_dependency(name="log4j-core", version="2.14.1")
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], None)
+        [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        return card
+
+    def test_a_kev_cve_waived_on_its_own_neither_raises_the_card_nor_is_named(self):
+        waived = {"id": "CVE-2021-44228", "waived": True, "in_kev": True, "epss_score": 0.94}
+        card = self._direct_card([waived, {"id": "CVE-2021-44832", "epss_score": 0.001}], in_kev=True, epss_score=0.94)
+
+        assert card.priority == Priority.MEDIUM
+        assert (card.impact["kev_count"], card.impact["high_epss_count"]) == (0, 0)
+        assert (card.action["kev_cves"], card.action["high_epss_cves"]) == ([], [])
+        assert card.action["cves"] == ["CVE-2021-44832"]
+
+    def test_the_kev_and_epss_samples_name_the_cve_that_carries_the_mark(self):
+        card = self._direct_card(
+            [
+                {"id": "CVE-2026-0001"},
+                {"id": "GHSA-aaaa-bbbb-cccc", "aliases": ["CVE-2026-0002"], "in_kev": True},
+                {"id": "CVE-2026-0003", "epss_score": 0.5},
+            ],
+            in_kev=True,
+            epss_score=0.5,
+        )
+
+        assert card.action["kev_cves"] == ["CVE-2026-0002"]
+        assert card.action["high_epss_cves"] == ["CVE-2026-0003"]
+        assert card.action["cves"] == ["CVE-2026-0001", "CVE-2026-0002", "CVE-2026-0003"]

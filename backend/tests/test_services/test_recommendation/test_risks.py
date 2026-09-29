@@ -21,14 +21,12 @@ def _vuln(
     risk_score=None,
     finding_id="CVE-2024-001",
 ):
-    details = {
-        "in_kev": is_kev,
-        "epss_score": epss_score,
-    }
+    advisory = {"id": finding_id, "in_kev": is_kev, "epss_score": epss_score}
+    if risk_score is not None:
+        advisory["risk_score"] = risk_score
+    details = {"vulnerabilities": [advisory]}
     if fixed_version is not None:
         details["fixed_version"] = fixed_version
-    if risk_score is not None:
-        details["risk_score"] = risk_score
     result = {
         "type": "vulnerability",
         "severity": severity,
@@ -866,3 +864,16 @@ class TestAttackSurfaceNamesTheParents:
         [rec] = analyze_attack_surface([_dep("lib", direct=False)], [_advisories("lib", "1.0", "CVE-1", "CVE-2")])
 
         assert rec.affected_components == ["lib@1.0"]
+
+
+class TestHotspotsReadTheLiveAdvisories:
+    def test_a_kev_cve_waived_on_its_own_does_not_make_a_hotspot(self):
+        finding = _vuln("log4j-core", "MEDIUM", version="2.14.1", is_kev=True, epss_score=0.94, risk_score=98.0)
+        finding["details"]["vulnerabilities"] = [
+            {"id": "CVE-2021-44228", "waived": True, "in_kev": True, "epss_score": 0.94, "risk_score": 98.0},
+            {"id": "CVE-2021-44832", "risk_score": 41.0},
+        ]
+
+        assert _hotspots([finding]) == []
+        [pkg] = _roll_up_packages([finding])
+        assert pkg.risk_score == 41.0

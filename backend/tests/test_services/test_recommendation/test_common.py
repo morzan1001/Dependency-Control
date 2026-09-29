@@ -18,7 +18,9 @@ from app.services.recommendation.common import (
     name_some,
     sample_components,
     sort_key,
+    summarize_vulns,
     take_top,
+    vuln_info,
 )
 
 
@@ -172,6 +174,58 @@ class TestFindingCveIds:
             details: dict = {"vulnerabilities": [{"id": "CVE-2021-44228"}]}
 
         assert finding_cve_ids(_Finding()) == ["CVE-2021-44228"]
+
+
+_WAIVED_KEV = {
+    "id": "CVE-2021-44228",
+    "waived": True,
+    "in_kev": True,
+    "kev_ransomware_use": True,
+    "epss_score": 0.94,
+    "risk_score": 98.0,
+}
+_LIVE = {"id": "CVE-2021-44832", "epss_score": 0.02, "risk_score": 41.0}
+
+
+class TestVulnInfo:
+    """A per-CVE waiver leaves the document roll-up as it was, so the marks come off the live advisories."""
+
+    def _finding(self, advisories):
+        return {
+            "id": "log4j-core:2.14.1",
+            "type": "vulnerability",
+            "severity": "MEDIUM",
+            "component": "log4j-core",
+            "version": "2.14.1",
+            "details": {
+                "in_kev": True,
+                "kev_ransomware_use": True,
+                "epss_score": 0.94,
+                "risk_score": 98.0,
+                "vulnerabilities": advisories,
+            },
+        }
+
+    def test_a_waived_advisory_lends_the_record_none_of_its_marks(self):
+        vuln = vuln_info(self._finding([_WAIVED_KEV, _LIVE]))
+
+        assert (vuln.is_kev, vuln.kev_ransomware, vuln.epss_score, vuln.risk_score) == (False, False, 0.02, 41.0)
+        assert vuln.advisories == [_LIVE]
+
+    def test_the_record_takes_the_worst_mark_across_its_live_advisories(self):
+        kev = {"id": "CVE-2", "in_kev": True, "epss_score": 0.3, "risk_score": 70.0}
+
+        vuln = vuln_info(self._finding([_LIVE, kev]))
+
+        assert (vuln.is_kev, vuln.kev_ransomware, vuln.epss_score, vuln.risk_score) == (True, False, 0.3, 70.0)
+
+    def test_the_stats_name_every_live_cve_once(self):
+        first = self._finding([_WAIVED_KEV, _LIVE, {"id": "CVE-2021-45105"}])
+        second = self._finding([{"id": "GHSA-8489-44mv-ggj8", "aliases": ["CVE-2021-44832"]}])
+
+        stats = summarize_vulns([vuln_info(first), vuln_info(second)])
+
+        assert stats.cves == ["CVE-2021-44832", "CVE-2021-45105"]
 
 
 class TestVersionOrdering:

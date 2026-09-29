@@ -20,7 +20,7 @@ from app.services.enrichment.scoring import calculate_secret_severity
 def _vuln(**kwargs) -> VulnerabilityInfo:
     base = {
         "finding_id": "test-id",
-        "cve_id": "CVE-2024-0001",
+        "advisories": [],
         "severity": "HIGH",
         "package_name": "pkg",
         "current_version": "1.0.0",

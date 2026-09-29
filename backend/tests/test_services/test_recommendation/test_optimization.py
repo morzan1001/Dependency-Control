@@ -12,7 +12,7 @@ def _vuln(component, severity="HIGH", version="1.0", fixed_version="2.0", is_kev
         "version": version,
         "details": {
             "fixed_version": fixed_version,
-            "in_kev": is_kev,
+            "vulnerabilities": [{"id": finding_id, "in_kev": is_kev}],
         },
         "id": finding_id,
     }
@@ -390,3 +390,17 @@ class TestQuickWinDirectnessIsOnlyWhatTheGraphConfirms:
         result = identify_quick_wins(inferred + confirmed, deps)
 
         assert [r.action["package"] for r in result] == ["declared", "guessed"]
+
+
+class TestQuickWinsReadTheLiveAdvisories:
+    def test_a_kev_cve_waived_on_its_own_does_not_raise_the_quick_win(self):
+        partly_waived = _vuln("log4j-core", severity="MEDIUM", version="2.14.1", is_kev=True)
+        partly_waived["details"]["vulnerabilities"] = [
+            {"id": "CVE-2021-44228", "waived": True, "in_kev": True},
+            {"id": "CVE-2021-44832"},
+        ]
+        other = _vuln("log4j-core", severity="MEDIUM", version="2.15.0", finding_id="CVE-2021-45046")
+
+        [rec] = identify_quick_wins([partly_waived, other], [])
+
+        assert (rec.priority, rec.impact["kev_count"]) == (Priority.MEDIUM, 0)

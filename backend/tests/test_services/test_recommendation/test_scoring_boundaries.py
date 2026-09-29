@@ -17,7 +17,11 @@ _KEV_WEIGHT = 100
 
 
 def _vuln(severity: str, in_kev: bool = False) -> dict:
-    return {"type": "vulnerability", "severity": severity, "details": {DETAILS_KEY_IN_KEV: in_kev}}
+    return {
+        "type": "vulnerability",
+        "severity": severity,
+        "details": {"vulnerabilities": [{DETAILS_KEY_IN_KEV: in_kev}]},
+    }
 
 
 def _scored(vulns: list[dict]) -> dict:

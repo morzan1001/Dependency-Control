@@ -18,7 +18,7 @@ from app.core.constants import (
 from app.core.epss import bucket_epss
 from app.schemas.recommendation import Priority, Recommendation, VulnerabilityInfo
 from app.services.aggregation.versions import parse_version_key, split_fixed_versions
-from app.core.cve import canonical_cves, display_vulnerability_id
+from app.core.cve import canonical_cves
 
 ModelOrDict = BaseModel | dict[str, Any]
 
@@ -123,28 +123,26 @@ def calculate_best_fix_version(versions: list[str]) -> str:
     return max(parts, key=parse_version_key) if parts else "unknown"
 
 
-# Shown where a finding names no advisory at all; VulnerabilityInfo.cve_id is not optional.
-_UNRESOLVED_CVE_ID = "unknown"
-
-
 def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
-    """A vulnerability finding in the shape every per-package roll-up counts."""
+    """A vulnerability finding in the shape every per-package roll-up counts, marked by its worst live advisory."""
     details = get_attr(f, "details", {})
-    details_dict = details if isinstance(details, dict) else {}
+    advisories = live_advisories(details)
+    epss = [a["epss_score"] for a in advisories if a.get("epss_score") is not None]
+    risk = [a["risk_score"] for a in advisories if a.get("risk_score") is not None]
 
     return VulnerabilityInfo(
         finding_id=get_attr(f, "id", ""),
-        cve_id=display_vulnerability_id(details_dict) or _UNRESOLVED_CVE_ID,
+        advisories=advisories,
         severity=get_attr(f, "severity", "UNKNOWN"),
         package_name=get_attr(f, "component", ""),
         current_version=get_attr(f, "version") or "",
-        fixed_version=details_dict.get("fixed_version"),
-        epss_score=details_dict.get("epss_score"),
-        is_kev=bool(details_dict.get(DETAILS_KEY_IN_KEV)),
-        kev_ransomware=bool(details_dict.get(DETAILS_KEY_KEV_RANSOMWARE)),
+        fixed_version=details.get("fixed_version") if isinstance(details, dict) else None,
+        epss_score=max(epss, default=None),
+        is_kev=any(a.get(DETAILS_KEY_IN_KEV) for a in advisories),
+        kev_ransomware=any(a.get(DETAILS_KEY_KEV_RANSOMWARE) for a in advisories),
         is_reachable=get_attr(f, "reachable"),
         reachability_level=get_attr(f, "reachability_level"),
-        risk_score=details_dict.get("risk_score"),
+        risk_score=max(risk, default=None),
     )
 
 
@@ -200,7 +198,7 @@ def summarize_vulns(vulns: list[VulnerabilityInfo]) -> VulnStats:
     return VulnStats(
         total=len(vulns),
         severity=Counter(v.severity for v in vulns),
-        cves=[v.cve_id for v in vulns],
+        cves=canonical_cves([{"vulnerabilities": v.advisories} for v in vulns]),
         kev=sum(v.is_kev for v in vulns),
         kev_ransomware=sum(v.kev_ransomware for v in vulns),
         high_epss=epss_buckets["high"],

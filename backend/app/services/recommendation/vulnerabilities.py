@@ -1,6 +1,9 @@
 from collections import defaultdict
+from collections.abc import Callable
+from typing import Any
 
-from app.core.constants import EPSS_HIGH_THRESHOLD, OS_PACKAGE_TYPES
+from app.core.constants import DETAILS_KEY_IN_KEV, EPSS_HIGH_THRESHOLD, OS_PACKAGE_TYPES
+from app.core.cve import canonical_cves
 from app.core.epss import HIGH_EPSS_LABEL
 from app.schemas.recommendation import (
     Priority,
@@ -200,6 +203,10 @@ def _build_direct_description(component: str, current_version: str, stats: VulnS
     return " ".join(desc_parts)
 
 
+def _marked_cves(vulns: list[VulnerabilityInfo], marked: Callable[[dict[str, Any]], Any]) -> list[str]:
+    return canonical_cves([{"vulnerabilities": [a for a in v.advisories if marked(a)]} for v in vulns])
+
+
 def _build_direct_recommendation(
     component: str, current_version: str, component_vulns: list[VulnerabilityInfo]
 ) -> Recommendation:
@@ -221,10 +228,14 @@ def _build_direct_recommendation(
             "target_version": stats.best_fix,
             "direct_inferred": direct_inferred,
             **sampled("cves", stats.cves, _CVES_SAMPLED),
-            **sampled("kev_cves", [v.cve_id for v in component_vulns if v.is_kev], _MARKED_CVES_SAMPLED),
+            **sampled(
+                "kev_cves",
+                _marked_cves(component_vulns, lambda a: a.get(DETAILS_KEY_IN_KEV)),
+                _MARKED_CVES_SAMPLED,
+            ),
             **sampled(
                 "high_epss_cves",
-                [v.cve_id for v in component_vulns if v.epss_score and v.epss_score >= EPSS_HIGH_THRESHOLD],
+                _marked_cves(component_vulns, lambda a: (a.get("epss_score") or 0) >= EPSS_HIGH_THRESHOLD),
                 _MARKED_CVES_SAMPLED,
             ),
         },

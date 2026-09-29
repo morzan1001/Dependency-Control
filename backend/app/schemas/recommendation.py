@@ -114,7 +114,8 @@ class VulnerabilityInfo:
     """Specific information about a vulnerability finding."""
 
     finding_id: str
-    cve_id: str
+    # The finding's unwaived advisories; every per-CVE mark and name is read off them.
+    advisories: list[dict[str, Any]]
     severity: str
     package_name: str
     current_version: str
