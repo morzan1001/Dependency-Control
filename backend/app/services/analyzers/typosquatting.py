@@ -51,14 +51,17 @@ def _build_typosquat_issue(
     severity: str,
 ) -> dict[str, Any]:
     name = component.get("name")
+    similarity = round(ratio, 2)
     return {
         "component": name,
         "version": component.get("version"),
         "purl": component.get("purl", ""),
         "imitated_package": popular,
-        "similarity": round(ratio, 2),
+        "similarity": similarity,
         "severity": severity,
-        "message": (f"Potential typosquatting: '{name}' is similar to popular package '{popular}'"),
+        "message": (
+            f"Possible typosquatting detected! '{name}' is {similarity * 100:.1f}% similar to popular package '{popular}'"
+        ),
     }
 
 

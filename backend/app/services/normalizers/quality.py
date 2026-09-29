@@ -105,7 +105,6 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], 
 
 def normalize_typosquatting(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for item in result.get("typosquatting_issues") or []:
-        similarity = item.get("similarity", 0)
         imitated = item.get("imitated_package") or "unknown"
         component = safe_get(item, "component", "unknown")
 
@@ -113,17 +112,14 @@ def normalize_typosquatting(aggregator: "ResultAggregator", result: dict[str, An
             Finding(
                 id=build_finding_id("TYPO", component),
                 type=FindingType.MALWARE,  # typosquatting is an attack, not a quality issue
-                severity=Severity.CRITICAL,
+                severity=safe_severity(item["severity"]),
                 component=component,
                 version=item.get("version"),
-                description=(
-                    f"Possible typosquatting detected! '{component}' is "
-                    f"{similarity * 100:.1f}% similar to popular package '{imitated}'"
-                ),
+                description=item["message"],
                 scanners=["typosquatting"],
-                details=TyposquattingDetails(imitated_package=imitated, similarity=similarity).model_dump(
-                    exclude_none=True
-                ),
+                details=TyposquattingDetails(
+                    imitated_package=imitated, similarity=item.get("similarity", 0)
+                ).model_dump(exclude_none=True),
             ),
             source=source,
         )
