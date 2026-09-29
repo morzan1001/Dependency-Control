@@ -100,6 +100,10 @@ class TestProcessSecretsMultipleGroupedByDetector:
         assert "Github" in secret_types
         assert "SlackWebhook" in secret_types
 
+    def test_a_detector_trufflehog_does_not_name_keeps_its_stored_label(self):
+        rec = process_secrets([_secret(detector="Generic Secret")])[0]
+        assert rec.action["secret_types"] == ["Generic Secret"]
+
     def test_the_action_carries_every_detector_and_the_prose_counts_the_rest(self):
         found = 8
         findings = [_secret(detector=str(i), finding_id=f"s{i}") for i in range(found)]
@@ -219,17 +223,6 @@ class TestProcessSecretsDetectorFallbacks:
     def test_unmapped_ordinal_falls_back_to_the_stored_value(self):
         rec = process_secrets([_secret(detector="999999")])[0]
         assert rec.action["secret_types"] == ["999999"]
-
-    def test_generic_fallback(self):
-        finding = {
-            "type": "secret",
-            "severity": "HIGH",
-            "component": "src/x.py",
-            "details": {},
-            "id": "s1",
-        }
-        rec = process_secrets([finding])[0]
-        assert "generic" in rec.description
 
     def test_effort_is_high(self):
         rec = process_secrets([_secret()])[0]

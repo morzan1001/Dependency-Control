@@ -14,9 +14,8 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
 
     secrets_by_type = defaultdict(list)
     for f in findings:
-        details = get_attr(f, "details", {})
-        raw_detector = details.get("detector") if isinstance(details, dict) else None
-        detector = resolve_detector_name(raw_detector) or (str(raw_detector) if raw_detector else "generic")
+        raw_detector = get_attr(f, "details", {}).get("detector")
+        detector = resolve_detector_name(raw_detector) or str(raw_detector)
         secrets_by_type[detector].append(f)
 
     recommendations = []
