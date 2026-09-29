@@ -18,6 +18,7 @@ from app.core.constants import (
     sort_by_severity,
 )
 from app.core.epss import bucket_epss
+from app.models.finding import Severity
 from app.core.risk_scoring import (
     CONFIRMED_REACHABLE_RISK_MODIFIER,
     RISK_SEVERITY_WEIGHTS,
@@ -297,9 +298,8 @@ def build_reachability_summary(
 
 
 # Severities with a dedicated bucket; anything else is counted as unknown so buckets always sum to total.
-_BUCKETED_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")
-
-_UNKNOWN_SEVERITY = "UNKNOWN"
+_UNKNOWN_SEVERITY = Severity.UNKNOWN.value
+_BUCKETED_SEVERITIES = tuple(s.value for s in Severity if s is not Severity.UNKNOWN)
 
 
 def _numeric(raw: Any) -> float | None:

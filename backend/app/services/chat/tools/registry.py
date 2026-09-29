@@ -27,7 +27,7 @@ from app.core.constants import (
 from app.core.epss import bucket_epss
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
-from app.models.finding import FindingType
+from app.models.finding import FindingType, Severity
 from app.models.project import Project
 from app.models.user import User
 from app.models.waiver import is_waiver_active
@@ -119,7 +119,7 @@ _FINDING_RANK_FETCH_CAP = 1000
 
 # Highest severity first; the trailing clause catches values outside the known set so no finding
 # is unreachable to the walk.
-_SEVERITY_TIERS: tuple[str, ...] = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO", "UNKNOWN")
+_SEVERITY_TIERS: tuple[str, ...] = tuple(s.value for s in Severity)
 
 _RANKING_SAMPLED = (
     "State this caveat in your answer: the {tier} tier holds {total} findings and only "
