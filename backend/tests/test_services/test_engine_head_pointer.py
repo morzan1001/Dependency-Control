@@ -97,6 +97,17 @@ async def test_a_rescan_of_the_head_build_takes_the_pointer_and_its_stats(db):
 
 
 @pytest.mark.asyncio
+async def test_a_rescan_leaves_the_projects_last_scanner_post_alone(db):
+    await _project(db, "b1", last_scan_at=_NOW)
+    await _scan(db, "b1", _NOW)
+    await _rescan(db, "r1", "b1", _NOW + _HOUR)
+
+    await _finalize(db, "r1")
+
+    assert (await db.projects.find_one({"_id": _PROJECT_ID}))["last_scan_at"] == _NOW
+
+
+@pytest.mark.asyncio
 async def test_a_rescan_of_an_older_release_leaves_the_pointer_on_the_head(db):
     await _project(db, "b2")
     await _scan(db, "b1", _NOW - 30 * _HOUR)

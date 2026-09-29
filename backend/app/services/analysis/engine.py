@@ -840,8 +840,8 @@ async def _sync_project_head(project_id: str, scan_repo: ScanRepository, project
         if not project_doc:
             return
         head = await scan_repo.head_fields(project_doc)
-        update = {"$set": {**head, "last_scan_at": datetime.now(timezone.utc)}}
-        if await project_repo.update_raw(project_id, update, guard={"latest_scan_id": project_doc.latest_scan_id}):
+        guard = {"latest_scan_id": project_doc.latest_scan_id}
+        if await project_repo.update_raw(project_id, {"$set": head}, guard=guard):
             return
 
 

@@ -187,9 +187,11 @@ class ScanManager:
             # The crypto analyzers read the assets this post replaced, so a run under way must start over.
             update_ops["$inc"] = {"sbom_generation": 1}
 
+        from app.repositories.projects import ProjectRepository
         from app.repositories.scans import ScanRepository
 
         scan_repo = ScanRepository(self.db)
+        await ProjectRepository(self.db).update_raw(str(self.project.id), {"$set": {"last_scan_at": now}})
 
         scan = await self.db.scans.find_one_and_update(
             {"_id": scan_id},
@@ -212,10 +214,3 @@ class ScanManager:
 
         if trigger_analysis or should_reaggregate:
             await self.trigger_aggregation(scan_id)
-
-    async def update_project_last_scan(self) -> None:
-        """Update the project's last_scan_at timestamp via repository."""
-        from app.repositories.projects import ProjectRepository
-
-        project_repo = ProjectRepository(self.db)
-        await project_repo.update_raw(str(self.project.id), {"$set": {"last_scan_at": datetime.now(timezone.utc)}})

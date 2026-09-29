@@ -46,6 +46,7 @@ class Project(MongoDocument, CreatedAtModel):
     api_key_hash: str | None = Field(None, exclude=True)
     active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
     stats: Stats | None = None
+    # The last scanner post from any branch; the rescan clock is Scan.last_rescanned_at.
     last_scan_at: datetime | None = None
     latest_scan_id: str | None = None
     retention_days: int = DEFAULT_RETENTION_DAYS
