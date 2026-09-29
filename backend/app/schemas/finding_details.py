@@ -106,16 +106,14 @@ class VulnerabilityScannerDetails(_DetailsModel):
     cvss_vector: str | None = None
     references: list[Any] | None = None
     cwe_ids: list[str] | None = None
-    # trivy
     published_date: str | None = None
     last_modified_date: str | None = None
+    # trivy
     layer_id: str | None = None
     # grype
     datasource: str | None = None
     namespace: str | None = None
     # osv
-    published: str | None = None
-    modified: str | None = None
     osv_url: str | None = None
     ecosystem_specific: dict[str, Any] | None = None
 
