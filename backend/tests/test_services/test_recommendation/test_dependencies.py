@@ -218,6 +218,10 @@ class TestAnalyzeDevInProductionFlagged:
             ("prettier", "3.0.0"),
             ("@types/node", "20.0.0"),
             ("cypress", "13.0.0"),
+            ("@playwright/test", "1.47.0"),
+            ("@jest/globals", "29.0.0"),
+            ("@cypress/webpack-preprocessor", "6.0.0"),
+            ("@vitest/coverage-v8", "2.1.0"),
         ],
     )
     def test_a_dev_package_outside_a_dev_scope_is_flagged(self, name, version):

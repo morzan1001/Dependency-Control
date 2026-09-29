@@ -255,7 +255,7 @@ IMPACT_SEVERITY_WEIGHTS: dict[str, float] = {
 
 # npm packages that belong in devDependencies: a dev-only scope, or a tool's name alone or with a "-suffix".
 DEV_DEPENDENCY_PATTERN = re.compile(
-    r"^(?:@(?:types|testing-library|storybook|commitlint|eslint|typescript-eslint)/.+"
+    r"^(?:@(?:types|testing-library|storybook|commitlint|eslint|typescript-eslint|jest|playwright|cypress|vitest)/.+"
     r"|(?:@[^/]+/)?(?:jest|mocha|chai|sinon|enzyme|eslint|prettier|tslint|stylelint|webpack-dev|nodemon|ts-node"
     r"|typescript|storybook|chromatic|cypress|playwright|puppeteer|husky|lint-staged|commitlint|babel-jest|ts-jest)"
     r"(?:-[\w.-]+)?)$"
