@@ -729,7 +729,7 @@ class ChatToolRegistry:
             states = [_waiver_state(f, vulnerability_id) for f in findings]
             waived_count = sum(state["waived"] for state in states)
             return {
-                "waived": waived_count == len(states),
+                "waived": waived_count == findings_total,
                 "waived_count": waived_count,
                 "findings": states,
                 "findings_total": findings_total,
