@@ -630,6 +630,37 @@ class TestCreateWaiverValidatesFindingMatch:
         assert created.match.last_line == 10
         mock_repo.create.assert_called_once()
 
+    def test_a_waiver_naming_no_finding_is_not_pinned_to_the_one_the_check_found(self, admin_user):
+        """Type and file describe every secret in the file; one signature would narrow that to a single one."""
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        signature = {"rule_key": "AWS", "file_key": "values.yaml", "anchor": "aaaa", "anchor_kind": "secret_hash"}
+        secret = {"type": "secret", "component": "values.yaml", "match": signature}
+        db = self._db_with_head_scan(findings=[{**secret, "finding_id": "SECRET-AWS-aaaa"}])
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
+            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+                with patch(f"{MODULE}.recalculate_project_stats"):
+                    created = asyncio.run(
+                        create_waiver(
+                            waiver_in=WaiverCreate(
+                                project_id="proj-1",
+                                finding_type="secret",
+                                package_name="values.yaml",
+                                reason="fixtures",
+                            ),
+                            background_tasks=BackgroundTasks(),
+                            current_user=admin_user,
+                            db=db,
+                        )
+                    )
+
+        assert created.match is None
+
 
 class TestGetWaiver:
     def test_get_waiver_returns_waiver_for_authorized_user(self, admin_user):

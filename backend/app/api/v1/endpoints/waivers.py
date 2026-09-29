@@ -19,6 +19,7 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR
 from app.core.permissions import Permissions, has_permission
 from app.models.finding import LOCATION_FINDING_TYPES
+from app.models.match_signature import MatchSignature
 from app.models.user import User
 from app.repositories.base import and_filters
 from app.models.waiver import Waiver
@@ -152,9 +153,8 @@ async def create_waiver(
 
     waiver_repo = WaiverRepository(db)
     waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
-    if matched_finding and matched_finding.get("match"):
-        from app.models.match_signature import MatchSignature
-
+    # Only a named finding is one location; criteria without a finding_id describe every finding they match.
+    if matched_finding and matched_finding.get("match") and waiver_in.finding_id:
         waiver.match = MatchSignature(**matched_finding["match"])
 
     await waiver_repo.create(waiver)
