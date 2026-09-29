@@ -221,7 +221,7 @@ async def test_a_rescan_with_an_unreadable_sbom_fails_and_leaves_the_lineage_on_
             raise OSError("transient gridfs outage")
         return await fs.open_download_stream(file_id)
 
-    monkeypatch.setattr("app.services.analysis.engine.open_gridfs_download_with_retry", _fail_second_file)
+    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_second_file)
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     await db.scans.insert_one({"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed"})
     scan_id = await _seed_rescan(db, refs)
