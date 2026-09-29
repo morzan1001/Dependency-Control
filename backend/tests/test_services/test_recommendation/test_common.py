@@ -15,7 +15,6 @@ from app.services.recommendation.common import (
     finding_cve_ids,
     get_attr,
     name_some,
-    parse_version_tuple,
     sample_components,
     sort_key,
     take_top,
@@ -169,34 +168,6 @@ class TestFindingCveIds:
         assert finding_cve_ids(_Finding()) == ["CVE-2021-44228"]
 
 
-class TestParseVersionTuple:
-    @pytest.mark.parametrize(
-        ("version", "expected"),
-        [
-            pytest.param("1.2.3", (1, 2, 3), id="simple_semver"),
-            pytest.param("1.2", (1, 2), id="two_part_version"),
-            pytest.param("1.2.3.4", (1, 2, 3, 4), id="four_part_version"),
-            pytest.param("42", (42,), id="single_number"),
-            pytest.param("1.2.0-beta.1", (1, 2, 0, 1), id="prerelease_beta"),
-            pytest.param("2.0.0-rc2", (2, 0, 0, 2), id="prerelease_rc"),
-            pytest.param("", (), id="empty_string"),
-            pytest.param("abc", (), id="no_numeric_parts"),
-        ],
-    )
-    def test_reads_the_numeric_parts(self, version, expected):
-        assert parse_version_tuple(version) == expected
-
-    @pytest.mark.parametrize(
-        ("higher", "lower"),
-        [
-            pytest.param("1.2.4", "1.2.3", id="patch"),
-            pytest.param("2.0.0", "1.99.99", id="major"),
-        ],
-    )
-    def test_the_tuples_compare_in_version_order(self, higher, lower):
-        assert parse_version_tuple(higher) > parse_version_tuple(lower)
-
-
 class TestCalculateBestFixVersion:
     @pytest.mark.parametrize(
         ("candidates", "expected"),
@@ -213,6 +184,8 @@ class TestCalculateBestFixVersion:
             pytest.param(["1.2.3", "1.2.4", "1.3.0"], "1.3.0", id="complex_versions"),
             pytest.param(["1.0.0, 1.5.0", "2.0.0"], "2.0.0", id="comma_separated_in_multiple_entries"),
             pytest.param(["1.0.0, 3.0.0, 2.0.0"], "1.0.0, 3.0.0, 2.0.0", id="single_comma_separated_entry_as_is"),
+            pytest.param(["5.0.0-beta.2", "5.0.0-rc.1"], "5.0.0-rc.1", id="rc_above_beta"),
+            pytest.param(["1.0.0-alpha", "1.0.0"], "1.0.0", id="release_above_its_prerelease"),
         ],
     )
     def test_calculate_best_fix_version(self, candidates, expected):

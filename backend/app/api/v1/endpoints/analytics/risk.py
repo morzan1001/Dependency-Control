@@ -43,7 +43,7 @@ from app.services.aggregation.components import (
 )
 from app.services.analytics.cache import get_analytics_cache
 from app.services.enrichment import canonical_cve, canonical_cves, get_cve_enrichment
-from app.services.recommendation.common import newest_first
+from app.services.aggregation.versions import newest_first
 
 logger = logging.getLogger(__name__)
 

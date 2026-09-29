@@ -3,24 +3,29 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from typing import Any
+
+# Flags that rank a tag below the end of a version, and both below one more number: 1.0-rc1 < 1.0 < 1.0.1.
+_TAG, _END, _NUMBER = 0, 1, 2
 
 
 def parse_version_key(v: str) -> tuple[tuple[int, int | str], ...]:
-    """Parse a version into (type_flag, value) pairs so numeric parts always sort before string parts."""
-    v = v.lower()
-    v = v.removeprefix("v")
+    """Parse a version into (flag, value) pairs that compare in version order; the first carries the major."""
+    tokens = re.findall(r"[a-z]+|\d+", v.lower().removeprefix("v"))
+    if not tokens:
+        return ()
+    parts: list[tuple[int, int | str]] = [(_NUMBER, int(t)) if t.isdigit() else (_TAG, t) for t in tokens]
+    return (*parts, (_END, ""))
 
-    parts: list[tuple[int, int | str]] = []
-    for part in re.split(r"[^a-z0-9]+", v):
-        if not part:
-            continue
-        for subpart in re.findall(r"[a-z]+|\d+", part):
-            if subpart.isdigit():
-                parts.append((0, int(subpart)))
-            else:
-                parts.append((1, subpart))
-    return tuple(parts)
+
+def _is_prerelease(key: tuple[tuple[int, int | str], ...]) -> bool:
+    return any(flag == _TAG for flag, _ in key)
+
+
+def newest_first(versions: Iterable[Any]) -> list[str]:
+    """Versions ranked newest first; the raw string breaks ties, so a set-derived input orders the same every run."""
+    return sorted((str(v) for v in versions), key=lambda v: (parse_version_key(v), v), reverse=True)
 
 
 def calculate_aggregated_fixed_version(fixed_versions_list: list[str]) -> str | None:
@@ -62,7 +67,8 @@ def calculate_aggregated_fixed_version(fixed_versions_list: list[str]) -> str | 
             max_ver_str = None
 
             for fixes in vulns_map.values():
-                fixes.sort(key=lambda x: x[0])
+                # A prerelease fix counts only where the line offers no release fix.
+                fixes.sort(key=lambda x: (_is_prerelease(x[0]), x[0]))
                 best_fix_for_vuln = fixes[0]
 
                 if max_ver_tuple is None or best_fix_for_vuln[0] > max_ver_tuple:

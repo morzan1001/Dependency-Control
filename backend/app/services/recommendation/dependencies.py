@@ -10,12 +10,12 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.versions import newest_first
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
-    newest_first,
     sample_components,
 )
 

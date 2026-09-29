@@ -28,7 +28,7 @@ from app.schemas.analytics import (
     SeverityBreakdown,
 )
 from app.services.aggregation.components import lookup_component
-from app.services.recommendation.common import parse_version_tuple
+from app.services.aggregation.versions import newest_first
 
 router = CustomAPIRouter()
 
@@ -200,7 +200,7 @@ async def get_top_dependencies(
                 name=dep["name"],
                 type=dep.get("type", "unknown"),
                 # $addToSet has no order, so rank before sampling.
-                versions=sorted(dep["versions"], key=parse_version_tuple, reverse=True)[:_VERSION_SAMPLE],
+                versions=newest_first(dep["versions"])[:_VERSION_SAMPLE],
                 version_count=dep["version_count"],
                 project_count=dep["project_count"],
                 total_occurrences=dep["total_occurrences"],

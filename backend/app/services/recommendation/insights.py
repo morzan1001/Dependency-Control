@@ -8,11 +8,11 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.aggregation.versions import newest_first
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     ModelOrDict,
     get_attr,
-    newest_first,
     sample_components,
     sampled,
     scorecard_details,

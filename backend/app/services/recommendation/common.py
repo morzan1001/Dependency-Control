@@ -1,4 +1,3 @@
-import re
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
@@ -13,6 +12,7 @@ from app.core.constants import (
     RECOMMENDATION_TYPE_BONUSES,
 )
 from app.schemas.recommendation import Priority, Recommendation
+from app.services.aggregation.versions import newest_first
 from app.services.enrichment import canonical_cves
 
 ModelOrDict = BaseModel | dict[str, Any]
@@ -112,20 +112,8 @@ def finding_cve_ids(
     return canonical_cves([details])
 
 
-def parse_version_tuple(version: str) -> tuple:
-    """Naive numeric tuple — sufficient for picking the highest of a candidate list."""
-    parts = re.findall(r"\d+", version)
-    return tuple(int(p) for p in parts)
-
-
 # Versions named per package inside an action block; version_count carries the population.
 ACTION_VERSION_SAMPLE = 5
-
-
-def newest_first(versions: Iterable[Any]) -> list[str]:
-    """Versions ranked newest first. A set-derived list carries no order of its own, so a sample
-    taken off one is a different five between runs."""
-    return sorted((str(v) for v in versions), key=parse_version_tuple, reverse=True)
 
 
 def calculate_best_fix_version(versions: list[str]) -> str:
@@ -150,8 +138,7 @@ def calculate_best_fix_version(versions: list[str]) -> str:
     if not parsed:
         return "unknown"
 
-    parsed.sort(key=parse_version_tuple, reverse=True)
-    return parsed[0]
+    return newest_first(parsed)[0]
 
 
 # Module-level cache to avoid repeated dict lookups on the hot scoring path.
