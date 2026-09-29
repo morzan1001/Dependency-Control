@@ -783,7 +783,7 @@ async def test_a_cancelled_cli_analyzer_leaves_no_scanner_running_and_no_file(
     retry starts another one."""
     analyzer = build_analyzer(_CLI_ANALYZER)
     monkeypatch.setattr(analyzer, "is_tool_available", lambda: True)
-    monkeypatch.setattr(analyzer, "_build_command_args", lambda _path, _settings: list(_HANGING_SCANNER))
+    monkeypatch.setattr(analyzer, "_build_command_args", lambda _path: list(_HANGING_SCANNER))
     serve_analyzer(monkeypatch, _CLI_ANALYZER, analyzer)
 
     spawned: list[Any] = []

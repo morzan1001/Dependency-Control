@@ -36,8 +36,12 @@ class TestTrivyRetryablePatternMatching:
         analyzer = TrivyAnalyzer()
         assert analyzer._is_retryable_error(stderr_text.encode()) is False
 
+    @pytest.mark.parametrize("stderr_text", ["", "  \n", "trivy timed out after 300 seconds"])
+    def test_a_silent_or_timed_out_run_is_not_retried(self, stderr_text):
+        assert TrivyAnalyzer()._is_retryable_error(stderr_text.encode()) is False
+
     def test_all_patterns_are_lowercase(self):
         # Guard against reintroducing an uppercase pattern that can never match
         # the lowercased stderr.
-        for pattern in TrivyAnalyzer._RETRYABLE_PATTERNS:
+        for pattern in TrivyAnalyzer.retryable_patterns:
             assert pattern == pattern.lower(), pattern
