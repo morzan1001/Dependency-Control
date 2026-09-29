@@ -250,4 +250,3 @@ class TestCachedIdentity:
 
         [entry] = result["osv_vulnerabilities"]
         assert (entry["component"], entry["version"], entry["purl"]) == ("@angular/core", "17.0.0", purl)
-        assert entry["message"].startswith("@angular/core@17.0.0 has 1 known vulnerability")

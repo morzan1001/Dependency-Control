@@ -80,11 +80,9 @@ OSV = {
                     "id": "GHSA-3jxr-9vmj-r5cp",
                     "aliases": ["CVE-2026-13149"],
                     "summary": "brace-expansion ReDoS",
-                    "details": "",
                     "severity": "LOW",
-                    "message": "brace-expansion ReDoS",
+                    "fixed_version": "2.0.3",
                     "references": ["https://github.com/advisories/GHSA-3jxr-9vmj-r5cp"],
-                    "affected": [{"ranges": [{"events": [{"introduced": "1.0.0"}, {"fixed": "2.0.3"}]}]}],
                 }
             ],
         }

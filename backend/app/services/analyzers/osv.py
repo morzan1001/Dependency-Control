@@ -13,12 +13,12 @@ from app.core.constants import (
     ANALYZER_TIMEOUTS,
     OSV_BATCH_API_URL,
     OSV_VULN_API_URL,
-    get_severity_value,
 )
 from app.core.cvss import cvss_base_score
 from app.core.http_utils import InstrumentedAsyncClient
-from app.core.purl import ParsedPURL, canonical_purl, parse_purl
+from app.core.purl import ParsedPURL, canonical_purl, package_identity, parse_purl
 from app.models.finding import Severity
+from app.services.aggregation.versions import parse_version_key
 
 from .base import Analyzer
 
@@ -165,6 +165,64 @@ def _query_targets(components: list[dict[str, Any]]) -> tuple[list[_Target], int
     return targets, len(unqueryable)
 
 
+def _package_key(package: dict[str, Any], by_purl: bool) -> tuple[str, str] | None:
+    if by_purl:
+        purl = package.get("purl")
+        return package_identity(purl, "", None, None) if purl else None
+    return str(package.get("ecosystem") or ""), str(package.get("name") or "").casefold()
+
+
+def _affected_entries(record: dict[str, Any], query: dict[str, Any]) -> list[dict[str, Any]]:
+    """The record's ``affected`` entries for the queried package; OS releases share a purl and match by ecosystem."""
+    by_purl = "purl" in query["package"]
+    key = _package_key(query["package"], by_purl)
+    return [entry for entry in record.get("affected") or [] if _package_key(entry.get("package") or {}, by_purl) == key]
+
+
+def _installed_version(query: dict[str, Any]) -> str:
+    if "purl" in query["package"]:
+        parsed = parse_purl(query["package"]["purl"])
+        return (parsed.version if parsed else None) or ""
+    return query.get("version") or ""
+
+
+def _fixed_version(entries: list[dict[str, Any]], installed: str) -> str | None:
+    """The ``fixed`` event closing the affected interval the installed version is in; GIT ranges fix by commit."""
+    current = parse_version_key(installed)
+    if not current:
+        return None
+    for entry in entries:
+        for version_range in entry.get("ranges") or []:
+            if version_range.get("type") not in ("ECOSYSTEM", "SEMVER"):
+                continue
+            introduced = None
+            for event in version_range.get("events") or []:
+                if "introduced" in event:
+                    introduced = parse_version_key(str(event["introduced"]))
+                elif (
+                    "fixed" in event
+                    and introduced is not None
+                    and introduced <= current < parse_version_key(str(event["fixed"]))
+                ):
+                    return str(event["fixed"])
+                else:
+                    introduced = None
+    return None
+
+
+def _vulnerable_symbols(entries: list[dict[str, Any]]) -> dict[str, list[Any]]:
+    """The entries' ``ecosystem_specific`` symbol data, which symbol-level reachability matches."""
+    merged: dict[str, list[Any]] = {}
+    for entry in entries:
+        eco = entry.get("ecosystem_specific")
+        if not isinstance(eco, dict):
+            continue
+        for key in ("symbols", "imports"):
+            if isinstance(eco.get(key), list):
+                merged.setdefault(key, []).extend(eco[key])
+    return merged
+
+
 class OSVAnalyzer(Analyzer):
     """Vulnerability lookup via the OSV batch API, cached across pods."""
 
@@ -244,10 +302,10 @@ class OSVAnalyzer(Analyzer):
         records, unresolved = await self._fetch_vuln_records(client, stubs)
 
         cache_mapping: dict[str, dict[str, Any]] = {}
-        for (component, purl, _query), vulns in pending:
+        for (component, purl, query), vulns in pending:
             ids = [vuln.get("id", "") for vuln in vulns]
             hydrated = [records.get(vuln_id, vuln) for vuln_id, vuln in zip(ids, vulns, strict=True)]
-            normalized = self._normalize_vulnerabilities(hydrated)
+            normalized = self._normalize_vulnerabilities(hydrated, query)
             # Caching an entry built from unresolved stubs would serve UNKNOWN for the next
             # six hours with no partial flag, making the failure invisible on the next scan.
             if not any(vuln_id in unresolved for vuln_id in ids):
@@ -421,15 +479,11 @@ class OSVAnalyzer(Analyzer):
 
     def _result_entry(self, component: dict[str, Any], vulnerabilities: list[dict[str, Any]]) -> dict[str, Any]:
         """The analyzer result for one component from its normalized vulnerabilities."""
-        name = component.get("name", "")
-        version = component.get("version", "")
         return {
-            "component": name,
-            "version": version,
+            "component": component.get("name", ""),
+            "version": component.get("version", ""),
             "purl": component.get("purl", ""),
             "vulnerabilities": vulnerabilities,
-            "severity": self._get_highest_severity(vulnerabilities),
-            "message": self._create_summary_message(name, version, vulnerabilities),
         }
 
     async def _get_cached_components(self, targets: list[_Target]) -> tuple[list[dict[str, Any]], list[_Target]]:
@@ -446,28 +500,38 @@ class OSVAnalyzer(Analyzer):
                 cached_results.append(self._result_entry(target[0], data["vulnerabilities"]))
         return cached_results, uncached
 
-    def _normalize_vulnerabilities(self, vulns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Normalize OSV vulnerabilities, dropping retracted entries (``withdrawn`` set)."""
+    def _normalize_vulnerabilities(self, vulns: list[dict[str, Any]], query: dict[str, Any]) -> list[dict[str, Any]]:
+        """The fields normalize_osv reads, resolved for the queried package; retracted records (``withdrawn``) drop."""
+        installed = _installed_version(query)
         normalized = []
         for vuln in vulns:
             if vuln.get("withdrawn"):
                 continue
-            vuln_id = vuln.get("id", "")
-            summary = vuln.get("summary", "")
-            normalized.append(
-                {
-                    "id": vuln_id,
-                    "aliases": vuln.get("aliases", []),
-                    "summary": summary,
-                    "details": vuln.get("details", ""),
-                    "severity": self._extract_severity(vuln),
-                    "message": summary or f"Vulnerability {vuln_id} detected",
-                    "references": [ref.get("url") for ref in vuln.get("references", []) if ref.get("url")],
-                    "published": vuln.get("published"),
-                    "modified": vuln.get("modified"),
-                    "affected": vuln.get("affected", []),
-                }
-            )
+            entries = _affected_entries(vuln, query)
+            cvss = self._select_cvss(vuln.get("severity") or [])
+            entry: dict[str, Any] = {
+                "id": vuln.get("id", ""),
+                "aliases": vuln.get("aliases", []),
+                "summary": vuln.get("summary", ""),
+                "severity": self._extract_severity(vuln),
+                "cvss_score": cvss[0] if cvss else None,
+                "cvss_vector": cvss[1] if cvss else None,
+                "fixed_version": _fixed_version(entries, installed),
+                "references": [ref.get("url") for ref in vuln.get("references", []) if ref.get("url")],
+                "published": vuln.get("published"),
+                "modified": vuln.get("modified"),
+            }
+            if not entry["summary"]:
+                entry["details"] = vuln.get("details", "")
+            symbols = _vulnerable_symbols(entries)
+            if symbols:
+                entry["ecosystem_specific"] = symbols
+            if entry["id"].startswith("MAL-"):
+                versions = [
+                    version for affected in vuln.get("affected") or [] for version in affected.get("versions") or []
+                ]
+                entry["affected_versions"] = versions[:10]
+            normalized.append(entry)
         return normalized
 
     # CVSS-type preference order — newest standard wins.
@@ -499,29 +563,21 @@ class OSVAnalyzer(Analyzer):
             return Severity.MEDIUM.value
         return Severity.LOW.value
 
-    def _severity_from_cvss_array(self, severity_array: list[dict[str, Any]]) -> str | None:
-        """Pick the highest-ranked CVSS entry (newest standard wins) and map it."""
-        entries_by_type: dict[str, list[dict[str, Any]]] = {}
-        for sev_info in severity_array:
-            sev_type = sev_info.get("type", "")
-            if "CVSS" in sev_type and sev_info.get("score"):
-                entries_by_type.setdefault(sev_type, []).append(sev_info)
-
-        for preferred_type in self._CVSS_TYPE_PREFERENCE:
-            for sev_info in entries_by_type.get(preferred_type, []):
-                cvss_score = self._parse_cvss_score(str(sev_info["score"]))
-                if cvss_score is not None:
-                    return self._cvss_to_severity(cvss_score, preferred_type)
-
-        # Fall through for unknown CVSS subtypes (e.g. a future v5).
-        for sev_info in severity_array:
-            sev_type = sev_info.get("type", "")
-            if "CVSS" not in sev_type or not sev_info.get("score"):
-                continue
-            cvss_score = self._parse_cvss_score(str(sev_info["score"]))
-            if cvss_score is not None:
-                return self._cvss_to_severity(cvss_score, sev_type)
+    def _select_cvss(self, severity_array: list[dict[str, Any]]) -> tuple[float, str | None, str] | None:
+        """``(score, vector or None for a bare number, type)`` of the newest-standard rating that parses."""
+        rank = {cvss_type: index for index, cvss_type in enumerate(self._CVSS_TYPE_PREFERENCE)}
+        ratings = [rating for rating in severity_array if "CVSS" in rating.get("type", "") and rating.get("score")]
+        # Unknown subtypes (e.g. a future v5) rank last, in their given order.
+        for rating in sorted(ratings, key=lambda rating: rank.get(rating["type"], len(rank))):
+            raw = str(rating["score"])
+            score = self._parse_cvss_score(raw)
+            if score is not None:
+                return score, raw if raw.startswith("CVSS:") else None, rating["type"]
         return None
+
+    def _severity_from_cvss_array(self, severity_array: list[dict[str, Any]]) -> str | None:
+        selected = self._select_cvss(severity_array)
+        return self._cvss_to_severity(selected[0], selected[2]) if selected else None
 
     @staticmethod
     def _severity_from_map(raw_severity: str | None) -> str | None:
@@ -559,28 +615,3 @@ class OSVAnalyzer(Analyzer):
         # float() accepts "nan"/"inf"; NaN survives the clamp in _cvss_to_severity as 10.0
         # (no comparison against it is true) and would land in CRITICAL.
         return value if math.isfinite(value) else None
-
-    def _get_highest_severity(self, vulns: list[dict[str, Any]]) -> str:
-        return max((vuln["severity"] for vuln in vulns), key=get_severity_value, default=Severity.INFO.value)
-
-    def _create_summary_message(self, component: str, version: str, vulns: list[dict[str, Any]]) -> str:
-        """Create a summary message for the component's vulnerabilities."""
-        if not vulns:
-            return ""
-
-        count = len(vulns)
-        critical = sum(1 for v in vulns if v.get("severity") == Severity.CRITICAL.value)
-        high = sum(1 for v in vulns if v.get("severity") == Severity.HIGH.value)
-
-        parts = [f"{component}@{version} has {count} known vulnerabilit{'y' if count == 1 else 'ies'}"]
-
-        severity_parts = []
-        if critical:
-            severity_parts.append(f"{critical} critical")
-        if high:
-            severity_parts.append(f"{high} high")
-
-        if severity_parts:
-            parts.append(f"({', '.join(severity_parts)})")
-
-        return " ".join(parts)
