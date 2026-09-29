@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
+from app.core.constants import ANALYSIS_MAX_RETRIES, SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.models.project import Scan
 from app.services.analysis.engine import run_analysis
 
@@ -97,7 +97,9 @@ async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_scan_and_its_del
     first = await _ingest(db, _FILE_ID_OLD)
     second = await _ingest(db, _FILE_ID_NEW)
 
-    await db.scans.update_one({"_id": first}, {"$set": {"status": "processing"}})
+    await db.scans.update_one(
+        {"_id": first}, {"$set": {"status": "processing", "retry_count": ANALYSIS_MAX_RETRIES - 1}}
+    )
     assert (
         await run_analysis(first, [_gridfs_ref("69d5332457c8763c8d8c82df")], [], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS

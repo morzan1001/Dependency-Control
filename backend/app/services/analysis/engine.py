@@ -15,6 +15,7 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateMany
 
 from app.core.constants import (
+    ANALYSIS_MAX_RETRIES,
     DETAILS_KEY_IN_KEV,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
@@ -1141,6 +1142,7 @@ async def run_analysis(
     fs = AsyncIOMotorGridFSBucket(db)
     sboms_to_process = _resolve_sboms_to_process(sboms, scan_type)
 
+    load_start = datetime.now(timezone.utc)
     # Resolved before the first delete, so an SBOM that fails to load leaves the stored analysis intact.
     resolved_sboms: list[dict[str, Any] | None] = [
         await _resolve_sbom(item, fs, aggregator) for item in sboms_to_process
@@ -1149,7 +1151,11 @@ async def run_analysis(
     sboms_expected = len(resolved_sboms)
     gridfs_expected = _count_gridfs_refs(sboms_to_process)
     if sbom_load_failures and scan_doc.completed_at is not None:
-        logger.warning("Scan %s: an SBOM failed to load; keeping the previous analysis", scan_id)
+        # Retried while the worker still re-queues, so the input that reopened the scan gets analysed.
+        if scan_doc.retry_count + 1 < ANALYSIS_MAX_RETRIES:
+            logger.warning("Scan %s: an SBOM failed to load; retrying the re-analysis", scan_id)
+            return SCAN_STATUS_PENDING if await scan_repo.requeue(scan_id, worker_id) else None
+        logger.warning("Scan %s: an SBOM failed to load on the last attempt; keeping the previous analysis", scan_id)
         error = "SBOM could not be loaded for re-analysis; findings are from the previous analysis"
         outcome = await _write_final_state(
             scan_repo,
@@ -1158,7 +1164,7 @@ async def run_analysis(
             {"$set": {"status": SCAN_STATUS_COMPLETED_WITH_ERRORS, "error": error}},
             worker_id=worker_id,
             sbom_generation=sbom_generation,
-            external_load_start=datetime.now(timezone.utc),
+            external_load_start=load_start,
         )
         if outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS and project_id:
             await _sync_project_head(project_id, scan_repo, project_repo)

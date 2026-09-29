@@ -1031,6 +1031,9 @@ HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS: int = 30
 # Maximum retries for stuck scans before marking as failed
 HOUSEKEEPING_MAX_SCAN_RETRIES: int = 3
 
+# Rescheduled analysis attempts before the worker stops re-queueing a scan
+ANALYSIS_MAX_RETRIES: int = 5
+
 # Interval (seconds) for checking stale pending scans (fast loop for responsiveness)
 HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS: int = 10
 

@@ -1,11 +1,13 @@
 """run_analysis on a FakeDatabase: analyzer set, GitHub token, final status and what reaches notifications."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.core.constants import (
+    ANALYSIS_MAX_RETRIES,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
@@ -18,6 +20,7 @@ from app.services.analysis import engine
 _PROJECT_ID = "notify-project"
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _WORKER = "pod-a/worker-0"
+_LAST_ATTEMPT = ANALYSIS_MAX_RETRIES - 1
 
 
 async def _seed_scan(db) -> str:
@@ -325,35 +328,111 @@ async def test_a_run_whose_old_sbom_failed_to_load_after_a_replace_is_reschedule
     assert (await db.scans.find_one({"_id": scan.id}))["status"] == "pending"
 
 
-@pytest.mark.asyncio
-async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_earlier_analysis(db, notified, monkeypatch):
-    """A late result reopened a finished scan; its findings, results and inventory stay the readable ones."""
-    ref = _gridfs_outage(monkeypatch)
+async def _finished_scan_with_an_analysis(db, ref: dict, retry_count: int) -> str:
+    """A late result reopened a finished scan whose findings, results and inventory are stored."""
     scan = Scan(
-        project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER, completed_at=_T0
+        project_id=_PROJECT_ID,
+        branch="main",
+        sbom_refs=[ref],
+        status="processing",
+        worker_id=_WORKER,
+        completed_at=_T0,
+        retry_count=retry_count,
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     await db.findings.insert_one({"_id": "f1", "scan_id": scan.id, "project_id": _PROJECT_ID})
     await db.analysis_results.insert_one({"_id": "r1", "scan_id": scan.id, "analyzer_name": "epss_kev"})
     await db.dependencies.insert_one({"_id": "d1", "scan_id": scan.id, "project_id": _PROJECT_ID})
+    return scan.id
 
-    outcome = await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER)
 
-    assert outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS
-    stored = await db.scans.find_one({"_id": scan.id})
+async def _assert_the_earlier_analysis_is_intact(db, scan_id: str) -> None:
+    assert [f["_id"] async for f in db.findings.find({"scan_id": scan_id})] == ["f1"]
+    assert await db.analysis_results.count_documents({"scan_id": scan_id}) == 1
+    assert await db.dependencies.count_documents({"scan_id": scan_id}) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_re_analysis_whose_sbom_fails_to_load_is_retried_with_the_earlier_analysis_in_place(
+    db, notified, monkeypatch
+):
+    ref = _gridfs_outage(monkeypatch)
+    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=0)
+
+    assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_PENDING
+
+    stored = await db.scans.find_one({"_id": scan_id})
+    assert (stored["status"], stored["retry_count"], stored["worker_id"]) == (SCAN_STATUS_PENDING, 1, None)
+    await _assert_the_earlier_analysis_is_intact(db, scan_id)
+    assert notified == []
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_worker_retries_an_unreadable_re_analysis_before_keeping_the_earlier_analysis(
+    db, notified, running_worker, monkeypatch
+):
+    ref = _gridfs_outage(monkeypatch)
+    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=0)
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"status": SCAN_STATUS_PENDING, "worker_id": None}})
+    await db.projects.insert_one({"_id": _PROJECT_ID, "name": "proj", "active_analyzers": []})
+    failure_notice = AsyncMock()
+    monkeypatch.setattr("app.core.worker.notify_analysis_failed", failure_notice)
+
+    await running_worker.add_job(scan_id)
+    await asyncio.wait_for(running_worker.queue.join(), timeout=10)
+
+    stored = await db.scans.find_one({"_id": scan_id})
+    assert (stored["status"], stored["retry_count"]) == (SCAN_STATUS_COMPLETED_WITH_ERRORS, _LAST_ATTEMPT)
+    await _assert_the_earlier_analysis_is_intact(db, scan_id)
+    failure_notice.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_re_analysis_whose_sbom_fails_to_load_on_its_last_attempt_keeps_the_earlier_analysis(
+    db, notified, monkeypatch
+):
+    ref = _gridfs_outage(monkeypatch)
+    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
+
+    assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+
+    stored = await db.scans.find_one({"_id": scan_id})
     assert stored["status"] == SCAN_STATUS_COMPLETED_WITH_ERRORS
     assert "previous analysis" in stored["error"]
-    assert [f["_id"] async for f in db.findings.find({"scan_id": scan.id})] == ["f1"]
-    assert await db.analysis_results.count_documents({"scan_id": scan.id}) == 1
-    assert await db.dependencies.count_documents({"scan_id": scan.id}) == 1
+    await _assert_the_earlier_analysis_is_intact(db, scan_id)
     assert notified == []
+
+
+@pytest.mark.asyncio
+async def test_a_result_that_arrives_while_the_last_attempt_loads_its_sbom_reschedules_it(db, notified, monkeypatch):
+    ref = _gridfs_outage(monkeypatch)
+    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
+
+    async def _result_lands_while_the_read_retries(fs, file_id, **_kwargs):
+        await db.scans.update_one({"_id": scan_id}, {"$set": {"last_result_at": datetime.now(timezone.utc)}})
+        await asyncio.sleep(0.01)
+        raise OSError("gridfs outage")
+
+    monkeypatch.setattr(engine, "open_gridfs_download_with_retry", _result_lands_while_the_read_retries)
+
+    assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_PENDING
+
+    assert (await db.scans.find_one({"_id": scan_id}))["status"] == SCAN_STATUS_PENDING
+    await _assert_the_earlier_analysis_is_intact(db, scan_id)
 
 
 @pytest.mark.asyncio
 async def test_a_re_analysis_whose_sbom_was_replaced_meanwhile_is_rescheduled(db, notified, monkeypatch):
     ref = _gridfs_outage(monkeypatch)
     scan = Scan(
-        project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER, completed_at=_T0
+        project_id=_PROJECT_ID,
+        branch="main",
+        sbom_refs=[ref],
+        status="processing",
+        worker_id=_WORKER,
+        completed_at=_T0,
+        retry_count=_LAST_ATTEMPT,
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_generation": 2})
 
@@ -379,6 +458,7 @@ async def test_a_re_analysis_that_keeps_the_earlier_analysis_heads_the_project_a
         worker_id=_WORKER,
         created_at=_T0 + timedelta(hours=1),
         completed_at=_T0 + timedelta(hours=1),
+        retry_count=_LAST_ATTEMPT,
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     await db.projects.insert_one({"_id": _PROJECT_ID, "name": "proj", "latest_scan_id": "older"})
@@ -433,7 +513,13 @@ async def test_a_re_analysis_that_keeps_the_earlier_analysis_applies_a_callgraph
 ):
     ref = _gridfs_outage(monkeypatch)
     scan = Scan(
-        project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER, completed_at=_T0
+        project_id=_PROJECT_ID,
+        branch="main",
+        sbom_refs=[ref],
+        status="processing",
+        worker_id=_WORKER,
+        completed_at=_T0,
+        retry_count=_LAST_ATTEMPT,
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     await _callgraph_upload(db, scan.id)

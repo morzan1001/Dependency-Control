@@ -7,7 +7,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
-from app.core.constants import SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
+from app.core.constants import ANALYSIS_MAX_RETRIES, SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
     worker_active_count,
@@ -201,11 +201,10 @@ class AnalysisWorkerManager:
 
     async def _handle_rescheduled(self, scan: dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase) -> bool:
         """Apply the retry ceiling. Engine owns status and retry_count writes."""
-        max_retries = 5
         retry_count = scan.get("retry_count", 0) + 1
         self._untrack_scan(scan_id)
 
-        if retry_count >= max_retries:
+        if retry_count >= ANALYSIS_MAX_RETRIES:
             logger.error(
                 f"Scan {scan_id} failed after {retry_count} retries due to persistent race conditions. Marking as failed."
             )
@@ -215,10 +214,7 @@ class AnalysisWorkerManager:
                 await notify_analysis_failed(db, scan_id, scan.get("project_id"), error_message)
             return True
 
-        logger.info(
-            f"Scan {scan_id} requires re-processing (race condition). "
-            f"Re-queueing (attempt {retry_count}/{max_retries})."
-        )
+        logger.info(f"Scan {scan_id} was rescheduled. Re-queueing (attempt {retry_count}/{ANALYSIS_MAX_RETRIES}).")
         await self.queue.put(scan_id)
         return False
 
