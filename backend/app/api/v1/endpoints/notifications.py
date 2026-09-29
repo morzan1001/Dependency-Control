@@ -15,7 +15,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from app.core.config import settings
 from app.core.permissions import Permissions
-from app.core.purl import package_identity
+from app.core.purl import package_identity, pep503_normalize
 from app.models.broadcast import Broadcast
 from app.models.project import Project
 from app.models.user import User
@@ -208,7 +208,7 @@ async def _handle_teams_broadcast(
 
 def _segment_key(name: str) -> str:
     """Lookup key a rule and a dependency share: the last name segment, blind to case and separators."""
-    return re.sub(r"[-_.]+", "-", re.split(r"[/:]", name)[-1].lower())
+    return pep503_normalize(re.split(r"[/:]", name)[-1])
 
 
 def _rule_matches(rule: AdvisoryPackage, dep_type: str, dep_path: str) -> bool:

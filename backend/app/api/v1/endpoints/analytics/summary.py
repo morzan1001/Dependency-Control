@@ -11,7 +11,6 @@ from app.api.v1.helpers.analytics import (
     get_latest_scan_ids,
     get_projects_with_scans,
     get_user_project_ids,
-    live_cves,
     require_analytics_permission,
     require_any_analytics_permission,
     scope_resolution_counts,
@@ -39,6 +38,7 @@ from app.services.component_identity import (
     lookup_component,
 )
 from app.services.aggregation.versions import parse_version_key
+from app.services.recommendation.common import live_cves
 
 router = CustomAPIRouter()
 

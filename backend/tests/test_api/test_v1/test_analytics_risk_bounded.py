@@ -436,7 +436,8 @@ class TestDistinctSeverityCounts:
         assert counts["high"] == 0, "a CVE must not also be counted at a lower severity"
 
     def test_counts_reconcile_with_the_cve_total(self):
-        from app.api.v1.helpers.analytics import live_cves, severity_counts_from_details
+        from app.api.v1.helpers.analytics import severity_counts_from_details
+        from app.services.recommendation.common import live_cves
 
         details = self._details(
             {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},

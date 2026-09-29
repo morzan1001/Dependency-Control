@@ -33,7 +33,7 @@ from app.core.constants import (
     SEVERITY_WEIGHTS,
     get_severity_value,
 )
-from app.core.cve import canonical_cves, counted_cves
+from app.core.cve import counted_cves
 from app.core.permissions import Permissions, has_permission
 from app.core.purl import package_identity_expr
 from app.models.user import User
@@ -42,7 +42,7 @@ from app.schemas.analytics import CVEEnrichmentResult
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
 from app.services.enrichment.scoring import fold_enrichments
-from app.services.recommendation.common import live_advisories
+from app.services.recommendation.common import live_advisories, live_cves
 
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
@@ -368,11 +368,6 @@ SLIM_DETAILS_EXPR: dict[str, Any] = {
         }
     },
 }
-
-
-def live_cves(details_list: list[Any]) -> list[str]:
-    """Distinct CVEs across a group's advisory lists that no per-CVE waiver covers."""
-    return canonical_cves([{"vulnerabilities": live_advisories(details)} for details in details_list])
 
 
 def severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:

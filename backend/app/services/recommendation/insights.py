@@ -14,7 +14,7 @@ from app.services.component_identity import build_component_index, lookup_compon
 from app.services.recommendation.common import (
     ACTION_VERSION_SAMPLE,
     ModelOrDict,
-    finding_cve_ids,
+    live_cves,
     get_attr,
     newest_first,
     sample_components,
@@ -80,7 +80,7 @@ def correlate_scorecard_with_vulnerabilities(
                     "vuln_severity": severity,
                     "scorecard_score": score,
                     "unmaintained": is_unmaintained,
-                    **sampled("cves", finding_cve_ids(vf), _RISKY_PACKAGE_CVES_SAMPLED),
+                    **sampled("cves", live_cves([get_attr(vf, "details")]), _RISKY_PACKAGE_CVES_SAMPLED),
                     "project_url": scorecard.get("project_url"),
                 }
             )

@@ -5,6 +5,7 @@ from typing import Any
 
 from app.core.constants import SCORECARD_LOW_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
 from app.core.purl import dependency_node_key
+from app.models.finding import PACKAGE_FINDING_TYPES
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -23,7 +24,7 @@ from app.services.recommendation.common import (
     ModelOrDict,
     VulnStats,
     dependency_label,
-    finding_cve_ids,
+    live_cves,
     get_attr,
     name_some,
     newest_first,
@@ -40,9 +41,6 @@ CRITICAL_HOTSPOTS_SHOWN = 10
 TOXIC_DEPENDENCIES_SHOWN = 5
 # Parents named per transitive dependency on the attack-surface card before "and N more".
 _PARENTS_NAMED = 3
-
-# Findings about a package; SAST, secret and IaC findings name a file as their component.
-_PACKAGE_FINDING_TYPES = frozenset({"vulnerability", "quality", "license", "malware", "eol"})
 
 
 @dataclass
@@ -104,7 +102,7 @@ def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
 
 def _roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
     package_findings = [
-        f for f in findings if get_attr(f, "component") and get_attr(f, "type") in _PACKAGE_FINDING_TYPES
+        f for f in findings if get_attr(f, "component") and get_attr(f, "type") in PACKAGE_FINDING_TYPES
     ]
     # Scorecard, license and EOL findings carry the SBOM name, a Maven vulnerability group:artifact.
     representative = cluster_by_package_identity(get_attr(f, "component") for f in package_findings)
@@ -363,7 +361,7 @@ def analyze_attack_surface(
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
             counts_by_version[normalize_version(get_attr(f, "version"))][get_attr(f, "component", "")] += (
-                len(finding_cve_ids(f)) or 1
+                len(live_cves([get_attr(f, "details")])) or 1
             )
     # Findings carry the qualified component while the inventory keeps the bare name.
     index_by_version = {version: build_component_index(counts) for version, counts in counts_by_version.items()}

@@ -20,7 +20,6 @@ from app.api.v1.helpers.analytics import (
     get_projects_with_scans,
     get_user_project_ids,
     historical_first_seen,
-    live_cves,
     process_cve_enrichments,
     require_analytics_permission,
     select_impact_candidates,
@@ -46,7 +45,7 @@ from app.services.component_identity import (
 )
 from app.services.analytics.cache import get_analytics_cache
 from app.services.enrichment import get_cve_enrichment
-from app.services.recommendation.common import newest_first
+from app.services.recommendation.common import live_cves, newest_first
 
 logger = logging.getLogger(__name__)
 

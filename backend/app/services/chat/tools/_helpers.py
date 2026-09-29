@@ -12,7 +12,7 @@ from app.core.risk_scoring import calculate_exploit_maturity
 from app.services.component_identity import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
 from app.services.aggregation.versions import parse_version_key
-from app.services.recommendation.common import finding_cve_ids, vuln_info
+from app.services.recommendation.common import live_cves, vuln_info
 
 
 def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bool:
@@ -283,7 +283,7 @@ def _serialize_finding_for_llm(doc: dict[str, Any], *, cve: str | None = None) -
         out["cvss_score"] = primary["cvss_score"]
     if refs := primary.get("references"):
         out["references"] = refs[:3]
-    out["cve_count"] = len(finding_cve_ids(doc))
+    out["cve_count"] = len(live_cves([details]))
     if len(advisories) > 1:
         # The row-level EPSS and exploit_maturity above are maxima over live advisories; these name their holder.
         views = (advisory_view(v, references=0) for v in advisories[:_ROW_ADVISORIES])

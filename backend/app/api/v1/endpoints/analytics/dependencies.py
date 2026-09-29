@@ -11,7 +11,6 @@ from app.api.v1.helpers.analytics import (
     get_latest_scan_ids,
     get_projects_with_scans,
     get_user_project_ids,
-    live_cves,
     require_analytics_permission,
     severity_counts_from_details,
     vuln_details_by,
@@ -44,7 +43,7 @@ from app.services.component_identity import (
     normalize_component,
 )
 from app.services.aggregation.versions import parse_version_key
-from app.services.recommendation.common import get_attr
+from app.services.recommendation.common import get_attr, live_cves
 from app.services.recommendation.graph import build_dependency_edges
 
 from ._shared import _get_enrichment_info, _resolve_scan_id

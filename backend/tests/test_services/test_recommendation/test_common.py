@@ -12,9 +12,9 @@ from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     calculate_best_fix_version,
     calculate_score,
-    finding_cve_ids,
     newest_first,
     get_attr,
+    live_cves,
     name_some,
     sample_components,
     sort_key,
@@ -103,21 +103,7 @@ class TestGetAttr:
         assert get_attr(source, key, default) == default
 
 
-def _stored_vuln(entries):
-    """A vulnerability finding in the shape the aggregator persists: the document id is the
-    (component, version) pair and every advisory lives in details.vulnerabilities."""
-    return {
-        "id": "log4j-core:2.14.1",
-        "finding_id": "log4j-core:2.14.1",
-        "type": "vulnerability",
-        "component": "log4j-core",
-        "version": "2.14.1",
-        "aliases": [],
-        "details": {"fixed_version": "2.15.0", "vulnerabilities": entries},
-    }
-
-
-class TestFindingCveIds:
+class TestLiveCves:
     @pytest.mark.parametrize(
         ("entries", "expected"),
         [
@@ -152,28 +138,15 @@ class TestFindingCveIds:
         ],
     )
     def test_the_advisory_list_decides_which_cves_are_named(self, entries, expected):
-        assert finding_cve_ids(_stored_vuln(entries)) == expected
+        assert live_cves([{"vulnerabilities": entries}]) == expected
 
-    def test_component_version_document_id_is_never_returned(self):
-        finding = _stored_vuln([{"id": "CVE-2021-44228"}])
-        assert "log4j-core:2.14.1" not in finding_cve_ids(finding)
+    def test_a_cve_in_two_advisory_lists_is_listed_once(self):
+        lists = [{"vulnerabilities": [{"id": "CVE-2021-44228"}]}, {"vulnerabilities": [{"id": "CVE-2021-44228"}]}]
+        assert live_cves(lists) == ["CVE-2021-44228"]
 
-    @pytest.mark.parametrize(
-        "finding",
-        [
-            pytest.param({"id": "log4j-core:2.14.1"}, id="without_details"),
-            pytest.param({"id": "log4j-core:2.14.1", "details": "a string"}, id="details_not_dict"),
-        ],
-    )
-    def test_a_finding_holding_no_advisories_names_nothing(self, finding):
-        assert finding_cve_ids(finding) == []
-
-    def test_reads_a_pydantic_finding_too(self):
-        class _Finding(BaseModel):
-            id: str = "log4j-core:2.14.1"
-            details: dict = {"vulnerabilities": [{"id": "CVE-2021-44228"}]}
-
-        assert finding_cve_ids(_Finding()) == ["CVE-2021-44228"]
+    @pytest.mark.parametrize("details", [None, "a string", {}], ids=["missing", "not_a_dict", "no_advisories"])
+    def test_details_holding_no_advisories_name_nothing(self, details):
+        assert live_cves([details]) == []
 
 
 _WAIVED_KEV = {

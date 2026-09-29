@@ -37,7 +37,7 @@ from app.schemas.recommendation import Recommendation, RecommendationType
 from app.services.enrichment import get_cve_enrichment
 from app.services.enrichment.service import apply_enrichments
 from app.services.recommendation import trends
-from app.services.recommendation.common import finding_cve_ids, get_attr
+from app.services.recommendation.common import live_cves, get_attr
 from app.services.recommendations import recommendation_engine
 
 from ._shared import _MSG_ACCESS_DENIED
@@ -83,7 +83,7 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
 async def _apply_live_threat_intel(findings: list[Any]) -> dict[str, VulnerabilityEnrichment]:
     """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan; returns the per-CVE enrichment."""
     vuln_findings = [f for f in findings if get_attr(f, "type") == "vulnerability"]
-    all_cves = list({c for f in vuln_findings for c in finding_cve_ids(f)})
+    all_cves = list({c for f in vuln_findings for c in live_cves([get_attr(f, "details")])})
     if not all_cves:
         return {}
     try:

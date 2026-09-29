@@ -115,14 +115,9 @@ def max_advisory_cvss(details: dict[str, Any]) -> float | None:
     return max(scores) if scores else None
 
 
-def finding_cve_ids(finding: ModelOrDict) -> list[str]:
-    """Every unwaived advisory a stored vulnerability finding names, collapsed to its CVE identity.
-
-    Aggregation groups one record per (component, version) and its top-level ``id`` is that pair,
-    so the advisory identity only ever lives in ``details.vulnerabilities`` — the same place the
-    scan delta reads its identity from.
-    """
-    return canonical_cves([{"vulnerabilities": live_advisories(get_attr(finding, "details", {}))}])
+def live_cves(details_list: Iterable[Any]) -> list[str]:
+    """Distinct CVEs across advisory lists that no per-CVE waiver covers."""
+    return canonical_cves([{"vulnerabilities": live_advisories(details)} for details in details_list])
 
 
 # Versions named per package inside an action block; version_count carries the population.
