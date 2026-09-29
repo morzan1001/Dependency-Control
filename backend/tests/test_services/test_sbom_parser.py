@@ -82,6 +82,10 @@ def _directness(result) -> dict[str, tuple[bool, bool]]:
 
 
 _POETRY_TRANSITIVES = ("anyio", "certifi", "h11", "httpcore", "idna", "sniffio")
+_UV_DEV_TRANSITIVES = (
+    *("anyio", "certifi", "h11", "httpcore", "idna", "typing-extensions"),
+    *("colorama", "iniconfig", "packaging", "pluggy", "pygments"),
+)
 _SYFT_MONOREPO = {
     "debug": (True, True),
     "ms": (False, True),
@@ -153,6 +157,83 @@ class TestDirectnessOfRealGraphs:
             "ssl_client",
         }
         assert all(value == (False, False) for name, value in directness.items() if name not in direct)
+
+    @pytest.mark.parametrize(
+        ("fixture", "project_deps"),
+        [
+            pytest.param("maven.trivy.cdx.json", {"logback-classic", "slf4j-api"}, id="pom"),
+            pytest.param("cargo.trivy.cdx.json", {"serde_json"}, id="cargo"),
+            pytest.param(
+                "gomod.trivy.cdx.json",
+                {"github.com/google/uuid", "golang.org/x/sys", "golang.org/x/text"},
+                id="gomod",
+            ),
+            pytest.param("gobinary.trivy.cdx.json", {"github.com/google/uuid", "stdlib"}, id="gobinary"),
+        ],
+    )
+    def test_trivy_root_package_is_skipped_and_its_children_are_direct(self, fixture, project_deps):
+        result = parse_sbom(_fixture(fixture))
+
+        directness = _directness(result)
+        assert {name for name, value in directness.items() if value == (True, False)} == project_deps
+        assert all(value == (False, False) for name, value in directness.items() if name not in project_deps)
+        assert result.skipped_reasons.get("root-component") == 1
+        ingested = {dep.purl for dep in result.dependencies}
+        assert all(set(dep.parent_components) <= ingested for dep in result.dependencies)
+
+    @pytest.mark.parametrize(
+        ("fixture", "expected", "skipped_roots"),
+        [
+            # npm auto-installs react as react-dom's peer; syft links no edge to it, so it is a second lock root.
+            pytest.param(
+                "npmpeer.syft.cdx.json",
+                {
+                    "myapp": (True, True),
+                    "react": (True, True),
+                    **dict.fromkeys(("react-dom", "loose-envify", "scheduler", "js-tokens"), (False, True)),
+                },
+                0,
+                id="npm-peer-cyclonedx",
+            ),
+            pytest.param(
+                "npmpeer.syft.json",
+                {
+                    "react-dom": (True, True),
+                    "react": (True, True),
+                    **dict.fromkeys(("loose-envify", "scheduler", "js-tokens"), (False, True)),
+                },
+                1,
+                id="npm-peer-json",
+            ),
+            # syft links no uv dev group to the project, so pytest is a second lock root.
+            pytest.param(
+                "uvdev.syft.cdx.json",
+                {
+                    "uvdemo": (True, True),
+                    "pytest": (True, True),
+                    "httpx": (False, True),
+                    **dict.fromkeys(_UV_DEV_TRANSITIVES, (False, True)),
+                },
+                0,
+                id="uv-dev-cyclonedx",
+            ),
+            pytest.param(
+                "uvdev.syft.json",
+                {
+                    "pytest": (True, True),
+                    "httpx": (True, True),
+                    **dict.fromkeys(_UV_DEV_TRANSITIVES, (False, True)),
+                },
+                1,
+                id="uv-dev-json",
+            ),
+        ],
+    )
+    def test_a_second_lock_root_keeps_every_registry_package(self, fixture, expected, skipped_roots):
+        result = parse_sbom(_fixture(fixture))
+
+        assert _directness(result) == expected
+        assert result.skipped_reasons.get("root-component", 0) == skipped_roots
 
     def test_spdx_image_root_sets_the_image_source(self):
         result = parse_sbom(_fixture("alpine.syft.spdx.json"))

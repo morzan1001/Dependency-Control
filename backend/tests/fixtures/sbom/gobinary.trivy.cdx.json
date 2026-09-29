@@ -1,0 +1,128 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.6",
+ "serialNumber": "urn:uuid:af9897d7-aa0c-49da-a008-fde4d00424a0",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-09-29T22:21:25+00:00",
+  "tools": {
+   "components": [
+    {
+     "type": "application",
+     "group": "aquasecurity",
+     "name": "trivy",
+     "version": "0.58.1"
+    }
+   ]
+  },
+  "component": {
+   "bom-ref": "1ffe0b40-faf5-4154-b941-a61b4d5799ef",
+   "type": "application",
+   "name": "/src/gobin",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:SchemaVersion",
+     "value": "2"
+    }
+   ]
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "cdf7e3f4-d2cd-4c7a-85b6-216725d16829",
+   "type": "application",
+   "name": "gobinsvc",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "gobinary"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:golang/github.com/example/gobinsvc",
+   "type": "library",
+   "name": "github.com/example/gobinsvc",
+   "purl": "pkg:golang/github.com/example/gobinsvc",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "github.com/example/gobinsvc"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "gobinary"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:golang/github.com/google/uuid@v1.6.0",
+   "type": "library",
+   "name": "github.com/google/uuid",
+   "version": "v1.6.0",
+   "purl": "pkg:golang/github.com/google/uuid@v1.6.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "github.com/google/uuid@v1.6.0"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "gobinary"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:golang/stdlib@v1.27.1",
+   "type": "library",
+   "name": "stdlib",
+   "version": "v1.27.1",
+   "purl": "pkg:golang/stdlib@v1.27.1",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "stdlib@v1.27.1"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "gobinary"
+    }
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "1ffe0b40-faf5-4154-b941-a61b4d5799ef",
+   "dependsOn": [
+    "cdf7e3f4-d2cd-4c7a-85b6-216725d16829"
+   ]
+  },
+  {
+   "ref": "cdf7e3f4-d2cd-4c7a-85b6-216725d16829",
+   "dependsOn": [
+    "pkg:golang/github.com/example/gobinsvc"
+   ]
+  },
+  {
+   "ref": "pkg:golang/github.com/example/gobinsvc",
+   "dependsOn": [
+    "pkg:golang/github.com/google/uuid@v1.6.0",
+    "pkg:golang/stdlib@v1.27.1"
+   ]
+  },
+  {
+   "ref": "pkg:golang/github.com/google/uuid@v1.6.0",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:golang/stdlib@v1.27.1",
+   "dependsOn": []
+  }
+ ],
+ "vulnerabilities": []
+}

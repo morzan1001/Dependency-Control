@@ -1,0 +1,188 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.6",
+ "serialNumber": "urn:uuid:9f75c45b-84b5-451a-a8e9-e8e9ce95dff2",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-09-29T21:22:30+00:00",
+  "tools": {
+   "components": [
+    {
+     "type": "application",
+     "group": "aquasecurity",
+     "name": "trivy",
+     "version": "0.58.1"
+    }
+   ]
+  },
+  "component": {
+   "bom-ref": "36d385a2-95de-4f7f-bdda-d4412c2320e1",
+   "type": "application",
+   "name": "/src/maven",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:SchemaVersion",
+     "value": "2"
+    }
+   ]
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "44fff3e3-617f-48ff-88f3-56ee8572b396",
+   "type": "application",
+   "name": "pom.xml",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+   "type": "library",
+   "group": "ch.qos.logback",
+   "name": "logback-classic",
+   "version": "1.5.6",
+   "licenses": [
+    {
+     "license": {
+      "name": "EPL-1.0"
+     }
+    },
+    {
+     "license": {
+      "name": "LGPL-2.1-only"
+     }
+    }
+   ],
+   "purl": "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ch.qos.logback:logback-classic:1.5.6"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+   "type": "library",
+   "group": "ch.qos.logback",
+   "name": "logback-core",
+   "version": "1.5.6",
+   "licenses": [
+    {
+     "license": {
+      "name": "EPL-1.0"
+     }
+    },
+    {
+     "license": {
+      "name": "LGPL-2.1-only"
+     }
+    }
+   ],
+   "purl": "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ch.qos.logback:logback-core:1.5.6"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:maven/com.example/demo@0.0.1-SNAPSHOT",
+   "type": "library",
+   "group": "com.example",
+   "name": "demo",
+   "version": "0.0.1-SNAPSHOT",
+   "purl": "pkg:maven/com.example/demo@0.0.1-SNAPSHOT",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "com.example:demo:0.0.1-SNAPSHOT"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
+   "type": "library",
+   "group": "org.slf4j",
+   "name": "slf4j-api",
+   "version": "2.0.16",
+   "licenses": [
+    {
+     "license": {
+      "name": "MIT"
+     }
+    }
+   ],
+   "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "org.slf4j:slf4j-api:2.0.16"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "pom"
+    }
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "36d385a2-95de-4f7f-bdda-d4412c2320e1",
+   "dependsOn": [
+    "44fff3e3-617f-48ff-88f3-56ee8572b396"
+   ]
+  },
+  {
+   "ref": "44fff3e3-617f-48ff-88f3-56ee8572b396",
+   "dependsOn": [
+    "pkg:maven/com.example/demo@0.0.1-SNAPSHOT"
+   ]
+  },
+  {
+   "ref": "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+   "dependsOn": [
+    "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+    "pkg:maven/org.slf4j/slf4j-api@2.0.16"
+   ]
+  },
+  {
+   "ref": "pkg:maven/ch.qos.logback/logback-core@1.5.6",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:maven/com.example/demo@0.0.1-SNAPSHOT",
+   "dependsOn": [
+    "pkg:maven/ch.qos.logback/logback-classic@1.5.6",
+    "pkg:maven/org.slf4j/slf4j-api@2.0.16"
+   ]
+  },
+  {
+   "ref": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
+   "dependsOn": []
+  }
+ ],
+ "vulnerabilities": []
+}

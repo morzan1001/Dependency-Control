@@ -1,0 +1,130 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.6",
+ "serialNumber": "urn:uuid:ad9acbc3-db5c-4d2d-a426-0fdcbe6a6594",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-09-29T21:22:29+00:00",
+  "tools": {
+   "components": [
+    {
+     "type": "application",
+     "group": "aquasecurity",
+     "name": "trivy",
+     "version": "0.58.1"
+    }
+   ]
+  },
+  "component": {
+   "bom-ref": "1df000a8-d9b9-43e7-8a76-40c63df566b9",
+   "type": "application",
+   "name": "/src/cargo",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:SchemaVersion",
+     "value": "2"
+    }
+   ]
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "40435860-ea15-4b37-9032-cc9834366d68",
+   "type": "application",
+   "name": "Cargo.lock",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "cargo"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/itoa@1.0.11",
+   "type": "library",
+   "name": "itoa",
+   "version": "1.0.11",
+   "purl": "pkg:cargo/itoa@1.0.11",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "itoa@1.0.11"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "cargo"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/myservice@0.1.0",
+   "type": "library",
+   "name": "myservice",
+   "version": "0.1.0",
+   "purl": "pkg:cargo/myservice@0.1.0",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "myservice@0.1.0"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "cargo"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/serde_json@1.0.120",
+   "type": "library",
+   "name": "serde_json",
+   "version": "1.0.120",
+   "purl": "pkg:cargo/serde_json@1.0.120",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "serde_json@1.0.120"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "cargo"
+    }
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "1df000a8-d9b9-43e7-8a76-40c63df566b9",
+   "dependsOn": [
+    "40435860-ea15-4b37-9032-cc9834366d68"
+   ]
+  },
+  {
+   "ref": "40435860-ea15-4b37-9032-cc9834366d68",
+   "dependsOn": [
+    "pkg:cargo/myservice@0.1.0"
+   ]
+  },
+  {
+   "ref": "pkg:cargo/itoa@1.0.11",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:cargo/myservice@0.1.0",
+   "dependsOn": [
+    "pkg:cargo/serde_json@1.0.120"
+   ]
+  },
+  {
+   "ref": "pkg:cargo/serde_json@1.0.120",
+   "dependsOn": [
+    "pkg:cargo/itoa@1.0.11"
+   ]
+  }
+ ],
+ "vulnerabilities": []
+}

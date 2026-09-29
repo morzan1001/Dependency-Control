@@ -146,6 +146,8 @@ _SYFT_PROJECT_ROOT_PROPERTIES = (
     ("syft:package:metadataType", "python-uv-lock-entry"),
     ("syft:package:foundBy", "java-pom-cataloger"),
 )
+# Lock-file types whose Trivy node holds the scanned project as a root package rather than its dependencies.
+_TRIVY_ROOT_PACKAGE_TYPES = tuple(("aquasecurity:trivy:Type", kind) for kind in ("pom", "cargo", "gomod", "gobinary"))
 
 
 def is_url(value: str) -> bool:
@@ -411,25 +413,29 @@ class SBOMParser:
     @classmethod
     def _cyclonedx_graph_roles(
         cls, components: list[dict[str, Any]], forward: dict[Any, list[Any]]
-    ) -> tuple[set[Any], set[Any]]:
-        """(graph refs that are no package, package refs that mark the scanned project)."""
-        packages: dict[str, dict[str, Any]] = {}
+    ) -> tuple[set[Any], set[Any], set[Any]]:
+        """(graph refs that are no package, Trivy lock-file root packages, syft roots that are the scanned project)."""
+        packages: set[str] = set()
+        trivy_roots: set[Any] = set()
+        syft_roots_by_lock: dict[str, list[str]] = {}
+        targets = set().union(*forward.values())
         for comp in components:
             ref, comp_type = comp.get("bom-ref") or comp.get("purl"), comp.get("type")
+            if not isinstance(ref, str) or comp_type in cls._NON_PACKAGE_COMPONENT_TYPES:
+                continue
+            props = [(p.get("name"), p.get("value")) for p in comp.get("properties") or [] if isinstance(p, dict)]
             # Trivy groups each lock file's packages under a purl-less application node.
-            aggregator = comp_type == "application" and not comp.get("purl")
-            if isinstance(ref, str) and comp_type not in cls._NON_PACKAGE_COMPONENT_TYPES and not aggregator:
-                packages[ref] = comp
-        nodes = set(forward).union(*forward.values())
-        project = {
-            ref
-            for ref, comp in packages.items()
-            if any(
-                isinstance(prop, dict) and (prop.get("name"), prop.get("value")) in _SYFT_PROJECT_ROOT_PROPERTIES
-                for prop in comp.get("properties") or []
-            )
-        }
-        return nodes - packages.keys(), project
+            if comp_type == "application" and not comp.get("purl"):
+                if any(prop in _TRIVY_ROOT_PACKAGE_TYPES for prop in props):
+                    trivy_roots.update(forward.get(ref, ()))
+                continue
+            packages.add(ref)
+            if forward.get(ref) and ref not in targets and any(prop in _SYFT_PROJECT_ROOT_PROPERTIES for prop in props):
+                lock = next((value for name, value in props if name == "syft:location:0:path"), None)
+                syft_roots_by_lock.setdefault(str(lock), []).append(ref)
+        # A second root in one lock file (an unlinked npm peer, a uv dev group) leaves the project ambiguous.
+        project = {roots[0] for roots in syft_roots_by_lock.values() if len(roots) == 1}
+        return set(forward).union(targets) - packages, trivy_roots, project
 
     def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         metadata = sbom.get("metadata", {})
@@ -456,10 +462,10 @@ class SBOMParser:
         result.crypto_assets = parse_crypto_components(components)
 
         forward = self._build_cyclonedx_deps_graph(sbom.get("dependencies") or [])
-        transparent, project = self._cyclonedx_graph_roles(components, forward)
-        directness, subjects = _resolve_directness(forward, main_refs, transparent, project)
+        transparent, trivy_roots, project = self._cyclonedx_graph_roles(components, forward)
+        directness, subjects = _resolve_directness(forward, main_refs, transparent | trivy_roots, project)
         # A tuple compares by equality, so an unhashable bom-ref cannot fail the whole document.
-        root_refs = (*main_refs, *subjects)
+        root_refs = (*main_refs, *trivy_roots, *subjects)
 
         parsed_by_ref: dict[Any, ParsedDependency] = {}
         for comp in components:
