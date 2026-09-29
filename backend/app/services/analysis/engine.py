@@ -1002,7 +1002,6 @@ def _release_memory_to_os() -> None:
 
 def _partial_run_reasons(
     failed_analyzers: list[str],
-    sbom_load_failed: bool,
     sbom_load_failures: int,
     sbom_parse_failures: int,
     sboms_expected: int,
@@ -1012,7 +1011,7 @@ def _partial_run_reasons(
     reasons: list[str] = []
     if failed_analyzers:
         reasons.append(f"analyzers failed or returned partial results: {', '.join(failed_analyzers)}")
-    if not sbom_load_failed and sbom_load_failures:
+    if sbom_load_failures:
         reasons.append(f"{sbom_load_failures} of {sboms_expected} SBOMs failed to load")
     if sbom_parse_failures:
         reasons.append(
@@ -1023,11 +1022,9 @@ def _partial_run_reasons(
     return reasons
 
 
-def _final_scan_status(
-    scan_id: str, sbom_load_failed: bool, partial_reasons: list[str]
-) -> tuple[ScanStatus, str | None]:
-    if sbom_load_failed:
-        return SCAN_STATUS_FAILED, "SBOM could not be loaded for analysis"
+def _final_scan_status(scan_id: str, sboms_unusable: bool, partial_reasons: list[str]) -> tuple[ScanStatus, str | None]:
+    if sboms_unusable:
+        return SCAN_STATUS_FAILED, "SBOM could not be loaded or parsed for analysis"
     if partial_reasons:
         error = "; ".join(partial_reasons)
         logger.warning("Scan %s completed with errors: %s", scan_id, error)
@@ -1243,20 +1240,22 @@ async def run_analysis(
 
     stats = await calculate_comprehensive_stats(db, scan_id)
 
-    # A rescan has no stored inventory to fall back on, so a partial load would leave it without one.
-    sbom_load_failed = sbom_load_failures > 0 and (scan_doc.is_rescan or sbom_load_failures == gridfs_expected)
-    if sbom_load_failed:
+    # A rescan has no stored inventory to fall back on, so a partial payload would leave it without one.
+    sboms_unusable = (scan_doc.is_rescan and sbom_load_failures + sbom_parse_failures > 0) or (
+        sbom_load_failures > 0 and sbom_load_failures == gridfs_expected
+    )
+    if sboms_unusable:
         logger.error(
-            "Scan %s: %d/%d SBOMs failed to load from GridFS; marking failed",
+            "Scan %s: %d/%d SBOMs failed to load and %d failed to parse; marking failed",
             scan_id,
             sbom_load_failures,
             sboms_expected,
+            sbom_parse_failures,
         )
 
     failed_analyzers = _failed_analyzer_names(results_summary)
     partial_reasons = _partial_run_reasons(
         failed_analyzers,
-        sbom_load_failed,
         sbom_load_failures,
         sbom_parse_failures,
         sboms_expected,
@@ -1264,7 +1263,7 @@ async def run_analysis(
         total_findings_count,
     )
     total_findings_count = persisted_findings_count
-    final_status, final_error = _final_scan_status(scan_id, sbom_load_failed, partial_reasons)
+    final_status, final_error = _final_scan_status(scan_id, sboms_unusable, partial_reasons)
 
     latest_run_summary = {
         "scan_id": scan_id,

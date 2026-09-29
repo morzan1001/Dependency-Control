@@ -298,9 +298,9 @@ async def test_a_run_whose_sboms_all_fail_to_load_is_failed_and_announced_as_fai
     assert await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
 
     stored = await db.scans.find_one({"_id": scan.id})
-    assert (stored["status"], stored["error"]) == ("failed", "SBOM could not be loaded for analysis")
+    assert (stored["status"], stored["error"]) == ("failed", "SBOM could not be loaded or parsed for analysis")
     assert notified == []
-    failure_notice.assert_awaited_once_with(db, scan.id, _PROJECT_ID, "SBOM could not be loaded for analysis")
+    failure_notice.assert_awaited_once_with(db, scan.id, _PROJECT_ID, "SBOM could not be loaded or parsed for analysis")
 
 
 @pytest.mark.asyncio

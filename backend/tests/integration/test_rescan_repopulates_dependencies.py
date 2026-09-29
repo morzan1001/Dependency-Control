@@ -44,7 +44,7 @@ _SBOM_A = _cyclonedx_sbom(
     ]
 )
 _SBOM_B = _cyclonedx_sbom([("flask", "3.0.0", "pkg:pypi/flask@3.0.0")])
-# The parser rejects a non-object metadata, the shape prod CI retries carry.
+# The parser rejects a non-object metadata.
 _MALFORMED_SBOM = {**_SBOM_B, "metadata": []}
 
 
@@ -195,15 +195,19 @@ async def test_an_unparsable_sbom_keeps_the_stored_dependencies_and_flags_the_sc
 
 
 @pytest.mark.asyncio
-async def test_a_rescan_with_an_unparsable_sbom_stores_no_partial_inventory(db, monkeypatch):
+async def test_a_rescan_with_an_unparsable_sbom_fails_and_leaves_the_lineage_on_the_earlier_analysis(db, monkeypatch):
     fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _MALFORMED_SBOM})
     monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    await db.scans.insert_one(
+        {"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed", "latest_rescan_id": "earlier"}
+    )
     scan_id = await _seed_rescan(db, refs)
 
-    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
 
-    assert await _dependency_docs(db, scan_id) == []
+    assert (await db.scans.find_one({"_id": _ORIGINAL_SCAN_ID}))["latest_rescan_id"] == "earlier"
+    assert (await db.scans.find_one({"_id": scan_id}))["error"] == "SBOM could not be loaded or parsed for analysis"
 
 
 @pytest.mark.asyncio
