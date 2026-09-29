@@ -33,6 +33,7 @@ from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
+from app.services.aggregation.versions import split_fixed_versions
 from app.services.component_identity import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
@@ -868,9 +869,7 @@ class ChatToolRegistry:
             details = f.get("details") or {}
             entries = details.get("vulnerabilities") or []
             for fv in (details.get("fixed_version"), *(v.get("fixed_version") for v in entries)):
-                if isinstance(fv, str) and fv:
-                    # Writers emit comma-joined fix lists ("1.2.6, 2.0.1"); compare single versions.
-                    g["fix_candidates"].extend(part for part in (c.strip() for c in fv.split(",")) if part)
+                g["fix_candidates"].extend(split_fixed_versions(fv))
 
         steps: list[dict[str, Any]] = []
         for key, g in groups.items():

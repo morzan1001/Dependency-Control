@@ -186,7 +186,7 @@ class TestCalculateBestFixVersion:
             pytest.param([], "unknown", id="empty_list"),
             pytest.param(["1.2.3"], "1.2.3", id="single_version"),
             pytest.param(["1.0.0", "2.0.0", "1.5.0"], "2.0.0", id="multiple_versions_returns_highest"),
-            pytest.param(["1.0.0, 2.0.0"], "1.0.0, 2.0.0", id="comma_separated_versions"),
+            pytest.param(["1.0.0, 2.0.0"], "2.0.0", id="comma_separated_versions"),
             pytest.param(["", " ", "  "], "unknown", id="whitespace_only_filtered"),
             pytest.param(["", "1.0.0", " "], "1.0.0", id="mixed_whitespace_and_valid"),
             pytest.param(["  1.0.0  ", "2.0.0"], "2.0.0", id="versions_with_leading_whitespace"),
@@ -194,7 +194,7 @@ class TestCalculateBestFixVersion:
             pytest.param([None, None], "unknown", id="all_none"),
             pytest.param(["1.2.3", "1.2.4", "1.3.0"], "1.3.0", id="complex_versions"),
             pytest.param(["1.0.0, 1.5.0", "2.0.0"], "2.0.0", id="comma_separated_in_multiple_entries"),
-            pytest.param(["1.0.0, 3.0.0, 2.0.0"], "1.0.0, 3.0.0, 2.0.0", id="single_comma_separated_entry_as_is"),
+            pytest.param(["1.0.0, 3.0.0, 2.0.0"], "3.0.0", id="single_comma_separated_entry"),
         ],
     )
     def test_calculate_best_fix_version(self, candidates, expected):

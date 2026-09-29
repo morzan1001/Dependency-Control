@@ -27,10 +27,14 @@ def parse_version_key(v: str) -> VersionKey:
     return tuple(parts)
 
 
+def split_fixed_versions(value: Any) -> list[str]:
+    """The single versions of a stored fixed_version, which writers join with ", " per release line."""
+    return [part for raw in str(value or "").split(",") if (part := raw.strip())]
+
+
 def _upgrade_candidates(fixed_version: Any, installed_key: VersionKey) -> list[tuple[VersionKey, str]]:
     """One advisory's fix candidates; a fix below the installed release is another line's backport."""
-    parts = (part.strip() for part in str(fixed_version or "").split(","))
-    candidates = [(key, part) for part in parts if (key := parse_version_key(part))]
+    candidates = [(key, part) for part in split_fixed_versions(fixed_version) if (key := parse_version_key(part))]
     return [(key, c) for key, c in candidates if key >= installed_key] or candidates
 
 

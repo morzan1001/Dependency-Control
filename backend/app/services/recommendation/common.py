@@ -17,7 +17,7 @@ from app.core.constants import (
 )
 from app.core.epss import bucket_epss
 from app.schemas.recommendation import Priority, Recommendation, VulnerabilityInfo
-from app.services.aggregation.versions import parse_version_key
+from app.services.aggregation.versions import parse_version_key, split_fixed_versions
 from app.core.cve import canonical_cves, display_vulnerability_id
 
 ModelOrDict = BaseModel | dict[str, Any]
@@ -114,29 +114,9 @@ def newest_first(versions: Iterable[Any]) -> list[str]:
 
 
 def calculate_best_fix_version(versions: list[str]) -> str:
-    """Pick the highest fix version (handles comma-separated lists)."""
-    if not versions:
-        return "unknown"
-
-    valid_versions = [v.strip() for v in versions if v and v.strip()]
-    if not valid_versions:
-        return "unknown"
-
-    if len(valid_versions) == 1:
-        return valid_versions[0]
-
-    parsed = []
-    for v in valid_versions:
-        for raw_part in v.split(","):
-            part = raw_part.strip()
-            if part:
-                parsed.append(part)
-
-    if not parsed:
-        return "unknown"
-
-    parsed.sort(key=parse_version_key, reverse=True)
-    return parsed[0]
+    """The highest single version among stored fixed_version values."""
+    parts = [part for v in versions for part in split_fixed_versions(v)]
+    return max(parts, key=parse_version_key) if parts else "unknown"
 
 
 # Shown where a finding names no advisory at all; VulnerabilityInfo.cve_id is not optional.
@@ -229,7 +209,7 @@ def summarize_vulns(vulns: list[VulnerabilityInfo]) -> VulnStats:
         actionable=sum(v.is_actionable for v in vulns),
         epss_scores=epss_scores,
         versions=newest_first({v.current_version for v in vulns if v.current_version}),
-        fixed_versions=newest_first(set(fixes)),
+        fixed_versions=newest_first({part for fix in fixes for part in split_fixed_versions(fix)}),
         best_fix=calculate_best_fix_version(fixes),
     )
 

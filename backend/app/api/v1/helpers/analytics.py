@@ -36,6 +36,7 @@ from app.core.purl import package_identity_expr
 from app.models.user import User
 from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
+from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
 from app.services.component_identity import build_component_index
 from app.services.enrichment.scoring import fold_enrichments
 from app.services.recommendation.common import get_attr
@@ -185,17 +186,19 @@ def calculate_days_known(first_seen: datetime | None) -> int | None:
         return None
 
 
-def extract_fix_versions(details_list: list[Any]) -> set:
-    """Extract fix versions from finding details."""
-    fix_versions = set()
-    for details in details_list:
-        if isinstance(details, dict):
-            if details.get("fixed_version"):
-                fix_versions.add(details["fixed_version"])
-            for vuln in details.get("vulnerabilities", []):
-                if vuln.get("fixed_version"):
-                    fix_versions.add(vuln["fixed_version"])
-    return fix_versions
+def extract_fix_versions(details_list: list[Any], installed_version: str | None) -> set[str]:
+    """The versions fixing every advisory of the group, else each advisory's own fixes."""
+    advisories = [
+        vuln
+        for details in details_list
+        if isinstance(details, dict)
+        for vuln in details.get("vulnerabilities") or []
+        if isinstance(vuln, dict)
+    ]
+    fixes_all = aggregate_fixed_version(advisories, installed_version)
+    if fixes_all:
+        return set(split_fixed_versions(fixes_all))
+    return {part for vuln in advisories for part in split_fixed_versions(vuln.get("fixed_version"))}
 
 
 def process_cve_enrichments(finding_ids: list[str], enrichments: dict[str, Any]) -> CVEEnrichmentResult:

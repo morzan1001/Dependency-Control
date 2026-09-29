@@ -10,7 +10,7 @@ from app.core.cve import entry_cves
 from app.services.normalizers.utils import FindingIdPrefix
 from app.models.finding import Finding, FindingType
 from app.schemas.finding import VulnerabilityEntry
-from app.services.aggregation.versions import VersionKey, parse_version_key
+from app.services.aggregation.versions import VersionKey, parse_version_key, split_fixed_versions
 
 
 def _sast_entry(f: Finding) -> dict[str, Any]:
@@ -107,7 +107,7 @@ def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry
 
 
 def _fix_candidates(value: Any) -> set[tuple[VersionKey, str]]:
-    return {(parse_version_key(v), v) for v in {v.strip() for v in str(value or "").split(",")} - {""}}
+    return {(parse_version_key(v), v) for v in split_fixed_versions(value)}
 
 
 def _merged_fixed_version(a: Any, b: Any) -> str | None:

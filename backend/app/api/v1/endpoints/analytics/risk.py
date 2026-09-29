@@ -102,7 +102,6 @@ def _severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
 # Slim details before $group so the group never accumulates the raw analyzer payload: keep the
 # per-advisory id/alias/severity (for distinct-CVE counts, severity, and enrichment) and fix versions.
 _SLIM_DETAILS_EXPR: dict[str, Any] = {
-    "fixed_version": "$details.fixed_version",
     "vulnerabilities": {
         "$map": {
             "input": {"$ifNull": ["$details.vulnerabilities", []]},
@@ -206,7 +205,7 @@ async def get_impact_analysis(
     for r in candidates:
         severity_counts = r["_severity_counts"]
         total_findings = sum(severity_counts.values())
-        fix_versions = extract_fix_versions(r.get("details_list", []))
+        fix_versions = extract_fix_versions(r.get("details_list", []), r.get("version"))
         has_fix = len(fix_versions) > 0
 
         enrichment_data = process_cve_enrichments(canonical_cves(r.get("details_list", [])), enrichments)
@@ -289,7 +288,7 @@ def _build_hotspot(
 ) -> VulnerabilityHotspot:
     details_list = r.get("details_list", [])
     severity_counts = _severity_counts_from_details(details_list)
-    fix_versions = extract_fix_versions(details_list)
+    fix_versions = extract_fix_versions(details_list, r["_id"].get("version"))
     has_fix = len(fix_versions) > 0
     component = r["_id"]["component"]
     # One name at one version can ship in several ecosystems (a deb and an apk openssl); name them all.

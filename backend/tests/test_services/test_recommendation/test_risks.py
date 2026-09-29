@@ -673,6 +673,12 @@ class TestHotspotNamesEveryInstalledVersionAndOneTarget:
         assert rec.action["steps"][0] == "URGENT: This vulnerability is being actively exploited in the wild"
         assert "Available fix: Update to 2.0.1" in rec.description
 
+    def test_a_fix_per_release_line_is_listed_as_single_versions(self):
+        [rec] = _hotspots([_vuln("lib", "CRITICAL", is_kev=True, fixed_version="1.2.6, 2.0.1")])
+
+        assert rec.action["fixed_versions"] == ["2.0.1", "1.2.6"]
+        assert "Available fix: Update to 2.0.1" in rec.description
+
 
 class TestCardsWithoutVulnerabilitiesKeepTheirVersion:
     def test_a_malware_hotspot_names_the_installed_version(self):
