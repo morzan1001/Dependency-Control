@@ -197,20 +197,19 @@ class TestEmailChangeRequest:
         assert await _stored(db, IDP_ID) == IDP
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        ("caller", "new_email", "detail"),
-        [
-            (LOCAL, "TARA@corp.com", "Email already registered"),
-            (LEGACY, "tara@corp.com", "This is already your email address"),
-        ],
-        ids=["someone-elses", "own"],
-    )
-    async def test_a_registered_address_in_any_case_is_refused(self, db, caller, new_email, detail):
-        with pytest.raises(HTTPException) as exc_info:
-            await _request_change(db, caller, new_email)
+    async def test_someone_elses_address_in_any_case_is_refused(self, db):
+        with pytest.raises(IdentityTakenError, match="Email already registered"):
+            await _request_change(db, LOCAL, "TARA@corp.com")
 
-        assert (exc_info.value.status_code, exc_info.value.detail) == (400, detail)
-        assert await _stored(db, caller["_id"]) == caller
+        assert await _stored(db, LOCAL["_id"]) == LOCAL
+
+    @pytest.mark.asyncio
+    async def test_the_own_address_in_any_case_is_refused(self, db):
+        with pytest.raises(HTTPException) as exc_info:
+            await _request_change(db, LEGACY, "tara@corp.com")
+
+        assert (exc_info.value.status_code, exc_info.value.detail) == (400, "This is already your email address")
+        assert await _stored(db, LEGACY["_id"]) == LEGACY
 
     @pytest.mark.asyncio
     async def test_without_a_mail_server_it_is_refused(self, db):
