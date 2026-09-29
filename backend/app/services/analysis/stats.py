@@ -298,8 +298,8 @@ def build_reachability_summary(
 
 
 # Severities with a dedicated bucket; anything else is counted as unknown so buckets always sum to total.
-_UNKNOWN_SEVERITY = Severity.UNKNOWN.value
-_BUCKETED_SEVERITIES = tuple(s.value for s in Severity if s is not Severity.UNKNOWN)
+_UNKNOWN_SEVERITY: str = Severity.UNKNOWN.value
+_BUCKETED_SEVERITIES: tuple[str, ...] = tuple(s.value for s in Severity if s is not Severity.UNKNOWN)
 
 
 def _numeric(raw: Any) -> float | None:
