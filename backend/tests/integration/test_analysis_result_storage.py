@@ -9,9 +9,15 @@ import pytest
 from app.models.project import Scan
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
-from app.services.analysis.engine import _aggregate_external_results, _carry_over_external_results, process_analyzer
+from app.services.analysis.engine import (
+    _aggregate_external_results,
+    _carry_over_external_results,
+    _process_sbom,
+    process_analyzer,
+)
 from app.services.analysis.stats import build_epss_kev_summary
 from app.services.analyzers.outdated import OutdatedAnalyzer
+from tests.helpers.analyzers import serve_analyzer
 
 _RUN = {"pipeline_id": 616161, "commit_hash": "d" * 40, "branch": "main"}
 _ENVELOPE = {
@@ -100,7 +106,12 @@ class _DepsDevAnswers(OutdatedAnalyzer):
 
 
 def _sbom(root: str) -> dict[str, Any]:
-    return {"bomFormat": "CycloneDX", "specVersion": "1.6", "metadata": {"component": {"name": root}}}
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "metadata": {"component": {"name": root}},
+        "components": [{"type": "library", "bom-ref": _BRACE["purl"], **_BRACE}],
+    }
 
 
 async def _rows(db, scan_id: str) -> list[dict[str, Any]]:
@@ -203,20 +214,22 @@ async def test_a_result_the_server_finds_just_over_the_limit_is_refused_with_413
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_each_sbom_keeps_its_own_row_and_a_rerun_replaces_it(db):
-    for root in ("storefront", "checkout", "storefront"):
-        status = await process_analyzer(
-            "outdated_packages",
-            _DepsDevAnswers(),
-            _sbom(root),
-            "scan-1",
-            db,
-            ResultAggregator(),
-            parsed_components=[_BRACE],
-        )
-        assert status == "outdated_packages: Success"
+async def test_each_sbom_keeps_its_own_row_and_a_rerun_replaces_it(db, monkeypatch):
+    serve_analyzer(monkeypatch, "outdated_packages", _DepsDevAnswers())
 
-    assert sorted(row["source"] for row in await _rows(db, "scan-1")) == ["checkout", "storefront"]
+    async def analyze(index: int) -> None:
+        # the two images of a multi-arch build share their root component name
+        await _process_sbom(index, _sbom("storefront"), "scan-1", db, ResultAggregator(), ["outdated_packages"], None)
+
+    await analyze(0)
+    await analyze(1)
+    first_ids = sorted(row["_id"] for row in await _rows(db, "scan-1"))
+    await analyze(0)
+
+    rows = await _rows(db, "scan-1")
+    assert len(first_ids) == 2
+    assert sorted(row["_id"] for row in rows) == first_ids
+    assert all(row["result"]["outdated_dependencies"] for row in rows)
 
 
 @pytest.mark.asyncio

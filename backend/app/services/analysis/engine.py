@@ -208,8 +208,9 @@ async def process_analyzer(
         aggregator.aggregate(analyzer_name, result, source=source)
 
         # The findings are already aggregated, so a refused raw row costs only the raw-results view.
+        # Keyed on the SBOM's position: root names repeat within a scan (multi-arch images).
         try:
-            await AnalysisResultRepository(db).save_result(scan_id, analyzer_name, result, source=source)
+            await AnalysisResultRepository(db).save_result(scan_id, analyzer_name, result, source=fallback_source)
         except Exception as e:
             logger.exception("Storing the raw %s result of %s failed: %s", analyzer_name, scan_id, e)
 
