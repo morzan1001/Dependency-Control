@@ -181,6 +181,16 @@ class TestDirectnessOfRealGraphs:
         ingested = {dep.purl for dep in result.dependencies}
         assert all(set(dep.parent_components) <= ingested for dep in result.dependencies)
 
+    def test_trivy_go_binary_without_main_module_keeps_every_package(self):
+        # gofmt (Go toolchain) and a `go build main.go` binary carry no main module, so trivy gives them no root.
+        result = parse_sbom(_fixture("gobinnomain.trivy.cdx.json"))
+
+        assert sorted((dep.name, dep.direct, dep.direct_inferred) for dep in result.dependencies) == [
+            ("github.com/google/uuid", True, False),
+            ("stdlib", True, False),
+        ]
+        assert "root-component" not in result.skipped_reasons
+
     @pytest.mark.parametrize(
         ("fixture", "expected", "skipped_roots"),
         [

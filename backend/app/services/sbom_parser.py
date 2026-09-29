@@ -146,7 +146,7 @@ _SYFT_PROJECT_ROOT_PROPERTIES = (
     ("syft:package:metadataType", "python-uv-lock-entry"),
     ("syft:package:foundBy", "java-pom-cataloger"),
 )
-# Lock-file types whose Trivy node holds the scanned project as a root package rather than its dependencies.
+# Lock-file types whose Trivy node can hold the scanned project as a root package rather than its dependencies.
 _TRIVY_ROOT_PACKAGE_TYPES = tuple(("aquasecurity:trivy:Type", kind) for kind in ("pom", "cargo", "gomod", "gobinary"))
 
 
@@ -426,8 +426,14 @@ class SBOMParser:
             props = [(p.get("name"), p.get("value")) for p in comp.get("properties") or [] if isinstance(p, dict)]
             # Trivy groups each lock file's packages under a purl-less application node.
             if comp_type == "application" and not comp.get("purl"):
-                if any(prop in _TRIVY_ROOT_PACKAGE_TYPES for prop in props):
-                    trivy_roots.update(forward.get(ref, ()))
+                children = forward.get(ref, [])
+                # A Go binary without a main module has no root package: its packages hang directly under the node.
+                if (
+                    len(children) == 1
+                    and forward.get(children[0])
+                    and any(prop in _TRIVY_ROOT_PACKAGE_TYPES for prop in props)
+                ):
+                    trivy_roots.add(children[0])
                 continue
             packages.add(ref)
             if forward.get(ref) and ref not in targets and any(prop in _SYFT_PROJECT_ROOT_PROPERTIES for prop in props):
