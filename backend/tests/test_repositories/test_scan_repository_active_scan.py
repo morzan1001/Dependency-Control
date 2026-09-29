@@ -24,6 +24,7 @@ _HEAD = "head"
 # walked, so only a tip carrying a rescan link costs one more read, again per scope.
 _POINTER_READS = 1
 _NO_READS = 0
+_SBOM_REFS = [{"type": "gridfs_reference", "gridfs_id": "g1"}]
 
 
 def _project(project_id: str, **overrides) -> dict:
@@ -40,6 +41,7 @@ def _scan(scan_id: str, project_id: str, branch: str, hours_old: int, **override
         "branch": branch,
         "status": "completed",
         "created_at": _NOW - timedelta(hours=hours_old),
+        "sbom_refs": _SBOM_REFS,
     }
     doc.update(overrides)
     return doc
@@ -442,6 +444,18 @@ class TestHeadIsTheDefaultBranch:
 
         assert result == {"p1": "main-build"}
 
+    @pytest.mark.parametrize("default_branch", [None, "main"])
+    def test_a_newer_scan_without_an_sbom_does_not_take_head_from_the_build_that_has_one(self, default_branch):
+        """Such a scan carries no dependencies, so heading with it would blank the project's vulnerabilities."""
+        result, _ = asyncio.run(
+            _resolve(
+                [_scan("sbom-build", "p1", "main", 6), _scan("sast-only", "p1", "main", 0, sbom_refs=[])],
+                [_project("p1", default_branch=default_branch)],
+            )
+        )
+
+        assert result == {"p1": "sbom-build"}
+
     def test_a_project_whose_ci_only_builds_tags_is_headed_by_its_newest_tag_build(self):
         result, _ = asyncio.run(
             _resolve(
@@ -628,6 +642,16 @@ class TestHeadFields:
         )
 
         assert fields["latest_scan_id"] == "on-stale"
+
+    @pytest.mark.asyncio
+    async def test_a_newer_scan_without_an_sbom_is_not_the_head_it_derives(self):
+        db = FakeDatabase()
+        await db.scans.insert_one(_scan("sbom-build", "p1", "main", 5, stats={"critical": 9}))
+        await db.scans.insert_one(_scan("sast-only", "p1", "main", 1, sbom_refs=[], stats={"critical": 0}))
+
+        fields = await ScanRepository(db).head_fields({"_id": "p1", "latest_scan_id": "sast-only"})
+
+        assert fields == {"latest_scan_id": "sbom-build", "stats": {"critical": 9}}
 
     @pytest.mark.asyncio
     async def test_clears_both_fields_when_nothing_usable_is_left(self):

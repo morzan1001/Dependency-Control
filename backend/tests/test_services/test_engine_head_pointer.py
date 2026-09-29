@@ -21,6 +21,7 @@ _FEATURE = "feature/spike"
 _TAG = "v1.2.3"
 _NOW = datetime(2026, 9, 1, tzinfo=timezone.utc)
 _HOUR = timedelta(hours=1)
+_SBOM_REFS = [{"type": "gridfs_reference", "gridfs_id": "g1"}]
 
 
 @pytest.fixture
@@ -41,6 +42,7 @@ async def _scan(db, scan_id, created_at, branch=_MAIN, status=SCAN_STATUS_COMPLE
             "status": status,
             "created_at": created_at,
             "stats": {"critical": 0},
+            "sbom_refs": _SBOM_REFS,
             **fields,
         }
     )
@@ -49,10 +51,19 @@ async def _scan(db, scan_id, created_at, branch=_MAIN, status=SCAN_STATUS_COMPLE
 async def _rescan(db, scan_id, root_id, created_at, status=SCAN_STATUS_COMPLETED):
     """The production shape: rooted at the lineage root, which points only at a delivered rescan."""
     root = await db.scans.find_one({"_id": root_id})
-    await _scan(db, scan_id, created_at, branch=root["branch"], status=status, is_rescan=True, original_scan_id=root_id)
+    await _scan(
+        db,
+        scan_id,
+        created_at,
+        branch=root["branch"],
+        status=status,
+        is_rescan=True,
+        original_scan_id=root_id,
+        sbom_refs=root["sbom_refs"],
+    )
 
 
-async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0, authoritative=True):
+async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0):
     scan_repo = ScanRepository(db)
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing"}})
     return await _finalize_scan_and_project(
@@ -66,7 +77,6 @@ async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0, autho
         scan_repo,
         ProjectRepository(db),
         status=status,
-        authoritative=authoritative,
     )
 
 
@@ -185,9 +195,38 @@ async def test_a_late_older_build_leaves_the_pointer_on_the_newer_one(db):
 async def test_a_scan_without_an_sbom_does_not_replace_an_existing_pointer(db):
     await _project(db, "b1")
     await _scan(db, "b1", _NOW)
-    await _scan(db, "sast-only", _NOW + _HOUR)
+    await _scan(db, "sast-only", _NOW + _HOUR, sbom_refs=[])
 
-    await _finalize(db, "sast-only", authoritative=False)
+    await _finalize(db, "sast-only")
+
+    assert await _pointer(db) == "b1"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("default_branch", [None, _MAIN])
+async def test_a_rescan_of_the_sbom_build_heads_past_a_newer_scan_without_one(db, default_branch):
+    await _project(db, "b1", default_branch=default_branch)
+    await _scan(db, "b1", _NOW)
+    await _scan(db, "sast-only", _NOW + _HOUR, sbom_refs=[])
+    await _finalize(db, "sast-only")
+    await _rescan(db, "r1", "b1", _NOW + 2 * _HOUR)
+
+    await _finalize(db, "r1", critical=9)
+
+    project = await db.projects.find_one({"_id": _PROJECT_ID})
+    assert (project["latest_scan_id"], project["stats"]["critical"]) == ("r1", 9)
+    assert (await ScanRepository(db).get_latest_active_scan(project)).id == "r1"
+
+
+@pytest.mark.asyncio
+async def test_a_feature_build_does_not_hand_head_to_a_newer_default_branch_scan_without_an_sbom(db):
+    await _project(db, "b1", default_branch=_MAIN)
+    await _scan(db, "b1", _NOW)
+    await _scan(db, "sast-only", _NOW + _HOUR, sbom_refs=[])
+    await _finalize(db, "sast-only")
+    await _scan(db, "feature-build", _NOW + 2 * _HOUR, branch=_FEATURE)
+
+    await _finalize(db, "feature-build")
 
     assert await _pointer(db) == "b1"
 
@@ -195,11 +234,23 @@ async def test_a_scan_without_an_sbom_does_not_replace_an_existing_pointer(db):
 @pytest.mark.asyncio
 async def test_a_scan_without_an_sbom_heads_a_project_that_has_nothing_else(db):
     await _project(db)
-    await _scan(db, "sast-only", _NOW)
+    await _scan(db, "sast-only", _NOW, sbom_refs=[])
 
-    await _finalize(db, "sast-only", authoritative=False)
+    await _finalize(db, "sast-only")
 
     assert await _pointer(db) == "sast-only"
+
+
+@pytest.mark.asyncio
+async def test_in_a_project_without_sboms_the_newest_scan_takes_the_pointer(db):
+    await _project(db, "sast-1", default_branch=_MAIN)
+    await _scan(db, "sast-1", _NOW, sbom_refs=[])
+    await _scan(db, "sast-2", _NOW + _HOUR, sbom_refs=[])
+
+    await _finalize(db, "sast-2", critical=2)
+
+    project = await db.projects.find_one({"_id": _PROJECT_ID})
+    assert (project["latest_scan_id"], project["stats"]["critical"]) == ("sast-2", 2)
 
 
 @pytest.mark.asyncio

@@ -26,6 +26,7 @@ from app.models.project import Project, Scan
 from app.models.release import Release
 from app.models.system import SystemSettings
 from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.rescan import build_rescan, create_rescan
 from tests.mocks.fake_mongo import FakeDatabase
@@ -738,6 +739,19 @@ class TestProcessProjectRescan:
         rescans = await _rescans(db)
         assert [r["original_scan_id"] for r in rescans] == [_SOURCE_SCAN_ID]
         assert rescans[0]["branch"] == _MAIN_BRANCH
+
+    @pytest.mark.asyncio
+    async def test_the_tip_is_the_build_head_reports_when_a_newer_scan_carries_no_sbom(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER)
+        await _seed_scan(db, _EMPTY_SBOM_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _RECENT, sbom_refs=[])
+        project = _project(default_branch=_MAIN_BRANCH)
+
+        targets = await _rescan_targets(project, db)
+        head = await ScanRepository(db).get_latest_active_scan(project)
+
+        assert [t["_id"] for t in targets] == [head.id] == [_SOURCE_SCAN_ID]
 
     @pytest.mark.asyncio
     async def test_the_newest_branch_wins_when_the_vcs_names_no_default(

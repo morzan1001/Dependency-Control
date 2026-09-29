@@ -74,6 +74,19 @@ async def test_a_branch_tip_is_the_newest_build_not_a_rescan_of_an_older_one(db)
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_branch_tip_is_the_newest_build_that_carries_an_sbom(db):
+    await _seed(
+        db,
+        _scan("sbom-build", "main", age_hours=24, sbom_refs=[{"gridfs_id": "g1"}]),
+        _scan("sast-only", "main", age_hours=1, sbom_refs=[]),
+        _scan("legacy", "main", age_hours=0),
+    )
+
+    assert (await ScanRepository(db).branch_tip("p1", "main")).id == "sbom-build"
+
+
+@pytest.mark.asyncio
 async def test_a_branch_tip_reports_the_delivered_rescan_of_its_newest_build(db):
     await _seed(
         db,

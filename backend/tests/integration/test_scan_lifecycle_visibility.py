@@ -1,6 +1,7 @@
 """Partially-failed scans must surface the loss: status completed_with_errors, error text, failed_analyzers."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -315,6 +316,15 @@ async def test_k10_sast_only_scan_does_not_replace_project_latest(db, monkeypatc
     fs = _fake_gridfs({})
     monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     await _seed_project(db, latest_scan_id="previous-sbom-scan")
+    previous = Scan(
+        id="previous-sbom-scan",
+        project_id=_PROJECT_ID,
+        branch="main",
+        status="completed",
+        sbom_refs=[_gridfs_ref(_FILE_ID_A)],
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    await db.scans.insert_one(previous.model_dump(by_alias=True))
     scan_id = await _seed_scan(db, sbom_refs=[])
 
     assert await run_analysis(scan_id, [], [], db) is True

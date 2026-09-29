@@ -874,7 +874,6 @@ async def _finalize_scan_and_project(
     findings_summary: list[dict[str, Any]] | None = None,
     failed_analyzers: list[str] | None = None,
     enrichment_failures: list[str] | None = None,
-    authoritative: bool = True,
 ) -> bool:
     """Persist the final scan status, ignored count, and (on success) project stats.
 
@@ -935,8 +934,7 @@ async def _finalize_scan_and_project(
 
     if project_id and status != SCAN_STATUS_FAILED:
         project_doc = await project_repo.get_by_id(project_id)
-        # A scan without an SBOM must not replace the SBOM-derived picture of a project that has one.
-        if project_doc and (authoritative or not project_doc.latest_scan_id):
+        if project_doc:
             head = await scan_repo.head_fields(project_doc)
             await project_repo.update_raw(project_id, {"$set": {**head, "last_scan_at": datetime.now(timezone.utc)}})
     return True
@@ -1235,7 +1233,6 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         findings_summary=_build_findings_summary(vulnerability_findings),
         failed_analyzers=failed_analyzers,
         enrichment_failures=_enrichment_failure_names(results_summary),
-        authoritative=bool(sboms_to_process),
     )
     if not finalized:
         # Rescheduled after a late scanner result raced completion; skip notifying on stale results.

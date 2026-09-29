@@ -74,6 +74,7 @@ def _scan(scan_id: str, project_id: str, *, created_delta: int = 0, status: str 
         "branch": _MAIN,
         "status": status,
         "created_at": _NOW + timedelta(hours=created_delta),
+        "sbom_refs": [{"type": "gridfs_reference", "gridfs_id": f"g-{scan_id}"}],
         **extra,
     }
 

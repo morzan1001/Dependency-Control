@@ -5,9 +5,10 @@ Head is the freshest readable analysis of the tip build of the project's head br
 The head branch is the default branch while the VCS still has one and it holds a usable scan, else
 any branch it has not deleted. The tip build is the newest build there: a rescan carries
 ``created_at = now`` over an older commit and a tag pipeline writes its tag into ``branch``, so a
-branch build outranks a tag build and both outrank a rescan. The freshest analysis is the newest
-usable scan in that build's rescan lineage. ``latest_scan_id`` caches the answer and is trusted only
-while it names a readable scan that may head the project.
+branch build outranks a tag build and both outrank a rescan; any scan with an SBOM outranks every
+scan without one. The freshest analysis is the newest usable scan in that build's rescan lineage.
+``latest_scan_id`` caches the answer and is trusted only while it names a readable scan that may
+head the project.
 
 The same two steps answer per branch (``branch_tips``) and per release (``freshest_in_lineage`` on
 the marked scan), so the project tile, head-mode analytics and the release view cannot disagree.
@@ -42,11 +43,17 @@ logger = logging.getLogger(__name__)
 USABLE_BUILD_MATCH: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "is_rescan": {"$ne": True}}
 # A tag pipeline writes its tag into branch, so such a scan names no branch.
 BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"]}}
+# A scan without an SBOM (SAST only) carries no dependencies, so it heads only where no scan has one.
+HAS_SBOM_MATCH: dict[str, Any] = {"sbom_refs": {"$exists": True, "$ne": []}}
 # Best first, so a project whose usable scans are all tag builds or rescans still has a tip.
-_TIP_TIERS: tuple[dict[str, Any], ...] = (
-    {**USABLE_BUILD_MATCH, **BRANCH_SCAN_FILTER},
-    USABLE_BUILD_MATCH,
-    {"status": {"$in": SCAN_USABLE_STATUSES}},
+_TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
+    {**sbom, **tier}
+    for sbom in (HAS_SBOM_MATCH, {})
+    for tier in (
+        {**USABLE_BUILD_MATCH, **BRANCH_SCAN_FILTER},
+        USABLE_BUILD_MATCH,
+        {"status": {"$in": SCAN_USABLE_STATUSES}},
+    )
 )
 _TIP_LOOKUP_CONCURRENCY = 16
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}

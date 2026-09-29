@@ -39,7 +39,7 @@ from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository
-from app.repositories.scans import BRANCH_SCAN_FILTER, USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import BRANCH_SCAN_FILTER, HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.compliance.retention import sweep_expired_compliance_reports
@@ -148,11 +148,7 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     """
     from app.services.releases import released_scan_ids
 
-    usable_source = {
-        "project_id": project.id,
-        "status": {"$in": SCAN_USABLE_STATUSES},
-        "sbom_refs": {"$exists": True, "$ne": []},
-    }
+    usable_source = {"project_id": project.id, "status": {"$in": SCAN_USABLE_STATUSES}, **HAS_SBOM_MATCH}
 
     targets: list[dict] = []
     targeted_ids: set[str] = set()
