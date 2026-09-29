@@ -46,7 +46,7 @@ from app.services.branch_sync import sync_project_branches
 from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.releases import reconcile_release_flags, release_protected_scan_ids
-from app.services.rescan import create_rescan
+from app.services.rescan import RESCAN_SOURCE_PROJECTION, create_rescan
 from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 
@@ -105,6 +105,11 @@ async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE)
     return sum([await _reap_batch(batch) async for batch in abatched(scan_ids, batch_size)])
 
 
+_RESCAN_PROJECT_PROJECTION = dict.fromkeys(
+    ("_id", "name", "default_branch", "deleted_branches", "rescan_enabled", "rescan_interval"), 1
+)
+
+
 def _resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
     """Return effective rescan interval hours, or None if rescans are disabled."""
     project_decides = system_settings.rescan_mode != SETTINGS_MODE_GLOBAL
@@ -149,32 +154,27 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     """
     from app.services.releases import released_scan_ids
 
-    targets: list[dict] = []
-    targeted_ids: set[str] = set()
-
     # Head's own tip build, so the rescan refreshes the analysis head reports; the lineage step is
     # left out because a rescan target has to be the build, not the previous interval's output.
-    tip = await ScanRepository(db).head_build(project, {**HAS_SBOM_MATCH, **USABLE_BUILD_MATCH})
-    if tip:
-        targets.append(tip)
-        targeted_ids.add(str(tip["_id"]))
+    tip = await ScanRepository(db).head_build(
+        project, {**HAS_SBOM_MATCH, **USABLE_BUILD_MATCH}, RESCAN_SOURCE_PROJECTION
+    )
+    targets = [tip] if tip else []
 
     # The marked scan itself, never its rescan: rescanning the rescan would grow the chain past
     # the bound effective_scan_ids walks. A failed one is retried, as nothing else analyses it.
-    for marked_id in (await released_scan_ids(db, project.id)).values():
-        marked = await db.scans.find_one(
+    marked_ids = set((await released_scan_ids(db, project.id)).values()) - {target["_id"] for target in targets}
+    if marked_ids:
+        marked = db.scans.find(
             {
                 "project_id": project.id,
-                "_id": marked_id,
+                "_id": {"$in": sorted(marked_ids)},
                 "status": {"$nin": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
                 **HAS_SBOM_MATCH,
-            }
+            },
+            RESCAN_SOURCE_PROJECTION,
         )
-        if not marked or str(marked["_id"]) in targeted_ids:
-            continue
-        targets.append(marked)
-        targeted_ids.add(str(marked["_id"]))
-
+        targets.extend(await marked.to_list(None))
     return targets
 
 
@@ -214,7 +214,7 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         system_settings = await repo.get()
 
         # Pre-filter to projects that have been scanned at least once.
-        async for project_data in db.projects.find({"last_scan_at": {"$ne": None}}):
+        async for project_data in db.projects.find({"last_scan_at": {"$ne": None}}, _RESCAN_PROJECT_PROJECTION):
             try:
                 await _process_project_rescan(project_data, system_settings, db, worker_manager)
             except Exception as e:

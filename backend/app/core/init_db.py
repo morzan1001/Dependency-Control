@@ -337,6 +337,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("created_at", pymongo.DESCENDING),
         ]
     )
+    # A branch's tip build is found in one seek, however many rescans of it pile up in front.
+    await database["scans"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("branch", pymongo.ASCENDING),
+            ("is_rescan", pymongo.ASCENDING),
+            *SCANS_TIP_SORT,
+        ]
+    )
     await database["scans"].create_index([("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)])
     await database["scans"].create_index("original_scan_id")
     await database["scans"].create_index("latest_rescan_id")

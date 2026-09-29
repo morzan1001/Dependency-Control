@@ -39,8 +39,9 @@ from app.schemas.projections import ScanMinimal, ScanWithStats
 
 logger = logging.getLogger(__name__)
 
-# $ne rather than False: scans predating the flag carry none and are builds.
-USABLE_BUILD_MATCH: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "is_rescan": {"$ne": True}}
+# None too: scans predating the flag carry none and are builds. $in rather than $ne, so an index
+# holding is_rescan ahead of the sort keys skips the rescans instead of fetching each one.
+USABLE_BUILD_MATCH: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "is_rescan": {"$in": [False, None]}}
 # A tag pipeline writes its tag into branch, so such a scan names no branch.
 BRANCH_SCAN_FILTER: dict[str, Any] = {"$expr": {"$ne": ["$branch", "$commit_tag"]}}
 # A scan without an SBOM (SAST only) carries no dependencies, so it heads only where no scan has one.
@@ -304,11 +305,10 @@ class ScanRepository:
             base["branch"] = {"$nin": scope.deleted}
         return await self._tip(base, projection)
 
-    async def head_build(self, project: Any, match: dict[str, Any]) -> dict | None:
-        """The whole document of the build that heads the project among scans under ``match``,
-        before the lineage step."""
+    async def head_build(self, project: Any, match: dict[str, Any], projection: dict[str, int]) -> dict | None:
+        """The build that heads the project among scans under ``match``, before the lineage step."""
         project_id, scope = _head_scope(project)
-        return await self._head_build(project_id, scope, match, None) if project_id else None
+        return await self._head_build(project_id, scope, match, projection) if project_id else None
 
     async def branch_tip(self, project_id: str, branch: str) -> Scan | None:
         """The head rule scoped to one branch: its tip build, resolved to the freshest analysis of it."""

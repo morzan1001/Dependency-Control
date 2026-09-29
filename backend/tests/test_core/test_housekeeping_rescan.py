@@ -28,7 +28,7 @@ from app.models.system import SystemSettings
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
-from app.services.rescan import build_rescan, create_rescan
+from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan, create_rescan
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT_ID = "p1"
@@ -463,6 +463,16 @@ class TestBuildRescan:
     def test_the_scan_model_holds_exactly_the_pinned_fields(self) -> None:
         """Widening Scan is a decision about what a rescan inherits, so it has to be made here."""
         assert set(Scan.model_fields) == _SCAN_MODEL_FIELDS
+
+    def test_the_scheduler_reads_every_field_a_rescan_is_built_from(self) -> None:
+        source = _saturated_scan_doc()
+        projected = {field: value for field, value in source.items() if field in RESCAN_SOURCE_PROJECTION}
+
+        built, built_from_projection = build_rescan(source), build_rescan(projected)
+
+        assert built_from_projection.model_dump(exclude={"id", "created_at"}) == built.model_dump(
+            exclude={"id", "created_at"}
+        )
 
     def test_a_rescan_carries_exactly_the_pinned_fields_and_nothing_else(self) -> None:
         source = _saturated_scan_doc()

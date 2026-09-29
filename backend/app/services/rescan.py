@@ -13,6 +13,32 @@ if TYPE_CHECKING:
     from app.core.worker import WorkerManager
 
 
+# Every field build_rescan and the scheduler's due check read, and nothing of the analysis.
+RESCAN_SOURCE_PROJECTION: dict[str, int] = dict.fromkeys(
+    (
+        "_id",
+        "project_id",
+        "branch",
+        "commit_hash",
+        "pipeline_iid",
+        "project_url",
+        "pipeline_url",
+        "job_id",
+        "job_started_at",
+        "project_name",
+        "commit_message",
+        "commit_tag",
+        "sbom_refs",
+        "sbom_generation",
+        "scan_type",
+        "original_scan_id",
+        "created_at",
+        "last_rescanned_at",
+    ),
+    1,
+)
+
+
 def build_rescan(source: dict[str, Any]) -> Scan:
     return Scan(
         project_id=source["project_id"],
