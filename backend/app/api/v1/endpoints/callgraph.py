@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.api.deps import CallgraphWriteDep, CurrentUserDep, DatabaseDep
+from app.api.deps import CurrentUserDep, DatabaseDep, ProjectWriteDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.callgraph import (
     callgraph_entry_count,
@@ -92,7 +92,7 @@ async def upload_callgraph(
     project_id: str,
     request: CallgraphUploadRequest,
     db: DatabaseDep,
-    _: CallgraphWriteDep,
+    _: ProjectWriteDep,
 ) -> CallgraphUploadResponse:
     """Upload call graph data (madge or generic format) for reachability analysis."""
     callgraph_repo = CallgraphRepository(db)

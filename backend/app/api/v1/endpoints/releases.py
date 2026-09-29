@@ -8,7 +8,7 @@ import pymongo
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import CurrentUserDep, DatabaseDep, ReleaseWriteDep
+from app.api.deps import CurrentUserDep, DatabaseDep, ProjectWriteDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_409
@@ -65,7 +65,7 @@ async def _to_items(db: AsyncIOMotorDatabase, rows: list[dict[str, Any]]) -> lis
     responses=RESP_AUTH_404_409,
 )
 async def mark_release(
-    project_id: ReleaseWriteDep,
+    project_id: ProjectWriteDep,
     payload: ReleaseMarkRequest,
     db: DatabaseDep,
 ) -> ReleaseItem:
@@ -121,7 +121,7 @@ async def mark_release(
     responses=RESP_AUTH_404,
 )
 async def unmark_release(
-    project_id: ReleaseWriteDep,
+    project_id: ProjectWriteDep,
     scan_id: str,
     db: DatabaseDep,
     environment: _EnvironmentQuery = DEFAULT_RELEASE_ENVIRONMENT,
