@@ -271,7 +271,7 @@ nullable.slice(1).forEach(f => printjson(db.projects.updateMany({[f]: {$type: "n
 Project names that are blank or longer than 200 characters. Rename them by hand:
 
 ```js
-db.projects.find({$expr: {$or: [{$gt: [{$strLenCP: {$ifNull: ["$name", ""]}}, 200]}, {$eq: [{$trim: {input: "$name"}}, ""]}]}}, {name: 1});
+db.projects.find({$expr: {$or: [{$gt: [{$strLenCP: {$ifNull: ["$name", ""]}}, 200]}, {$eq: [{$trim: {input: {$ifNull: ["$name", ""]}}}, ""]}]}}, {name: 1});
 ```
 
 Retention beyond 36500 days, which also crashes housekeeping's cutoff on the old image, a negative global retention, which already means keep forever, and settings modes other than `project` and `global`:
