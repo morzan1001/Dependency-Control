@@ -151,6 +151,33 @@ GO_RAPID_RESET: dict[str, Any] = {
     ],
 }
 
+# Maven names are group:artifact; a second group ships an artifact of the same name, never fixed.
+LOG4SHELL: dict[str, Any] = {
+    "id": "GHSA-jfh8-c2jp-5v3q",
+    "summary": "Remote code injection in Log4j",
+    "affected": [
+        {
+            "package": {
+                "name": "org.apache.logging.log4j:log4j-core",
+                "ecosystem": "Maven",
+                "purl": "pkg:maven/org.apache.logging.log4j/log4j-core",
+            },
+            "ranges": _ranges({"introduced": lower}, {"fixed": fixed}),
+        }
+        for lower, fixed in (("2.13.0", "2.15.0"), ("2.4", "2.12.2"))
+    ]
+    + [
+        {
+            "package": {
+                "name": "com.guicedee.services:log4j-core",
+                "ecosystem": "Maven",
+                "purl": "pkg:maven/com.guicedee.services/log4j-core",
+            },
+            "ranges": _ranges({"introduced": "0"}, {"last_affected": "1.2.1.2-jre17"}),
+        }
+    ],
+}
+
 # Every Alpine release shares one source purl but has its own fix; the record has no summary.
 ALPINE_OPENSSL: dict[str, Any] = {
     "id": "ALPINE-CVE-2023-5678",

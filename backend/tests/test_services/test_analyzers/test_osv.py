@@ -10,6 +10,7 @@ from tests.helpers.osv import (
     DEBIAN_OPENSSL,
     DJANGO_REDOS,
     GO_RAPID_RESET,
+    LOG4SHELL,
     MALWARE_COMBINEZONE,
     REQUEST_SSRF,
     URLLIB3_CRLF,
@@ -22,12 +23,21 @@ def _purl(purl: str) -> dict[str, Any]:
 
 _LODASH = _purl("pkg:npm/lodash@4.17.11")
 _DJANGO_4_2_0 = _purl("pkg:pypi/django@4.2.0")
+_LOG4J_CORE_2_14_1 = _purl("pkg:maven/org.apache.logging.log4j/log4j-core@2.14.1")
 _OPENSSL_ON_ALPINE_3_17 = {"package": {"ecosystem": "Alpine:v3.17", "name": "openssl"}, "version": "3.0.8-r0"}
 _OPENSSL_ON_DEBIAN_12 = {"package": {"ecosystem": "Debian:12", "name": "openssl"}, "version": "3.0.9-1"}
 
 
 def _normalized(record: dict[str, Any], query: dict[str, Any]) -> dict[str, Any]:
     return OSVAnalyzer()._normalize_vulnerabilities([record], query)[0]
+
+
+def _without_purls(record: dict[str, Any]) -> dict[str, Any]:
+    """The record as a source without ``package.purl`` serves it; the OSV schema makes the field optional."""
+    affected = [
+        {**entry, "package": {k: v for k, v in entry["package"].items() if k != "purl"}} for entry in record["affected"]
+    ]
+    return {**record, "affected": affected}
 
 
 class TestParseCvssScore:
@@ -145,12 +155,32 @@ class TestFixedVersion:
             pytest.param(REQUEST_SSRF, _purl("pkg:npm/%40cypress/request@2.88.10"), "3.0.0", id="scoped-package"),
             pytest.param(GO_RAPID_RESET, _purl("pkg:golang/stdlib@1.21.1"), "1.21.3", id="second-interval"),
             pytest.param(GO_RAPID_RESET, _purl("pkg:golang/golang.org/x/net@v0.16.0"), "0.17.0", id="other-module"),
+            pytest.param(LOG4SHELL, _LOG4J_CORE_2_14_1, "2.15.0", id="maven"),
             pytest.param(ALPINE_OPENSSL, _OPENSSL_ON_ALPINE_3_17, "3.0.12-r1", id="os-release-of-the-query"),
             pytest.param(DEBIAN_OPENSSL, _OPENSSL_ON_DEBIAN_12, "3.0.13-1~deb12u1", id="debian-revision"),
         ],
     )
     def test_the_fix_is_the_one_for_the_installed_version(self, record, query, expected):
         assert _normalized(record, query)["fixed_version"] == expected
+
+    @pytest.mark.parametrize(
+        ("record", "query", "expected"),
+        [
+            pytest.param(DJANGO_REDOS, _purl("pkg:pypi/Django@4.2.0"), "4.2.11", id="pep503-name"),
+            pytest.param(DJANGO_REDOS, _purl("pkg:npm/django@4.2.0"), None, id="other-ecosystem"),
+            pytest.param(REQUEST_SSRF, _purl("pkg:npm/%40cypress/request@2.88.10"), "3.0.0", id="scoped-package"),
+            pytest.param(GO_RAPID_RESET, _purl("pkg:golang/golang.org/x/net@v0.16.0"), "0.17.0", id="module-path"),
+            pytest.param(LOG4SHELL, _LOG4J_CORE_2_14_1, "2.15.0", id="maven-group-artifact"),
+            pytest.param(
+                LOG4SHELL,
+                _purl("pkg:maven/com.guicedee.services/log4j-core@2.14.1"),
+                None,
+                id="same-artifact-other-group",
+            ),
+        ],
+    )
+    def test_an_entry_without_a_purl_matches_by_ecosystem_and_name(self, record, query, expected):
+        assert _normalized(_without_purls(record), query)["fixed_version"] == expected
 
 
 class TestEcosystemSpecific:

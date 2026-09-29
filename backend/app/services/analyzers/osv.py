@@ -16,7 +16,7 @@ from app.core.constants import (
 )
 from app.core.cvss import cvss_base_score
 from app.core.http_utils import InstrumentedAsyncClient
-from app.core.purl import ParsedPURL, canonical_purl, package_identity, parse_purl
+from app.core.purl import PURL_TYPE_TO_SYSTEM, ParsedPURL, canonical_purl, package_identity, parse_purl
 from app.models.finding import Severity
 from app.services.aggregation.versions import parse_version_key
 
@@ -167,18 +167,25 @@ def _query_targets(components: list[dict[str, Any]]) -> tuple[list[_Target], int
     return targets, len(unqueryable)
 
 
-def _package_key(package: dict[str, Any], by_purl: bool) -> tuple[str, str] | None:
-    if by_purl:
-        purl = package.get("purl")
-        return package_identity(purl, "", None, None) if purl else None
-    return str(package.get("ecosystem") or ""), str(package.get("name") or "").casefold()
+def _package_key(package: dict[str, Any], purl_type: str | None) -> tuple[str, str] | None:
+    ecosystem, name = str(package.get("ecosystem") or ""), str(package.get("name") or "")
+    if purl_type is None:
+        return ecosystem, name.casefold()
+    purl = package.get("purl")
+    # OSV makes ``purl`` optional; Maven names are group:artifact.
+    if not purl and name and PURL_TYPE_TO_SYSTEM.get(purl_type) == ecosystem.casefold():
+        purl = f"pkg:{purl_type}/{name.replace(':', '/')}"
+    return package_identity(purl, "", None, None) if purl else None
 
 
 def _affected_entries(record: dict[str, Any], query: dict[str, Any]) -> list[dict[str, Any]]:
     """The record's ``affected`` entries for the queried package; OS releases share a purl and match by ecosystem."""
-    by_purl = "purl" in query["package"]
-    key = _package_key(query["package"], by_purl)
-    return [entry for entry in record.get("affected") or [] if _package_key(entry.get("package") or {}, by_purl) == key]
+    parsed = parse_purl(query["package"].get("purl") or "")
+    purl_type = parsed.type if parsed else None
+    key = _package_key(query["package"], purl_type)
+    return [
+        entry for entry in record.get("affected") or [] if _package_key(entry.get("package") or {}, purl_type) == key
+    ]
 
 
 def _installed_version(query: dict[str, Any]) -> str:
