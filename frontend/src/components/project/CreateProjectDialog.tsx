@@ -61,7 +61,7 @@ export function CreateProjectDialog({
       {
         name,
         team_id: teamId === "none" ? undefined : teamId,
-        active_analyzers: analyzers,
+        active_analyzers: pickedAnalyzers ?? undefined,
         retention_days: appConfig?.retention_mode === 'global' ? undefined : retentionDays,
         retention_action: appConfig?.retention_mode === 'global' ? undefined : retentionAction as 'delete' | 'archive' | 'none',
       },

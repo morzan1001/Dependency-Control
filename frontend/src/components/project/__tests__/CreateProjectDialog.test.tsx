@@ -4,9 +4,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CreateProjectDialog } from '../CreateProjectDialog'
 
 const mockMutate = vi.fn()
+let appConfig: { retention_mode: string; default_project_analyzers: string[] } | undefined
 
 vi.mock('@/hooks/queries/use-system', () => ({
-  useAppConfig: () => ({ data: { retention_mode: 'project', default_project_analyzers: ['trivy', 'epss_kev'] } }),
+  useAppConfig: () => ({ data: appConfig }),
 }))
 vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => ({ data: [] }) }))
 vi.mock('@/hooks/queries/use-projects', () => ({
@@ -16,16 +17,35 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 beforeEach(() => {
   mockMutate.mockReset()
+  appConfig = { retention_mode: 'project', default_project_analyzers: ['trivy', 'epss_kev'] }
 })
 
+function submit() {
+  fireEvent.change(screen.getByLabelText('Project Name'), { target: { value: 'svc' } })
+  fireEvent.click(screen.getByRole('button', { name: /create project/i }))
+  expect(mockMutate).toHaveBeenCalledTimes(1)
+  return mockMutate.mock.calls[0][0]
+}
+
 describe('CreateProjectDialog', () => {
-  it('creates the project with the backend default analyzers when the user keeps them', () => {
+  it('leaves the analyzers to the server default when the user keeps them', () => {
     render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
 
-    fireEvent.change(screen.getByLabelText('Project Name'), { target: { value: 'svc' } })
-    fireEvent.click(screen.getByRole('button', { name: /create project/i }))
+    expect(submit().active_analyzers).toBeUndefined()
+  })
 
-    expect(mockMutate).toHaveBeenCalledTimes(1)
-    expect(mockMutate.mock.calls[0][0].active_analyzers).toEqual(['trivy', 'epss_kev'])
+  it('leaves the analyzers to the server default when the app config has not loaded', () => {
+    appConfig = undefined
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    expect(submit().active_analyzers).toBeUndefined()
+  })
+
+  it('sends the analyzers the user picked', () => {
+    render(<CreateProjectDialog open onOpenChange={vi.fn()} />)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /epss/i }))
+
+    expect(submit().active_analyzers).toEqual(['trivy'])
   })
 })
