@@ -140,6 +140,10 @@ class CacheKeys:
         return f"deps:{system}:{package}:{version}"
 
     @staticmethod
+    def deps_dev_project(project_id: str) -> str:
+        return f"depsproj:{project_id}"
+
+    @staticmethod
     def latest_version(system: str, package: str) -> str:
         return f"latest:{system}:{package}"
 
