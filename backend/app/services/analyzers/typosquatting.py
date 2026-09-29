@@ -217,7 +217,7 @@ class TyposquattingAnalyzer(Analyzer):
     ) -> dict[str, Any]:
         popular_packages = await self._ensure_popular_packages()
 
-        components = self._get_components(sbom, parsed_components)
+        components = parsed_components or []
         issues = []
 
         settings = settings or {}

@@ -76,7 +76,7 @@ class EndOfLifeAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        components = self._get_components(sbom, parsed_components)
+        components = parsed_components or []
         self._apply_settings(settings)
 
         products_to_check: dict[str, list[tuple[str, str]]] = collect_products_to_check(components)

@@ -61,6 +61,9 @@ post_processor_factories: dict[str, AnalyzerFactory] = {
 # Vulnerability scanners — post-processors depend on these.
 VULNERABILITY_ANALYZERS: set[str] = {"trivy", "grype", "osv", "deps_dev"}
 
+# The only analyzers that read the posted document itself; every other one grades the parser's components.
+RAW_SBOM_ANALYZERS: set[str] = {"trivy", "grype"}
+
 CRYPTO_ANALYZERS: set[str] = {
     *(finding_type.value for finding_type in RULE_DRIVEN_FINDING_TYPES),
     "crypto_certificate_lifecycle",

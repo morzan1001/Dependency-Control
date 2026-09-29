@@ -24,6 +24,7 @@ from app.services.analyzers.license_compliance.evaluator import (
     is_acceptable_under_policy,
     should_include_finding,
 )
+from tests.helpers.analyzers import analyze_cyclonedx
 from app.services.analyzers.license_compliance.normalizer import (
     extract_licenses,
     normalize_license,
@@ -767,7 +768,7 @@ class TestUndeterminableLicense:
 
     @staticmethod
     async def _run(components):
-        return await LicenseAnalyzer().analyze({"components": components})
+        return await analyze_cyclonedx(LicenseAnalyzer(), components)
 
     @staticmethod
     def _unknown_issues(result):
@@ -872,7 +873,7 @@ class TestUnreadableOrAlternative:
             "purl": "pkg:pypi/dual-licensed@1.0.0",
             "licenses": [{"expression": expression}],
         }
-        return await LicenseAnalyzer().analyze({"components": [component]}, settings or {})
+        return await analyze_cyclonedx(LicenseAnalyzer(), [component], settings or {})
 
     @staticmethod
     def _by_category(result, category):
@@ -945,7 +946,7 @@ class TestUnreadableOrAlternative:
             },
         ]
 
-        result = await LicenseAnalyzer().analyze({"components": components})
+        result = await analyze_cyclonedx(LicenseAnalyzer(), components)
 
         conflicts = self._by_category(result, _INCOMPATIBILITY_CATEGORY)
         assert len(conflicts) == _ONE_FINDING

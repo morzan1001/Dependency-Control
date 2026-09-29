@@ -248,7 +248,7 @@ class OSVAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        targets, unqueryable = _query_targets(self._get_components(sbom, parsed_components))
+        targets, unqueryable = _query_targets(parsed_components or [])
 
         pending, uncached = await self._get_cached_stubs(targets)
         logger.debug(f"OSV: {len(pending)} from cache, {len(uncached)} to fetch")

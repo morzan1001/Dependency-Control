@@ -36,7 +36,7 @@ class HashVerificationAnalyzer(Analyzer):
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Verify component hashes against registries; fetch registry hashes when the SBOM has none."""
-        components = self._get_components(sbom, parsed_components)
+        components = parsed_components or []
         issues = []
         verified_count = 0
         unverifiable_count = 0

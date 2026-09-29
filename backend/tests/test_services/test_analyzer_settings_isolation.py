@@ -9,7 +9,7 @@ import pytest
 
 from app.core.constants import EOL_HIGH_AFTER_DAYS, EOL_MEDIUM_AFTER_DAYS
 from app.models.finding import Severity
-from tests.helpers.analyzers import build_analyzer
+from tests.helpers.analyzers import analyze_cyclonedx, build_analyzer
 
 _EOL = "end_of_life"
 _MAINTAINER_RISK = "maintainer_risk"
@@ -17,7 +17,7 @@ _PRODUCT = "isolated-product"
 _DAYS_PAST_EOL = 60
 _TIGHT_EOL = {"eol_high_after_days": 30, "eol_medium_after_days": 15}
 _DEFAULT_EOL = {"eol_high_after_days": EOL_HIGH_AFTER_DAYS, "eol_medium_after_days": EOL_MEDIUM_AFTER_DAYS}
-_SBOM = {"components": [{"name": _PRODUCT, "version": "1.0", "type": "library"}]}
+_COMPONENTS = [{"name": _PRODUCT, "version": "1.0", "type": "library"}]
 _NO_COMPONENTS: dict[str, Any] = {"components": []}
 _TIGHT_MAINTAINER = {"stale_after_days": 30, "warn_after_days": 15}
 _DEFAULT_MAINTAINER: dict[str, Any] = {}
@@ -51,8 +51,8 @@ def test_the_registry_hands_out_a_fresh_analyzer_per_resolution() -> None:
 async def test_two_projects_scanning_at_once_keep_their_own_eol_thresholds(_eol_cycle_in_cache: None) -> None:
     """60 days past EOL is HIGH under a 30-day threshold and LOW under the default 365-day one."""
     tight, default = await asyncio.gather(
-        build_analyzer(_EOL).analyze(_SBOM, _TIGHT_EOL),
-        build_analyzer(_EOL).analyze(_SBOM, _DEFAULT_EOL),
+        analyze_cyclonedx(build_analyzer(_EOL), _COMPONENTS, _TIGHT_EOL),
+        analyze_cyclonedx(build_analyzer(_EOL), _COMPONENTS, _DEFAULT_EOL),
     )
 
     assert _severities(tight) == [Severity.HIGH.value]

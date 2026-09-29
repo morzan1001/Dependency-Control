@@ -61,6 +61,7 @@ from app.services.analysis.integrations import decorate_github_pr, decorate_gitl
 from app.services.analysis.notifications import notify_analysis_failed, send_scan_notifications
 from app.services.analysis.registry import (
     CRYPTO_ANALYZERS,
+    RAW_SBOM_ANALYZERS,
     VULNERABILITY_ANALYZERS,
     analyzer_factories,
     is_crypto_analyzer,
@@ -311,7 +312,7 @@ def _parse_and_track_sbom(current_sbom: Any) -> tuple[Any, list[dict[str, Any]]]
         if analysis_components_parsed_total:
             analysis_components_parsed_total.inc(len(parsed_components))
     except Exception as parse_err:
-        logger.warning(f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing")
+        logger.warning(f"Failed to pre-parse SBOM: {parse_err} - only the raw-document scanners will run")
         if analysis_sbom_parse_errors_total:
             analysis_sbom_parse_errors_total.inc()
     return parsed_sbom, parsed_components
@@ -353,6 +354,8 @@ def _resolve_effective_analyzers(
     else:
         effective_analyzers = sorted(n for n in active_analyzers if n not in CRYPTO_ANALYZERS)
 
+    if parsed_sbom is None:
+        effective_analyzers = [n for n in effective_analyzers if n in RAW_SBOM_ANALYZERS or n in CRYPTO_ANALYZERS]
     # CBOM-only scans with no real SBOM content: drop SBOM-format scanners
     if not parsed_components and scan_type == "cbom":
         effective_analyzers = [n for n in effective_analyzers if n not in VULNERABILITY_ANALYZERS]
@@ -420,7 +423,7 @@ async def _process_sbom(
             aggregator,
             settings=settings_for(analyzer_name),
             fallback_source=fallback_source,
-            parsed_components=(parsed_components if parsed_components else None),
+            parsed_components=parsed_components,
             project_id=project_id,
         )
         for analyzer_name in effective_analyzers

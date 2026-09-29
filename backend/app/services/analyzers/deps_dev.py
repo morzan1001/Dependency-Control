@@ -91,7 +91,7 @@ class DepsDevAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        components = self._get_components(sbom, parsed_components)
+        components = parsed_components or []
         scorecard_issues: list[Any] = []
         package_metadata: dict[str, Any] = {}
 

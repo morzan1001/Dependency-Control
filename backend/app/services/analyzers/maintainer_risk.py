@@ -94,7 +94,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Analyze maintainer health for packages in the SBOM."""
-        components = self._get_components(sbom, parsed_components)
+        components = parsed_components or []
         issues = []
         checked_count = 0
 
