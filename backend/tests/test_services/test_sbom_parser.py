@@ -5,9 +5,9 @@ import re
 import pytest
 
 from app.schemas.sbom import ParsedDependency, SBOMFormat
+from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
 from app.services.sbom_parser import (
     SBOMParser,
-    extract_license_from_url,
     is_url,
     merge_duplicate_dependencies,
     parse_sbom,
@@ -40,7 +40,6 @@ class TestIsUrl:
 
 class TestExtractLicenseFromUrl:
     def test_mit_license_org(self):
-        # mit-license.org pattern matches because url.lower() keeps it lowercase
         assert extract_license_from_url("https://mit-license.org") == "MIT"
 
     def test_gpl3_url(self):
@@ -56,9 +55,8 @@ class TestExtractLicenseFromUrl:
     def test_none(self):
         assert extract_license_from_url(None) is None  # type: ignore[arg-type]  # Testing None handling
 
-    def test_case_sensitive_patterns_not_matching_uppercase(self):
-        # url.lower() converts MIT to mit, but the pattern has uppercase MIT, so it won't match.
-        assert extract_license_from_url("https://opensource.org/licenses/MIT") is None
+    def test_an_uppercase_url_segment_still_matches(self):
+        assert extract_license_from_url("https://opensource.org/licenses/MIT") == "MIT"
 
     def test_unlicense_org(self):
         assert extract_license_from_url("https://unlicense.org") == "Unlicense"

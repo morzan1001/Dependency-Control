@@ -93,6 +93,14 @@ LICENSE_DATABASE: dict[str, LicenseInfo] = {
         ],
         compatible_with_proprietary=True,
     ),
+    "Apache-1.1": LicenseInfo(
+        spdx_id="Apache-1.1",
+        category=LicenseCategory.PERMISSIVE,
+        name="Apache License 1.1",
+        description="Permissive license with an end-user acknowledgement clause.",
+        obligations=[INCLUDE_COPYRIGHT_NOTICE, INCLUDE_LICENSE_TEXT, "Include the acknowledgement in documentation"],
+        compatible_with_proprietary=True,
+    ),
     "BSD-2-Clause": LicenseInfo(
         spdx_id="BSD-2-Clause",
         category=LicenseCategory.PERMISSIVE,
@@ -154,6 +162,16 @@ LICENSE_DATABASE: dict[str, LicenseInfo] = {
         risks=["May not be legally enforceable in all jurisdictions"],
         compatible_with_proprietary=True,
         requires_attribution=False,
+    ),
+    "LGPL-2.0": LicenseInfo(
+        spdx_id="LGPL-2.0",
+        category=LicenseCategory.WEAK_COPYLEFT,
+        name="GNU Library General Public License v2",
+        description="The predecessor of LGPL 2.1 with the same library copyleft.",
+        obligations=[SHARE_SOURCE_OF_MODIFICATIONS, "Allow relinking"],
+        risks=["Static linking may trigger full GPL terms"],
+        compatible_with_proprietary=True,
+        requires_source_disclosure=True,
     ),
     "LGPL-2.1": LicenseInfo(
         spdx_id="LGPL-2.1",
@@ -244,6 +262,15 @@ LICENSE_DATABASE: dict[str, LicenseInfo] = {
         requires_source_disclosure=True,
         viral=False,
         network_clause=False,
+    ),
+    "MPL-1.1": LicenseInfo(
+        spdx_id="MPL-1.1",
+        category=LicenseCategory.WEAK_COPYLEFT,
+        name="Mozilla Public License 1.1",
+        description="File-level copyleft; unlike MPL 2.0 not compatible with the GPL.",
+        obligations=["Share source of modified files", INCLUDE_LICENSE_TEXT, "Preserve copyright notices"],
+        compatible_with_proprietary=True,
+        requires_source_disclosure=True,
     ),
     SPDX_EPL_1_0: LicenseInfo(
         spdx_id=SPDX_EPL_1_0,
@@ -567,5 +594,6 @@ CATEGORY_STAT_KEY: dict[LicenseCategory, str] = {
 
 @functools.cache
 def get_lowercase_mappings() -> tuple[dict[str, str], dict[str, str]]:
-    """Return cached (db_lower, alias_lower) lookup tables for case-insensitive matching."""
-    return {k.lower(): k for k in LICENSE_DATABASE}, {k.lower(): v for k, v in LICENSE_ALIASES.items()}
+    """Return cached (db_lower, alias_lower) lookup tables; alias_lower also holds each licence's full name."""
+    names = {info.name.lower(): spdx_id for spdx_id, info in LICENSE_DATABASE.items()}
+    return {k.lower(): k for k in LICENSE_DATABASE}, names | {k.lower(): v for k, v in LICENSE_ALIASES.items()}

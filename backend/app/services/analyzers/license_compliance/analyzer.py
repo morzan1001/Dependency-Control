@@ -137,6 +137,9 @@ class LicenseAnalyzer(Analyzer):
         unrecognized: list[str] = []
         for lic_id, lic_url in licenses:
             normalized = normalizer.normalize_license(lic_id)
+            if normalized not in LICENSE_DATABASE and len(licenses) == 1:
+                # A lone licence's URL is its own; with several, the one stored URL may belong to another.
+                normalized = normalizer.extract_license_from_url(lic_url) or normalized
             license_info = LICENSE_DATABASE.get(normalized)
 
             if not license_info:
