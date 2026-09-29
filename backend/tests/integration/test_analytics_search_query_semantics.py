@@ -169,6 +169,7 @@ async def test_vulnerability_search_pages_ascending_from_the_first_component(cli
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_vulnerability_search_finds_a_high_cve_inside_a_critical_component(client, db, scanned):
     finding = _vulnerability("log4j-core")
     finding["severity"] = "CRITICAL"

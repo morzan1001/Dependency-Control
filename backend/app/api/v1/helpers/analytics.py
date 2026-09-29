@@ -435,21 +435,11 @@ def build_hotspot_priority_reasons(
 
 
 def cross_project_cve_pipeline(scan_ids: list[str]) -> list[dict[str, Any]]:
-    """CVE ids per scan; they only exist nested in details.vulnerabilities[].id."""
+    """Each scan's slim advisory lists, for canonical CVE identity in Python."""
     return [
-        {
-            MONGO_MATCH: {
-                "scan_id": {"$in": scan_ids},
-                "type": "vulnerability",
-            }
-        },
-        {"$unwind": "$details.vulnerabilities"},
-        {
-            MONGO_GROUP: {
-                "_id": "$scan_id",
-                "cves": {"$addToSet": "$details.vulnerabilities.id"},
-            }
-        },
+        {MONGO_MATCH: {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
+        {"$project": {"scan_id": 1, "details": SLIM_DETAILS_EXPR}},
+        {MONGO_GROUP: {"_id": "$scan_id", "details_list": {"$addToSet": "$details"}}},
     ]
 
 
@@ -537,7 +527,7 @@ async def gather_cross_project_data(
     scan_stats_map = {s.id: s.stats for s in other_scans if s.stats}
 
     cve_results = await finding_repo.aggregate(cross_project_cve_pipeline(other_scan_ids))
-    scan_cves_map = {r["_id"]: [c for c in r["cves"] if c] for r in cve_results}
+    scan_cves_map = {r["_id"]: live_cves(r["details_list"]) for r in cve_results}
 
     cross_project_data["shared_packages"] = await dep_repo.aggregate(
         cross_project_package_pipeline(other_scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)

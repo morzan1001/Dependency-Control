@@ -9,6 +9,9 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+# The counts run as Mongo aggregations, so they are checked on the real server.
+pytestmark = pytest.mark.live_mongo
+
 SCAN_ID = "scan-cve-counts"
 COMPONENT = "lodash"
 

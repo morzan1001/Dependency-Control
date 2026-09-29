@@ -163,7 +163,7 @@ def _build_cve_project_map(projects: list[dict[str, Any]]) -> dict[str, list[str
     cve_project_map: dict[str, list[str]] = defaultdict(list)
     for proj in projects:
         for cve in proj.get("cves", []):
-            cve_project_map[cve].append(str(proj.get("project_name", proj.get("project_id", ""))))
+            cve_project_map[cve].append(proj["project_name"])
     return cve_project_map
 
 
