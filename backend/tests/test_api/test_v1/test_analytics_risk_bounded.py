@@ -14,7 +14,7 @@ from app.api.v1.helpers.analytics import (
 from app.core.constants import BLAST_RADIUS_THRESHOLD, IMPACT_MAX_SCORE_BOOST
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
-from app.schemas.analytics import CVEEnrichmentResult
+from app.schemas.analytics import CVEEnrichmentResult, SeverityBreakdown
 from tests.mocks.fake_mongo import FakeCollection
 
 MODULE = "app.api.v1.endpoints.analytics.risk"
@@ -410,7 +410,7 @@ class TestDistinctSeverityCounts:
             {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
         )
         counts = _severity_counts_from_details(details)
-        assert counts == {"critical": 1, "high": 0, "medium": 0, "low": 0}
+        assert counts == {"critical": 1}
 
     def test_multi_severity_cve_counts_once_at_worst(self):
         from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
@@ -427,20 +427,64 @@ class TestDistinctSeverityCounts:
         assert counts["critical"] == 2, "each CVE counts once at its worst severity"
         assert counts["high"] == 0, "a CVE must not also be counted at a lower severity"
 
-    def test_counts_reconcile_with_total_and_ignore_unranked(self):
+    def test_every_canonical_cve_lands_in_exactly_one_bucket(self):
         from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
         from app.services.enrichment import canonical_cves as _canonical_cves
 
         details = self._details(
             {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
             {"id": "CVE-2", "resolved_cve": "CVE-2", "severity": "HIGH"},
-            {"id": "CVE-3", "resolved_cve": "CVE-3", "severity": "MEDIUM"},
-            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": "UNKNOWN"},  # unranked -> excluded
+            {"id": "CVE-3", "resolved_cve": "CVE-3", "severity": "NEGLIGIBLE"},
+            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": "UNKNOWN"},
+            {"id": "CVE-5", "resolved_cve": "CVE-5"},
+            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": "LOW"},
         )
         counts = _severity_counts_from_details(details)
-        assert counts == {"critical": 1, "high": 1, "medium": 1, "low": 0}
-        assert sum(counts.values()) == 3, "unranked severity is not counted as a bucket"
-        assert set(_canonical_cves(details)) == {"CVE-1", "CVE-2", "CVE-3", "CVE-4"}
+
+        assert SeverityBreakdown.from_counts(counts) == SeverityBreakdown(
+            critical=1, high=1, low=1, negligible=1, unknown=1
+        )
+        assert sum(counts.values()) == len(_canonical_cves(details)) == 5
+
+    def test_a_hotspot_counts_every_cve_it_names(self):
+        from app.api.v1.endpoints.analytics.risk import _build_hotspot
+
+        group = {
+            "_id": {"component": "left-pad", "version": "1.0.0"},
+            "details_list": self._details(
+                {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "HIGH"},
+                {"id": "CVE-2", "resolved_cve": "CVE-2", "severity": "NEGLIGIBLE"},
+                {"id": "CVE-3", "resolved_cve": "CVE-3", "severity": "UNKNOWN"},
+            ),
+            "project_ids": ["p1"],
+            "first_seen": None,
+        }
+        hotspot = _build_hotspot(group, {}, {}, {"p1": "p1"}, ["p1"])
+
+        assert hotspot.finding_count == hotspot.cve_count == sum(hotspot.severity_breakdown.model_dump().values()) == 3
+
+
+class TestUnratedAdvisoriesWeigh:
+    """A CVE still awaiting NVD/GHSA scoring is where KEV/EPSS should decide, so it needs a base to boost."""
+
+    def test_an_unrated_cve_has_a_base_score(self):
+        assert impact_pre_score({"unknown": 1}, 1) > 0
+
+    def test_an_unrated_broad_fix_is_ranked_among_many_low_ones(self):
+        lows = [_impact_row(f"low{i}", ap=1, low=1) for i in range(30)]
+        unrated = _impact_row("unrated", ap=5)
+        unrated["details_list"] = [
+            {
+                "fixed_version": None,
+                "vulnerabilities": [{"id": "CVE-9", "resolved_cve": "CVE-9", "severity": "UNKNOWN"}],
+            }
+        ]
+
+        response, _, _ = _run_impact(agg_results=[*lows, unrated], limit=20)
+
+        top = response[0]
+        assert (top.component, top.total_findings, top.findings_by_severity.unknown) == ("unrated", 1, 1)
+        assert top.fix_impact_score > 0
 
 
 # epss/risk come from enrichment, not Mongo, so the endpoint re-sorts in Python; the pipeline must not cap the fetch below skip+limit.
@@ -657,7 +701,7 @@ class TestSelectImpactCandidates:
         assert "unreachable" not in names, "the cut must come from the limit-th pre-score"
 
     def test_a_field_that_scores_zero_throughout_keeps_every_group(self):
-        """INFO and UNKNOWN carry no severity weight, so a whole page can pre-score zero; an
+        """INFO carries no severity weight, so a whole page can pre-score zero; an
         exclusive cut then drops the entire field and the endpoint answers with nothing."""
         rows = [_impact_row(f"u{i}", ap=5) for i in range(8)]
 

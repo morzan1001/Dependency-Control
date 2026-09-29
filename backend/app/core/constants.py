@@ -239,7 +239,8 @@ SEVERITY_WEIGHTS: dict[str, float] = {
     "MEDIUM": 4.0,
     "LOW": 1.0,
     "INFO": 0.0,
-    "UNKNOWN": 0.0,
+    # Not yet rated rather than harmless: the KEV/EPSS boosts multiply this base.
+    "UNKNOWN": 4.0,
 }
 
 

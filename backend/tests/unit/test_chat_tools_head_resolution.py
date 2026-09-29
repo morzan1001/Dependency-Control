@@ -201,7 +201,7 @@ class TestPerProjectToolsAnswerFromHead:
 
         result = await _call(seeded, admin_user, "get_findings_by_severity", {"project_id": _PROJECT})
 
-        assert result["breakdown"] == {_SEV_CRITICAL: 1, _SEV_HIGH: 1}
+        assert result["breakdown"] == {_SEV_CRITICAL: 1}
 
     @pytest.mark.asyncio
     async def test_type_breakdown_is_the_head_builds(self, seeded, admin_user, pointer):
@@ -209,7 +209,7 @@ class TestPerProjectToolsAnswerFromHead:
 
         result = await _call(seeded, admin_user, "get_findings_by_type", {"project_id": _PROJECT})
 
-        assert result["breakdown"] == {_TYPE_VULNERABILITY: 1, _TYPE_LICENSE: 1}
+        assert result["breakdown"] == {_TYPE_VULNERABILITY: 1}
 
     @pytest.mark.asyncio
     async def test_dependency_tree_is_the_head_builds(self, seeded, admin_user, pointer):
@@ -256,7 +256,8 @@ class TestCrossProjectToolsAnswerFromHead:
 
         result = await _call(seeded, admin_user, "get_analytics_summary")
 
-        assert result["severity_breakdown"] == {_SEV_CRITICAL: 1, _SEV_HIGH: 1}
+        assert result["severity_breakdown"] == {_SEV_CRITICAL: 1}
+        assert result["total_findings"] == 1
         assert result["top_risky_projects"][0]["critical"] == _HEAD_CRITICAL_COUNT
 
     @pytest.mark.asyncio
@@ -276,6 +277,30 @@ class TestCrossProjectToolsAnswerFromHead:
         result = await _call(seeded, admin_user, "get_top_priority_findings")
 
         assert [f["finding_id"] for f in result["findings"]] == [_HEAD_CVE, _WAIVED_FINDING_ID]
+
+
+class TestWaivedFindingsAreNotReportedOpen:
+    """The waived HIGH license finding sits beside an open HIGH vulnerability of the same build."""
+
+    @pytest.fixture
+    def with_open_high(self, seeded):
+        _point_at(seeded, _HEAD_SCAN)
+        doc = _vulnerability(_HEAD_SCAN, "CVE-2026-40002", _SEV_HIGH, _HEAD_COMPONENT)
+        seeded.findings._docs[doc["_id"]] = doc
+        return seeded
+
+    @pytest.mark.asyncio
+    async def test_the_severity_answers_count_only_the_open_finding(self, with_open_high, admin_user):
+        per_project = await _call(with_open_high, admin_user, "get_findings_by_severity", {"project_id": _PROJECT})
+        summary = await _call(with_open_high, admin_user, "get_analytics_summary")
+
+        assert per_project["breakdown"] == summary["severity_breakdown"] == {_SEV_CRITICAL: 1, _SEV_HIGH: 1}
+
+    @pytest.mark.asyncio
+    async def test_the_type_answer_counts_only_open_findings(self, with_open_high, admin_user):
+        result = await _call(with_open_high, admin_user, "get_findings_by_type", {"project_id": _PROJECT})
+
+        assert result["breakdown"] == {_TYPE_VULNERABILITY: 2}
 
 
 class TestCompareScansDefaultPair:

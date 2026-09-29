@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+from collections import Counter
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -26,7 +27,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, get_severity_value
 from app.core.permissions import Permissions
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
@@ -59,9 +60,6 @@ def _scope_digest(project_ids: list[str], scan_ids: list[str]) -> str:
     return h.hexdigest()[:16]
 
 
-_SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
-_SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-
 # Samples named on a card; each is returned beside the population it was drawn from, so a reader
 # acting on the list knows whether it is the whole of what the row found.
 _AFFECTED_PROJECTS_SHOWN = 5
@@ -71,7 +69,7 @@ _CVES_SHOWN = 5
 
 
 def _worst_severity_by_cve(details_list: list[Any]) -> dict[str, str]:
-    """Map each distinct canonical vulnerability to its worst ranked severity across the group."""
+    """Map each distinct canonical vulnerability to its worst severity across the group (lowercase)."""
     worst: dict[str, str] = {}
     for details in details_list:
         if not isinstance(details, dict):
@@ -82,21 +80,16 @@ def _worst_severity_by_cve(details_list: list[Any]) -> dict[str, str]:
             cve = canonical_cve(vuln)
             if not cve:
                 continue
-            sev = str(vuln.get("severity") or "").lower()
-            if sev not in _SEVERITY_RANK:
-                continue
-            if cve not in worst or _SEVERITY_RANK[sev] > _SEVERITY_RANK[worst[cve]]:
+            sev = str(vuln.get("severity") or "unknown").lower()
+            if cve not in worst or get_severity_value(sev) > get_severity_value(worst[cve]):
                 worst[cve] = sev
     return worst
 
 
-def _severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
+def _severity_counts_from_details(details_list: list[Any]) -> Counter[str]:
     """Distinct vulnerabilities per worst severity. Buckets are disjoint (one CVE, one bucket) and
     sum to the distinct total, so the breakdown reconciles with the vuln count and the score."""
-    counts = dict.fromkeys(_SEVERITY_BUCKETS, 0)
-    for sev in _worst_severity_by_cve(details_list).values():
-        counts[sev] += 1
-    return counts
+    return Counter(_worst_severity_by_cve(details_list).values())
 
 
 # Slim details before $group so the group never accumulates the raw analyzer payload: keep the
@@ -241,7 +234,7 @@ async def get_impact_analysis(
                 version=r.get("version") or "unknown",
                 affected_projects=len(accessible_impact_project_ids),
                 total_findings=total_findings,
-                findings_by_severity=SeverityBreakdown(**severity_counts),
+                findings_by_severity=SeverityBreakdown.from_counts(severity_counts),
                 fix_impact_score=base_impact,
                 affected_project_names=[
                     project_name_map.get(pid, "Unknown")
@@ -309,7 +302,7 @@ def _build_hotspot(
         version=r["_id"].get("version") or "unknown",
         type=dep_type,
         finding_count=sum(severity_counts.values()),
-        severity_breakdown=SeverityBreakdown(**severity_counts),
+        severity_breakdown=SeverityBreakdown.from_counts(severity_counts),
         affected_projects=[
             project_name_map.get(pid, "Unknown") for pid in accessible_affected_projects[:_HOTSPOT_PROJECTS_SHOWN]
         ],

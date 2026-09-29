@@ -227,17 +227,14 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def get_severity_distribution(
         self,
         scan_ids: list[str],
-        finding_type: str = "vulnerability",
+        finding_type: str | None = "vulnerability",
     ) -> dict[str, int]:
-        """Returns {severity: count} of non-waived findings aggregated across `scan_ids`."""
+        """Returns {severity: count} of non-waived findings aggregated across `scan_ids`; None counts every type."""
+        match: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}}
+        if finding_type is not None:
+            match["type"] = finding_type
         pipeline: list[dict[str, Any]] = [
-            {
-                "$match": {
-                    "scan_id": {"$in": scan_ids},
-                    "type": finding_type,
-                    "waived": {"$ne": True},
-                }
-            },
+            {"$match": match},
             {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
         ]
         results = await self.aggregate(pipeline)

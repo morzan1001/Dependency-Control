@@ -7,7 +7,6 @@ from app.api.v1.helpers.analytics import (
     calculate_days_known,
     calculate_days_until_due,
     calculate_impact_score,
-    count_severities,
     extract_fix_versions,
     gather_cross_project_data,
     get_latest_scan_ids,
@@ -146,7 +145,6 @@ __all__ = [
     "check_webhook_create_permission",
     "check_webhook_list_permission",
     "check_webhook_permission",
-    "count_severities",
     # Storage helpers
     "detect_format",
     "enrich_team_with_usernames",

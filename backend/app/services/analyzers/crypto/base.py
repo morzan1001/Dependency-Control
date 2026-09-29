@@ -7,7 +7,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
+from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN, get_severity_value
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType
 from app.repositories.crypto_asset import CryptoAssetRepository
@@ -62,13 +62,10 @@ class CryptoRuleAnalyzer(Analyzer):
             return {"error": str(e), "findings": []}
 
 
-_SEVERITY_RANK = {"CRITICAL": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1, "UNKNOWN": 0}
-
-
 def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[str, Any]:
     # Lead rule (strictest by default_severity) drives top-level fields; the rest
     # are recorded under details.matched_rules.
-    lead = max(rules, key=lambda r: _SEVERITY_RANK.get(r.default_severity, 0))
+    lead = max(rules, key=lambda r: get_severity_value(r.default_severity))
     ft = lead.finding_type
     component_label = f"{asset.name}" + (f" ({asset.variant})" if asset.variant else "") + f" [bom-ref:{asset.bom_ref}]"
 

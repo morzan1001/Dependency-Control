@@ -124,25 +124,12 @@ async def get_analytics_summary(
 
     severity_counts = await finding_repo.get_severity_distribution(scan_ids)
 
-    total_vulns = sum(severity_counts.values())
-    named = {sev: severity_counts.get(sev, 0) for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")}
-    severity_dist = SeverityBreakdown(
-        critical=named["CRITICAL"],
-        high=named["HIGH"],
-        medium=named["MEDIUM"],
-        low=named["LOW"],
-        negligible=named["NEGLIGIBLE"],
-        info=named["INFO"],
-        # Catch-all so the breakdown always sums to total_vulns, even for unmapped severities.
-        unknown=total_vulns - sum(named.values()),
-    )
-
     return AnalyticsSummary(
         total_dependencies=total_deps,
-        total_vulnerabilities=total_vulns,
+        total_vulnerabilities=sum(severity_counts.values()),
         unique_packages=unique_packages,
         dependency_types=dependency_types,
-        severity_distribution=severity_dist,
+        severity_distribution=SeverityBreakdown.from_counts(severity_counts),
         resolved_projects=resolved_projects,
         projects_without_release=projects_without_release,
     )

@@ -1,5 +1,6 @@
 """Helper functions for analytics endpoints."""
 
+from collections import Counter, defaultdict
 from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -357,44 +358,13 @@ def build_priority_reasons(
     return reasons
 
 
-def count_severities(severities: list[str | None]) -> dict[str, int]:
-    """Count severities from a list."""
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    for sev in severities:
-        if sev:
-            sev_lower = sev.lower()
-            if sev_lower in counts:
-                counts[sev_lower] += 1
-    return counts
-
-
-def build_findings_severity_map(
-    findings: list[Any],
-) -> dict[str, dict[str, int]]:
-    """Map component names to their severity counts, plus unambiguous bare-artifact aliases."""
-    findings_map: dict[str, dict[str, int]] = {}
-
+def build_findings_severity_map(findings: list[Any]) -> dict[str, Counter[str]]:
+    """Map component names to their per-severity finding counts, plus unambiguous bare-artifact aliases."""
+    findings_map: defaultdict[str, Counter[str]] = defaultdict(Counter)
     for finding in findings:
         component = get_attr(finding, "component")
-        if not component:
-            continue
-
-        severity = get_attr(finding, "severity", "UNKNOWN")
-
-        if component not in findings_map:
-            findings_map[component] = {
-                "critical": 0,
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "total": 0,
-            }
-
-        sev_lower = severity.lower()
-        if sev_lower in findings_map[component]:
-            findings_map[component][sev_lower] += 1
-        findings_map[component]["total"] += 1
-
+        if component:
+            findings_map[component][get_attr(finding, "severity", "UNKNOWN")] += 1
     return build_component_index(findings_map)
 
 

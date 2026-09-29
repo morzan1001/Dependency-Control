@@ -1,5 +1,6 @@
 """Analytics dependency endpoints: dependency-tree, component-findings, dependency-metadata."""
 
+from collections import Counter
 from typing import Annotated, Any
 
 from fastapi import HTTPException, Query
@@ -73,11 +74,12 @@ def _resolve_single_package(records: list[Any], component: str) -> list[Any]:
     return [r for r in records if get_attr(r, "component", "") == component]
 
 
-def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> DependencyTreeNode:
+def _build_tree_node(dep: Any, findings_map: dict[str, Counter[str]]) -> DependencyTreeNode:
     """Build one node without its children; the graph builder fills in child_ids."""
     name = get_attr(dep, "name", "")
     # The bare-artifact alias keys are lowercased, dependency names are not.
-    finding_info = lookup_component(findings_map, name) or {}
+    severity_counts = lookup_component(findings_map, name) or Counter()
+    findings_count = sum(severity_counts.values())
 
     return DependencyTreeNode(
         # The document id (uuid) is unique per dependency; PURL only backstops dict inputs in tests.
@@ -88,18 +90,9 @@ def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> Depen
         type=get_attr(dep, "type", "unknown"),
         direct=get_attr(dep, "direct", False),
         direct_inferred=get_attr(dep, "direct_inferred", False),
-        has_findings=finding_info.get("total", 0) > 0,
-        findings_count=finding_info.get("total", 0),
-        findings_severity=(
-            SeverityBreakdown(
-                critical=finding_info.get("critical", 0),
-                high=finding_info.get("high", 0),
-                medium=finding_info.get("medium", 0),
-                low=finding_info.get("low", 0),
-            )
-            if finding_info
-            else None
-        ),
+        has_findings=findings_count > 0,
+        findings_count=findings_count,
+        findings_severity=SeverityBreakdown.from_counts(severity_counts) if severity_counts else None,
         source_type=get_attr(dep, "source_type"),
         source_target=get_attr(dep, "source_target"),
         layer_digest=get_attr(dep, "layer_digest"),
@@ -110,7 +103,7 @@ def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> Depen
 
 def _build_dependency_graph(
     dependencies: list[Any],
-    findings_map: dict[str, dict[str, int]],
+    findings_map: dict[str, Counter[str]],
     dependencies_total: int,
 ) -> DependencyGraph:
     """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""

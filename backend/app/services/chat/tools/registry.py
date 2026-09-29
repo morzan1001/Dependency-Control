@@ -27,10 +27,11 @@ from app.core.constants import (
 from app.core.epss import bucket_epss
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
-from app.models.finding import FindingType, Severity
+from app.models.finding import FindingType
 from app.models.project import Project
 from app.models.user import User
 from app.models.waiver import is_waiver_active
+from app.repositories.findings import FindingRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
@@ -146,7 +147,6 @@ _TEAM_RISK_PROJECT_READ = 500
 
 # A breakdown groups over a closed enum, so its read bound is the size of that enum: any smaller
 # number returns some of the buckets under a key that reads as all of them.
-_SEVERITY_BUCKETS = len(Severity)
 _FINDING_TYPE_BUCKETS = len(FindingType)
 
 # A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
@@ -541,12 +541,8 @@ class ChatToolRegistry:
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"breakdown": {}}
-        pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": head_scan_id}},
-            {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
-        ]
-        results = await ctx.db["findings"].aggregate(pipeline).to_list(length=_SEVERITY_BUCKETS)
-        return {"breakdown": {r["_id"]: r["count"] for r in results}}
+        breakdown = await FindingRepository(ctx.db).get_severity_distribution([head_scan_id], finding_type=None)
+        return {"breakdown": breakdown}
 
     async def _tool_get_findings_by_type(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
@@ -556,7 +552,7 @@ class ChatToolRegistry:
         if not head_scan_id:
             return {"breakdown": {}}
         pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": head_scan_id}},
+            {"$match": {"scan_id": head_scan_id, "waived": {"$ne": True}}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
         ]
         results = await ctx.db["findings"].aggregate(pipeline).to_list(length=_FINDING_TYPE_BUCKETS)
@@ -568,11 +564,9 @@ class ChatToolRegistry:
             return {"total_projects": 0, "total_findings": 0, "severity_breakdown": {}}
         head = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
         stats_by_project = await self._head_scan_stats(ctx.db, head)
-        sev_pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": {"$in": list(head.values())}}},
-            {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
-        ]
-        sev_results = await ctx.db["findings"].aggregate(sev_pipeline).to_list(length=_SEVERITY_BUCKETS)
+        severity_counts = await FindingRepository(ctx.db).get_severity_distribution(
+            list(head.values()), finding_type=None
+        )
         ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:_TOP_RISKY]
         project_names_map = await ProjectRepository(ctx.db).names_by_ids(ranked)
         top3 = [
@@ -586,8 +580,8 @@ class ChatToolRegistry:
         ]
         return {
             "total_projects": len(project_ids),
-            "severity_breakdown": {r["_id"]: r["count"] for r in sev_results},
-            "total_findings": sum(r["count"] for r in sev_results),
+            "severity_breakdown": severity_counts,
+            "total_findings": sum(severity_counts.values()),
             "top_risky_projects": top3,
             "hint": (
                 "If the user asked 'where should I start' or 'what is worst', "

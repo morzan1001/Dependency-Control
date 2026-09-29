@@ -1,5 +1,6 @@
 """Pydantic models and TypedDicts for analytics API endpoints."""
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any, Literal
 
@@ -33,6 +34,15 @@ class SeverityBreakdown(BaseModel):
     negligible: int = 0
     info: int = 0
     unknown: int = 0
+
+    @classmethod
+    def from_counts(cls, counts: Mapping[str, int]) -> "SeverityBreakdown":
+        """Keys in any case; one without its own field counts as unknown, so the fields sum to the counts."""
+        buckets = dict.fromkeys(cls.model_fields, 0)
+        for severity, count in counts.items():
+            key = severity.lower()
+            buckets[key if key in buckets else "unknown"] += count
+        return cls(**buckets)
 
 
 class DependencyUsage(BaseModel):

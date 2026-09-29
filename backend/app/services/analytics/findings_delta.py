@@ -1,7 +1,7 @@
 """Findings-delta: match findings across two scans by a type-specific semantic key
 (CVE id, secret finding_id, SAST rule id, ...) into the unified envelope.
 
-Stored `severity` is UPPERCASE; the envelope and `_SEVERITY_RANK` keys are lowercase.
+Stored `severity` is UPPERCASE; the envelope's is lowercase.
 """
 
 from __future__ import annotations
@@ -12,6 +12,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import get_severity_value
 from app.repositories.base import find_window
 from app.schemas.scan_delta import (
     DeltaCategory,
@@ -26,16 +27,6 @@ from app.services.analytics._delta_reachability import side_reachability
 # Served by the {scan_id, component, version} index, so a capped side is cut at the same point in
 # the identity space on both sides instead of at two arbitrary points in natural order.
 _SIDE_SORT: list[tuple[str, int]] = [("component", 1), ("version", 1)]
-
-_SEVERITY_RANK = {
-    "critical": 0,
-    "high": 1,
-    "medium": 2,
-    "low": 3,
-    "negligible": 4,
-    "info": 5,
-    "unknown": 6,
-}
 
 
 def _first_id(details: dict[str, Any], *keys: str) -> str:
@@ -357,7 +348,7 @@ async def compute_findings_delta(
     items.sort(
         key=lambda i: (
             i.change != "added",
-            _SEVERITY_RANK.get(i.severity, 99),
+            -get_severity_value(i.severity),
             i.title,
             i.finding_id,
         )

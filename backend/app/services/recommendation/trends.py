@@ -2,7 +2,7 @@ from collections import defaultdict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
-from app.core.constants import FINDING_DELTA_THRESHOLD, RECURRING_ISSUE_THRESHOLD
+from app.core.constants import FINDING_DELTA_THRESHOLD, RECURRING_ISSUE_THRESHOLD, get_severity_value
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -160,7 +160,7 @@ def analyze_recurring_issues(
     recurring.sort(
         key=lambda entry: (
             len(entry[1].scans),
-            {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(entry[1].severity or "", 0),
+            get_severity_value(entry[1].severity),
             entry[0],
         ),
         reverse=True,
