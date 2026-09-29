@@ -723,18 +723,18 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     if parser is None:
         raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
 
-    imports, _calls, module_usage, analyzed_modules = parser(data, language)
+    parsed = parser(data, language)
     minimal = CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,
-        module_usage={key: usage.model_dump() for key, usage in module_usage.items()},
-        analyzed_modules=analyzed_modules,
+        module_usage={key: usage.model_dump() for key, usage in parsed.module_usage.items()},
+        analyzed_modules=parsed.analyzed_modules,
         language=language,
     )
     as_dict = {
         "language": minimal.language,
         "module_usage": minimal.module_usage,
         "analyzed_modules": minimal.analyzed_modules,
-        "total_imports": len(imports),
+        "total_imports": parsed.total_imports,
         "created_at": None,
     }
     return as_dict, _prepare_callgraph(minimal)

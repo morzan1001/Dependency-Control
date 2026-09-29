@@ -1,66 +1,11 @@
-"""Tests for Callgraph, ImportEntry, CallEdge, and ModuleUsage models."""
+"""Tests for the Callgraph and ModuleUsage models."""
 
 from datetime import datetime, timezone
 
 import pytest
 from pydantic import ValidationError
 
-from app.models.callgraph import (
-    CallEdge,
-    Callgraph,
-    ImportEntry,
-    ModuleUsage,
-)
-
-
-class TestImportEntry:
-    def test_minimal_valid(self):
-        entry = ImportEntry(module="requests", file="app/main.py", line=3)
-        assert entry.module == "requests"
-        assert entry.file == "app/main.py"
-        assert entry.line == 3
-
-    def test_defaults(self):
-        entry = ImportEntry(module="os", file="util.py", line=1)
-        assert entry.imported_symbols == []
-        assert entry.is_dynamic is False
-
-    def test_with_symbols_and_dynamic(self):
-        entry = ImportEntry(
-            module="lodash",
-            file="src/index.js",
-            line=5,
-            imported_symbols=["get", "set"],
-            is_dynamic=True,
-        )
-        assert entry.imported_symbols == ["get", "set"]
-        assert entry.is_dynamic is True
-
-    def test_missing_required_field_rejected(self):
-        with pytest.raises(ValidationError):
-            ImportEntry(file="a.py", line=1)
-
-
-class TestCallEdge:
-    def test_minimal_valid(self):
-        edge = CallEdge(
-            caller="app/main.py:main",
-            callee="requests:get",
-            file="app/main.py",
-            line=10,
-        )
-        assert edge.caller == "app/main.py:main"
-        assert edge.callee == "requests:get"
-        assert edge.file == "app/main.py"
-        assert edge.line == 10
-
-    def test_default_call_type(self):
-        edge = CallEdge(caller="a:f", callee="b:g", file="a.py", line=1)
-        assert edge.call_type == "direct"
-
-    def test_custom_call_type(self):
-        edge = CallEdge(caller="a:f", callee="b:g", file="a.py", line=1, call_type="async")
-        assert edge.call_type == "async"
+from app.models.callgraph import Callgraph, ModuleUsage
 
 
 class TestModuleUsage:
@@ -125,8 +70,6 @@ class TestCallgraphModel:
 
     def test_list_and_dict_defaults_empty(self):
         cg = self._make_callgraph()
-        assert cg.imports == []
-        assert cg.calls == []
         assert cg.module_usage == {}
         assert cg.analyzed_modules == []
 
@@ -141,20 +84,6 @@ class TestCallgraphModel:
         cg = self._make_callgraph()
         after = datetime.now(timezone.utc)
         assert before <= cg.created_at <= after
-
-    def test_with_nested_imports_and_calls(self):
-        cg = self._make_callgraph(
-            imports=[
-                ImportEntry(module="requests", file="main.py", line=1),
-            ],
-            calls=[
-                CallEdge(caller="main.py:run", callee="requests:get", file="main.py", line=5),
-            ],
-        )
-        assert len(cg.imports) == 1
-        assert cg.imports[0].module == "requests"
-        assert len(cg.calls) == 1
-        assert cg.calls[0].callee == "requests:get"
 
     def test_with_module_usage_dict(self):
         cg = self._make_callgraph(

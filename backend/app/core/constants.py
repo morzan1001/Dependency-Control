@@ -953,7 +953,8 @@ REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE = "absence_not_evidence"
 
 # Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
 # calls, the symbols each import names, madge dependencies and the analyzed-modules list.
-CALLGRAPH_MAX_ENTRIES = 200_000
+# At this cap a madge graph of 100-character paths, each dependency a distinct package, stays under 16 MiB.
+CALLGRAPH_MAX_ENTRIES = 150_000
 
 GITLAB_ACCESS_GUEST = 10
 GITLAB_ACCESS_REPORTER = 20

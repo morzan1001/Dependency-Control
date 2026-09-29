@@ -84,15 +84,13 @@ JDEPS_OUTPUT = """
 
 
 def _prepared_python_callgraph(imports: list[dict], analyzed: list[str] | None = None):
-    _, _, module_usage, analyzed_keys = parse_generic_format(
-        {"imports": imports, "analyzed_modules": analyzed or []}, "python"
-    )
+    parsed = parse_generic_format({"imports": imports, "analyzed_modules": analyzed or []}, "python")
     return _prepare_callgraph(
         CallgraphMinimal(
             _id=ObjectId(),
             language="python",
-            module_usage={key: usage.model_dump() for key, usage in module_usage.items()},
-            analyzed_modules=analyzed_keys,
+            module_usage={key: usage.model_dump() for key, usage in parsed.module_usage.items()},
+            analyzed_modules=parsed.analyzed_modules,
         )
     )
 
@@ -116,25 +114,25 @@ class TestMadgeGoldenFixture:
         assert detect_format(data) == "madge"
 
     def test_analyzed_modules_key_is_not_a_file_entry(self, data):
-        imports, _, _, _ = parse_madge_format(data, "javascript")
-        assert "__analyzed_modules__" not in {entry.file for entry in imports}
+        parsed = parse_madge_format(data, "javascript")
+        assert (parsed.total_imports, parsed.source_files) == (3, 1)
 
     def test_module_usage_keys_are_package_names(self):
-        _, _, module_usage, _ = _parse(MADGE_OUTPUT, "javascript")
+        module_usage = _parse(MADGE_OUTPUT, "javascript").module_usage
         assert set(module_usage) == {"lodash", "@babel/core"}
         assert not set(module_usage) & PATH_ARTEFACTS
 
-    def test_first_party_file_is_imported_but_not_a_module(self):
-        imports, _, module_usage, _ = _parse(MADGE_OUTPUT, "javascript")
-        assert "utils.js" in {entry.module for entry in imports}
-        assert "utils.js" not in module_usage
+    def test_first_party_file_counts_as_an_import_but_not_a_module(self):
+        parsed = _parse(MADGE_OUTPUT, "javascript")
+        assert parsed.total_imports == 3
+        assert "utils.js" not in parsed.module_usage
 
     def test_import_locations_name_the_importing_file(self):
-        _, _, module_usage, _ = _parse(MADGE_OUTPUT, "javascript")
+        module_usage = _parse(MADGE_OUTPUT, "javascript").module_usage
         assert module_usage["lodash"].import_locations == ["index.js"]
 
     def test_analyzed_modules_survives(self):
-        _, _, _, analyzed = _parse(MADGE_OUTPUT, "javascript")
+        analyzed = _parse(MADGE_OUTPUT, "javascript").analyzed_modules
         assert analyzed == ["@babel/core", "lodash"]
 
 
@@ -143,22 +141,22 @@ class TestPythonAstGoldenFixture:
         assert detect_format(json.loads(PYTHON_AST_OUTPUT)) == "generic"
 
     def test_module_usage_keys_are_top_level_package_names(self):
-        _, _, module_usage, _ = _parse(PYTHON_AST_OUTPUT, "python")
+        module_usage = _parse(PYTHON_AST_OUTPUT, "python").module_usage
         assert set(module_usage) == {"requests", "urllib3", "typing", "pyyaml"}
         assert not set(module_usage) & PATH_ARTEFACTS
 
     def test_submodule_imports_collapse_onto_one_usage_entry(self):
-        _, _, module_usage, _ = _parse(PYTHON_AST_OUTPUT, "python")
+        module_usage = _parse(PYTHON_AST_OUTPUT, "python").module_usage
         assert module_usage["urllib3"].import_count == 2
         assert module_usage["urllib3"].import_locations == ["app/client.py"]
 
     def test_imported_symbols_land_in_used_symbols(self):
-        _, _, module_usage, _ = _parse(PYTHON_AST_OUTPUT, "python")
+        module_usage = _parse(PYTHON_AST_OUTPUT, "python").module_usage
         assert module_usage["urllib3"].used_symbols == ["Retry"]
         assert module_usage["typing"].used_symbols == ["Any"]
 
     def test_analyzed_modules_is_canonicalised(self):
-        _, _, _, analyzed = _parse(PYTHON_AST_OUTPUT, "python")
+        analyzed = _parse(PYTHON_AST_OUTPUT, "python").analyzed_modules
         assert analyzed == ["pyyaml", "requests", "urllib3"]
 
 
@@ -167,17 +165,17 @@ class TestGoListGoldenFixture:
         assert detect_format(json.loads(GO_LIST_OUTPUT)) == "generic"
 
     def test_module_usage_keys_are_full_module_paths(self):
-        _, _, module_usage, _ = _parse(GO_LIST_OUTPUT, "go")
+        module_usage = _parse(GO_LIST_OUTPUT, "go").module_usage
         assert set(module_usage) == {"github.com/example/textkit", "github.com/masterminds/semver"}
         assert not set(module_usage) & PATH_ARTEFACTS
 
     def test_same_module_imported_from_two_packages_counts_twice(self):
-        _, _, module_usage, _ = _parse(GO_LIST_OUTPUT, "go")
+        module_usage = _parse(GO_LIST_OUTPUT, "go").module_usage
         assert module_usage["github.com/example/textkit"].import_count == 2
         assert module_usage["github.com/example/textkit"].import_locations == ["cmd", "."]
 
     def test_analyzed_modules_survives_canonicalised(self):
-        _, _, _, analyzed = _parse(GO_LIST_OUTPUT, "go")
+        analyzed = _parse(GO_LIST_OUTPUT, "go").analyzed_modules
         assert analyzed == ["github.com/masterminds/semver", "github.com/example/textkit"]
 
 
@@ -186,17 +184,17 @@ class TestJdepsGoldenFixture:
         assert detect_format(json.loads(JDEPS_OUTPUT)) == "generic"
 
     def test_module_usage_keys_are_maven_coordinates(self):
-        _, _, module_usage, _ = _parse(JDEPS_OUTPUT, "java")
+        module_usage = _parse(JDEPS_OUTPUT, "java").module_usage
         assert set(module_usage) == {"com.example:textkit", "hdrhistogram:hdrhistogram"}
         assert not set(module_usage) & PATH_ARTEFACTS
 
     def test_referenced_class_names_land_in_used_symbols(self):
-        _, _, module_usage, _ = _parse(JDEPS_OUTPUT, "java")
+        module_usage = _parse(JDEPS_OUTPUT, "java").module_usage
         assert module_usage["com.example:textkit"].used_symbols == ["Text"]
         assert module_usage["hdrhistogram:hdrhistogram"].used_symbols == ["Histogram"]
 
     def test_analyzed_modules_survives(self):
-        _, _, _, analyzed = _parse(JDEPS_OUTPUT, "java")
+        analyzed = _parse(JDEPS_OUTPUT, "java").analyzed_modules
         assert analyzed == ["com.example:textkit", "hdrhistogram:hdrhistogram"]
 
 
@@ -217,7 +215,7 @@ class TestUniverseMeetsUsage:
         ],
     )
     def test_every_covered_and_imported_package_resolves_in_usage(self, payload, language, imported):
-        _, _, module_usage, analyzed = _parse(payload, language)
+        module_usage, analyzed, *_ = _parse(payload, language)
         index = build_component_index(module_usage)
         for component in imported:
             assert canonical_module_key(component, language) in analyzed
@@ -303,12 +301,12 @@ class TestWriteReadMeetingPoint:
     )
     def test_stored_usage_resolves_under_the_component_name(self, payload, language, component):
         parser = parse_madge_format if payload is MADGE_OUTPUT else parse_generic_format
-        _, _, module_usage, _ = parser(json.loads(payload), language)
+        module_usage = parser(json.loads(payload), language).module_usage
         index = build_component_index(module_usage)
         assert lookup_component(index, component) or lookup_component(index, _normalize_component(component, language))
 
     def test_analyzed_modules_resolve_under_the_component_name(self):
-        _, _, _, analyzed = _parse(JDEPS_OUTPUT, "java")
+        analyzed = _parse(JDEPS_OUTPUT, "java").analyzed_modules
         index = build_component_index(dict.fromkeys(analyzed, True))
         assert lookup_component(index, "HdrHistogram:HdrHistogram")
 
@@ -350,7 +348,7 @@ class TestFormatDetectionRegressions:
     def test_madge_without_dependencies_is_valid_alongside_a_universe(self):
         data = {"src/index.ts": [], "__analyzed_modules__": ["lodash"]}
         assert detect_format(data) == "madge"
-        _, _, module_usage, analyzed_modules = parse_madge_format(data, "typescript")
+        module_usage, analyzed_modules, *_ = parse_madge_format(data, "typescript")
         assert module_usage == {}
         assert analyzed_modules == ["lodash"]
 
@@ -367,7 +365,7 @@ class TestDedupeIsLinear:
         symbols = [counted(f"sym{i}") for i in range(_DISTINCT)]
         data = {"imports": [{"module": "lodash", "file": "src/a.js", "line": 1, "symbols": symbols}]}
 
-        _, _, module_usage, _ = parse_generic_format(data, "javascript")
+        module_usage = parse_generic_format(data, "javascript").module_usage
 
         assert counted.comparisons == 0
         assert module_usage["lodash"].used_symbols == [f"sym{i}" for i in range(_DISTINCT)]
@@ -376,7 +374,7 @@ class TestDedupeIsLinear:
         counted = counted_str_type()
         calls = [{"callee_module": "lodash", "callee_function": counted(f"fn{i}")} for i in range(_DISTINCT)]
 
-        _, _, module_usage, _ = parse_generic_format({"calls": calls}, "javascript")
+        module_usage = parse_generic_format({"calls": calls}, "javascript").module_usage
 
         assert counted.comparisons == 0
         assert module_usage["lodash"].used_symbols == [f"fn{i}" for i in range(_DISTINCT)]
@@ -385,7 +383,7 @@ class TestDedupeIsLinear:
         counted = counted_str_type()
         imports = [{"module": "lodash", "file": counted(f"src/f{i}.js"), "symbols": []} for i in range(_DISTINCT)]
 
-        _, _, module_usage, _ = parse_generic_format({"imports": imports}, "javascript")
+        module_usage = parse_generic_format({"imports": imports}, "javascript").module_usage
 
         assert counted.comparisons == 0
         assert module_usage["lodash"].import_locations == [f"src/f{i}.js" for i in range(_DISTINCT)]
@@ -394,7 +392,7 @@ class TestDedupeIsLinear:
         counted = counted_str_type()
         data = {counted(f"src/f{i}.js"): ["node_modules/lodash/index.js"] for i in range(_DISTINCT)}
 
-        _, _, module_usage, _ = parse_madge_format(data, "javascript")
+        module_usage = parse_madge_format(data, "javascript").module_usage
 
         # Each file key is told apart from the analyzed-modules key once, and deduped without a comparison.
         assert counted.comparisons == _DISTINCT
@@ -405,7 +403,7 @@ class TestDedupeIsLinear:
         monkeypatch.setattr("app.api.v1.helpers.callgraph.canonical_module_key", lambda name, _language: counted(name))
         names = [f"pkg{i}" for i in range(_DISTINCT)]
 
-        _, _, _, analyzed_modules = parse_generic_format({"analyzed_modules": names}, "javascript")
+        analyzed_modules = parse_generic_format({"analyzed_modules": names}, "javascript").analyzed_modules
 
         assert counted.comparisons == 0
         assert analyzed_modules == names
@@ -424,7 +422,7 @@ class TestDedupeIsLinear:
             "analyzed_modules": ["lodash", "express", "lodash"],
         }
 
-        _, _, module_usage, analyzed_modules = parse_generic_format(data, "javascript")
+        module_usage, analyzed_modules, *_ = parse_generic_format(data, "javascript")
 
         usage = module_usage["lodash"]
         assert usage.import_locations == ["src/b.js", "src/a.js"]

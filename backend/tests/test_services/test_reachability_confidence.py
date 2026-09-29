@@ -110,7 +110,7 @@ class TestImportMatchingUsesWholePackageKeys:
         ],
     )
     def test_a_subpath_import_counts_for_its_package(self, component, imported, language):
-        _, _, module_usage, _ = parse_generic_format({"imports": [{"module": imported, "file": "a.src"}]}, language)
+        module_usage = parse_generic_format({"imports": [{"module": imported, "file": "a.src"}]}, language).module_usage
         prepared = _prepared({key: usage.model_dump() for key, usage in module_usage.items()}, language=language)
         finding = _vuln_finding(component=component)
 
