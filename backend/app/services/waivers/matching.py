@@ -126,9 +126,12 @@ def waiver_reach_filter(waiver: Waiver) -> dict[str, Any] | None:
 
 def waive_advisories(record: dict[str, Any], waiver: Waiver) -> bool:
     """Waive the record's nested advisories known under the waiver's vulnerability_id; False when it holds none."""
+    vid = waiver.vulnerability_id
     hit = False
     for entry in (record.get("details") or {}).get("vulnerabilities") or []:
-        if waiver.vulnerability_id in {entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])}:
+        names = [entry.get(name) for name in _ADVISORY_NAMES]
+        # As advisory_filter's $in does: a scalar name equals the id, a list name holds it.
+        if any(name == vid or (isinstance(name, list) and vid in name) for name in names):
             entry["waived"] = True
             entry["waiver_reason"] = waiver.reason
             hit = True
