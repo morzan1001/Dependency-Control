@@ -542,7 +542,7 @@ GITHUB_API_URL = "https://api.github.com"
 
 # Mapping from package/component names to endoflife.date product IDs
 # See https://endoflife.date/api for all available products
-NAME_TO_EOL_MAPPING: dict[str, str] = {
+NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     # Programming Languages & Runtimes
     "python": "python",
     "python3": "python",
@@ -606,8 +606,8 @@ NAME_TO_EOL_MAPPING: dict[str, str] = {
     "sles": "sles",
     "windows-server": "windows-server",
     # Frontend Frameworks
-    # The npm package "angular" is AngularJS 1.x; Angular 2+ ships as @angular/core.
-    "angular": "angularjs",
+    # "angular" is AngularJS 1.x as an npm name but Angular 2+ as a CPE product; the cycle match separates them.
+    "angular": ("angularjs", "angular"),
     "@angular/core": "angular",
     "react": "react",
     "react-dom": "react",

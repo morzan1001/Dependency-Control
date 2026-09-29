@@ -22,6 +22,11 @@ from .base import Analyzer
 logger = logging.getLogger(__name__)
 
 
+def _mapped_products(key: str) -> set[str]:
+    target = NAME_TO_EOL_MAPPING.get(key, key)
+    return {target} if isinstance(target, str) else set(target)
+
+
 def _extract_products_from_cpes(cpes: list[str]) -> set[str]:
     """Map CPE strings to endoflife.date product IDs (accepts cpe:2.3:a:, cpe:/2.3:a:, and legacy cpe:/a:)."""
     products: set[str] = set()
@@ -29,8 +34,7 @@ def _extract_products_from_cpes(cpes: list[str]) -> set[str]:
         match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe) or re.match(r"cpe:/a:([^:]+):([^:]+)", cpe)
         if not match:
             continue
-        product = match.group(2).lower()
-        products.add(NAME_TO_EOL_MAPPING.get(product, product))
+        products |= _mapped_products(match.group(2).lower())
     return products
 
 
@@ -38,7 +42,7 @@ def _resolve_eol_products(name: str, cpes: list[str]) -> set[str]:
     """Map a component to endoflife.date product IDs: its CPE products plus its mapped name, else the bare name."""
     products = _extract_products_from_cpes(cpes)
     if name in NAME_TO_EOL_MAPPING:
-        products.add(NAME_TO_EOL_MAPPING[name])
+        products |= _mapped_products(name)
     return products or {name}
 
 
