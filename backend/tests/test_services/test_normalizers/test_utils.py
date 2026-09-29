@@ -219,6 +219,24 @@ class TestExtractCvss:
         assert score == 5.0
         assert vector == "V2"
 
+    def test_v4_only_advisory_has_a_score(self):
+        data = {"ghsa": {"V40Vector": _V4_VECTOR, "V40Score": 9.3}}
+        assert extract_cvss(data) == (9.3, _V4_VECTOR)
+
+    def test_v4_ranks_above_v2_across_sources(self):
+        data = {
+            "nvd": {"V2Vector": "AV:N/AC:L/Au:N/C:P/I:P/A:P", "V2Score": 7.5},
+            "ghsa": {"V40Vector": _V4_VECTOR, "V40Score": 9.3},
+        }
+        assert extract_cvss(data) == (9.3, _V4_VECTOR)
+
+    def test_v3_still_wins_over_v4(self):
+        data = {"ghsa": {"V3Vector": "CVSS:3.1/AV:N/AC:L", "V3Score": 9.8, "V40Vector": _V4_VECTOR, "V40Score": 9.3}}
+        assert extract_cvss(data) == (9.8, "CVSS:3.1/AV:N/AC:L")
+
+
+_V4_VECTOR = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+
 
 class TestExtractGrypeCvss:
     def test_highest_version_selected(self):
