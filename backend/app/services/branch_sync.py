@@ -67,12 +67,7 @@ async def sync_project_branches(project: dict[str, Any], db: Any) -> bool:
             update_fields["default_branch"] = vcs_default
 
     await db.projects.update_one({"_id": project_id}, {"$set": update_fields})
-    head = await ScanRepository(db).head_fields({**project, **update_fields})
-    if head["latest_scan_id"] != project.get("latest_scan_id"):
-        # A pointer moved since the project was read belongs to a finalizer that saw newer scans.
-        await db.projects.update_one(
-            {"_id": project_id, "latest_scan_id": project.get("latest_scan_id")}, {"$set": head}
-        )
+    await ScanRepository(db).sync_project_head(project_id)
     if deleted:
         logger.info("Project %s: %d deleted branch(es) detected", project.get("name", project_id), len(deleted))
     return True

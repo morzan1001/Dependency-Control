@@ -498,13 +498,13 @@ async def test_a_callgraph_uploaded_during_the_run_is_applied_once_the_scan_is_f
 
 
 @pytest.mark.asyncio
-async def test_a_pending_marker_without_a_callgraph_is_left_for_the_upload(db, notified, handed_over):
+async def test_a_pending_marker_without_a_callgraph_is_left_for_the_upload(db, notified):
     scan_id = await _seed_scan(db)
     await db.scans.update_one({"_id": scan_id}, {"$set": {"reachability_pending": True}})
 
     assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
-    handed_over.assert_not_awaited()
+    assert (await db.scans.find_one({"_id": scan_id}))["reachability_pending"] is True
 
 
 @pytest.mark.asyncio

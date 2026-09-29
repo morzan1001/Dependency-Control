@@ -89,7 +89,6 @@ from app.services.update_frequency_rollup import record_scan_update_delta
 logger = logging.getLogger(__name__)
 
 _BULK_CHUNK_SIZE = 500
-_HEAD_SYNC_ATTEMPTS = 3
 
 # Run inside the engine (not registered in ``analyzers``); regenerated per run, never carried over.
 _POST_PROCESSOR_ANALYZERS = frozenset({"epss_kev", "reachability"})
@@ -592,12 +591,7 @@ async def _run_reachability_enrichment(
         return
 
     try:
-        enriched_count = await enrich_findings_with_reachability(
-            findings=vulnerability_findings,
-            project_id=str(project_id),
-            db=db,
-            scan_id=scan_id,
-        )
+        enriched_count = await enrich_findings_with_reachability(vulnerability_findings, callgraphs, scan_id, db)
         reachability_summary = build_reachability_summary(
             vulnerability_findings,
             [cg.model_dump(by_alias=True) for cg in callgraphs],
@@ -834,24 +828,12 @@ async def _persist_findings_and_waivers(
     return persisted_count, ignored_count, active_waivers
 
 
-async def _sync_project_head(project_id: str, scan_repo: ScanRepository, project_repo: ProjectRepository) -> None:
-    # A pointer moved in between belongs to a finalizer that saw newer scans, so the head is derived again.
-    for _ in range(_HEAD_SYNC_ATTEMPTS):
-        project_doc = await project_repo.get_by_id(project_id)
-        if not project_doc:
-            return
-        head = await scan_repo.head_fields(project_doc)
-        guard = {"latest_scan_id": project_doc.latest_scan_id}
-        if await project_repo.update_raw(project_id, {"$set": head}, guard=guard):
-            return
-
-
 async def _apply_handed_over_callgraphs(
     scan_id: str, project_id: str | None, scan_repo: ScanRepository, db: Database
 ) -> None:
     # A callgraph uploaded during the run only flagged the scan, since the findings it would enrich were being replaced.
     state = await scan_repo.get_minimal_by_id(scan_id)
-    if project_id and state and state.reachability_pending and await fetch_callgraphs(project_id, scan_id, db):
+    if project_id and state and state.reachability_pending:
         await run_pending_reachability_for_scan(scan_id, project_id, db)
 
 
@@ -903,7 +885,6 @@ async def _finalize_scan_and_project(
     stats: Any,
     latest_run_summary: dict,
     scan_repo: ScanRepository,
-    project_repo: ProjectRepository,
     *,
     worker_id: str,
     external_load_start: datetime,
@@ -957,7 +938,7 @@ async def _finalize_scan_and_project(
         await scan_repo.report_rescan_run(scan_doc.original_scan_id, scan_doc.sbom_generation, root_fields)
 
     if project_id and status != SCAN_STATUS_FAILED:
-        await _sync_project_head(project_id, scan_repo, project_repo)
+        await scan_repo.sync_project_head(project_id)
     return status
 
 
@@ -1164,7 +1145,7 @@ async def run_analysis(
             external_load_start=load_start,
         )
         if outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS and project_id:
-            await _sync_project_head(project_id, scan_repo, project_repo)
+            await scan_repo.sync_project_head(project_id)
             await _apply_handed_over_callgraphs(scan_id, project_id, scan_repo, db)
         return outcome
 
@@ -1308,7 +1289,6 @@ async def run_analysis(
         stats,
         latest_run_summary,
         scan_repo,
-        project_repo,
         worker_id=worker_id,
         external_load_start=external_load_start,
         status=final_status,

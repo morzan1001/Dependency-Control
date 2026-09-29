@@ -7,8 +7,8 @@ any branch it has not deleted. The tip build is the newest build there: a rescan
 ``created_at = now`` over an older commit and a tag pipeline writes its tag into ``branch``, so a
 branch build outranks a tag build and both outrank a rescan; any scan with an SBOM outranks every
 scan without one. The freshest analysis is the newest usable scan in that build's rescan lineage.
-``latest_scan_id`` caches the answer and is trusted only while it names a readable scan that may
-head the project.
+``latest_scan_id`` caches the answer, written only by ``sync_project_head``, and is trusted only
+while it names a readable scan that may head the project.
 
 The same two steps answer per branch (``branch_tips``) and per release (``freshest_in_lineage`` on
 the marked scan), so the project tile, head-mode analytics and the release view cannot disagree.
@@ -59,6 +59,8 @@ _TIP_TIERS: tuple[dict[str, Any], ...] = tuple(
 _TIP_LOOKUP_CONCURRENCY = 16
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
 _TIP_PROJECTION = {**_CHAIN_PROJECTION, "branch": 1, "commit_tag": 1}
+_HEAD_SCOPE_PROJECTION = {"default_branch": 1, "deleted_branches": 1, "latest_scan_id": 1}
+_HEAD_SYNC_ATTEMPTS = 3
 
 
 def is_usable_build(doc: dict[str, Any]) -> bool:
@@ -402,15 +404,25 @@ class ScanRepository:
         scan_id = (await self._head_scan_ids({project_id: scope})).get(project_id)
         return await self.get_by_id(scan_id) if scan_id else None
 
-    async def head_fields(self, project: Any) -> dict[str, Any]:
-        """``latest_scan_id`` and ``stats`` for the project document, derived afresh rather than
-        through the pointer they replace."""
-        project_id, scope = _head_scope(project)
-        scan_id = None
-        if project_id:
+    async def sync_project_head(self, project_id: str) -> str | None:
+        """Cache the project's head, derived afresh, with its stats over the pointer it replaces; returns the head
+        written, or None when the project is gone, nothing may head it, or the pointer kept moving."""
+        for _ in range(_HEAD_SYNC_ATTEMPTS):
+            project = await self.db.projects.find_one({"_id": project_id}, _HEAD_SCOPE_PROJECTION)
+            if not project:
+                return None
+            _, scope = _head_scope(project)
             scan_id = (await self._head_scan_ids({project_id: scope._replace(pointer=None)})).get(project_id)
-        doc = await self.collection.find_one({"_id": scan_id}, {"stats": 1}) if scan_id else None
-        return {"latest_scan_id": doc["_id"] if doc else None, "stats": doc.get("stats") if doc else None}
+            doc = await self.collection.find_one({"_id": scan_id}, {"stats": 1}) if scan_id else None
+            head = doc["_id"] if doc else None
+            # A pointer moved in between belongs to a writer that saw newer scans, so the head is derived again.
+            written = await self.db.projects.update_one(
+                {"_id": project_id, "latest_scan_id": scope.pointer},
+                {"$set": {"latest_scan_id": head, "stats": doc.get("stats") if doc else None}},
+            )
+            if written.matched_count:
+                return head
+        return None
 
     async def get_preceding_scan(self, scan_id: str) -> Scan | None:
         """The build the given scan's commit succeeded: the newest usable build on its branch that

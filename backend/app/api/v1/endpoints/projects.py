@@ -771,8 +771,7 @@ async def update_project(
 
     updated_project = await _reload_project(project_repo, project_id)
     if updated_project.default_branch != project.default_branch:
-        head = await ScanRepository(db).head_fields(updated_project)
-        await project_repo.update_raw(project_id, {"$set": head})
+        await ScanRepository(db).sync_project_head(project_id)
         updated_project = await _reload_project(project_repo, project_id)
     await _audit_license_policy_change(db, project_id, old_license_policy, updated_project, current_user)
     return updated_project

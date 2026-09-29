@@ -243,7 +243,7 @@ async def fetch_callgraphs(
     if callgraphs:
         return callgraphs
 
-    scan = await ScanRepository(db).get_by_id(scan_id)
+    scan = await ScanRepository(db).get_minimal_by_id(scan_id)
     if scan and scan.original_scan_id:
         return await fetch_callgraphs(project_id, scan.original_scan_id, db)
     if scan and scan.pipeline_id:
@@ -395,29 +395,10 @@ def enrich_findings_from_callgraphs(
 
 
 async def enrich_findings_with_reachability(
-    findings: list[dict[str, Any]],
-    project_id: str,
-    db: AsyncIOMotorDatabase,
-    scan_id: str | None = None,
+    findings: list[dict[str, Any]], callgraphs: list[Any], scan_id: str, db: AsyncIOMotorDatabase
 ) -> int:
-    """Enrich vulnerability findings (modified in-place) with reachability; return count enriched.
-
-    Uses the per-language callgraph where each finding's package is imported.
-    """
-    if not findings:
-        return 0
-
-    if not scan_id and findings:
-        scan_id = findings[0].get("scan_id")
-
-    if not scan_id:
-        logger.warning("No scan_id available for reachability enrichment")
-        return 0
-
-    callgraphs = await fetch_callgraphs(project_id, scan_id, db)
-
-    if not callgraphs:
-        logger.debug(f"No callgraph available for scan {scan_id}")
+    """Enrich the scan's vulnerability findings (in place) from its ``fetch_callgraphs``; returns the count enriched."""
+    if not findings or not callgraphs:
         return 0
 
     prepared_graphs = [_prepare_callgraph(cg) for cg in callgraphs]
@@ -587,21 +568,6 @@ def _calculate_confidence(extraction_confidence: str, match_type: str) -> float:
     return extraction_score * 0.5
 
 
-async def _sync_project_stats_if_latest(
-    db: AsyncIOMotorDatabase,
-    project_id: str,
-    scan_id: str,
-    stats: Any,
-) -> None:
-    """Mirror recomputed scan stats onto the project when this scan is still its latest."""
-    from app.repositories.projects import ProjectRepository
-
-    project_repo = ProjectRepository(db)
-    project = await project_repo.get_raw_by_id(project_id)
-    if project and project.get("latest_scan_id") == scan_id:
-        await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
-
-
 async def _load_vulnerability_findings(finding_repo: Any, scan_id: str) -> tuple[list[Any], int]:
     """Page through a scan's vulnerability findings; second element is how many the cap left behind."""
     query = {"scan_id": scan_id, "type": "vulnerability"}
@@ -634,21 +600,27 @@ async def run_pending_reachability_for_scan(
     }
 
     from app.repositories.analysis_results import AnalysisResultRepository
-    from app.repositories.callgraphs import CallgraphRepository
     from app.repositories.findings import FindingRepository
     from app.repositories.scans import ScanRepository
 
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
-    callgraph_repo = CallgraphRepository(db)
     result_repo = AnalysisResultRepository(db)
 
-    scan = await scan_repo.get_by_id(scan_id)
-    if not scan:
+    if not await scan_repo.get_minimal_by_id(scan_id):
         logger.debug(f"Scan {scan_id} not found")
         return result
 
+    finished = {
+        "$unset": {"reachability_pending": "", "reachability_pending_since": ""},
+        "$set": {"reachability_completed_at": datetime.now(timezone.utc)},
+    }
     try:
+        callgraphs = await fetch_callgraphs(project_id, scan_id, db)
+        if not callgraphs:
+            logger.debug(f"No callgraph for scan {scan_id}; reachability stays pending")
+            return result
+
         findings, dropped = await _load_vulnerability_findings(finding_repo, scan_id)
         if dropped:
             result["findings_dropped"] = dropped
@@ -661,25 +633,11 @@ async def run_pending_reachability_for_scan(
 
         if not findings:
             logger.debug(f"No vulnerability findings for scan {scan_id}")
-            await scan_repo.update_raw(
-                scan_id,
-                {
-                    "$unset": {
-                        "reachability_pending": "",
-                        "reachability_pending_since": "",
-                    }
-                },
-            )
+            await scan_repo.update_raw(scan_id, finished)
             return result
 
         findings_dicts = [f.model_dump(by_alias=True) for f in findings]
-
-        enriched_count = await enrich_findings_with_reachability(
-            findings=findings_dicts,
-            project_id=project_id,
-            db=db,
-            scan_id=scan_id,
-        )
+        enriched_count = await enrich_findings_with_reachability(findings_dicts, callgraphs, scan_id, db)
 
         # Chunked unordered bulk_write instead of one update per finding, so a 10k-finding
         # scan doesn't fire 10k serial Mongo calls inline in the callgraph-upload request.
@@ -704,35 +662,17 @@ async def run_pending_reachability_for_scan(
         for i in range(0, len(bulk_ops), _BULK_CHUNK_SIZE):
             await finding_repo.collection.bulk_write(bulk_ops[i : i + _BULK_CHUNK_SIZE], ordered=False)
 
-        # Reuse the canonical builders so the pending and inline paths cannot drift.
-        # Lazy import to avoid the stats -> reachability_enrichment import cycle.
-        from app.services.analysis.stats import build_reachability_summary, calculate_comprehensive_stats
+        # Lazy imports avoid the stats -> reachability_enrichment import cycle.
+        from app.services.analysis.stats import build_reachability_summary
+        from app.services.stats import refresh_scan_stats
 
-        callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
-        if callgraphs:
-            reachability_summary = build_reachability_summary(
-                findings_dicts,
-                [cg.model_dump(by_alias=True) for cg in callgraphs],
-                enriched_count,
-            )
-            await result_repo.replace_result(scan_id, "reachability", reachability_summary)
-
-        # The scan's stats were frozen at completion, before any reachability verdict existed.
-        stats = await calculate_comprehensive_stats(db, scan_id)
-        await scan_repo.update_raw(
-            scan_id,
-            {
-                "$unset": {
-                    "reachability_pending": "",
-                    "reachability_pending_since": "",
-                },
-                "$set": {
-                    "reachability_completed_at": datetime.now(timezone.utc),
-                    "stats": stats.model_dump(),
-                },
-            },
+        reachability_summary = build_reachability_summary(
+            findings_dicts, [cg.model_dump(by_alias=True) for cg in callgraphs], enriched_count
         )
-        await _sync_project_stats_if_latest(db, project_id, scan_id, stats)
+        await result_repo.replace_result(scan_id, "reachability", reachability_summary)
+        await scan_repo.update_raw(scan_id, finished)
+        # The scan's stats were frozen at completion, before any reachability verdict existed.
+        await refresh_scan_stats(db, project_id, scan_id)
 
         result["findings_enriched"] = enriched_count
         logger.info(f"[reachability] Processed scan {scan_id}: enriched {enriched_count} findings")

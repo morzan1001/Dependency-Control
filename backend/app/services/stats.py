@@ -2,8 +2,10 @@ import asyncio
 import logging
 import os
 import re
+import uuid
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -19,13 +21,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Lock-acquisition retry policy for recalculate_project_stats. Recalc is triggered
-# fire-and-forget from waiver CRUD endpoints, so a dropped run (None return) leaves
-# stats stale until an unrelated event re-triggers it. Bounded exponential backoff
-# lets a contending run wait for the current holder to finish and then recompute
-# against the fully-committed waiver set. Total worst-case wait ~= 0.2*(2^5-1) = 6.2s.
+# A contending recalc waits (at most ~6.2s) for the holder rather than dropping, so both waiver changes land.
 _LOCK_MAX_RETRIES = 5
 _LOCK_RETRY_BASE_DELAY = 0.2
+_LOCK_TTL_SECONDS = 300
+# A build finalized during a pass heads next, and the engine re-stamps it only while a waiver is active.
+_HEAD_PASSES = 3
 
 # Waiver field mapping: waiver field -> finding query field
 _WAIVER_FIELD_MAP = {
@@ -389,95 +390,83 @@ async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> l
     return sorted({analysis.scan_id for analysis in resolved.values()})
 
 
+@asynccontextmanager
+async def _stats_lock(db: AsyncIOMotorDatabase, project_id: str) -> AsyncIterator[bool]:
+    """Hold the project's stats lock for the block; yields False when another holder kept it."""
+    from app.repositories.distributed_locks import DistributedLocksRepository
+
+    lock_repo = DistributedLocksRepository(db)
+    lock_name = f"stats_recalc:{project_id}"
+    holder_id = f"stats-{os.getenv('HOSTNAME', 'unknown')}-{uuid.uuid4().hex[:8]}"
+    acquired = False
+    for attempt in range(_LOCK_MAX_RETRIES + 1):
+        if attempt:
+            await asyncio.sleep(_LOCK_RETRY_BASE_DELAY * (2 ** (attempt - 1)))
+        if acquired := await lock_repo.acquire_lock(lock_name, holder_id, _LOCK_TTL_SECONDS):
+            break
+    if not acquired:
+        logger.warning(f"Could not acquire {lock_name} after {_LOCK_MAX_RETRIES} retries; stats may be stale")
+    try:
+        yield acquired
+    finally:
+        if acquired:
+            await lock_repo.release_lock(lock_name, holder_id)
+
+
 async def recalculate_project_stats(
     project_id: str, db: AsyncIOMotorDatabase, restamp: Sequence[str] = ()
 ) -> Stats | None:
-    """Recalculate a project's stats from its head scan and active waivers, and re-stamp the same
-    waiver set onto the scans release mode reports and onto ``restamp``.
-
-    Resets ALL waivers for those scans and re-applies them under a distributed lock to
-    prevent races when pods modify waivers concurrently. Returns None if project not found.
-    """
-    from app.repositories.distributed_locks import DistributedLocksRepository
+    """Re-stamp the active waivers onto head, the released scans and ``restamp``, and re-cache head; returns head's
+    new stats, or None without a project, a head or the lock (released scans may be re-stamped by then)."""
     from app.repositories.findings import FindingRepository
     from app.repositories.projects import ProjectRepository
     from app.repositories.scans import ScanRepository
     from app.repositories.waivers import WaiverRepository
 
-    project_repo = ProjectRepository(db)
+    scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
     waiver_repo = WaiverRepository(db)
-    lock_repo = DistributedLocksRepository(db)
 
-    project = await project_repo.get_by_id(project_id)
-    if not project:
-        return None
-
-    scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
-    released_ids = sorted({*await _released_analysis_ids(db, project_id), *restamp} - {scan_id})
-    if not scan_id and not released_ids:
-        return None
-
-    # Acquire distributed lock to prevent race conditions
-    lock_name = f"stats_recalc:{project_id}"
-    holder_id = f"pod-{os.getenv('HOSTNAME', 'unknown')}-{os.getpid()}"
-
-    # Retry with bounded exponential backoff instead of dropping the recalc on the
-    # first contention. Two concurrent waiver changes must both end up reflected: the
-    # loser of the lock waits for the holder to release, then recomputes against the
-    # now-committed waiver set (avoids stale stats / stale ignored_count).
-    lock_acquired = False
-    for attempt in range(_LOCK_MAX_RETRIES + 1):
-        lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, 300)
-        if lock_acquired:
-            break
-        if attempt < _LOCK_MAX_RETRIES:
-            delay = _LOCK_RETRY_BASE_DELAY * (2**attempt)
-            logger.debug(
-                f"Lock contention for stats recalculation of project {project_id}; "
-                f"retrying in {delay:.2f}s (attempt {attempt + 1}/{_LOCK_MAX_RETRIES})."
-            )
-            await asyncio.sleep(delay)
-    if not lock_acquired:
-        logger.warning(
-            f"Could not acquire lock for stats recalculation of project {project_id} "
-            f"after {_LOCK_MAX_RETRIES} retries. Another process is holding it; "
-            f"stats may be stale until the next recalculation."
-        )
-        return None
-
-    try:
-        logger.info(
-            f"Recalculating stats for project {project_id} (head {scan_id}, released {released_ids}) "
-            f"with lock {lock_name}"
-        )
+    async with _stats_lock(db, project_id) as locked:
+        project = await ProjectRepository(db).get_by_id(project_id) if locked else None
+        if not project:
+            return None
+        scan_id = (await scan_repo.get_latest_active_scan_ids([project])).get(project_id)
+        released_ids = sorted({*await _released_analysis_ids(db, project_id), *restamp} - {scan_id})
+        logger.info(f"Recalculating stats for project {project_id} (head {scan_id}, released {released_ids})")
 
         waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
         # Head last: every pass writes each waiver's last_eval_scan_id and re-anchored signature,
         # and those describe head.
         for released_id in released_ids:
             await _restamp_scan(released_id, db, waivers, finding_repo, waiver_repo)
-        if not scan_id:
-            return None
-
-        stats = await _restamp_scan(scan_id, db, waivers, finding_repo, waiver_repo)
-        await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
-
-        logger.info(f"Stats updated for project {project_id}: {stats.model_dump()}")
-        return stats
-
-    finally:
-        if lock_acquired:
-            await lock_repo.release_lock(lock_name, holder_id)
-            logger.debug(f"Released lock {lock_name} for project {project_id}")
+        for _ in range(_HEAD_PASSES):
+            if not scan_id:
+                return None
+            stats = await _restamp_scan(scan_id, db, waivers, finding_repo, waiver_repo)
+            head = await scan_repo.sync_project_head(project_id)
+            if head == scan_id:
+                return stats
+            scan_id = head
+        return None
 
 
-async def recalculate_all_projects(db: AsyncIOMotorDatabase) -> int:
-    """Recalculate stats for ALL projects; returns the number processed. Resource intensive."""
+async def refresh_scan_stats(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> None:
+    """Recompute one scan's stats under the project's stats lock and re-cache the project's head."""
+    from app.repositories.scans import ScanRepository
+
+    async with _stats_lock(db, project_id) as locked:
+        if not locked:
+            return
+        scan_repo = ScanRepository(db)
+        stats = await calculate_comprehensive_stats(db, scan_id)
+        await scan_repo.update_raw(scan_id, {"$set": {"stats": stats.model_dump()}})
+        await scan_repo.sync_project_head(project_id)
+
+
+async def recalculate_all_projects(db: AsyncIOMotorDatabase) -> None:
+    """Recalculate stats for every project. Resource intensive."""
     logger.info("Starting global stats recalculation")
-    count = 0
     async for project in db.projects.find({}, {"_id": 1}):
         await recalculate_project_stats(project["_id"], db)
-        count += 1
-    logger.info(f"Global stats recalculation completed: {count} projects processed")
-    return count
+    logger.info("Global stats recalculation completed")

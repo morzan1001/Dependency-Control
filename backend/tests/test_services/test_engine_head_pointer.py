@@ -10,7 +10,6 @@ import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
 from app.models.stats import Stats
-from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.services.analysis.engine import _finalize_scan_and_project
 from app.services.rescan import build_rescan
@@ -71,7 +70,6 @@ async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0, sbom_
         Stats(critical=critical),
         {"scan_id": scan_id, "status": status},
         scan_repo,
-        ProjectRepository(db),
         status=status,
         sbom_generation=sbom_generation,
         worker_id=_WORKER,
@@ -356,24 +354,3 @@ async def test_a_run_whose_claim_moved_to_another_worker_leaves_the_scan_to_it(d
     stored = await db.scans.find_one({"_id": "b1"})
     assert (stored["status"], stored["worker_id"]) == ("processing", "pod-b/worker-0")
     assert await _pointer(db) == "b0"
-
-
-@pytest.mark.asyncio
-async def test_a_head_derived_before_a_newer_build_finalized_does_not_overwrite_it(db, monkeypatch):
-    """B1's finalizer derived the head while B2 was still processing, then B2's finalizer took the pointer."""
-    await _project(db, "b0")
-    await _scan(db, "b0", _NOW - 2 * _HOUR)
-    await _scan(db, "b1", _NOW - _HOUR)
-    await _scan(db, "b2", _NOW)
-    derive = ScanRepository.head_fields
-
-    async def _b2_finalizes_meanwhile(self, project, *args):
-        monkeypatch.setattr(ScanRepository, "head_fields", derive)
-        await db.projects.update_one({"_id": _PROJECT_ID}, {"$set": {"latest_scan_id": "b2"}})
-        return {"latest_scan_id": "b1", "stats": {"critical": 0}}
-
-    monkeypatch.setattr(ScanRepository, "head_fields", _b2_finalizes_meanwhile)
-
-    await _finalize(db, "b1")
-
-    assert await _pointer(db) == "b2"

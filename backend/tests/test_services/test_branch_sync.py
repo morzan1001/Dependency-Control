@@ -221,6 +221,7 @@ async def test_a_head_a_finalizer_moved_during_the_vcs_call_is_not_overwritten()
     db = await _db(project, [_scan("s-main", _MAIN), _scan("s-gone", _GONE, _T0 + _HOUR)])
 
     async def list_branches_while_a_scan_finalizes() -> list[str]:
+        await db.scans.insert_one(_scan("s-finalized", _MAIN, _T0 + 2 * _HOUR, stats={"critical": _CRITICALS}))
         finalized = {"latest_scan_id": "s-finalized", "stats": {"critical": _CRITICALS}}
         await db.projects.update_one({"_id": _PROJECT_ID}, {"$set": finalized})
         return [_MAIN]

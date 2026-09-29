@@ -599,6 +599,18 @@ def _vulnerability(finding_id: str, scan_id: str, severity: str) -> dict:
     }
 
 
+def _waiver_on(finding_id: str) -> dict:
+    return {
+        "_id": f"w-{finding_id}",
+        "project_id": "p1",
+        "finding_id": finding_id,
+        "scope": "finding",
+        "finding_type": "vulnerability",
+        "reason": "accepted",
+        "created_by": "tester",
+    }
+
+
 class TestStatsRecalculationReadsHead:
     @pytest.mark.asyncio
     async def test_a_pointer_on_a_feature_branch_does_not_decide_the_projects_stats(self):
@@ -615,39 +627,130 @@ class TestStatsRecalculationReadsHead:
 
         assert stats is not None
         assert (stats.critical, stats.low) == (1, 0)
-
-
-class TestHeadFields:
-    """The fields ingest, branch sync and the settings edit cache on the project: head, derived afresh."""
+        project = await db.projects.find_one({"_id": "p1"})
+        assert (project["latest_scan_id"], project["stats"]["critical"]) == ("main-tip", 1)
 
     @pytest.mark.asyncio
-    async def test_derives_head_rather_than_trusting_the_pointer_it_replaces(self):
+    async def test_a_build_finalized_while_the_recalc_waited_for_the_lock_is_the_head_it_stamps(self, monkeypatch):
+        from app.repositories.distributed_locks import DistributedLocksRepository
+        from app.services.stats import recalculate_project_stats
+
         db = FakeDatabase()
-        await db.scans.insert_one(_scan("scan-old", "p1", "main", 10))
-        await db.scans.insert_one(_scan("main-tip", "p1", "main", 5, stats=Stats().model_dump()))
-        project = {"_id": "p1", "latest_scan_id": "scan-old", "default_branch": "main"}
+        await db.projects.insert_one(_project("p1", name="proj", default_branch="main", latest_scan_id="b1"))
+        await db.scans.insert_one(_scan("b1", "p1", "main", 5))
+        await db.findings.insert_one(_vulnerability("f-old", "b1", "HIGH"))
+        acquire = DistributedLocksRepository.acquire_lock
 
-        fields = await ScanRepository(db).head_fields(project)
+        async def _b2_finalizes_while_another_recalc_holds_the_lock(self, *args):
+            monkeypatch.setattr(DistributedLocksRepository, "acquire_lock", acquire)
+            await db.scans.insert_one(_scan("b2", "p1", "main", 0))
+            await db.findings.insert_one(_vulnerability("f-new", "b2", "CRITICAL"))
+            await db.projects.update_one({"_id": "p1"}, {"$set": {"latest_scan_id": "b2"}})
+            return False
 
-        assert fields == {"latest_scan_id": "main-tip", "stats": Stats().model_dump()}
+        monkeypatch.setattr(
+            DistributedLocksRepository, "acquire_lock", _b2_finalizes_while_another_recalc_holds_the_lock
+        )
+        monkeypatch.setattr("app.services.stats._LOCK_RETRY_BASE_DELAY", 0)
+
+        stats = await recalculate_project_stats("p1", db)
+
+        assert (stats.critical, stats.high) == (1, 0)
+        project = await db.projects.find_one({"_id": "p1"})
+        assert (project["latest_scan_id"], project["stats"]["critical"], project["stats"]["high"]) == ("b2", 1, 0)
 
     @pytest.mark.asyncio
-    async def test_a_newer_scan_without_an_sbom_is_not_the_head_it_derives(self):
+    async def test_a_build_finalized_during_the_restamp_gets_the_waivers_too(self, monkeypatch):
+        """The engine re-stamps a new head only while a waiver is active, so a deleted one's flags would stay."""
+        from app.services import stats as stats_service
+
         db = FakeDatabase()
-        await db.scans.insert_one(_scan("sbom-build", "p1", "main", 5, stats={"critical": 9}))
-        await db.scans.insert_one(_scan("sast-only", "p1", "main", 1, sbom_refs=[], stats={"critical": 0}))
+        await db.projects.insert_one(_project("p1", name="proj", default_branch="main", latest_scan_id="b1"))
+        await db.scans.insert_one(_scan("b1", "p1", "main", 5))
+        await db.waivers.insert_one(_waiver_on("CVE-W"))
+        restamp = stats_service._restamp_scan
 
-        fields = await ScanRepository(db).head_fields({"_id": "p1", "latest_scan_id": "sast-only"})
+        async def _b2_finalizes_meanwhile(scan_id, *args):
+            monkeypatch.setattr(stats_service, "_restamp_scan", restamp)
+            await db.scans.insert_one(_scan("b2", "p1", "main", 0))
+            await db.findings.insert_one(_vulnerability("CVE-W", "b2", "CRITICAL"))
+            return await restamp(scan_id, *args)
 
-        assert fields == {"latest_scan_id": "sbom-build", "stats": {"critical": 9}}
+        monkeypatch.setattr(stats_service, "_restamp_scan", _b2_finalizes_meanwhile)
+
+        stats = await stats_service.recalculate_project_stats("p1", db)
+
+        assert (await db.findings.find_one({"_id": "b2:CVE-W"}))["waived"] is True
+        assert stats is not None and stats.critical == 0
+        project = await db.projects.find_one({"_id": "p1"})
+        assert (project["latest_scan_id"], project["stats"]["critical"]) == ("b2", 0)
+
+
+class TestSyncProjectHead:
+    """The one writer of ``latest_scan_id`` and ``project.stats``: head derived afresh, written over the pointer read."""
+
+    @staticmethod
+    async def _synced(db: FakeDatabase, project: dict) -> tuple[str | None, dict]:
+        await db.projects.insert_one(project)
+        written = await ScanRepository(db).sync_project_head(project["_id"])
+        return written, await db.projects.find_one({"_id": project["_id"]})
+
+    @pytest.mark.asyncio
+    async def test_caches_the_derived_head_rather_than_the_pointer_it_replaces(self):
+        db = await _seeded(
+            [_scan("scan-old", "p1", "main", 10), _scan("main-tip", "p1", "main", 5, stats=Stats().model_dump())]
+        )
+
+        written, project = await self._synced(db, _project("p1", latest_scan_id="scan-old", default_branch="main"))
+
+        assert written == "main-tip"
+        assert (project["latest_scan_id"], project["stats"]) == ("main-tip", Stats().model_dump())
+
+    @pytest.mark.asyncio
+    async def test_a_newer_scan_without_an_sbom_is_not_the_head_it_caches(self):
+        db = await _seeded(
+            [
+                _scan("sbom-build", "p1", "main", 5, stats={"critical": 9}),
+                _scan("sast-only", "p1", "main", 1, sbom_refs=[], stats={"critical": 0}),
+            ]
+        )
+
+        written, project = await self._synced(db, _project("p1", latest_scan_id="sast-only"))
+
+        assert written == "sbom-build"
+        assert project["stats"] == {"critical": 9}
 
     @pytest.mark.asyncio
     async def test_clears_both_fields_when_nothing_usable_is_left(self):
-        db = FakeDatabase()
-        await db.scans.insert_one(_scan("on-gone", "p1", "gone", 1))
+        db = await _seeded([_scan("on-gone", "p1", "gone", 1, stats={"critical": 3})])
 
-        fields = await ScanRepository(db).head_fields(
-            {"_id": "p1", "latest_scan_id": "on-gone", "deleted_branches": ["gone"]}
+        written, project = await self._synced(
+            db, _project("p1", latest_scan_id="on-gone", deleted_branches=["gone"], stats={"critical": 3})
         )
 
-        assert fields == {"latest_scan_id": None, "stats": None}
+        assert written is None
+        assert (project["latest_scan_id"], project["stats"]) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_a_pointer_moved_since_it_was_read_is_derived_again(self, monkeypatch):
+        """A writer that moved the pointer meanwhile saw newer scans, so an older derivation must not land."""
+        db = await _seeded([_scan("b1", "p1", "main", 2), _scan("b2", "p1", "main", 0)])
+        await db.projects.insert_one(_project("p1", latest_scan_id="b0", default_branch="main"))
+        derive = ScanRepository._head_scan_ids
+
+        async def _b2_finalizes_meanwhile(self, scopes):
+            monkeypatch.setattr(ScanRepository, "_head_scan_ids", derive)
+            await db.projects.update_one({"_id": "p1"}, {"$set": {"latest_scan_id": "b2"}})
+            return {"p1": "b1"}
+
+        monkeypatch.setattr(ScanRepository, "_head_scan_ids", _b2_finalizes_meanwhile)
+
+        assert await ScanRepository(db).sync_project_head("p1") == "b2"
+        assert (await db.projects.find_one({"_id": "p1"}))["latest_scan_id"] == "b2"
+
+    @pytest.mark.asyncio
+    async def test_a_project_that_is_gone_is_left_alone(self):
+        db = await _seeded([_scan("main-tip", "p1", "main", 5)])
+
+        assert await ScanRepository(db).sync_project_head("p1") is None
+        assert await db.projects.find_one({"_id": "p1"}) is None
