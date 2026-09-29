@@ -139,11 +139,12 @@ class TestIngestHonoursScopeAndRule:
             reason="r",
             created_by="u",
             scope="file",
+            rule_id="r",
             finding_id="OPENGREP-r-a.py-10",
             package_name="a.py",
             finding_type="sast",
         )
-        moved = _ingested("OPENGREP-r-a.py-42", "sast", "a.py", {})
+        moved = _ingested("OPENGREP-r-a.py-42", "sast", "a.py", {"sast_findings": [{"id": "r", "scanner": "opengrep"}]})
 
         assert ScanManager._finding_matches_waiver(ScanManager, moved, waiver) is True
 

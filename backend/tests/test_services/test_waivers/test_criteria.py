@@ -12,6 +12,8 @@ _A10, _A42, _B7 = "BEARER-weak_rng-src/a.js-10", "BEARER-weak_rng-src/a.js-42", 
 _MERGED, _EVAL = "SAST-AGG-src/c.js-5", "BEARER-eval-src/a.js-10"
 _SECRET_A, _SECRET_B, _OTHER_DETECTOR = "SECRET-17-aaaa1111", "SECRET-17-bbbb2222", "SECRET-18-cccc3333"
 _KICS = "KICS-q1-main.tf-3"
+_MERGED_A, _MERGED_A_RNG = "SAST-AGG-src/a.js-20", "SAST-AGG-src/a.js-30"
+_NO_EVAL, _NO_EVAL_EXPR = "BEARER-no-eval-src/d.js-3", "BEARER-no-eval-with-expression-src/e.js-5"
 
 
 def _finding(fid, ftype, component, details):
@@ -32,6 +34,10 @@ _FINDINGS = [
     _finding(_SECRET_B, "secret", "src/b.env", {"detector": "17"}),
     _finding(_OTHER_DETECTOR, "secret", "src/a.env", {"detector": "18"}),
     _finding(_KICS, "iac", "main.tf", {"rule_id": "q1"}),
+    _sast(_MERGED_A, "src/a.js", "eval"),
+    _sast(_MERGED_A_RNG, "src/a.js", "weak_rng"),
+    _sast(_NO_EVAL, "src/d.js", "no-eval"),
+    _sast(_NO_EVAL_EXPR, "src/e.js", "no-eval-with-expression"),
 ]
 
 
@@ -42,18 +48,29 @@ def _waiver(**fields):
 _TAKEN_FROM_A10 = {"finding_id": _A10, "package_name": "src/a.js", "finding_type": "sast"}
 _CASES = {
     "finding scope is the exact finding": (_waiver(**_TAKEN_FROM_A10), {_A10}),
-    "file scope spans one rule's lines in one file": (_waiver(scope="file", **_TAKEN_FROM_A10), {_A10, _A42}),
-    "rule scope from a finding id spans the rule's files": (
-        _waiver(scope="rule", **_TAKEN_FROM_A10),
-        {_A10, _A42, _B7},
+    "file scope spans one rule's lines in one file": (
+        _waiver(scope="file", rule_id="weak_rng", **_TAKEN_FROM_A10),
+        {_A10, _A42, _MERGED_A_RNG},
+    ),
+    "a file scope from a merged finding spans only its rule in that file": (
+        _waiver(scope="file", rule_id="eval", finding_id=_MERGED_A, package_name="src/a.js", finding_type="sast"),
+        {_MERGED_A, _EVAL},
+    ),
+    "a widened scope without its rule_id stays on the finding it was taken from": (
+        _waiver(scope="file", finding_id=_MERGED_A, package_name="src/a.js", finding_type="sast"),
+        {_MERGED_A},
+    ),
+    "a rule scope without its rule_id does not reach a rule its id prefixes": (
+        _waiver(scope="rule", finding_id=_NO_EVAL, package_name="src/d.js", finding_type="sast"),
+        {_NO_EVAL},
     ),
     "a rule_id also reaches merged findings of the rule": (
         _waiver(scope="rule", rule_id="weak_rng", **_TAKEN_FROM_A10),
-        {_A10, _A42, _B7, _MERGED},
+        {_A10, _A42, _B7, _MERGED, _MERGED_A_RNG},
     ),
     "a global rule waiver waives only its rule": (
         _waiver(scope="rule", rule_id="eval", finding_type="sast"),
-        {_MERGED, _EVAL},
+        {_MERGED, _EVAL, _MERGED_A},
     ),
     "a rule waiver without a type still names its rule": (_waiver(scope="rule", rule_id="q1"), {_KICS}),
     "a secret rule waiver spans its detector's files": (

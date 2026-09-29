@@ -74,7 +74,7 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
             package_version: packageVersion || undefined,
             finding_type: findingType || undefined,
             scope,
-            rule_id: scope === 'rule' && ruleId ? ruleId : undefined,
+            rule_id: scope !== 'finding' && ruleId ? ruleId : undefined,
             status,
             reason,
             expiration_date: expirationDateInputToIso(date),
@@ -173,7 +173,7 @@ export function CreateGlobalWaiverDialog({ open, onOpenChange }: Readonly<Create
                         </div>
                     </div>
 
-                    {scope === 'rule' && (
+                    {scope !== 'finding' && (
                         <div className="space-y-2">
                             <Label>Rule ID</Label>
                             <Input

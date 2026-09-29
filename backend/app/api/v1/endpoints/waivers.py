@@ -18,6 +18,7 @@ from app.api.v1.helpers import (
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_EDITOR
 from app.core.permissions import Permissions, has_permission
+from app.models.finding import LOCATION_FINDING_TYPES
 from app.models.user import User
 from app.repositories.base import and_filters
 from app.models.waiver import Waiver
@@ -26,7 +27,7 @@ from app.repositories.waivers import non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
 from app.services.stats import recalculate_all_projects, recalculate_project_stats
-from app.services.waivers.matching import extract_rule_prefix, waiver_query
+from app.services.waivers.matching import finding_rule_id, waiver_query
 
 
 def _invalidate_analytics_cache() -> None:
@@ -52,14 +53,35 @@ _MSG_NEEDS_PACKAGE_SCOPE = (
 )
 
 
-_MSG_SCOPE_NEEDS_RULE = "A file or rule scope waiver needs the finding_id or rule_id it widens."
+_MSG_SCOPE_NEEDS_RULE = (
+    "A file or rule scope waiver needs its rule_id, or the finding_id of a finding this project stores, "
+    "to name the rule it widens to."
+)
+_MSG_SCOPE_NEEDS_FILE = "A file scope waiver needs the file (package_name) it covers."
+_MSG_SCOPE_NEEDS_LOCATION = "File and rule scope apply only to findings a scanner places in a file."
+
+
+async def _resolve_widened_rule(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> None:
+    """A file or rule scope widens to a rule, so it must name one: as given, else the rule a stored copy of the
+    finding it was taken from reports."""
+    if waiver_in.finding_type is not None and waiver_in.finding_type not in LOCATION_FINDING_TYPES:
+        raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_LOCATION)
+    if waiver_in.scope == "file" and not waiver_in.package_name:
+        raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_FILE)
+    if waiver_in.rule_id:
+        return
+    finding = None
+    if waiver_in.project_id and waiver_in.finding_id:
+        finding = await db.findings.find_one(
+            {"project_id": waiver_in.project_id, "finding_id": waiver_in.finding_id}, {"details": 1}
+        )
+    waiver_in.rule_id = finding_rule_id(finding.get("details")) if finding else None
+    if not waiver_in.rule_id:
+        raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_RULE)
 
 
 def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
     """Refuse a waiver whose criteria would blanket findings nobody picked."""
-    # With neither, the waiver would match every finding of its type.
-    if waiver_in.scope != "finding" and not (waiver_in.finding_id or waiver_in.rule_id):
-        raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_RULE)
     if waiver_in.finding_type not in _BROAD_FINDING_ID_TYPES or waiver_in.package_name or not waiver_in.finding_id:
         return
     raise HTTPException(
@@ -124,14 +146,9 @@ async def create_waiver(
 
     # Reject zombie and over-broad waivers early, before consuming a write and recalculating stats.
     _reject_unscoped_broad_waiver(waiver_in)
+    if waiver_in.scope != "finding":
+        await _resolve_widened_rule(waiver_in, db)
     matched_finding = await _ensure_waiver_matches_finding(waiver_in, db)
-
-    if waiver_in.scope == "rule" and not waiver_in.rule_id and waiver_in.finding_id and waiver_in.package_name:
-        rule_prefix = extract_rule_prefix(waiver_in.finding_id, waiver_in.package_name)
-        if rule_prefix:
-            # Strip scanner prefix (e.g. "BEARER-rule_name" → "rule_name")
-            parts = rule_prefix.split("-", 1)
-            waiver_in.rule_id = parts[1] if len(parts) > 1 else rule_prefix
 
     waiver_repo = WaiverRepository(db)
     waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)

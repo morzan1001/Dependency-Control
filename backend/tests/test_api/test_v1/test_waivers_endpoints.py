@@ -33,6 +33,17 @@ def _make_waiver(id="waiver-1", project_id="proj-1", reason="Accepted risk", cre
     return Waiver(id=id, project_id=project_id, reason=reason, created_by=created_by, **kwargs)
 
 
+def _stored_bearer_finding(finding_id: str, rule_id: str, scan_id: str) -> dict:
+    return {
+        "_id": f"{scan_id}:{finding_id}",
+        "scan_id": scan_id,
+        "project_id": _PROJECT,
+        "finding_id": finding_id,
+        "type": "sast",
+        "details": {"sast_findings": [{"id": rule_id, "scanner": "bearer"}]},
+    }
+
+
 def _call_list_waivers(current_user, db=None, **overrides):
     from app.api.v1.endpoints.waivers import list_waivers
 
@@ -232,6 +243,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.schemas.waiver import WaiverCreate
 
         db = self._db_with_head_scan()
+        db.findings._docs["elsewhere"] = _stored_bearer_finding("BEARER-rule_x-src/file.js-1", "rule_x", "other-scan")
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -258,16 +270,19 @@ class TestCreateWaiverValidatesFindingMatch:
 
         mock_repo.create.assert_called_once()
 
-    def test_rule_scope_waiver_stores_the_rule_without_the_scanner_prefix(self, admin_user):
-        """The derived rule_id is the scanner's rule name; keeping the "BEARER-" stamp names a rule no scanner reports."""
+    @pytest.mark.parametrize("scope", ["file", "rule"])
+    def test_a_widened_scope_takes_its_rule_from_the_finding_it_was_taken_from(self, admin_user, scope):
+        """A merged SAST id names no rule; the finding's own details do."""
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
         db = self._db_with_head_scan()
+        db.findings._docs["merged"] = _stored_bearer_finding(
+            "SAST-AGG-src/file.rb-12", "ruby_lang_weak-hash", _HEAD_SCAN
+        )
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
-        bg_tasks = BackgroundTasks()
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
@@ -276,13 +291,13 @@ class TestCreateWaiverValidatesFindingMatch:
                         create_waiver(
                             waiver_in=WaiverCreate(
                                 project_id="proj-1",
-                                finding_id="BEARER-ruby_lang_weak-hash-src/file.rb-12",
+                                finding_id="SAST-AGG-src/file.rb-12",
                                 finding_type="sast",
                                 package_name="src/file.rb",
-                                scope="rule",
+                                scope=scope,
                                 reason="future",
                             ),
-                            background_tasks=bg_tasks,
+                            background_tasks=BackgroundTasks(),
                             current_user=admin_user,
                             db=db,
                         )
@@ -295,6 +310,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.schemas.waiver import WaiverCreate
 
         db = self._db_with_head_scan()
+        db.findings._docs["elsewhere"] = _stored_bearer_finding("BEARER-rule_x-src/file.js-1", "rule_x", "other-scan")
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -426,6 +442,41 @@ class TestCreateWaiverValidatesFindingMatch:
                 asyncio.run(
                     create_waiver(
                         waiver_in=WaiverCreate(project_id=None, finding_type="sast", scope=scope, reason="approved"),
+                        background_tasks=BackgroundTasks(),
+                        current_user=admin_user,
+                        db=MagicMock(),
+                    )
+                )
+
+        assert exc.value.status_code == 422
+        mock_repo.create.assert_not_called()
+
+    @pytest.mark.parametrize(
+        "fields",
+        [
+            pytest.param({"scope": "file", "rule_id": "weak_rng"}, id="file scope without its file"),
+            pytest.param(
+                {"scope": "rule", "finding_id": "BEARER-weak_rng-src/a.js-3", "package_name": "src/a.js"},
+                id="global widened scope without its rule_id",
+            ),
+            pytest.param(
+                {"scope": "rule", "rule_id": "x", "finding_type": "license", "package_name": "lib"},
+                id="widened scope on a type without a location",
+            ),
+        ],
+    )
+    def test_a_widened_scope_that_cannot_name_its_rule_and_place_is_rejected(self, admin_user, fields):
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(
+                    create_waiver(
+                        waiver_in=WaiverCreate(project_id=None, reason="approved", **fields),
                         background_tasks=BackgroundTasks(),
                         current_user=admin_user,
                         db=MagicMock(),

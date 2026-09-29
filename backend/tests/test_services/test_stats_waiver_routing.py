@@ -555,19 +555,23 @@ class TestWhatAWaiverMatchesOn:
     async def test_a_rule_scope_waiver_reaches_the_same_rule_in_another_file(self, seeded_db):
         """Rule scope means "this rule everywhere"; keeping the waiver's own file in the query
         would silently degrade it to file scope."""
+        rule = {"sast_findings": [{"id": "weak_rng"}]}
         await _insert_finding(
             seeded_db,
-            {"_id": "f-rule-a", "type": "sast", "finding_id": "BEARER-weak_rng-src/a.js-10", "component": "src/a.js"},
+            {"_id": "f-rule-a", "type": "sast", "finding_id": "BEARER-weak_rng-src/a.js-10", "component": "src/a.js"}
+            | {"details": rule},
         )
         await _insert_finding(
             seeded_db,
-            {"_id": "f-rule-b", "type": "sast", "finding_id": "BEARER-weak_rng-src/b.js-42", "component": "src/b.js"},
+            {"_id": "f-rule-b", "type": "sast", "finding_id": "BEARER-weak_rng-src/b.js-42", "component": "src/b.js"}
+            | {"details": rule},
         )
         await seeded_db.waivers.insert_one(
             {
                 "_id": "w-rule",
                 "project_id": PROJECT_ID,
                 "scope": "rule",
+                "rule_id": "weak_rng",
                 "finding_type": "sast",
                 "finding_id": "BEARER-weak_rng-src/a.js-10",
                 "package_name": "src/a.js",

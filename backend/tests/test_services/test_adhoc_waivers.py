@@ -128,18 +128,20 @@ def _vulnerability_record(component: str = _COMPONENT) -> dict:
 
 
 def _bearer_record(finding_id: str, component: str) -> dict:
+    rule = _OTHER_BEARER_RULE if finding_id == _OTHER_RULE_FINDING_ID else _BEARER_RULE
     return {
         "id": finding_id,
         "finding_id": finding_id,
         "type": _TYPE_SAST,
         "component": component,
         "version": "",
+        "details": {"sast_findings": [{"id": rule, "scanner": _BEARER}]},
     }
 
 
 def _bearer_waiver(scope: str) -> Waiver:
-    """Taken from the line the scanner first reported, as the UI records it."""
-    return _waiver(finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=scope)
+    """Taken from the line the scanner first reported, with the rule create_waiver stores for it."""
+    return _waiver(finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=scope, rule_id=_BEARER_RULE)
 
 
 def _sast_record(anchor: str, content_hash: str) -> dict:
@@ -339,7 +341,9 @@ async def test_opt_in_applies_the_global_waiver_and_writes_nothing(_osv):
 async def test_a_widened_scope_is_covered_by_the_control_the_response_reports():
     """``waivers_applied`` names every scope the run honours, so a widened one must be applied."""
     db = FakeDatabase()
-    await _seed_waiver(db, finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=_SCOPE_FILE)
+    await _seed_waiver(
+        db, finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=_SCOPE_FILE, rule_id=_BEARER_RULE
+    )
 
     payload = {
         "findings": [
