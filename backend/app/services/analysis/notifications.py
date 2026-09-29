@@ -37,7 +37,7 @@ _TOP_VULNS_SHOWN = 10
 def _extract_vulnerability_info(entry_details: dict[str, Any], finding: dict[str, Any]) -> dict[str, Any]:
     """Extract vulnerability info from a vulnerability entry and its parent finding."""
     return AlertVulnerability(
-        id=canonical_cve(entry_details) or entry_details["id"],
+        id=canonical_cve(entry_details) or "Unknown",
         severity=entry_details["severity"],
         package=finding.get("component", "Unknown"),
         version=finding.get("version", ""),

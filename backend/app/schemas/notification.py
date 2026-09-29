@@ -1,4 +1,5 @@
 import re
+from typing import cast
 
 from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, Field, field_validator
@@ -99,7 +100,7 @@ class AdvisoryPackage(BaseModel):
             # Other schemes compare by numeric release, so a qualifier (.Final, -SNAPSHOT) never lifts a
             # version past its own release.
             installed = _release(version)
-            return None if installed is None else installed <= (_release(self.version) or ())
+            return None if installed is None else installed <= cast(tuple[int, ...], _release(self.version))
 
 
 class BroadcastRequest(BaseModel):

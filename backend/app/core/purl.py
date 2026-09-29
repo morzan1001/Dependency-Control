@@ -220,12 +220,8 @@ def get_purl_type(purl: str | None) -> str | None:
     return purl[4:].split("/")[0].lower()
 
 
-def is_purl_type(purl: str, expected_type: str | tuple[str, ...]) -> bool:
-    """Check if a PURL matches the expected type(s)."""
-    purl_type = get_purl_type(purl)
-    if isinstance(expected_type, tuple):
-        return purl_type in expected_type
-    return purl_type == expected_type
+def is_purl_type(purl: str, expected_type: str) -> bool:
+    return get_purl_type(purl) == expected_type
 
 
 def is_pypi(purl: str) -> bool:
@@ -234,19 +230,3 @@ def is_pypi(purl: str) -> bool:
 
 def is_npm(purl: str) -> bool:
     return is_purl_type(purl, "npm")
-
-
-def is_maven(purl: str) -> bool:
-    return is_purl_type(purl, "maven")
-
-
-def is_go(purl: str) -> bool:
-    return is_purl_type(purl, ("go", "golang"))
-
-
-def is_cargo(purl: str) -> bool:
-    return is_purl_type(purl, "cargo")
-
-
-def is_nuget(purl: str) -> bool:
-    return is_purl_type(purl, "nuget")

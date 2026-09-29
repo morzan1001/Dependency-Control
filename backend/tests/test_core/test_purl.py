@@ -9,11 +9,7 @@ from app.core.purl import (
     MAX_PURL_LENGTH,
     MAX_VERSION_LENGTH,
     get_purl_type,
-    is_cargo,
-    is_go,
-    is_maven,
     is_npm,
-    is_nuget,
     is_purl_type,
     is_pypi,
     package_identity,
@@ -344,8 +340,6 @@ class TestIsPurlType:
         [
             pytest.param("pkg:pypi/requests@1.0", "pypi", True, id="single_match"),
             pytest.param("pkg:pypi/requests@1.0", "npm", False, id="single_mismatch"),
-            pytest.param("pkg:golang/gin@1.0", ("go", "golang"), True, id="tuple_match"),
-            pytest.param("pkg:pypi/requests@1.0", ("npm", "maven"), False, id="tuple_no_match"),
         ],
     )
     def test_is_purl_type(self, purl, wanted, expected):
@@ -358,25 +352,11 @@ class TestConvenienceFunctions:
         [
             pytest.param(is_pypi, "pkg:pypi/requests@2.31.0", "pkg:npm/express@4.0.0", id="is_pypi"),
             pytest.param(is_npm, "pkg:npm/express@4.0.0", "pkg:pypi/requests@1.0", id="is_npm"),
-            pytest.param(is_maven, "pkg:maven/org.apache/commons@1.0", "pkg:pypi/requests@1.0", id="is_maven"),
-            pytest.param(is_cargo, "pkg:cargo/serde@1.0", "pkg:npm/express@1.0", id="is_cargo"),
-            pytest.param(is_nuget, "pkg:nuget/Newtonsoft.Json@13.0", "pkg:pypi/requests@1.0", id="is_nuget"),
         ],
     )
     def test_accepts_its_own_type_and_rejects_a_foreign_one(self, predicate, own_type_purl, foreign_purl):
         assert predicate(own_type_purl) is True
         assert predicate(foreign_purl) is False
-
-    @pytest.mark.parametrize(
-        ("purl", "expected"),
-        [
-            pytest.param("pkg:golang/gin@1.0", True, id="golang"),
-            pytest.param("pkg:go/gin@1.0", True, id="go"),
-            pytest.param("pkg:pypi/requests@1.0", False, id="not_go"),
-        ],
-    )
-    def test_is_go_accepts_both_spellings_of_the_type(self, purl, expected):
-        assert is_go(purl) is expected
 
 
 @pytest.mark.parametrize(
