@@ -32,6 +32,15 @@ def _make_vuln_finding(
             "purl": purl or f"pkg:pypi/{component}@{version}",
             "in_kev": is_kev,
             "epss_score": epss_score,
+            "vulnerabilities": [
+                {
+                    "id": finding_id,
+                    "severity": severity,
+                    "fixed_version": fixed_version,
+                    "in_kev": is_kev,
+                    "epss_score": epss_score,
+                }
+            ],
         },
         "reachable": reachable,
         "reachability_level": None,

@@ -2,6 +2,7 @@
 
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.optimization import QUICK_WINS_SHOWN, identify_quick_wins
+from tests.helpers.findings import stored_vulnerability
 
 
 def _vuln(component, severity="HIGH", version="1.0", fixed_version="2.0", is_kev=False, finding_id="CVE-2024-001"):
@@ -12,7 +13,9 @@ def _vuln(component, severity="HIGH", version="1.0", fixed_version="2.0", is_kev
         "version": version,
         "details": {
             "fixed_version": fixed_version,
-            "vulnerabilities": [{"id": finding_id, "in_kev": is_kev}],
+            "vulnerabilities": [
+                {"id": finding_id, "severity": severity, "fixed_version": fixed_version, "in_kev": is_kev}
+            ],
         },
         "id": finding_id,
     }
@@ -396,11 +399,29 @@ class TestQuickWinsReadTheLiveAdvisories:
     def test_a_kev_cve_waived_on_its_own_does_not_raise_the_quick_win(self):
         partly_waived = _vuln("log4j-core", severity="MEDIUM", version="2.14.1", is_kev=True)
         partly_waived["details"]["vulnerabilities"] = [
-            {"id": "CVE-2021-44228", "waived": True, "in_kev": True},
-            {"id": "CVE-2021-44832"},
+            {"id": "CVE-2021-44228", "waived": True, "in_kev": True, "fixed_version": "2.0"},
+            {"id": "CVE-2021-44832", "fixed_version": "2.0"},
         ]
         other = _vuln("log4j-core", severity="MEDIUM", version="2.15.0", finding_id="CVE-2021-45046")
 
         [rec] = identify_quick_wins([partly_waived, other], [])
 
         assert (rec.priority, rec.impact["kev_count"]) == (Priority.MEDIUM, 0)
+
+
+def test_a_package_whose_copies_each_leave_a_low_unfixed_is_still_a_quick_win():
+    copies = [
+        stored_vulnerability(
+            "libssl3",
+            version,
+            [
+                {"id": f"CVE-2024-000{n}", "severity": "CRITICAL", "fixed_version": "3.0.13-1~deb12u1"},
+                {"id": "CVE-2010-5298", "severity": "LOW", "fixed_version": None},
+            ],
+        )
+        for n, version in enumerate(("3.0.11-1~deb12u1", "3.0.11-1~deb12u2"))
+    ]
+
+    [rec] = identify_quick_wins(copies, [])
+
+    assert rec.action["target_version"] == "3.0.13-1~deb12u1"

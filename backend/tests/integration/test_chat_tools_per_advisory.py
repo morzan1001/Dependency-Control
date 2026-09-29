@@ -11,6 +11,7 @@ import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
+from app.services.aggregation.versions import aggregate_fixed_version
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.permission_presets import PRESET_ADMIN
 
@@ -67,7 +68,11 @@ def _finding(_id: str, severity: str, component: str, advisories: list[dict], **
         "version": "1.0.0",
         "description": "",
         "waived": False,
-        "details": {"vulnerabilities": advisories, **details},
+        "details": {
+            "vulnerabilities": advisories,
+            "fixed_version": aggregate_fixed_version(advisories, "1.0.0"),
+            **details,
+        },
     }
 
 
@@ -103,7 +108,6 @@ def _log4j(**details) -> dict:
                 "description": "uncontrolled recursion",
             },
         ],
-        fixed_version="2.15.0",
         epss_score=0.97,
         epss_percentile=0.999,
         exploit_maturity="weaponized",
@@ -191,9 +195,7 @@ async def test_vulnerability_details_list_the_worst_advisories_first_and_name_th
     await _seed_head(db)
     advisories = [{"id": f"CVE-2017-000{i}", "severity": "MEDIUM", "fixed_version": "2.0.0"} for i in range(1, 7)]
     advisories.append({"id": "CVE-2020-0001", "severity": "CRITICAL", "fixed_version": None})
-    await db.findings.insert_one(
-        _finding("f-jackson", "CRITICAL", "jackson-databind", advisories, fixed_version="2.0.0")
-    )
+    await db.findings.insert_one(_finding("f-jackson", "CRITICAL", "jackson-databind", advisories))
 
     finding = (await _call(db, "get_vulnerability_details", project_id=_PROJECT, finding_id="f-jackson"))["finding"]
 
@@ -268,7 +270,6 @@ async def test_auto_fixable_requires_a_fix_for_every_live_critical_and_high_advi
                     {"id": "CVE-2024-0001", "severity": "CRITICAL", "fixed_version": None},
                     {"id": "CVE-2024-0002", "severity": "LOW", "fixed_version": "4.17.21"},
                 ],
-                fixed_version="4.17.21",
             ),
             _finding(
                 "f-partial",
@@ -278,7 +279,6 @@ async def test_auto_fixable_requires_a_fix_for_every_live_critical_and_high_advi
                     {"id": "CVE-2024-0003", "severity": "HIGH", "fixed_version": "1.6.0"},
                     {"id": "CVE-2024-0004", "severity": "LOW", "fixed_version": None},
                 ],
-                fixed_version="1.6.0",
             ),
             _finding(
                 "f-waived-critical",
@@ -288,14 +288,16 @@ async def test_auto_fixable_requires_a_fix_for_every_live_critical_and_high_advi
                     {"id": "CVE-2024-0005", "severity": "CRITICAL", "fixed_version": None, "waived": True},
                     {"id": "CVE-2024-0006", "severity": "HIGH", "fixed_version": "4.19.2"},
                 ],
-                fixed_version="4.19.2",
             ),
         ]
     )
 
     rows = (await _call(db, "get_auto_fixable_findings"))["findings"]
 
-    assert {r["component"]: r["still_open"] for r in rows} == {"axios": ["CVE-2024-0004"], "express": []}
+    assert {r["component"]: (r["fixed_version"], r["still_open"]) for r in rows} == {
+        "axios": ("1.6.0", ["CVE-2024-0004"]),
+        "express": ("4.19.2", []),
+    }
 
 
 async def test_kev_list_skips_a_finding_whose_only_kev_advisory_is_waived(db, database):
@@ -344,7 +346,6 @@ async def test_remediation_plan_leaves_waived_advisories_out(db, database):
             {"id": "CVE-2024-0007", "severity": "CRITICAL", "fixed_version": "3.0.0", "waived": True},
             {"id": "CVE-2024-0008", "severity": "HIGH", "fixed_version": "1.0.1"},
         ],
-        fixed_version="1.0.1, 3.0.0",
     )
     await db.findings.insert_one(finding)
 
@@ -431,3 +432,27 @@ async def test_waiver_status_finds_a_dormant_cve_waiver_by_its_vulnerability_id(
     result = await _call(db, "get_waiver_status", project_id=_PROJECT, finding_id="CVE-2020-0010")
 
     assert (result["waived"], result["waiver_present"], result["suppressing"]) == (False, True, False)
+
+
+async def test_a_row_reads_its_threat_fields_off_the_unwaived_advisories(db, database):
+    await _seed_head(db)
+    await db.findings.insert_one(
+        _finding(
+            "f-struts",
+            "CRITICAL",
+            "struts",
+            [
+                {"id": "CVE-2017-5638", "severity": "CRITICAL", "in_kev": True, "epss_score": 0.97, "waived": True},
+                {"id": "CVE-2017-0002", "severity": "MEDIUM", "epss_score": 0.001, "epss_percentile": 0.2},
+            ],
+            in_kev=True,
+            epss_score=0.97,
+            epss_percentile=0.999,
+            exploit_maturity="active",
+        )
+    )
+
+    [row] = (await _call(db, "get_project_findings", project_id=_PROJECT))["findings"]
+
+    assert "in_kev" not in row
+    assert (row["epss_score"], row["epss_percentile"], row["exploit_maturity"]) == (0.001, 0.2, "low")

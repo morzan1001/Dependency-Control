@@ -21,12 +21,12 @@ def _vuln(
     risk_score=None,
     finding_id="CVE-2024-001",
 ):
-    advisory = {"id": finding_id, "in_kev": is_kev, "epss_score": epss_score}
+    advisory = {"id": finding_id, "severity": severity, "in_kev": is_kev, "epss_score": epss_score}
     if risk_score is not None:
         advisory["risk_score"] = risk_score
     details = {"vulnerabilities": [advisory]}
     if fixed_version is not None:
-        details["fixed_version"] = fixed_version
+        details["fixed_version"] = advisory["fixed_version"] = fixed_version
     result = {
         "type": "vulnerability",
         "severity": severity,

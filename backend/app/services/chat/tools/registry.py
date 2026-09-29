@@ -1006,15 +1006,17 @@ class ChatToolRegistry:
             {
                 "scan_id": {"$in": list(latest.values())},
                 "severity": {"$in": ["CRITICAL", "HIGH"]},
-                "details.fixed_version": {"$exists": True, "$ne": None},
                 "waived": {"$ne": True},
-                # details.fixed_version exists once any advisory has a fix; every live CRITICAL/HIGH one needs one.
+                # The live_fixed_version rule: a live advisory names a fix and no live CRITICAL/HIGH one lacks one.
+                "details.vulnerabilities": {
+                    "$elemMatch": {"fixed_version": {"$nin": [None, ""]}, "waived": {"$ne": True}}
+                },
                 "$nor": [
                     {
                         "details.vulnerabilities": {
                             "$elemMatch": {
                                 "severity": {"$in": ["CRITICAL", "HIGH"]},
-                                "fixed_version": None,
+                                "fixed_version": {"$in": [None, ""]},
                                 "waived": {"$ne": True},
                             }
                         }
@@ -1036,7 +1038,7 @@ class ChatToolRegistry:
             "findings": out,
             "count": len(out),
             "hint": (
-                "Upgrading to fix_version fixes every CRITICAL/HIGH advisory of these findings. Advisories "
+                "Upgrading to fixed_version fixes every CRITICAL/HIGH advisory of these findings. Advisories "
                 "under still_open have no fix yet and stay after the upgrade: call that a partial fix."
             ),
             **({"ranking_note": ranking_note} if ranking_note else {}),

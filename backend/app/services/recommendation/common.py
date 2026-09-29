@@ -17,7 +17,7 @@ from app.core.constants import (
 )
 from app.core.epss import bucket_epss
 from app.schemas.recommendation import Priority, Recommendation, VulnerabilityInfo
-from app.services.aggregation.versions import parse_version_key, split_fixed_versions
+from app.services.aggregation.versions import aggregate_fixed_version, parse_version_key, split_fixed_versions
 from app.core.cve import canonical_cves
 
 ModelOrDict = BaseModel | dict[str, Any]
@@ -97,6 +97,14 @@ def live_advisories(details: Any) -> list[dict[str, Any]]:
     return [a for a in details.get("vulnerabilities") or [] if isinstance(a, dict) and not a.get("waived")]
 
 
+def live_fixed_version(finding: ModelOrDict) -> str | None:
+    """The version fixing every live advisory that names a fix; None while a live CRITICAL/HIGH one names none."""
+    advisories = live_advisories(get_attr(finding, "details", {}))
+    if any(a.get("severity") in ("CRITICAL", "HIGH") and not a.get("fixed_version") for a in advisories):
+        return None
+    return aggregate_fixed_version([a for a in advisories if a.get("fixed_version")], get_attr(finding, "version"))
+
+
 def max_advisory_cvss(details: dict[str, Any]) -> float | None:
     """Aggregated findings carry CVSS only per advisory in details.vulnerabilities[]."""
     scores = [
@@ -135,8 +143,7 @@ def calculate_best_fix_version(versions: list[str]) -> str:
 
 def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
     """A vulnerability finding in the shape every per-package roll-up counts, marked by its worst live advisory."""
-    details = get_attr(f, "details", {})
-    advisories = live_advisories(details)
+    advisories = live_advisories(get_attr(f, "details", {}))
     epss = [a["epss_score"] for a in advisories if a.get("epss_score") is not None]
     risk = [a["risk_score"] for a in advisories if a.get("risk_score") is not None]
 
@@ -146,7 +153,7 @@ def vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
         severity=get_attr(f, "severity", "UNKNOWN"),
         package_name=get_attr(f, "component", ""),
         current_version=get_attr(f, "version") or "",
-        fixed_version=details.get("fixed_version") if isinstance(details, dict) else None,
+        fixed_version=live_fixed_version(f),
         epss_score=max(epss, default=None),
         is_kev=any(a.get(DETAILS_KEY_IN_KEV) for a in advisories),
         kev_ransomware=any(a.get(DETAILS_KEY_KEV_RANSOMWARE) for a in advisories),

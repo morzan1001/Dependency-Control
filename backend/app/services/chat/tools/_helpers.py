@@ -2,15 +2,17 @@
 
 from contextvars import ContextVar
 from datetime import datetime, timezone
+from operator import itemgetter
 from typing import Any
 
 from app.core.config import settings
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE
 from app.core.cve import advisory_ids, canonical_cve, canonical_cves
+from app.core.risk_scoring import calculate_exploit_maturity
 from app.services.component_identity import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
 from app.services.aggregation.versions import parse_version_key
-from app.services.recommendation.common import finding_cve_ids
+from app.services.recommendation.common import finding_cve_ids, vuln_info
 
 
 def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bool:
@@ -61,7 +63,7 @@ _FINDING_DETAILS_FIELDS = (
     DETAILS_KEY_IN_KEV,
 )
 
-# A row's compact view of each advisory, and how many advisories it lists beside its primary.
+# A row's compact view of each advisory, and how many it lists, its primary first.
 _ROW_ADVISORY_FIELDS = ("id", "severity", DETAILS_KEY_IN_KEV, "epss_score", "fixed_version", "waived")
 _ROW_ADVISORIES = 3
 
@@ -238,6 +240,23 @@ def advisory_view(entry: dict[str, Any], *, references: int) -> dict[str, Any]:
     }
 
 
+def _live_threat(doc: dict[str, Any]) -> dict[str, Any]:
+    """A vulnerability row's details fields over its unwaived advisories; the stored roll-up counts waived ones."""
+    vuln = vuln_info(doc)
+    top_epss = max(
+        (a for a in vuln.advisories if a.get("epss_score") is not None), key=itemgetter("epss_score"), default={}
+    )
+    maturity = calculate_exploit_maturity(vuln.is_kev, vuln.kev_ransomware, vuln.epss_score)
+    return {
+        "fixed_version": vuln.fixed_version,
+        "epss_score": vuln.epss_score,
+        "epss_percentile": top_epss.get("epss_percentile"),
+        "exploit_maturity": None if maturity == "unknown" else maturity,
+        "risk_score": vuln.risk_score,
+        DETAILS_KEY_IN_KEV: vuln.is_kev or None,
+    }
+
+
 def _serialize_finding_for_llm(doc: dict[str, Any], *, cve: str | None = None) -> dict[str, Any]:
     """Compact LLM projection: `details` flattened, the row named after its primary advisory (see ranked_advisories)."""
     if not doc:
@@ -249,9 +268,10 @@ def _serialize_finding_for_llm(doc: dict[str, Any], *, cve: str | None = None) -
     out["id"] = str(doc.get("_id", doc.get("id", "")))
 
     details = doc.get("details") or {}
+    values = _live_threat(doc) if details.get("vulnerabilities") else details
     for key in _FINDING_DETAILS_FIELDS:
-        if details.get(key) is not None:
-            out[key] = _clip_value(details[key])
+        if values.get(key) is not None:
+            out[key] = _clip_value(values[key])
 
     advisories = ranked_advisories(details, first=cve)
     if not advisories:
@@ -265,7 +285,7 @@ def _serialize_finding_for_llm(doc: dict[str, Any], *, cve: str | None = None) -
         out["references"] = refs[:3]
     out["cve_count"] = len(finding_cve_ids(doc))
     if len(advisories) > 1:
-        # The finding-level EPSS and exploit_maturity above are maxima; these say which advisory holds them.
+        # The row-level EPSS and exploit_maturity above are maxima over live advisories; these name their holder.
         views = (advisory_view(v, references=0) for v in advisories[:_ROW_ADVISORIES])
         out["advisories"] = [{k: view[k] for k in _ROW_ADVISORY_FIELDS} for view in views]
     return out
