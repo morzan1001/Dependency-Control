@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from collections import Counter
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -18,6 +20,7 @@ from app.core.constants import (
     HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS,
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
     HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC,
+    RESCAN_HISTORY_RUNS,
     RETENTION_ACTIONS,
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
@@ -26,6 +29,8 @@ from app.core.constants import (
     SCAN_ACTIVE_STATUSES,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
+    SCAN_USABLE_STATUSES,
+    SCANS_TIP_SORT,
     SETTINGS_MODE_GLOBAL,
 )
 from app.core.metrics import (
@@ -409,8 +414,41 @@ async def _process_scans_in_batches(
         await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
 
 
-async def _expire_older_than(db: Any, days: int, scope: dict[str, Any], action: str, label: str) -> None:
-    """Retention for one group. A stored retention no cutoff can be computed for fails only its own group."""
+async def _superseded_rescans(db: Any, scope: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
+    """Each build's rescans older than its newest RESCAN_HISTORY_RUNS usable ones, except the one its
+    latest_rescan_id names."""
+    # Keyed on original_scan_id so its index, not a pass over every build, finds the rescans.
+    runs = {
+        **scope,
+        "original_scan_id": {"$ne": None},
+        "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
+        "status": {"$nin": SCAN_ACTIVE_STATUSES},
+    }
+    crowded = db.scans.aggregate(
+        [
+            {"$match": runs},
+            {"$group": {"_id": "$original_scan_id", "runs": {"$sum": 1}}},
+            {"$match": {"runs": {"$gt": RESCAN_HISTORY_RUNS}}},
+        ]
+    )
+    async for groups in abatched(crowded, ARCHIVE_BATCH_SIZE):
+        roots = [group["_id"] for group in groups]
+        current = set(await db.scans.distinct("latest_rescan_id", {"_id": {"$in": roots}}))
+        usable_kept: Counter[str] = Counter()
+        cursor = db.scans.find(
+            {**runs, "original_scan_id": {"$in": roots}}, {"project_id": 1, "original_scan_id": 1, "status": 1}
+        )
+        async for run in cursor.sort(SCANS_TIP_SORT):
+            root = run["original_scan_id"]
+            if usable_kept[root] < RESCAN_HISTORY_RUNS:
+                usable_kept[root] += run.get("status") in SCAN_USABLE_STATUSES
+            elif run["_id"] not in current:
+                yield run
+
+
+async def _expire_group(db: Any, days: int, scope: dict[str, Any], action: str, label: str) -> None:
+    """Retention for one group: scans past its age and rescans past the history cap. A stored retention no
+    cutoff can be computed for fails only its own group."""
     try:
         cutoff_date = datetime.now(timezone.utc) - timedelta(days=days)
         cursor = db.scans.find(
@@ -423,6 +461,7 @@ async def _expire_older_than(db: Any, days: int, scope: dict[str, Any], action: 
             {"_id": 1, "project_id": 1},
         )
         await _process_scans_in_batches(db, cursor, action, label)
+        await _process_scans_in_batches(db, _superseded_rescans(db, scope), action, f"{label} rescan history")
     except Exception:
         logger.exception("Housekeeping: %s failed", label)
 
@@ -435,7 +474,7 @@ async def _run_retention(db: Any) -> None:
         retention_action = system_settings.global_retention_action
         if retention_days > 0 and retention_action != RETENTION_ACTION_NONE:
             logger.info(f"Running global housekeeping (action={retention_action}, older than {retention_days} days)")
-            await _expire_older_than(db, retention_days, {}, retention_action, "Global housekeeping")
+            await _expire_group(db, retention_days, {}, retention_action, "Global housekeeping")
         return
 
     logger.info("Running project-specific housekeeping...")
@@ -464,7 +503,7 @@ async def _run_retention(db: Any) -> None:
         action = group["_id"]["action"]
         project_ids = group["project_ids"]
         label = f"Retention {days}d/{action} ({len(project_ids)} projects)"
-        await _expire_older_than(db, days, {"project_id": {"$in": project_ids}}, action, label)
+        await _expire_group(db, days, {"project_id": {"$in": project_ids}}, action, label)
 
 
 async def run_housekeeping() -> None:

@@ -1050,6 +1050,9 @@ HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6
 # europe-west1, so its repair writes do not land in the working day.
 HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
 
+# Usable rescans each build keeps; older runs are near-identical full copies of the same SBOM.
+RESCAN_HISTORY_RUNS: int = 7
+
 # TTL (seconds) of the per-source rescan-creation lock; only the insert runs under it.
 HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS: int = 60
 
