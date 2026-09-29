@@ -159,7 +159,7 @@ class TestPackageNameWaiverTargetsOnePackage:
 
         from app.models.waiver import Waiver
         from app.repositories.findings import FindingRepository
-        from app.services.stats import _build_waiver_query
+        from app.services.waivers.matching import waiver_query
         from tests.mocks.fake_mongo import FakeDatabase
 
         agg = ResultAggregator()
@@ -185,7 +185,7 @@ class TestPackageNameWaiverTargetsOnePackage:
         )
         repo = FindingRepository(db)
         modified = asyncio.run(
-            repo.apply_finding_waiver("scan-1", _build_waiver_query(waiver), waived=True, waiver_reason="reviewed")
+            repo.apply_finding_waiver("scan-1", waiver_query(waiver), waived=True, waiver_reason="reviewed")
         )
 
         assert modified == 1

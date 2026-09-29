@@ -1,13 +1,10 @@
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK, WAIVER_STATUSES
+from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK, WaiverScope, WaiverStatus
 from app.models.finding import FindingType
 from app.models.types import PyObjectId
-
-WAIVER_SCOPES = ("finding", "file", "rule")
 
 
 class WaiverCreate(BaseModel):
@@ -23,7 +20,7 @@ class WaiverCreate(BaseModel):
     package_name: str | None = None
     package_version: str | None = None
     finding_type: FindingType | None = None
-    scope: Literal["finding", "file", "rule"] = Field(
+    scope: WaiverScope = Field(
         "finding",
         description="'finding' = exact match, 'file' = same rule in same file, 'rule' = same rule project-wide",
     )
@@ -32,8 +29,14 @@ class WaiverCreate(BaseModel):
         description="Scanner rule ID (e.g. 'javascript_lang_insufficiently_random_values'). Auto-populated from finding_id.",
     )
     reason: str
-    status: str = WAIVER_STATUS_ACCEPTED_RISK
+    status: WaiverStatus = WAIVER_STATUS_ACCEPTED_RISK
     expiration_date: datetime | None = None
+
+    @field_validator("package_name", mode="before")
+    @classmethod
+    def drop_package_placeholder(cls, v: str | None) -> str | None:
+        """The waiver form sends "Unknown" for a finding without a package; lowercase "unknown" is a real name."""
+        return None if v == "Unknown" else v
 
     @field_validator("package_version", mode="before")
     @classmethod
@@ -43,25 +46,11 @@ class WaiverCreate(BaseModel):
             return None
         return v
 
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, v: str) -> str:
-        if v not in WAIVER_STATUSES:
-            raise ValueError(f"Invalid status. Must be one of: {', '.join(WAIVER_STATUSES)}")
-        return v
-
 
 class WaiverUpdate(BaseModel):
     reason: str | None = None
     expiration_date: datetime | None = None
-    status: str | None = None
-
-    @field_validator("status")
-    @classmethod
-    def validate_status(cls, v: str | None) -> str | None:
-        if v is not None and v not in WAIVER_STATUSES:
-            raise ValueError(f"Invalid status. Must be one of: {', '.join(WAIVER_STATUSES)}")
-        return v
+    status: WaiverStatus | None = None
 
 
 class WaiverResponse(WaiverCreate):

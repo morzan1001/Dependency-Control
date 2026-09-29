@@ -1,7 +1,7 @@
 """Shared constants used across the application."""
 
 import re
-from typing import Any, Literal, get_args
+from typing import Any, Final, Literal, get_args
 
 # Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
 # finding's ``details`` dict by the enrichment writer. Every reader of persisted
@@ -1022,13 +1022,12 @@ AGG_KEY_SAST = "SAST-AGG"
 MAX_CROSS_LINK_GROUP_SIZE: int = 100
 
 # Waiver status values
-WAIVER_STATUS_ACCEPTED_RISK = "accepted_risk"
-WAIVER_STATUS_FALSE_POSITIVE = "false_positive"
+WAIVER_STATUS_ACCEPTED_RISK: Final = "accepted_risk"
+WAIVER_STATUS_FALSE_POSITIVE: Final = "false_positive"
 
-WAIVER_STATUSES = [
-    WAIVER_STATUS_ACCEPTED_RISK,
-    WAIVER_STATUS_FALSE_POSITIVE,
-]
+WaiverStatus = Literal["accepted_risk", "false_positive"]
+# "finding" = exact match, "file" = same rule in same file, "rule" = same rule project-wide.
+WaiverScope = Literal["finding", "file", "rule"]
 
 # Default CVSS scores used when actual score is not available
 CVSS_SEVERITY_SCORES: dict[str, float] = {

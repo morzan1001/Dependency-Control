@@ -15,6 +15,7 @@ from app.models.release import Release
 from app.models.waiver import Waiver
 from app.repositories import ReleaseRepository, ScanRepository
 from app.schemas.ingest import BaseIngest
+from app.services.waivers.matching import record_matches, waiver_criteria, waiver_strong_match
 
 logger = logging.getLogger(__name__)
 
@@ -160,31 +161,20 @@ class ScanManager:
         return self._waivers
 
     def _finding_matches_waiver(self, finding: Finding, waiver: Waiver) -> bool:
-        """Best-effort exact match at ingest. Location-based findings use the strong-anchor
-        signature (no re-anchoring here — the recalc is authoritative for that)."""
-        if finding.match is not None and waiver.match is not None:
-            from app.services.waivers.matching import waiver_strong_match
-
-            return waiver_strong_match(finding.match, waiver.match, waiver.status or "false_positive")
-        # Legacy path for non-location findings (license/eol/vuln-by-type/component).
-        # Mirror _build_waiver_query's AND semantics (services/stats.py): every field the
-        # waiver sets must match the finding; an unset (or "Unknown") field is a wildcard.
-        # Using OR here over-waives, e.g. a secret waiver scoped to one file would suppress
-        # every secret in the whole upload.
-        field_pairs = (
-            (waiver.finding_id, finding.id),
-            (waiver.package_name, finding.component),
-            (waiver.package_version, finding.version),
-            (waiver.finding_type, finding.type),
-        )
-        matched_any = False
-        for waiver_value, finding_value in field_pairs:
-            if not waiver_value or waiver_value == "Unknown":
-                continue
-            if waiver_value != finding_value:
-                return False
-            matched_any = True
-        return matched_any
+        """Best-effort match at ingest; the recalculation re-anchors a moved location finding."""
+        if waiver.vulnerability_id:
+            return False
+        if waiver.scope == "finding" and waiver.match is not None:
+            return finding.match is not None and waiver_strong_match(finding.match, waiver.match, waiver.status)
+        criteria = waiver_criteria(waiver)
+        record = {
+            "finding_id": finding.id,
+            "component": finding.component,
+            "version": finding.version,
+            "type": finding.type,
+            "details": finding.details,
+        }
+        return bool(criteria) and record_matches(record, criteria)
 
     async def apply_waivers(self, findings: list[Finding]) -> tuple[list[Finding], int]:
         """Apply waivers to findings, returning (non_waived_findings, waived_count)."""

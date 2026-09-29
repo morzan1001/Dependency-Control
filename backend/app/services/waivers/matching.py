@@ -1,14 +1,100 @@
-"""Two-pass waiver matching: strong-exact (Pass 1) then content/proximity re-anchor (Pass 2)."""
+"""Waiver matching: the field criteria a waiver sets, as a MongoDB filter and as an in-memory check,
+and the two-pass signature matcher, strong-exact (Pass 1) then content/proximity re-anchor (Pass 2)."""
 
-from collections.abc import Sequence
+import re
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+from typing import Any
 
-from app.core.constants import WAIVER_STATUS_FALSE_POSITIVE
+from app.core.constants import AGG_KEY_SAST, WAIVER_STATUS_FALSE_POSITIVE
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
 
 REANCHOR_WINDOW = 50  # max line distance to consider a candidate the moved instance
 REANCHOR_MARGIN = 3  # nearest must beat second-nearest by this many lines to be unambiguous
+
+_RULE_ID = "rule_id"
+# Where a location finding names its rule: merged SAST entries, flat SAST/IaC details, secrets.
+_RULE_ID_PATHS = ("details.sast_findings.id", "details.rule_id", "details.detector")
+
+
+def _strip_line_number(finding_id: str) -> str | None:
+    """The id without its trailing ``-<line_number>``, so file scope covers every line of the rule in the file."""
+    parts = finding_id.rsplit("-", 1)
+    if len(parts) == 2 and parts[1].isdigit():
+        return parts[0]
+    return None
+
+
+def extract_rule_prefix(finding_id: str, component: str) -> str | None:
+    """``{SCANNER}-{rule_id}`` of a ``{SCANNER}-{rule_id}-{file_path}-{line}`` id; a merged SAST id names no rule."""
+    file_prefix = _strip_line_number(finding_id)
+    suffix = f"-{component}"
+    if not file_prefix or not file_prefix.endswith(suffix):
+        return None
+    prefix = file_prefix[: -len(suffix)]
+    return None if prefix == AGG_KEY_SAST else prefix
+
+
+def _scoped_finding_id(waiver: Waiver, finding_id: str) -> str | re.Pattern[str] | None:
+    """The finding ids a waiver reaches; None when its rule_id, not the finding it came from, names the rule."""
+    if waiver.scope == "file" and (file_prefix := _strip_line_number(finding_id)):
+        return re.compile(f"^{re.escape(file_prefix)}-\\d+$")
+    if waiver.scope == "rule":
+        if waiver.rule_id:
+            return None
+        if rule_prefix := extract_rule_prefix(finding_id, waiver.package_name or ""):
+            return re.compile(f"^{re.escape(rule_prefix)}-")
+    return finding_id
+
+
+def waiver_criteria(waiver: Waiver) -> dict[str, Any]:
+    """The finding fields a waiver constrains, as values or compiled patterns, honouring its scope and rule_id."""
+    # An advisory lives only in vulnerability documents, whatever type or rule the waiver names.
+    advisory = bool(waiver.vulnerability_id)
+    criteria: dict[str, Any] = {}
+    if waiver.finding_id and (finding_id := _scoped_finding_id(waiver, waiver.finding_id)) is not None:
+        criteria["finding_id"] = finding_id
+    if waiver.package_name and waiver.scope != "rule":
+        criteria["component"] = waiver.package_name
+    if waiver.package_version:
+        criteria["version"] = waiver.package_version
+    if waiver.finding_type and not advisory:
+        criteria["type"] = waiver.finding_type
+    if waiver.rule_id and not advisory:
+        criteria[_RULE_ID] = waiver.rule_id
+    return criteria
+
+
+def waiver_query(waiver: Waiver) -> dict[str, Any]:
+    """waiver_criteria as a MongoDB filter over findings."""
+    query: dict[str, Any] = {}
+    for key, expected in waiver_criteria(waiver).items():
+        if key == _RULE_ID:
+            query["$or"] = [{path: expected} for path in _RULE_ID_PATHS]
+        elif isinstance(expected, re.Pattern):
+            query[key] = {"$regex": expected.pattern}
+        else:
+            query[key] = expected
+    return query
+
+
+def record_matches(record: Mapping[str, Any], criteria: Mapping[str, Any]) -> bool:
+    """waiver_criteria checked against one in-memory finding record."""
+    for key, expected in criteria.items():
+        if key == _RULE_ID:
+            details = record.get("details") or {}
+            rules = {details.get("rule_id"), details.get("detector")}
+            rules.update(entry.get("id") for entry in details.get("sast_findings") or [])
+            if expected not in rules:
+                return False
+        elif isinstance(expected, re.Pattern):
+            value = record.get(key)
+            if not isinstance(value, str) or not expected.search(value):
+                return False
+        elif record.get(key) != expected:
+            return False
+    return True
 
 
 def _content_equal(a: str | None, b: str | None) -> bool:

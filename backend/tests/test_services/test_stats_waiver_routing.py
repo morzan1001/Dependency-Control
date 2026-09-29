@@ -5,6 +5,7 @@ import pytest_asyncio
 
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
+from app.schemas.waiver import WaiverCreate
 from app.services.stats import _is_signature_waiver, recalculate_project_stats
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -291,7 +292,7 @@ class TestRecalculateReachesTheReleasedBuild:
 
 # ---------------------------------------------------------------------------
 # A waiver with no matching criteria must NOT waive every finding: an empty
-# _build_waiver_query ({}) would match all findings, so _apply_waivers must
+# waiver query ({}) would match all findings, so _apply_waivers must
 # skip criteria-less waivers.
 # ---------------------------------------------------------------------------
 
@@ -427,6 +428,31 @@ async def _insert_finding(db, doc):
 
 class TestWhatAWaiverMatchesOn:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("finding_type", ["sast", None])
+    async def test_a_global_rule_waiver_waives_only_its_rule(self, seeded_db, finding_type):
+        for fid, rule in (("f-rule-x", "X"), ("f-rule-y", "Y")):
+            await _insert_finding(
+                seeded_db,
+                {"_id": fid, "type": "sast", "component": "a.py", "details": {"sast_findings": [{"id": rule}]}},
+            )
+        await seeded_db.waivers.insert_one(
+            {
+                "_id": "w-rule-x",
+                "project_id": None,
+                "scope": "rule",
+                "rule_id": "X",
+                "finding_type": finding_type,
+                "reason": "rule X accepted everywhere",
+                "created_by": "admin",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert (await seeded_db.findings.find_one({"_id": "f-rule-x"}))["waived"] is True
+        assert (await seeded_db.findings.find_one({"_id": "f-rule-y"}))["waived"] is False
+
+    @pytest.mark.asyncio
     async def test_an_unknown_package_version_is_a_placeholder_and_not_a_version_to_match(self, seeded_db):
         """Scanners write "Unknown" where they have no version; matching on it literally would
         leave the waiver suppressing nothing."""
@@ -434,17 +460,15 @@ class TestWhatAWaiverMatchesOn:
             seeded_db,
             {"_id": "f-ghost", "type": "vulnerability", "component": "ghost-pkg", "version": "2.0.0"},
         )
+        waiver_in = WaiverCreate(
+            project_id=PROJECT_ID,
+            finding_type="vulnerability",
+            package_name="ghost-pkg",
+            package_version="Unknown",
+            reason="no version recorded by the scanner",
+        )
         await seeded_db.waivers.insert_one(
-            {
-                "_id": "w-unknown-version",
-                "project_id": PROJECT_ID,
-                "scope": "finding",
-                "finding_type": "vulnerability",
-                "package_name": "ghost-pkg",
-                "package_version": "Unknown",
-                "reason": "no version recorded by the scanner",
-                "created_by": "tester",
-            }
+            Waiver(**waiver_in.model_dump(), created_by="tester").model_dump(by_alias=True)
         )
 
         await recalculate_project_stats(PROJECT_ID, seeded_db)

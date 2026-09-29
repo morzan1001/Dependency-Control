@@ -102,3 +102,71 @@ class TestLegacyWaiverAndSemantics:
         waiver = _legacy_waiver()
         finding = _legacy_finding("CVE-1", "vulnerability", "requests")
         assert ScanManager._finding_matches_waiver(ScanManager, finding, waiver) is False
+
+
+def _ingested(finding_id, ftype, component, details, match=None):
+    return Finding(
+        id=finding_id,
+        type=ftype,
+        severity="HIGH",
+        component=component,
+        description="d",
+        scanners=["s"],
+        details=details,
+        match=match,
+    )
+
+
+class TestIngestHonoursScopeAndRule:
+    def test_a_rule_scope_secret_waiver_reaches_the_detector_in_another_file(self):
+        waiver = Waiver(
+            reason="r",
+            created_by="u",
+            scope="rule",
+            rule_id="17",
+            finding_id="SECRET-17-aaaa1111",
+            package_name="src/a.env",
+            finding_type="secret",
+        )
+        other_file = _ingested("SECRET-17-bbbb2222", "secret", "src/b.env", {"detector": "17"})
+        other_detector = _ingested("SECRET-18-cccc3333", "secret", "src/a.env", {"detector": "18"})
+
+        assert ScanManager._finding_matches_waiver(ScanManager, other_file, waiver) is True
+        assert ScanManager._finding_matches_waiver(ScanManager, other_detector, waiver) is False
+
+    def test_a_file_scope_waiver_reaches_another_line_of_its_rule(self):
+        waiver = Waiver(
+            reason="r",
+            created_by="u",
+            scope="file",
+            finding_id="OPENGREP-r-a.py-10",
+            package_name="a.py",
+            finding_type="sast",
+        )
+        moved = _ingested("OPENGREP-r-a.py-42", "sast", "a.py", {})
+
+        assert ScanManager._finding_matches_waiver(ScanManager, moved, waiver) is True
+
+    def test_a_rule_scope_waiver_carrying_a_signature_keeps_rule_semantics(self):
+        waiver = _waiver("fpA")
+        waiver.scope = "rule"
+        waiver.rule_id = "r"
+        elsewhere = _ingested(
+            "OPENGREP-r-b.py-3",
+            "sast",
+            "b.py",
+            {"sast_findings": [{"id": "r", "scanner": "opengrep"}]},
+            match=_finding("fpB").match,
+        )
+
+        assert ScanManager._finding_matches_waiver(ScanManager, elsewhere, waiver) is True
+
+    def test_a_vulnerability_waiver_never_waives_a_whole_document(self):
+        waiver = Waiver(reason="r", created_by="u", vulnerability_id="CVE-1", package_name="requests")
+
+        assert (
+            ScanManager._finding_matches_waiver(
+                ScanManager, _legacy_finding("CVE-1", "vulnerability", "requests"), waiver
+            )
+            is False
+        )

@@ -1,19 +1,18 @@
 import asyncio
 import logging
 import os
-import re
 from collections import Counter
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import ValidationError
 
+from app.models.match_signature import MatchSignature
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.services.analysis.stats import calculate_comprehensive_stats
-
-if TYPE_CHECKING:
-    from app.models.match_signature import MatchSignature
-    from app.services.waivers.matching import MatchFinding, WaiverApplication
+from app.services.waivers.matching import MatchFinding, WaiverApplication, apply_waivers_to_findings, waiver_query
+from app.services.waivers.signature import compute_match_signature_from_doc
 
 logger = logging.getLogger(__name__)
 
@@ -24,87 +23,6 @@ logger = logging.getLogger(__name__)
 # against the fully-committed waiver set. Total worst-case wait ~= 0.2*(2^5-1) = 6.2s.
 _LOCK_MAX_RETRIES = 5
 _LOCK_RETRY_BASE_DELAY = 0.2
-
-# Waiver field mapping: waiver field -> finding query field
-_WAIVER_FIELD_MAP = {
-    "finding_id": "finding_id",
-    "package_name": "component",
-    "package_version": "version",
-    "finding_type": "type",
-}
-
-
-def _strip_line_number(finding_id: str) -> str | None:
-    """Strip the trailing ``-<line_number>`` from a SAST finding ID, so file-scope matching covers
-    every line of the same rule + file.
-    """
-    parts = finding_id.rsplit("-", 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        return parts[0]
-    return None
-
-
-def _extract_rule_prefix(finding_id: str, component: str) -> str | None:
-    """Extract ``{SCANNER}-{rule_id}`` from a SAST/IAC ``{SCANNER}-{rule_id}-{file_path}-{line}``
-    ID, given ``component = {file_path}``, so rule-scope waivers match the rule across all files.
-    """
-    file_prefix = _strip_line_number(finding_id)
-    if not file_prefix:
-        return None
-    suffix = f"-{component}"
-    if file_prefix.endswith(suffix):
-        return file_prefix[: -len(suffix)]
-    return None
-
-
-def _resolve_finding_id_query(
-    finding_id: str,
-    scope: str,
-    component: str,
-) -> str | dict[str, str]:
-    """Resolve the MongoDB query value for ``finding_id`` based on waiver scope."""
-    if scope == "file":
-        prefix = _strip_line_number(finding_id)
-        if prefix:
-            return {"$regex": f"^{re.escape(prefix)}-\\d+$"}
-    elif scope == "rule":
-        rule_prefix = _extract_rule_prefix(finding_id, component)
-        if rule_prefix:
-            return {"$regex": f"^{re.escape(rule_prefix)}-"}
-    return finding_id
-
-
-def _build_waiver_query(waiver: Waiver) -> dict[str, str | dict[str, str]]:
-    """Build a finding query dict from a waiver's matching fields."""
-    scope = waiver.scope or "finding"
-    query: dict[str, str | dict[str, str]] = {}
-
-    waiver_values = {
-        "finding_id": waiver.finding_id,
-        "package_name": waiver.package_name,
-        "package_version": waiver.package_version,
-        "finding_type": waiver.finding_type,
-    }
-
-    for waiver_field, query_field in _WAIVER_FIELD_MAP.items():
-        value = waiver_values.get(waiver_field)
-        if not value or value == "Unknown":
-            continue
-
-        # Rule-scope waivers must NOT filter by component (match all files)
-        if waiver_field == "package_name" and scope == "rule":
-            continue
-
-        if waiver_field == "finding_id" and scope in ("file", "rule"):
-            query[query_field] = _resolve_finding_id_query(
-                value,
-                scope,
-                waiver.package_name or "",
-            )
-        else:
-            query[query_field] = value
-
-    return query
 
 
 async def _record_match_outcome(waiver_repo: Any, waiver: Waiver, scan_id: str, count: int) -> None:
@@ -129,22 +47,18 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: list[Waiver],
                 vulnerability_id=waiver.vulnerability_id,
                 waived=True,
                 waiver_reason=waiver.reason,
-                scope=_build_waiver_query(waiver),
+                scope=waiver_query(waiver),
             )
             await _record_match_outcome(waiver_repo, waiver, scan_id, matched)
             continue
 
-        query = _build_waiver_query(waiver)
+        query = waiver_query(waiver)
 
-        # A waiver with no concrete matching criteria produces an empty query. Passing
-        # {} to apply_finding_waiver would match (and waive) EVERY finding in the scan,
-        # silently suppressing all security findings. Skip and log instead. Legitimate
-        # waivers always carry at least one of finding_id/package_name/package_version/
-        # finding_type (or a vulnerability_id, handled above).
+        # An empty query would waive every finding in the scan.
         if not query:
             logger.warning(
                 "Skipping waiver %s: no matching criteria (empty query) — refusing to waive every finding in scan %s",
-                getattr(waiver, "id", "?"),
+                waiver.id,
                 scan_id,
             )
             continue
@@ -169,31 +83,24 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: list[Waiver],
         await _record_match_outcome(waiver_repo, waiver, scan_id, matched)
 
 
-def _is_signature_waiver(waiver: Any) -> bool:
-    """True if a waiver should be applied via the signature orchestrator rather than the legacy
-    finding_id query. File/rule scope keep their broad semantics on the legacy _build_waiver_query
-    path; within finding scope a location-typed waiver without a signature qualifies so the
-    back-fill can give it one, and untyped non-location ones stay legacy so they are never
-    silently dropped."""
+def _is_signature_waiver(waiver: Waiver) -> bool:
+    """True if a waiver should be applied via the signature orchestrator rather than the field
+    query. File/rule scope keep their broad semantics on the query path; within finding scope a
+    location-typed waiver without a signature qualifies so the back-fill can give it one, and
+    untyped non-location ones stay on the query so they are never silently dropped."""
     from app.repositories.findings import FindingRepository
 
-    if getattr(waiver, "scope", "finding") != "finding":
+    if waiver.scope != "finding":
         return False
-    if getattr(waiver, "match", None) is not None:
-        return True
-    return waiver.finding_type in FindingRepository._LOCATION_TYPES
+    return waiver.match is not None or waiver.finding_type in FindingRepository._LOCATION_TYPES
 
 
-def _safe_match_signature(raw: dict, context: str) -> "MatchSignature | None":
+def _safe_match_signature(raw: dict, context: str) -> MatchSignature | None:
     """Build a MatchSignature from a stored finding dict, returning None (and logging) if malformed.
 
     Skipping a malformed sub-document keeps the recalc reset+reapply from aborting and
     leaving findings transiently un-waived.
     """
-    from pydantic import ValidationError
-
-    from app.models.match_signature import MatchSignature
-
     try:
         return MatchSignature(**raw)
     except ValidationError:
@@ -206,8 +113,6 @@ async def _apply_waivers_signature(
 ) -> None:
     """Apply finding-scope location waivers to a scan by signature; ``waiver_repo``, when given, records
     each waiver's outcome and walked signature. Vulnerability-id waivers are handled by the caller."""
-    from app.services.waivers.matching import apply_waivers_to_findings
-
     if not waivers:
         return
     signed, recomputed = _signed_match_findings(await finding_repo.find_location_findings(scan_id))
@@ -244,7 +149,7 @@ async def _apply_waivers_signature(
 
 
 async def _backfill_legacy_waiver_signatures(
-    waiver_repo: Any | None, waivers: list[Waiver], sig_by_finding_id: "dict[str, MatchSignature]"
+    waiver_repo: Any | None, waivers: list[Waiver], sig_by_finding_id: dict[str, MatchSignature]
 ) -> None:
     """A waiver without a signature takes the one of the finding it names by exact finding_id."""
     for w in waivers:
@@ -255,12 +160,9 @@ async def _backfill_legacy_waiver_signatures(
                 await waiver_repo.update(w.id, {"match": sig.model_dump()})
 
 
-def _signed_match_findings(docs: list[dict]) -> "tuple[list[tuple[str, MatchFinding]], int]":
+def _signed_match_findings(docs: list[dict]) -> tuple[list[tuple[str, MatchFinding]], int]:
     """The scan's findings that carry a signature, with the finding_id a legacy waiver names them by,
     plus how many signatures were recomputed because none was stored."""
-    from app.services.waivers.matching import MatchFinding
-    from app.services.waivers.signature import compute_match_signature_from_doc
-
     signed = []
     recomputed = 0
     for d in docs:
@@ -275,7 +177,7 @@ def _signed_match_findings(docs: list[dict]) -> "tuple[list[tuple[str, MatchFind
 
 
 async def _persist_signature_application(
-    finding_repo: Any, waiver_repo: Any | None, scan_id: str, app: "WaiverApplication", waivers: list[Waiver]
+    finding_repo: Any, waiver_repo: Any | None, scan_id: str, app: WaiverApplication, waivers: list[Waiver]
 ) -> None:
     reason_by_waiver = {w.id: w.reason for w in waivers}
     by_reason: dict[str | None, list[str]] = {}

@@ -371,3 +371,21 @@ async def test_a_project_scoped_waiver_is_not_applied_to_a_project_less_run(_osv
 
     assert response.waivers_applied == "global"
     assert response.waived_count == 0
+
+
+def test_a_global_rule_waiver_waives_only_the_records_of_its_rule():
+    def record(finding_id, rule):
+        return {
+            **_bearer_record(finding_id, _BEARER_FILE),
+            "details": {"sast_findings": [{"id": rule, "scanner": _BEARER}]},
+        }
+
+    records = [record(_WAIVED_FINDING_ID, _BEARER_RULE), record(_OTHER_RULE_FINDING_ID, _OTHER_BEARER_RULE)]
+
+    assert (
+        apply_global_waivers_in_memory(
+            records, [_waiver(scope=_SCOPE_RULE, rule_id=_BEARER_RULE, finding_type=_TYPE_SAST)]
+        )
+        == 1
+    )
+    assert records[0]["waived"] is True

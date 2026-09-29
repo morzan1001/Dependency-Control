@@ -1,17 +1,16 @@
-import uuid
 from datetime import datetime, timezone
 
-from pydantic import ConfigDict, Field, computed_field
+from pydantic import computed_field
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
 from app.models.base import CreatedAtModel
 from app.models.finding import FindingType
 from app.models.match_signature import MatchSignature
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
 def is_waiver_active(expiration_date: datetime | None, now: datetime | None = None) -> bool:
-    """Return True if the waiver is still active. Mirrors WaiverRepository._non_expired_filter; treats naive datetimes as UTC."""
+    """Return True if the waiver is still active. Mirrors non_expired_waiver_filter; treats naive datetimes as UTC."""
     if expiration_date is None:
         return True
     reference = now or datetime.now(timezone.utc)
@@ -20,12 +19,7 @@ def is_waiver_active(expiration_date: datetime | None, now: datetime | None = No
     return expiration_date > reference
 
 
-class Waiver(CreatedAtModel):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class Waiver(MongoDocument, CreatedAtModel):
     project_id: str | None = None  # If None, applies globally (admin only)
 
     # Matching Criteria
@@ -44,8 +38,6 @@ class Waiver(CreatedAtModel):
     status: str = WAIVER_STATUS_ACCEPTED_RISK
     expiration_date: datetime | None = None
     created_by: str
-
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

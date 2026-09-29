@@ -1,4 +1,4 @@
-"""CRYPTO_* FindingType values work with the existing waiver machinery: _build_waiver_query and FindingRepository.apply_finding_waiver."""
+"""CRYPTO_* FindingType values work with the existing waiver machinery: waiver_query and FindingRepository.apply_finding_waiver."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -7,7 +7,7 @@ import pytest
 from app.models.finding import FindingType
 from app.models.waiver import Waiver
 from app.repositories.findings import FindingRepository
-from app.services.stats import _build_waiver_query
+from app.services.waivers.matching import waiver_query
 from tests.mocks.mongodb import create_mock_collection
 
 
@@ -22,10 +22,10 @@ def _crypto_waiver(finding_type: FindingType, **extra) -> Waiver:
     )
 
 
-def test_build_waiver_query_crypto_weak_algorithm():
-    """_build_waiver_query maps a type-scoped waiver's finding_type to the 'type' field."""
+def test_waiver_query_crypto_weak_algorithm():
+    """waiver_query maps a type-scoped waiver's finding_type to the 'type' field."""
     waiver = _crypto_waiver(FindingType.CRYPTO_WEAK_ALGORITHM)
-    query = _build_waiver_query(waiver)
+    query = waiver_query(waiver)
 
     assert "type" in query, f"Expected 'type' key in query, got: {query!r}"
     assert query["type"] == "crypto_weak_algorithm", (
@@ -33,20 +33,20 @@ def test_build_waiver_query_crypto_weak_algorithm():
     )
 
 
-def test_build_waiver_query_crypto_weak_key():
+def test_waiver_query_crypto_weak_key():
     waiver = _crypto_waiver(FindingType.CRYPTO_WEAK_KEY)
-    query = _build_waiver_query(waiver)
+    query = waiver_query(waiver)
     assert query.get("type") == "crypto_weak_key"
 
 
-def test_build_waiver_query_crypto_quantum_vulnerable():
+def test_waiver_query_crypto_quantum_vulnerable():
     waiver = _crypto_waiver(FindingType.CRYPTO_QUANTUM_VULNERABLE)
-    query = _build_waiver_query(waiver)
+    query = waiver_query(waiver)
     assert query.get("type") == "crypto_quantum_vulnerable"
 
 
-def test_build_waiver_query_component_scoped():
-    """_build_waiver_query includes 'component' when package_name is set."""
+def test_waiver_query_component_scoped():
+    """waiver_query includes 'component' when package_name is set."""
     waiver = Waiver(
         finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
         package_name="MD5 [bom-ref:a]",
@@ -54,7 +54,7 @@ def test_build_waiver_query_component_scoped():
         created_by="tester",
         scope="finding",
     )
-    query = _build_waiver_query(waiver)
+    query = waiver_query(waiver)
     assert query.get("type") == "crypto_weak_algorithm"
     assert query.get("component") == "MD5 [bom-ref:a]"
 
@@ -101,11 +101,11 @@ async def test_apply_finding_waiver_calls_update_many_for_crypto_type():
 
 @pytest.mark.asyncio
 async def test_full_waiver_flow_crypto_finding():
-    """_build_waiver_query feeds FindingRepository.apply_finding_waiver, asserting the combined filter."""
+    """waiver_query feeds FindingRepository.apply_finding_waiver, asserting the combined filter."""
     repo, mock_col = _make_repo_with_mock_col(matched_count=2)
 
     waiver = _crypto_waiver(FindingType.CRYPTO_WEAK_ALGORITHM)
-    query = _build_waiver_query(waiver)
+    query = waiver_query(waiver)
 
     modified = await repo.apply_finding_waiver(
         scan_id="scan-xyz",

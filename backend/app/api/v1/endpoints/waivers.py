@@ -24,7 +24,8 @@ from app.models.waiver import Waiver
 from app.repositories import ScanRepository, WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
-from app.services.stats import _build_waiver_query, recalculate_all_projects, recalculate_project_stats
+from app.services.stats import recalculate_all_projects, recalculate_project_stats
+from app.services.waivers.matching import extract_rule_prefix, waiver_query
 
 
 def _invalidate_analytics_cache() -> None:
@@ -50,12 +51,15 @@ _MSG_NEEDS_PACKAGE_SCOPE = (
 )
 
 
+_MSG_SCOPE_NEEDS_RULE = "A file or rule scope waiver needs the finding_id or rule_id it widens."
+
+
 def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
-    """Refuse a finding_id-only waiver on a type whose finding_id is not unique per scan."""
-    if waiver_in.finding_type not in _BROAD_FINDING_ID_TYPES:
-        return
-    # "Unknown" is the UI's placeholder and _build_waiver_query discards it, so it is not a scope.
-    if (waiver_in.package_name and waiver_in.package_name != "Unknown") or not waiver_in.finding_id:
+    """Refuse a waiver whose criteria would blanket findings nobody picked."""
+    # With neither, the waiver would match every finding of its type.
+    if waiver_in.scope != "finding" and not (waiver_in.finding_id or waiver_in.rule_id):
+        raise HTTPException(status_code=422, detail=_MSG_SCOPE_NEEDS_RULE)
+    if waiver_in.finding_type not in _BROAD_FINDING_ID_TYPES or waiver_in.package_name or not waiver_in.finding_id:
         return
     raise HTTPException(
         status_code=422,
@@ -82,7 +86,7 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
         return None
 
     probe = Waiver(**waiver_in.model_dump(), created_by="__validation__")
-    finding_query = _build_waiver_query(probe)
+    finding_query = waiver_query(probe)
     if not finding_query:
         return None  # nothing concrete to validate against
 
@@ -122,9 +126,7 @@ async def create_waiver(
     matched_finding = await _ensure_waiver_matches_finding(waiver_in, db)
 
     if waiver_in.scope == "rule" and not waiver_in.rule_id and waiver_in.finding_id and waiver_in.package_name:
-        from app.services.stats import _extract_rule_prefix
-
-        rule_prefix = _extract_rule_prefix(waiver_in.finding_id, waiver_in.package_name)
+        rule_prefix = extract_rule_prefix(waiver_in.finding_id, waiver_in.package_name)
         if rule_prefix:
             # Strip scanner prefix (e.g. "BEARER-rule_name" → "rule_name")
             parts = rule_prefix.split("-", 1)

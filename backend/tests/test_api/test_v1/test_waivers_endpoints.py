@@ -385,8 +385,7 @@ class TestCreateWaiverValidatesFindingMatch:
         mock_repo.create.assert_not_called()
 
     def test_unknown_placeholder_does_not_count_as_a_package_scope(self, admin_user):
-        """The waiver form sends 'Unknown' when it cannot resolve a package; _build_waiver_query
-        drops it, so it must not satisfy the scope requirement either."""
+        """The waiver form sends 'Unknown' when it cannot resolve a package, which is no package scope."""
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
@@ -405,6 +404,28 @@ class TestCreateWaiverValidatesFindingMatch:
                             scope="finding",
                             reason="approved",
                         ),
+                        background_tasks=BackgroundTasks(),
+                        current_user=admin_user,
+                        db=MagicMock(),
+                    )
+                )
+
+        assert exc.value.status_code == 422
+        mock_repo.create.assert_not_called()
+
+    @pytest.mark.parametrize("scope", ["file", "rule"])
+    def test_a_widened_scope_needs_a_finding_or_a_rule_to_widen(self, admin_user, scope):
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(
+                    create_waiver(
+                        waiver_in=WaiverCreate(project_id=None, finding_type="sast", scope=scope, reason="approved"),
                         background_tasks=BackgroundTasks(),
                         current_user=admin_user,
                         db=MagicMock(),
