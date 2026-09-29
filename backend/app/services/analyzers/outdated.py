@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Any
 from urllib.parse import quote
@@ -11,7 +10,7 @@ from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, DEPS_DEV
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
-from .base import Analyzer
+from .base import Analyzer, gather_bounded
 from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
@@ -154,26 +153,18 @@ class OutdatedAnalyzer(Analyzer):
         key_targets: dict[str, tuple[str, str]],
         infos: dict[str, dict[str, Any]],
     ) -> None:
-        """Fetch package documents for uncached packages, concurrently in batches."""
+        """Fetch package documents for uncached packages with bounded concurrency."""
         timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
-        batch_size = ANALYZER_BATCH_SIZES.get("outdated", 25)
-
         async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-            for i in range(0, len(missing_keys), batch_size):
-                batch = missing_keys[i : i + batch_size]
-                tasks = [self._fetch_package_info(client, cache_key, *key_targets[cache_key]) for cache_key in batch]
-                results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+            results = await gather_bounded(
+                missing_keys,
+                lambda cache_key: self._fetch_package_info(client, cache_key, *key_targets[cache_key]),
+                ANALYZER_BATCH_SIZES["outdated"],
+            )
 
-                for cache_key, result in zip(batch, results, strict=True):
-                    if isinstance(result, Exception) or result is None:
-                        # Transient failure this scan: treat as "no signal".
-                        infos[cache_key] = {}
-                    else:
-                        infos[cache_key] = result
-
-                # Small delay between batches to avoid rate limits.
-                if i + batch_size < len(missing_keys):
-                    await asyncio.sleep(0.1)
+        for cache_key, result in zip(missing_keys, results, strict=True):
+            # A failed fetch is no signal for this scan.
+            infos[cache_key] = result if isinstance(result, dict) else {}
 
     async def _fetch_package_info(
         self,

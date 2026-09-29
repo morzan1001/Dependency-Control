@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from typing import Any
 from urllib.parse import quote
@@ -14,7 +13,7 @@ from app.core.constants import (
 )
 from app.core.http_utils import InstrumentedAsyncClient
 
-from .base import Analyzer
+from .base import Analyzer, gather_bounded
 from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
@@ -51,8 +50,6 @@ class DepsDevAnalyzer(Analyzer):
     name = "deps_dev"
     base_url = DEPS_DEV_API_URL
 
-    MAX_CONCURRENT = ANALYZER_BATCH_SIZES.get("deps_dev", 10)
-
     @staticmethod
     def _collect(
         component: dict[str, Any],
@@ -63,7 +60,7 @@ class DepsDevAnalyzer(Analyzer):
         scorecard_issues: list[Any],
     ) -> None:
         """Apply a payload under this scan's component (a cached one names its fetcher), re-checking the threshold."""
-        if isinstance(payload, Exception):
+        if isinstance(payload, BaseException):
             logger.warning(f"deps_dev check failed: {payload}")
             return
         if not payload:
@@ -77,13 +74,19 @@ class DepsDevAnalyzer(Analyzer):
 
     async def _fetch_uncached(self, keys: list[str], targets: dict[str, tuple[dict[str, Any], str, str]]) -> list[Any]:
         """Fetch deps.dev data for uncached packages with bounded concurrency."""
-        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
         timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
-
         async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-            tasks = [self._check_component_with_limit(semaphore, client, key, *targets[key]) for key in keys]
-            results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
-            return results
+
+            async def fetch(key: str) -> dict[str, Any] | None:
+                component, system, lookup_name = targets[key]
+                # Distributed lock prevents multiple pods fetching the same package.
+                return await cache_service.get_or_fetch_with_lock(
+                    key=key,
+                    fetch_fn=lambda: self._check_component(client, component, system, lookup_name),
+                    ttl_seconds=CacheTTL.DEPS_DEV_METADATA,
+                )
+
+            return await gather_bounded(keys, fetch, ANALYZER_BATCH_SIZES["deps_dev"])
 
     async def analyze(
         self,
@@ -120,28 +123,6 @@ class DepsDevAnalyzer(Analyzer):
             "scorecard_issues": scorecard_issues,
             "package_metadata": package_metadata,
         }
-
-    async def _check_component_with_limit(
-        self,
-        semaphore: asyncio.Semaphore,
-        client: InstrumentedAsyncClient,
-        cache_key: str,
-        component: dict[str, Any],
-        system: str,
-        lookup_name: str,
-    ) -> dict[str, Any] | None:
-        """Fetch component data with concurrency limit and distributed lock."""
-
-        async def fetch_component() -> dict[str, Any] | None:
-            async with semaphore:
-                return await self._check_component(client, component, system, lookup_name)
-
-        # Distributed lock prevents multiple pods fetching the same package.
-        return await cache_service.get_or_fetch_with_lock(
-            key=cache_key,
-            fetch_fn=fetch_component,
-            ttl_seconds=CacheTTL.DEPS_DEV_METADATA,
-        )
 
     @staticmethod
     def _select_project_id(related_projects: list[dict[str, Any]]) -> str | None:

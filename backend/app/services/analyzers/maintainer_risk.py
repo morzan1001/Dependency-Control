@@ -1,6 +1,5 @@
 """Analyzes package maintainer activity to flag supply-chain risk from abandoned or under-maintained packages."""
 
-import asyncio
 import logging
 import re
 from datetime import datetime, timezone
@@ -21,7 +20,7 @@ from app.core.constants import (
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
-from .base import Analyzer
+from .base import Analyzer, gather_bounded
 from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
@@ -94,33 +93,30 @@ class MaintainerRiskAnalyzer(Analyzer):
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Analyze maintainer health for packages in the SBOM."""
-        components = parsed_components or []
         issues = []
         checked_count = 0
 
         github_token = settings.get("github_token") if settings else None
         timeout = ANALYZER_TIMEOUTS.get("maintainer_risk", ANALYZER_TIMEOUTS["default"])
-        batch_size = ANALYZER_BATCH_SIZES.get("maintainer_risk", 10)
 
         settings = settings or {}
         self._stale_after_days = int(settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS))
         self._warn_after_days = int(settings.get("warn_after_days", STALE_PACKAGE_WARNING_DAYS))
 
         async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:
-            for i in range(0, len(components), batch_size):
-                batch = components[i : i + batch_size]
-                tasks = [self._check_component(client, comp, github_token) for comp in batch]
-                results = await asyncio.gather(*tasks)
+            results = await gather_bounded(
+                parsed_components or [],
+                lambda component: self._check_component(client, component, github_token),
+                ANALYZER_BATCH_SIZES["maintainer_risk"],
+            )
 
-                for result in results:
-                    if result:
-                        checked_count += 1
-                        if result.get("risks"):
-                            issues.append(result)
-
-                # Small delay between batches to respect rate limits.
-                if i + batch_size < len(components):
-                    await asyncio.sleep(0.5)
+        for result in results:
+            if isinstance(result, BaseException):
+                raise result
+            if result:
+                checked_count += 1
+                if result.get("risks"):
+                    issues.append(result)
 
         return {
             "maintainer_issues": issues,
