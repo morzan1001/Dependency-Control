@@ -253,34 +253,15 @@ IMPACT_SEVERITY_WEIGHTS: dict[str, float] = {
 }
 
 
-# Common patterns for development dependencies
-DEV_DEPENDENCY_PATTERNS = [
-    r"jest",
-    r"mocha",
-    r"chai",
-    r"sinon",
-    r"enzyme",
-    r"testing-library",
-    r"eslint",
-    r"prettier",
-    r"tslint",
-    r"stylelint",
-    r"webpack-dev",
-    r"nodemon",
-    r"ts-node",
-    r"@types/",
-    r"typescript$",
-    r"storybook",
-    r"chromatic",
-    r"cypress",
-    r"playwright",
-    r"puppeteer",
-    r"husky",
-    r"lint-staged",
-    r"commitlint",
-    r"babel-jest",
-    r"ts-jest",
-]
+# npm packages that belong in devDependencies: a dev-only scope, or a tool's name alone or with a "-suffix".
+DEV_DEPENDENCY_PATTERN = re.compile(
+    r"^(?:@(?:types|testing-library|storybook|commitlint|eslint|typescript-eslint)/.+"
+    r"|(?:@[^/]+/)?(?:jest|mocha|chai|sinon|enzyme|eslint|prettier|tslint|stylelint|webpack-dev|nodemon|ts-node"
+    r"|typescript|storybook|chromatic|cypress|playwright|puppeteer|husky|lint-staged|commitlint|babel-jest|ts-jest)"
+    r"(?:-[\w.-]+)?)$"
+)
+# Runtime packages that share a dev tool's prefix.
+DEV_DEPENDENCY_RUNTIME_PACKAGES = frozenset({"eslint-scope", "jest-worker", "playwright-core", "puppeteer-core"})
 
 
 # Scoring weights for identifying "Quick Win" updates

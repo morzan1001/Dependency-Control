@@ -1,9 +1,9 @@
-import re
 from collections import defaultdict
 from typing import Any
 
 from app.core.constants import (
-    DEV_DEPENDENCY_PATTERNS,
+    DEV_DEPENDENCY_PATTERN,
+    DEV_DEPENDENCY_RUNTIME_PACKAGES,
     SIGNIFICANT_FRAGMENTATION_THRESHOLD,
 )
 from app.schemas.recommendation import (
@@ -229,22 +229,15 @@ def analyze_dev_in_production(
     potential_dev_deps: list[dict[str, Any]] = []
 
     for dep in dependencies:
-        name = str(get_attr(dep, "name") or "").lower()
         scope = str(get_attr(dep, "scope") or "").lower()
-
-        if scope in ("dev", "development", "test"):
+        # The patterns and the devDependencies advice are npm's.
+        if scope in ("dev", "development", "test") or get_attr(dep, "type") != "npm":
             continue
 
-        for pattern in DEV_DEPENDENCY_PATTERNS:
-            if re.search(pattern, name, re.IGNORECASE):
-                potential_dev_deps.append(
-                    {
-                        "name": get_attr(dep, "name"),
-                        "version": get_attr(dep, "version"),
-                        "reason": f"Matches dev pattern: {pattern}",
-                    }
-                )
-                break
+        group = get_attr(dep, "group")
+        name = f"{group}/{get_attr(dep, 'name')}" if group else str(get_attr(dep, "name") or "")
+        if name.lower() not in DEV_DEPENDENCY_RUNTIME_PACKAGES and DEV_DEPENDENCY_PATTERN.match(name.lower()):
+            potential_dev_deps.append({"name": name, "version": get_attr(dep, "version")})
 
     dev_deps_shown, dev_deps_total = sample_components(f"{d['name']}@{d['version']}" for d in potential_dev_deps)
     if potential_dev_deps:
