@@ -194,7 +194,7 @@ async def _process_project_rescan(
         return
 
     for source_scan in targets:
-        if _is_rescan_due(source_scan, interval_hours):
+        if _is_rescan_due(source_scan, interval_hours) and not worker_manager.is_saturated():
             logger.info(f"Re-scan due for project {project.name} from source scan {source_scan['_id']}")
             await create_rescan(db, source_scan, worker_manager)
 
@@ -215,6 +215,9 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
 
         # Pre-filter to projects that have been scanned at least once.
         async for project_data in db.projects.find({"last_scan_at": {"$ne": None}}, _RESCAN_PROJECT_PROJECTION):
+            # The due targets left over stay due, so a later pass, in whichever process has room, takes them.
+            if worker_manager.is_saturated():
+                break
             try:
                 await _process_project_rescan(project_data, system_settings, db, worker_manager)
             except Exception as e:

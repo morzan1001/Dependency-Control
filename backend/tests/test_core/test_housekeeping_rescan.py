@@ -1,8 +1,9 @@
 """Characterisation of the scheduled-rescan path as it behaves today."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -22,6 +23,7 @@ from app.core.housekeeping import (
     _resolve_rescan_interval,
     check_scheduled_rescans,
 )
+from app.core.worker import AnalysisWorkerManager
 from app.models.project import Project, Scan
 from app.models.release import Release
 from app.models.system import SystemSettings
@@ -328,7 +330,15 @@ def db() -> FakeDatabase:
 
 @pytest.fixture
 def worker() -> AsyncMock:
-    return AsyncMock()
+    manager = AsyncMock()
+    manager.is_saturated = MagicMock(return_value=False)
+    return manager
+
+
+def _one_worker() -> AnalysisWorkerManager:
+    manager = AnalysisWorkerManager(num_workers=1)
+    manager.queue = asyncio.Queue()
+    return manager
 
 
 class TestResolveRescanInterval:
@@ -1108,6 +1118,34 @@ class TestCheckScheduledRescans:
         await check_scheduled_rescans(worker)
 
         assert seen == [_OTHER_PROJECT_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_pass_stops_creating_rescans_once_jobs_wait_for_every_worker(
+        self, db: FakeDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The rest stay due for a later pass, possibly in another process, so CI scans do not queue behind them."""
+        await _seed_system_settings(db)
+        for project_id in (_PROJECT_ID, _OTHER_PROJECT_ID, _UNSCANNED_PROJECT_ID):
+            await db.projects.insert_one(_project_doc(_id=project_id, name=project_id))
+            await _seed_scan(db, f"build-{project_id}", project_id=project_id)
+        manager = _one_worker()
+        monkeypatch.setattr(housekeeping, "get_database", AsyncMock(return_value=db))
+
+        await check_scheduled_rescans(manager)
+
+        assert len(await _rescans(db)) == 1
+        assert manager.queue.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_a_saturated_worker_stops_the_rescans_of_a_projects_further_targets(self, db: FakeDatabase) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+        manager = _one_worker()
+
+        await _process_project_rescan(_project_doc(), _system_settings(), db, manager)
+
+        assert len(await _rescans(db)) == 1
 
     @pytest.mark.asyncio
     async def test_a_database_failure_is_swallowed_so_the_housekeeping_loop_survives(

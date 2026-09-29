@@ -53,6 +53,10 @@ class AnalysisWorkerManager:
         self._no_active_scans = asyncio.Event()
         self._no_active_scans.set()
 
+    def is_saturated(self) -> bool:
+        """Whether a job already waits for every worker, so work that can wait should."""
+        return self.queue.qsize() >= self.num_workers
+
     async def start(self) -> None:
         """Start workers and recover pending jobs from the DB."""
         logger.info(f"Starting {self.num_workers} analysis workers...")
