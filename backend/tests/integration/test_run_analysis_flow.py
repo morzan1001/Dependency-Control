@@ -34,40 +34,19 @@ def notified(monkeypatch) -> list[Stats]:
     return sent
 
 
-def _waivers_active(monkeypatch, active: bool) -> None:
-    async def _has_active_waivers(self, project_id):
-        return active
-
-    monkeypatch.setattr(engine.WaiverRepository, "has_active_for_project", _has_active_waivers)
-
-
-def _recalc_returns(monkeypatch, result: Stats | None) -> list[str]:
+@pytest.mark.asyncio
+async def test_an_analysis_stamps_only_its_own_scan_and_notifies_its_own_stats(db, notified, monkeypatch):
+    """Its one waiver pass is the analysed scan's: no project recalculation follows it."""
+    await db.waivers.insert_one(
+        {"_id": "w-1", "project_id": _PROJECT_ID, "finding_id": "x", "reason": "r", "created_by": "u"}
+    )
     calls: list[str] = []
 
-    async def _recalculate(project_id, db):
+    async def _recalculate(project_id, *args, **kwargs):
         calls.append(project_id)
-        return result
+        return Stats(critical=7)
 
     monkeypatch.setattr("app.services.stats.recalculate_project_stats", _recalculate)
-    return calls
-
-
-@pytest.mark.asyncio
-async def test_notifications_carry_the_analysed_scans_own_stats_whatever_head_says(db, notified, monkeypatch):
-    """An MR decoration reports its own pipeline, not the head the catch-up recalc restamps."""
-    _waivers_active(monkeypatch, True)
-    calls = _recalc_returns(monkeypatch, Stats(critical=7))
-
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
-
-    assert calls == [_PROJECT_ID]
-    assert notified == [Stats()]
-
-
-@pytest.mark.asyncio
-async def test_without_active_waivers_no_recalc_runs(db, notified, monkeypatch):
-    _waivers_active(monkeypatch, False)
-    calls = _recalc_returns(monkeypatch, Stats(critical=7))
 
     assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
 

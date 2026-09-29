@@ -9,6 +9,7 @@ from fastapi import BackgroundTasks, HTTPException
 
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_PENDING
 from app.models.waiver import Waiver
+from app.services.stats import run_waiver_recalc
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.waivers"
@@ -62,7 +63,7 @@ class TestCreateWaiver:
         bg_tasks = BackgroundTasks()
 
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.recalculate_all_projects"):
+            with patch(f"{MODULE}.request_waiver_recalc") as mock_request:
                 result = asyncio.run(
                     create_waiver(
                         waiver_in=WaiverCreate(project_id=None, package_name="requests", reason="Global waiver"),
@@ -75,6 +76,8 @@ class TestCreateWaiver:
         assert result.project_id is None
         assert result.created_by == admin_user.username
         mock_repo.create.assert_called_once()
+        assert mock_request.await_args.args[1] is result
+        assert [t.func for t in bg_tasks.tasks] == [run_waiver_recalc]
 
     def test_created_by_is_set_to_username(self, admin_user):
         from app.api.v1.endpoints.waivers import create_waiver
@@ -90,7 +93,7 @@ class TestCreateWaiver:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     result = asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(project_id="proj-1", package_name="requests", reason="Test"),
@@ -141,7 +144,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     with pytest.raises(HTTPException) as exc_info:
                         asyncio.run(
                             create_waiver(
@@ -178,7 +181,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(
@@ -219,7 +222,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(
@@ -251,7 +254,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(
@@ -286,7 +289,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     created = asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(
@@ -318,7 +321,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(
@@ -350,7 +353,7 @@ class TestCreateWaiverValidatesFindingMatch:
         bg_tasks = BackgroundTasks()
 
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.recalculate_all_projects"):
+            with patch(f"{MODULE}.request_waiver_recalc"):
                 asyncio.run(
                     create_waiver(
                         waiver_in=WaiverCreate(
@@ -542,7 +545,7 @@ class TestCreateWaiverValidatesFindingMatch:
         mock_repo.create = AsyncMock()
 
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.recalculate_all_projects"):
+            with patch(f"{MODULE}.request_waiver_recalc"):
                 asyncio.run(
                     create_waiver(
                         waiver_in=WaiverCreate(
@@ -574,7 +577,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(
@@ -605,7 +608,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(
@@ -651,7 +654,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     created = asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(
@@ -691,7 +694,7 @@ class TestCreateWaiverValidatesFindingMatch:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     created = asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(
@@ -767,7 +770,7 @@ class TestUpdateWaiverRecalc:
 
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
             with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
-                with patch(f"{MODULE}.recalculate_project_stats") as mock_recalc:
+                with patch(f"{MODULE}.request_waiver_recalc") as mock_request:
                     asyncio.run(
                         update_waiver(
                             waiver_id="waiver-1",
@@ -777,28 +780,21 @@ class TestUpdateWaiverRecalc:
                             db=MagicMock(),
                         )
                     )
-        return bg_tasks, mock_recalc
+        queued = [call.args[1] for call in mock_request.await_args_list]
+        return [waiver.id for waiver in queued], [t.func for t in bg_tasks.tasks]
 
     def test_expiration_date_change_triggers_recalc(self, admin_user):
-        """Expiring/extending a waiver changes the active set and must schedule recalculate_project_stats."""
+        """Expiring/extending a waiver changes the active set and must queue the recalculation."""
         new_expiry = datetime.now(timezone.utc) - timedelta(days=1)
-        bg_tasks, mock_recalc = self._run_update(admin_user, {"expiration_date": new_expiry})
 
-        scheduled = [t.func for t in bg_tasks.tasks]
-        assert mock_recalc in scheduled
+        assert self._run_update(admin_user, {"expiration_date": new_expiry}) == (["waiver-1"], [run_waiver_recalc])
 
     def test_status_change_still_triggers_recalc(self, admin_user):
-        bg_tasks, mock_recalc = self._run_update(admin_user, {"status": "false_positive"})
-
-        scheduled = [t.func for t in bg_tasks.tasks]
-        assert mock_recalc in scheduled
+        assert self._run_update(admin_user, {"status": "false_positive"}) == (["waiver-1"], [run_waiver_recalc])
 
     def test_reason_only_change_triggers_recalc(self, admin_user):
         """Findings carry the reason of the waiver that covers them, so a new reason is restamped."""
-        bg_tasks, mock_recalc = self._run_update(admin_user, {"reason": "Updated reason"})
-
-        scheduled = [t.func for t in bg_tasks.tasks]
-        assert mock_recalc in scheduled
+        assert self._run_update(admin_user, {"reason": "Updated reason"}) == (["waiver-1"], [run_waiver_recalc])
 
 
 class TestListWaivers:
@@ -942,7 +938,7 @@ class TestDeleteWaiver:
         bg_tasks = BackgroundTasks()
 
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.recalculate_all_projects"):
+            with patch(f"{MODULE}.request_waiver_recalc") as mock_request:
                 asyncio.run(
                     delete_waiver(
                         waiver_id="waiver-1",
@@ -953,6 +949,8 @@ class TestDeleteWaiver:
                 )
 
         mock_repo.delete.assert_called_once()
+        assert mock_request.await_args.args[1] is waiver
+        assert [t.func for t in bg_tasks.tasks] == [run_waiver_recalc]
 
 
 class TestCreateWaiverPermissions:
@@ -971,7 +969,7 @@ class TestCreateWaiverPermissions:
 
         with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock) as mock_access:
             with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     asyncio.run(
                         create_waiver(
                             waiver_in=WaiverCreate(project_id="proj-1", package_name="requests", reason="Test"),
@@ -1018,7 +1016,7 @@ class TestDeleteWaiverPermissions:
 
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
             with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock) as mock_access:
-                with patch(f"{MODULE}.recalculate_project_stats"):
+                with patch(f"{MODULE}.request_waiver_recalc"):
                     asyncio.run(
                         delete_waiver(
                             waiver_id="waiver-1",

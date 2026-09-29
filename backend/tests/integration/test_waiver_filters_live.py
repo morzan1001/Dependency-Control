@@ -35,5 +35,4 @@ async def test_a_waiver_without_an_expiration_date_is_active_and_an_expired_one_
     repo = WaiverRepository(db)
 
     assert [w.id for w in await repo.find_active_for_project("p")] == ["no-expiry"]
-    assert await repo.has_active_for_project("p") is True
-    assert await repo.has_active_for_project("other") is False
+    assert await repo.find_active_for_project("other") == []

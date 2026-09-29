@@ -107,11 +107,6 @@ class WaiverRepository:
             docs = await cursor.to_list(None)
         return [Waiver(**doc) for doc in docs]
 
-    async def has_active_for_project(self, project_id: str) -> bool:
-        """Whether the project, or a global waiver, has an active waiver; stops at the first one found."""
-        with track_db_operation(_COL, "count"):
-            return await self.collection.count_documents(_active_for_project_filter(project_id), limit=1) > 0
-
     async def find_active_global(self) -> list[Waiver]:
         """Active (non-expired) waivers that apply to every project (project_id=None)."""
         query: dict[str, Any] = {"$and": [{"project_id": None}, non_expired_waiver_filter(datetime.now(timezone.utc))]}

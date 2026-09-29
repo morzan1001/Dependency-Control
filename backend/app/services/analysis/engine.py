@@ -1181,15 +1181,6 @@ def _final_scan_status(scan_id: str, sbom_load_failed: bool, partial_reasons: li
     return SCAN_STATUS_COMPLETED, None
 
 
-async def _restamp_stale_scans(project_id: str | None, db: Database) -> None:
-    """The project's head, branch tips and released scans still stamped with an older waiver set (one expired
-    since, or a recalculation a restart dropped) take the current one."""
-    if project_id and await WaiverRepository(db).has_active_for_project(project_id):
-        from app.services.stats import recalculate_project_stats
-
-        await recalculate_project_stats(project_id, db)
-
-
 async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyzers: list[str], db: Database) -> bool:
     """Orchestrate analysis for an SBOM scan; returns False if rescheduled due to a race condition."""
     logger.info(f"Starting analysis for scan {scan_id}")
@@ -1329,7 +1320,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
             scan_id,
         )
     authoritative = bool(sboms_to_process)
-    # Decided again at finalize; a mismatch only misplaces the waiver outcomes, which the recalculation heals.
+    # Decided again at finalize; a mismatch only misplaces the waiver outcomes, which the next recalculation heals.
     becomes_head = bool(
         project_id
         and not sbom_load_failed
@@ -1398,7 +1389,6 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         await _send_integrations_and_notifications(
             project_id, scan_id, scan_doc, stats, notify_findings, results_summary, db
         )
-        await _restamp_stale_scans(project_id, db)
 
     del aggregated_findings
 

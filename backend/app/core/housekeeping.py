@@ -45,6 +45,7 @@ from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.releases import reconcile_release_flags, release_protected_scan_ids
 from app.services.scan_cascade import delete_scans_and_related_data
+from app.services.stats import run_waiver_recalc
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 
 if TYPE_CHECKING:
@@ -957,6 +958,11 @@ async def housekeeping_loop(
             await update_cache_stats()
         except Exception as e:
             logger.exception("Failed to update cache statistics: %s", e)
+
+        try:
+            await run_waiver_recalc(await get_database())
+        except Exception as e:
+            logger.exception("Waiver recalculation failed: %s", e)
 
         if (datetime.now(timezone.utc) - last_retention_run) > timedelta(
             hours=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS

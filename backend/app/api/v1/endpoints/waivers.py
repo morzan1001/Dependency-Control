@@ -27,7 +27,7 @@ from app.repositories import ScanRepository, WaiverRepository
 from app.repositories.waivers import non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
-from app.services.stats import recalculate_all_projects, recalculate_project_stats
+from app.services.stats import request_waiver_recalc, run_waiver_recalc
 from app.services.waivers.matching import finding_rule_id, waiver_query
 
 
@@ -156,10 +156,8 @@ async def create_waiver(
     await waiver_repo.create(waiver)
     _invalidate_analytics_cache()
 
-    if waiver.project_id:
-        background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
-    else:
-        background_tasks.add_task(recalculate_all_projects, db, waiver)
+    await request_waiver_recalc(db, waiver)
+    background_tasks.add_task(run_waiver_recalc, db)
 
     return waiver
 
@@ -279,10 +277,8 @@ async def update_waiver(
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
     _invalidate_analytics_cache()
 
-    if updated.project_id:
-        background_tasks.add_task(recalculate_project_stats, updated.project_id, db)
-    else:
-        background_tasks.add_task(recalculate_all_projects, db, updated)
+    await request_waiver_recalc(db, updated)
+    background_tasks.add_task(run_waiver_recalc, db)
 
     return updated
 
@@ -310,7 +306,5 @@ async def delete_waiver(
     await waiver_repo.delete(waiver_id)
     _invalidate_analytics_cache()
 
-    if waiver.project_id:
-        background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
-    else:
-        background_tasks.add_task(recalculate_all_projects, db, waiver)
+    await request_waiver_recalc(db, waiver)
+    background_tasks.add_task(run_waiver_recalc, db)
