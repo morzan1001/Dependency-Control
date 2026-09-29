@@ -289,6 +289,44 @@ class TestRecalculateReachesTheReleasedBuild:
         assert (await released_db.findings.find_one({"_id": "loc-shipped"}))["waived"] is True
         assert MatchSignature(**(await released_db.waivers.find_one({"_id": "w-loc"}))["match"]) == at_head
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted_risk", "false_positive"])
+    async def test_a_released_build_lagging_head_by_more_than_the_window_keeps_the_waiver(self, released_db, status):
+        """The waiver's last_line tracks head; a shipped build whose code sits 60 lines higher is still waived."""
+        at_head = MatchSignature(
+            rule_key="bearer:r",
+            file_key="a.py",
+            anchor="c",
+            anchor_kind="content_hash",
+            content_hash="c",
+            last_line=200,
+        )
+        await _insert_finding(released_db, {"_id": "loc-head", "type": "sast", "match": at_head.model_dump()})
+        await _insert_finding(
+            released_db,
+            {
+                "_id": "loc-shipped",
+                "scan_id": RELEASE_SCAN_ID,
+                "type": "sast",
+                "match": {**at_head.model_dump(), "last_line": 140},
+            },
+        )
+        await released_db.waivers.insert_one(
+            {
+                "_id": "w-loc",
+                "project_id": PROJECT_ID,
+                "finding_type": "sast",
+                "match": at_head.model_dump(),
+                "status": status,
+                "reason": "reviewed",
+                "created_by": "tester",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert (await released_db.findings.find_one({"_id": "loc-shipped"}))["waived"] is True
+
 
 # ---------------------------------------------------------------------------
 # A waiver with no matching criteria must NOT waive every finding: an empty

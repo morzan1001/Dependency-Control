@@ -210,6 +210,9 @@ def _pass2_reanchor(app: WaiverApplication, unmatched: list[_Signed], findings: 
         ]
         if not same_content:
             content_changed.append((w, wsig, group))
+        elif len(same_content) == 1:
+            # Identifying content is the instance wherever it moved; last_line tracks head, not a lagging release.
+            _bind_reanchor(app, w, wsig, same_content[0])
         elif (chosen := _pick_unique_nearest(same_content, wsig.last_line)) is not None:
             _bind_reanchor(app, w, wsig, chosen)
         else:

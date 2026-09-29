@@ -344,14 +344,25 @@ def test_a_lone_candidate_without_a_known_line_does_not_bind():
     assert app.waived == {}
 
 
-def test_a_lone_same_content_candidate_far_away_does_not_bind():
+@pytest.mark.parametrize("status", ["accepted_risk", "false_positive"])
+def test_a_content_anchored_waiver_follows_its_lone_code_at_any_distance(status):
     finding = mf("f1", anchor="c1", kind="content_hash", ch="c1", line=400)
     app = apply_waivers_to_findings(
-        [finding], [_W("w1", "false_positive", sig(anchor="c1", kind="content_hash", ch="c1", line=10))]
+        [finding], [_W("w1", status, sig(anchor="c1", kind="content_hash", ch="c1", line=10))]
     )
 
-    assert app.waived == {}
-    assert app.reanchored == {}
+    assert app.waived == {"f1": "w1"}
+    assert app.reanchored == {"w1": finding.sig}
+
+
+@pytest.mark.parametrize("status", ["accepted_risk", "false_positive"])
+def test_a_bearer_waiver_follows_its_finding_past_a_large_insertion_above(status):
+    before = _bearer_scan([(10, _A), (20, _B), (30, _C)])
+    waiver = _W("W", status, before[_B].match)
+
+    after = _bearer_scan([(10, _A), (90, _B), (100, _C)])
+
+    assert _waived_codes(after, waiver) == {_B}
 
 
 def _kics(anchor, line, ch="acl"):
