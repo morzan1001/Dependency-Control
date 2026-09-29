@@ -88,15 +88,15 @@ def finding_vulnerability_id(finding: dict[str, Any]) -> str:
     never reach a field labelled "CVE".
     """
     entries = [e for e in (finding.get("details") or {}).get("vulnerabilities") or [] if isinstance(e, dict)]
-    for entry in entries:
-        if cves := entry_cves(entry):
+    for entry_details in entries:
+        if cves := entry_cves(entry_details):
             return cves[0]
     for alias in finding.get("aliases") or []:
         if isinstance(alias, str) and alias.startswith("CVE-"):
             return alias
-    for entry in entries:
-        if entry.get("id"):
-            return str(entry["id"])
+    for entry_details in entries:
+        if entry_details.get("id"):
+            return str(entry_details["id"])
     return str(finding.get("finding_id") or finding.get("id") or "")
 
 
@@ -107,13 +107,13 @@ def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summa
     component = finding.get("component", "")
     rows: list[KEVDetail] = [
         {
-            "cve": canonical_cve(entry) or "",
+            "cve": canonical_cve(entry_details) or "",
             "component": component,
-            "due_date": entry.get("kev_due_date"),
-            "ransomware": bool(entry.get(DETAILS_KEY_KEV_RANSOMWARE)),
+            "due_date": entry_details.get("kev_due_date"),
+            "ransomware": bool(entry_details.get(DETAILS_KEY_KEV_RANSOMWARE)),
         }
-        for entry in (details.get("vulnerabilities") or [])
-        if isinstance(entry, dict) and entry.get(DETAILS_KEY_IN_KEV)
+        for entry_details in (details.get("vulnerabilities") or [])
+        if isinstance(entry_details, dict) and entry_details.get(DETAILS_KEY_IN_KEV)
     ]
     if not rows:
         # The KEV CVE can come from the finding's own aliases, which match no nested entry.

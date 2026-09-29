@@ -32,17 +32,17 @@ logger = logging.getLogger(__name__)
 _TOP_VULNS_SHOWN = 10
 
 
-def _extract_vulnerability_info(vuln: dict[str, Any], finding: dict[str, Any]) -> dict[str, Any]:
-    """Extract vulnerability info from a vulnerability dict and its parent finding."""
+def _extract_vulnerability_info(entry_details: dict[str, Any], finding: dict[str, Any]) -> dict[str, Any]:
+    """Extract vulnerability info from a vulnerability entry and its parent finding."""
     return AlertVulnerability(
-        id=vuln.get("id", finding.get("id", "Unknown")),
-        severity=vuln.get("severity", finding.get("severity", "UNKNOWN")),
+        id=entry_details.get("id", finding.get("id", "Unknown")),
+        severity=entry_details.get("severity", finding.get("severity", "UNKNOWN")),
         package=finding.get("component", "Unknown"),
         version=finding.get("version", ""),
-        in_kev=vuln.get(DETAILS_KEY_IN_KEV, False),
-        epss_score=vuln.get("epss_score"),
-        kev_due_date=vuln.get("kev_due_date"),
-        kev_ransomware_use=vuln.get(DETAILS_KEY_KEV_RANSOMWARE, False),
+        in_kev=entry_details.get(DETAILS_KEY_IN_KEV, False),
+        epss_score=entry_details.get("epss_score"),
+        kev_due_date=entry_details.get("kev_due_date"),
+        kev_ransomware_use=entry_details.get(DETAILS_KEY_KEV_RANSOMWARE, False),
     ).model_dump()
 
 
@@ -58,18 +58,18 @@ def _categorize_vulnerabilities(
         details = finding.get("details", {})
         vulns = details.get("vulnerabilities", [details])
 
-        for vuln in vulns:
-            vuln_info = _extract_vulnerability_info(vuln, finding)
+        for entry_details in vulns:
+            vuln_info = _extract_vulnerability_info(entry_details, finding)
 
-            if vuln.get(DETAILS_KEY_IN_KEV):
+            if entry_details.get(DETAILS_KEY_IN_KEV):
                 kev_vulns.append(vuln_info)
 
-            epss_score = vuln.get("epss_score")
+            epss_score = entry_details.get("epss_score")
             if epss_score is not None and epss_score >= 0.1:
                 high_epss_vulns.append(vuln_info)
 
-            severity = vuln.get("severity")
-            if severity in ["CRITICAL", "HIGH"] or vuln.get(DETAILS_KEY_IN_KEV):
+            severity = entry_details.get("severity")
+            if severity in ["CRITICAL", "HIGH"] or entry_details.get(DETAILS_KEY_IN_KEV):
                 critical_vulns.append(vuln_info)
 
     return kev_vulns, high_epss_vulns, critical_vulns

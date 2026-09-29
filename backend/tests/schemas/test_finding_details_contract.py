@@ -364,3 +364,14 @@ def test_writer_construction_kwargs_are_declared_fields():
                 if kw.arg is not None and kw.arg not in fields
             )
     assert not bad, "writers pass kwargs that are not schema fields:\n" + "\n".join(bad)
+
+
+def test_the_kev_consumers_per_entry_reads_are_walked():
+    """Their vulnerability-entry variables are named ``*_details``, so a key that drifts from the
+    enrichment writer fails the declared-key check instead of silently reading nothing."""
+    stats, notifications = (
+        {use.key for use in _collect_file_uses(APP_ROOT / "services" / "analysis" / name)}
+        for name in ("stats.py", "notifications.py")
+    )
+    assert {"id", "in_kev", "kev_due_date", "kev_ransomware_use"} <= stats
+    assert {"id", "severity", "epss_score", "in_kev", "kev_due_date", "kev_ransomware_use"} <= notifications
