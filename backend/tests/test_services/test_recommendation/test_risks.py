@@ -871,6 +871,24 @@ class TestAttackSurfaceNamesTheParents:
         assert rec.affected_components == ["minimist@0.0.8 (via mkdirp@0.5.1, some-bom-ref)"]
         assert rec.action["transitive_deps"][0]["parents"] == ["mkdirp@0.5.1", "some-bom-ref"]
 
+    def test_the_parents_of_every_document_of_one_node_are_named(self):
+        minimist = {"name": "minimist", "version": "0.0.8", "purl": "pkg:npm/minimist@0.0.8", "direct": False}
+        deps = [
+            {"name": "mkdirp", "version": "0.5.1", "purl": "pkg:npm/mkdirp@0.5.1", "direct": True},
+            {"name": "optimist", "version": "0.6.1", "purl": "pkg:npm/optimist@0.6.1", "direct": True},
+            {**minimist, "parent_components": ["pkg:npm/mkdirp@0.5.1"]},
+            {**minimist, "parent_components": ["pkg:npm/optimist@0.6.1"]},
+        ]
+
+        [rec] = analyze_attack_surface(deps, [_advisories("minimist", "0.0.8", "CVE-1", "CVE-2")])
+
+        assert rec.action["transitive_deps"][0]["parents"] == ["mkdirp@0.5.1", "optimist@0.6.1"]
+
+    def test_a_node_one_of_whose_documents_is_direct_is_not_transitive(self):
+        deps = [_dep("lib", direct=True), {**_dep("lib", direct=False), "parent_components": ["app@1.0"]}]
+
+        assert analyze_attack_surface(deps, [_advisories("lib", "1.0", "CVE-1", "CVE-2")]) == []
+
     def test_a_dependency_without_parents_claims_none(self):
         [rec] = analyze_attack_surface([_dep("lib", direct=False)], [_advisories("lib", "1.0", "CVE-1", "CVE-2")])
 

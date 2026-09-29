@@ -4,7 +4,6 @@ from functools import cached_property
 from typing import Any
 
 from app.core.constants import SCORECARD_LOW_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
-from app.core.purl import dependency_node_key
 from app.models.finding import PACKAGE_FINDING_TYPES
 from app.schemas.recommendation import (
     Priority,
@@ -19,6 +18,7 @@ from app.services.component_identity import (
     lookup_component,
     normalize_component,
 )
+from app.services.recommendation.graph import build_dependency_edges
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
@@ -370,26 +370,25 @@ def analyze_attack_surface(
             )
     # Findings carry the qualified component while the inventory keeps the bare name.
     index_by_version = {version: build_component_index(counts) for version, counts in counts_by_version.items()}
-    # Parents are stored as node keys; a ref naming no inventory entry is shown as stored.
-    label_by_key = {
-        dependency_node_key(get_attr(d, "purl"), get_attr(d, "name"), get_attr(d, "version")): dependency_label(d)
-        for d in dependencies
-    }
-
+    edges = build_dependency_edges(dependencies)
     by_label: dict[str, dict[str, Any]] = {}
-    for dep in dependencies:
+    for key, dep in edges.dep_by_key.items():
         version = get_attr(dep, "version") or ""
         vuln_count = (
             lookup_component(index_by_version.get(normalize_version(version), {}), get_attr(dep, "name", "")) or 0
         )
-        if not get_attr(dep, "direct", False) and vuln_count >= 2:
+        if key not in edges.direct_keys and vuln_count >= 2:
             by_label.setdefault(
                 dependency_label(dep),
                 {
                     "name": get_attr(dep, "name", ""),
                     "version": version,
                     "vuln_count": vuln_count,
-                    "parents": [label_by_key.get(ref, ref) for ref in get_attr(dep, "parent_components") or []],
+                    # A parent ref naming no inventory entry is shown as stored.
+                    "parents": [
+                        dependency_label(edges.dep_by_key[ref]) if ref in edges.dep_by_key else ref
+                        for ref in edges.parents_by_key[key]
+                    ],
                 },
             )
     transitive_with_vulns = list(by_label.values())
