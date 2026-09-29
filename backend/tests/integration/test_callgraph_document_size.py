@@ -15,8 +15,7 @@ def _madge(files: int, path_length: int) -> dict[str, list[str]]:
     """madge `--json --include-npm` output in which every dependency is a package no other file of it imports."""
     return {
         f"src/features/f{i}/".ljust(path_length - 4, "x") + ".tsx": [
-            f"../node_modules/pkg-{(i * _DEPENDENCIES_PER_FILE + j) % 2000}/index.js"
-            for j in range(_DEPENDENCIES_PER_FILE)
+            f"../node_modules/pkg-{i * _DEPENDENCIES_PER_FILE + j}/index.js" for j in range(_DEPENDENCIES_PER_FILE)
         ]
         for i in range(files)
     }
