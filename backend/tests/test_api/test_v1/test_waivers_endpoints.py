@@ -400,6 +400,29 @@ class TestCreateWaiverValidatesFindingMatch:
         assert "package_name" in exc.value.detail
         mock_repo.create.assert_not_called()
 
+    @pytest.mark.parametrize("finding_id", ["LIC-GPL-2.0-only", "EOL-python-3.8"])
+    def test_an_unscoped_shared_id_is_rejected_without_its_type(self, admin_user, finding_id):
+        """The id names the type the caller left out, and a global waiver never reaches the head-build check."""
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(
+                    create_waiver(
+                        waiver_in=WaiverCreate(project_id=None, finding_id=finding_id, reason="approved"),
+                        background_tasks=BackgroundTasks(),
+                        current_user=admin_user,
+                        db=MagicMock(),
+                    )
+                )
+
+        assert exc.value.status_code == 422
+        mock_repo.create.assert_not_called()
+
     def test_unknown_placeholder_does_not_count_as_a_package_scope(self, admin_user):
         """The waiver form sends 'Unknown' when it cannot resolve a package, which is no package scope."""
         from app.api.v1.endpoints.waivers import create_waiver
@@ -705,7 +728,7 @@ class TestGetWaiver:
 
 
 class TestUpdateWaiverRecalc:
-    """update_waiver must re-run stats recalc whenever a field gating waiver application changes; active state is driven by expiration_date, so expiring/extending must trigger recalculation."""
+    """Every writable field (reason, status, expiration_date) changes what the stamped findings say."""
 
     def _run_update(self, admin_user, update_kwargs):
         from app.api.v1.endpoints.waivers import update_waiver
@@ -746,11 +769,12 @@ class TestUpdateWaiverRecalc:
         scheduled = [t.func for t in bg_tasks.tasks]
         assert mock_recalc in scheduled
 
-    def test_reason_only_change_does_not_trigger_recalc(self, admin_user):
+    def test_reason_only_change_triggers_recalc(self, admin_user):
+        """Findings carry the reason of the waiver that covers them, so a new reason is restamped."""
         bg_tasks, mock_recalc = self._run_update(admin_user, {"reason": "Updated reason"})
 
         scheduled = [t.func for t in bg_tasks.tasks]
-        assert mock_recalc not in scheduled
+        assert mock_recalc in scheduled
 
 
 class TestListWaivers:

@@ -46,7 +46,7 @@ _MSG_NO_MATCHING_FINDING = (
 
 # finding_id is not unique within a scan for these types (one document per affected
 # component), so a waiver carrying only a finding_id blankets every one of them.
-_BROAD_FINDING_ID_TYPES = ("license", "eol")
+_BROAD_FINDING_ID_PREFIXES = {"license": "LIC-", "eol": "EOL-"}
 
 _MSG_NEEDS_PACKAGE_SCOPE = (
     "A {finding_type} finding_id is shared by every affected component, so this waiver would "
@@ -82,13 +82,15 @@ async def _resolve_widened_rule(waiver_in: WaiverCreate, db: AsyncIOMotorDatabas
 
 
 def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
-    """Refuse a waiver whose criteria would blanket findings nobody picked."""
-    if waiver_in.finding_type not in _BROAD_FINDING_ID_TYPES or waiver_in.package_name or not waiver_in.finding_id:
+    """Refuse a waiver whose criteria would blanket findings nobody picked; without a type its id names it."""
+    finding_id = waiver_in.finding_id
+    if waiver_in.package_name or not finding_id:
         return
-    raise HTTPException(
-        status_code=422,
-        detail=_MSG_NEEDS_PACKAGE_SCOPE.format(finding_type=waiver_in.finding_type),
+    finding_type = waiver_in.finding_type or next(
+        (kind for kind, prefix in _BROAD_FINDING_ID_PREFIXES.items() if finding_id.startswith(prefix)), None
     )
+    if finding_type in _BROAD_FINDING_ID_PREFIXES:
+        raise HTTPException(status_code=422, detail=_MSG_NEEDS_PACKAGE_SCOPE.format(finding_type=finding_type))
 
 
 async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> dict | None:
@@ -283,12 +285,10 @@ async def update_waiver(
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
     _invalidate_analytics_cache()
 
-    # Recalculate when a field that gates waiver application (status/expiration) changes.
-    if {"status", "expiration_date"} & update_data.keys():
-        if updated.project_id:
-            background_tasks.add_task(recalculate_project_stats, updated.project_id, db)
-        else:
-            background_tasks.add_task(recalculate_all_projects, db, updated)
+    if updated.project_id:
+        background_tasks.add_task(recalculate_project_stats, updated.project_id, db)
+    else:
+        background_tasks.add_task(recalculate_all_projects, db, updated)
 
     return updated
 

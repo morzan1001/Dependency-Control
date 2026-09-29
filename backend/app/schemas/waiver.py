@@ -52,6 +52,14 @@ class WaiverUpdate(BaseModel):
     expiration_date: datetime | None = None
     status: WaiverStatus | None = None
 
+    @field_validator("reason", "status")
+    @classmethod
+    def reject_null(cls, v: str | None) -> str:
+        """Left out keeps the stored value; an explicit null would store a waiver no reader can load."""
+        if v is None:
+            raise ValueError("may be omitted but not null")
+        return v
+
 
 class WaiverResponse(WaiverCreate):
     id: PyObjectId = Field(validation_alias="_id")
