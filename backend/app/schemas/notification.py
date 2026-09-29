@@ -1,8 +1,9 @@
 import re
-from typing import Literal, cast
+from typing import Literal
 
-from packaging.version import InvalidVersion, Version
 from pydantic import BaseModel, Field, field_validator
+
+from app.services.aggregation.versions import parse_version_key
 
 # Names the UI and syft use for an ecosystem, mapped to its purl type.
 _ECOSYSTEM_ALIASES = {"pip": "pypi", "python": "pypi", "go": "golang", "go-module": "golang", "dotnet": "nuget"}
@@ -45,19 +46,13 @@ _PURL_TYPES = frozenset(
         "swift",
     }
 )
-_RELEASE = re.compile(r"[vV]?(\d+(?:\.\d+)*)")
+_RELEASE = re.compile(r"[vV]?\d")
 _WILDCARD_SEGMENT = re.compile(r"(^|[.-])[xX*](\.|$)")
 
 
-def _release(version: str) -> tuple[int, ...] | None:
-    """The leading numeric release, epoch dropped and trailing zeros trimmed: 1:4.1.0.Final -> (4, 1)."""
-    match = _RELEASE.match(version.strip().split(":", 1)[-1])
-    if not match:
-        return None
-    parts = [int(part) for part in match.group(1).split(".")]
-    while len(parts) > 1 and parts[-1] == 0:
-        parts.pop()
-    return tuple(parts)
+def _names_release(version: str) -> bool:
+    """Whether the version, epoch dropped, starts at a numeric release."""
+    return _RELEASE.match(version.strip().split(":", 1)[-1]) is not None
 
 
 class AdvisoryPackage(BaseModel):
@@ -86,21 +81,17 @@ class AdvisoryPackage(BaseModel):
         if not value or not value.strip():
             return None
         value = value.strip()
-        if _release(value) is None or _WILDCARD_SEGMENT.search(value):
+        if not _names_release(value) or _WILDCARD_SEGMENT.search(value):
             raise ValueError(f"'{value}' names no version to compare against")
         return value
 
     def covers(self, version: str) -> bool | None:
-        """Whether ``version`` is at or below this rule's inclusive max version; None if it cannot be compared."""
+        """Whether ``version`` is at or below this rule's inclusive max version; None if it names no release."""
         if self.version is None:
             return True
-        try:
-            return Version(version) <= Version(self.version)
-        except InvalidVersion:
-            # Other schemes compare by numeric release, so a qualifier (.Final, -SNAPSHOT) never lifts a
-            # version past its own release.
-            installed = _release(version)
-            return None if installed is None else installed <= cast(tuple[int, ...], _release(self.version))
+        if not _names_release(version):
+            return None
+        return parse_version_key(version) <= parse_version_key(self.version)
 
 
 class BroadcastRequest(BaseModel):

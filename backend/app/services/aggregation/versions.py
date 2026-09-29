@@ -28,6 +28,8 @@ _PRERELEASE_RANK = {
     "c": 5,
     "snapshot": 6,
 }
+# Maven's spellings of a plain release: 4.1.100.Final is 4.1.100.
+_RELEASE_QUALIFIERS = frozenset({"final", "ga", "release"})
 
 
 def _token_key(token: str, prev_char: str, next_char: str) -> tuple[int, int | str]:
@@ -42,12 +44,18 @@ def _token_key(token: str, prev_char: str, next_char: str) -> tuple[int, int | s
 
 
 def parse_version_key(v: str) -> VersionKey:
-    """Parse a version into (flag, value) pairs that compare in version order; the first carries the major."""
-    text = v.lower().removeprefix("v")
+    """Parse a version into (flag, value) pairs that compare in version order; the first carries the major.
+    An epoch and the release's trailing zeros drop out, so 1:2.30.0 ranks as 2.30."""
+    text = v.lower().split(":", 1)[-1].removeprefix("v")
     parts = [
         _token_key(m.group(), text[m.start() - 1 : m.start()], text[m.end() : m.end() + 1])
         for m in re.finditer(r"[a-z]+|\d+", text)
+        if m.group() not in _RELEASE_QUALIFIERS
     ]
+    release = next((i for i, (flag, _) in enumerate(parts) if flag != _NUMBER), len(parts))
+    while release > 1 and parts[release - 1] == (_NUMBER, 0):
+        release -= 1
+        del parts[release]
     if not parts:
         return ()
     return (*parts, (_END, ""))

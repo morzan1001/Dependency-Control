@@ -33,6 +33,18 @@ class TestParseVersionKey:
         assert parse_version_key("") == ()
 
     @pytest.mark.parametrize(
+        ("spelling", "same"),
+        [
+            pytest.param("5.2.20.RELEASE", "5.2.20", id="maven-release-qualifier"),
+            pytest.param("4.1.100.Final", "4.1.100", id="maven-final-qualifier"),
+            pytest.param("4.1.0", "4.1", id="trailing-zero"),
+            pytest.param("1:2.30-1", "2.30-1", id="epoch"),
+        ],
+    )
+    def test_spellings_of_one_release_share_a_key(self, spelling, same):
+        assert parse_version_key(spelling) == parse_version_key(same)
+
+    @pytest.mark.parametrize(
         ("lower", "higher"),
         [
             pytest.param("1.2.3", "1.2.4", id="patch-bump"),
@@ -56,7 +68,6 @@ class TestParseVersionKey:
             pytest.param("1.1.1", "1.1.1n", id="openssl-letter-release-above-base"),
             pytest.param("1.1.1", "1.1.1a", id="openssl-letter-a-is-no-alpha"),
             pytest.param("1.1.1n", "1.1.2", id="openssl-letter-release-below-next-patch"),
-            pytest.param("5.2.20", "5.2.20.RELEASE", id="maven-qualifier-above-bare"),
             pytest.param("0.6.0", "0.6.0+incompatible", id="go-incompatible-above-bare"),
         ],
     )

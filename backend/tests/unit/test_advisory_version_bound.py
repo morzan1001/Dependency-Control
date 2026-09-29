@@ -20,6 +20,9 @@ from app.schemas.notification import AdvisoryPackage
         ("v0.0.0-20210101000000-abcdef123456", "0.1.0", True),
         ("1:2.30-1", "2.29", False),
         ("2.15.0", "2.14.1", False),
+        ("1.1.1a", "1.1.1", False),
+        ("1.1.1", "1.1.1a", True),
+        ("2.14.0", "2.14", True),
         ("latest", "1.0.0", None),
     ],
 )
