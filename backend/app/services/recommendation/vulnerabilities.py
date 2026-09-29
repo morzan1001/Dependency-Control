@@ -5,7 +5,7 @@ from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
     EPSS_HIGH_THRESHOLD,
-    OS_PACKAGE_TYPES,
+    SOURCE_TYPE_IMAGE,
 )
 from app.core.epss import bucket_epss
 from app.schemas.recommendation import (
@@ -14,6 +14,7 @@ from app.schemas.recommendation import (
     RecommendationType,
     VulnerabilityInfo,
 )
+from app.services.analyzers.purl_utils import is_os_package_type
 from app.services.recommendation.common import (
     ModelOrDict,
     calculate_best_fix_version,
@@ -108,8 +109,11 @@ def _classify_category(vuln_info: VulnerabilityInfo, dep: ModelOrDict | None) ->
     if not dep:
         return "application"
 
-    source_type = get_attr(dep, "source_type", "")
-    if source_type == "image" or _is_os_package(dep):
+    source_type = get_attr(dep, "source_type")
+    # The parser's source wins; only an SBOM naming no source leaves the package type to decide.
+    if source_type == SOURCE_TYPE_IMAGE or (
+        not source_type and is_os_package_type(get_attr(dep, "purl"), get_attr(dep, "type"))
+    ):
         return "image"
     if get_attr(dep, "direct", False):
         return "application"
@@ -138,14 +142,6 @@ def _categorize_by_source(
         categories[_classify_category(vuln_info, dep)].append(vuln_info)
 
     return categories
-
-
-def _is_os_package(dep: ModelOrDict) -> bool:
-    """Check if a dependency is an OS-level package."""
-    pkg_type = str(get_attr(dep, "type", "")).lower()
-    purl = get_attr(dep, "purl", "") or ""
-
-    return pkg_type in OS_PACKAGE_TYPES or any(purl.startswith(f"pkg:{os_type}/") for os_type in OS_PACKAGE_TYPES)
 
 
 def _analyze_base_image_vulns(

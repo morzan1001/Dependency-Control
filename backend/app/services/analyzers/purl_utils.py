@@ -4,6 +4,8 @@ import re
 from typing import NamedTuple
 from urllib.parse import unquote
 
+from app.core.constants import OS_PACKAGE_TYPES
+
 _PYPI_NORMALIZE_RE = re.compile(r"[-_.]+")
 
 # Maximum lengths for PURL components to prevent DoS via unbounded strings
@@ -166,6 +168,11 @@ def get_purl_type(purl: str | None) -> str | None:
         return purl[4:].split("/")[0].lower()
     except (IndexError, AttributeError):
         return None
+
+
+def is_os_package_type(purl: str | None, pkg_type: str | None) -> bool:
+    """A distro package (deb, rpm, apk, ...), judged by the purl type before the declared type."""
+    return (get_purl_type(purl) or pkg_type or "").lower() in OS_PACKAGE_TYPES
 
 
 def is_purl_type(purl: str, expected_type: str | tuple[str, ...]) -> bool:

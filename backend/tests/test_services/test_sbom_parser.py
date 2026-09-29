@@ -2199,3 +2199,18 @@ def _spdx_package(name: str) -> dict:
 
 def _syft_artifact(name: str) -> dict:
     return {"id": name, "name": name, "version": "1.0.0", "type": "npm", "purl": f"pkg:npm/{name}@1.0.0"}
+
+
+class TestComponentSource:
+    @pytest.mark.parametrize(
+        ("purl", "pkg_type", "layer_digest", "scan_source", "expected"),
+        [
+            pytest.param("pkg:deb/debian/libssl@1.0", "library", None, "directory", "directory", id="deb-dir-scan"),
+            pytest.param("pkg:deb/debian/libssl@1.0", "library", "sha256:ab", None, "image", id="deb-in-a-layer"),
+            pytest.param("pkg:rpm/redhat/bash@5", "library", None, "image", "image", id="rpm-image-scan"),
+            pytest.param(None, "APK", None, "image", "image", id="declared-os-type"),
+            pytest.param("pkg:npm/lodash@4", "deb", None, "image", "application", id="purl-type-wins"),
+        ],
+    )
+    def test_os_packages_are_image_only_in_an_image_context(self, purl, pkg_type, layer_digest, scan_source, expected):
+        assert SBOMParser()._determine_component_source(purl, pkg_type, layer_digest, scan_source) == expected

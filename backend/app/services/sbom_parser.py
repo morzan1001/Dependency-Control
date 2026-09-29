@@ -7,7 +7,6 @@ from urllib.parse import quote, urlparse
 
 from app.core.constants import (
     APP_PACKAGE_TYPES,
-    OS_PACKAGE_TYPES,
     SOURCE_TYPE_APPLICATION,
     SOURCE_TYPE_DIRECTORY,
     SOURCE_TYPE_FILE,
@@ -17,7 +16,7 @@ from app.core.constants import (
 )
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
-from app.services.analyzers.purl_utils import get_purl_type, parse_purl
+from app.services.analyzers.purl_utils import get_purl_type, is_os_package_type, parse_purl
 from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
@@ -452,13 +451,10 @@ class SBOMParser:
         global_source_type: str | None,
     ) -> str | None:
         """Determine a component's likely source: image, application, file, or None."""
-        purl_type = get_purl_type(purl)
-        effective_type = (purl_type or pkg_type or "").lower()
-
-        if effective_type in OS_PACKAGE_TYPES and (layer_digest or global_source_type == SOURCE_TYPE_IMAGE):
+        if is_os_package_type(purl, pkg_type) and (layer_digest or global_source_type == SOURCE_TYPE_IMAGE):
             return SOURCE_TYPE_IMAGE
 
-        if effective_type in APP_PACKAGE_TYPES:
+        if (get_purl_type(purl) or pkg_type or "").lower() in APP_PACKAGE_TYPES:
             return SOURCE_TYPE_APPLICATION
 
         if layer_digest:
