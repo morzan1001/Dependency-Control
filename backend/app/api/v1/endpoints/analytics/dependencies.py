@@ -71,7 +71,7 @@ async def _package_finding_query(
     return {**scope, "component": {"$in": same or [component]}}
 
 
-def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> DependencyTreeNode:
+def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]], *, direct: bool) -> DependencyTreeNode:
     """Build one node without its children; the graph builder fills in child_ids."""
     name = get_attr(dep, "name", "")
     # The bare-artifact alias keys are lowercased, dependency names are not.
@@ -85,7 +85,7 @@ def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> Depen
         version=get_attr(dep, "version", ""),
         purl=get_attr(dep, "purl", ""),
         type=get_attr(dep, "type", "unknown"),
-        direct=get_attr(dep, "direct", False),
+        direct=direct,
         direct_inferred=get_attr(dep, "direct_inferred", False),
         has_findings=findings_count > 0,
         findings_count=findings_count,
@@ -105,7 +105,10 @@ def _build_dependency_graph(
 ) -> DependencyGraph:
     """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""
     edges = build_dependency_edges(dependencies)
-    node_by_key = {key: _build_tree_node(dep, findings_map) for key, dep in edges.dep_by_key.items()}
+    node_by_key = {
+        key: _build_tree_node(dep, findings_map, direct=key in edges.direct_keys)
+        for key, dep in edges.dep_by_key.items()
+    }
     for key, node in node_by_key.items():
         child_keys = sorted(
             edges.children_by_parent.get(key, []), key=lambda ck: node_by_key[ck].findings_count, reverse=True

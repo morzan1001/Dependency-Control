@@ -209,6 +209,7 @@ class TestDependencyGraphBuilder:
         graph = _graph([a, x_transitive, x_direct], {})
 
         assert sorted(_root_names(graph)) == ["a", "x"]
+        assert _by_name(graph)["x"].direct is True
 
     def test_findings_absent_yields_no_severity(self):
         node = _by_name(_graph([_dep("a", direct=True)], {}))["a"]
