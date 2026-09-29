@@ -139,7 +139,7 @@ export function FindingsDeltaTab({
             {(data?.items as FindingDeltaItem[] | undefined)?.map((item) => (
               <TableRow key={`${item.change}-${item.finding_id}`}>
                 <TableCell><ChangeBadge change={item.change} /></TableCell>
-                <TableCell><SeverityBadge severity={item.severity.toUpperCase()} /></TableCell>
+                <TableCell><SeverityBadge severity={item.severity} /></TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">{item.finding_type}</TableCell>
                 <TableCell>{item.title}</TableCell>
                 <TableCell className="text-muted-foreground">{item.component ?? ""}</TableCell>

@@ -1,7 +1,5 @@
 """Findings-delta: match findings across two scans by a type-specific semantic key
 (CVE id, secret finding_id, SAST rule id, ...) into the unified envelope.
-
-Stored `severity` is UPPERCASE; the envelope's is lowercase.
 """
 
 from __future__ import annotations
@@ -242,7 +240,7 @@ async def _fetch_waiver_touched(
 
 
 def _doc_severity(doc: dict) -> str:
-    return (doc.get("severity") or "unknown").lower()
+    return doc.get("severity") or "UNKNOWN"
 
 
 def _doc_type(doc: dict) -> str:

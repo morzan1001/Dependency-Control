@@ -232,7 +232,7 @@ async def test_findings_delta_added_and_removed(db):
     assert resp.totals.added == 1
     assert resp.totals.removed == 1
     assert resp.totals.unchanged == 1
-    assert resp.totals.by_severity["medium"] == 1
+    assert resp.totals.by_severity["MEDIUM"] == 1
     assert resp.totals.by_type["vulnerability"] == 1
     added = [i for i in resp.items if i.change == "added"]
     removed = [i for i in resp.items if i.change == "removed"]
@@ -261,8 +261,8 @@ async def test_breakdowns_decompose_full_totals_under_change_filter(db):
     assert resp.totals.removed == 1
     # breakdowns reconcile with added + removed (= 2), not just the displayed 'added'
     assert sum(resp.totals.by_severity.values()) == resp.totals.added + resp.totals.removed
-    assert resp.totals.by_severity.get("medium") == 1  # added CVE-NEW
-    assert resp.totals.by_severity.get("high") == 1  # removed secret
+    assert resp.totals.by_severity.get("MEDIUM") == 1  # added CVE-NEW
+    assert resp.totals.by_severity.get("HIGH") == 1  # removed secret
     assert resp.totals.by_type.get("vulnerability") == 1
     assert resp.totals.by_type.get("secret") == 1
     # the paginated items remain scoped to the change filter
@@ -289,7 +289,7 @@ async def test_findings_delta_severity_filter(db):
         finding_type=None,
     )
     assert resp.totals.added == 1
-    assert resp.items[0].severity == "critical"
+    assert resp.items[0].severity == "CRITICAL"
 
 
 @pytest.mark.asyncio
