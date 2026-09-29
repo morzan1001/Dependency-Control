@@ -183,6 +183,28 @@ class TestNormalizeOpengrep:
         assert entry["fingerprint"] == "abc123def456"
         assert entry["code_extract"] == "random.random()"
 
+    def test_merged_sast_finding_stores_the_scanner_message_once(self):
+        raw = {
+            "check_id": "python.lang.security.audit.eval-detected",
+            "path": "app/util.py",
+            "start": {"line": 10, "col": 5},
+            "end": {"line": 10, "col": 20},
+            "extra": {
+                "severity": "ERROR",
+                "message": "eval() on user input",
+                "metadata": {"cwe": ["CWE-95"], "owasp": ["A03:2021"]},
+                "lines": "eval(x)",
+            },
+        }
+        self.agg.aggregate("opengrep", {"results": [raw]})
+        [f] = self.agg.get_findings()
+
+        assert set(f.details) == {"sast_findings", "file", "line"}
+        [entry] = f.details["sast_findings"]
+        assert set(entry) == {"id", "scanner", "severity", "details"}
+        assert entry["details"]["cwe_ids"]
+        assert f.description
+
     def test_get_findings_sets_match_signature(self):
         result = self._opengrep_result(
             [

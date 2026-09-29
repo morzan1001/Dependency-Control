@@ -58,8 +58,8 @@ interface SastIssueEntry {
     id: string
     scanner: string
     severity: string
-    title: string
-    description: string
+    title?: string
+    description?: string
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     details: Record<string, any>
 }
@@ -333,7 +333,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                                                  <Badge variant={getSeverityBadgeVariant(issue.severity)} className="flex-shrink-0">
                                                     {issue.severity}
                                                 </Badge>
-                                                <span className="font-medium truncate text-sm">{issue.title}</span>
+                                                <span className="font-medium truncate text-sm">{issue.details?.title ?? issue.title}</span>
                                             </div>
                                             <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                                 <Badge variant="outline" className="text-[10px] py-0 h-5">
@@ -348,7 +348,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                                 {isExpanded && (
                                     <div className="p-4 pt-0 border-t bg-muted/10">
                                         <div className="mt-4">
-                                            {renderSingleFindingDetails(issue.details, issue.description, [issue.scanner])}
+                                            {renderSingleFindingDetails(issue.details, issue.description ?? finding.description, [issue.scanner])}
                                         </div>
                                     </div>
                                 )}
@@ -361,7 +361,7 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     }
 
     const singleFindingDetails = sastFindings.length === 1 ? sastFindings[0].details : details
-    const singleFindingDescription = sastFindings.length === 1 ? sastFindings[0].description : finding.description
+    const singleFindingDescription = finding.description
     const singleFindingScanners = sastFindings.length === 1 ? [sastFindings[0].scanner] : (finding.scanners || [])
     
     return (

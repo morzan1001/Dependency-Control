@@ -12,21 +12,12 @@ from app.schemas.finding import VulnerabilityEntry
 from app.services.aggregation.versions import VersionKey, parse_version_key
 
 
-def _extend_unique(target: list[Any], items: list[Any]) -> None:
-    """Append items to target list, skipping duplicates."""
-    for item in items:
-        if item not in target:
-            target.append(item)
-
-
 def _sast_entry(f: Finding) -> dict[str, Any]:
     """Build the per-scanner sast_findings entry from a single Finding."""
     return {
         "id": f.details.get("rule_id", "unknown"),
         "scanner": f.scanners[0] if f.scanners else "unknown",
         "severity": f.severity,
-        "title": f.details.get("title", f.description[:50]),
-        "description": f.description,
         "details": f.details,
     }
 
@@ -42,9 +33,6 @@ def merge_sast_findings(findings: list[Finding]) -> Finding | None:
         "sast_findings": [],
         "file": base.component,
         "line": base.details.get("line") or base.details.get("start", {}).get("line"),
-        "cwe_ids": [],
-        "category_groups": [],
-        "owasp": [],
     }
 
     merged_scanners: set = set()
@@ -59,9 +47,6 @@ def merge_sast_findings(findings: list[Finding]) -> Finding | None:
 
         merged_scanners.update(f.scanners)
         merged_details["sast_findings"].append(_sast_entry(f))
-        _extend_unique(merged_details["cwe_ids"], f.details.get("cwe_ids") or [])
-        _extend_unique(merged_details["category_groups"], f.details.get("category_groups") or [])
-        _extend_unique(merged_details["owasp"], f.details.get("owasp") or [])
 
     description = base.description
     if len(findings) > 1 and len(merged_scanners) > 1:

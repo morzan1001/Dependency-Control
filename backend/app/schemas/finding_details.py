@@ -318,8 +318,6 @@ class SastFindingEntry(_DetailsModel):
     id: str | None = None
     scanner: str | None = None
     severity: str | None = None
-    title: str | None = None
-    description: str | None = None
     details: SastScannerDetails | None = None
 
 
@@ -329,9 +327,6 @@ class SastDetails(_DetailsModel):
     sast_findings: list[SastFindingEntry] = []
     file: str | None = None
     line: int | None = None
-    cwe_ids: list[str] = []
-    category_groups: list[Any] = []
-    owasp: list[str] = []
 
 
 class IacDetails(_DetailsModel):
