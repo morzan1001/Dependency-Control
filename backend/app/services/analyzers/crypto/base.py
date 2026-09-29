@@ -20,16 +20,20 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver
 logger = logging.getLogger(__name__)
 
 
-def crypto_findings_for_assets(assets: Sequence[CryptoAsset], rules: Sequence[CryptoRule]) -> list[dict[str, Any]]:
-    """One finding per asset violating at least one rule, at the strictest matched severity.
+def crypto_findings_for_assets(
+    assets: Sequence[CryptoAsset], rules: Sequence[CryptoRule], *, scanner: str
+) -> list[dict[str, Any]]:
+    """One finding per asset and violated finding type, at the strictest severity matched within that type.
 
-    All matched rules are recorded in details for cross-framework attribution.
+    All matched rules of the type are recorded in details for cross-framework attribution.
     """
     findings: list[dict[str, Any]] = []
     for asset in assets:
-        matched_rules = [r for r in rules if rule_matches(asset, r)]
-        if matched_rules:
-            findings.append(_build_finding_dedup(asset, matched_rules))
+        by_type: dict[str, list[CryptoRule]] = {}
+        for rule in rules:
+            if rule_matches(asset, rule):
+                by_type.setdefault(rule.finding_type, []).append(rule)
+        findings.extend(_build_finding_dedup(asset, matched, scanner) for matched in by_type.values())
     return findings
 
 
@@ -56,13 +60,14 @@ class CryptoRuleAnalyzer(Analyzer):
             effective = await CryptoPolicyResolver(db).resolve(project_id)
             rules = [r for r in effective.rules if r.enabled and r.finding_type in self.finding_types]
             # assets x rules matching; off the event loop every tenant shares.
-            return {"findings": await asyncio.to_thread(crypto_findings_for_assets, assets, rules)}
+            findings = await asyncio.to_thread(crypto_findings_for_assets, assets, rules, scanner=self.name)
+            return {"findings": findings}
         except Exception as e:
             logger.exception("crypto analyzer %s failed: %s", self.name, e)
             return {"error": str(e), "findings": []}
 
 
-def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[str, Any]:
+def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule], scanner: str) -> dict[str, Any]:
     # Lead rule (strictest by default_severity) drives top-level fields; the rest
     # are recorded under details.matched_rules.
     lead = max(rules, key=lambda r: get_severity_value(r.default_severity))
@@ -97,7 +102,7 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[st
         "component": component_label,
         "version": asset.variant or "",
         "description": lead.description or lead.name,
-        "scanners": ["crypto_rule_analyzer"],
+        "scanners": [scanner],
         "details": CryptoRuleDetails(
             rule_id=lead.rule_id,
             rule_name=lead.name,

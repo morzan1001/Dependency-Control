@@ -15,12 +15,6 @@ _ASSET_LIMIT = 50_000
 _POLL_ATTEMPTS = 200
 _POLL_INTERVAL_SECONDS = 0.1
 _NON_TERMINAL_STATUSES = ("running", "pending", "processing", None)
-# Regenerated per call, so it is the one field two evaluations of the same rules cannot share.
-_GENERATED_FIELD = "id"
-
-
-def _without_generated_ids(findings):
-    return [{key: value for key, value in finding.items() if key != _GENERATED_FIELD} for finding in findings]
 
 
 def _rule(rule_id, ft, **extra):
@@ -244,9 +238,9 @@ async def test_analyzer_adds_nothing_to_the_shared_rule_evaluation(db):
     )
 
     assets = await CryptoAssetRepository(db).list_by_scan(_SHARED_PROJECT, _SHARED_SCAN, limit=_ASSET_LIMIT)
-    expected = crypto_findings_for_assets(assets, [owned])
+    expected = crypto_findings_for_assets(assets, [owned], scanner="crypto_weak_algorithm")
     assert expected, "the rule must actually match, or the comparison is vacuous"
-    assert _without_generated_ids(result["findings"]) == _without_generated_ids(expected)
+    assert result["findings"] == expected
 
 
 @pytest.mark.live_mongo

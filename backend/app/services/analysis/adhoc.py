@@ -671,7 +671,7 @@ def _aggregate_crypto_rules(
             CryptoAsset(project_id=_ADHOC_SCOPE, scan_id=_ADHOC_SCOPE, **asset.model_dump())
             for asset in parsed_input.parsed.crypto_assets
         ]
-        findings = crypto_findings_for_assets(assets, rules)
+        findings = crypto_findings_for_assets(assets, rules, scanner=_CRYPTO_RULES)
         if findings:
             aggregator.aggregate(
                 _CRYPTO_DISPATCH_KEY,
