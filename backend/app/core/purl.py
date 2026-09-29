@@ -222,15 +222,3 @@ def get_purl_type(purl: str | None) -> str | None:
 def is_os_package_type(purl: str | None, pkg_type: str | None) -> bool:
     """A distro package (deb, rpm, apk, ...), judged by the purl type before the declared type."""
     return (get_purl_type(purl) or pkg_type or "").lower() in OS_PACKAGE_TYPES
-
-
-def is_purl_type(purl: str, expected_type: str) -> bool:
-    return get_purl_type(purl) == expected_type
-
-
-def is_pypi(purl: str) -> bool:
-    return is_purl_type(purl, "pypi")
-
-
-def is_npm(purl: str) -> bool:
-    return is_purl_type(purl, "npm")

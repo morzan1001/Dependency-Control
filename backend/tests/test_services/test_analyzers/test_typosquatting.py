@@ -10,6 +10,7 @@ import pytest
 from app.core.cache import cache_service
 from app.core.constants import TYPOSQUATTING_POPULAR_PACKAGE_RANKS
 from app.services.analyzers.typosquatting import TyposquattingAnalyzer
+from tests.helpers.analyzers import analyze_cyclonedx
 
 
 class TestIsSuspicious:
@@ -270,3 +271,32 @@ class TestCorpusDepthIsDeclaredAndReported:
 
         assert len(packages) < TYPOSQUATTING_POPULAR_PACKAGE_RANKS
         assert "HTTP 301" in caplog.text
+
+
+class TestTheEcosystemComesFromThePurl:
+    """The purl's registry is the ecosystem rule every analyzer shares, so a syft type alone names none."""
+
+    _CORPUS: ClassVar[dict[str, set[str]]] = {"pypi": {"requests"}}
+
+    async def _issues(self, component):
+        analyzer = TyposquattingAnalyzer()
+        with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=self._CORPUS)):
+            result = await analyze_cyclonedx(analyzer, [component])
+        return result["typosquatting_issues"]
+
+    @pytest.mark.asyncio
+    async def test_a_pypi_purl_is_compared_against_the_pypi_corpus(self):
+        component = {"type": "library", "name": "reqests", "version": "1.0", "purl": "pkg:pypi/reqests@1.0"}
+
+        assert [issue["imitated_package"] for issue in await self._issues(component)] == ["requests"]
+
+    @pytest.mark.asyncio
+    async def test_a_syft_python_type_without_a_purl_is_not_compared(self):
+        component = {
+            "type": "library",
+            "name": "reqests",
+            "version": "1.0",
+            "properties": [{"name": "syft:package:type", "value": "python"}],
+        }
+
+        assert await self._issues(component) == []

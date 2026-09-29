@@ -17,7 +17,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
-from app.core.purl import is_npm, is_pypi, pep503_normalize
+from app.core.purl import parse_purl, pep503_normalize
 
 logger = logging.getLogger(__name__)
 
@@ -34,15 +34,6 @@ def _normalize_pkg_name(name: str | None) -> str:
 def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
     """True if ``longer`` extends ``shorter`` after a separator (``react-dom`` yes, ``expresss`` no)."""
     return longer.startswith(shorter + "-")
-
-
-def _resolve_ecosystem(component: dict[str, Any], purl: str) -> str:
-    """``pypi`` / ``npm`` / ``unknown`` from PURL or component type."""
-    if is_pypi(purl) or component.get("type") == "python":
-        return "pypi"
-    if is_npm(purl) or component.get("type") == "npm":
-        return "npm"
-    return "unknown"
 
 
 def _severity_for_ratio(ratio: float, critical_at: float, high_at: float) -> str:
@@ -258,8 +249,8 @@ class TyposquattingAnalyzer(Analyzer):
         high_at: float,
     ) -> dict[str, Any] | None:
         """Return a typosquat finding for ``component``, or ``None`` if clean."""
-        purl = component.get("purl", "")
-        ecosystem = _resolve_ecosystem(component, purl)
+        parsed = parse_purl(component.get("purl") or "")
+        ecosystem = parsed.registry_system if parsed else None
         if ecosystem not in popular_packages:
             return None
 

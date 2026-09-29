@@ -13,7 +13,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer, normalize_hash_algorithm
-from app.core.purl import is_npm, is_pypi
+from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
 
@@ -76,15 +76,6 @@ class HashVerificationAnalyzer(Analyzer):
         }
 
     @staticmethod
-    def _detect_registry(purl: str) -> str | None:
-        """Return the registry name for a PURL, or None if unsupported."""
-        if is_pypi(purl):
-            return "pypi"
-        if is_npm(purl):
-            return "npm"
-        return None
-
-    @staticmethod
     def _hashes_from_cyclonedx_list(hashes: list[Any]) -> dict[str, str]:
         """Extract hashes from a CycloneDX-style list."""
         result: dict[str, str] = {}
@@ -139,8 +130,9 @@ class HashVerificationAnalyzer(Analyzer):
         if not name or not version:
             return None
 
-        registry = self._detect_registry(purl)
-        if registry is None:
+        parsed = parse_purl(purl)
+        registry = parsed.registry_system if parsed else None
+        if registry not in self.REGISTRY_APIS:
             return None
 
         sbom_hashes = self._extract_sbom_hashes(component)

@@ -22,7 +22,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
-from app.core.purl import is_npm, is_pypi, parse_purl
+from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
 
@@ -142,14 +142,13 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         parsed = parse_purl(purl)
         registry = parsed.registry_system if parsed else None
-        cache_key = CacheKeys.maintainer(registry, name) if registry else None
-        if not cache_key:
+        if not registry:
             return None
 
         # Distributed lock prevents cache stampede across pods.
         cached_info = await cache_service.get_or_fetch_with_lock(
-            key=cache_key,
-            fetch_fn=lambda: self._fetch_maintainer_data(client, purl, name, repo_url, github_token),
+            key=CacheKeys.maintainer(registry, name),
+            fetch_fn=lambda: self._fetch_maintainer_data(client, registry, name, repo_url, github_token),
             ttl_seconds=CacheTTL.MAINTAINER_INFO,
         )
 
@@ -173,7 +172,7 @@ class MaintainerRiskAnalyzer(Analyzer):
     async def _fetch_maintainer_data(
         self,
         client: InstrumentedAsyncClient,
-        purl: str,
+        registry: str,
         name: str,
         repo_url: str | None,
         github_token: str | None,
@@ -181,11 +180,11 @@ class MaintainerRiskAnalyzer(Analyzer):
         """Pull registry + GitHub data; ``{}`` is the negative-cache marker."""
         cache_data: dict[str, Any] = {"maintainer_info": {}, "github_info": None}
 
-        if is_pypi(purl):
+        if registry == "pypi":
             info = await self._check_pypi(client, name)
             if info:
                 cache_data["maintainer_info"] = info
-        elif is_npm(purl):
+        elif registry == "npm":
             info = await self._check_npm(client, name)
             if info:
                 cache_data["maintainer_info"] = info
