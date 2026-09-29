@@ -18,6 +18,7 @@ from urllib.parse import quote
 from packaging.version import InvalidVersion, Version
 
 from app.core import ensure_utc
+from app.core.constants import DEPS_DEV_API_URL
 
 logger = logging.getLogger(__name__)
 
@@ -224,13 +225,13 @@ class DepsDevReleaseHistoryFetcher:
         cache_get: CacheGet,
         cache_set: CacheSet,
         http_fetch: HttpFetch,
-        cache_key_builder: Callable[[str, str], str] | None = None,
-        cache_ttl_seconds: int = 24 * 3600,
+        cache_key_builder: Callable[[str, str], str],
+        cache_ttl_seconds: int,
     ) -> None:
         self._cache_get = cache_get
         self._cache_set = cache_set
         self._http_fetch = http_fetch
-        self._cache_key_builder = cache_key_builder or (lambda system, name: f"releases:{system}:{name}")
+        self._cache_key_builder = cache_key_builder
         self._cache_ttl = cache_ttl_seconds
 
     async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
@@ -267,7 +268,7 @@ class DepsDevReleaseHistoryFetcher:
 
 
 def _build_deps_dev_url(system: str, name: str) -> str:
-    return f"https://api.deps.dev/v3alpha/systems/{system}/packages/{quote(name, safe='')}"
+    return f"{DEPS_DEV_API_URL}/systems/{system}/packages/{quote(name, safe='')}"
 
 
 def _release_list_to_cache(releases: Sequence[ReleaseInfo]) -> list[dict[str, str]]:
