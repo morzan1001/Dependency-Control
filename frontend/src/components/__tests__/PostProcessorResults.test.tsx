@@ -54,6 +54,15 @@ describe("EPSSKEVResults risk-score tile label", () => {
   });
 });
 
+describe("EPSSKEVResults KEV tile label", () => {
+  it("says it counts CVEs as enriched at scan time", () => {
+    // The scan stats count KEV findings, waiver-aware; this tile counts CVEs from the scan-time snapshot.
+    render(<EPSSKEVResults data={{ ...baseData, kev_matches: 3 }} />);
+
+    expect(screen.getByText("KEV CVEs at scan time")).toBeInTheDocument();
+  });
+});
+
 const reachabilityData = {
   total_vulnerabilities: 60,
   analyzed: 60,

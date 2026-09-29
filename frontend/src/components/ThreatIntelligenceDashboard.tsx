@@ -209,7 +209,7 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertCircle className="h-4 w-4 text-severity-critical" />
-                  <span className="text-sm">CISA KEV (Actively Exploited)</span>
+                  <span className="text-sm">KEV findings (actively exploited)</span>
                 </div>
                 <Badge variant={threatIntel.kev_count > 0 ? "destructive" : "secondary"}>
                   {threatIntel.kev_count}

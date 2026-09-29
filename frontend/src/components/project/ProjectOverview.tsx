@@ -130,9 +130,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
   const hasThreatIntelData = threatIntel && (
     (threatIntel.kev_count ?? 0) > 0 ||
     (threatIntel.high_epss_count ?? 0) > 0 ||
-    (threatIntel.medium_epss_count ?? 0) > 0 ||
-    (threatIntel.weaponized_count ?? 0) > 0 ||
-    (threatIntel.active_exploitation_count ?? 0) > 0
+    (threatIntel.medium_epss_count ?? 0) > 0
   )
   const reachability = stats.reachability
   const hasReachabilityData = reachability && (

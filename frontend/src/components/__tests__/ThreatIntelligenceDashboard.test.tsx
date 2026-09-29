@@ -81,3 +81,10 @@ describe("ThreatIntelligenceDashboard reachability card", () => {
     expect(likelyRow).toHaveTextContent("8");
   });
 });
+
+describe("ThreatIntelligenceDashboard KEV row", () => {
+  it("says it counts findings, not CVEs", () => {
+    render(<ThreatIntelligenceDashboard stats={makeStats({ total: 2, deprioritized_count: 0 })} />);
+    expect(screen.getByText("KEV findings (actively exploited)")).toBeInTheDocument();
+  });
+});
