@@ -223,10 +223,6 @@ def _get_description(vuln: dict, finding: Any) -> str | None:
     return None
 
 
-def _check_fix_availability(nested_vulns: list[dict[str, Any]]) -> bool:
-    return any(vuln.get("fixed_version") for vuln in nested_vulns)
-
-
 def _max_nested_cvss(details: dict[str, Any]) -> float | None:
     """Aggregated findings carry CVSS only per CVE in details.vulnerabilities[]."""
     scores = [
@@ -264,12 +260,6 @@ def _build_direct_vuln_result(
     )
 
 
-def _nested_vuln_aliases(vuln: dict[str, Any], finding: Any) -> list[str]:
-    if vuln.get("id") != finding.finding_id:
-        return [finding.finding_id]
-    return finding.aliases or []
-
-
 def _nested_vuln_waived(vuln: dict[str, Any], finding: Any) -> bool:
     if vuln.get("waived", False):
         return True
@@ -277,19 +267,20 @@ def _nested_vuln_waived(vuln: dict[str, Any], finding: Any) -> bool:
 
 
 def _build_nested_vuln_result(
-    vuln: dict[str, Any], finding: Any, details: dict[str, Any], project_name_map: dict[str, str]
+    vuln: dict[str, Any], finding: Any, project_name_map: dict[str, str]
 ) -> VulnerabilitySearchResult:
     project_id = finding.project_id or ""
+    vulnerability_id = canonical_cve(vuln) or finding.finding_id
     return VulnerabilitySearchResult(
-        vulnerability_id=canonical_cve(vuln) or finding.finding_id,
-        aliases=_nested_vuln_aliases(vuln, finding),
+        vulnerability_id=vulnerability_id,
+        aliases=sorted({vuln.get("id"), *(vuln.get("aliases") or [])} - {vulnerability_id, None}),
         severity=(vuln.get("severity") or finding.severity or "UNKNOWN"),
         cvss_score=vuln.get("cvss_score"),
-        epss_score=(vuln.get("epss_score") or details.get("epss_score")),
-        epss_percentile=(vuln.get("epss_percentile") or details.get("epss_percentile")),
-        in_kev=bool(vuln.get(DETAILS_KEY_IN_KEV) or details.get(DETAILS_KEY_IN_KEV)),
-        kev_ransomware=bool(vuln.get(DETAILS_KEY_KEV_RANSOMWARE) or details.get(DETAILS_KEY_KEV_RANSOMWARE)),
-        kev_due_date=vuln.get("kev_due_date") or details.get("kev_due_date"),
+        epss_score=vuln.get("epss_score"),
+        epss_percentile=vuln.get("epss_percentile"),
+        in_kev=bool(vuln.get(DETAILS_KEY_IN_KEV)),
+        kev_ransomware=bool(vuln.get(DETAILS_KEY_KEV_RANSOMWARE)),
+        kev_due_date=vuln.get("kev_due_date"),
         component=finding.component or "",
         version=finding.version or "",
         project_id=project_id,
@@ -312,18 +303,22 @@ def _build_vuln_query(
     include_waived: bool,
 ) -> dict[str, Any]:
     search_regex = {"$regex": re.escape(q), "$options": "i"}
-    query: dict[str, Any] = {
-        "scan_id": {"$in": scan_ids},
-        "$or": [
-            {"id": search_regex},
-            {"aliases": search_regex},
-            {"description": search_regex},
-            {"details.vulnerabilities.id": search_regex},
-            {"details.vulnerabilities.resolved_cve": search_regex},
-        ],
-    }
+    clauses: list[dict[str, Any]] = [
+        {
+            "$or": [
+                {"id": search_regex},
+                {"aliases": search_regex},
+                {"description": search_regex},
+                {"details.vulnerabilities.id": search_regex},
+                {"details.vulnerabilities.resolved_cve": search_regex},
+            ]
+        }
+    ]
     if severity:
-        query["severity"] = severity.upper()
+        # A document carries its worst advisory's severity, so a HIGH CVE can sit in a CRITICAL one.
+        sev = severity.upper()
+        clauses.append({"$or": [{"severity": sev}, {"details.vulnerabilities.severity": sev}]})
+    query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "$and": clauses}
     if finding_type:
         query["type"] = finding_type
     if not include_waived:
@@ -342,32 +337,33 @@ _VULN_SORT_FIELD_MAP = {
 
 
 def _vuln_results_for_finding(
-    finding: Any,
-    query_lower: str,
-    in_kev: bool | None,
-    has_fix: bool | None,
-    project_name_map: dict[str, str],
+    finding: Any, query_lower: str, project_name_map: dict[str, str]
 ) -> list[VulnerabilitySearchResult]:
-    """Build VulnerabilitySearchResult entries for one finding, applying KEV/fix filters."""
+    """One row per advisory the query names, else one row for the whole finding."""
     details = finding.details
-    nested_vulns = details.get("vulnerabilities", [])
-
-    if in_kev is not None and in_kev != bool(details.get(DETAILS_KEY_IN_KEV)):
-        return []
-
-    has_fix_status = _check_fix_availability(nested_vulns)
-    if has_fix is not None and has_fix != has_fix_status:
-        return []
-
     matched_vulns = [
         vuln
-        for vuln in nested_vulns
+        for vuln in details.get("vulnerabilities", [])
         if query_lower in vuln.get("id", "").lower() or query_lower in vuln.get("resolved_cve", "").lower()
     ]
-
     if not matched_vulns:
         return [_build_direct_vuln_result(finding, details, project_name_map)]
-    return [_build_nested_vuln_result(vuln, finding, details, project_name_map) for vuln in matched_vulns]
+    return [_build_nested_vuln_result(vuln, finding, project_name_map) for vuln in matched_vulns]
+
+
+def _row_matches(
+    row: VulnerabilitySearchResult,
+    severity: str | None,
+    in_kev: bool | None,
+    has_fix: bool | None,
+    include_waived: bool,
+) -> bool:
+    return (
+        (include_waived or not row.waived)
+        and (severity is None or row.severity == severity.upper())
+        and (in_kev is None or row.in_kev == in_kev)
+        and (has_fix is None or bool(row.fixed_version) == has_fix)
+    )
 
 
 @router.get("/vulnerability-search", responses=RESP_AUTH)
@@ -395,7 +391,7 @@ async def search_vulnerabilities(
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> VulnerabilitySearchResponse:
-    """Search vulnerabilities across accessible projects by id, aliases, nested ids, and description."""
+    """Search vulnerabilities by id, aliases and advisory ids; description matches reach non-vulnerability findings."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     accessible_project_ids = await get_user_project_ids(current_user, db)
@@ -442,9 +438,12 @@ async def search_vulnerabilities(
     )
 
     query_lower = q.lower()
-    results: list[VulnerabilitySearchResult] = []
-    for finding in findings:
-        results.extend(_vuln_results_for_finding(finding, query_lower, in_kev, has_fix, project_name_map))
+    results = [
+        row
+        for finding in findings
+        for row in _vuln_results_for_finding(finding, query_lower, project_name_map)
+        if _row_matches(row, severity, in_kev, has_fix, include_waived)
+    ]
 
     # MongoDB can't sort by severity order, so resort in Python with the rank map.
     if sort_by == "severity":

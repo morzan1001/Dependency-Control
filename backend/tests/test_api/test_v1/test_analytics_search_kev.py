@@ -2,7 +2,7 @@
 
 from types import SimpleNamespace
 
-from app.api.v1.endpoints.analytics.search import _vuln_results_for_finding
+from app.api.v1.endpoints.analytics.search import _row_matches, _vuln_results_for_finding
 
 
 def _finding(details):
@@ -31,17 +31,20 @@ _KEV_DETAILS = {
 
 
 def test_the_document_row_carries_the_persisted_kev_roll_up():
-    [row] = _vuln_results_for_finding(_finding(_KEV_DETAILS), "log4j", None, None, {})
+    [row] = _vuln_results_for_finding(_finding(_KEV_DETAILS), "log4j", {})
 
     assert (row.in_kev, row.kev_ransomware, row.kev_due_date) == (True, True, "2026-03-01")
 
 
 def test_the_kev_filter_reads_the_persisted_roll_up():
-    assert _vuln_results_for_finding(_finding(_KEV_DETAILS), "log4j", False, None, {}) == []
-    assert _vuln_results_for_finding(_finding({"vulnerabilities": []}), "log4j", True, None, {}) == []
+    [kev_row] = _vuln_results_for_finding(_finding(_KEV_DETAILS), "log4j", {})
+    [plain_row] = _vuln_results_for_finding(_finding({"vulnerabilities": []}), "log4j", {})
+
+    assert not _row_matches(kev_row, None, False, None, False)
+    assert not _row_matches(plain_row, None, True, None, False)
 
 
 def test_a_document_without_kev_marks_is_not_in_kev():
-    [row] = _vuln_results_for_finding(_finding({"vulnerabilities": []}), "log4j", None, None, {})
+    [row] = _vuln_results_for_finding(_finding({"vulnerabilities": []}), "log4j", {})
 
     assert (row.in_kev, row.kev_ransomware, row.kev_due_date) == (False, False, None)
