@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from typing import Any
 
 from app.core.constants import get_severity_value
@@ -17,6 +18,7 @@ from app.schemas.project import LicensePolicySchema
 
 from .constants import (
     POLICY_VIOLATION_MIN_RANK,
+    SPDX_SSPL_1_0,
     UNDETERMINED_LICENSE_ID,
     UNDETERMINED_LICENSE_MESSAGE,
 )
@@ -30,12 +32,10 @@ def is_acceptable_under_policy(issue: dict[str, Any] | None) -> bool:
 
 
 def evaluate_license(
-    component: str,
-    version: str,
+    component: dict[str, Any],
     license_info: LicenseInfo,
-    lic_url: str | None,
-    purl: str,
     policy: LicensePolicySchema,
+    lic_url: str | None = None,
 ) -> dict[str, Any] | None:
     """Return an issue dict if the license is problematic under `policy`, else None."""
 
@@ -46,258 +46,222 @@ def evaluate_license(
         return None
 
     if license_info.category == LicenseCategory.WEAK_COPYLEFT:
-        return evaluate_weak_copyleft(component, version, license_info, lic_url, purl, policy)
+        return evaluate_weak_copyleft(component, license_info, lic_url, policy)
 
     if license_info.category == LicenseCategory.STRONG_COPYLEFT:
-        return evaluate_strong_copyleft(component, version, license_info, lic_url, purl, policy)
+        return evaluate_strong_copyleft(component, license_info, lic_url, policy)
 
     if license_info.category == LicenseCategory.NETWORK_COPYLEFT:
-        return evaluate_network_copyleft(component, version, license_info, lic_url, purl, policy)
+        return evaluate_network_copyleft(component, license_info, lic_url, policy)
 
     if license_info.category == LicenseCategory.PROPRIETARY:
-        return create_issue(
-            component=component,
-            version=version,
-            license_id=license_info.spdx_id,
-            severity=Severity.HIGH,
-            category=license_info.category,
-            message=f"Non-commercial or proprietary license: {license_info.name}",
-            explanation=license_info.description,
-            recommendation=(
-                "This package cannot be used in commercial products. "
-                "Find an alternative or obtain a commercial license."
-            ),
-            obligations=license_info.obligations,
-            risks=license_info.risks,
-            purl=purl,
-            license_url=lic_url,
+        return _issue(
+            license_info,
+            component,
+            lic_url,
+            Severity.HIGH,
+            "Proprietary or restricted-use license",
+            "This license restricts commercial use, production use or derivative works, depending on its terms. "
+            "Check them against your use, find an alternative, or obtain a commercial license.",
         )
 
     return None
 
 
+def _issue(
+    license_info: LicenseInfo,
+    component: dict[str, Any],
+    lic_url: str | None,
+    severity: Severity,
+    message: str,
+    recommendation: str,
+    *,
+    explanation: str | None = None,
+    reason: str | None = None,
+    baseline: Severity | None = None,
+) -> dict[str, Any]:
+    softened = baseline is not None and get_severity_value(severity.value) < get_severity_value(baseline.value)
+    return create_issue(
+        component=component,
+        license_id=license_info.spdx_id,
+        severity=severity,
+        category=license_info.category.value,
+        message=f"{message}: {license_info.name}",
+        explanation=explanation or license_info.description,
+        recommendation=recommendation,
+        obligations=license_info.obligations,
+        risks=license_info.risks,
+        license_url=lic_url,
+        context_reason=reason,
+        severity_without_context=baseline if softened else None,
+    )
+
+
 def evaluate_weak_copyleft(
-    component: str,
-    version: str,
+    component: dict[str, Any],
     license_info: LicenseInfo,
     lic_url: str | None,
-    purl: str,
     policy: LicensePolicySchema,
 ) -> dict[str, Any] | None:
     """Weak copyleft (LGPL, MPL, EPL, CDDL): obligation only on modification."""
     if policy.library_usage == LibraryUsage.UNMODIFIED:
         return None
 
-    context_reason = None
-    if policy.library_usage == LibraryUsage.MODIFIED:
-        context_reason = (
+    return _issue(
+        license_info,
+        component,
+        lic_url,
+        Severity.INFO,
+        "Weak copyleft license",
+        "This license allows use in proprietary software, but modifications "
+        "to this library must be shared under the same license.",
+        reason=(
             "Library is marked as modified — modifications to this library must be shared under the same license."
-        )
-
-    return create_issue(
-        component=component,
-        version=version,
-        license_id=license_info.spdx_id,
-        severity=Severity.INFO,
-        category=license_info.category,
-        message=f"Weak copyleft license: {license_info.name}",
-        explanation=license_info.description,
-        recommendation=(
-            "This license allows use in proprietary software, but modifications "
-            "to this library must be shared under the same license."
+            if policy.library_usage == LibraryUsage.MODIFIED
+            else None
         ),
-        obligations=license_info.obligations,
-        risks=license_info.risks,
-        purl=purl,
-        license_url=lic_url,
-        context_reason=context_reason,
     )
 
 
 def evaluate_strong_copyleft(
-    component: str,
-    version: str,
+    component: dict[str, Any],
     license_info: LicenseInfo,
     lic_url: str | None,
-    purl: str,
     policy: LicensePolicySchema,
 ) -> dict[str, Any] | None:
     """Strong copyleft (GPL): obligations trigger only upon distribution."""
+    issue = partial(_issue, license_info, component, lic_url, baseline=Severity.HIGH)
+
     if policy.distribution_model == DistributionModel.INTERNAL_ONLY:
-        return create_issue(
-            component=component,
-            version=version,
-            license_id=license_info.spdx_id,
-            severity=Severity.INFO,
-            category=license_info.category,
-            message=f"Strong copyleft license (internal use only): {license_info.name}",
-            explanation=license_info.description,
-            recommendation=(
-                "This project is internal-only. GPL obligations only apply when "
-                "distributing software, so no action is required."
-            ),
-            obligations=license_info.obligations,
-            risks=license_info.risks,
-            purl=purl,
-            license_url=lic_url,
-            context_reason=("Severity reduced: project is internal-only, GPL distribution obligations do not apply."),
-            effective_severity=Severity.HIGH.value,
+        return issue(
+            Severity.INFO,
+            "Strong copyleft license (internal use only)",
+            "This project is internal-only. GPL obligations only apply when "
+            "distributing software, so no action is required.",
+            reason="Severity reduced: project is internal-only, GPL distribution obligations do not apply.",
         )
 
     if policy.distribution_model == DistributionModel.OPEN_SOURCE:
-        return create_issue(
-            component=component,
-            version=version,
-            license_id=license_info.spdx_id,
-            severity=Severity.INFO,
-            category=license_info.category,
-            message=f"Strong copyleft license (open source project): {license_info.name}",
-            explanation=license_info.description,
-            recommendation=(
-                "This project is open source. Ensure your project license is GPL-compatible if distributing."
-            ),
-            obligations=license_info.obligations,
-            risks=license_info.risks,
-            purl=purl,
-            license_url=lic_url,
-            context_reason=("Severity reduced: project is open source, GPL source disclosure is already satisfied."),
-            effective_severity=Severity.HIGH.value,
+        return issue(
+            Severity.INFO,
+            "Strong copyleft license (open source project)",
+            "This project is open source. Ensure your project license is GPL-compatible if distributing.",
+            reason="Severity reduced: project is open source, GPL source disclosure is already satisfied.",
         )
 
     if policy.allow_strong_copyleft:
-        return create_issue(
-            component=component,
-            version=version,
-            license_id=license_info.spdx_id,
-            severity=Severity.INFO,
-            category=license_info.category,
-            message=f"Strong copyleft license (allowed by policy): {license_info.name}",
-            explanation=license_info.description,
-            recommendation=(
-                "Your policy allows GPL-style licenses. "
-                "Ensure compliance with source disclosure requirements if distributing."
-            ),
-            obligations=license_info.obligations,
-            risks=license_info.risks,
-            purl=purl,
-            license_url=lic_url,
+        return issue(
+            Severity.INFO,
+            "Strong copyleft license (allowed by policy)",
+            "Your policy allows GPL-style licenses. "
+            "Ensure compliance with source disclosure requirements if distributing.",
+            reason="Severity reduced: project license policy allows strong copyleft.",
         )
 
-    return create_issue(
-        component=component,
-        version=version,
-        license_id=license_info.spdx_id,
-        severity=Severity.HIGH,
-        category=license_info.category,
-        message=f"Strong copyleft license: {license_info.name}",
+    return issue(
+        Severity.HIGH,
+        "Strong copyleft license",
+        "Options:\n"
+        "• If not distributing (internal use only): GPL obligations don't apply\n"
+        "• If open-sourcing your project: License your code under GPL\n"
+        "• Otherwise: Find an alternative package with a permissive license",
         explanation=(
             f"{license_info.description}\n\n"
             "IMPORTANT: If you distribute this software (binary or source), "
             "you must also distribute the complete source code of your "
             "entire application under the GPL."
         ),
-        recommendation=(
-            "Options:\n"
-            "• If not distributing (internal use only): GPL obligations don't apply\n"
-            "• If open-sourcing your project: License your code under GPL\n"
-            "• Otherwise: Find an alternative package with a permissive license"
-        ),
-        obligations=license_info.obligations,
-        risks=license_info.risks,
-        purl=purl,
-        license_url=lic_url,
     )
 
 
 def evaluate_network_copyleft(
-    component: str,
-    version: str,
+    component: dict[str, Any],
     license_info: LicenseInfo,
     lic_url: str | None,
-    purl: str,
     policy: LicensePolicySchema,
 ) -> dict[str, Any] | None:
-    """Network copyleft (AGPL, SSPL): obligations trigger on network interaction; CLI/desktop/embedded are exempt."""
+    """Network copyleft (AGPL, SSPL): network use triggers source disclosure; distribution does in every deployment."""
+    issue = partial(_issue, license_info, component, lic_url, baseline=Severity.CRITICAL)
+
     if policy.deployment_model in (
         DeploymentModel.CLI_BATCH,
         DeploymentModel.DESKTOP,
         DeploymentModel.EMBEDDED,
     ):
-        return create_issue(
-            component=component,
-            version=version,
-            license_id=license_info.spdx_id,
-            severity=Severity.LOW,
-            category=license_info.category,
-            message=f"Network copyleft license (non-network deployment): {license_info.name}",
-            explanation=license_info.description,
-            recommendation=(
+        if policy.distribution_model in (DistributionModel.INTERNAL_ONLY, DistributionModel.OPEN_SOURCE):
+            return issue(
+                Severity.LOW,
+                "Network copyleft license (non-network deployment)",
                 "This project does not provide network access to users, so the "
                 "AGPL/SSPL network clause does not apply. Standard GPL-like "
-                "distribution obligations still apply if distributing."
+                "distribution obligations still apply if distributing.",
+                reason=(
+                    "Severity reduced: project deployment model is "
+                    f"'{policy.deployment_model}', AGPL/SSPL network clause does not apply."
+                ),
+            )
+        if policy.allow_network_copyleft or policy.allow_strong_copyleft:
+            return issue(
+                Severity.MEDIUM,
+                "Network copyleft license (allowed by policy)",
+                "Your policy allows copyleft licenses. Distributing this software still requires "
+                "publishing the complete source of your application under the same license.",
+                reason="Severity reduced: project license policy allows copyleft; the network clause does not apply.",
+            )
+        return issue(
+            Severity.HIGH,
+            "Network copyleft license (distributed, non-network deployment)",
+            "Options:\n"
+            "• If open-sourcing your project: License your code under a compatible license\n"
+            "• Otherwise: Find an alternative package with a permissive license",
+            explanation=(
+                f"{license_info.description}\n\n"
+                f"The network clause does not apply to a '{policy.deployment_model}' deployment, but "
+                "distributing this software triggers the full copyleft obligations: you must also "
+                "distribute the complete source code of your application under the same license."
             ),
-            obligations=license_info.obligations,
-            risks=license_info.risks,
-            purl=purl,
-            license_url=lic_url,
-            context_reason=(
-                "Severity reduced: project deployment model is "
-                f"'{policy.deployment_model}', AGPL/SSPL network clause "
-                "does not apply."
-            ),
-            effective_severity=Severity.CRITICAL.value,
+            reason="Severity reduced: network clause does not apply; distribution obligations do.",
+        )
+
+    # Publishing the project does not satisfy SSPL, whose clause covers the whole service stack.
+    if policy.distribution_model == DistributionModel.OPEN_SOURCE and license_info.spdx_id != SPDX_SSPL_1_0:
+        return issue(
+            Severity.INFO,
+            "Network copyleft license (open source project)",
+            "Keep the project licence AGPL-compatible and publish the exact source you deploy.",
+            reason="Severity reduced: project is open source, AGPL network source offer is satisfied by publication.",
         )
 
     if policy.distribution_model == DistributionModel.INTERNAL_ONLY:
-        return create_issue(
-            component=component,
-            version=version,
-            license_id=license_info.spdx_id,
-            severity=Severity.MEDIUM,
-            category=license_info.category,
-            message=f"Network copyleft license (internal service): {license_info.name}",
-            explanation=license_info.description,
-            recommendation=(
-                "This is an internal service. AGPL/SSPL network obligations may "
-                "still apply if internal users interact with the software over a "
-                "network. Review with legal counsel."
-            ),
-            obligations=license_info.obligations,
-            risks=license_info.risks,
-            purl=purl,
-            license_url=lic_url,
-            context_reason=(
-                "Severity reduced: project is internal-only, but network clause may still apply for internal users."
-            ),
-            effective_severity=Severity.CRITICAL.value,
+        return issue(
+            Severity.MEDIUM,
+            "Network copyleft license (internal service)",
+            "This is an internal service. AGPL/SSPL network obligations may "
+            "still apply if internal users interact with the software over a "
+            "network. Review with legal counsel.",
+            reason="Severity reduced: project is internal-only, but network clause may still apply for internal users.",
         )
 
     if policy.allow_network_copyleft:
-        return create_issue(
-            component=component,
-            version=version,
-            license_id=license_info.spdx_id,
-            severity=Severity.MEDIUM,
-            category=license_info.category,
-            message=f"Network copyleft license (allowed by policy): {license_info.name}",
-            explanation=license_info.description,
-            recommendation=(
-                "Your policy allows AGPL-style licenses. Remember: providing "
-                "network access to users triggers source disclosure."
+        return issue(
+            Severity.MEDIUM,
+            "Network copyleft license (allowed by policy)",
+            "Your policy allows AGPL-style licenses. Remember: providing "
+            "network access to users triggers source disclosure.",
+            reason=(
+                "Severity reduced: project license policy allows network copyleft; "
+                "network use still triggers source disclosure."
             ),
-            obligations=license_info.obligations,
-            risks=license_info.risks,
-            purl=purl,
-            license_url=lic_url,
         )
 
-    return create_issue(
-        component=component,
-        version=version,
-        license_id=license_info.spdx_id,
-        severity=Severity.CRITICAL,
-        category=license_info.category,
-        message=f"Network copyleft license: {license_info.name}",
+    return issue(
+        Severity.CRITICAL,
+        "Network copyleft license",
+        "This license is highly problematic for commercial/proprietary use:\n"
+        "• Find an alternative package with a permissive license\n"
+        "• If no alternative exists, consider isolating this component "
+        "as a separate service\n"
+        "• Consult with legal counsel before proceeding",
         explanation=(
             f"{license_info.description}\n\n"
             "[CRITICAL] Unlike GPL, AGPL/SSPL obligations are triggered when "
@@ -305,24 +269,11 @@ def evaluate_network_copyleft(
             "never distribute binaries. This affects SaaS, web applications, "
             "and APIs."
         ),
-        recommendation=(
-            "This license is highly problematic for commercial/proprietary use:\n"
-            "• Find an alternative package with a permissive license\n"
-            "• If no alternative exists, consider isolating this component "
-            "as a separate service\n"
-            "• Consult with legal counsel before proceeding"
-        ),
-        obligations=license_info.obligations,
-        risks=license_info.risks,
-        purl=purl,
-        license_url=lic_url,
     )
 
 
 def create_undeterminable_issue(
-    component: str,
-    version: str,
-    purl: str,
+    component: dict[str, Any],
     unrecognized: list[str],
     rejected_alternatives: list[str] | None = None,
 ) -> dict[str, Any]:
@@ -346,17 +297,15 @@ def create_undeterminable_issue(
         )
     return create_issue(
         component=component,
-        version=version,
         license_id=UNDETERMINED_LICENSE_ID,
         severity=Severity.INFO,
-        category=LicenseCategory.UNKNOWN,
+        category=LicenseCategory.UNKNOWN.value,
         message=UNDETERMINED_LICENSE_MESSAGE,
         explanation=explanation,
         recommendation=(
             "Add a license override for this component, pin it to a release that declares its "
             "license, or remove the dependency."
         ),
-        purl=purl,
     )
 
 
@@ -375,7 +324,7 @@ def apply_transitive_adjustment(issue: dict[str, Any], is_transitive: bool) -> N
     }
     new_severity = downgrade_map.get(severity) if isinstance(severity, str) else None
     if new_severity:
-        issue["effective_severity"] = issue.get("effective_severity") or severity
+        issue["severity_without_context"] = issue.get("severity_without_context") or severity
         issue["severity"] = new_severity
         existing_reason = issue.get("context_reason", "")
         transitive_note = "Severity reduced: transitive dependency (not directly included)."
@@ -388,38 +337,36 @@ def should_include_finding(issue: dict[str, Any], is_transitive: bool) -> bool:
 
 
 def create_issue(
-    component: str,
-    version: str,
+    component: dict[str, Any],
     license_id: str,
     severity: Severity,
-    category: LicenseCategory,
+    category: str,
     message: str,
     explanation: str,
     recommendation: str,
     obligations: list[str] | None = None,
     risks: list[str] | None = None,
-    purl: str | None = None,
     license_url: str | None = None,
     context_reason: str | None = None,
-    effective_severity: str | None = None,
+    severity_without_context: Severity | None = None,
 ) -> dict[str, Any]:
-    """Create a license issue dict."""
+    """Create a license issue dict for the component whose name, version and purl it carries."""
     issue: dict[str, Any] = {
-        "component": component,
-        "version": version,
+        "component": component.get("name", "unknown"),
+        "version": component.get("version", "unknown"),
         "license": license_id,
         "license_url": license_url,
         "severity": severity.value,
-        "category": category.value,
+        "category": category,
         "message": message,
         "explanation": explanation,
         "recommendation": recommendation,
         "obligations": obligations or [],
         "risks": risks or [],
-        "purl": purl,
+        "purl": component.get("purl", ""),
     }
     if context_reason:
         issue["context_reason"] = context_reason
-    if effective_severity:
-        issue["effective_severity"] = effective_severity
+    if severity_without_context:
+        issue["severity_without_context"] = severity_without_context.value
     return issue

@@ -32,7 +32,7 @@ CATEGORY_RESTRICTIVENESS: dict[str, int] = {
 class DistributionModel(str, Enum):
     """How the project is distributed."""
 
-    INTERNAL_ONLY = "internal_only"  # Not distributed outside the organization
+    INTERNAL_ONLY = "internal_only"  # Used by internal users only
     DISTRIBUTED = "distributed"  # Distributed as binary or source to third parties
     OPEN_SOURCE = "open_source"  # Project itself is open source
 

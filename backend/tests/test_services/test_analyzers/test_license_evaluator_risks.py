@@ -66,12 +66,7 @@ _POLICY_CASES = [
 @pytest.mark.parametrize(("label", "category", "policy"), _POLICY_CASES, ids=[c[0] for c in _POLICY_CASES])
 def test_issue_carries_license_risks(label, category, policy):
     issue = evaluator.evaluate_license(
-        component="pkg",
-        version="1.0",
-        license_info=_info(category),
-        lic_url=None,
-        purl="pkg:npm/pkg@1.0",
-        policy=policy,
+        {"name": "pkg", "version": "1.0", "purl": "pkg:npm/pkg@1.0"}, _info(category), policy
     )
     assert issue is not None
     assert issue["risks"] == RISKS

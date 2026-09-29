@@ -44,7 +44,7 @@ def normalize_license(aggregator: "ResultAggregator", result: dict[str, Any], so
                     purl=item.get("purl"),
                     spdx_expression=item.get("spdx_expression"),
                     context_reason=item.get("context_reason"),
-                    effective_severity=item.get("effective_severity"),
+                    severity_without_context=item.get("severity_without_context"),
                 ).model_dump(exclude_none=True),
             ),
             source=source,

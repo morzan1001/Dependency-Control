@@ -1,12 +1,13 @@
 """Tests for the LicenseAnalyzer - license compliance analysis."""
 
 import asyncio
+import itertools
 from dataclasses import replace
 from typing import Any, ClassVar
 
 import pytest
 
-from app.core.constants import NON_RUNTIME_SCOPES
+from app.core.constants import NON_RUNTIME_SCOPES, get_severity_value
 from app.models.finding import Severity
 from app.models.license import (
     DeploymentModel,
@@ -30,8 +31,17 @@ from app.services.analyzers.license_compliance.normalizer import normalize_licen
 from app.services.sbom_parser import parse_sbom
 
 
-def _parsed_cyclonedx(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": components}
+_TEST_PKG = {"name": "test-pkg", "version": "1.0.0", "purl": "pkg:pypi/test-pkg@1.0.0"}
+
+
+def _parsed_cyclonedx(components: list[dict[str, Any]], transitive_refs: tuple[str, ...] = ()) -> list[dict[str, Any]]:
+    sbom: dict[str, Any] = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": components}
+    if transitive_refs:
+        sbom["metadata"] = {"component": {"bom-ref": "app"}}
+        sbom["dependencies"] = [
+            {"ref": "app", "dependsOn": ["hub"]},
+            {"ref": "hub", "dependsOn": list(transitive_refs)},
+        ]
     return [dep.model_dump() for dep in parse_sbom(sbom).dependencies]
 
 
@@ -84,14 +94,7 @@ class TestEvaluateLicense:
             allow_strong_copyleft=allow_strong,
             allow_network_copyleft=allow_network,
         )
-        return evaluate_license(
-            component="test-pkg",
-            version="1.0.0",
-            license_info=info,
-            lic_url=None,
-            purl="pkg:pypi/test-pkg@1.0.0",
-            policy=policy,
-        )
+        return evaluate_license(_TEST_PKG, info, policy)
 
     @pytest.mark.parametrize(
         "spdx_id",
@@ -147,6 +150,12 @@ class TestEvaluateLicense:
         result = self._evaluate("GPL-3.0")
         assert isinstance(result["obligations"], list)
         assert len(result["obligations"]) > 0
+
+    @pytest.mark.parametrize("spdx_id", ["CC-BY-ND-4.0", "BUSL-1.1", "Elastic-2.0", "CC-BY-NC-4.0"])
+    def test_a_restricted_licence_is_judged_against_its_own_terms(self, spdx_id):
+        result = self._evaluate(spdx_id)
+        assert result["explanation"] == self._get_license_info(spdx_id).description
+        assert result["recommendation"].startswith("This license restricts commercial use, production use or")
 
 
 class TestLicenseDatabase:
@@ -216,14 +225,7 @@ class TestEvaluateLicenseWithContext:
     def _evaluate_with_policy(self, spdx_id, **policy_kwargs):
         info = self._get_license_info(spdx_id)
         policy = LicensePolicySchema(**policy_kwargs)
-        return evaluate_license(
-            component="test-pkg",
-            version="1.0.0",
-            license_info=info,
-            lic_url=None,
-            purl="pkg:pypi/test-pkg@1.0.0",
-            policy=policy,
-        )
+        return evaluate_license(_TEST_PKG, info, policy)
 
     # --- Weak Copyleft + library_usage ---
 
@@ -259,100 +261,100 @@ class TestEvaluateLicenseWithContext:
     # --- Strong Copyleft + distribution_model ---
 
     @pytest.mark.parametrize(
-        "distribution_model",
+        "policy_kwargs",
         [
-            pytest.param(DistributionModel.INTERNAL_ONLY, id="internal-only"),
-            pytest.param(DistributionModel.OPEN_SOURCE, id="open-source"),
+            pytest.param({"distribution_model": DistributionModel.INTERNAL_ONLY}, id="internal-only"),
+            pytest.param({"distribution_model": DistributionModel.OPEN_SOURCE}, id="open-source"),
+            pytest.param({"allow_strong_copyleft": True}, id="allowed-by-policy"),
         ],
     )
-    def test_strong_copyleft_without_proprietary_distribution_is_softened_to_info(self, distribution_model):
-        result = self._evaluate_with_policy("GPL-3.0", distribution_model=distribution_model)
-        assert result is not None
+    def test_softened_strong_copyleft_is_info_and_says_why(self, policy_kwargs):
+        result = self._evaluate_with_policy("GPL-3.0", **policy_kwargs)
         assert result["severity"] == Severity.INFO.value
-        assert result["context_reason"] is not None
-        assert result["effective_severity"] == Severity.HIGH.value
-
-    @pytest.mark.parametrize(
-        ("allow_strong_copyleft", "expected_severity"),
-        [
-            pytest.param(False, Severity.HIGH, id="not-allowed"),
-            pytest.param(True, Severity.INFO, id="allowed"),
-        ],
-    )
-    def test_strong_copyleft_distributed_follows_the_policy(self, allow_strong_copyleft, expected_severity):
-        result = self._evaluate_with_policy(
-            "GPL-3.0",
-            distribution_model=DistributionModel.DISTRIBUTED,
-            allow_strong_copyleft=allow_strong_copyleft,
-        )
-        assert result is not None
-        assert result["severity"] == expected_severity.value
+        assert result["context_reason"]
+        assert result["severity_without_context"] == Severity.HIGH.value
 
     # --- Network Copyleft + deployment_model ---
 
     @pytest.mark.parametrize(
-        ("policy_kwargs", "expected_severity"),
+        ("spdx_id", "policy_kwargs", "expected_severity"),
         [
-            pytest.param(
-                {"deployment_model": DeploymentModel.CLI_BATCH},
-                Severity.LOW,
-                id="cli-batch",
+            *(
+                pytest.param(
+                    "AGPL-3.0", {"deployment_model": deployment}, Severity.HIGH, id=f"{deployment.value}-distributed"
+                )
+                for deployment in (DeploymentModel.CLI_BATCH, DeploymentModel.DESKTOP, DeploymentModel.EMBEDDED)
+            ),
+            *(
+                pytest.param(
+                    "AGPL-3.0",
+                    {"deployment_model": DeploymentModel.DESKTOP, "distribution_model": distribution},
+                    Severity.LOW,
+                    id=f"desktop-{distribution.value}",
+                )
+                for distribution in (DistributionModel.INTERNAL_ONLY, DistributionModel.OPEN_SOURCE)
+            ),
+            *(
+                pytest.param(
+                    "SSPL-1.0",
+                    {"deployment_model": DeploymentModel.EMBEDDED, allowed: True},
+                    Severity.MEDIUM,
+                    id=allowed,
+                )
+                for allowed in ("allow_network_copyleft", "allow_strong_copyleft")
             ),
             pytest.param(
-                {
-                    "deployment_model": DeploymentModel.NETWORK_FACING,
-                    "distribution_model": DistributionModel.INTERNAL_ONLY,
-                },
+                "AGPL-3.0",
+                {"distribution_model": DistributionModel.INTERNAL_ONLY},
                 Severity.MEDIUM,
                 id="network-facing-internal-only",
             ),
+            pytest.param("AGPL-3.0", {"allow_network_copyleft": True}, Severity.MEDIUM, id="network-facing-allowed"),
+            pytest.param(
+                "AGPL-3.0-only",
+                {"distribution_model": DistributionModel.OPEN_SOURCE},
+                Severity.INFO,
+                id="network-facing-open-source",
+            ),
         ],
     )
-    def test_network_copyleft_out_of_reach_of_users_is_softened(self, policy_kwargs, expected_severity):
-        result = self._evaluate_with_policy("AGPL-3.0", **policy_kwargs)
-        assert result is not None
+    def test_softened_network_copyleft_says_why(self, spdx_id, policy_kwargs, expected_severity):
+        result = self._evaluate_with_policy(spdx_id, **policy_kwargs)
         assert result["severity"] == expected_severity.value
-        assert result["context_reason"] is not None
-        assert result["effective_severity"] == Severity.CRITICAL.value
+        assert result["context_reason"]
+        assert result["severity_without_context"] == Severity.CRITICAL.value
 
     @pytest.mark.parametrize(
-        ("policy_kwargs", "expected_severity"),
+        ("spdx_id", "policy_kwargs"),
         [
-            pytest.param({"deployment_model": DeploymentModel.DESKTOP}, Severity.LOW, id="desktop"),
-            pytest.param({"deployment_model": DeploymentModel.EMBEDDED}, Severity.LOW, id="embedded"),
-            pytest.param(
-                {
-                    "deployment_model": DeploymentModel.NETWORK_FACING,
-                    "distribution_model": DistributionModel.DISTRIBUTED,
-                    "allow_network_copyleft": False,
-                },
-                Severity.CRITICAL,
-                id="network-facing-distributed-not-allowed",
-            ),
-            pytest.param(
-                {"deployment_model": DeploymentModel.NETWORK_FACING, "allow_network_copyleft": True},
-                Severity.MEDIUM,
-                id="network-facing-allowed",
-            ),
+            pytest.param("AGPL-3.0", {}, id="agpl-network-facing-distributed"),
+            # Publishing the project does not satisfy SSPL's clause over the whole service stack.
+            pytest.param("SSPL-1.0", {"distribution_model": DistributionModel.OPEN_SOURCE}, id="sspl-open-source"),
         ],
     )
-    def test_network_copyleft_severity_follows_the_deployment(self, policy_kwargs, expected_severity):
-        result = self._evaluate_with_policy("AGPL-3.0", **policy_kwargs)
-        assert result is not None
-        assert result["severity"] == expected_severity.value
+    def test_network_copyleft_offered_to_users_stays_critical(self, spdx_id, policy_kwargs):
+        result = self._evaluate_with_policy(spdx_id, **policy_kwargs)
+        assert result["severity"] == Severity.CRITICAL.value
+        assert "severity_without_context" not in result
 
-    # --- context_reason and effective_severity fields ---
-
-    @pytest.mark.parametrize("field", ["context_reason", "effective_severity"])
-    def test_the_context_fields_are_absent_when_not_adjusted(self, field):
-        result = self._evaluate_with_policy("GPL-3.0")
-        assert field not in result
-
-    def test_context_fields_present_when_adjusted(self):
-        result = self._evaluate_with_policy("GPL-3.0", distribution_model=DistributionModel.INTERNAL_ONLY)
-        assert "context_reason" in result
-        assert "effective_severity" in result
-        assert result["effective_severity"] == Severity.HIGH.value
+    @pytest.mark.parametrize(
+        ("spdx_id", "baseline"),
+        [("GPL-3.0-only", Severity.HIGH), ("AGPL-3.0-only", Severity.CRITICAL), ("SSPL-1.0", Severity.CRITICAL)],
+    )
+    def test_every_policy_softening_records_the_severity_it_replaced(self, spdx_id, baseline):
+        for distribution, deployment, allow_strong, allow_network in itertools.product(
+            DistributionModel, DeploymentModel, (False, True), (False, True)
+        ):
+            result = self._evaluate_with_policy(
+                spdx_id,
+                distribution_model=distribution,
+                deployment_model=deployment,
+                allow_strong_copyleft=allow_strong,
+                allow_network_copyleft=allow_network,
+            )
+            softened = get_severity_value(result["severity"]) < get_severity_value(baseline.value)
+            recorded = (result.get("severity_without_context"), bool(result.get("context_reason")))
+            assert recorded == ((baseline.value, True) if softened else (None, False)), result
 
 
 class TestSpdxExpressionEvaluation:
@@ -371,17 +373,13 @@ class TestSpdxExpressionEvaluation:
     )
     def test_an_or_offering_a_permissive_alternative_raises_no_issue(self, or_groups):
         policy = LicensePolicySchema()
-        _, result = self.analyzer._select_or_alternative(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
+        _, result = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, policy)
         assert result is None
 
     def test_evaluate_or_gpl_or_lgpl_picks_lgpl(self):
         policy = LicensePolicySchema()
         or_groups = [["GPL-3.0"], ["LGPL-3.0"]]
-        _, result = self.analyzer._select_or_alternative(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
+        _, result = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, policy)
         assert result is not None
         assert result["severity"] == Severity.INFO.value
         assert result["license"] == "LGPL-3.0"
@@ -400,9 +398,7 @@ class TestSpdxExpressionEvaluation:
         ],
     )
     def test_the_selected_alternative_carries_its_severity(self, policy, or_groups, expected_severity):
-        _, result = self.analyzer._select_or_alternative(
-            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
-        )
+        _, result = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, policy)
         assert result is not None
         assert result["severity"] == expected_severity.value
 
@@ -439,10 +435,10 @@ class TestTransitiveDependencySeverity:
         assert issue["severity"] == Severity.HIGH.value
         assert "is_transitive" not in issue
 
-    def test_transitive_preserves_effective_severity(self):
+    def test_transitive_records_the_severity_without_context(self):
         issue = {"severity": Severity.HIGH.value, "category": "strong_copyleft"}
         apply_transitive_adjustment(issue, is_transitive=True)
-        assert issue["effective_severity"] == Severity.HIGH.value
+        assert issue["severity_without_context"] == Severity.HIGH.value
 
     @pytest.mark.parametrize(
         ("severity", "is_transitive", "included"),
@@ -615,7 +611,25 @@ class TestTransitiveDirectness:
         assert len(issues) == 1
         assert issues[0]["is_transitive"] is True
         assert issues[0]["severity"] == Severity.MEDIUM.value
-        assert issues[0]["effective_severity"] == Severity.HIGH.value
+        assert issues[0]["severity_without_context"] == Severity.HIGH.value
+
+    @pytest.mark.asyncio
+    async def test_a_transitive_agpl_in_a_distributed_desktop_product_is_reported(self):
+        components = _parsed_cyclonedx(
+            [
+                {
+                    "type": "library",
+                    "bom-ref": "agpl-lib",
+                    "name": "agpl-lib",
+                    "version": "1.0",
+                    "licenses": [{"license": {"id": "AGPL-3.0-only"}}],
+                }
+            ],
+            transitive_refs=("agpl-lib",),
+        )
+        result = await self.analyzer.analyze({}, {"deployment_model": "desktop"}, parsed_components=components)
+        verdicts = [(i["component"], i["severity"], i["severity_without_context"]) for i in result["license_issues"]]
+        assert verdicts == [("agpl-lib", Severity.MEDIUM.value, Severity.CRITICAL.value)]
 
     @pytest.mark.asyncio
     async def test_direct_dep_not_downgraded(self):

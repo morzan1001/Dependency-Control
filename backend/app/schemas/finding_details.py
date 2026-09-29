@@ -197,7 +197,7 @@ class LicenseDetails(_DetailsModel):
     purl: str | None = None
     spdx_expression: str | None = None
     context_reason: str | None = None
-    effective_severity: str | None = None
+    severity_without_context: str | None = None
     additional_finding_types: list[AdditionalFindingType] = []
     vulnerability_info: VulnerabilityContextInfo | None = None
     scorecard_context: ScorecardContext | None = None

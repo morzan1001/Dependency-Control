@@ -77,17 +77,11 @@ class LicenseAnalyzer(Analyzer):
             stats["skipped"] += 1
             return
 
-        comp_name = component.get("name", "unknown")
-        comp_version = component.get("version", "unknown")
-        comp_purl = component.get("purl", "")
-
         declared = component.get("license") or ""
         or_groups = normalizer.parse_license_expression(declared)
         if len(or_groups) > 1:
             self._analyze_or_expression(
-                comp_name,
-                comp_version,
-                comp_purl,
+                component,
                 declared,
                 or_groups,
                 stats,
@@ -101,7 +95,7 @@ class LicenseAnalyzer(Analyzer):
         members = or_groups[0] if or_groups else []
         if not members:
             stats["unknown"] += 1
-            issues.append(evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, []))
+            issues.append(evaluator.create_undeterminable_issue(component, []))
             return
 
         # Keep the declared composite on each issue so the full license survives enrichment.
@@ -125,18 +119,9 @@ class LicenseAnalyzer(Analyzer):
             if stat_key:
                 stats[stat_key] += 1
 
-            component_licenses.append(
-                self._classification_entry(comp_name, comp_version, comp_purl, normalized, license_info, raw_expression)
-            )
+            component_licenses.append(self._classification_entry(component, normalized, license_info, raw_expression))
 
-            issue = evaluator.evaluate_license(
-                component=comp_name,
-                version=comp_version,
-                license_info=license_info,
-                lic_url=lic_url,
-                purl=comp_purl,
-                policy=policy,
-            )
+            issue = evaluator.evaluate_license(component, license_info, policy, lic_url)
             if issue:
                 if raw_expression:
                     issue["spdx_expression"] = raw_expression
@@ -147,22 +132,20 @@ class LicenseAnalyzer(Analyzer):
         if unrecognized:
             # Neither adjusted nor filtered by transitivity: the audit control reads presence, so
             # dropping the transitive ones would let it pass over components it cannot audit.
-            issues.append(evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, unrecognized))
+            issues.append(evaluator.create_undeterminable_issue(component, unrecognized))
 
     @staticmethod
     def _classification_entry(
-        comp_name: str,
-        comp_version: str,
-        comp_purl: str,
+        component: dict[str, Any],
         spdx_id: str,
         license_info: LicenseInfo,
         spdx_expression: str | None,
     ) -> dict[str, Any]:
         """Classification of one component license, emitted regardless of policy verdict."""
         entry: dict[str, Any] = {
-            "component": comp_name,
-            "version": comp_version,
-            "purl": comp_purl,
+            "component": component.get("name", "unknown"),
+            "version": component.get("version", "unknown"),
+            "purl": component.get("purl", ""),
             "license": spdx_id,
             "category": license_info.category.value,
             "obligations": license_info.obligations,
@@ -175,9 +158,7 @@ class LicenseAnalyzer(Analyzer):
 
     def _analyze_or_expression(
         self,
-        comp_name: str,
-        comp_version: str,
-        comp_purl: str,
+        component: dict[str, Any],
         spdx_expr: str,
         or_groups: list[list[str]],
         stats: dict[str, int],
@@ -189,16 +170,14 @@ class LicenseAnalyzer(Analyzer):
     ) -> None:
         """Resolve an OR-expression to the alternative a consumer would take, or report it undeterminable."""
         readable_groups, unreadable = compatibility.partition_or_groups(or_groups)
-        selected, issue = self._select_or_alternative(comp_name, comp_version, comp_purl, readable_groups, policy)
+        selected, issue = self._select_or_alternative(component, readable_groups, policy)
 
         if selected is None or (unreadable and not evaluator.is_acceptable_under_policy(issue)):
             # No alternative is both readable and acceptable, so the expression settles nothing:
             # an acceptable licence may sit behind the identifier we do not recognise.
             stats["unknown"] += 1
             rejected = list(dict.fromkeys(lic_id for group in readable_groups for lic_id in group))
-            issues.append(
-                evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, unreadable, rejected)
-            )
+            issues.append(evaluator.create_undeterminable_issue(component, unreadable, rejected))
             return
 
         for lic_id in selected:
@@ -206,9 +185,7 @@ class LicenseAnalyzer(Analyzer):
             stat_key = CATEGORY_STAT_KEY.get(info.category)
             if stat_key:
                 stats[stat_key] += 1
-            component_licenses.append(
-                self._classification_entry(comp_name, comp_version, comp_purl, lic_id, info, spdx_expr)
-            )
+            component_licenses.append(self._classification_entry(component, lic_id, info, spdx_expr))
 
         if issue:
             issue["spdx_expression"] = spdx_expr
@@ -218,9 +195,7 @@ class LicenseAnalyzer(Analyzer):
 
     @staticmethod
     def _select_or_alternative(
-        comp_name: str,
-        comp_version: str,
-        comp_purl: str,
+        component: dict[str, Any],
         readable_groups: list[list[str]],
         policy: LicensePolicySchema,
     ) -> tuple[list[str] | None, dict[str, Any] | None]:
@@ -231,14 +206,7 @@ class LicenseAnalyzer(Analyzer):
         for and_group in readable_groups:
             evaluated: list[tuple[int, dict[str, Any] | None]] = []
             for lic_id in and_group:
-                issue = evaluator.evaluate_license(
-                    component=comp_name,
-                    version=comp_version,
-                    license_info=LICENSE_DATABASE[lic_id],
-                    lic_url=None,
-                    purl=comp_purl,
-                    policy=policy,
-                )
+                issue = evaluator.evaluate_license(component, LICENSE_DATABASE[lic_id], policy)
                 # No issue ranks below every severity, INFO included.
                 evaluated.append((get_severity_value(issue["severity"]) if issue else -1, issue))
             worst_rank, worst_issue = max(evaluated, key=lambda pair: pair[0])

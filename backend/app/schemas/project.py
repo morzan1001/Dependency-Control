@@ -33,7 +33,7 @@ class LicensePolicySchema(BaseModel):
 
     distribution_model: DistributionModel = Field(
         DistributionModel.DISTRIBUTED,
-        description="How the project is distributed: internal_only (no external distribution), "
+        description="How the project is distributed: internal_only (internal users only), "
         "distributed (binary/source to third parties), open_source (project is open source)",
     )
     deployment_model: DeploymentModel = Field(

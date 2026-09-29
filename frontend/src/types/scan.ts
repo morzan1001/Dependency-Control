@@ -251,9 +251,8 @@ export interface FindingDetails {
   explanation?: string;
   recommendation?: string;
   obligations?: string[];
-  license_risks?: string[];
   context_reason?: string;
-  effective_severity?: string;
+  severity_without_context?: string;
   overall_score?: number;
   has_maintenance_issues?: boolean;
   issue_count?: number;
@@ -261,14 +260,17 @@ export interface FindingDetails {
   critical_issues?: string[];
   repository?: string;
   checks_summary?: Record<string, number>;
-  risks?: Array<{
-    type: string;
-    severity: string;
-    description: string;
-    severity_score?: number;
-    message?: string;
-    detail?: string;
-  }>;
+  // License findings carry risk texts, maintainer-risk findings carry risk objects.
+  risks?:
+    | string[]
+    | Array<{
+        type: string;
+        severity: string;
+        description: string;
+        severity_score?: number;
+        message?: string;
+        detail?: string;
+      }>;
   maintainer_info?: {
     name?: string;
     email?: string;
