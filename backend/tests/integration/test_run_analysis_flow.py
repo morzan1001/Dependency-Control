@@ -5,7 +5,12 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
+from app.core.constants import (
+    SCAN_STATUS_COMPLETED,
+    SCAN_STATUS_COMPLETED_WITH_ERRORS,
+    SCAN_STATUS_FAILED,
+    SCAN_STATUS_PENDING,
+)
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.services.analysis import engine
@@ -318,3 +323,66 @@ async def test_a_run_whose_old_sbom_failed_to_load_after_a_replace_is_reschedule
     )
 
     assert (await db.scans.find_one({"_id": scan.id}))["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_earlier_analysis(db, notified, monkeypatch):
+    """A late result reopened a finished scan; its findings, results and inventory stay the readable ones."""
+    ref = _gridfs_outage(monkeypatch)
+    scan = Scan(
+        project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER, completed_at=_T0
+    )
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    await db.findings.insert_one({"_id": "f1", "scan_id": scan.id, "project_id": _PROJECT_ID})
+    await db.analysis_results.insert_one({"_id": "r1", "scan_id": scan.id, "analyzer_name": "epss_kev"})
+    await db.dependencies.insert_one({"_id": "d1", "scan_id": scan.id, "project_id": _PROJECT_ID})
+
+    outcome = await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER)
+
+    assert outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    stored = await db.scans.find_one({"_id": scan.id})
+    assert stored["status"] == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    assert "previous analysis" in stored["error"]
+    assert [f["_id"] async for f in db.findings.find({"scan_id": scan.id})] == ["f1"]
+    assert await db.analysis_results.count_documents({"scan_id": scan.id}) == 1
+    assert await db.dependencies.count_documents({"scan_id": scan.id}) == 1
+    assert notified == []
+
+
+@pytest.mark.asyncio
+async def test_a_re_analysis_whose_sbom_was_replaced_meanwhile_is_rescheduled(db, notified, monkeypatch):
+    ref = _gridfs_outage(monkeypatch)
+    scan = Scan(
+        project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER, completed_at=_T0
+    )
+    await db.scans.insert_one(scan.model_dump(by_alias=True) | {"sbom_generation": 2})
+
+    outcome = await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER, sbom_generation=1)
+
+    assert outcome == SCAN_STATUS_PENDING
+    assert (await db.scans.find_one({"_id": scan.id}))["status"] == "pending"
+
+
+@pytest.mark.asyncio
+async def test_a_re_analysis_that_keeps_the_earlier_analysis_heads_the_project_again(db, notified, monkeypatch):
+    """While it was processing, an older build took the head; usable again, it takes the head back."""
+    ref = _gridfs_outage(monkeypatch)
+    await db.scans.insert_one(
+        {"_id": "older", "project_id": _PROJECT_ID, "branch": "main", "status": "completed", "created_at": _T0}
+        | {"sbom_refs": [ref], "stats": {}}
+    )
+    scan = Scan(
+        project_id=_PROJECT_ID,
+        branch="main",
+        sbom_refs=[ref],
+        status="processing",
+        worker_id=_WORKER,
+        created_at=_T0 + timedelta(hours=1),
+        completed_at=_T0 + timedelta(hours=1),
+    )
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    await db.projects.insert_one({"_id": _PROJECT_ID, "name": "proj", "latest_scan_id": "older"})
+
+    await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER)
+
+    assert (await db.projects.find_one({"_id": _PROJECT_ID}))["latest_scan_id"] == scan.id

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.models.project import Scan
 from app.services.analysis.engine import run_analysis
 
@@ -93,22 +93,19 @@ async def test_ingest_records_delta_for_each_scan(db, _gridfs_patched):
 
 
 @pytest.mark.asyncio
-async def test_re_ingest_that_fails_drops_the_delta_of_the_scan(db, _gridfs_patched):
+async def test_a_re_analysis_whose_sbom_fails_to_load_keeps_the_scan_and_its_delta(db, _gridfs_patched):
     first = await _ingest(db, _FILE_ID_OLD)
     second = await _ingest(db, _FILE_ID_NEW)
-    assert (await db.scan_update_deltas.find_one({"_id": second}))["prev_scan_id"] == first
 
     await db.scans.update_one({"_id": first}, {"$set": {"status": "processing"}})
     assert (
         await run_analysis(first, [_gridfs_ref("69d5332457c8763c8d8c82df")], [], db, worker_id=_WORKER)
-        == SCAN_STATUS_FAILED
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
-    assert (await db.scans.find_one({"_id": first}))["status"] == "failed"
 
-    assert await db.scan_update_deltas.find_one({"_id": first}) is None
+    assert await db.scan_update_deltas.find_one({"_id": first}) is not None
     successor = await db.scan_update_deltas.find_one({"_id": second})
-    assert successor["is_baseline"] is True, "the successor still compares against a scan that failed"
-    assert successor["updates"]["minor"] == 0
+    assert (successor["prev_scan_id"], successor["updates"]["minor"]) == (first, 1)
 
 
 @pytest.mark.asyncio

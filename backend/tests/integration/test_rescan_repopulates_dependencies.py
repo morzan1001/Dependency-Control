@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS, SCAN_STATUS_FAILED
 from app.models.dependency import Dependency
 from app.models.project import Scan
 from app.services.analysis.engine import run_analysis
@@ -175,6 +175,27 @@ async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _gridfs_
     assert {(d["name"], d["version"]) for d in docs} == {(n, v) for n, v, _ in ingest_stored}, (
         "a partially resolved run must not wipe or halve the stored dependency set"
     )
+
+
+@pytest.mark.asyncio
+async def test_a_rescan_with_an_unreadable_sbom_fails_and_leaves_the_lineage_on_the_earlier_analysis(
+    db, _gridfs_patched, monkeypatch
+):
+    """A rescan has no stored inventory to keep, so a partial load would make it a head without dependencies."""
+
+    async def _fail_second_file(fs, file_id, **_kwargs):
+        if str(file_id) == _FILE_ID_B:
+            raise OSError("transient gridfs outage")
+        return await fs.open_download_stream(file_id)
+
+    monkeypatch.setattr("app.services.analysis.engine.open_gridfs_download_with_retry", _fail_second_file)
+    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    await db.scans.insert_one({"_id": _ORIGINAL_SCAN_ID, "project_id": _PROJECT_ID, "status": "completed"})
+    scan_id = await _seed_rescan(db, refs)
+
+    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
+
+    assert (await db.scans.find_one({"_id": _ORIGINAL_SCAN_ID})).get("latest_rescan_id") is None
 
 
 @pytest.mark.asyncio

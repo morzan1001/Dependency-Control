@@ -841,6 +841,52 @@ async def _persist_findings_and_waivers(
     return persisted_count, ignored_count, active_waivers
 
 
+async def _sync_project_head(project_id: str, scan_repo: ScanRepository, project_repo: ProjectRepository) -> None:
+    project_doc = await project_repo.get_by_id(project_id)
+    if project_doc:
+        head = await scan_repo.head_fields(project_doc)
+        await project_repo.update_raw(project_id, {"$set": {**head, "last_scan_at": datetime.now(timezone.utc)}})
+
+
+async def _write_final_state(
+    scan_repo: ScanRepository,
+    scan_id: str,
+    status: ScanStatus,
+    update: dict[str, Any],
+    *,
+    worker_id: str,
+    sbom_generation: int | None,
+    external_load_start: datetime,
+) -> ScanStatus | None:
+    """Apply ``update`` while this run holds the scan and saw all its input.
+
+    Returns ``status`` once written, PENDING when new input arrived during the run (rescheduled),
+    and None when the claim moved to another run, which then owns the scan.
+    """
+    # A replaced SBOM, or a scanner result that arrived after loading began, would otherwise be
+    # finalized over and never analysed.
+    guard: dict[str, Any] = {
+        "_id": scan_id,
+        "status": SCAN_STATUS_PROCESSING,
+        "worker_id": worker_id,
+        "sbom_generation": sbom_generation,
+        "$or": [
+            {"last_result_at": {"$exists": False}},
+            {"last_result_at": None},
+            {"last_result_at": {"$lt": external_load_start}},
+        ],
+    }
+    if await scan_repo.collection.find_one_and_update(guard, update) is not None:
+        return status
+    if not await scan_repo.requeue(scan_id, worker_id):
+        logger.warning("Scan %s: the claim moved to another run; leaving the scan to it.", scan_id)
+        return None
+    logger.warning("Scan %s: new input arrived during analysis; rescheduled instead of finalizing.", scan_id)
+    if analysis_race_conditions_total:
+        analysis_race_conditions_total.inc()
+    return SCAN_STATUS_PENDING
+
+
 async def _finalize_scan_and_project(
     scan_id: str,
     scan_doc: Any,
@@ -861,11 +907,8 @@ async def _finalize_scan_and_project(
     enrichment_failures: list[str] | None = None,
     sbom_generation: int | None = None,
 ) -> ScanStatus | None:
-    """Persist the final scan status, ignored count, and (on success) project stats.
-
-    Returns ``status`` once written, PENDING when new input arrived during the run (rescheduled),
-    and None when the claim moved to another run, which then owns the scan.
-    """
+    """Persist the final scan status, ignored count, and (on success) project stats; returns what
+    ``_write_final_state`` returns."""
     set_fields: dict[str, Any] = {
         "status": status,
         "findings_count": total_findings_count,
@@ -887,27 +930,17 @@ async def _finalize_scan_and_project(
         # This analysis post-dates every rescan of the build, which may still hold a replaced SBOM.
         unset_fields["latest_rescan_id"] = ""
 
-    # A replaced SBOM, or a scanner result that arrived after loading began, would otherwise be
-    # finalized over and never analysed.
-    guard: dict[str, Any] = {
-        "_id": scan_id,
-        "status": SCAN_STATUS_PROCESSING,
-        "worker_id": worker_id,
-        "sbom_generation": sbom_generation,
-        "$or": [
-            {"last_result_at": {"$exists": False}},
-            {"last_result_at": None},
-            {"last_result_at": {"$lt": external_load_start}},
-        ],
-    }
-    if await scan_repo.collection.find_one_and_update(guard, {"$set": set_fields, "$unset": unset_fields}) is None:
-        if not await scan_repo.requeue(scan_id, worker_id):
-            logger.warning("Scan %s: the claim moved to another run; leaving the scan to it.", scan_id)
-            return None
-        logger.warning("Scan %s: new input arrived during analysis; rescheduled instead of finalizing.", scan_id)
-        if analysis_race_conditions_total:
-            analysis_race_conditions_total.inc()
-        return SCAN_STATUS_PENDING
+    outcome = await _write_final_state(
+        scan_repo,
+        scan_id,
+        status,
+        {"$set": set_fields, "$unset": unset_fields},
+        worker_id=worker_id,
+        sbom_generation=sbom_generation,
+        external_load_start=external_load_start,
+    )
+    if outcome != status:
+        return outcome
 
     if scan_doc.is_rescan and scan_doc.original_scan_id:
         # latest_run reports every run, while the lineage moves only onto an analysis head may report.
@@ -920,10 +953,7 @@ async def _finalize_scan_and_project(
         )
 
     if project_id and status != SCAN_STATUS_FAILED:
-        project_doc = await project_repo.get_by_id(project_id)
-        if project_doc:
-            head = await scan_repo.head_fields(project_doc)
-            await project_repo.update_raw(project_id, {"$set": {**head, "last_scan_at": datetime.now(timezone.utc)}})
+        await _sync_project_head(project_id, scan_repo, project_repo)
     return status
 
 
@@ -1103,6 +1133,32 @@ async def run_analysis(
     if scan_type == "cbom":
         active_analyzers = sorted(set(active_analyzers) | CRYPTO_ANALYZERS)
 
+    fs = AsyncIOMotorGridFSBucket(db)
+    sboms_to_process = _resolve_sboms_to_process(sboms, scan_type)
+
+    # Resolved before the first delete, so an SBOM that fails to load leaves the stored analysis intact.
+    resolved_sboms: list[dict[str, Any] | None] = [
+        await _resolve_sbom(item, fs, aggregator) for item in sboms_to_process
+    ]
+    sbom_load_failures = sum(1 for resolved in resolved_sboms if resolved is None)
+    sboms_expected = len(resolved_sboms)
+    gridfs_expected = _count_gridfs_refs(sboms_to_process)
+    if sbom_load_failures and scan_doc.completed_at is not None:
+        logger.warning("Scan %s: an SBOM failed to load; keeping the previous analysis", scan_id)
+        error = "SBOM could not be loaded for re-analysis; findings are from the previous analysis"
+        outcome = await _write_final_state(
+            scan_repo,
+            scan_id,
+            SCAN_STATUS_COMPLETED_WITH_ERRORS,
+            {"$set": {"status": SCAN_STATUS_COMPLETED_WITH_ERRORS, "error": error}},
+            worker_id=worker_id,
+            sbom_generation=sbom_generation,
+            external_load_start=datetime.now(timezone.utc),
+        )
+        if outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS and project_id:
+            await _sync_project_head(project_id, scan_repo, project_repo)
+        return outcome
+
     await result_repo.delete_many(
         {"scan_id": scan_id, "analyzer_name": {"$in": _cleanup_analyzer_names(active_analyzers)}}
     )
@@ -1119,19 +1175,7 @@ async def run_analysis(
 
     project_license_policy, project_analyzer_settings = await _load_project_settings_overrides(project_id, project_repo)
 
-    fs = AsyncIOMotorGridFSBucket(db)
-    sboms_to_process = _resolve_sboms_to_process(sboms, scan_type)
-
-    # Resolve every SBOM before the first dependency delete: a partial GridFS failure must
-    # not wipe the stored deps of the SBOMs that did not load.
-    resolved_sboms: list[dict[str, Any] | None] = [
-        await _resolve_sbom(item, fs, aggregator) for item in sboms_to_process
-    ]
-    sbom_load_failures = sum(1 for resolved in resolved_sboms if resolved is None)
-    sboms_expected = len(resolved_sboms)
-    gridfs_expected = _count_gridfs_refs(sboms_to_process)
-    persist_deps = sbom_load_failures == 0
-    if not persist_deps:
+    if sbom_load_failures:
         logger.warning(
             "Scan %s: %d/%d SBOMs failed to resolve; skipping dependency persistence to keep stored dependencies",
             scan_id,
@@ -1139,7 +1183,7 @@ async def run_analysis(
             sboms_expected,
         )
 
-    deps_to_store = _ScanDependencies() if persist_deps else None
+    deps_to_store = None if sbom_load_failures else _ScanDependencies()
     for index, current_sbom in enumerate(resolved_sboms):
         if current_sbom is None:
             continue
@@ -1215,11 +1259,14 @@ async def run_analysis(
 
     stats = await calculate_comprehensive_stats(db, scan_id)
 
-    sbom_load_failed = gridfs_expected > 0 and sbom_load_failures >= gridfs_expected
+    # A rescan has no stored inventory to fall back on, so a partial load would leave it without one.
+    sbom_load_failed = sbom_load_failures > 0 and (scan_doc.is_rescan or sbom_load_failures == gridfs_expected)
     if sbom_load_failed:
         logger.error(
-            "Scan %s: all SBOMs failed to load from GridFS — marking failed (was silently completing)",
+            "Scan %s: %d/%d SBOMs failed to load from GridFS; marking failed",
             scan_id,
+            sbom_load_failures,
+            sboms_expected,
         )
 
     failed_analyzers = _failed_analyzer_names(results_summary)
