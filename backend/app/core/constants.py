@@ -7,9 +7,8 @@ from typing import Any, Literal, get_args
 # HOSTNAME alone repeats across the uvicorn processes of one pod.
 INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
 
-# Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
-# finding's ``details`` dict by the enrichment writer. Every reader of persisted
-# finding details MUST use these exact keys.
+# The two CISA KEV flags enrichment persists on a finding's details and on each of its
+# details.vulnerabilities entries; every writer and reader of those flags uses these keys.
 DETAILS_KEY_IN_KEV = "in_kev"
 DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
 
