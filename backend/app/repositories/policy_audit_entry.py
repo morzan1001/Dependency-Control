@@ -5,10 +5,8 @@ from typing import Any, Literal
 
 from pymongo import DESCENDING
 
-from app.models.policy_audit_entry import PolicyAuditEntry
+from app.models.policy_audit_entry import PolicyAuditEntry, PolicyType
 from app.repositories.base import BaseRepository
-
-PolicyType = Literal["crypto", "license"]
 
 
 def _policy_type_filter(policy_type: PolicyType) -> dict[str, Any]:
@@ -93,4 +91,8 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             **_policy_type_filter(policy_type),
         }
         result = await self.collection.delete_many(query)
+        return result.deleted_count
+
+    async def delete_all_older_than(self, cutoff: datetime) -> int:
+        result = await self.collection.delete_many({"timestamp": {"$lt": cutoff}})
         return result.deleted_count

@@ -212,6 +212,7 @@ def team_binding_key(provider: str, instance_id: str, external_id: int) -> str:
 
 # Upper bound on a user-entered policy comment, shared by the audit entry and the request bodies.
 POLICY_COMMENT_MAX_LENGTH = 1000
+POLICY_CHANGE_SUMMARY_MAX_LENGTH = 200
 
 # Team Roles. Ordered least- to most-privileged: helpers/teams.py compares by index.
 TeamRole = Literal["member", "admin"]

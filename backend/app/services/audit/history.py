@@ -7,6 +7,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import (
+    POLICY_CHANGE_SUMMARY_MAX_LENGTH,
     WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED,
     WEBHOOK_EVENT_LICENSE_POLICY_CHANGED,
 )
@@ -40,7 +41,7 @@ _COMPARED_FIELDS: tuple[str, ...] = (
 
 
 def compute_change_summary(old: CryptoPolicy | None, new: CryptoPolicy) -> str:
-    """Deterministic human-readable diff summary (<=200 chars)."""
+    """Deterministic human-readable diff summary."""
     if old is None:
         return f"Initial policy ({len(new.rules)} rules)"
 
@@ -73,8 +74,7 @@ def compute_change_summary(old: CryptoPolicy | None, new: CryptoPolicy) -> str:
     if modified:
         parts.append(f"modified {len(modified)}")
 
-    summary = ", ".join(parts).capitalize() if parts else _NO_CHANGES_SUMMARY
-    return summary[:200]
+    return ", ".join(parts).capitalize() if parts else _NO_CHANGES_SUMMARY
 
 
 async def record_policy_change(
@@ -152,15 +152,14 @@ async def _dispatch_webhook(
     """Fire a policy.changed webhook. Best-effort."""
     from app.services.webhooks import webhook_service
 
-    policy_type = getattr(entry, "policy_type", "crypto") or "crypto"
     payload = {
         "event": event_type,
         "timestamp": entry.timestamp.isoformat(),
-        "policy_type": policy_type,
+        "policy_type": entry.policy_type,
         "policy_scope": entry.policy_scope,
         "project_id": entry.project_id,
         "version": entry.version,
-        "action": entry.action.value if hasattr(entry.action, "value") else entry.action,
+        "action": entry.action,
         "actor": {
             "user_id": entry.actor_user_id,
             "display_name": entry.actor_display_name,
@@ -174,7 +173,7 @@ async def _dispatch_webhook(
         event_type=event_type,
         payload=payload,
         project_id=entry.project_id,
-        context=f"policy_audit:{policy_type}",
+        context=f"policy_audit:{entry.policy_type}",
     )
 
 
@@ -186,7 +185,7 @@ async def _notify_relevant_users(
     event_type: str = "crypto_policy_changed",
 ) -> None:
     """Notify users affected by a policy change; system-scope hits system:manage/analytics:global holders, project-scope hits members. Skipped for SEED."""
-    if entry.action == PolicyAuditAction.SEED or entry.action == "seed":
+    if entry.action == PolicyAuditAction.SEED:
         return
 
     from app.services.notifications.service import notification_service
@@ -236,7 +235,7 @@ def compute_license_policy_change_summary(
     old: dict[str, Any] | None,
     new: dict[str, Any] | None,
 ) -> str:
-    """Deterministic one-line summary of a license-policy transition (<=200 chars)."""
+    """Deterministic one-line summary of a license-policy transition."""
     if old is None and new is None:
         return _NO_CHANGES_SUMMARY
     old = old or {}
@@ -260,7 +259,7 @@ def compute_license_policy_change_summary(
             parts.append(f"{field}: {old_v} -> {new_v}")
     if not parts:
         return _NO_CHANGES_SUMMARY
-    return ", ".join(parts)[:200]
+    return ", ".join(parts)[:POLICY_CHANGE_SUMMARY_MAX_LENGTH]
 
 
 async def record_license_policy_change(
