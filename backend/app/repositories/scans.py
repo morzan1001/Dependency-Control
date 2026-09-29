@@ -133,11 +133,11 @@ class _HeadScope(NamedTuple):
     pointer: str | None
 
 
-def _head_scope(project: Any, deleted_override: list[str] | None = None) -> tuple[str | None, _HeadScope]:
+def _head_scope(project: Any) -> tuple[str | None, _HeadScope]:
     project_id, deleted = _project_id_and_deleted(project)
     return project_id, _HeadScope(
         default_branch=_project_field(project, "default_branch"),
-        deleted=deleted if deleted_override is None else list(deleted_override),
+        deleted=deleted,
         pointer=_project_field(project, "latest_scan_id"),
     )
 
@@ -402,10 +402,10 @@ class ScanRepository:
         scan_id = (await self._head_scan_ids({project_id: scope})).get(project_id)
         return await self.get_by_id(scan_id) if scan_id else None
 
-    async def head_fields(self, project: Any, deleted_branches: list[str] | None = None) -> dict[str, Any]:
+    async def head_fields(self, project: Any) -> dict[str, Any]:
         """``latest_scan_id`` and ``stats`` for the project document, derived afresh rather than
-        through the pointer they replace. ``deleted_branches`` overrides a set not yet persisted."""
-        project_id, scope = _head_scope(project, deleted_branches)
+        through the pointer they replace."""
+        project_id, scope = _head_scope(project)
         scan_id = None
         if project_id:
             scan_id = (await self._head_scan_ids({project_id: scope._replace(pointer=None)})).get(project_id)

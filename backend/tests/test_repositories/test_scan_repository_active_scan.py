@@ -632,18 +632,6 @@ class TestHeadFields:
         assert fields == {"latest_scan_id": "main-tip", "stats": Stats().model_dump()}
 
     @pytest.mark.asyncio
-    async def test_a_deleted_set_not_yet_persisted_overrides_the_projects_own(self):
-        db = FakeDatabase()
-        await db.scans.insert_one(_scan("on-fresh", "p1", "fresh-a", 0))
-        await db.scans.insert_one(_scan("on-stale", "p1", "stale", 1))
-
-        fields = await ScanRepository(db).head_fields(
-            {"_id": "p1", "deleted_branches": ["stale"]}, deleted_branches=["fresh-a"]
-        )
-
-        assert fields["latest_scan_id"] == "on-stale"
-
-    @pytest.mark.asyncio
     async def test_a_newer_scan_without_an_sbom_is_not_the_head_it_derives(self):
         db = FakeDatabase()
         await db.scans.insert_one(_scan("sbom-build", "p1", "main", 5, stats={"critical": 9}))
@@ -658,6 +646,8 @@ class TestHeadFields:
         db = FakeDatabase()
         await db.scans.insert_one(_scan("on-gone", "p1", "gone", 1))
 
-        fields = await ScanRepository(db).head_fields({"_id": "p1", "latest_scan_id": "on-gone"}, ["gone"])
+        fields = await ScanRepository(db).head_fields(
+            {"_id": "p1", "latest_scan_id": "on-gone", "deleted_branches": ["gone"]}
+        )
 
         assert fields == {"latest_scan_id": None, "stats": None}
