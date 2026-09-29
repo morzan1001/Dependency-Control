@@ -23,6 +23,7 @@ from app.schemas.notification import AdvisoryPackage
         ("1.1.1a", "1.1.1", False),
         ("1.1.1", "1.1.1a", True),
         ("2.14.0", "2.14", True),
+        ("2.0.0", "2", True),
         ("latest", "1.0.0", None),
     ],
 )

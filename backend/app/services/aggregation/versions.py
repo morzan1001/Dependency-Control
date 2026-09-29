@@ -44,8 +44,8 @@ def _token_key(token: str, prev_char: str, next_char: str) -> tuple[int, int | s
 
 
 def parse_version_key(v: str) -> VersionKey:
-    """Parse a version into (flag, value) pairs that compare in version order; the first carries the major.
-    An epoch and the release's trailing zeros drop out, so 1:2.30.0 ranks as 2.30."""
+    """Parse a version into (flag, value) pairs in version order; the first two, major and minor, name its release line.
+    An epoch and trailing zeros past the minor drop out and a bare major gains .0: 1:2.30.0 ranks as 2.30, 2 as 2.0."""
     text = v.lower().split(":", 1)[-1].removeprefix("v")
     parts = [
         _token_key(m.group(), text[m.start() - 1 : m.start()], text[m.end() : m.end() + 1])
@@ -53,7 +53,10 @@ def parse_version_key(v: str) -> VersionKey:
         if m.group() not in _RELEASE_QUALIFIERS
     ]
     release = next((i for i, (flag, _) in enumerate(parts) if flag != _NUMBER), len(parts))
-    while release > 1 and parts[release - 1] == (_NUMBER, 0):
+    if release == 1:
+        parts.insert(1, (_NUMBER, 0))
+        release = 2
+    while release > 2 and parts[release - 1] == (_NUMBER, 0):
         release -= 1
         del parts[release]
     if not parts:

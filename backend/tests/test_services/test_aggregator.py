@@ -39,6 +39,7 @@ class TestParseVersionKey:
             pytest.param("4.1.100.Final", "4.1.100", id="maven-final-qualifier"),
             pytest.param("4.1.0", "4.1", id="trailing-zero"),
             pytest.param("1:2.30-1", "2.30-1", id="epoch"),
+            pytest.param("2", "2.0.0", id="bare-major"),
         ],
     )
     def test_spellings_of_one_release_share_a_key(self, spelling, same):
@@ -338,6 +339,10 @@ class TestMergeVulnerabilityIntoList:
             pytest.param("4.17.21, 4.17.12", "4.17.21, 4.17.12", "4.17.12, 4.17.21", id="identical-lists-are-kept"),
             pytest.param("4.17.12", "4.17.21, 4.17.12", "4.17.12, 4.17.21", id="agreeing-lowest-keeps-both"),
             pytest.param("1.2.5", "1.2.3.4, 1.2.5", "1.2.5", id="below-the-higher-lowest-is-dropped"),
+            pytest.param("2.0.0", "2.0.1", "2.0.1", id="zero-patch-shares-its-release-line"),
+            pytest.param("1.2.5, 3.0.0", "3.0.2", "1.2.5, 3.0.2", id="zero-patch-beside-another-line"),
+            pytest.param("3.0.0-rc1", "3.0.1", "3.0.1", id="zero-patch-prerelease-shares-its-release-line"),
+            pytest.param("2", "2.0.1", "2.0.1", id="bare-major-shares-its-release-line"),
         ],
     )
     def test_fixed_versions_of_both_entries_are_merged(self, target_fixed, entry_fixed, expected):
