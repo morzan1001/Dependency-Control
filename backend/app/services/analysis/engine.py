@@ -897,9 +897,13 @@ async def _finalize_scan_and_project(
 
     if project_id and status != SCAN_STATUS_FAILED and await scan_repo.sync_project_head(project_id) == scan_id:
         # Only head records waiver outcomes, and head is known once sync_project_head derived it.
-        waiver_repo = WaiverRepository(scan_repo.db)
-        waivers = await waiver_repo.find_active_for_project(project_id)
-        await restamp_waivers(FindingRepository(scan_repo.db), waiver_repo, scan_id, waivers)
+        try:
+            waiver_repo = WaiverRepository(scan_repo.db)
+            waivers = await waiver_repo.find_active_for_project(project_id)
+            await restamp_waivers(FindingRepository(scan_repo.db), waiver_repo, scan_id, waivers)
+        except Exception:
+            # Best effort like the announcement: the scan is already final.
+            logger.exception("Scan %s: recording the waiver outcomes on head failed", scan_id)
     return status
 
 

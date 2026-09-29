@@ -130,6 +130,25 @@ async def test_a_failing_notification_leaves_the_finalized_scan_completed(db, mo
     assert (await db.scans.find_one({"_id": scan_id}))["status"] == SCAN_STATUS_COMPLETED
 
 
+@pytest.mark.asyncio
+async def test_a_failing_head_waiver_bookkeeping_still_announces_the_completed_scan(db, notified, monkeypatch):
+    await db.projects.insert_one({"_id": _PROJECT_ID, "name": "p", "default_branch": "main"})
+    restamp = engine.restamp_waivers
+
+    async def _failing_on_head(finding_repo, waiver_repo, scan_id, waivers):
+        if waiver_repo is not None:
+            raise RuntimeError("waiver bookkeeping")
+        return await restamp(finding_repo, waiver_repo, scan_id, waivers)
+
+    monkeypatch.setattr(engine, "restamp_waivers", _failing_on_head)
+    scan_id = await _seed_scan(db)
+
+    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+
+    assert (await db.scans.find_one({"_id": scan_id}))["status"] == SCAN_STATUS_COMPLETED
+    assert notified == [Stats()]
+
+
 @pytest.fixture
 def enrichment_inputs(monkeypatch) -> dict:
     seen: dict = {}
