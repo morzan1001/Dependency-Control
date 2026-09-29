@@ -322,7 +322,6 @@ class ChatToolRegistry:
             args = checked_arguments(tool_name, arguments)
             begin_limit_ledger()
             result = await self._dispatch(tool_name, args, user, db)
-            status = "rejected" if "error" in result else "success"
             _inject_urls(result)
             note = clamped_limit_note()
             if note:
@@ -333,7 +332,9 @@ class ChatToolRegistry:
                 result["_bounded_read"] = True
                 result["_bounded_read_note"] = saturated
             # Cap JSON size so a large dump can't blow the LLM's context budget.
-            return _truncate_if_too_large(result)
+            answer = _truncate_if_too_large(result)
+            status = "rejected" if "error" in result else "success"
+            return answer
         except ToolArgumentError as e:
             status = "rejected"
             return {"error": str(e)}

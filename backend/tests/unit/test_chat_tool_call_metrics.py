@@ -8,6 +8,7 @@ from prometheus_client import REGISTRY
 
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools import registry as registry_module
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -72,3 +73,28 @@ async def test_a_scope_denial_is_a_refusal_not_a_tool_failure(caplog: pytest.Log
     assert result == {"error": "Global analytics requires analytics:global or system:manage"}
     assert _count("get_framework_evaluation_summary", "refused") == before + 1
     assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+
+@pytest.mark.asyncio
+async def test_a_failure_after_the_handler_answered_is_counted_as_error_not_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    success_before = _count("get_project_details", "success")
+    error_before = _count("get_project_details", "error")
+
+    async def _answer(*_args: object) -> dict[str, object]:
+        return {"project": "p1"}
+
+    def _boom(_result: object) -> dict[str, object]:
+        raise RuntimeError("cannot serialise")
+
+    monkeypatch.setattr(ChatToolRegistry, "_dispatch", _answer)
+    monkeypatch.setattr(registry_module, "_truncate_if_too_large", _boom)
+
+    result = await ChatToolRegistry().execute_tool(
+        "get_project_details", {"project_id": "p1"}, _user(PRESET_ADMIN), FakeDatabase()
+    )
+
+    assert result["error"].startswith("Tool execution failed")
+    assert _count("get_project_details", "error") == error_before + 1
+    assert _count("get_project_details", "success") == success_before
