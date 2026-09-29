@@ -44,6 +44,18 @@ class TestParseVersionKey:
             pytest.param("1.0.0-rc1", "1.0.0-rc2", id="prerelease-number"),
             pytest.param("1.0.0-rc", "1.0.0.1", id="longer-release-above-prerelease"),
             pytest.param("1.0.0", "1.0.0.1", id="longer-release-above-release"),
+            pytest.param("1.0.0-SNAPSHOT", "1.0.0", id="maven-snapshot-below-release"),
+            pytest.param("1.0.0-M1", "1.0.0", id="maven-milestone-below-release"),
+            pytest.param("5.0.0.CR1", "5.0.0", id="maven-candidate-release-below-release"),
+            pytest.param("1.0.dev1", "1.0a1", id="pep440-dev-below-alpha"),
+            pytest.param("1.0", "1.0.post1", id="pep440-post-release-above-release"),
+            pytest.param("1.0.post1", "1.0.1", id="post-release-below-next-number"),
+            pytest.param("2.36-9", "2.36-9+deb12u4", id="debian-security-update-above-its-base"),
+            pytest.param("1.1.1", "1.1.1n", id="openssl-letter-release-above-base"),
+            pytest.param("1.1.1", "1.1.1a", id="openssl-letter-a-is-no-alpha"),
+            pytest.param("1.1.1n", "1.1.2", id="openssl-letter-release-below-next-patch"),
+            pytest.param("5.2.20", "5.2.20.RELEASE", id="maven-qualifier-above-bare"),
+            pytest.param("0.6.0", "0.6.0+incompatible", id="go-incompatible-above-bare"),
         ],
     )
     def test_higher_version_compares_as_greater(self, lower, higher):
@@ -58,6 +70,9 @@ class TestNewestFirst:
             "5.0.0-beta.2",
             "4.9.0",
         ]
+
+    def test_a_post_release_ranks_above_its_release(self):
+        assert newest_first(["1.0", "1.0.post1"]) == ["1.0.post1", "1.0"]
 
     def test_spellings_of_one_version_order_the_same_whatever_the_input_order(self):
         assert newest_first(["v1.0.0", "1.0.0"]) == newest_first(["1.0.0", "v1.0.0"])
@@ -168,6 +183,9 @@ class TestCalculateAggregatedFixedVersion:
             pytest.param(["2.0.0-rc1, 2.0.0"], "2.0.0", id="release-beside-its-rc"),
             pytest.param(["1.2.3rc1, 1.2.4"], "1.2.4", id="release-over-a-lower-rc"),
             pytest.param(["3.0.0a1"], "3.0.0a1", id="prerelease-when-no-release-fixes"),
+            pytest.param(["1.0.0-M1, 1.0.1"], "1.0.1", id="release-over-a-milestone"),
+            pytest.param(["5.2.20.RELEASE, 5.3.18"], "5.2.20.RELEASE", id="maven-qualifier-is-a-release"),
+            pytest.param(["2.36-9", "2.36-9+deb12u4"], "2.36-9+deb12u4", id="debian-security-update-fixes-both"),
         ],
     )
     def test_a_release_fix_is_preferred_over_a_prerelease(self, fixes, expected):

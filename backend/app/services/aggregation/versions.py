@@ -6,21 +6,48 @@ import re
 from collections.abc import Iterable
 from typing import Any
 
-# Flags that rank a tag below the end of a version, and both below one more number: 1.0-rc1 < 1.0 < 1.0.1.
-_TAG, _END, _NUMBER = 0, 1, 2
+# Flags that give 1.0-rc1 < 1.0 < 1.0.post1 < 1.0.1: a prerelease tag, the end, any other tag, one more number.
+_PRERELEASE, _END, _SUFFIX, _NUMBER = 0, 1, 2, 3
+
+# Ranked to agree with both PEP 440 (dev < a < b < rc) and Maven (alpha < beta < milestone < rc < snapshot).
+_PRERELEASE_RANK = {
+    "dev": 0,
+    "alpha": 1,
+    "a": 1,
+    "beta": 2,
+    "b": 2,
+    "milestone": 3,
+    "m": 3,
+    "pre": 4,
+    "preview": 4,
+    "rc": 5,
+    "cr": 5,
+    "c": 5,
+    "snapshot": 6,
+}
+
+
+def _token_key(token: str, next_char: str) -> tuple[int, int | str]:
+    if token.isdigit():
+        return (_NUMBER, int(token))
+    rank = _PRERELEASE_RANK.get(token)
+    # A lone letter is a prerelease only before a number (1.0a1, 1.0-M2); OpenSSL's 1.1.1a follows 1.1.1.
+    if rank is None or (len(token) == 1 and not next_char.isdigit()):
+        return (_SUFFIX, token)
+    return (_PRERELEASE, rank)
 
 
 def parse_version_key(v: str) -> tuple[tuple[int, int | str], ...]:
     """Parse a version into (flag, value) pairs that compare in version order; the first carries the major."""
-    tokens = re.findall(r"[a-z]+|\d+", v.lower().removeprefix("v"))
-    if not tokens:
+    text = v.lower().removeprefix("v")
+    parts = [_token_key(m.group(), text[m.end() : m.end() + 1]) for m in re.finditer(r"[a-z]+|\d+", text)]
+    if not parts:
         return ()
-    parts: list[tuple[int, int | str]] = [(_NUMBER, int(t)) if t.isdigit() else (_TAG, t) for t in tokens]
     return (*parts, (_END, ""))
 
 
 def _is_prerelease(key: tuple[tuple[int, int | str], ...]) -> bool:
-    return any(flag == _TAG for flag, _ in key)
+    return any(flag == _PRERELEASE for flag, _ in key)
 
 
 def newest_first(versions: Iterable[Any]) -> list[str]:
