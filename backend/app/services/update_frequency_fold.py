@@ -8,9 +8,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import dropwhile, pairwise
-from typing import Any, Literal
+from typing import Any, Literal, get_args
 
-from app.core.constants import RECENT_UPDATES_LIMIT
+from app.core.constants import COUNTED_UPDATE_KINDS, RECENT_UPDATES_LIMIT, UpdateKind
 from app.schemas.analytics import (
     DependencyUpdateEvent,
     ProjectUpdateSummary,
@@ -32,7 +32,6 @@ from app.services.update_frequency import (
 
 logger = logging.getLogger(__name__)
 
-_UPDATE_KINDS = ("patch", "minor", "major", "unknown")
 _NOT_ENOUGH_SCANS = "Not enough scans to analyze (need at least 2)"
 
 
@@ -246,12 +245,12 @@ def fold_window(
     kinds: Counter[str] = Counter()
     for delta in window[1:]:
         updates = delta.get("updates") or {}
-        for kind in (*_UPDATE_KINDS, "downgrade"):
+        for kind in get_args(UpdateKind):
             kinds[kind] += int(updates.get(kind, 0))
 
     ever_outdated, ever_resolved = _outdated_movement(window, baseline_outdated)
 
-    total_updates = sum(kinds[kind] for kind in _UPDATE_KINDS)
+    total_updates = sum(kinds[kind] for kind in COUNTED_UPDATE_KINDS)
     num_intervals = len(timeline) - 1
 
     first_date = datetime.fromisoformat(timeline[0].date)
@@ -370,7 +369,7 @@ def _short_window(bars: Sequence[ScanTimelineEntry]) -> FoldedWindow:
 
 def _timeline_entry(delta: dict[str, Any], *, baseline: bool) -> ScanTimelineEntry:
     updates: dict[str, Any] = {} if baseline else (delta.get("updates") or {})
-    counts = {kind: int(updates.get(kind, 0)) for kind in _UPDATE_KINDS}
+    counts = {kind: int(updates.get(kind, 0)) for kind in COUNTED_UPDATE_KINDS}
     outdated_count = delta.get("outdated_count")
     return ScanTimelineEntry(
         scan_id=str(delta["_id"]),

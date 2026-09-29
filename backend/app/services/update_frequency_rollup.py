@@ -61,16 +61,7 @@ class _Diff:
     outdated_resolved: list[str] = field(default_factory=list)
 
     def to_counts(self) -> UpdateCounts:
-        return UpdateCounts(
-            patch=self.counts["patch"],
-            minor=self.counts["minor"],
-            major=self.counts["major"],
-            unknown=self.counts["unknown"],
-            downgrade=self.counts["downgrade"],
-        )
-
-    def total_updates(self) -> int:
-        return sum(count for kind, count in self.counts.items() if kind != "downgrade")
+        return UpdateCounts(**self.counts)
 
 
 async def record_scan_update_delta(db: Any, scan_id: str) -> None:
@@ -164,7 +155,6 @@ async def _compute_delta(db: Any, scan: _ScanRef) -> tuple[ScanUpdateDelta, set[
         is_baseline=prev is None,
         dep_count=len(deps),
         updates=diff.to_counts(),
-        total_updates=diff.total_updates(),
         outdated_count=len(outdated) if outdated is not None else None,
         outdated_added=diff.outdated_added,
         outdated_resolved=diff.outdated_resolved,

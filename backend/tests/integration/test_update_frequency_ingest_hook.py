@@ -80,8 +80,7 @@ async def test_ingest_records_delta_for_each_scan(db, _gridfs_patched):
     assert delta is not None, "the ingest path never wrote a delta for the second scan"
     assert delta["prev_scan_id"] == first
     assert delta["is_baseline"] is False
-    assert delta["updates"]["minor"] == 1
-    assert delta["total_updates"] == 1
+    assert delta["updates"] == {"patch": 0, "minor": 1, "major": 0, "unknown": 0, "downgrade": 0}
     assert [s["n"] for s in delta["updates_sample"]] == ["requests"]
 
     # No analyzer ran, so the scan has no outdated measurement to store.
@@ -102,7 +101,7 @@ async def test_re_ingest_that_fails_drops_the_delta_of_the_scan(db, _gridfs_patc
     assert await db.scan_update_deltas.find_one({"_id": first}) is None
     successor = await db.scan_update_deltas.find_one({"_id": second})
     assert successor["is_baseline"] is True, "the successor still compares against a scan that failed"
-    assert successor["total_updates"] == 0
+    assert successor["updates"]["minor"] == 0
 
 
 @pytest.mark.asyncio

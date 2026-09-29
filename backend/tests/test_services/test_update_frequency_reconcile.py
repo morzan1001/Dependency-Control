@@ -208,7 +208,7 @@ class TestStaleSchema:
         db = FakeDatabase()
         await _seed_project(db)
         await _seed_chain(db, {"s1": "1.0.0", "s2": "1.1.0"})
-        await db.scan_update_deltas.update_one({"_id": "s2"}, {"$set": {"schema_version": 0, "total_updates": 99}})
+        await db.scan_update_deltas.update_one({"_id": "s2"}, {"$set": {"schema_version": 0, "updates.minor": 99}})
 
         report = await run_update_frequency_reconcile(db)
 
@@ -217,7 +217,7 @@ class TestStaleSchema:
         doc = await _delta(db, "s2")
         assert doc is not None
         assert doc["schema_version"] == 1
-        assert doc["total_updates"] == 1
+        assert doc["updates"]["minor"] == 1
 
     @pytest.mark.asyncio
     async def test_a_delta_that_names_no_schema_version_is_derived_again(self, spy: list[str]):

@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from app.core.constants import RECENT_UPDATES_LIMIT
+from app.core.constants import COUNTED_UPDATE_KINDS, RECENT_UPDATES_LIMIT
 from app.core.metrics import update_frequency_delta_writes_total
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase
@@ -17,6 +17,10 @@ T0 = datetime(2026, 6, 1, 12, 0, tzinfo=timezone.utc)
 
 def _at(hours: int) -> datetime:
     return T0 + timedelta(hours=hours)
+
+
+def _counted(doc: dict[str, Any]) -> int:
+    return sum(doc["updates"][kind] for kind in COUNTED_UPDATE_KINDS)
 
 
 def _dep(scan_id: str, name: str, version: str, ecosystem: str = "pypi") -> dict[str, Any]:
@@ -109,7 +113,7 @@ class TestBaseline:
         assert doc["prev_scan_id"] is None
         assert doc["prev_created_at"] is None
         assert doc["dep_count"] == 2
-        assert doc["total_updates"] == 0
+        assert _counted(doc) == 0
         assert doc["updates"] == {"patch": 0, "minor": 0, "major": 0, "unknown": 0, "downgrade": 0}
         assert doc["outdated_count"] == 1
         assert doc["outdated_added"] == []
@@ -188,7 +192,7 @@ class TestDiff:
         assert doc["prev_scan_id"] == "s1"
         assert doc["prev_created_at"] == _at(0)
         assert doc["updates"] == {"patch": 1, "minor": 1, "major": 1, "unknown": 0, "downgrade": 0}
-        assert doc["total_updates"] == 3
+        assert _counted(doc) == 3
         assert doc["dep_count"] == 4
         # "left" disappeared instead of being updated, so it is not resolved.
         assert doc["outdated_added"] == ["click"]
@@ -215,7 +219,7 @@ class TestDiff:
         assert doc is not None
         assert doc["updates"]["downgrade"] == 1
         assert doc["updates"]["patch"] == 1
-        assert doc["total_updates"] == 1
+        assert _counted(doc) == 1
         kinds = {entry["n"]: entry["k"] for entry in doc["updates_sample"]}
         assert kinds == {"requests": "downgrade", "flask": "patch"}
 
@@ -230,7 +234,7 @@ class TestDiff:
 
         doc = await _delta(db, "s2")
         assert doc is not None
-        assert doc["total_updates"] == 0
+        assert _counted(doc) == 0
         assert doc["updates_sample"] == []
 
     @pytest.mark.asyncio
@@ -244,7 +248,7 @@ class TestDiff:
 
         doc = await _delta(db, "s2")
         assert doc is not None
-        assert doc["total_updates"] == 0
+        assert _counted(doc) == 0
         assert doc["eco"] == {"pypi": 1}
 
     @pytest.mark.asyncio
@@ -282,7 +286,7 @@ class TestDiff:
 
         doc = await _delta(db, "s2")
         assert doc is not None
-        assert doc["total_updates"] == changed
+        assert _counted(doc) == changed
         # The writer keeps exactly what the readers show, so one busy scan can fill their list.
         assert len(doc["updates_sample"]) == RECENT_UPDATES_LIMIT
         # Biggest jump first, then by name, so a recomputation keeps the same entries.
@@ -422,7 +426,7 @@ class TestProjectSeparation:
         assert doc is not None
         assert doc["is_baseline"] is True
         assert doc["prev_scan_id"] is None
-        assert doc["total_updates"] == 0
+        assert _counted(doc) == 0
 
     @pytest.mark.asyncio
     async def test_other_project_is_not_repaired_as_a_successor(self):
@@ -537,7 +541,7 @@ class TestPredecessorSelection:
         doc = await _delta(db, "s2")
         assert doc is not None
         assert doc["is_baseline"] is True
-        assert doc["total_updates"] == 0
+        assert _counted(doc) == 0
 
     @pytest.mark.asyncio
     async def test_error_document_is_not_a_predecessor(self):
@@ -687,7 +691,7 @@ class TestReIngest:
         doc = await _delta(db, "s2")
         assert doc is not None
         assert doc["prev_scan_id"] == "s1"
-        assert doc["total_updates"] == 0
+        assert _counted(doc) == 0
         assert doc["updates"]["major"] == 0
         # 1.0.0 -> 2.0.0 is a transition that never took place.
         assert doc["updates_sample"] == []
@@ -835,7 +839,7 @@ class TestFailures:
         assert doc is not None
         assert doc["error"] == "RuntimeError: connection reset by peer"
         assert doc["dep_count"] == 0
-        assert doc["total_updates"] == 0
+        assert _counted(doc) == 0
         assert doc["project_id"] == PROJECT
         assert doc["scan_created_at"] == _at(0)
         # The outdated set belongs to a successful computation only.

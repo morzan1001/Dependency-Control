@@ -887,9 +887,12 @@ SCAN_USABLE_STATUSES = [
 # per scan. One number for both: a writer keeping fewer than the readers show leaves a busy scan
 # unable to fill the list on its own, and the two read paths then answer with different events.
 RECENT_UPDATES_LIMIT: int = 30
+UpdateKind = Literal["major", "minor", "patch", "unknown", "downgrade"]
+# Downgrades are recorded but are not update activity.
+COUNTED_UPDATE_KINDS: tuple[UpdateKind, ...] = ("patch", "minor", "major", "unknown")
 # The order the cut is taken in, so a scan with more changes than the limit loses the same ones
-# on every path. Downgrades rank last: they are recorded but are not update activity.
-UPDATE_SAMPLE_RANK: dict[str, int] = {"major": 0, "minor": 1, "patch": 2, "unknown": 3, "downgrade": 4}
+# on every path; downgrades rank last.
+UPDATE_SAMPLE_RANK: dict[str, int] = {kind: rank for rank, kind in enumerate(get_args(UpdateKind))}
 
 # Rows of the slowest-to-update table. Both read paths rank by scans outdated and break ties on
 # the package name; without that, packages tied at the cap swap places between requests.

@@ -71,7 +71,6 @@ def _delta(
             "unknown": unknown,
             "downgrade": downgrade,
         },
-        "total_updates": patch + minor + major + unknown,
         "outdated_count": outdated_count,
         "outdated_added": list(added),
         "outdated_resolved": list(resolved),

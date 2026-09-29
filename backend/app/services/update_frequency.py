@@ -16,10 +16,12 @@ from typing import Any, Literal
 from packaging.version import InvalidVersion, Version
 
 from app.core.constants import (
+    COUNTED_UPDATE_KINDS,
     RECENT_UPDATES_LIMIT,
     SCAN_USABLE_STATUSES,
     SLOWEST_PACKAGES_LIMIT,
     UPDATE_SAMPLE_RANK,
+    UpdateKind,
 )
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
@@ -68,7 +70,7 @@ def _release_tuple(version: Version) -> tuple[int, int]:
     )
 
 
-def classify_version_change(old_version: str, new_version: str) -> str:
+def classify_version_change(old_version: str, new_version: str) -> UpdateKind | Literal["none"]:
     """Classify a version change via PEP 440 parsing.
 
     Returns ``"major" | "minor" | "patch" | "downgrade" | "none" | "unknown"``.
@@ -291,17 +293,16 @@ def _build_timeline_entry(
 ) -> ScanTimelineEntry:
     """Build a timeline entry from a list of update events for a scan."""
     type_counts = Counter(e.update_type for e in events)
-    downgrades = type_counts.get("downgrade", 0)
     return ScanTimelineEntry(
         scan_id=scan_id,
         date=scan_date.isoformat(),
-        updates_count=len(events) - downgrades,
+        updates_count=sum(type_counts[kind] for kind in COUNTED_UPDATE_KINDS),
         outdated_count=outdated_count,
         patch=type_counts.get("patch", 0),
         minor=type_counts.get("minor", 0),
         major=type_counts.get("major", 0),
         unknown=type_counts.get("unknown", 0),
-        downgrades=downgrades,
+        downgrades=type_counts.get("downgrade", 0),
     )
 
 
@@ -368,11 +369,9 @@ def compute_trend(scan_timeline: Sequence[ScanTimelineEntry]) -> tuple[str, str]
 
 def granularity_ratio(type_counter: Counter, total_updates: int) -> dict[str, float]:
     """Per-update-type share of all updates, rounded to 2 dp."""
-    if not total_updates:
-        return {"patch": 0.0, "minor": 0.0, "major": 0.0, "unknown": 0.0}
     return {
-        bucket: round(type_counter.get(bucket, 0) / total_updates, 2)
-        for bucket in ("patch", "minor", "major", "unknown")
+        bucket: round(type_counter.get(bucket, 0) / total_updates, 2) if total_updates else 0.0
+        for bucket in COUNTED_UPDATE_KINDS
     }
 
 
@@ -417,8 +416,7 @@ def _aggregate_metrics(
 ) -> UpdateFrequencyMetrics:
     """Build the final metrics response from streamed counters."""
     downgrade_total = type_counter.get("downgrade", 0)
-    # Downgrades are recorded but are not update activity.
-    total_updates = sum(type_counter.values()) - downgrade_total
+    total_updates = sum(type_counter.get(kind, 0) for kind in COUNTED_UPDATE_KINDS)
     num_intervals = len(bars) - 1
 
     first_date = datetime.fromisoformat(bars[0].date)
