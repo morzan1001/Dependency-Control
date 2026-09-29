@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import logging
 import os
 from typing import Any
@@ -18,7 +17,7 @@ from app.repositories import (
 )
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.releases import released_scan_ids
-from app.services.waivers.apply import restamp_waivers
+from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
 from app.services.waivers.matching import waiver_reach_filter
 
 logger = logging.getLogger(__name__)
@@ -32,17 +31,6 @@ _LOCK_MAX_RETRIES = 5
 _LOCK_RETRY_BASE_DELAY = 0.2
 
 
-# What a pass writes, when an active waiver expires, and the creation time (defaulted on load for a document
-# without one) do not change how a waiver stamps.
-_NOT_STAMPED = {"last_eval_scan_id", "last_match_count", "expiration_date", "is_active", "created_at"}
-
-
-def _waiver_fingerprint(waivers: list[Waiver]) -> str:
-    """Names the waiver set a scan was stamped with, from what decides the stamping."""
-    dumps = sorted(w.model_dump_json(exclude=_NOT_STAMPED) for w in waivers)
-    return hashlib.sha256("\n".join(dumps).encode()).hexdigest()
-
-
 async def _restamp_scan(
     scan_id: str,
     db: AsyncIOMotorDatabase,
@@ -54,13 +42,18 @@ async def _restamp_scan(
     """Re-apply the current waiver set to one scan and rewrite its stats from the result; ``waiver_repo``,
     when given, records what each waiver matched there."""
     await restamp_waivers(finding_repo, waiver_repo, scan_id, waivers)
-    stats = await calculate_comprehensive_stats(db, scan_id)
-    ignored_count = await finding_repo.count_waived(scan_id)
+    tally = await calculate_comprehensive_stats(db, scan_id)
     await ScanRepository(db).update_raw(
         scan_id,
-        {"$set": {"stats": stats.model_dump(), "ignored_count": ignored_count, "waiver_fingerprint": fingerprint}},
+        {
+            "$set": {
+                "stats": tally.stats.model_dump(),
+                "ignored_count": tally.ignored_count,
+                "waiver_fingerprint": fingerprint,
+            }
+        },
     )
-    return stats
+    return tally.stats
 
 
 async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> list[str]:
@@ -140,7 +133,7 @@ async def recalculate_project_stats(
 
     try:
         waivers = await waiver_repo.find_active_for_project(project_id)
-        fingerprint = _waiver_fingerprint(waivers)
+        fingerprint = waiver_fingerprint(waivers)
         stamped = await scan_repo.find_many_raw(
             {"_id": {"$in": scan_ids}, "waiver_fingerprint": fingerprint}, projection={"_id": 1}
         )

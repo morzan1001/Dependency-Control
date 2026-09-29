@@ -2,7 +2,7 @@
 
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, NamedTuple, cast
 
 from pymongo import ASCENDING, ReadPreference
 
@@ -384,6 +384,7 @@ class StatsAccumulator:
     def __init__(self, component_languages: Mapping[str, frozenset[str]]) -> None:
         self._component_languages = component_languages
         self._counted = 0
+        self.waived_count = 0
         self._severity: dict[str, int] = dict.fromkeys((*_BUCKETED_SEVERITIES, _UNKNOWN_SEVERITY), 0)
         self._adjusted_exposure = 0.0
         self._vuln_severity: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
@@ -422,6 +423,7 @@ class StatsAccumulator:
 
     def add(self, finding: Mapping[str, Any]) -> None:
         if finding.get("waived") is True:
+            self.waived_count += 1
             return
         self._counted += 1
 
@@ -620,8 +622,14 @@ assert _stats_projection().keys() >= StatsAccumulator.REQUIRED_PATHS, "stats pro
 _STATS_CURSOR_HINT = [("scan_id", ASCENDING), ("type", ASCENDING)]
 
 
-async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
-    """Comprehensive statistics for a scan, folded from a single projected cursor."""
+class ScanTally(NamedTuple):
+    stats: Stats
+    ignored_count: int
+
+
+async def calculate_comprehensive_stats(db: Database, scan_id: str) -> ScanTally:
+    """Comprehensive statistics for a scan and how many of its findings are waived, folded from a single
+    projected cursor so both describe one read."""
     acc = StatsAccumulator(await build_component_language_map(db, scan_id))
     # PRIMARY: with secondaryPreferred the read can miss findings written milliseconds earlier.
     findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
@@ -631,4 +639,4 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
             acc.add(doc)
     finally:
         await cursor.close()
-    return acc.result()
+    return ScanTally(acc.result(), acc.waived_count)

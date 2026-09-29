@@ -53,21 +53,10 @@ def _recalc_returns(monkeypatch, result: Stats | None) -> list[str]:
 
 
 @pytest.mark.asyncio
-async def test_active_waivers_route_the_recalculated_stats_to_notifications(db, notified, monkeypatch):
-    recalculated = Stats(critical=7)
+async def test_notifications_carry_the_analysed_scans_own_stats_whatever_head_says(db, notified, monkeypatch):
+    """An MR decoration reports its own pipeline, not the head the catch-up recalc restamps."""
     _waivers_active(monkeypatch, True)
-    calls = _recalc_returns(monkeypatch, recalculated)
-
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
-
-    assert calls == [_PROJECT_ID]
-    assert notified == [recalculated]
-
-
-@pytest.mark.asyncio
-async def test_a_recalc_that_yields_nothing_leaves_the_scan_stats_for_notifications(db, notified, monkeypatch):
-    _waivers_active(monkeypatch, True)
-    calls = _recalc_returns(monkeypatch, None)
+    calls = _recalc_returns(monkeypatch, Stats(critical=7))
 
     assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
 

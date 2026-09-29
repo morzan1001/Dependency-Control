@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import pytest
 from pymongo import ReadPreference
 
+from app.core.metrics import analysis_waivers_applied_total
 from app.models.finding import Finding, FindingType, Severity
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
@@ -89,9 +90,9 @@ async def _seed_project(db) -> None:
     await db.scans.insert_one({"_id": _HEAD, "project_id": _PROJECT, "status": "completed"})
 
 
-async def _persist(db, scan_id: str, *findings: Finding) -> list[dict]:
+async def _persist(db, scan_id: str, *findings: Finding, head: bool = False) -> list[dict]:
     records, _ = _prepare_finding_records(list(findings), scan_id, _PROJECT, datetime.now(timezone.utc))
-    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db)
+    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db, head=head)
     return await db.findings.find({"scan_id": scan_id}).to_list(None)
 
 
@@ -279,3 +280,64 @@ async def test_a_global_waiver_carries_no_one_projects_outcome():
     stored = await db.waivers.find_one({})
     assert stored.get("last_eval_scan_id") is None
     assert (await db.findings.find_one({}))["waived"] is True
+
+
+def _record_recalc_restamps(monkeypatch) -> list[str]:
+    import app.services.stats as stats_module
+
+    restamped: list[str] = []
+    original = stats_module.restamp_waivers
+
+    async def recording(finding_repo, waiver_repo, scan_id, waivers):
+        restamped.append(scan_id)
+        return await original(finding_repo, waiver_repo, scan_id, waivers)
+
+    monkeypatch.setattr(stats_module, "restamp_waivers", recording)
+    return restamped
+
+
+async def test_heads_analysis_records_each_waivers_outcome_and_leaves_the_recalc_nothing(monkeypatch):
+    db = FakeDatabase()
+    await _seed_project(db)
+    await WaiverRepository(db).create(_field_waiver())
+    await _persist(db, _HEAD, _vulnerable_component(), head=True)
+    restamped = _record_recalc_restamps(monkeypatch)
+
+    await recalculate_project_stats(_PROJECT, db)
+
+    stored = await db.waivers.find_one({})
+    assert (stored["last_eval_scan_id"], stored["last_match_count"]) == (_HEAD, 1)
+    assert restamped == []
+
+
+async def test_another_branchs_analysis_leaves_each_waivers_outcome_to_head():
+    db = FakeDatabase()
+    await WaiverRepository(db).create(_field_waiver())
+
+    await _persist(db, _FEATURE, _vulnerable_component())
+
+    assert (await db.waivers.find_one({})).get("last_eval_scan_id") is None
+
+
+_ROUTES = ("query", "vulnerability", "signature")
+
+
+def _applied_by_route() -> dict[str, float]:
+    return {route: analysis_waivers_applied_total.labels(type=route)._value.get() for route in _ROUTES}
+
+
+async def test_the_applied_metric_counts_each_waiver_that_matched_by_the_path_it_took():
+    db = FakeDatabase()
+    unmatched = Waiver(project_id=_PROJECT, finding_id="lodash:4.17.0", reason="r", created_by="u")
+    for waiver in (_field_waiver(), _partial_cve_waiver(), unmatched):
+        await WaiverRepository(db).create(waiver)
+    before = _applied_by_route()
+
+    await _persist(db, _FEATURE, _vulnerable_component())
+
+    after = _applied_by_route()
+    assert {route: after[route] - before[route] for route in _ROUTES} == {
+        "query": 1,
+        "vulnerability": 1,
+        "signature": 0,
+    }

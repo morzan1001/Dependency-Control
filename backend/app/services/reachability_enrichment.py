@@ -746,7 +746,7 @@ async def run_pending_reachability_for_scan(
             await persist_reachability_result(result_repo, scan_id, reachability_summary)
 
         # The scan's stats were frozen at completion, before any reachability verdict existed.
-        stats = await calculate_comprehensive_stats(db, scan_id)
+        stats = (await calculate_comprehensive_stats(db, scan_id)).stats
         await scan_repo.update_raw(
             scan_id,
             {

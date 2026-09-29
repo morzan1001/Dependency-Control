@@ -384,7 +384,7 @@ class TestDriverReadsOneCursor:
         await db.findings.insert_one(
             {"_id": "f2", "scan_id": "s1", "type": "vulnerability", "severity": "CRITICAL", "waived": False}
         )
-        stats = await calculate_comprehensive_stats(db, "s1")
+        stats = (await calculate_comprehensive_stats(db, "s1")).stats
         assert stats.critical == 1
 
     @pytest.mark.asyncio
@@ -394,7 +394,7 @@ class TestDriverReadsOneCursor:
         await db.findings.insert_one(
             {"_id": "f1", "scan_id": "s1", "type": "vulnerability", "severity": "HIGH", "component": "lodash"}
         )
-        stats = await calculate_comprehensive_stats(db, "s1")
+        stats = (await calculate_comprehensive_stats(db, "s1")).stats
         assert stats.reachability.coverable_count == 1
         # The seeded finding carries no ``reachable`` key, so coverable is independent of analysis.
         assert stats.reachability.analyzed_count == 0
@@ -587,7 +587,7 @@ class TestProjectionOracle:
     async def test_the_projected_driver_matches_the_unprojected_fold(self):
         db, documents = await _seeded_oracle_db()
         languages = component_language_map(_ORACLE_DEPENDENCIES)
-        projected = await calculate_comprehensive_stats(db, _ORACLE_SCAN_ID)
+        projected = (await calculate_comprehensive_stats(db, _ORACLE_SCAN_ID)).stats
         assert projected.model_dump() == compute_stats(documents, languages).model_dump()
 
     @pytest.mark.asyncio
@@ -595,7 +595,7 @@ class TestProjectionOracle:
         """Nothing else in the suite folds details.reachability.confidence_score through a projection,
         so a zero here would leave the comparison above blind to the only nested path."""
         db, _ = await _seeded_oracle_db()
-        reachability = (await calculate_comprehensive_stats(db, _ORACLE_SCAN_ID)).reachability
+        reachability = (await calculate_comprehensive_stats(db, _ORACLE_SCAN_ID)).stats.reachability
         assert reachability.reachable_count_high_confidence == _EXPECTED_HIGH_CONFIDENCE
         assert reachability.reachable_critical_high_confidence == _EXPECTED_HIGH_CONFIDENCE_CRITICAL
         assert reachability.reachable_high_high_confidence == _EXPECTED_HIGH_CONFIDENCE_HIGH
@@ -668,6 +668,17 @@ class TestWaivedAdvisoriesCarryNoThreatIntel:
         db = FakeDatabase()
         await db.findings.insert_one({**_partly_waived_log4j(), "_id": "f1", "scan_id": "s1"})
 
-        stats = await calculate_comprehensive_stats(db, "s1")
+        stats = (await calculate_comprehensive_stats(db, "s1")).stats
 
         assert stats.threat_intel.kev_count == 0
+
+
+@pytest.mark.asyncio
+async def test_the_tally_counts_the_waived_documents_the_stats_leave_out():
+    db = FakeDatabase()
+    for index, waived in enumerate((True, True, False)):
+        await db.findings.insert_one({**_finding(), "_id": f"f{index}", "scan_id": "s1", "waived": waived})
+
+    tally = await calculate_comprehensive_stats(db, "s1")
+
+    assert (tally.stats.high, tally.ignored_count) == (1, 2)

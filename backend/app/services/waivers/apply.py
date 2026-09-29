@@ -1,5 +1,6 @@
 """The one waiver restamp: brings a scan's stored waiver flags in line with the active waiver set."""
 
+import hashlib
 import logging
 from collections import Counter, defaultdict
 from typing import Any
@@ -30,11 +31,22 @@ logger = logging.getLogger(__name__)
 
 _FieldsById = dict[str, dict[str, Any]]
 
+# What a pass writes, when an active waiver expires, and the creation time (defaulted on load for a document
+# without one) do not change how a waiver stamps.
+_NOT_STAMPED = {"last_eval_scan_id", "last_match_count", "expiration_date", "is_active", "created_at"}
+
+
+def waiver_fingerprint(waivers: list[Waiver]) -> str:
+    """Names the waiver set a scan was stamped with, from what decides the stamping."""
+    dumps = sorted(w.model_dump_json(exclude=_NOT_STAMPED) for w in waivers)
+    return hashlib.sha256("\n".join(dumps).encode()).hexdigest()
+
 
 async def restamp_waivers(
     finding_repo: FindingRepository, waiver_repo: WaiverRepository | None, scan_id: str, waivers: list[Waiver]
-) -> None:
-    """Bring one scan's waiver flags in line with ``waivers``, writing only the findings whose flags change.
+) -> Counter[str]:
+    """Bring one scan's waiver flags in line with ``waivers``, writing only the findings whose flags change, and
+    return how many findings each waiver matched there.
 
     ``waiver_repo``, when given, records what each project waiver matched there and where its signature now is.
     """
@@ -59,6 +71,7 @@ async def restamp_waivers(
 
     if waiver_repo is not None:
         await waiver_repo.set_fields_many(_waiver_bookkeeping(waivers, scan_id, counts, bound, app))
+    return counts
 
 
 def _safe_match_signature(raw: dict, context: str) -> MatchSignature | None:

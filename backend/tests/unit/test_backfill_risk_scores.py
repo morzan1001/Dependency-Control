@@ -137,7 +137,7 @@ class TestFullStatsDivergenceReport:
         from app.services.analysis.stats import calculate_comprehensive_stats
 
         await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
-        computed = await calculate_comprehensive_stats(seeded_db, "scan-c")
+        computed = (await calculate_comprehensive_stats(seeded_db, "scan-c")).stats
         await seeded_db.scans.insert_one({"_id": "scan-c", "stats": computed.model_dump()})
 
         counters = await backfill_scans(
@@ -151,7 +151,7 @@ class TestFullStatsDivergenceReport:
         from app.services.analysis.stats import calculate_comprehensive_stats
 
         await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
-        computed = await calculate_comprehensive_stats(seeded_db, "scan-c")
+        computed = (await calculate_comprehensive_stats(seeded_db, "scan-c")).stats
         stored = computed.model_dump()
         stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
         await seeded_db.scans.insert_one({"_id": "scan-c", "stats": stored})
@@ -169,7 +169,7 @@ class TestFullStatsDivergenceReport:
 
         for scan_id in ("scan-c", "scan-d"):
             await seeded_db.findings.insert_one(_finding(f"f-{scan_id}", scan_id))
-            computed = await calculate_comprehensive_stats(seeded_db, scan_id)
+            computed = (await calculate_comprehensive_stats(seeded_db, scan_id)).stats
             stored = computed.model_dump()
             stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
             await seeded_db.scans.insert_one({"_id": scan_id, "stats": stored})
@@ -186,7 +186,7 @@ class TestFullStatsDivergenceReport:
         from app.services.analysis.stats import calculate_comprehensive_stats
 
         await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
-        computed = await calculate_comprehensive_stats(seeded_db, "scan-c")
+        computed = (await calculate_comprehensive_stats(seeded_db, "scan-c")).stats
         stored = computed.model_dump()
         stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
         await seeded_db.scans.insert_one({"_id": "scan-c", "stats": stored})
@@ -203,7 +203,7 @@ class TestFullStatsDivergenceReport:
         for index in range(DRIFTED_SCAN_COUNT):
             scan_id = f"scan-{index}"
             await seeded_db.findings.insert_one(_finding(f"f-{scan_id}", scan_id))
-            computed = await calculate_comprehensive_stats(seeded_db, scan_id)
+            computed = (await calculate_comprehensive_stats(seeded_db, scan_id)).stats
             stored = computed.model_dump()
             stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
             await seeded_db.scans.insert_one({"_id": scan_id, "stats": stored})
@@ -243,7 +243,7 @@ class TestFullStatsDivergenceReport:
         from app.services.analysis.stats import calculate_comprehensive_stats
 
         await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
-        computed = await calculate_comprehensive_stats(seeded_db, "scan-c")
+        computed = (await calculate_comprehensive_stats(seeded_db, "scan-c")).stats
         stored = computed.model_dump()
         del stored["negligible"]
 

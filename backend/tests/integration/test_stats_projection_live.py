@@ -21,6 +21,6 @@ async def test_the_projected_read_matches_the_unprojected_fold(db):
     await db.dependencies.insert_many(copy.deepcopy(_ORACLE_DEPENDENCIES))
     await db.findings.insert_many(copy.deepcopy(documents))
 
-    projected = await calculate_comprehensive_stats(db, _ORACLE_SCAN_ID)
+    projected = (await calculate_comprehensive_stats(db, _ORACLE_SCAN_ID)).stats
 
     assert projected == compute_stats(documents, component_language_map(_ORACLE_DEPENDENCIES))

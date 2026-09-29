@@ -144,7 +144,7 @@ class TestRecalculateUnifiedStats:
         # recalc resets + re-applies waivers, then computes stats. Comparing
         # comprehensive on the SAME post-recalc state proves identical filtering.
         result = await recalculate_project_stats(PROJECT_ID, seeded_db)
-        comprehensive = await calculate_comprehensive_stats(seeded_db, SCAN_ID)
+        comprehensive = (await calculate_comprehensive_stats(seeded_db, SCAN_ID)).stats
 
         assert result is not None
         # Severity counts identical and exclude the waived CRITICAL finding.
@@ -540,7 +540,7 @@ async def test_stats_count_findings_that_carry_no_waived_field():
     del doc["waived"]
     await db.findings.insert_one(doc)
 
-    stats = await calculate_comprehensive_stats(db, SCAN_ID)
+    stats = (await calculate_comprehensive_stats(db, SCAN_ID)).stats
 
     assert stats.critical == 1
 
