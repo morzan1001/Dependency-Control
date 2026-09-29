@@ -2,14 +2,15 @@
 
 import logging
 from types import SimpleNamespace
-from typing import ClassVar
+from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.cache import cache_service
+from app.core.cache import CacheKeys, CacheTTL
 from app.core.constants import TYPOSQUATTING_POPULAR_PACKAGE_RANKS
-from app.services.analyzers.typosquatting import TyposquattingAnalyzer
+from app.services.analyzers import typosquatting
+from app.services.analyzers.typosquatting import _STATIC_NPM_PACKAGES, _STATIC_PYPI_FALLBACK, TyposquattingAnalyzer
 from tests.helpers.analyzers import analyze_cyclonedx
 
 
@@ -94,60 +95,14 @@ class TestNormalizePkgName:
         assert _normalize_pkg_name(None) == ""
 
 
-class TestGetStaticPypi:
-    def setup_method(self):
-        self.analyzer = TyposquattingAnalyzer()
-
-    def test_returns_non_empty_set(self):
-        result = self.analyzer._get_static_pypi()
-        assert isinstance(result, set)
-        assert len(result) > 0
-
-    def test_contains_requests(self):
-        assert "requests" in self.analyzer._get_static_pypi()
-
-    def test_contains_flask(self):
-        assert "flask" in self.analyzer._get_static_pypi()
-
-    def test_contains_django(self):
-        assert "django" in self.analyzer._get_static_pypi()
-
-    def test_contains_numpy(self):
-        assert "numpy" in self.analyzer._get_static_pypi()
-
-    def test_contains_pydantic(self):
-        assert "pydantic" in self.analyzer._get_static_pypi()
-
-    def test_contains_fastapi(self):
-        assert "fastapi" in self.analyzer._get_static_pypi()
+@pytest.mark.parametrize("name", ["requests", "flask", "django", "numpy", "pydantic", "fastapi"])
+def test_the_built_in_pypi_names_cover_the_most_imitated_packages(name):
+    assert name in _STATIC_PYPI_FALLBACK
 
 
-class TestGetStaticNpm:
-    def setup_method(self):
-        self.analyzer = TyposquattingAnalyzer()
-
-    def test_returns_non_empty_set(self):
-        result = self.analyzer._get_static_npm()
-        assert isinstance(result, set)
-        assert len(result) > 0
-
-    def test_contains_react(self):
-        assert "react" in self.analyzer._get_static_npm()
-
-    def test_contains_lodash(self):
-        assert "lodash" in self.analyzer._get_static_npm()
-
-    def test_contains_express(self):
-        assert "express" in self.analyzer._get_static_npm()
-
-    def test_contains_typescript(self):
-        assert "typescript" in self.analyzer._get_static_npm()
-
-    def test_contains_webpack(self):
-        assert "webpack" in self.analyzer._get_static_npm()
-
-    def test_contains_vue(self):
-        assert "vue" in self.analyzer._get_static_npm()
+@pytest.mark.parametrize("name", ["react", "lodash", "express", "typescript", "webpack", "vue"])
+def test_the_npm_corpus_covers_the_most_imitated_packages(name):
+    assert name in _STATIC_NPM_PACKAGES
 
 
 class TestSeverityThresholds:
@@ -214,6 +169,12 @@ class TestCorpusMembershipDecidesWhoIsScanned:
         assert [issue["imitated_package"] for issue in issues] == ["lodash"]
 
 
+def _serve_corpus(client_cls, status_code: int, payload) -> None:
+    client_cls.return_value.__aenter__.return_value.get = AsyncMock(
+        return_value=SimpleNamespace(status_code=status_code, json=lambda: payload)
+    )
+
+
 class TestCorpusDepthIsDeclaredAndReported:
     """One declared depth drives the fetch, and the result says what the comparison covered."""
 
@@ -222,13 +183,8 @@ class TestCorpusDepthIsDeclaredAndReported:
         served_ranks = TYPOSQUATTING_POPULAR_PACKAGE_RANKS * 3
         payload = {"rows": [{"project": f"pkg-{index}"} for index in range(served_ranks)]}
 
-        with (
-            patch.object(cache_service, "set", new=AsyncMock()),
-            patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls,
-        ):
-            ClientCls.return_value.__aenter__.return_value.get = AsyncMock(
-                return_value=SimpleNamespace(status_code=200, json=lambda: payload)
-            )
+        with patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls:
+            _serve_corpus(ClientCls, 200, payload)
             packages = await TyposquattingAnalyzer()._fetch_pypi_packages()
 
         assert len(packages) == TYPOSQUATTING_POPULAR_PACKAGE_RANKS
@@ -246,31 +202,91 @@ class TestCorpusDepthIsDeclaredAndReported:
     @pytest.mark.asyncio
     async def test_the_fetch_follows_the_corpus_when_it_moves_host(self):
         """A 301 that is not followed leaves the detector on the built-in handful of names."""
-        with (
-            patch.object(cache_service, "set", new=AsyncMock()),
-            patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls,
-        ):
-            ClientCls.return_value.__aenter__.return_value.get = AsyncMock(
-                return_value=SimpleNamespace(status_code=200, json=lambda: {"rows": []})
-            )
+        with patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls:
+            _serve_corpus(ClientCls, 200, {"rows": []})
             await TyposquattingAnalyzer()._fetch_pypi_packages()
 
         assert ClientCls.call_args.kwargs["follow_redirects"] is True
 
-    @pytest.mark.asyncio
-    async def test_falling_back_to_the_built_in_names_is_reported(self, caplog):
-        with (
-            patch.object(cache_service, "set", new=AsyncMock()),
-            patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls,
-            caplog.at_level(logging.WARNING, logger="app.services.analyzers.typosquatting"),
-        ):
-            ClientCls.return_value.__aenter__.return_value.get = AsyncMock(
-                return_value=SimpleNamespace(status_code=301, json=dict)
-            )
-            packages = await TyposquattingAnalyzer()._fetch_pypi_packages()
 
-        assert len(packages) < TYPOSQUATTING_POPULAR_PACKAGE_RANKS
-        assert "HTTP 301" in caplog.text
+class _CorpusCache:
+    """Mirrors cache_service.get_or_fetch_with_lock and records every write with its TTL."""
+
+    def __init__(self, entries: dict[str, Any] | None = None):
+        self.entries = dict(entries or {})
+        self.writes: list[tuple[str, Any, int | None]] = []
+
+    async def mget(self, keys: list[str]) -> dict[str, Any]:
+        return {key: self.entries.get(key) for key in keys}
+
+    async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
+        self.writes.append((key, value, ttl_seconds))
+        return True
+
+    async def get_or_fetch_with_lock(self, key: str, fetch_fn, ttl_seconds: int | None = None) -> Any:
+        if self.entries.get(key) is not None:
+            return self.entries[key]
+        value = await fetch_fn()
+        if value is None:
+            self.writes.append((key, {}, CacheTTL.NEGATIVE_RESULT))
+        else:
+            self.writes.append((key, value, ttl_seconds))
+        return value
+
+
+_PYPI_KEY = CacheKeys.popular_packages("pypi")
+
+
+class TestOnlyThePypiCorpusIsCached:
+    """The npm list is a constant; only the fetched PyPI ranking goes through the locked cache helper."""
+
+    async def _corpus(self, monkeypatch, cache: _CorpusCache, status_code: int = 200, payload=None):
+        monkeypatch.setattr(typosquatting, "cache_service", cache)
+        with patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls:
+            _serve_corpus(ClientCls, status_code, payload)
+            corpus = await TyposquattingAnalyzer()._ensure_popular_packages()
+        return corpus, ClientCls
+
+    @pytest.mark.asyncio
+    async def test_a_fetched_ranking_is_cached_and_the_npm_list_is_not(self, monkeypatch):
+        cache = _CorpusCache()
+
+        corpus, _ = await self._corpus(monkeypatch, cache, payload={"rows": [{"project": "Requests"}]})
+
+        assert corpus == {"pypi": {"requests"}, "npm": set(_STATIC_NPM_PACKAGES)}
+        assert cache.writes == [(_PYPI_KEY, ["requests"], CacheTTL.POPULAR_PACKAGES)]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("status_code", "payload", "reason"),
+        [
+            pytest.param(301, {}, "HTTP 301", id="unfollowed_redirect"),
+            pytest.param(200, {"rows": []}, "empty corpus", id="empty_ranking"),
+            pytest.param(200, {"rows": [{"name": "requests"}]}, "KeyError", id="rows_without_project"),
+            pytest.param(200, ["requests"], "AttributeError", id="not_an_object"),
+        ],
+    )
+    async def test_an_unusable_ranking_is_negative_cached_and_the_run_uses_the_built_in_names(
+        self, monkeypatch, caplog, status_code, payload, reason
+    ):
+        cache = _CorpusCache()
+
+        with caplog.at_level(logging.WARNING, logger="app.services.analyzers.typosquatting"):
+            corpus, _ = await self._corpus(monkeypatch, cache, status_code, payload)
+
+        assert corpus["pypi"] == set(_STATIC_PYPI_FALLBACK)
+        assert cache.writes == [(_PYPI_KEY, {}, CacheTTL.NEGATIVE_RESULT)]
+        assert reason in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_a_cached_negative_entry_uses_the_built_in_names_without_a_fetch(self, monkeypatch):
+        cache = _CorpusCache({_PYPI_KEY: {}})
+
+        corpus, client_cls = await self._corpus(monkeypatch, cache)
+
+        assert corpus["pypi"] == set(_STATIC_PYPI_FALLBACK)
+        assert client_cls.call_count == 0
+        assert cache.writes == []
 
 
 class TestTheEcosystemComesFromThePurl:

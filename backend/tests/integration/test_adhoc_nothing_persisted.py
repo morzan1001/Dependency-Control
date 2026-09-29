@@ -83,19 +83,13 @@ _REDIS_DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
 _DRIVER_ENTRY_POINTS = _MONGO_DRIVER_ENTRY_POINTS + _REDIS_DRIVER_ENTRY_POINTS
 
 # Upstream reference lists shared by every caller: the key names the source, never the payload.
-_UPSTREAM_REFERENCE_CACHE_KEYS = frozenset(
-    {
-        CacheKeys.popular_packages("npm"),
-        CacheKeys.popular_packages("pypi"),
-        CacheKeys.kev_catalog(),
-    }
-)
+_UPSTREAM_REFERENCE_CACHE_KEYS = frozenset({CacheKeys.popular_packages("pypi"), CacheKeys.kev_catalog()})
 
 # The run reads the shared cache and publishes nothing back. An equality assertion on the
 # reads, so an analyzer that stops running cannot quietly shrink the cache nets to nothing.
-_EXPECTED_CACHE_READS = frozenset({CacheKeys.popular_packages("npm"), CacheKeys.popular_packages("pypi")})
+_EXPECTED_CACHE_READS = frozenset({CacheKeys.popular_packages("pypi")})
 
-_UPSTREAM_NPM_KEY = f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('npm')}"
+_UPSTREAM_PYPI_KEY = f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('pypi')}"
 _UNNAMED_COLLECTION = "a_collection_no_one_named"
 _UNMODELLED_DRIVER_API = "get_collection"
 _LEAK_ID = "leak"
@@ -501,7 +495,7 @@ def assert_no_caller_data_in_shared_cache(writes: list[tuple[str, str]]) -> None
 @pytest.fixture
 def recording_cache(monkeypatch: pytest.MonkeyPatch) -> _RecordedCache:
     recorded = _RecordedCache([], [])
-    seeded = {f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('pypi')}": json.dumps(_SEEDED_POPULAR_PYPI)}
+    seeded = {_UPSTREAM_PYPI_KEY: json.dumps(_SEEDED_POPULAR_PYPI)}
     client = _RecordingRedis(seeded, recorded.writes, recorded.reads)
 
     async def _get_client(_self: CacheService) -> _RecordingRedis:
@@ -648,7 +642,7 @@ async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
             await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_CALLER_ONLY_COMPONENT])
             await cache_service.mset({_CALLER_DERIVED_CACHE_KEY: [_CALLER_ONLY_COMPONENT]})
             await cache_service.get_or_fetch_with_lock(_CALLER_DERIVED_CACHE_KEY, _fetch)
-            await cache_service.delete(_UPSTREAM_NPM_KEY)
+            await cache_service.delete(_UPSTREAM_PYPI_KEY)
             return {"findings": []}
 
     serve_analyzer(monkeypatch, _CACHING_ANALYZER, _Caching())
@@ -945,17 +939,17 @@ def test_a_directly_constructed_driver_client_is_caught(bypass_attempts, label, 
 
 
 def test_a_caller_derived_cache_key_is_caught():
-    assert_no_caller_derived_cache_writes([(_UPSTREAM_NPM_KEY, "")])
+    assert_no_caller_derived_cache_writes([(_UPSTREAM_PYPI_KEY, "")])
 
     with pytest.raises(AssertionError, match=_CALLER_DERIVED_CACHE_KEY):
         assert_no_caller_derived_cache_writes([(f"{settings.CACHE_PREFIX}{_CALLER_DERIVED_CACHE_KEY}", "")])
 
 
 def test_caller_data_cached_under_a_permitted_upstream_key_is_caught():
-    assert_no_caller_data_in_shared_cache([(_UPSTREAM_NPM_KEY, json.dumps(_SEEDED_POPULAR_PYPI))])
+    assert_no_caller_data_in_shared_cache([(_UPSTREAM_PYPI_KEY, json.dumps(_SEEDED_POPULAR_PYPI))])
 
-    with pytest.raises(AssertionError, match=_UPSTREAM_NPM_KEY):
-        assert_no_caller_data_in_shared_cache([(_UPSTREAM_NPM_KEY, json.dumps([_CALLER_ONLY_COMPONENT]))])
+    with pytest.raises(AssertionError, match=_UPSTREAM_PYPI_KEY):
+        assert_no_caller_data_in_shared_cache([(_UPSTREAM_PYPI_KEY, json.dumps([_CALLER_ONLY_COMPONENT]))])
 
 
 def test_a_file_left_behind_is_caught(filesystem_watch):
