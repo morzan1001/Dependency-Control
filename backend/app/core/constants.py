@@ -1,11 +1,14 @@
 """Shared constants used across the application."""
 
+import os
 import re
 from typing import Any, Final, Literal, get_args
 
-# Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
-# finding's ``details`` dict by the enrichment writer. Every reader of persisted
-# finding details MUST use these exact keys.
+# HOSTNAME alone repeats across the uvicorn processes of one pod.
+INSTANCE_ID = f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}"
+
+# The two CISA KEV flags enrichment persists on a finding's details and on each of its
+# details.vulnerabilities entries; every writer and reader of those flags uses these keys.
 DETAILS_KEY_IN_KEV = "in_kev"
 DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
 
@@ -243,13 +246,6 @@ SEVERITY_WEIGHTS: dict[str, float] = {
 }
 
 
-def get_severity_weight(severity: str | None) -> float:
-    """Get risk weight for a severity level (case-insensitive)."""
-    if not severity:
-        return 0.0
-    return SEVERITY_WEIGHTS.get(severity.upper(), 0.0)
-
-
 # Common patterns for development dependencies
 DEV_DEPENDENCY_PATTERNS = [
     r"jest",
@@ -307,7 +303,6 @@ RECOMMENDATION_SCORING_WEIGHTS: dict[str, int] = {
     "kev_ransomware_bonus": 250,
     "high_epss_bonus": 200,
     "medium_epss_bonus": 50,
-    "active_exploitation_bonus": 300,
 }
 
 
@@ -375,11 +370,10 @@ EFFORT_BONUSES: dict[str, int] = {
     "high": 0,
 }
 
-# Maximum depth for dependency chain analysis
+# Dependencies nested deeper than this below their nearest direct dependency are reported.
 MAX_DEPENDENCY_DEPTH: int = 5
-
-# Threshold for considering a dependency outdated (in days)
-OUTDATED_DEPENDENCY_THRESHOLD_DAYS: int = 365 * 2  # 2 years
+# Reported chains at least this deep count as medium impact, shallower ones as low.
+DEEP_CHAIN_MEDIUM_IMPACT_DEPTH: int = 8
 
 # Thresholds for recommendation analysis
 RECURRING_ISSUE_THRESHOLD: int = 3  # Min scans a CVE appears in to be "recurring"
@@ -390,7 +384,6 @@ CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project pattern
 
 # EPSS very high threshold (for immediate action recommendations)
 EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploited
-EPSS_ACTIVE_EXPLOITATION_THRESHOLD: float = 0.7  # >= 70% - treated as under active exploitation
 
 # OpenSSF Scorecard thresholds
 SCORECARD_LOW_THRESHOLD: float = 4.0  # Packages below this are flagged as low quality
@@ -406,6 +399,8 @@ EOL_MEDIUM_AFTER_DAYS: int = 180
 
 # Typosquatting detection threshold (similarity ratio 0-1)
 TYPOSQUATTING_SIMILARITY_THRESHOLD: float = 0.82
+TYPOSQUATTING_HIGH_SIMILARITY: float = 0.90
+TYPOSQUATTING_CRITICAL_SIMILARITY: float = 0.95
 # Download-rank depth of the corpus a package name is compared against. The upstream list serves
 # 15 000 ranks and every 1 000 of them costs ~3 ms per unrecognised component, so the depth is a
 # scan-time budget: 5 000 ranks is ~15 ms per component. The analyzer result reports the depth,
@@ -462,9 +457,8 @@ EXPLOIT_MATURITY_ORDER: dict[str, int] = {
     "low": 1,
     "medium": 2,
     "high": 3,
-    "poc": 4,  # Proof of concept
-    "active": 5,
-    "weaponized": 6,
+    "active": 4,
+    "weaponized": 5,
 }
 
 # Exploit maturity boost factors for impact score calculation
@@ -992,12 +986,14 @@ REACHABILITY_EXTRACTION_CONFIDENCE = {
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
-# Why a finding carries no reachability verdict. "unsupported_ecosystem" is terminal — OS
-# packages have no callgraph tooling — while the others name something a pipeline can fix.
+# Why a finding carries no reachability verdict. "unsupported_ecosystem" and "absence_not_evidence"
+# are terminal — OS packages have no callgraph tooling, a JVM graph cannot rule a package out — while
+# the others name something a pipeline can fix.
 REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM = "unsupported_ecosystem"
 REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED = "language_not_analyzed"
 REACHABILITY_REASON_NO_COVERAGE_UNIVERSE = "no_coverage_universe"
 REACHABILITY_REASON_OUTSIDE_COVERAGE = "outside_coverage"
+REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE = "absence_not_evidence"
 
 # Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
 # calls, the symbols each import names, madge dependencies and the analyzed-modules list.
@@ -1015,7 +1011,6 @@ GITLAB_ADMIN_MIN_ACCESS = GITLAB_ACCESS_MAINTAINER
 # Aggregation key prefixes for finding deduplication
 AGG_KEY_VULNERABILITY = "AGG:VULN"
 AGG_KEY_QUALITY = "AGG:QUALITY"
-AGG_KEY_SAST = "SAST-AGG"
 
 # Cross-linking is pairwise, so a component carrying thousands of findings costs O(n^2) to
 # produce a related-findings list no reader can use. Above this the group is left unlinked.
@@ -1038,6 +1033,7 @@ CVSS_SEVERITY_SCORES: dict[str, float] = {
     "HIGH": 7.5,
     "MEDIUM": 4.0,
     "LOW": 1.0,
+    "NEGLIGIBLE": 0.0,
     "INFO": 0.0,
     "UNKNOWN": 0.0,
 }
@@ -1048,7 +1044,7 @@ CVSS_SEVERITY_SCORES: dict[str, float] = {
 SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
     sev: round((cvss / 10.0) * 40.0, 1) for sev, cvss in CVSS_SEVERITY_SCORES.items()
 }
-# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, INFO/UNKNOWN=0.0
+# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, NEGLIGIBLE/INFO/UNKNOWN=0.0
 
 # GitLab JWKS cache TTLs (in seconds)
 GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour

@@ -42,7 +42,7 @@ def _prod_shaped_vuln_finding():
 
 
 def test_result_carries_no_permanently_null_component_fields():
-    results = _vuln_results_for_finding(_prod_shaped_vuln_finding(), "cve-2026", None, None, {"proj-1": "demo"})
+    results = _vuln_results_for_finding(_prod_shaped_vuln_finding(), "cve-2026", {"proj-1": "demo"})
     assert len(results) == 1
     payload = results[0].model_dump()
     assert "purl" not in payload

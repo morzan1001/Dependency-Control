@@ -39,7 +39,6 @@ class TestRunAnalysisScanNotFound:
         monkeypatch.setattr("app.services.analysis.engine.ScanRepository", _scan_repo)
         monkeypatch.setattr("app.services.analysis.engine.AnalysisResultRepository", lambda _: MagicMock())
         monkeypatch.setattr("app.services.analysis.engine.FindingRepository", lambda _: MagicMock())
-        monkeypatch.setattr("app.services.analysis.engine.CallgraphRepository", lambda _: MagicMock())
         monkeypatch.setattr("app.services.analysis.engine.ProjectRepository", lambda _: MagicMock())
 
         result = asyncio.run(run_analysis("missing-scan", [], [], MagicMock()))

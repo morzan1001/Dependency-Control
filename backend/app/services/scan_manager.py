@@ -21,8 +21,8 @@ from app.services.waivers.matching import record_matches, route_waiver, waiver_c
 logger = logging.getLogger(__name__)
 
 
-def derive_pipeline_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
-    """The scan every job of one CI run writes to, so SBOM, scanner results and callgraph meet; None without a run."""
+def deterministic_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
+    """The scan one CI run's SBOM, scanner results and callgraphs share, or None without a pipeline."""
     if not pipeline_id:
         return None
     seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
@@ -141,7 +141,7 @@ class ScanManager:
 
     def run_scan_id(self, data: BaseIngest) -> str:
         # pipeline_id 0 derives nothing and still needs a scan of its own.
-        return derive_pipeline_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
+        return deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
     async def find_or_create_scan(self, data: BaseIngest) -> str:
         """The run's scan id; the upsert lets concurrent scanners of one run share it across pods."""

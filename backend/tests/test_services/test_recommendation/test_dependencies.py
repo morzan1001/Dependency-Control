@@ -299,3 +299,33 @@ class TestAnalyzeEndOfLifeMultiple:
         ]
         rec = analyze_end_of_life(findings)[0]
         assert rec.priority == Priority.HIGH
+
+
+class TestAnalyzeVersionFragmentationPackageIdentity:
+    def test_scoped_packages_sharing_a_bare_name_are_not_one_fragmented_package(self):
+        deps = [
+            {**_dep(name="core", version="16.2.0"), "purl": "pkg:npm/%40angular/core@16.2.0"},
+            {**_dep(name="core", version="7.23.0"), "purl": "pkg:npm/%40babel/core@7.23.0"},
+            {**_dep(name="core", version="10.0.0"), "purl": "pkg:npm/%40nestjs/core@10.0.0"},
+        ]
+
+        assert analyze_version_fragmentation(deps) == []
+
+    def test_the_card_names_the_qualified_package(self):
+        deps = [
+            {**_dep(name="core", version=version), "purl": f"pkg:npm/%40angular/core@{version}"}
+            for version in ("15.0.0", "16.0.0", "17.0.0")
+        ]
+
+        rec = analyze_version_fragmentation(deps)[0]
+
+        assert rec.action["packages"][0]["name"] == "@angular/core"
+
+
+class TestHygieneCardsMatchTheQualifiedName:
+    def test_a_scope_kept_in_the_purl_matches_a_scoped_dev_pattern(self):
+        dep = {"name": "node", "version": "18.0.0", "purl": "pkg:npm/%40types/node@18.0.0"}
+
+        [rec] = analyze_dev_in_production([dep])
+
+        assert rec.affected_components == ["@types/node@18.0.0"]

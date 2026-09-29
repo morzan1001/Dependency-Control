@@ -12,13 +12,15 @@ from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     calculate_best_fix_version,
     calculate_score,
-    finding_cve_ids,
+    newest_first,
     get_attr,
+    live_cves,
     name_some,
-    parse_version_tuple,
     sample_components,
     sort_key,
+    summarize_vulns,
     take_top,
+    vuln_info,
 )
 
 
@@ -101,21 +103,7 @@ class TestGetAttr:
         assert get_attr(source, key, default) == default
 
 
-def _stored_vuln(entries):
-    """A vulnerability finding in the shape the aggregator persists: the document id is the
-    (component, version) pair and every advisory lives in details.vulnerabilities."""
-    return {
-        "id": "log4j-core:2.14.1",
-        "finding_id": "log4j-core:2.14.1",
-        "type": "vulnerability",
-        "component": "log4j-core",
-        "version": "2.14.1",
-        "aliases": [],
-        "details": {"fixed_version": "2.15.0", "vulnerabilities": entries},
-    }
-
-
-class TestFindingCveIds:
+class TestLiveCves:
     @pytest.mark.parametrize(
         ("entries", "expected"),
         [
@@ -142,59 +130,85 @@ class TestFindingCveIds:
                 id="a_cve_named_by_two_entries_is_listed_once",
             ),
             pytest.param([], [], id="empty_advisory_list_names_nothing"),
+            pytest.param(
+                [{"id": "CVE-2021-44228", "waived": True}, {"id": "CVE-2021-45046"}],
+                ["CVE-2021-45046"],
+                id="a_waived_advisory_is_not_named",
+            ),
         ],
     )
     def test_the_advisory_list_decides_which_cves_are_named(self, entries, expected):
-        assert finding_cve_ids(_stored_vuln(entries)) == expected
+        assert live_cves([{"vulnerabilities": entries}]) == expected
 
-    def test_component_version_document_id_is_never_returned(self):
-        finding = _stored_vuln([{"id": "CVE-2021-44228"}])
-        assert "log4j-core:2.14.1" not in finding_cve_ids(finding)
+    def test_a_cve_in_two_advisory_lists_is_listed_once(self):
+        lists = [{"vulnerabilities": [{"id": "CVE-2021-44228"}]}, {"vulnerabilities": [{"id": "CVE-2021-44228"}]}]
+        assert live_cves(lists) == ["CVE-2021-44228"]
 
-    @pytest.mark.parametrize(
-        "finding",
-        [
-            pytest.param({"id": "log4j-core:2.14.1"}, id="without_details"),
-            pytest.param({"id": "log4j-core:2.14.1", "details": "a string"}, id="details_not_dict"),
-        ],
-    )
-    def test_a_finding_holding_no_advisories_names_nothing(self, finding):
-        assert finding_cve_ids(finding) == []
-
-    def test_reads_a_pydantic_finding_too(self):
-        class _Finding(BaseModel):
-            id: str = "log4j-core:2.14.1"
-            details: dict = {"vulnerabilities": [{"id": "CVE-2021-44228"}]}
-
-        assert finding_cve_ids(_Finding()) == ["CVE-2021-44228"]
+    @pytest.mark.parametrize("details", [None, "a string", {}], ids=["missing", "not_a_dict", "no_advisories"])
+    def test_details_holding_no_advisories_name_nothing(self, details):
+        assert live_cves([details]) == []
 
 
-class TestParseVersionTuple:
-    @pytest.mark.parametrize(
-        ("version", "expected"),
-        [
-            pytest.param("1.2.3", (1, 2, 3), id="simple_semver"),
-            pytest.param("1.2", (1, 2), id="two_part_version"),
-            pytest.param("1.2.3.4", (1, 2, 3, 4), id="four_part_version"),
-            pytest.param("42", (42,), id="single_number"),
-            pytest.param("1.2.0-beta.1", (1, 2, 0, 1), id="prerelease_beta"),
-            pytest.param("2.0.0-rc2", (2, 0, 0, 2), id="prerelease_rc"),
-            pytest.param("", (), id="empty_string"),
-            pytest.param("abc", (), id="no_numeric_parts"),
-        ],
-    )
-    def test_reads_the_numeric_parts(self, version, expected):
-        assert parse_version_tuple(version) == expected
+_WAIVED_KEV = {
+    "id": "CVE-2021-44228",
+    "waived": True,
+    "in_kev": True,
+    "kev_ransomware_use": True,
+    "epss_score": 0.94,
+    "risk_score": 98.0,
+}
+_LIVE = {"id": "CVE-2021-44832", "epss_score": 0.02, "risk_score": 41.0}
 
-    @pytest.mark.parametrize(
-        ("higher", "lower"),
-        [
-            pytest.param("1.2.4", "1.2.3", id="patch"),
-            pytest.param("2.0.0", "1.99.99", id="major"),
-        ],
-    )
-    def test_the_tuples_compare_in_version_order(self, higher, lower):
-        assert parse_version_tuple(higher) > parse_version_tuple(lower)
+
+class TestVulnInfo:
+    """A per-CVE waiver leaves the document roll-up as it was, so the marks come off the live advisories."""
+
+    def _finding(self, advisories):
+        return {
+            "id": "log4j-core:2.14.1",
+            "type": "vulnerability",
+            "severity": "MEDIUM",
+            "component": "log4j-core",
+            "version": "2.14.1",
+            "details": {
+                "in_kev": True,
+                "kev_ransomware_use": True,
+                "epss_score": 0.94,
+                "risk_score": 98.0,
+                "vulnerabilities": advisories,
+            },
+        }
+
+    def test_a_waived_advisory_lends_the_record_none_of_its_marks(self):
+        vuln = vuln_info(self._finding([_WAIVED_KEV, _LIVE]))
+
+        assert (vuln.is_kev, vuln.kev_ransomware, vuln.epss_score, vuln.risk_score) == (False, False, 0.02, 41.0)
+        assert vuln.advisories == [_LIVE]
+
+    def test_the_record_takes_the_worst_mark_across_its_live_advisories(self):
+        kev = {"id": "CVE-2", "in_kev": True, "epss_score": 0.3, "risk_score": 70.0}
+
+        vuln = vuln_info(self._finding([_LIVE, kev]))
+
+        assert (vuln.is_kev, vuln.kev_ransomware, vuln.epss_score, vuln.risk_score) == (True, False, 0.3, 70.0)
+
+    def test_the_stats_name_every_live_cve_once(self):
+        first = self._finding([_WAIVED_KEV, _LIVE, {"id": "CVE-2021-45105"}])
+        second = self._finding([{"id": "GHSA-8489-44mv-ggj8", "aliases": ["CVE-2021-44832"]}])
+
+        stats = summarize_vulns([vuln_info(first), vuln_info(second)])
+
+        assert stats.cves == ["CVE-2021-44832", "CVE-2021-45105"]
+
+
+class TestVersionOrdering:
+    """Recommendations rank versions by the key the aggregate fixed_version uses."""
+
+    def test_letter_suffixed_releases_are_ordered(self):
+        assert newest_first(["2.3.1b", "2.3.1c"]) == ["2.3.1c", "2.3.1b"]
+
+    def test_debian_revisions_are_ordered_numerically(self):
+        assert calculate_best_fix_version(["1.2.3-2", "1.2.3-10"]) == "1.2.3-10"
 
 
 class TestCalculateBestFixVersion:
@@ -204,7 +218,7 @@ class TestCalculateBestFixVersion:
             pytest.param([], "unknown", id="empty_list"),
             pytest.param(["1.2.3"], "1.2.3", id="single_version"),
             pytest.param(["1.0.0", "2.0.0", "1.5.0"], "2.0.0", id="multiple_versions_returns_highest"),
-            pytest.param(["1.0.0, 2.0.0"], "1.0.0, 2.0.0", id="comma_separated_versions"),
+            pytest.param(["1.0.0, 2.0.0"], "2.0.0", id="comma_separated_versions"),
             pytest.param(["", " ", "  "], "unknown", id="whitespace_only_filtered"),
             pytest.param(["", "1.0.0", " "], "1.0.0", id="mixed_whitespace_and_valid"),
             pytest.param(["  1.0.0  ", "2.0.0"], "2.0.0", id="versions_with_leading_whitespace"),
@@ -212,7 +226,7 @@ class TestCalculateBestFixVersion:
             pytest.param([None, None], "unknown", id="all_none"),
             pytest.param(["1.2.3", "1.2.4", "1.3.0"], "1.3.0", id="complex_versions"),
             pytest.param(["1.0.0, 1.5.0", "2.0.0"], "2.0.0", id="comma_separated_in_multiple_entries"),
-            pytest.param(["1.0.0, 3.0.0, 2.0.0"], "1.0.0, 3.0.0, 2.0.0", id="single_comma_separated_entry_as_is"),
+            pytest.param(["1.0.0, 3.0.0, 2.0.0"], "3.0.0", id="single_comma_separated_entry"),
         ],
     )
     def test_calculate_best_fix_version(self, candidates, expected):
@@ -287,11 +301,6 @@ class TestCalculateScore:
                 id="medium_epss",
             ),
             pytest.param(
-                _impact(total=1, active_exploitation_count=1),
-                _impact(total=1, active_exploitation_count=0),
-                id="active_exploitation",
-            ),
-            pytest.param(
                 _impact(total=1, reachable_count=2, reachable_critical=1, reachable_high=1),
                 _impact(total=1, reachable_count=0),
                 id="reachability",
@@ -302,7 +311,7 @@ class TestCalculateScore:
                 id="actionable",
             ),
             pytest.param(
-                _impact(critical=1, total=1, kev_count=1, high_epss_count=1, active_exploitation_count=1),
+                _impact(critical=1, total=1, kev_count=1, high_epss_count=1),
                 _impact(critical=1, total=1, kev_count=1),
                 id="combined_threat_intel",
             ),
@@ -504,29 +513,3 @@ class TestRecommendationTotal:
 
         assert rec.affected_components_total == covered
         assert rec.to_dict()["affected_components_total"] == covered
-
-
-class TestFindingCveIdsAdvisoryFilter:
-    """A card names the advisories it is about; a seven-CVE component group is not seven KEV CVEs."""
-
-    def _mixed(self):
-        return _stored_vuln(
-            [
-                {"id": "CVE-2021-44228", "in_kev": True, "kev_ransomware_use": True},
-                {"id": "CVE-2021-44832"},
-                {"id": "CVE-2021-45046", "in_kev": True, "kev_ransomware_use": True},
-                {"id": "CVE-2021-45105"},
-            ]
-        )
-
-    def test_only_the_marked_advisories_are_named(self):
-        marked = finding_cve_ids(self._mixed(), lambda a: bool(a.get("kev_ransomware_use")))
-        assert marked == ["CVE-2021-44228", "CVE-2021-45046"]
-
-    def test_an_unmarked_group_falls_back_to_every_cve(self):
-        finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "CVE-2021-44832"}])
-        finding["details"]["kev_ransomware_use"] = True
-
-        marked = finding_cve_ids(finding, lambda a: bool(a.get("kev_ransomware_use")))
-
-        assert marked == ["CVE-2021-44228", "CVE-2021-44832"]

@@ -168,6 +168,20 @@ class ScanRepository:
             data = await self._primary().find_one({"_id": scan_id})
         return Scan(**data) if data else None
 
+    async def lineage_root(self, scan_id: str, scan_doc: Any) -> str:
+        """The root of a rescan lineage over any number of hops, bounded so a cyclic pointer cannot hang ingest."""
+        root_id = scan_id
+        doc = scan_doc
+        for _hop in range(MAX_RESCAN_HOPS):
+            if doc is None or not getattr(doc, "is_rescan", False):
+                break
+            parent_id = getattr(doc, "original_scan_id", None)
+            if not parent_id or parent_id == root_id:
+                break
+            root_id = parent_id
+            doc = await self.get_by_id_strong(parent_id)
+        return root_id
+
     async def get_minimal_by_id(self, scan_id: str) -> ScanMinimal | None:
         data = await self.collection.find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
         return ScanMinimal(**data) if data else None

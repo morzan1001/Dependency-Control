@@ -1,5 +1,6 @@
-"""GridFS reference bookkeeping: delete unreferenced SBOM files, reap aged orphans."""
+"""GridFS SBOM references: their shape, loading them, deleting unreferenced files, reaping orphans."""
 
+import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -8,19 +9,32 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+from app.db.mongodb import open_gridfs_download_with_retry
 
 logger = logging.getLogger(__name__)
 
+_GRIDFS_REFERENCE = "gridfs_reference"
+
+
+def make_gridfs_ref(file_id: Any, filename: str) -> dict[str, Any]:
+    return {"type": _GRIDFS_REFERENCE, "gridfs_id": str(file_id), "filename": filename}
+
+
+def gridfs_ref_id(ref: Any) -> str | None:
+    """The GridFS file id of an SBOM reference, or None when ``ref`` is not one."""
+    if isinstance(ref, dict) and ref.get("type") == _GRIDFS_REFERENCE and ref.get("gridfs_id"):
+        return str(ref["gridfs_id"])
+    return None
+
+
+async def load_gridfs_json(fs: AsyncIOMotorGridFSBucket, file_id: str) -> Any:
+    """Download and parse one stored SBOM; raises on failure so each caller keeps its own policy."""
+    stream = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
+    return json.loads(await stream.read())
+
 
 def extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
-    """Extract GridFS IDs from a list of SBOM references."""
-    ids: list[str] = []
-    for ref in sbom_refs:
-        if isinstance(ref, dict) and ref.get("type") == "gridfs_reference":
-            gid = ref.get("gridfs_id")
-            if gid:
-                ids.append(gid)
-    return ids
+    return [gid for ref in sbom_refs if (gid := gridfs_ref_id(ref))]
 
 
 async def _surviving_gridfs_references(db: Any, gridfs_ids: list[str], excluded_scan_ids: list[str]) -> set[str]:

@@ -93,7 +93,6 @@ export interface QualityIssue {
   severity?: string;
   description?: string;
   scanners?: string[];
-  source?: string;
   details?: QualityIssueDetails;
 }
 
@@ -201,7 +200,6 @@ export interface FindingDetails {
   epss_percentile?: number;
   epss_date?: string;
   fixed_version?: string;
-  github_advisory_url?: string;
   kev?: boolean;
   kev_due_date?: string;
   urls?: string[];

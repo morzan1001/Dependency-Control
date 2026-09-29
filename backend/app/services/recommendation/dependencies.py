@@ -6,6 +6,7 @@ from app.core.constants import (
     DEV_DEPENDENCY_PATTERNS,
     SIGNIFICANT_FRAGMENTATION_THRESHOLD,
 )
+from app.core.purl import package_identity
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -126,21 +127,17 @@ def analyze_version_fragmentation(
     """Detect multiple versions of the same package in the dependency tree."""
     recommendations = []
 
-    deps_by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    deps_by_package: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
     for dep in dependencies:
-        name = str(get_attr(dep, "name", "")).lower()
-        if name:
-            deps_by_name[name].append(
-                {
-                    "version": get_attr(dep, "version", "unknown"),
-                    "purl": get_attr(dep, "purl"),
-                    "direct": get_attr(dep, "direct", False),
-                    "parent": get_attr(dep, "parent_components", []),
-                }
-            )
+        identity = package_identity(
+            get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"), get_attr(dep, "group")
+        )
+        deps_by_package[identity].append(
+            {"version": get_attr(dep, "version"), "direct": get_attr(dep, "direct", False)}
+        )
 
     fragmented: list[dict[str, Any]] = []
-    for name, versions in deps_by_name.items():
+    for (_, name), versions in deps_by_package.items():
         unique_versions = {v["version"] for v in versions}
         if len(unique_versions) > 1:
             fragmented.append(
@@ -229,7 +226,10 @@ def analyze_dev_in_production(
     potential_dev_deps: list[dict[str, Any]] = []
 
     for dep in dependencies:
-        name = str(get_attr(dep, "name") or "").lower()
+        # The qualified name, so scoped patterns such as '@types/' match a scope the SBOM kept apart.
+        _, name = package_identity(
+            get_attr(dep, "purl"), get_attr(dep, "name") or "", get_attr(dep, "type"), get_attr(dep, "group")
+        )
         scope = str(get_attr(dep, "scope") or "").lower()
 
         if scope in ("dev", "development", "test"):
@@ -239,7 +239,7 @@ def analyze_dev_in_production(
             if re.search(pattern, name, re.IGNORECASE):
                 potential_dev_deps.append(
                     {
-                        "name": get_attr(dep, "name"),
+                        "name": name,
                         "version": get_attr(dep, "version"),
                         "reason": f"Matches dev pattern: {pattern}",
                     }

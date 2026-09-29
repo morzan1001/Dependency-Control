@@ -12,7 +12,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
-from .purl_utils import parse_purl
+from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
 
@@ -69,16 +69,10 @@ class OutdatedAnalyzer(Analyzer):
         ahead: list[dict[str, Any]] = []
         yanked: list[dict[str, Any]] = []
 
-        # Resolve one deps.dev document per distinct package, then classify every component
-        # against it (keyed by package so multiple installed versions each get classified).
-        package_infos = await self._resolve_package_infos(components)
+        # One deps.dev document per distinct package; every installed version is classified against it.
+        infos = await self._resolve_package_infos(components)
 
-        for component in components:
-            parsed = parse_purl(component.get("purl", ""))
-            if not parsed or not parsed.registry_system:
-                continue
-
-            info = package_infos.get(CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name))
+        for component, info in zip(components, infos, strict=True):
             if not info:
                 continue
 
@@ -96,34 +90,32 @@ class OutdatedAnalyzer(Analyzer):
             "yanked_versions": yanked,
         }
 
-    async def _resolve_package_infos(self, components: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-        """Return ``{cache_key: {"default": str|None, "withdrawn": [str, ...]}}``.
+    @staticmethod
+    def _package_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
+        """``(cache key, deps.dev system, deps.dev name)`` of a component deps.dev can answer for."""
+        parsed = parse_purl(component.get("purl", ""))
+        if not parsed or not parsed.deps_dev_system:
+            return None
+        system, name = parsed.deps_dev_system, parsed.deps_dev_name
+        return CacheKeys.latest_version(system, name), system, name
+
+    async def _resolve_package_infos(self, components: list[dict[str, Any]]) -> list[dict[str, Any] | None]:
+        """Each component's ``{"default": str|None, "withdrawn": [str, ...]}``, aligned with ``components``.
 
         Warm entries come from a batched ``mget``; misses are fetched concurrently with a
         distributed lock, so each package document is requested at most once.
         """
-        # Dedupe by cache key so a package at several versions is fetched only once.
-        key_targets: dict[str, tuple[str, str]] = {}
-        skipped_count = 0
-
-        for component in components:
-            parsed = parse_purl(component.get("purl", ""))
-            if not parsed or not parsed.registry_system:
-                skipped_count += 1
-                continue
-            cache_key = CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name)
-            key_targets.setdefault(cache_key, (parsed.registry_system, parsed.deps_dev_name))
-
+        targets = [self._package_target(component) for component in components]
+        skipped_count = targets.count(None)
         if skipped_count > 0:
-            logger.debug(f"Outdated: Skipped {skipped_count} components without valid registry system")
+            logger.debug(f"Outdated: Skipped {skipped_count} components deps.dev does not serve")
 
-        if not key_targets:
-            return {}
-
+        # Dedupe by cache key so a package at several versions is fetched only once.
+        key_targets = {target[0]: (target[1], target[2]) for target in targets if target}
         infos: dict[str, dict[str, Any]] = {}
         missing: list[str] = []
 
-        cached_data: dict[str, Any] = await cache_service.mget(list(key_targets.keys()))
+        cached_data: dict[str, Any] = await cache_service.mget(list(key_targets))
         for cache_key in key_targets:
             normalized = self._normalize_cached_info(cached_data.get(cache_key))
             if normalized is None:
@@ -136,7 +128,7 @@ class OutdatedAnalyzer(Analyzer):
         if missing:
             await self._fetch_missing_infos(missing, key_targets, infos)
 
-        return infos
+        return [infos.get(target[0]) if target else None for target in targets]
 
     @staticmethod
     def _normalize_cached_info(value: Any) -> dict[str, Any] | None:

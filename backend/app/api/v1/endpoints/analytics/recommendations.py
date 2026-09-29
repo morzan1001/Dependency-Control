@@ -18,8 +18,6 @@ from app.api.v1.helpers.responses import RESP_AUTH_404
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
-    DETAILS_KEY_IN_KEV,
-    DETAILS_KEY_KEV_RANSOMWARE,
     SCAN_DEPENDENCY_READ_LIMIT,
 )
 from app.core.permissions import Permissions
@@ -33,10 +31,12 @@ from app.schemas.analytics import (
     RecommendationResponse,
     RecommendationsResponse,
 )
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
-from app.services.enrichment import canonical_cves, get_cve_enrichment
+from app.services.enrichment import get_cve_enrichment
+from app.services.enrichment.service import apply_enrichments
 from app.services.recommendation import trends
-from app.services.recommendation.common import get_attr
+from app.services.recommendation.common import live_cves, get_attr
 from app.services.recommendations import recommendation_engine
 
 from ._shared import SCAN_NOT_IN_PROJECT, resolve_project_scan_id
@@ -79,38 +79,23 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
 }
 
 
-async def _apply_live_threat_intel(findings: list[Any]) -> None:
-    """Populate each vulnerability finding's details with current KEV/EPSS from the live threat-intel
-    source. Ingest rarely writes KEV to findings (in_kev is set on ~0.2%), so the recommendation
-    engine — which reads is_kev/epss/kev_ransomware off details — otherwise almost never raises the
-    KEV/exploit recommendations. Uses the canonical CVEs of each finding's advisory list, and writes
-    the finding-level worst case (any-KEV, max-EPSS) so the existing engine picks it up unchanged."""
+async def _apply_live_threat_intel(findings: list[Any]) -> dict[str, VulnerabilityEnrichment]:
+    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan; returns the per-CVE enrichment."""
     vuln_findings = [f for f in findings if get_attr(f, "type") == "vulnerability"]
-    all_cves = list({c for f in vuln_findings for c in canonical_cves([get_attr(f, "details", {})])})
+    all_cves = list({c for f in vuln_findings for c in live_cves([get_attr(f, "details")])})
     if not all_cves:
-        return
+        return {}
     try:
         enrichments = await get_cve_enrichment(all_cves)
     except Exception as e:
         logger.warning("Recommendations: live CVE enrichment failed, using stored data: %s", e)
-        return
+        return {}
 
     for f in vuln_findings:
         details = get_attr(f, "details", {})
-        if not isinstance(details, dict):
-            continue
-        infos = [enrichments[c] for c in canonical_cves([details]) if c in enrichments]
-        if not infos:
-            continue
-        if any(e.is_kev for e in infos):
-            details[DETAILS_KEY_IN_KEV] = True
-        if any(e.kev_ransomware_use for e in infos):
-            details[DETAILS_KEY_KEV_RANSOMWARE] = True
-        epss_vals = [e.epss_score for e in infos if e.epss_score is not None]
-        if epss_vals:
-            max_epss = max(epss_vals)
-            if details.get("epss_score") is None or max_epss > details["epss_score"]:
-                details["epss_score"] = max_epss
+        if isinstance(details, dict):
+            apply_enrichments(details, enrichments)
+    return enrichments
 
 
 @router.get("/projects/{project_id}/recommendations", responses=RESP_AUTH_404)
@@ -142,7 +127,7 @@ async def get_project_recommendations(
         return RecommendationsResponse(**cached)
 
     findings = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
-    await _apply_live_threat_intel(findings)
+    threat_intel = await _apply_live_threat_intel(findings)
 
     dependencies, dependencies_total = await dep_repo.find_by_scan(
         project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
@@ -174,6 +159,7 @@ async def get_project_recommendations(
         cve_recurrence=cve_recurrence,
         recurrence_window_scans=len(recent_scan_ids),
         cross_project_data=cross_project_data,
+        threat_intel=threat_intel,
     )
 
     finding_counts = _finding_counts(findings)

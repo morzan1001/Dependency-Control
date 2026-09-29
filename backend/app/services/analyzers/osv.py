@@ -1,7 +1,9 @@
 import asyncio
 import logging
 import math
+import re
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -15,6 +17,7 @@ from app.core.constants import (
 from app.core.cvss import cvss_base_score
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import external_api_rate_limit_hits_total
+from app.core.purl import ParsedPURL, canonical_purl, parse_purl
 from app.models.finding import Severity
 
 from .base import Analyzer
@@ -69,23 +72,97 @@ class _HydrationBudget:
             self._tripped = True
 
 
-def _build_batch_payload(
-    chunk: list[dict[str, Any]],
-) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
-    """``(payload, valid_components)`` from a chunk; PURL-less components are skipped."""
-    payload: dict[str, list[dict[str, Any]]] = {"queries": []}
-    valid_components: list[dict[str, Any]] = []
-    skipped = 0
-    for component in chunk:
-        purl = component.get("purl")
-        if purl:
-            payload["queries"].append({"package": {"purl": purl}})
-            valid_components.append(component)
-        else:
-            skipped += 1
-    if skipped:
-        logger.debug(f"OSV: Skipped {skipped} components without PURL")
-    return payload, valid_components
+# OSV answers HTTP 400 for the whole batch when one query holds a malformed percent escape.
+_INVALID_ESCAPE = re.compile(r"%(?![0-9A-Fa-f]{2})")
+_PURL_TYPE = re.compile(r"[a-z][a-z0-9.+-]*")
+_REJECTED_QUERY = re.compile(r"error in query at index (\d+)")
+# Resends after OSV rejected a query; bisection doubles the requests at each of these levels.
+_MAX_REJECTION_RESENDS = 4
+# OSV resolves Debian and Alpine packages only by release-scoped ecosystem and source package name.
+_OS_ECOSYSTEMS = {
+    ("deb", "debian"): (re.compile(r"^(?:debian-)?(\d+)"), "Debian:{}"),
+    ("apk", "alpine"): (re.compile(r"^(?:alpine-)?(\d+\.\d+)"), "Alpine:v{}"),
+}
+_TRIVY = "aquasecurity:trivy:"
+
+# (component, versioned purl, querybatch query)
+_Target = tuple[dict[str, Any], str, dict[str, Any]]
+
+
+def _versioned_purl(component: dict[str, Any]) -> str | None:
+    """The component's purl with its version, or None: unversioned, OSV answers with every advisory of the package."""
+    purl = str(component.get("purl") or "")
+    if not purl:
+        return None
+    parsed = parse_purl(purl)
+    # A malformed purl passes through unchanged, so the query step reports it as unscanned.
+    if parsed is None or not parsed.name or parsed.version:
+        return purl
+    version = str(component.get("version") or "")
+    if version.lower() in ("", "unknown"):
+        return None
+    coordinates = canonical_purl(purl)
+    return f"{coordinates.rstrip('@')}@{quote(version, safe='')}{purl[len(coordinates) :]}"
+
+
+def _osv_query(purl: str, component: dict[str, Any]) -> dict[str, Any] | None:
+    """The querybatch query for a versioned purl, or None when OSV would reject or cannot resolve it."""
+    parsed = parse_purl(purl)
+    if parsed is None or not parsed.name or not _PURL_TYPE.fullmatch(parsed.type) or _INVALID_ESCAPE.search(purl):
+        return None
+    rule = _OS_ECOSYSTEMS.get((parsed.type, parsed.namespace or ""))
+    if rule is None:
+        return {"package": {"purl": purl}}
+    release_pattern, ecosystem = rule
+    release = release_pattern.match(parsed.qualifiers.get("distro", ""))
+    source = _os_source_package(parsed, component)
+    if release is None or source is None:
+        return None
+    return {"package": {"ecosystem": ecosystem.format(release[1]), "name": source[0]}, "version": source[1]}
+
+
+def _os_source_package(parsed: ParsedPURL, component: dict[str, Any]) -> tuple[str, str | None] | None:
+    """``(name, version)`` of the source package an OS binary was built from, or None when unknown."""
+    upstream = parsed.qualifiers.get("upstream")
+    if upstream:
+        name, _, version = upstream.partition("@")
+        return name, version or parsed.version
+    properties = component.get("properties") or {}
+    source = properties.get(f"{_TRIVY}SrcName")
+    if source:
+        # Trivy splits the Debian source version into epoch, upstream version and revision.
+        source_version = properties.get(f"{_TRIVY}SrcVersion")
+        if source_version and properties.get(f"{_TRIVY}SrcRelease"):
+            source_version = f"{source_version}-{properties[f'{_TRIVY}SrcRelease']}"
+        if source_version and properties.get(f"{_TRIVY}SrcEpoch"):
+            source_version = f"{properties[f'{_TRIVY}SrcEpoch']}:{source_version}"
+        return source, source_version or parsed.version
+    # Syft, the one generator naming its cataloger, leaves out ``upstream`` when the source is the binary.
+    if component.get("found_by"):
+        return parsed.name, parsed.version
+    return None
+
+
+def _query_targets(components: list[dict[str, Any]]) -> tuple[list[_Target], int]:
+    """Every component OSV can be asked about, and how many it cannot although they are pinned."""
+    targets: list[_Target] = []
+    unqueryable: list[str] = []
+    unpinned = 0
+    for component in components:
+        purl = _versioned_purl(component)
+        if purl is None:
+            unpinned += 1
+            continue
+        query = _osv_query(purl, component)
+        if query is None:
+            unqueryable.append(purl)
+            continue
+        targets.append((component, purl, query))
+    if unpinned:
+        logger.debug(f"OSV: Skipped {unpinned} components without a purl or version")
+    if unqueryable:
+        logger.warning(f"OSV: {len(unqueryable)} components cannot be queried, e.g. {unqueryable[:3]}")
+    return targets, len(unqueryable)
 
 
 class OSVAnalyzer(Analyzer):
@@ -104,17 +181,13 @@ class OSVAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        components = self._get_components(sbom, parsed_components)
-        results: list[dict[str, Any]] = []
+        targets, unqueryable = _query_targets(self._get_components(sbom, parsed_components))
 
-        cached_results, uncached_components = await self._get_cached_components(components)
-        results.extend(cached_results)
-        logger.debug(f"OSV: {len(cached_results)} from cache, {len(uncached_components)} to fetch")
+        results, uncached = await self._get_cached_components(targets)
+        logger.debug(f"OSV: {len(results)} from cache, {len(uncached)} to fetch")
 
-        if not uncached_components:
-            return {"osv_vulnerabilities": results}
-
-        skipped, unhydrated = await self._fetch_uncached(uncached_components, results)
+        skipped, unhydrated = await self._fetch_uncached(uncached, results) if uncached else (0, 0)
+        skipped += unqueryable
         result: dict[str, Any] = {"osv_vulnerabilities": results}
         # Surfaced by the engine as a partial scan; never silently report full coverage.
         if skipped:
@@ -125,48 +198,26 @@ class OSVAnalyzer(Analyzer):
 
     async def _fetch_uncached(
         self,
-        uncached_components: list[dict[str, Any]],
+        uncached: list[_Target],
         results: list[dict[str, Any]],
     ) -> tuple[int, int]:
         """Drive the chunked batch loop, then hydrate, populating ``results`` in-place.
 
         Returns ``(components_never_scanned, vulnerability_records_not_fetched)``: dropped
-        batches, persistent rate limiting and truncated responses for the first, OSV records
-        that could not be resolved to their full form for the second.
+        batches, rejected queries, persistent rate limiting and truncated responses for the
+        first, OSV records that could not be resolved to their full form for the second.
         """
         timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
         total_skipped = 0
-        # (component, [{id, modified}, ...]) pairs; hydrated together so one id is fetched once.
-        pending: list[tuple[dict[str, Any], list[dict[str, Any]]]] = []
+        # (target, [{id, modified}, ...]) pairs; hydrated together so one id is fetched once.
+        pending: list[tuple[_Target, list[dict[str, Any]]]] = []
 
         async with InstrumentedAsyncClient(_OSV_SERVICE_LABEL, timeout=timeout) as client:
-            for chunk_start in range(0, len(uncached_components), batch_size):
-                chunk = uncached_components[chunk_start : chunk_start + batch_size]
-                payload, valid_components = _build_batch_payload(chunk)
-                if not payload["queries"]:
-                    continue
-                for attempt in range(1 + self.max_retries):
-                    rate_limited, skipped = await self._post_and_handle(
-                        client, payload, valid_components, pending, chunk_start
-                    )
-                    if not rate_limited:
-                        total_skipped += skipped
-                        break
-                    if attempt < self.max_retries:
-                        delay = self.retry_base_delay * (2**attempt)
-                        logger.warning(
-                            f"OSV API rate limit hit for batch starting at {chunk_start} "
-                            f"(attempt {attempt + 1}/{1 + self.max_retries}), retrying in {delay:.1f}s"
-                        )
-                        await asyncio.sleep(delay)
-                    else:
-                        logger.error(
-                            f"OSV API rate limit persisted after {1 + self.max_retries} attempts; "
-                            f"dropping batch starting at {chunk_start} ({len(valid_components)} components)"
-                        )
-                        total_skipped += len(valid_components)
-                if chunk_start + batch_size < len(uncached_components):
+            for chunk_start in range(0, len(uncached), batch_size):
+                chunk = uncached[chunk_start : chunk_start + batch_size]
+                total_skipped += await self._send_chunk(client, chunk, pending, chunk_start, _MAX_REJECTION_RESENDS)
+                if chunk_start + batch_size < len(uncached):
                     await asyncio.sleep(0.2)
 
             unhydrated = await self._hydrate_and_emit(client, pending, results)
@@ -175,7 +226,7 @@ class OSVAnalyzer(Analyzer):
     async def _hydrate_and_emit(
         self,
         client: InstrumentedAsyncClient,
-        pending: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+        pending: list[tuple[_Target, list[dict[str, Any]]]],
         results: list[dict[str, Any]],
     ) -> int:
         """Replace the querybatch stubs with full OSV records, then build the result entries.
@@ -184,7 +235,7 @@ class OSVAnalyzer(Analyzer):
         vulnerability is still reported — as UNKNOWN severity rather than an invented one.
         """
         stubs: dict[str, str] = {}
-        for _component, vulns in pending:
+        for _target, vulns in pending:
             for vuln in vulns:
                 vuln_id = vuln.get("id")
                 if vuln_id:
@@ -193,16 +244,16 @@ class OSVAnalyzer(Analyzer):
         records, unresolved = await self._fetch_vuln_records(client, stubs)
 
         cache_mapping: dict[str, dict[str, Any]] = {}
-        for component, vulns in pending:
+        for (component, purl, _query), vulns in pending:
             ids = [vuln.get("id", "") for vuln in vulns]
             hydrated = [records.get(vuln_id, vuln) for vuln_id, vuln in zip(ids, vulns, strict=True)]
-            entry = self._build_cache_entry(component, hydrated)
+            normalized = self._normalize_vulnerabilities(hydrated)
             # Caching an entry built from unresolved stubs would serve UNKNOWN for the next
             # six hours with no partial flag, making the failure invisible on the next scan.
             if not any(vuln_id in unresolved for vuln_id in ids):
-                cache_mapping[CacheKeys.osv(component.get("purl", ""))] = entry
-            if entry["vulnerabilities"]:
-                results.append(entry)
+                cache_mapping[CacheKeys.osv(purl)] = {"vulnerabilities": normalized}
+            if normalized:
+                results.append(self._result_entry(component, normalized))
 
         if cache_mapping:
             await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
@@ -302,13 +353,39 @@ class OSVAnalyzer(Analyzer):
         logger.error(f"OSV vuln fetch for {vuln_id} rate limited after {1 + self.max_retries} attempts")
         return None
 
+    async def _send_chunk(
+        self,
+        client: InstrumentedAsyncClient,
+        chunk: list[_Target],
+        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        chunk_start: int,
+        resends: int,
+    ) -> int:
+        """POST one chunk, retrying it on 429. Returns how many of its components were lost."""
+        for attempt in range(1 + self.max_retries):
+            rate_limited, skipped = await self._post_and_handle(client, chunk, pending, chunk_start, resends)
+            if not rate_limited:
+                return skipped
+            if attempt < self.max_retries:
+                delay = self.retry_base_delay * (2**attempt)
+                logger.warning(
+                    f"OSV API rate limit hit for batch starting at {chunk_start} "
+                    f"(attempt {attempt + 1}/{1 + self.max_retries}), retrying in {delay:.1f}s"
+                )
+                await asyncio.sleep(delay)
+        logger.error(
+            f"OSV API rate limit persisted after {1 + self.max_retries} attempts; "
+            f"dropping batch starting at {chunk_start} ({len(chunk)} components)"
+        )
+        return len(chunk)
+
     async def _post_and_handle(
         self,
         client: InstrumentedAsyncClient,
-        payload: dict[str, list[dict[str, Any]]],
-        valid_components: list[dict[str, Any]],
-        pending: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+        chunk: list[_Target],
+        pending: list[tuple[_Target, list[dict[str, Any]]]],
         chunk_start: int,
+        resends: int,
     ) -> tuple[bool, int]:
         """POST one batch and dispatch on response status.
 
@@ -316,31 +393,56 @@ class OSVAnalyzer(Analyzer):
         retry the same chunk, ``skipped`` counts components this batch lost.
         """
         try:
-            response = await client.post(self.api_url, json=payload)
+            response = await client.post(self.api_url, json={"queries": [query for _, _, query in chunk]})
         except httpx.TimeoutException:
             logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
-            return False, len(valid_components)
+            return False, len(chunk)
         except httpx.ConnectError:
             logger.warning("OSV API connection error")
-            return False, len(valid_components)
+            return False, len(chunk)
         except Exception as e:
             logger.warning(f"OSV Analysis Exception: {type(e).__name__}: {e}")
-            return False, len(valid_components)
+            return False, len(chunk)
 
         if response.status_code == 200:
-            skipped = self._handle_success(response, valid_components, pending)
+            skipped = self._handle_success(response, chunk, pending)
             return False, skipped
         if response.status_code == 429:
             external_api_rate_limit_hits_total.labels(service=_OSV_SERVICE_LABEL).inc()
             return True, 0
-        logger.warning(f"OSV Batch API error: {response.status_code}")
-        return False, len(valid_components)
+        if response.status_code == 400 and resends:
+            return False, await self._resend_accepted(client, chunk, pending, chunk_start, response.text, resends - 1)
+        logger.warning(
+            f"OSV Batch API error for batch starting at {chunk_start}: {response.status_code} {response.text[:200]}"
+        )
+        return False, len(chunk)
+
+    async def _resend_accepted(
+        self,
+        client: InstrumentedAsyncClient,
+        chunk: list[_Target],
+        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        chunk_start: int,
+        rejection: str,
+        resends: int,
+    ) -> int:
+        """Resend a rejected chunk minus the named query, else bisected; returns how many components stay lost."""
+        named = _REJECTED_QUERY.search(rejection)
+        index = int(named[1]) if named and int(named[1]) < len(chunk) else None
+        if index is None and len(chunk) > 1:
+            middle = len(chunk) // 2
+            lost = await self._send_chunk(client, chunk[:middle], pending, chunk_start, resends)
+            return lost + await self._send_chunk(client, chunk[middle:], pending, chunk_start + middle, resends)
+        index = index or 0
+        logger.warning(f"OSV rejected {chunk[index][1]}: {rejection[:200]}")
+        rest = chunk[:index] + chunk[index + 1 :]
+        return 1 + (await self._send_chunk(client, rest, pending, chunk_start, resends) if rest else 0)
 
     def _handle_success(
         self,
         response: Any,
-        valid_components: list[dict[str, Any]],
-        pending: list[tuple[dict[str, Any], list[dict[str, Any]]]],
+        chunk: list[_Target],
+        pending: list[tuple[_Target, list[dict[str, Any]]]],
     ) -> int:
         """Parse a 200 response and align its ``{id, modified}`` stubs with their components.
 
@@ -351,65 +453,44 @@ class OSVAnalyzer(Analyzer):
         except ValueError as exc:
             # A proxy or CDN error page answering 200 must not abort the analyzer.
             logger.warning(f"OSV Batch API returned an unparseable body: {exc}")
-            return len(valid_components)
+            return len(chunk)
         batch_results = data.get("results", [])
         skipped = 0
-        if len(batch_results) != len(valid_components):
-            logger.warning(
-                f"OSV API response count mismatch: sent {len(valid_components)}, received {len(batch_results)}"
-            )
-            skipped = max(0, len(valid_components) - len(batch_results))
-            batch_results = batch_results[: len(valid_components)]
+        if len(batch_results) != len(chunk):
+            logger.warning(f"OSV API response count mismatch: sent {len(chunk)}, received {len(batch_results)}")
+            skipped = max(0, len(chunk) - len(batch_results))
+            batch_results = batch_results[: len(chunk)]
 
-        for comp, res in zip(valid_components, batch_results, strict=False):
-            pending.append((comp, res.get("vulns") or []))
+        for target, res in zip(chunk, batch_results, strict=False):
+            pending.append((target, res.get("vulns") or []))
         return skipped
 
-    def _build_cache_entry(self, component: dict[str, Any], vulns: list[dict[str, Any]]) -> dict[str, Any]:
-        """Build the per-component dict that gets written to cache and to results."""
-        comp_name = component.get("name", "")
-        comp_version = component.get("version", "")
-        normalized = self._normalize_vulnerabilities(vulns)
+    def _result_entry(self, component: dict[str, Any], vulnerabilities: list[dict[str, Any]]) -> dict[str, Any]:
+        """The analyzer result for one component from its normalized vulnerabilities."""
+        name = component.get("name", "")
+        version = component.get("version", "")
         return {
-            "component": comp_name,
-            "version": comp_version,
+            "component": name,
+            "version": version,
             "purl": component.get("purl", ""),
-            "vulnerabilities": normalized,
-            "severity": self._get_highest_severity(normalized),
-            "message": self._create_summary_message(comp_name, comp_version, normalized),
+            "vulnerabilities": vulnerabilities,
+            "severity": self._get_highest_severity(vulnerabilities),
+            "message": self._create_summary_message(name, version, vulnerabilities),
         }
 
-    async def _get_cached_components(
-        self, components: list[dict[str, Any]]
-    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        """``(cached_results, uncached_components)`` from a batch Redis lookup."""
+    async def _get_cached_components(self, targets: list[_Target]) -> tuple[list[dict[str, Any]], list[_Target]]:
+        """``(cached result entries, uncached targets)``; cached per package version, named for this component."""
+        keys = [CacheKeys.osv(purl) for _, purl, _ in targets]
+        cached_data = await cache_service.mget(list(dict.fromkeys(keys)))
         cached_results: list[dict[str, Any]] = []
-        uncached_components: list[dict[str, Any]] = []
-
-        cache_keys: list[str] = []
-        component_map: dict[str, Any] = {}
-        for component in components:
-            purl = component.get("purl")
-            if purl:
-                cache_key = CacheKeys.osv(purl)
-                cache_keys.append(cache_key)
-                component_map[cache_key] = component
-
-        if not cache_keys:
-            return [], components
-
-        cached_data = await cache_service.mget(cache_keys)
-        for cache_key, data in cached_data.items():
-            cached_comp = component_map.get(cache_key)
-            if not cached_comp:
-                continue
-            if data:
-                if data.get("vulnerabilities"):
-                    cached_results.append(data)
-            else:
-                uncached_components.append(cached_comp)
-
-        return cached_results, uncached_components
+        uncached: list[_Target] = []
+        for target, key in zip(targets, keys, strict=True):
+            data = cached_data.get(key)
+            if not data:
+                uncached.append(target)
+            elif data.get("vulnerabilities"):
+                cached_results.append(self._result_entry(target[0], data["vulnerabilities"]))
+        return cached_results, uncached
 
     def _normalize_vulnerabilities(self, vulns: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Normalize OSV vulnerabilities, dropping retracted entries (``withdrawn`` set)."""

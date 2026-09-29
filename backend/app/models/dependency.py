@@ -31,7 +31,7 @@ class Dependency(MongoDocument):
         False,
         description="True if 'direct' is a guess (no graph, ref absent from the graph, or fallback root resolution)",
     )
-    parent_components: list[str] = Field(default_factory=list, description="List of parent component PURLs/names")
+    parent_components: list[str] = Field(default_factory=list, description="The parents' dependency_node_key values")
 
     # Source/Origin info (from SBOM properties)
     source_type: str | None = Field(None, description="Source type: image, file-system, directory, application")

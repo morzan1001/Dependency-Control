@@ -107,9 +107,10 @@ from app.schemas.project import (
     ScanReleaseRef,
     ScanWithReleases,
 )
-from app.services.aggregation.components import component_match_expr
+from app.services.component_identity import component_match_expr
 from app.services.branches import resolve_default_branch
 from app.services.gitlab import GitLabService
+from app.services.gridfs_maintenance import gridfs_ref_id
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
 from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
@@ -1463,9 +1464,10 @@ async def export_project_sbom(
 
     sbom_contents: list[Any] = []
     for ref in scan.sbom_refs:
-        if ref.get("storage") != "gridfs" or not ref.get("file_id"):
+        gridfs_id = gridfs_ref_id(ref)
+        if not gridfs_id:
             raise HTTPException(status_code=500, detail="Invalid SBOM reference (not GridFS)")
-        sbom_content = await load_from_gridfs(db, ref["file_id"])
+        sbom_content = await load_from_gridfs(db, gridfs_id)
         if not sbom_content:
             raise HTTPException(status_code=404, detail="SBOM file not found in GridFS")
         sbom_contents.append(sbom_content)

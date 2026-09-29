@@ -1,6 +1,8 @@
-from typing import Any
+from collections.abc import Iterator, Mapping
 
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, EPSS_VERY_HIGH_THRESHOLD
+from app.core.cve import counted_cves
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -8,8 +10,8 @@ from app.schemas.recommendation import (
 )
 from app.services.recommendation.common import (
     ModelOrDict,
-    finding_cve_ids,
     get_attr,
+    live_advisories,
     name_some,
     sample_components,
 )
@@ -17,27 +19,37 @@ from app.services.recommendation.common import (
 _CVES_NAMED = 5
 
 
-def _advisory_is_ransomware(advisory: dict[str, Any]) -> bool:
-    return bool(advisory.get(DETAILS_KEY_KEV_RANSOMWARE))
+def _cve_signals(
+    finding: ModelOrDict, threat_intel: Mapping[str, VulnerabilityEnrichment]
+) -> Iterator[tuple[str, bool, bool, float]]:
+    """(cve, KEV, ransomware, EPSS) per CVE of the unwaived advisories."""
+    for advisory in live_advisories(get_attr(finding, "details", {})):
+        cves = counted_cves(advisory)
+        for cve in cves:
+            # A bundle's stored marks are any one CVE's; a single CVE keeps its own, which a KEV outage cannot clear.
+            live = threat_intel.get(cve) if len(cves) > 1 else None
+            if live is not None:
+                yield cve, live.is_kev, live.kev_ransomware_use, live.epss_score or 0.0
+            else:
+                in_kev, ransomware = advisory.get(DETAILS_KEY_IN_KEV), advisory.get(DETAILS_KEY_KEV_RANSOMWARE)
+                yield cve, bool(in_kev), bool(ransomware), advisory.get("epss_score") or 0.0
 
 
-def _advisory_is_kev(advisory: dict[str, Any]) -> bool:
-    return bool(advisory.get(DETAILS_KEY_IN_KEV))
-
-
-def _advisory_has_very_high_epss(advisory: dict[str, Any]) -> bool:
-    epss = advisory.get("epss_score")
-    return epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD
-
-
-def _advisory_is_kev_only(advisory: dict[str, Any]) -> bool:
-    """A KEV advisory the ransomware card is not already about."""
-    return _advisory_is_kev(advisory) and not _advisory_is_ransomware(advisory)
-
-
-def _advisory_is_epss_only(advisory: dict[str, Any]) -> bool:
-    """A high-EPSS advisory that is not in KEV; confirmed exploitation outranks a prediction."""
-    return _advisory_has_very_high_epss(advisory) and not _advisory_is_kev(advisory)
+def _exploited_cves(
+    finding: ModelOrDict, threat_intel: Mapping[str, VulnerabilityEnrichment]
+) -> tuple[set[str], set[str], dict[str, float]]:
+    """Ransomware CVEs, other KEV CVEs, and high-EPSS CVEs outside KEV: confirmed exploitation outranks prediction."""
+    ransomware: set[str] = set()
+    kev: set[str] = set()
+    epss: dict[str, float] = {}
+    for cve, in_kev, ransomware_use, epss_score in _cve_signals(finding, threat_intel):
+        if ransomware_use:
+            ransomware.add(cve)
+        elif in_kev:
+            kev.add(cve)
+        elif epss_score >= EPSS_VERY_HIGH_THRESHOLD:
+            epss[cve] = max(epss_score, epss.get(cve, 0.0))
+    return ransomware, kev, epss
 
 
 def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -135,54 +147,37 @@ def process_typosquatting(
     ]
 
 
-def _card_advisories(details: dict[str, Any]) -> list[dict[str, Any]]:
-    """The marked advisories not waived; with none marked, the document, which a live refresh marks directly."""
-    advisories = [a for a in details.get("vulnerabilities") or [] if isinstance(a, dict)]
-    marked = [a for a in advisories if _advisory_is_kev(a) or _advisory_has_very_high_epss(a)]
-    # A waived advisory is an accepted risk and raises no card.
-    return [a for a in marked if not a.get("waived")] if marked else [details]
-
-
-def _classify_vuln_finding(
-    f: ModelOrDict,
-    kev_vulns: list[ModelOrDict],
-    ransomware_vulns: list[ModelOrDict],
-    high_epss_vulns: list[ModelOrDict],
-) -> None:
-    """Route a finding to every card one of its advisories is about.
-
-    Aggregation groups one record per (component, version), so a group holding both a ransomware
-    advisory and a KEV-only one belongs in both cards; bucketing on the document alone puts it
-    wholly in the first and leaves the other advisory in no card at all.
-    """
-    details = get_attr(f, "details", {})
-    if not isinstance(details, dict):
-        return
-
-    advisories = _card_advisories(details)
-    if any(_advisory_is_ransomware(a) for a in advisories):
-        ransomware_vulns.append(f)
-    if any(_advisory_is_kev_only(a) for a in advisories):
-        kev_vulns.append(f)
-    if any(_advisory_is_epss_only(a) for a in advisories):
-        high_epss_vulns.append(f)
-
-
-def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Detect vulnerabilities with known exploits (KEV, ransomware, high EPSS)."""
+def detect_known_exploits(
+    vuln_findings: list[ModelOrDict], threat_intel: Mapping[str, VulnerabilityEnrichment] | None = None
+) -> list[Recommendation]:
+    """Cards per CVE with a known exploit (KEV, ransomware, high EPSS); one record can join several."""
     recommendations = []
 
     kev_vulns: list[ModelOrDict] = []
     ransomware_vulns: list[ModelOrDict] = []
     high_epss_vulns: list[ModelOrDict] = []
+    kev_cves: set[str] = set()
+    ransomware_cves: set[str] = set()
+    high_epss_cves: set[str] = set()
+    max_epss = 0.0
 
     for f in vuln_findings:
-        _classify_vuln_finding(f, kev_vulns, ransomware_vulns, high_epss_vulns)
+        ransomware, kev, epss = _exploited_cves(f, threat_intel or {})
+        if ransomware:
+            ransomware_vulns.append(f)
+            ransomware_cves |= ransomware
+        if kev:
+            kev_vulns.append(f)
+            kev_cves |= kev
+        if epss:
+            high_epss_vulns.append(f)
+            high_epss_cves |= epss.keys()
+            max_epss = max(max_epss, *epss.values())
 
     if ransomware_vulns:
         affected_packages = sorted({get_attr(f, "component", "") for f in ransomware_vulns})
         packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted({cve for f in ransomware_vulns for cve in finding_cve_ids(f, _advisory_is_ransomware)})
+        cves = sorted(ransomware_cves)
 
         recommendations.append(
             Recommendation(
@@ -226,7 +221,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
     if kev_vulns:
         affected_packages = sorted({get_attr(f, "component", "") for f in kev_vulns})
         packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted({cve for f in kev_vulns for cve in finding_cve_ids(f, _advisory_is_kev_only)})
+        cves = sorted(kev_cves)
 
         recommendations.append(
             Recommendation(
@@ -267,12 +262,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
     if high_epss_vulns:
         affected_packages = sorted({get_attr(f, "component", "") for f in high_epss_vulns})
         packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted({cve for f in high_epss_vulns for cve in finding_cve_ids(f, _advisory_is_epss_only)})
-
-        max_epss = max(
-            (get_attr(f, "details", {}).get("epss_score", 0) if isinstance(get_attr(f, "details", {}), dict) else 0)
-            for f in high_epss_vulns
-        )
+        cves = sorted(high_epss_cves)
 
         recommendations.append(
             Recommendation(
@@ -280,7 +270,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
                 priority=Priority.CRITICAL,
                 title="Very High Exploitation Probability",
                 description=(
-                    f"Found {len(high_epss_vulns)} vulnerabilities with EPSS score > 50%. "
+                    f"Found {len(high_epss_vulns)} vulnerabilities with EPSS score >= {EPSS_VERY_HIGH_THRESHOLD:.0%}. "
                     f"These have a very high probability of being exploited in the next 30 days. "
                     f"Highest EPSS: {max_epss * 100:.1f}%"
                 ),

@@ -152,7 +152,7 @@ async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _gridfs_
             raise OSError("transient gridfs outage")
         return await fs.open_download_stream(file_id)
 
-    monkeypatch.setattr("app.services.analysis.engine.open_gridfs_download_with_retry", _fail_second_file)
+    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_second_file)
 
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing")

@@ -98,13 +98,16 @@ export function DependencyStats({ onSelectDependency }: Readonly<DependencyStats
             <TableBody>
               {dependencies.map((dep) => (
                 <TableRow 
-                  key={dep.name} 
+                  key={`${dep.type}:${dep.group ?? ''}:${dep.name}`}
                   className="group cursor-pointer hover:bg-muted"
                   onClick={() => handleRowClick(dep)}
                 >
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <Package className="h-4 w-4 text-muted-foreground" />
+                      {dep.group && !dep.name.startsWith(dep.group) && (
+                        <span className="text-xs text-muted-foreground">{dep.group}</span>
+                      )}
                       <span className="font-medium">{dep.name}</span>
                       <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                     </div>

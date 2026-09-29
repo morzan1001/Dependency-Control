@@ -1,6 +1,7 @@
 """Tests for incident detection: malware, typosquatting, and known exploits."""
 
 from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.incidents import (
     detect_known_exploits,
@@ -43,18 +44,15 @@ _COMPONENT_VERSION = "1.0.0"
 
 
 def _vuln(component, severity="CRITICAL", is_kev=False, kev_ransomware=False, epss_score=0.0, cve_id="CVE-2024-001"):
-    """Aggregator shape: the document id is component:version and the CVE lives one level down."""
+    """Aggregator shape: the document id is component:version and the CVE lives one level down,
+    where enrichment marks it and rolls the document up from it."""
+    flags = {"in_kev": is_kev, "kev_ransomware_use": kev_ransomware, "epss_score": epss_score}
     return {
         "type": "vulnerability",
         "severity": severity,
         "component": component,
         "version": _COMPONENT_VERSION,
-        "details": {
-            "in_kev": is_kev,
-            "kev_ransomware_use": kev_ransomware,
-            "epss_score": epss_score,
-            "vulnerabilities": [{"id": cve_id}],
-        },
+        "details": {**flags, "vulnerabilities": [{"id": cve_id, **flags}]},
         "id": f"{component}:{_COMPONENT_VERSION}",
         "aliases": [],
     }
@@ -418,12 +416,6 @@ class TestIncidentCardsNameOnlyTheFlaggedAdvisories:
         card = self._card(finding, RecommendationType.ACTIVELY_EXPLOITED)
         assert card.action["cves"] == ["CVE-2022-0001"]
 
-    def test_a_document_only_flag_still_names_the_group(self):
-        finding = _vuln("log4j-core", is_kev=True, kev_ransomware=True)
-        finding["details"]["vulnerabilities"] = [{"id": "CVE-2021-44228"}, {"id": "CVE-2021-44832"}]
-        card = self._card(finding, RecommendationType.RANSOMWARE_RISK)
-        assert card.action["cves"] == ["CVE-2021-44228", "CVE-2021-44832"]
-
 
 class TestIncidentCardsBucketPerAdvisory:
     """Aggregation groups one record per (component, version), so one record can be about
@@ -475,16 +467,66 @@ class TestIncidentCardsBucketPerAdvisory:
 
         assert RecommendationType.ACTIVELY_EXPLOITED not in cards
 
-    def test_a_document_only_flag_lands_in_one_card_as_before(self):
-        finding = _vuln("log4j-core", is_kev=True, kev_ransomware=True)
-        finding["details"]["vulnerabilities"] = [{"id": _RANSOMWARE_CVE}]
 
-        cards = self._cards(finding)
+class TestIncidentCardsNameTheCvesLiveEnrichmentMarks:
+    """A bundled distro advisory is marked when any of its CVEs is; the live enrichment says which."""
 
-        assert set(cards) == {RecommendationType.RANSOMWARE_RISK}
+    _FIRST, _SECOND = "CVE-2023-0001", "CVE-2023-0002"
+
+    def _bundled(self, **flags):
+        finding = _vuln("openssl-libs", **flags)
+        advisory = {"id": self._FIRST, "aliases": ["ALAS2-2023-2001", self._SECOND]}
+        advisory.update({k: v for k, v in finding["details"].items() if k != "vulnerabilities"})
+        finding["details"]["vulnerabilities"] = [advisory]
+        return finding
+
+    @staticmethod
+    def _live(cve, **fields):
+        return VulnerabilityEnrichment(cve=cve, risk_score=20.0, **fields)
+
+    def _cards(self, finding, threat_intel):
+        return {r.type: r for r in detect_known_exploits([finding], threat_intel)}
+
+    def test_the_kev_card_names_only_the_cve_in_kev(self):
+        cards = self._cards(
+            self._bundled(is_kev=True),
+            {self._FIRST: self._live(self._FIRST, is_kev=True), self._SECOND: self._live(self._SECOND)},
+        )
+        assert cards[RecommendationType.KNOWN_EXPLOIT].action["cves"] == [self._FIRST]
+
+    def test_the_ransomware_and_kev_cards_split_one_advisory_by_cve(self):
+        cards = self._cards(
+            self._bundled(is_kev=True, kev_ransomware=True),
+            {
+                self._FIRST: self._live(self._FIRST, is_kev=True),
+                self._SECOND: self._live(self._SECOND, is_kev=True, kev_ransomware_use=True),
+            },
+        )
+        assert cards[RecommendationType.RANSOMWARE_RISK].action["cves"] == [self._SECOND]
+        assert cards[RecommendationType.KNOWN_EXPLOIT].action["cves"] == [self._FIRST]
+
+    def test_the_epss_card_names_only_the_cve_with_the_high_score(self):
+        cards = self._cards(
+            self._bundled(epss_score=0.9),
+            {
+                self._FIRST: self._live(self._FIRST, epss_score=0.01),
+                self._SECOND: self._live(self._SECOND, epss_score=0.9),
+            },
+        )
+        card = cards[RecommendationType.ACTIVELY_EXPLOITED]
+        assert card.action["cves"] == [self._SECOND]
+        assert card.impact["max_epss"] == 0.9
+
+    def test_a_document_flag_alone_raises_no_card(self):
+        finding = _vuln("log4j-core")
+        finding["details"]["kev_ransomware_use"] = True
+
+        assert detect_known_exploits([finding]) == []
 
 
-class TestWaivedAdvisoriesMakeNoCard:
+class TestIncidentCardsLeaveWaivedAdvisoriesOut:
+    """A per-CVE waiver leaves the record live while its other advisories are."""
+
     def _log4j(self):
         doc = _vuln("log4j-core", severity="MEDIUM", is_kev=True, kev_ransomware=True, epss_score=0.93)
         waived = {"id": _RANSOMWARE_CVE, "in_kev": True, "kev_ransomware_use": True, "epss_score": 0.93}
@@ -502,3 +544,37 @@ class TestWaivedAdvisoriesMakeNoCard:
 
         assert card.type == RecommendationType.RANSOMWARE_RISK
         assert card.action["cves"] == [_KEV_ONLY_CVE]
+
+    def test_a_waived_kev_advisory_raises_no_kev_card(self):
+        finding = _vuln("log4j-core", is_kev=True)
+        finding["details"]["vulnerabilities"] = [
+            {"id": "CVE-2021-44228", "in_kev": True, "waived": True},
+            {"id": "CVE-2021-44832"},
+        ]
+
+        assert detect_known_exploits([finding]) == []
+
+    def test_a_waived_cve_gets_no_card_from_live_data_either(self):
+        finding = _vuln("log4j-core")
+        finding["details"]["vulnerabilities"] = [{"id": _RANSOMWARE_CVE, "waived": True}]
+        live = {_RANSOMWARE_CVE: VulnerabilityEnrichment(cve=_RANSOMWARE_CVE, risk_score=90.0, is_kev=True)}
+
+        assert detect_known_exploits([finding], live) == []
+
+
+class TestIncidentCardsKeepStoredMarksWhenTheLiveFeedSaysLess:
+    """The KEV provider answers an outage with an empty catalog, so a live 'not in KEV' is no proof."""
+
+    def test_a_stored_kev_mark_survives_an_empty_live_catalog(self):
+        finding = _vuln("struts2-core", is_kev=True, cve_id=_KEV_ONLY_CVE)
+        live = {_KEV_ONLY_CVE: VulnerabilityEnrichment(cve=_KEV_ONLY_CVE, risk_score=40.0)}
+
+        cards = {r.type: r for r in detect_known_exploits([finding], live)}
+
+        assert cards[RecommendationType.KNOWN_EXPLOIT].action["cves"] == [_KEV_ONLY_CVE]
+
+
+def test_the_epss_card_states_the_threshold_it_compares_with():
+    [card] = detect_known_exploits([_vuln("pkg", epss_score=EPSS_VERY_HIGH_THRESHOLD)])
+
+    assert f"EPSS score >= {EPSS_VERY_HIGH_THRESHOLD:.0%}" in card.description

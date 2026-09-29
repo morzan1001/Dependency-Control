@@ -1,12 +1,17 @@
 """Stateless helpers for chat tool registry and crypto/compliance tool wrappers."""
 
 from contextvars import ContextVar
+from operator import itemgetter
 from typing import Any
 
 from app.core.config import settings
-from app.services.aggregation.components import extract_artifact_name
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE
+from app.core.cve import advisory_ids, canonical_cve, canonical_cves
+from app.core.risk_scoring import calculate_exploit_maturity
+from app.services.component_identity import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
-from app.services.recommendation.common import finding_cve_ids
+from app.services.aggregation.versions import parse_version_key
+from app.services.recommendation.common import live_cves, vuln_info
 
 
 MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
@@ -22,9 +27,6 @@ MAX_FINDING_ROWS = 25
 MAX_SUMMARY_ROWS = 50
 MAX_PLAN_STEPS = 25
 MAX_DAY_WINDOW = 365
-
-# details.exploit_maturity values meaning actively exploited in the wild.
-KEV_EQUIVALENT_MATURITY = ("active", "weaponized")
 
 _FINDING_TOPLEVEL_FIELDS = (
     "finding_id",
@@ -45,8 +47,12 @@ _FINDING_DETAILS_FIELDS = (
     "epss_percentile",
     "exploit_maturity",
     "risk_score",
-    "cvss_score",
+    DETAILS_KEY_IN_KEV,
 )
+
+# A row's compact view of each advisory, and how many it lists, its primary first.
+_ROW_ADVISORY_FIELDS = ("id", "severity", DETAILS_KEY_IN_KEV, "epss_score", "fixed_version", "waived")
+_ROW_ADVISORIES = 3
 
 _SEVERITY_RANK = {
     "CRITICAL": 4,
@@ -153,7 +159,7 @@ def staleness_identities(finding: dict[str, Any]) -> set[tuple[str, str, str]]:
     """
     if (finding.get("type") or "") == _VULNERABILITY:
         component = extract_artifact_name(finding.get("component") or "")
-        advisories = finding_cve_ids(finding)
+        advisories = canonical_cves([finding.get("details")])
         if advisories:
             return {(_VULNERABILITY, component, advisory) for advisory in advisories}
     return {finding_identity_key(finding)}
@@ -179,24 +185,66 @@ def _clip_value(value: Any) -> Any:
     return value
 
 
-def _flatten_primary_vuln(out: dict[str, Any], vulns: list[dict[str, Any]]) -> None:
-    """Mutate `out` with fields lifted from the first nested CVE."""
-    if not vulns:
-        return
-    primary = vulns[0]
-    if primary.get("id"):
-        out["cve"] = primary["id"]
-    for k in ("cvss_score", "fixed_version", "epss_score"):
-        if primary.get(k) is not None and k not in out:
-            out[k] = primary[k]
-    refs = primary.get("references") or []
-    if refs:
-        out["references"] = refs[:3]
-    out["cve_count"] = len(vulns)
+def _number(value: Any) -> float:
+    """A sort key for a stored number; missing or non-numeric sorts last."""
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
 
 
-def _serialize_finding_for_llm(doc: dict[str, Any]) -> dict[str, Any]:
-    """Compact LLM projection: flattens `details` and the first CVE to the top level."""
+def ranked_advisories(details: Any, first: str | None = None) -> list[dict[str, Any]]:
+    """Advisories, the row's namesake first: known as `first`, live, KEV (ransomware first), severity, EPSS, CVSS."""
+    entries = (details.get("vulnerabilities") or []) if isinstance(details, dict) else []
+    return sorted(
+        entries,
+        key=lambda v: (
+            first in advisory_ids(v),
+            not v.get("waived"),
+            bool(v.get(DETAILS_KEY_IN_KEV)),
+            bool(v.get(DETAILS_KEY_KEV_RANSOMWARE)),
+            _SEVERITY_RANK.get(str(v.get("severity") or "").upper(), 0),
+            _number(v.get("epss_score")),
+            _number(v.get("cvss_score")),
+        ),
+        reverse=True,
+    )
+
+
+def advisory_view(entry: dict[str, Any], *, references: int) -> dict[str, Any]:
+    """One advisory's own values; a finding's details hold maxima over all its advisories and never stand in."""
+    return {
+        "id": canonical_cve(entry),
+        "severity": entry.get("severity"),
+        "cvss_score": entry.get("cvss_score"),
+        "cvss_vector": entry.get("cvss_vector"),
+        "epss_score": entry.get("epss_score"),
+        "epss_percentile": entry.get("epss_percentile"),
+        DETAILS_KEY_IN_KEV: bool(entry.get(DETAILS_KEY_IN_KEV)),
+        "fixed_version": entry.get("fixed_version"),
+        "waived": bool(entry.get("waived")),
+        "description": _clip_value(entry.get("description") or ""),
+        "references": (entry.get("references") or [])[:references],
+        "scanners": entry.get("scanners"),
+    }
+
+
+def _live_threat(doc: dict[str, Any]) -> dict[str, Any]:
+    """A vulnerability row's details fields over its unwaived advisories; the stored roll-up counts waived ones."""
+    vuln = vuln_info(doc)
+    top_epss = max(
+        (a for a in vuln.advisories if a.get("epss_score") is not None), key=itemgetter("epss_score"), default={}
+    )
+    maturity = calculate_exploit_maturity(vuln.is_kev, vuln.kev_ransomware, vuln.epss_score)
+    return {
+        "fixed_version": vuln.fixed_version,
+        "epss_score": vuln.epss_score,
+        "epss_percentile": top_epss.get("epss_percentile"),
+        "exploit_maturity": None if maturity == "unknown" else maturity,
+        "risk_score": vuln.risk_score,
+        DETAILS_KEY_IN_KEV: vuln.is_kev or None,
+    }
+
+
+def _serialize_finding_for_llm(doc: dict[str, Any], *, cve: str | None = None) -> dict[str, Any]:
+    """Compact LLM projection: `details` flattened, the row named after its primary advisory (see ranked_advisories)."""
     if not doc:
         return {}
     out: dict[str, Any] = {}
@@ -206,11 +254,26 @@ def _serialize_finding_for_llm(doc: dict[str, Any]) -> dict[str, Any]:
     out["id"] = str(doc.get("_id", doc.get("id", "")))
 
     details = doc.get("details") or {}
+    values = _live_threat(doc) if details.get("vulnerabilities") else details
     for key in _FINDING_DETAILS_FIELDS:
-        if details.get(key) is not None:
-            out[key] = _clip_value(details[key])
+        if values.get(key) is not None:
+            out[key] = _clip_value(values[key])
 
-    _flatten_primary_vuln(out, details.get("vulnerabilities") or [])
+    advisories = ranked_advisories(details, first=cve)
+    if not advisories:
+        return out
+    primary = advisories[0]
+    if primary_id := canonical_cve(primary):
+        out["cve"] = primary_id
+    if primary.get("cvss_score") is not None:
+        out["cvss_score"] = primary["cvss_score"]
+    if refs := primary.get("references"):
+        out["references"] = refs[:3]
+    out["cve_count"] = len(live_cves([details]))
+    if len(advisories) > 1:
+        # The row-level EPSS and exploit_maturity above are maxima over live advisories; these name their holder.
+        views = (advisory_view(v, references=0) for v in advisories[:_ROW_ADVISORIES])
+        out["advisories"] = [{k: view[k] for k in _ROW_ADVISORY_FIELDS} for view in views]
     return out
 
 
@@ -226,29 +289,9 @@ def _parse_major(version: str | None) -> int | None:
 
 
 def _compare_versions(a: str, b: str) -> int:
-    """Naive numeric-tuple comparison (-1/0/1) to pick the 'largest' fix_version, not full semver."""
-
-    def parts(v: str) -> list[Any]:
-        out: list[Any] = []
-        for token in v.lstrip("vV=^~ ").split("."):
-            head = token.split("-", 1)[0].split("+", 1)[0]
-            try:
-                out.append((0, int(head)))
-            except (TypeError, ValueError):
-                out.append((1, head))
-        return out
-
-    pa, pb = parts(a), parts(b)
-    for x, y in zip(pa, pb, strict=False):
-        if x < y:
-            return -1
-        if x > y:
-            return 1
-    if len(pa) < len(pb):
-        return -1
-    if len(pa) > len(pb):
-        return 1
-    return 0
+    """-1/0/1 by the ordering the aggregate fixed_version uses."""
+    key_a, key_b = parse_version_key(a), parse_version_key(b)
+    return (key_a > key_b) - (key_a < key_b)
 
 
 def _breaking_risk(current: str | None, target: str | None) -> str:

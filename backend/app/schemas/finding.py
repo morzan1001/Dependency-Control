@@ -7,14 +7,12 @@ class VulnerabilityEntry(TypedDict, total=False):
     id: str
     severity: Severity
     description: str
-    description_source: str
     fixed_version: str | None
     cvss_score: float | None
     cvss_vector: str | None
     references: list[str]
     aliases: list[str]
     scanners: list[str]
-    source: str | None
     details: dict[str, Any]
     ecosystem_specific: dict[str, Any]
 
@@ -32,7 +30,6 @@ class QualityEntry(TypedDict, total=False):
     severity: str
     description: str
     scanners: list[str]
-    source: str | None
     details: dict[str, Any]
 
 

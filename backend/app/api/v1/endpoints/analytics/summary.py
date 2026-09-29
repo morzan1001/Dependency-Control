@@ -13,9 +13,11 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
     require_any_analytics_permission,
     scope_resolution_counts,
+    vuln_details_by,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.permissions import Permissions
+from app.core.purl import package_identity_expr
 from app.repositories import (
     DependencyRepository,
     FindingRepository,
@@ -28,8 +30,14 @@ from app.schemas.analytics import (
     DependencyUsage,
     SeverityBreakdown,
 )
-from app.services.aggregation.components import lookup_component
-from app.services.recommendation.common import parse_version_tuple
+from app.services.component_identity import (
+    artifact_name_expr,
+    build_component_index,
+    extract_artifact_name,
+    lookup_component,
+)
+from app.services.aggregation.versions import parse_version_key
+from app.services.recommendation.common import live_cves
 
 router = CustomAPIRouter()
 
@@ -164,8 +172,10 @@ async def get_top_dependencies(
         {"$match": match_stage},
         {
             "$group": {
-                "_id": "$name",
-                "type": {"$first": "$type"},
+                "_id": package_identity_expr(),
+                "name": {"$min": "$name"},
+                "type": {"$min": "$type"},
+                "group": {"$max": "$group"},
                 "versions": {"$addToSet": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
                 "total_occurrences": {"$sum": 1},
@@ -173,8 +183,9 @@ async def get_top_dependencies(
         },
         {
             "$project": {
-                "name": "$_id",
+                "name": 1,
                 "type": 1,
+                "group": 1,
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
                 "project_count": {"$size": "$project_ids"},
@@ -190,7 +201,20 @@ async def get_top_dependencies(
 
     results = await dep_repo.aggregate(pipeline)
 
-    vuln_count_map = await finding_repo.get_vuln_counts_by_components(scan_ids, project_ids)
+    # Every same-artifact spelling is read, so build_component_index sees the ambiguity it guards against.
+    listed_artifacts = sorted({extract_artifact_name(dep["name"]) for dep in results})
+    details_by_component = await vuln_details_by(
+        finding_repo,
+        "component",
+        {
+            "scan_id": {"$in": scan_ids},
+            "project_id": {"$in": project_ids},
+            "$expr": {"$in": [artifact_name_expr("$component"), listed_artifacts]},
+        },
+    )
+    vuln_count_map = build_component_index(
+        {component: len(live_cves(details)) for component, details in details_by_component.items()}
+    )
 
     enriched = []
     for dep in results:
@@ -199,8 +223,9 @@ async def get_top_dependencies(
             DependencyUsage(
                 name=dep["name"],
                 type=dep.get("type", "unknown"),
+                group=dep.get("group"),
                 # $addToSet has no order, so rank before sampling.
-                versions=sorted(dep["versions"], key=parse_version_tuple, reverse=True)[:_VERSION_SAMPLE],
+                versions=sorted(dep["versions"], key=parse_version_key, reverse=True)[:_VERSION_SAMPLE],
                 version_count=dep["version_count"],
                 project_count=dep["project_count"],
                 total_occurrences=dep["total_occurrences"],

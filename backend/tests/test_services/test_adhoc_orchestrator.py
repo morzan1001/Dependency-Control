@@ -10,7 +10,7 @@ from tests.helpers.analyzers import serve_analyzer
 from tests.mocks.fake_mongo import FakeDatabase
 
 _SECRET_FILE = "app/config.py"
-_SBOM_LABEL = "sbom#1"
+_SBOM_LABEL = "SBOM #1"
 _LICENSE_FINDING_ID = "LIC-GPL-3.0-only"
 _SEVERITY_HIGH = "HIGH"
 _SEVERITY_INFO = "INFO"

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable, Mapping
+from operator import itemgetter
 from typing import Any
 
+VersionKey = tuple[tuple[int, int | str], ...]
 
-def parse_version_key(v: str) -> tuple[tuple[int, int | str], ...]:
+
+def parse_version_key(v: str) -> VersionKey:
     """Parse a version into (type_flag, value) pairs so numeric parts always sort before string parts."""
     v = v.lower()
     v = v.removeprefix("v")
@@ -23,71 +27,38 @@ def parse_version_key(v: str) -> tuple[tuple[int, int | str], ...]:
     return tuple(parts)
 
 
-def calculate_aggregated_fixed_version(fixed_versions_list: list[str]) -> str | None:
-    """Pick the best fixed version(s) across vulnerabilities and major lines, e.g. ["1.2.5, 2.0.1", "1.2.6"] -> "1.2.6, 2.0.1"."""
-    if not fixed_versions_list:
-        return None
-
-    major_buckets: dict[Any, Any] = {}
-
-    for i, fv_str in enumerate(fixed_versions_list):
-        candidates = [c.strip() for c in fv_str.split(",") if c.strip()]
-
-        for cand in candidates:
-            try:
-                parsed = parse_version_key(cand)
-                if not parsed:
-                    continue
-
-                # Bucket by first element; a string first element (e.g. 'release') gets its own bucket.
-                major = parsed[0][1] if len(parsed) > 0 else 0
-
-                if major not in major_buckets:
-                    major_buckets[major] = {}
-
-                if i not in major_buckets[major]:
-                    major_buckets[major][i] = []
-
-                major_buckets[major][i].append((parsed, cand))
-            except (ValueError, TypeError, IndexError):
-                continue
-
-    valid_majors = []
-    num_vulns = len(fixed_versions_list)
-
-    for major, vulns_map in major_buckets.items():
-        # A major line is only valid if it fixes every vulnerability.
-        if len(vulns_map) == num_vulns:
-            max_ver_tuple = None
-            max_ver_str = None
-
-            for fixes in vulns_map.values():
-                fixes.sort(key=lambda x: x[0])
-                best_fix_for_vuln = fixes[0]
-
-                if max_ver_tuple is None or best_fix_for_vuln[0] > max_ver_tuple:
-                    max_ver_tuple = best_fix_for_vuln[0]
-                    max_ver_str = best_fix_for_vuln[1]
-
-            valid_majors.append((major, max_ver_tuple, max_ver_str))
-
-    if not valid_majors:
-        return None
-
-    try:
-        valid_majors.sort(key=lambda x: x[0] if isinstance(x[0], int) else str(x[0]))
-    except TypeError:
-        valid_majors.sort(key=lambda x: str(x[0]))
-
-    return ", ".join([str(vm[2]) for vm in valid_majors if vm[2] is not None])
+def split_fixed_versions(value: Any) -> list[str]:
+    """The single versions of a stored fixed_version, which writers join with ", " per release line."""
+    return [part for raw in str(value or "").split(",") if (part := raw.strip())]
 
 
-def resolve_fixed_versions(versions: list[str]) -> str | None:
-    """Resolve the best fixed version(s) across multiple vulnerabilities and major versions."""
-    return calculate_aggregated_fixed_version(versions)
+def _upgrade_candidates(fixed_version: Any, installed_key: VersionKey) -> list[tuple[VersionKey, str]]:
+    """One advisory's fix candidates; a fix below the installed release is another line's backport."""
+    candidates = [(key, part) for part in split_fixed_versions(fixed_version) if (key := parse_version_key(part))]
+    return [(key, c) for key, c in candidates if key >= installed_key] or candidates
 
 
-def normalize_version(version: str) -> str:
+def _major_sort_key(major: int | str) -> tuple[bool, int, str]:
+    return isinstance(major, str), major if isinstance(major, int) else 0, str(major)
+
+
+def aggregate_fixed_version(entries: Iterable[Mapping[str, Any]], installed_version: str | None) -> str | None:
+    """The version per major line that fixes every advisory, e.g. "1.2.6, 2.0.1"; None when one has no fix."""
+    installed_key = parse_version_key(installed_version or "")
+    advisories = [_upgrade_candidates(entry.get("fixed_version"), installed_key) for entry in entries]
+    by_major: dict[int | str, dict[int, list[tuple[VersionKey, str]]]] = {}
+    for index, candidates in enumerate(advisories):
+        for key, candidate in candidates:
+            by_major.setdefault(key[0][1], {}).setdefault(index, []).append((key, candidate))
+    line_fixes = [
+        (major, max((min(fixes, key=itemgetter(0)) for fixes in per_advisory.values()), key=itemgetter(0))[1])
+        for major, per_advisory in by_major.items()
+        if len(per_advisory) == len(advisories)
+    ]
+    return ", ".join(fix for _, fix in sorted(line_fixes, key=lambda line: _major_sort_key(line[0]))) or None
+
+
+def normalize_version(version: str | None) -> str:
     if not version:
         return "unknown"
     v = version.strip().lower()

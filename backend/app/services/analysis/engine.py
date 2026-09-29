@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import json
 import logging
 import re
 import time
@@ -10,18 +9,17 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateMany, UpdateOne
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
-    MAX_RESCAN_HOPS,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
     SCAN_USABLE_STATUSES,
 )
+from app.core.cve import display_vulnerability_id
 from app.core.metrics import (
     analysis_aggregation_duration_seconds,
     analysis_components_parsed_total,
@@ -41,12 +39,11 @@ from app.core.metrics import (
     analysis_scans_total,
     analysis_waivers_applied_total,
 )
-from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
+from app.db.mongodb import primary_gridfs_bucket
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Project, Scan
 from app.repositories import (
     AnalysisResultRepository,
-    CallgraphRepository,
     DependencyRepository,
     FindingRepository,
     ProjectRepository,
@@ -58,6 +55,7 @@ from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
 from app.schemas.sbom import ParsedDependency
 from app.services.aggregation import ResultAggregator
+from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.integrations import decorate_github_pr, decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
 from app.services.analysis.registry import (
@@ -70,14 +68,20 @@ from app.services.analysis.stats import (
     build_epss_kev_summary,
     build_reachability_summary,
     calculate_comprehensive_stats,
-    finding_vulnerability_id,
 )
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.github import is_public_github
-from app.services.reachability_enrichment import enrich_findings_with_reachability, persist_reachability_result
+from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs, gridfs_ref_id, load_gridfs_json
+from app.services.reachability_enrichment import (
+    ComponentLanguages,
+    build_component_language_map,
+    enrich_findings_with_reachability,
+    fetch_callgraphs,
+    persist_reachability_result,
+)
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.update_frequency_rollup import record_scan_update_delta
 from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
@@ -280,7 +284,7 @@ _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
 def _count_gridfs_refs(sboms_to_process: list[Any]) -> int:
-    return sum(1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference")
+    return len(extract_gridfs_ids_from_refs(sboms_to_process))
 
 
 def _failed_analyzer_names(results_summary: list[str]) -> list[str]:
@@ -315,15 +319,12 @@ def _enrichment_failure_names(results_summary: list[str]) -> list[str]:
 
 async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> dict[str, Any] | None:
     """Resolve a single SBOM item from inline dict or GridFS reference."""
-    if isinstance(item, dict) and item.get("type") == "gridfs_reference":
-        gridfs_id = item.get("gridfs_id")
+    gridfs_id = gridfs_ref_id(item)
+    if gridfs_id:
         try:
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
-            stream = await open_gridfs_download_with_retry(fs, ObjectId(gridfs_id))
-            content: bytes = await stream.read()
-            sbom: dict[str, Any] = json.loads(content)
-            del content
+            sbom: dict[str, Any] = await load_gridfs_json(fs, gridfs_id)
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
             return sbom
@@ -506,16 +507,21 @@ def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMa
     if not slim:
         return []
 
-    dep_filter: dict[str, Any] = {"scan_id": scan_id, "name": entry["name"], "version": entry["version"]}
     if entry["purl"]:
-        # Prefix match keeps qualifier variants together without touching a
-        # same-named package from another ecosystem.
-        dep_filter["purl"] = {"$regex": f"^{re.escape(entry['purl'])}([?#]|$)"}
+        # The canonical purl names package and version whatever each SBOM called it; the prefix
+        # match keeps qualifier variants together. A lookahead, unlike an alternation, leaves the
+        # server a tight index range on the literal prefix.
+        dep_filter: dict[str, Any] = {"scan_id": scan_id, "purl": {"$regex": f"^{re.escape(entry['purl'])}(?![^?#])"}}
     else:
         # Without a purl the enrichment describes an unidentified package; restrict it to
         # the equally purl-less docs so it cannot stamp a same-named package of another
         # ecosystem with its licence.
-        dep_filter["purl"] = {"$in": [None, ""]}
+        dep_filter = {
+            "scan_id": scan_id,
+            "name": entry["name"],
+            "version": entry["version"],
+            "purl": {"$in": [None, ""]},
+        }
 
     if "license" not in slim:
         return [UpdateMany(dep_filter, {"$set": slim})]
@@ -636,20 +642,13 @@ async def _run_reachability_enrichment(
     vulnerability_findings: list[dict[str, Any]],
     scan_id: str,
     project_id: str,
-    scan_doc: Scan,
     db: Database,
-    callgraph_repo: CallgraphRepository,
     result_repo: AnalysisResultRepository,
     scan_repo: ScanRepository,
     results_summary: list[str],
-) -> None:
-    """Run reachability analysis on vulnerability findings."""
-    callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
-
-    if not callgraphs:
-        pipeline_id = scan_doc.pipeline_id if scan_doc else None
-        if pipeline_id:
-            callgraphs = await callgraph_repo.find_all_minimal_by_pipeline(project_id, pipeline_id)
+) -> ComponentLanguages | None:
+    """Run reachability analysis on vulnerability findings; returns the inventory language map it built."""
+    callgraphs = await fetch_callgraphs(project_id, scan_id, db)
 
     if not callgraphs:
         await scan_repo.update_raw(
@@ -657,15 +656,12 @@ async def _run_reachability_enrichment(
             {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
         )
         logger.info(f"[reachability] No callgraph available for scan {scan_id}. Marked as pending.")
-        return
+        return None
 
+    component_languages = None
     try:
-        enriched_count = await enrich_findings_with_reachability(
-            findings=vulnerability_findings,
-            project_id=str(project_id),
-            db=db,
-            scan_id=scan_id,
-        )
+        component_languages = await build_component_language_map(db, scan_id)
+        enriched_count = enrich_findings_with_reachability(vulnerability_findings, callgraphs, component_languages)
         reachability_summary = build_reachability_summary(
             vulnerability_findings,
             [cg.model_dump(by_alias=True) for cg in callgraphs],
@@ -687,6 +683,7 @@ async def _run_reachability_enrichment(
     except Exception as e:
         results_summary.append("reachability: Failed")
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
+    return component_languages
 
 
 async def _check_race_condition(scan_id: str, external_load_start: datetime, scan_repo: ScanRepository) -> bool:
@@ -832,7 +829,7 @@ def _build_findings_summary(
     """Compact, bounded, vulnerability-only summary; details trimmed to the CVE id to bound size."""
     summary: list[dict[str, Any]] = []
     for record in vulnerability_findings[:limit]:
-        cve_id = finding_vulnerability_id(record)
+        cve_id = display_vulnerability_id(record.get("details"))
         summary.append(
             {
                 "id": record.get("id"),
@@ -853,29 +850,21 @@ async def _run_vuln_enrichments(
     vulnerability_findings: list[dict[str, Any]],
     scan_id: str,
     project_id: str | None,
-    scan_doc: Any,
     db: Database,
     result_repo: AnalysisResultRepository,
-    callgraph_repo: CallgraphRepository,
     scan_repo: ScanRepository,
     github_token: str | None,
     results_summary: list[str],
-) -> None:
+) -> ComponentLanguages | None:
+    """Run the vulnerability enrichments; returns the inventory language map reachability built."""
     if "epss_kev" in active_analyzers and vulnerability_findings:
         await _run_epss_kev_enrichment(vulnerability_findings, scan_id, result_repo, github_token, results_summary)
 
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
-        await _run_reachability_enrichment(
-            vulnerability_findings,
-            scan_id,
-            project_id,
-            scan_doc,
-            db,
-            callgraph_repo,
-            result_repo,
-            scan_repo,
-            results_summary,
+        return await _run_reachability_enrichment(
+            vulnerability_findings, scan_id, project_id, db, result_repo, scan_repo, results_summary
         )
+    return None
 
 
 async def _stamp_first_seen(
@@ -923,25 +912,6 @@ def _as_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
-async def _lineage_root(scan_id: str, scan_doc: Any, scan_repo: ScanRepository) -> str:
-    """The scan a rescan lineage descends from, following original_scan_id upwards.
-
-    A pointer may name a rescan rather than the root, so one hop is not enough. Bounded, so a
-    cyclic pointer cannot hang the ingest path.
-    """
-    root_id = scan_id
-    doc = scan_doc
-    for _hop in range(MAX_RESCAN_HOPS):
-        if doc is None or not getattr(doc, "is_rescan", False):
-            break
-        parent_id = getattr(doc, "original_scan_id", None)
-        if not parent_id or parent_id == root_id:
-            break
-        root_id = parent_id
-        doc = await scan_repo.get_by_id_strong(parent_id)
-    return root_id
-
-
 async def _should_update_project_latest_scan(
     scan_id: str,
     scan_doc: Any,
@@ -983,8 +953,8 @@ async def _should_update_project_latest_scan(
         # One shared parent settles the common case with no read at all; only a mismatch is worth
         # resolving both sides for, because a pointer into the middle of a chain names no root.
         if incoming_parent and incoming_parent != current_parent:
-            incoming_root = await _lineage_root(scan_id, scan_doc, scan_repo)
-            current_root = await _lineage_root(current_latest_id, current_latest, scan_repo)
+            incoming_root = await scan_repo.lineage_root(scan_id, scan_doc)
+            current_root = await scan_repo.lineage_root(current_latest_id, current_latest)
             if incoming_root != current_root:
                 return False
 
@@ -1188,7 +1158,6 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     scan_repo = ScanRepository(db)
     result_repo = AnalysisResultRepository(db)
     finding_repo = FindingRepository(db)
-    callgraph_repo = CallgraphRepository(db)
     project_repo = ProjectRepository(db)
 
     scan_doc = await scan_repo.get_by_id_strong(scan_id)
@@ -1296,19 +1265,18 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     if not github_token:
         github_token = await _get_github_instance_token(db)
 
-    await _run_vuln_enrichments(
+    component_languages = await _run_vuln_enrichments(
         active_analyzers,
         vulnerability_findings,
         scan_id,
         project_id,
-        scan_doc,
         db,
         result_repo,
-        callgraph_repo,
         scan_repo,
         github_token,
         results_summary,
     )
+    refresh_vulnerability_info(findings_to_insert)
 
     sbom_load_failed = gridfs_expected > 0 and sbom_load_failures >= gridfs_expected
     if sbom_load_failed:
@@ -1329,7 +1297,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         findings_to_insert, scan_id, project_id, finding_repo, db, head=becomes_head
     )
 
-    stats, ignored_count = await calculate_comprehensive_stats(db, scan_id)
+    stats, ignored_count = await calculate_comprehensive_stats(db, scan_id, component_languages)
 
     failed_analyzers = _failed_analyzer_names(results_summary)
     partial_reasons = _partial_run_reasons(

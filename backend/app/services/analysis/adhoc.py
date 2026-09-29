@@ -36,28 +36,32 @@ from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
 from app.schemas.bearer import BearerFinding
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.kics import KicsQuery
 from app.schemas.opengrep import OpenGrepFinding
 from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator
+from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories, post_processor_factories
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.analyzers.crypto.base import CryptoRuleAnalyzer, crypto_findings_for_assets
+from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import VulnerabilityEnrichmentService
 from app.services.reachability_enrichment import (
+    ComponentLanguages,
     _prepare_callgraph,
     _PreparedCallgraph,
     component_language_map,
     enrich_findings_from_callgraphs,
 )
 from app.services.recommendations import recommendation_engine
-from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, parse_sbom
+from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, merge_duplicate_dependencies, parse_sbom
 from app.services.waivers.matching import (
     MatchFinding,
     apply_waivers_to_findings,
@@ -609,7 +613,7 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
     parsed_inputs: list[_ParsedInput] = []
     for index, sbom in enumerate(request.sboms):
         position = index + 1
-        label = f"sbom#{position}"
+        label = _SBOM_POSITION.format(position=position)
         try:
             parsed = parse_sbom(sbom)
         except Exception as exc:
@@ -690,22 +694,27 @@ def _aggregate_crypto_rules(
     _record_ran(report, _CRYPTO_RULES)
 
 
-async def _enrich_vulnerabilities(records: list[dict[str, Any]], report: AnalyzerReport) -> dict[str, Any]:
-    """Add EPSS/KEV to the vulnerability records through a service private to this request.
+async def _enrich_vulnerabilities(
+    records: list[dict[str, Any]], report: AnalyzerReport
+) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
+    """Add EPSS/KEV to the vulnerability records through a service private to this request;
+    returns the EPSS/KEV summary and the per-CVE enrichment.
 
     The module singleton carries a mutable GitHub token shared with background scans.
     """
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     service = VulnerabilityEnrichmentService()
+    threat_intel: dict[str, VulnerabilityEnrichment] = {}
     try:
-        await service.enrich_findings(vulnerabilities)
+        threat_intel = await service.enrich_findings(vulnerabilities)
         _record_ran(report, _ENRICHMENT)
     except Exception as exc:
         logger.warning("adhoc: EPSS/KEV enrichment failed: %s", exc)
         _record_errored(report, _ENRICHMENT, str(exc))
     finally:
         await service.close()
-    return dict(build_epss_kev_summary(vulnerabilities))
+    refresh_vulnerability_info(records)
+    return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], _PreparedCallgraph]:
@@ -718,21 +727,21 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     if resolved_format == "unknown":
         raise ValueError(_UNDETECTABLE_FORMAT)
 
-    language = payload.get("language") or (_MADGE_LANGUAGE if resolved_format == _MADGE_FORMAT else None)
-    if not language:
+    raw_language = payload.get("language") or (_MADGE_LANGUAGE if resolved_format == _MADGE_FORMAT else None)
+    if not raw_language:
         raise ValueError(_LANGUAGE_REQUIRED.format(callgraph_format=resolved_format))
+    language = canonical_callgraph_language(str(raw_language))
 
     parser = {_MADGE_FORMAT: parse_madge_format, "generic": parse_generic_format}.get(resolved_format)
     if parser is None:
         raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
 
-    imports, _calls, module_usage, analyzed_modules = parser(data, str(language))
-    # The model derives ``import_map`` from ``module_usage``, which is what the enrichment reads.
+    imports, _calls, module_usage, analyzed_modules = parser(data, language)
     minimal = CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,
         module_usage={key: usage.model_dump() for key, usage in module_usage.items()},
         analyzed_modules=analyzed_modules,
-        language=str(language),
+        language=language,
     )
     as_dict = {
         "language": minimal.language,
@@ -747,7 +756,7 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
 def _run_reachability(
     records: list[dict[str, Any]],
     callgraph_payload: dict[str, Any] | None,
-    languages: dict[str, frozenset[str]],
+    languages: ComponentLanguages,
     report: AnalyzerReport,
 ) -> dict[str, Any] | None:
     if callgraph_payload is None:
@@ -876,9 +885,11 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     # Before enrichment, so waivers, stats and recommendations all describe the returned set.
     records, truncated = _cap_findings(records)
 
-    epss_kev_summary = await _enrich_vulnerabilities(records, report)
+    epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, report)
 
-    components = [component for pi in parsed_inputs for component in pi.components]
+    # One row per package across every posted SBOM, the invariant a stored scan's inventory holds.
+    merged, _ = merge_duplicate_dependencies([dep for pi in parsed_inputs for dep in pi.parsed.dependencies])
+    components = [dep.to_dict() for dep in merged]
     languages = component_language_map(components)
     reachability_summary = await asyncio.to_thread(_run_reachability, records, request.callgraph, languages, report)
 
@@ -897,6 +908,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         findings=[record for record in records if not record.get("waived")],
         dependencies=components,
         source_target=source_target,
+        threat_intel=threat_intel,
     )
 
     # A stage that errored still reached upstream, so attempted is the condition, not success.

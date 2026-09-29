@@ -8,7 +8,6 @@ import pytest
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
-    EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
     EPSS_HIGH_THRESHOLD,
     EPSS_MEDIUM_THRESHOLD,
     EPSS_VERY_HIGH_THRESHOLD,
@@ -16,13 +15,16 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_SYMBOL,
 )
+from app.schemas.enrichment import EPSSData, KEVEntry
 from app.services.analysis.stats import (
     StatsAccumulator,
     _stats_projection,
+    build_epss_kev_summary,
     calculate_comprehensive_stats,
     compute_stats,
 )
-from app.services.reachability_enrichment import component_language_map
+from app.services.enrichment.service import _build_enrichment, apply_enrichments
+from app.services.reachability_enrichment import ComponentLanguages, component_language_map
 from tests.mocks.fake_mongo import FakeDatabase
 
 # One CRITICAL finding, scored through saturating_risk_score at each reachability tier.
@@ -33,6 +35,29 @@ _UNREACHABLE_CRITICAL_SCORE = 3.1
 
 def _finding(ftype="vulnerability", severity="HIGH", **details):
     return {"type": ftype, "severity": severity, "component": "pkg", "details": dict(details), "waived": False}
+
+
+def _enriched(cve, *, kev=False, ransomware=False, epss=None):
+    """A vulnerability finding as the enrichment writer leaves it."""
+    kev_entry = (
+        KEVEntry(
+            cve=cve,
+            vendor_project="v",
+            product="p",
+            vulnerability_name="n",
+            date_added="2024-01-01",
+            short_description="d",
+            required_action="patch",
+            due_date="2024-02-01",
+            known_ransomware_use=ransomware,
+        )
+        if kev
+        else None
+    )
+    epss_entry = EPSSData(cve=cve, epss_score=epss, percentile=0.9, date="2024-01-01") if epss is not None else None
+    finding = _finding(vulnerabilities=[{"id": cve, "severity": "HIGH"}])
+    apply_enrichments(finding["details"], {cve: _build_enrichment(cve, kev_entry, epss_entry)})
+    return finding
 
 
 class TestVulnerabilityGate:
@@ -65,6 +90,18 @@ class TestVulnerabilityGate:
         stats = compute_stats(findings, {})
         assert stats.critical == 1
         assert stats.prioritized.total == 1
+
+
+class TestScannerErrors:
+    def test_a_lone_scanner_error_reads_as_no_data(self):
+        """A failed analyzer is missing coverage, not a HIGH defect in the project."""
+        stats = compute_stats([_finding(ftype="system_warning", severity="HIGH")], {})
+        assert (stats.high, stats.risk_score, stats.adjusted_risk_score) == (0, 0.0, 0.0)
+        assert stats.threat_intel is None
+
+    def test_a_scanner_error_leaves_the_real_findings_counts_alone(self):
+        findings = [_finding(ftype="system_warning", severity="HIGH"), _finding(severity="HIGH")]
+        assert compute_stats(findings, {}).model_dump() == compute_stats([_finding(severity="HIGH")], {}).model_dump()
 
 
 class TestSecretGate:
@@ -107,13 +144,13 @@ class TestSecretGate:
         assert secrets is not None
         assert secrets.total == 0
 
-    def test_verified_historical_secret_is_neither_actionable_nor_deprioritized(self):
-        """(verified=True, in_current_tree=False) is historical only; not actionable, not deprioritized."""
-        findings = [_finding(ftype="secret", verified=True, in_current_tree=False)]
+    @pytest.mark.parametrize("in_current_tree", [False, None], ids=["historical", "unknown_tree"])
+    def test_a_verified_secret_is_actionable_wherever_its_file_is(self, in_current_tree):
+        """A verified credential is a live leak until rotated; scoring keeps it CRITICAL, so stats count it."""
+        findings = [_finding(ftype="secret", verified=True, in_current_tree=in_current_tree)]
         s = compute_stats(findings, {}).secret_priority
         assert s.verified_count == 1
-        assert s.historical_only_count == 1
-        assert s.actionable_count == 0
+        assert s.actionable_count == 1
         assert s.deprioritized_count == 0
 
 
@@ -162,13 +199,6 @@ class TestThreatIntelBoundaries:
         t = compute_stats([_finding(epss_score=EPSS_HIGH_THRESHOLD)], {}).threat_intel
         assert (t.high_epss_count, t.medium_epss_count) == (1, 0)
 
-    def test_weaponized_needs_kev_alongside_very_high_epss(self):
-        assert compute_stats([_finding(epss_score=0.9)], {}).threat_intel.weaponized_count == 0
-        assert (
-            compute_stats([_finding(epss_score=0.9, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel.weaponized_count
-            == 1
-        )
-
     def test_ransomware_alone_is_weaponized(self):
         t = compute_stats([_finding(**{DETAILS_KEY_KEV_RANSOMWARE: True})], {}).threat_intel
         assert t.weaponized_count == 1
@@ -190,33 +220,27 @@ class TestThreatIntelBoundaries:
         assert t.medium_epss_count == 1
         assert t.high_epss_count == 0
 
-    def test_very_high_epss_threshold_is_inclusive_for_weaponized(self):
-        """Boundary: EPSS_VERY_HIGH_THRESHOLD is inclusive for weaponized (with KEV)."""
-        kev = {DETAILS_KEY_IN_KEV: True}
-        t = compute_stats([_finding(epss_score=EPSS_VERY_HIGH_THRESHOLD, **kev)], {}).threat_intel
-        assert t.weaponized_count == 1
+    def test_epss_alone_never_counts_as_exploited(self):
+        t = compute_stats([_finding(epss_score=1.0)], {}).threat_intel
+        assert (t.weaponized_count, t.active_exploitation_count) == (0, 0)
 
-    def test_active_exploitation_threshold_is_inclusive_at_the_boundary(self):
-        """Boundary: EPSS_ACTIVE_EXPLOITATION_THRESHOLD is inclusive."""
-        t = compute_stats([_finding(epss_score=EPSS_ACTIVE_EXPLOITATION_THRESHOLD)], {}).threat_intel
-        assert t.active_exploitation_count == 1
+    def test_kev_with_very_high_epss_is_active_not_weaponized(self):
+        t = compute_stats([_finding(epss_score=1.0, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
+        assert (t.weaponized_count, t.active_exploitation_count) == (0, 1)
 
-    def test_very_high_epss_with_kev_below_threshold_does_not_weaponize(self):
-        """Constant swap guard: KEV + EPSS between HIGH and VERY_HIGH thresholds must not weaponize."""
-        kev = {DETAILS_KEY_IN_KEV: True}
-        t = compute_stats([_finding(epss_score=EPSS_HIGH_THRESHOLD, **kev)], {}).threat_intel
-        assert t.weaponized_count == 0
-
-    def test_very_high_epss_threshold_without_kev_does_not_weaponize(self):
-        """Conjunct guard: EPSS_VERY_HIGH_THRESHOLD without KEV does not count."""
-        t = compute_stats([_finding(epss_score=EPSS_VERY_HIGH_THRESHOLD)], {}).threat_intel
-        assert t.weaponized_count == 0
-
-    def test_below_active_exploitation_threshold_does_not_activate(self):
-        """Below active: EPSS just below EPSS_ACTIVE_EXPLOITATION_THRESHOLD does not count."""
-        below = EPSS_ACTIVE_EXPLOITATION_THRESHOLD - 0.01
-        t = compute_stats([_finding(epss_score=below)], {}).threat_intel
-        assert t.active_exploitation_count == 0
+    def test_stats_count_exploitation_as_the_findings_own_maturity_does(self):
+        """The scan stats and the raw EPSS/KEV view of one scan name the same findings weaponized and active."""
+        findings = [
+            _enriched("CVE-2021-0001", kev=True, epss=0.6),
+            _enriched("CVE-2021-0002", epss=0.8),
+            _enriched("CVE-2021-0003", kev=True, ransomware=True, epss=0.2),
+            _enriched("CVE-2021-0004", epss=0.5),
+            _enriched("CVE-2021-0005", kev=True),
+        ]
+        maturity = build_epss_kev_summary(findings)["exploit_maturity"]
+        t = compute_stats(findings, {}).threat_intel
+        assert t.weaponized_count == maturity["weaponized"] == 1
+        assert t.active_exploitation_count == maturity["weaponized"] + maturity["active"] == 3
 
 
 class TestReachabilityTriState:
@@ -244,6 +268,13 @@ class TestReachabilityTriState:
     def test_unknown_count_is_measured_against_vulnerabilities_only(self):
         findings = [_finding(ftype="license") for _ in range(5)] + [_finding(), _finding()]
         assert compute_stats(findings, {}).reachability.unknown_count == 2
+
+    def test_reachability_on_a_non_vulnerability_is_not_counted(self):
+        """unknown_count is vulnerabilities minus analysed ones, so analysed must count vulnerabilities only."""
+        sast = {**_finding(ftype="sast"), "reachable": True, "reachability_level": REACHABILITY_LEVEL_IMPORT}
+        r = compute_stats([sast, _finding()], {}).reachability
+        assert (r.analyzed_count, r.reachable_count, r.likely_reachable_count) == (0, 0, 0)
+        assert r.unknown_count == 1
 
     def test_symbol_level_is_confirmed_import_level_is_likely_and_reachable_is_both(self):
         findings = [
@@ -296,10 +327,9 @@ class TestHighConfidenceGate:
 
 
 class TestCoverableCount:
-    _LANGS: ClassVar[dict[str, frozenset[str]]] = {
-        "lodash": frozenset({"javascript"}),
-        "requests": frozenset({"python"}),
-    }
+    _LANGS: ClassVar[ComponentLanguages] = component_language_map(
+        [{"name": "lodash", "type": "npm"}, {"name": "requests", "type": "pypi"}]
+    )
 
     def test_counts_only_components_a_callgraph_could_analyse(self):
         findings = [
@@ -331,6 +361,11 @@ class TestCoverableCount:
         findings = [{**_finding(), "component": "org.acme:json"}]
         assert compute_stats(findings, langs).reachability.coverable_count == 1
 
+    def test_a_maven_package_is_coverable(self):
+        langs = component_language_map([{"name": "jackson-databind", "type": "maven"}])
+        findings = [{**_finding(), "component": "com.fasterxml.jackson.core:jackson-databind"}]
+        assert compute_stats(findings, langs).reachability.coverable_count == 1
+
 
 class TestComponentLanguageMap:
     def test_derives_languages_from_type_then_purl(self):
@@ -342,14 +377,16 @@ class TestComponentLanguageMap:
             {"type": "npm"},
         ]
         m = component_language_map(deps)
-        assert m["requests"] == frozenset({"python"})
-        assert m["left-pad"] == frozenset({"javascript", "typescript"})
-        assert m["viapurl"] == frozenset({"python"})
+        assert m["requests"] == [("", frozenset({"python"}))]
+        assert m["left-pad"] == [("", frozenset({"javascript", "typescript"}))]
+        assert m["viapurl"] == [("", frozenset({"python"}))]
         assert "rpmpkg" not in m
 
-    def test_a_name_listed_twice_unions_its_languages(self):
-        m = component_language_map([{"name": "x", "type": "npm"}, {"name": "x", "type": "pypi"}])
-        assert m["x"] == frozenset({"javascript", "typescript", "python"})
+    def test_a_name_two_ecosystems_list_keeps_one_candidate_per_ecosystem(self):
+        m = component_language_map(
+            [{"name": "x", "version": "1.0", "type": "npm"}, {"name": "x", "version": "2.0", "type": "pypi"}]
+        )
+        assert m["x"] == [("1.0", frozenset({"javascript", "typescript"})), ("2.0", frozenset({"python"}))]
 
 
 class TestDriverReadsOneCursor:
@@ -444,7 +481,7 @@ def _oracle_documents() -> list[dict[str, Any]]:
             "reachable": True,
             "reachability_level": REACHABILITY_LEVEL_IMPORT,
             "details": {
-                "epss_score": EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
+                "epss_score": EPSS_HIGH_THRESHOLD,
                 DETAILS_KEY_IN_KEV: True,
                 DETAILS_KEY_KEV_RANSOMWARE: False,
                 "reachability": {"confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD},

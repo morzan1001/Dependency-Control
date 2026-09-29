@@ -395,7 +395,7 @@ class TestDistinctSeverityCounts:
         return [{"fixed_version": None, "vulnerabilities": list(vulns)}]
 
     def test_canonical_cve_prefers_cve_over_ghsa(self):
-        from app.services.enrichment import canonical_cve as _canonical_cve
+        from app.core.cve import canonical_cve as _canonical_cve
 
         assert _canonical_cve({"id": "GHSA-x", "resolved_cve": "CVE-1"}) == "CVE-1"
         assert _canonical_cve({"id": "GHSA-x", "aliases": ["CVE-2"]}) == "CVE-2"
@@ -403,18 +403,26 @@ class TestDistinctSeverityCounts:
         assert _canonical_cve({"id": "GHSA-only"}) == "GHSA-only"  # GHSA with no CVE mapping
 
     def test_ghsa_and_cve_alias_count_once(self):
-        from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
+        from app.api.v1.helpers.analytics import severity_counts_from_details
 
         # the same vuln listed as its GHSA and its CVE alias (as prod does) is one critical
         details = self._details(
             {"id": "GHSA-a", "aliases": ["CVE-1"], "severity": "CRITICAL"},
             {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
         )
-        counts = _severity_counts_from_details(details)
-        assert counts == {"critical": 1, "high": 0, "medium": 0, "low": 0}
+        counts = severity_counts_from_details(details)
+        assert {k: v for k, v in counts.items() if v} == {"critical": 1}
+
+    def test_a_multi_cve_advisory_credits_its_severity_to_each_cve(self):
+        from app.api.v1.helpers.analytics import severity_counts_from_details
+
+        details = self._details(
+            {"id": "CVE-1", "aliases": ["ALAS-1", "CVE-2", "CVE-3"], "severity": "HIGH"},
+        )
+        assert {k: v for k, v in severity_counts_from_details(details).items() if v} == {"high": 3}
 
     def test_multi_severity_cve_counts_once_at_worst(self):
-        from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
+        from app.api.v1.helpers.analytics import severity_counts_from_details
 
         # Both orderings must resolve to critical, so the test catches a last-wins bug regardless
         # of iteration order: CVE-A is high-then-critical, CVE-B is critical-then-high.
@@ -424,24 +432,24 @@ class TestDistinctSeverityCounts:
             {"id": "CVE-B", "resolved_cve": "CVE-B", "severity": "CRITICAL"},
             {"id": "CVE-B", "resolved_cve": "CVE-B", "severity": "HIGH"},
         )
-        counts = _severity_counts_from_details(details)
+        counts = severity_counts_from_details(details)
         assert counts["critical"] == 2, "each CVE counts once at its worst severity"
         assert counts["high"] == 0, "a CVE must not also be counted at a lower severity"
 
-    def test_counts_reconcile_with_total_and_ignore_unranked(self):
-        from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
-        from app.services.enrichment import canonical_cves as _canonical_cves
+    def test_counts_reconcile_with_the_cve_total(self):
+        from app.api.v1.helpers.analytics import severity_counts_from_details
+        from app.services.recommendation.common import live_cves
 
         details = self._details(
             {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
             {"id": "CVE-2", "resolved_cve": "CVE-2", "severity": "HIGH"},
             {"id": "CVE-3", "resolved_cve": "CVE-3", "severity": "MEDIUM"},
-            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": "UNKNOWN"},  # unranked -> excluded
+            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": None},
+            {"id": "CVE-5", "resolved_cve": "CVE-5", "severity": "CRITICAL", "waived": True},
         )
-        counts = _severity_counts_from_details(details)
-        assert counts == {"critical": 1, "high": 1, "medium": 1, "low": 0}
-        assert sum(counts.values()) == 3, "unranked severity is not counted as a bucket"
-        assert set(_canonical_cves(details)) == {"CVE-1", "CVE-2", "CVE-3", "CVE-4"}
+        counts = severity_counts_from_details(details)
+        assert {k: v for k, v in counts.items() if v} == {"critical": 1, "high": 1, "medium": 1, "unknown": 1}
+        assert sum(counts.values()) == len(live_cves(details)) == 4
 
 
 # epss/risk come from enrichment, not Mongo, so the endpoint re-sorts in Python; the pipeline must not cap the fetch below skip+limit.

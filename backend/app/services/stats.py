@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -19,6 +18,7 @@ from app.repositories import (
     ScanRepository,
     WaiverRepository,
 )
+from app.repositories.distributed_locks import new_lock_holder
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.releases import released_scan_ids
 from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
@@ -35,10 +35,6 @@ _LOCK_TTL_SECONDS = 300
 _RECALC_LOCK = "waiver_recalc"
 _EXPIRY_SWEEP = "expiry_sweep"
 _QUEUED = {"waiver": {"$exists": True}}
-
-
-def _holder_id() -> str:
-    return f"pod-{os.getenv('HOSTNAME', 'unknown')}-{os.getpid()}"
 
 
 async def _restamp_scan(
@@ -125,7 +121,7 @@ async def recalculate_project_stats(
         return None
 
     lock_name = f"stats_recalc:{project_id}"
-    holder_id = _holder_id()
+    holder_id = new_lock_holder()
     if not await _acquire_with_backoff(lock_repo, lock_name, holder_id):
         logger.warning(
             f"Could not acquire lock for stats recalculation of project {project_id} "
@@ -175,7 +171,7 @@ async def run_waiver_recalc(db: AsyncIOMotorDatabase) -> None:
     # A secondary lagging behind the change would fingerprint the old waiver set and retire the change as done.
     db = db.with_options(read_preference=ReadPreference.PRIMARY)
     lock_repo = DistributedLocksRepository(db)
-    holder_id = _holder_id()
+    holder_id = new_lock_holder()
     while await lock_repo.acquire_lock(_RECALC_LOCK, holder_id, _LOCK_TTL_SECONDS):
         try:
             await _queue_expired_waivers(db)

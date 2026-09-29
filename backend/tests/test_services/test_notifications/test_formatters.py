@@ -19,7 +19,7 @@ from app.services.notifications.slack_formatter import (
 _SCAN_LINK = "https://dc.example.com/scans/s1"
 _DASHBOARD_LINK = "https://dc.example.com"
 _LISTED_VULNS = 10
-_CRITICAL_FOUND = 431
+_PRIORITY_FOUND = 431
 _AFFECTED_PROJECTS = 132
 _FINDINGS_PER_PROJECT = 9
 
@@ -48,19 +48,25 @@ class TestSlackVulnerabilityAlert:
             project_name="demo",
             kev_count=3,
             high_epss_count=4,
-            critical_count=_CRITICAL_FOUND,
+            priority_count=_PRIORITY_FOUND,
             top_vulns=_vulns(_LISTED_VULNS),
             scan_link=_SCAN_LINK,
         )
 
     def test_the_vulnerability_list_names_the_population_it_was_drawn_from(self):
-        assert any(f"({_LISTED_VULNS} of {_CRITICAL_FOUND})" in text for text in _section_texts(self._blocks()))
+        assert any(f"({_LISTED_VULNS} of {_PRIORITY_FOUND})" in text for text in _section_texts(self._blocks()))
 
     def test_every_vulnerability_the_caller_passed_is_listed(self):
         listed = "\n".join(_section_texts(self._blocks()))
 
         for vuln in _vulns(_LISTED_VULNS):
             assert vuln["id"] in listed
+
+    def test_the_counts_say_what_they_count(self):
+        fields = next(b["fields"] for b in self._blocks() if "fields" in b)
+        texts = " ".join(f["text"] for f in fields)
+        assert "High EPSS (EPSS >= 10%)" in texts
+        assert f"Priority (Critical/High/KEV/High EPSS):* {_PRIORITY_FOUND}" in texts
 
 
 class TestSlackAdvisory:
@@ -118,12 +124,25 @@ class TestMattermostAlerts:
             project_name="demo",
             kev_count=3,
             high_epss_count=4,
-            critical_count=_CRITICAL_FOUND,
+            priority_count=_PRIORITY_FOUND,
             top_vulns=_vulns(_LISTED_VULNS),
             scan_link=_SCAN_LINK,
         )
 
-        assert f"({_LISTED_VULNS} of {_CRITICAL_FOUND})" in props["attachments"][0]["text"]
+        assert f"({_LISTED_VULNS} of {_PRIORITY_FOUND})" in props["attachments"][0]["text"]
+
+    def test_the_counts_say_what_they_count(self):
+        props = build_vulnerability_found_props(
+            project_name="demo",
+            kev_count=3,
+            high_epss_count=4,
+            priority_count=_PRIORITY_FOUND,
+            top_vulns=_vulns(_LISTED_VULNS),
+            scan_link=_SCAN_LINK,
+        )
+        titles = [field["title"] for field in props["attachments"][0]["fields"]]
+        assert any(title.endswith("High EPSS (EPSS >= 10%)") for title in titles)
+        assert any(title.endswith("Priority (Critical/High/KEV/High EPSS)") for title in titles)
 
     def test_the_project_list_names_the_population_it_was_drawn_from(self):
         props = build_advisory_props(

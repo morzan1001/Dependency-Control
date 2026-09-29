@@ -12,13 +12,14 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.cve import display_vulnerability_id
 from app.schemas.scan_delta import (
     DeltaCategory,
     FindingDeltaItem,
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.aggregation.components import extract_artifact_name
+from app.services.component_identity import extract_artifact_name
 from app.services.analytics._delta_pagination import MAX_FETCH, delta_truncation, paginate
 from app.services.analytics._delta_reachability import side_reachability
 
@@ -60,15 +61,8 @@ def _sast_identifier(details: dict[str, Any]) -> str:
 
 
 def _malware_identifier(details: dict[str, Any]) -> str:
-    """Typosquat findings carry ``imitated_package``; os_malware findings carry
-    ``info``/``reference``."""
-    imitated = details.get("imitated_package")
-    if imitated:
-        return str(imitated)
-    info = details.get("info")
-    if isinstance(info, dict) and info.get("id"):
-        return str(info["id"])
-    return _first_id(details, "reference")
+    """A typosquat's ``imitated_package``, else ``osv_id`` (either merged feed keeps it), else ``reference``."""
+    return _first_id(details, "imitated_package", "osv_id", "reference")
 
 
 def _vulnerability_identifier(finding: dict[str, Any], include_waived: bool) -> str:
@@ -160,7 +154,7 @@ FINDING_IDENTITY_PROJECTION: dict[str, int] = {
     "details.line": 1,
     "details.license": 1,
     "details.imitated_package": 1,
-    "details.info.id": 1,
+    "details.osv_id": 1,
     "details.reference": 1,
     "details.eol_date": 1,
     "details.fixed_version": 1,
@@ -171,6 +165,8 @@ _FETCH_PROJECTION: dict[str, int] = {
     **FINDING_IDENTITY_PROJECTION,
     "severity": 1,
     "scan_created_at": 1,
+    "details.vulnerabilities.resolved_cve": 1,
+    "details.vulnerabilities.aliases": 1,
 }
 
 
@@ -264,14 +260,6 @@ def _doc_type(doc: dict) -> str:
     return doc.get("type") or ""
 
 
-def _item_cve_id(details: dict[str, Any]) -> str | None:
-    """Best display CVE id: the first ``details.vulnerabilities[].id``."""
-    for entry in details.get("vulnerabilities") or []:
-        if isinstance(entry, dict) and entry.get("id"):
-            return str(entry["id"])
-    return None
-
-
 def _to_item(doc: dict, change: str) -> FindingDeltaItem:
     details = doc.get("details") or {}
     found_in = doc.get("found_in") or []
@@ -282,7 +270,7 @@ def _to_item(doc: dict, change: str) -> FindingDeltaItem:
         severity=_doc_severity(doc),
         title=doc.get("description") or "",
         component=doc.get("component"),
-        cve_id=_item_cve_id(details),
+        cve_id=display_vulnerability_id(details),
         file_path=(found_in[0] if found_in else None),
         first_seen=doc.get("scan_created_at"),
     )

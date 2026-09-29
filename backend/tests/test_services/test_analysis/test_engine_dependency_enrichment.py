@@ -102,6 +102,19 @@ def test_cross_ecosystem_twin_is_not_touched():
     assert "license_category" not in _find_dep(db, purl="pkg:deb/debian/foo@1.0.0")
 
 
+def test_a_purl_that_merely_starts_with_the_enriched_one_is_not_touched():
+    db = FakeDatabase()
+    _insert_dep(db, name="foo", version="1.0.0", purl="pkg:npm/foo@1.0.0#dist/foo.js")
+    _insert_dep(db, name="foo", version="1.0.01", purl="pkg:npm/foo@1.0.01")
+    _insert_dep(db, name="foo", version="1.0.0-beta", purl="pkg:npm/foo@1.0.0-beta")
+
+    _run(db, [_entry("foo", "1.0.0", "pkg:npm/foo@1.0.0", {"license_category": "permissive"})])
+
+    assert _find_dep(db, purl="pkg:npm/foo@1.0.0#dist/foo.js")["license_category"] == "permissive"
+    assert "license_category" not in _find_dep(db, purl="pkg:npm/foo@1.0.01")
+    assert "license_category" not in _find_dep(db, purl="pkg:npm/foo@1.0.0-beta")
+
+
 def test_sbom_declared_license_survives_but_twin_without_license_is_filled():
     db = FakeDatabase()
     _insert_dep(
@@ -214,3 +227,16 @@ def test_the_recorded_sources_accumulate_across_scans_like_the_data_they_describ
 
     doc = asyncio.run(db.dependency_enrichments.find_one({"purl": purl}))
     assert sorted(doc["enrichment_sources"]) == ["deps_dev", "license_compliance"]
+
+
+def test_every_spelling_of_one_purl_receives_the_enrichment():
+    """Two SBOMs of one scan name the same purl differently."""
+    db = FakeDatabase()
+    purl = "pkg:maven/org.apache.logging.log4j/log4j-core@2.17.1"
+    _insert_dep(db, name="log4j-core", version="2.17.1", purl=purl)
+    _insert_dep(db, name="org.apache.logging.log4j:log4j-core", version="2.17.1", purl=purl)
+
+    _run(db, [_entry("log4j-core", "2.17.1", purl, {"license_category": "permissive"})])
+
+    for name in ("log4j-core", "org.apache.logging.log4j:log4j-core"):
+        assert _find_dep(db, name=name)["license_category"] == "permissive"

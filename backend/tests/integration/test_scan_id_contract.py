@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.scan_manager import derive_pipeline_scan_id
+from app.services.scan_manager import deterministic_scan_id
 
 _PIPELINE_ID = 5150
 _COMMIT = "c" * 40
@@ -23,7 +23,7 @@ def _uuid5(seed: str) -> str:
     [(7, "abc", _uuid5("p-7-abc")), (7, None, _uuid5("p-7")), (None, "abc", None), (0, "abc", None)],
 )
 def test_the_rule(pipeline_id, commit_hash, expected):
-    assert derive_pipeline_scan_id("p", pipeline_id, commit_hash) == expected
+    assert deterministic_scan_id("p", pipeline_id, commit_hash) == expected
 
 
 @pytest.mark.asyncio

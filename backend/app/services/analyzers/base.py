@@ -3,7 +3,12 @@ from typing import Any
 
 from app.models.finding import Severity
 
-from .purl_utils import normalize_hash_algorithm
+
+def normalize_hash_algorithm(alg: str) -> str:
+    """Normalize a hash algorithm name (lowercase, no hyphens): "SHA-256" -> "sha256"."""
+    if not alg:
+        return ""
+    return alg.lower().replace("-", "")
 
 
 def map_vendor_severity(raw_severity: str | None) -> str:

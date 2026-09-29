@@ -1,13 +1,11 @@
 """Shared helper functions for API v1 endpoints."""
 
 from app.api.v1.helpers.analytics import (
-    build_findings_severity_map,
     build_hotspot_priority_reasons,
     build_priority_reasons,
     calculate_days_known,
     calculate_days_until_due,
     calculate_impact_score,
-    count_severities,
     extract_fix_versions,
     gather_cross_project_data,
     get_latest_scan_ids,
@@ -123,7 +121,6 @@ __all__ = [
     "aggregate_stats_by_category",
     "apply_system_settings_enforcement",
     "authorize_waiver_read",
-    "build_findings_severity_map",
     "build_hotspot_priority_reasons",
     # Pagination helpers
     "build_pagination_response",
@@ -145,7 +142,6 @@ __all__ = [
     "check_webhook_create_permission",
     "check_webhook_list_permission",
     "check_webhook_permission",
-    "count_severities",
     # Storage helpers
     "detect_format",
     "enrich_team_with_usernames",

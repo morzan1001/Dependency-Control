@@ -106,3 +106,21 @@ describe('Broadcasts - advisory package type reset', () => {
     expect(payload.packages[0]).toMatchObject({ name: 'log4j-core', type: '' })
   })
 })
+
+describe('Broadcasts - advisory impact', () => {
+  it('lists the matched versions that could not be compared with the max version', async () => {
+    mockSendBroadcast.mockResolvedValue({
+      recipient_count: 1,
+      project_count: 0,
+      uncomparable_versions: ['express (latest)'],
+    })
+    render(<Broadcasts />)
+
+    fireEvent.click(screen.getByRole('tab', { name: /Security Advisory/i }))
+    fireEvent.change(screen.getByTestId('pkg-name'), { target: { value: 'express' } })
+    fireEvent.click(screen.getByRole('button', { name: /Calculate Impact/i }))
+
+    expect(await screen.findByText(/express \(latest\)/)).toBeInTheDocument()
+    expect(screen.getByText(/could not be compared/i)).toBeInTheDocument()
+  })
+})

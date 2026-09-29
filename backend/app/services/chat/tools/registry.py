@@ -20,14 +20,18 @@ from app.api.v1.helpers.webhooks import (
     check_webhook_permission,
 )
 from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CRYPTO_ASSET_PAGE,
     MAX_CRYPTO_HOTSPOT_PAGE,
     MAX_POLICY_AUDIT_PAGE,
     MAX_PQC_PLAN_ITEMS,
 )
+from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cve
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
+from app.core.risk_scoring import calculate_exploit_maturity, reachability_display_tier
 from app.models.finding import FindingType, Severity
 from app.models.project import Project
 from app.models.user import User
@@ -38,18 +42,18 @@ from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
-from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
+from app.services.aggregation.versions import split_fixed_versions
+from app.services.component_identity import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
-from app.services.analyzers.purl_utils import canonical_purl
+from app.core.purl import canonical_purl
 from app.services.compliance.visibility import report_visibility_filter
-from app.services.reachability_enrichment import reachability_display_tier
+from app.services.recommendation.common import live_advisories, max_advisory_cvss
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
     _SEVERITY_RANK,
-    KEV_EQUIVALENT_MATURITY,
     MAX_DAY_WINDOW,
     MAX_FINDING_ROWS,
     MAX_PLAN_STEPS,
@@ -60,13 +64,16 @@ from ._helpers import (
     _compare_versions,
     _ensure_list,
     _inject_urls,
+    _number,
     _serialize_doc,
     _serialize_finding_for_llm,
     _truncate_if_too_large,
+    advisory_view,
     begin_limit_ledger,
     bounded_read,
     bounded_read_note,
     clamped_limit_note,
+    ranked_advisories,
     staleness_identities,
 )
 from .crypto_tools import (
@@ -95,8 +102,6 @@ _ERR_WEBHOOK_NOT_FOUND = "Webhook not found or access denied"
 _ERR_ARCHIVE_NOT_FOUND = "Archive not found or access denied"
 _ERR_NO_SCAN_DATA = "No scan data available"
 _ERR_NEED_TWO_SCANS = "Need at least two builds on the head branch to compare"
-_FIELD_VULN_ID = "details.vulnerabilities.id"
-_FIELD_EPSS_SCORE = "details.epss_score"
 
 
 def _rendered_fields(model: type[BaseModel], *, withheld: frozenset[str] = frozenset()) -> list[str]:
@@ -146,6 +151,7 @@ _TREND_SCAN_READ = 500
 _REMEDIATION_FINDING_READ = 500
 _COMPONENT_USAGE_READ = 100
 _CVE_OCCURRENCE_READ = 25
+_WAIVER_STATE_READ = 50
 _EXPIRING_WAIVER_READ = 25
 _TEAM_RISK_PROJECT_READ = 500
 
@@ -182,13 +188,6 @@ def _row_project_id(row: dict[str, Any]) -> str:
     return str(row.get("project_id") or "")
 
 
-def _finding_detail_number(finding: dict[str, Any], field: str) -> float:
-    """Return a numeric `details.<field>` for tiebreak sorting; missing/non-numeric -> -1.0."""
-    details = finding.get("details") or {}
-    value = details.get(field)
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
-
-
 # How a dependency's directness was established. `direct` alone cannot express it: an
 # inferred-direct package is direct, but ranks below a declared one when ordering fixes.
 _DIRECT_CONFIDENCE_RANK = {"declared": 0, "inferred": 1, "transitive": 2}
@@ -200,13 +199,41 @@ def _direct_confidence(dep: dict[str, Any]) -> str:
     return "inferred" if dep.get("direct_inferred") else "declared"
 
 
+# A head finding's waiver state, with each advisory's own flag and the ids that name it.
+_WAIVER_STATE_PROJECTION = {
+    "component": 1,
+    "version": 1,
+    "waived": 1,
+    "waiver_reason": 1,
+    "waiver_lapsed": 1,
+    "lapsed_waiver_id": 1,
+    **{f"details.vulnerabilities.{field}": 1 for field in ("id", "aliases", "resolved_cve", "waived", "waiver_reason")},
+}
+
+
+def _waiver_state(finding: dict[str, Any], vulnerability_id: str) -> dict[str, Any]:
+    """One head finding's waiver state; asked about by an advisory id, `waived` is that advisory's on this component."""
+    waived_advisories = [v for v in (finding.get("details") or {}).get("vulnerabilities") or [] if v.get("waived")]
+    return {
+        "component": finding.get("component"),
+        "version": finding.get("version"),
+        "waived": bool(finding.get("waived")) or any(vulnerability_id in advisory_ids(v) for v in waived_advisories),
+        "waiver_reason": finding.get("waiver_reason"),
+        "lapsed": bool(finding.get("waiver_lapsed")),
+        "lapsed_waiver_id": finding.get("lapsed_waiver_id"),
+        "waived_advisories": [
+            {"id": canonical_cve(v), "waiver_reason": v.get("waiver_reason")} for v in waived_advisories
+        ],
+    }
+
+
 def _rank_findings(findings: list[dict[str, Any]]) -> None:
-    """Sort findings in place by severity rank desc, then details.epss_score and details.cvss_score desc."""
+    """Sort findings in place by severity rank desc, then details.epss_score and the highest advisory CVSS desc."""
     findings.sort(
         key=lambda f: (
             _SEVERITY_RANK.get((f.get("severity") or "").upper(), 0),
-            _finding_detail_number(f, "epss_score"),
-            _finding_detail_number(f, "cvss_score"),
+            _number((f.get("details") or {}).get("epss_score")),
+            _number(max_advisory_cvss(f.get("details") or {})),
         ),
         reverse=True,
     )
@@ -476,34 +503,18 @@ class ChatToolRegistry:
             return {"error": _ERR_FINDING_NOT_FOUND}
         slim = _serialize_finding_for_llm(finding)
         slim["project_name"] = project.get("name", "")
-        details = finding.get("details") or {}
-        vulns = (details.get("vulnerabilities") or [])[:5]
-        if vulns:
-            slim["vulnerabilities"] = [
-                {
-                    "id": v.get("id"),
-                    "severity": v.get("severity"),
-                    "cvss_score": v.get("cvss_score"),
-                    "fixed_version": v.get("fixed_version"),
-                    "epss_score": v.get("epss_score"),
-                    "description": _clip_value(v.get("description") or ""),
-                    "references": (v.get("references") or [])[:3],
-                }
-                for v in vulns
-            ]
+        advisories = ranked_advisories(finding.get("details"))
+        if advisories:
+            slim["advisories"] = [advisory_view(v, references=3) for v in advisories[:5]]
+            slim["advisories_total"] = len(advisories)
         return {"finding": slim}
 
     async def _tool_search_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         search_query = ctx.args["query"]
-        escaped_search_query = re.escape(search_query)
+        pattern = {"$regex": re.escape(search_query), "$options": "i"}
         query = {
             **await self._in_scope(ctx),
-            "$or": [
-                {"finding_id": {"$regex": escaped_search_query, "$options": "i"}},
-                {"description": {"$regex": escaped_search_query, "$options": "i"}},
-                {"component": {"$regex": escaped_search_query, "$options": "i"}},
-                {_FIELD_VULN_ID: {"$regex": escaped_search_query, "$options": "i"}},
-            ],
+            "$or": [{"finding_id": pattern}, {"description": pattern}, {"component": pattern}, advisory_match(pattern)],
         }
         if ctx.args.get("severity"):
             query["severity"] = ctx.args["severity"].upper()
@@ -680,27 +691,40 @@ class ChatToolRegistry:
 
     async def _tool_get_waiver_status(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
+        wanted = ctx.args["finding_id"]
+        vulnerability_id = advisory_id(wanted) or ""
         head_scan_id = await self._head_scan_id(project, ctx.db)
-        finding = None
+        findings: list[dict[str, Any]] = []
+        findings_total = 0
         if head_scan_id:
-            finding = await ctx.db["findings"].find_one(
-                {"scan_id": head_scan_id, "finding_id": ctx.args["finding_id"]},
-                {"waived": 1, "waiver_reason": 1, "waiver_lapsed": 1, "lapsed_waiver_id": 1},
+            findings, findings_total = await bounded_read(
+                ctx.db["findings"],
+                {"scan_id": head_scan_id, "$or": [{"finding_id": wanted}, advisory_match(vulnerability_id)]},
+                subject=f"findings named {wanted}",
+                limit=_WAIVER_STATE_READ,
+                projection=_WAIVER_STATE_PROJECTION,
             )
-        if finding is not None:
-            resp: dict[str, Any] = {"waived": bool(finding.get("waived"))}
-            if finding.get("waiver_reason"):
-                resp["waiver_reason"] = finding["waiver_reason"]
-            if finding.get("waiver_lapsed"):
-                resp["lapsed"] = True
-                resp["lapsed_waiver_id"] = finding.get("lapsed_waiver_id")
-            return resp
+        if findings:
+            states = [_waiver_state(f, vulnerability_id) for f in findings]
+            waived_count = sum(state["waived"] for state in states)
+            return {
+                "waived": waived_count == findings_total,
+                "waived_count": waived_count,
+                "findings": states,
+                "findings_total": findings_total,
+                "hint": (
+                    "An advisory under waived_advisories is suppressed even where its finding is not waived; "
+                    "that finding's severity counts only its live advisories."
+                ),
+            }
         # No finding doc for this id in the latest scan: an existing waiver row
         # suppresses nothing, so report it as present-but-not-suppressing.
         now = datetime.now(timezone.utc)
-        waiver = await ctx.db["waivers"].find_one(
-            {"finding_id": ctx.args["finding_id"], "project_id": project["_id"]}
-        ) or await ctx.db["waivers"].find_one({"finding_id": ctx.args["finding_id"], "project_id": None})
+        named = {"$or": [{"finding_id": wanted}, {"vulnerability_id": vulnerability_id}]}
+        waivers = ctx.db["waivers"]
+        waiver = await waivers.find_one({**named, "project_id": project["_id"]}) or await waivers.find_one(
+            {**named, "project_id": None}
+        )
         if not waiver:
             return {"waived": False}
         active = is_waiver_active(waiver.get("expiration_date"), now)
@@ -826,11 +850,14 @@ class ChatToolRegistry:
             )
             g["findings"].append(f)
             details = f.get("details") or {}
-            entries = details.get("vulnerabilities") or []
-            for fv in (details.get("fixed_version"), *(v.get("fixed_version") for v in entries)):
-                if isinstance(fv, str) and fv:
-                    # Writers emit comma-joined fix lists ("1.2.6, 2.0.1"); compare single versions.
-                    g["fix_candidates"].extend(part for part in (c.strip() for c in fv.split(",")) if part)
+            # The finding-level fixed_version also folds in the fixes of waived advisories.
+            fixes = (
+                [v.get("fixed_version") for v in live_advisories(details)]
+                if details.get("vulnerabilities")
+                else [details.get("fixed_version")]
+            )
+            for fv in fixes:
+                g["fix_candidates"].extend(split_fixed_versions(fv))
 
         steps: list[dict[str, Any]] = []
         for key, g in groups.items():
@@ -847,11 +874,11 @@ class ChatToolRegistry:
             resolved: list[dict[str, Any]] = []
             for f in g["findings"]:
                 # Non-vulnerability findings carry no CVE list; label with the finding id.
-                entries = (f.get("details") or {}).get("vulnerabilities") or [{}]
+                entries = live_advisories(f.get("details")) or [{}]
                 resolved.extend(
                     {
                         "finding_id": f.get("finding_id"),
-                        "cve_id": v.get("resolved_cve") or v.get("id") or f.get("finding_id"),
+                        "cve_id": canonical_cve(v) or f.get("finding_id"),
                         "severity": v.get("severity") or f.get("severity"),
                     }
                     for v in entries
@@ -939,8 +966,22 @@ class ChatToolRegistry:
             {
                 "scan_id": {"$in": list(latest.values())},
                 "severity": {"$in": ["CRITICAL", "HIGH"]},
-                "details.fixed_version": {"$exists": True, "$ne": None},
                 "waived": {"$ne": True},
+                # The live_fixed_version rule: a live advisory names a fix and no live CRITICAL/HIGH one lacks one.
+                "details.vulnerabilities": {
+                    "$elemMatch": {"fixed_version": {"$nin": [None, ""]}, "waived": {"$ne": True}}
+                },
+                "$nor": [
+                    {
+                        "details.vulnerabilities": {
+                            "$elemMatch": {
+                                "severity": {"$in": ["CRITICAL", "HIGH"]},
+                                "fixed_version": {"$in": [None, ""]},
+                                "waived": {"$ne": True},
+                            }
+                        }
+                    }
+                ],
             },
             limit,
         )
@@ -948,11 +989,17 @@ class ChatToolRegistry:
         for f in rows:
             slim = _serialize_finding_for_llm(f)
             slim["project_name"] = names.get(_row_project_id(f), "")
+            slim["still_open"] = [
+                canonical_cve(v) for v in live_advisories(f.get("details")) if not v.get("fixed_version")
+            ]
             out.append(slim)
         return {
             "findings": out,
             "count": len(out),
-            "hint": "These already have a fix_version — recommend the upgrade directly.",
+            "hint": (
+                "Upgrading to fixed_version fixes every CRITICAL/HIGH advisory of these findings. Advisories "
+                "under still_open have no fix yet and stay after the upgrade: call that a partial fix."
+            ),
             **({"ranking_note": ranking_note} if ranking_note else {}),
         }
 
@@ -970,11 +1017,11 @@ class ChatToolRegistry:
         fix = details.get("fixed_version")
 
         reasons = []
-        if maturity in KEV_EQUIVALENT_MATURITY:
+        if details.get(DETAILS_KEY_IN_KEV):
             return {
                 "suggested_reason": (
-                    "NOT RECOMMENDED TO WAIVE. This vulnerability has exploit_maturity="
-                    f"'{maturity}' — it is actively exploited in the wild. Patch rather than waive."
+                    "NOT RECOMMENDED TO WAIVE. This vulnerability is listed in CISA KEV — it is "
+                    "actively exploited in the wild. Patch rather than waive."
                 ),
                 "suggested_expiry_days": 0,
                 "recommend_waive": False,
@@ -1046,7 +1093,7 @@ class ChatToolRegistry:
             ctx.db,
             {
                 "scan_id": {"$in": list(latest.values())},
-                "details.exploit_maturity": {"$in": list(KEV_EQUIVALENT_MATURITY)},
+                "details.vulnerabilities": {"$elemMatch": {DETAILS_KEY_IN_KEV: True, "waived": {"$ne": True}}},
                 "waived": {"$ne": True},
             },
             limit,
@@ -1059,7 +1106,10 @@ class ChatToolRegistry:
         return {
             "findings": out,
             "count": len(out),
-            "hint": ("All of these have real-world exploits. Prioritise above plain CVSS-only critical findings."),
+            "hint": (
+                "Each has an unwaived advisory in CISA KEV, named as cve: it has real-world exploits. "
+                "Prioritise above plain CVSS-only critical findings."
+            ),
             **({"ranking_note": ranking_note} if ranking_note else {}),
         }
 
@@ -1109,7 +1159,7 @@ class ChatToolRegistry:
         return {"matches": matches, "count": len(matches), "matches_total": rows_total}
 
     async def _tool_get_findings_by_cve(self, ctx: _ToolContext) -> dict[str, Any]:
-        cve = ctx.args["cve_id"].strip().upper()
+        cve = advisory_id(ctx.args["cve_id"]) or ""
         latest, names = await self._heads_in_scope(ctx)
         if not latest:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
@@ -1117,7 +1167,7 @@ class ChatToolRegistry:
             ctx.db["findings"],
             {
                 "scan_id": {"$in": list(latest.values())},
-                _FIELD_VULN_ID: cve,
+                **advisory_match(cve),
             },
             subject=f"findings naming {cve}",
             limit=_CVE_OCCURRENCE_READ,
@@ -1133,7 +1183,7 @@ class ChatToolRegistry:
                     "findings": [],
                 },
             )
-            slot["findings"].append(_serialize_finding_for_llm(f))
+            slot["findings"].append(_serialize_finding_for_llm(f, cve=cve))
         return {
             "cve_id": cve,
             "affected_projects": list(by_project.values()),
@@ -1145,27 +1195,19 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_cve_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        cve = ctx.args["cve_id"].strip().upper()
-        finding = await ctx.db["findings"].find_one({**await self._in_scope(ctx), _FIELD_VULN_ID: cve})
+        cve = advisory_id(ctx.args["cve_id"]) or ""
+        finding = await ctx.db["findings"].find_one({**await self._in_scope(ctx), **advisory_match(cve)})
         if not finding:
             return {"error": f"{cve} not found in any of your projects' scan data"}
-        details = finding.get("details") or {}
-        vulns = details.get("vulnerabilities") or []
-        vuln = next((v for v in vulns if (v.get("id") or "").upper() == cve), None) or {}
+        advisory = next(v for v in finding["details"]["vulnerabilities"] if cve in advisory_ids(v))
+        in_kev = bool(advisory.get(DETAILS_KEY_IN_KEV))
         return {
             "cve_id": cve,
-            "severity": vuln.get("severity") or finding.get("severity"),
-            "cvss_score": vuln.get("cvss_score") or details.get("cvss_score"),
-            "cvss_vector": vuln.get("cvss_vector"),
-            "epss_score": vuln.get("epss_score") or details.get("epss_score"),
-            "epss_percentile": details.get("epss_percentile"),
-            "exploit_maturity": details.get("exploit_maturity"),
-            "actively_exploited": details.get("exploit_maturity") in KEV_EQUIVALENT_MATURITY,
-            "description": _clip_value(vuln.get("description") or ""),
-            "fixed_version": vuln.get("fixed_version") or details.get("fixed_version"),
-            "references": (vuln.get("references") or [])[:5],
+            **advisory_view(advisory, references=5),
+            "exploit_maturity": calculate_exploit_maturity(
+                in_kev, bool(advisory.get(DETAILS_KEY_KEV_RANSOMWARE)), advisory.get("epss_score")
+            ),
             "affected_component": f"{finding.get('component', '')}@{finding.get('version', '')}",
-            "source_scanners": vuln.get("scanners"),
         }
 
     async def _tool_get_stale_findings(self, ctx: _ToolContext) -> dict[str, Any]:

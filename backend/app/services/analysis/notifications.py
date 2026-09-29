@@ -4,10 +4,12 @@ import logging
 from typing import Any
 
 from app.core.config import settings
-from app.core.constants import get_severity_value
-from app.models.finding import Finding
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, EPSS_HIGH_THRESHOLD, get_severity_value
+from app.core.cve import canonical_cve
+from app.core.epss import HIGH_EPSS_LABEL
+from app.models.finding import Finding, FindingType
 from app.models.project import Project
-from app.schemas.notification import AlertVulnerability
+from app.schemas.notification import PRIORITY_VULNS_LABEL, AlertVulnerability
 from app.services.analysis.types import Database
 from app.services.notifications import notification_service
 from app.services.notifications.mattermost_formatter import (
@@ -32,47 +34,42 @@ logger = logging.getLogger(__name__)
 _TOP_VULNS_SHOWN = 10
 
 
-def _extract_vulnerability_info(vuln: dict[str, Any], finding: dict[str, Any]) -> dict[str, Any]:
-    """Extract vulnerability info from a vulnerability dict and its parent finding."""
+def _extract_vulnerability_info(entry_details: dict[str, Any], finding: dict[str, Any]) -> dict[str, Any]:
+    """Extract vulnerability info from a vulnerability entry and its parent finding."""
     return AlertVulnerability(
-        id=vuln.get("id", finding.get("id", "Unknown")),
-        severity=vuln.get("severity", finding.get("severity", "UNKNOWN")),
+        id=canonical_cve(entry_details) or "Unknown",
+        severity=entry_details["severity"],
         package=finding.get("component", "Unknown"),
         version=finding.get("version", ""),
-        in_kev=vuln.get("in_kev", False),
-        epss_score=vuln.get("epss_score"),
-        kev_due_date=vuln.get("kev_due_date"),
-        kev_ransomware_use=vuln.get("kev_ransomware_use", False),
+        in_kev=entry_details.get(DETAILS_KEY_IN_KEV, False),
+        epss_score=entry_details.get("epss_score"),
+        kev_due_date=entry_details.get("kev_due_date"),
+        kev_ransomware_use=entry_details.get(DETAILS_KEY_KEV_RANSOMWARE, False),
     ).model_dump()
+
+
+def _is_high_epss(vuln: dict[str, Any]) -> bool:
+    return (vuln["epss_score"] or 0) >= EPSS_HIGH_THRESHOLD
+
+
+def _is_priority(vuln: dict[str, Any]) -> bool:
+    return vuln["severity"] in ("CRITICAL", "HIGH") or vuln["in_kev"] or _is_high_epss(vuln)
 
 
 def _categorize_vulnerabilities(
     vulnerability_findings: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
-    """Categorize vulnerabilities into (kev_vulns, high_epss_vulns, critical_vulns)."""
-    kev_vulns: list[dict[str, Any]] = []
-    high_epss_vulns: list[dict[str, Any]] = []
-    critical_vulns: list[dict[str, Any]] = []
-
-    for finding in vulnerability_findings:
-        details = finding.get("details", {})
-        vulns = details.get("vulnerabilities", [details])
-
-        for vuln in vulns:
-            vuln_info = _extract_vulnerability_info(vuln, finding)
-
-            if vuln.get("in_kev"):
-                kev_vulns.append(vuln_info)
-
-            epss_score = vuln.get("epss_score")
-            if epss_score is not None and epss_score >= 0.1:
-                high_epss_vulns.append(vuln_info)
-
-            severity = vuln.get("severity")
-            if severity in ["CRITICAL", "HIGH"] or vuln.get("in_kev"):
-                critical_vulns.append(vuln_info)
-
-    return kev_vulns, high_epss_vulns, critical_vulns
+    """Categorize vulnerabilities into (kev_vulns, high_epss_vulns, priority_vulns)."""
+    vulns = [
+        _extract_vulnerability_info(entry_details, finding)
+        for finding in vulnerability_findings
+        for entry_details in (finding.get("details") or {}).get("vulnerabilities") or []
+    ]
+    return (
+        [v for v in vulns if v["in_kev"]],
+        [v for v in vulns if _is_high_epss(v)],
+        [v for v in vulns if _is_priority(v)],
+    )
 
 
 def _format_vuln_line(index: int, vuln: dict[str, Any]) -> str:
@@ -91,7 +88,7 @@ def _build_vulnerability_message(
     project_name: str,
     kev_vulns: list[dict[str, Any]],
     high_epss_vulns: list[dict[str, Any]],
-    critical_vulns: list[dict[str, Any]],
+    priority_vulns: list[dict[str, Any]],
     top_vulns: list[dict[str, Any]],
     scan_link: str,
 ) -> tuple[str, str]:
@@ -110,12 +107,13 @@ def _build_vulnerability_message(
         message += f"[KEV] {len(kev_vulns)} Known Exploited Vulnerabilities (CISA KEV)\n"
     if high_epss_vulns:
         message += (
-            f"[HIGH RISK] {len(high_epss_vulns)} vulnerabilities with high exploitation probability (EPSS > 10%)\n"
+            f"[HIGH RISK] {len(high_epss_vulns)} vulnerabilities with high exploitation probability "
+            f"({HIGH_EPSS_LABEL})\n"
         )
-    message += f"\nTotal critical/high vulnerabilities: {len(critical_vulns)}\n"
+    message += f"\n{PRIORITY_VULNS_LABEL}: {len(priority_vulns)}\n"
 
     if top_vulns:
-        message += f"\nTop Priority Vulnerabilities ({len(top_vulns)} of {len(critical_vulns)}):\n"
+        message += f"\nTop Priority Vulnerabilities ({len(top_vulns)} of {len(priority_vulns)}):\n"
         for i, vuln in enumerate(top_vulns, 1):
             message += _format_vuln_line(i, vuln) + "\n"
 
@@ -138,9 +136,8 @@ async def send_scan_notifications(
     try:
         severity_counts: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
         for f in aggregated_findings:
-            sev = f.severity if hasattr(f, "severity") else "UNKNOWN"
-            if sev in severity_counts:
-                severity_counts[sev] += 1
+            if f.type != FindingType.SYSTEM_WARNING and f.severity in severity_counts:
+                severity_counts[f.severity] += 1
 
         scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
         html_content = get_analysis_completed_template(
@@ -209,15 +206,13 @@ async def send_scan_notifications(
         if not vulnerability_findings:
             return
 
-        kev_vulns, high_epss_vulns, critical_vulns = _categorize_vulnerabilities(vulnerability_findings)
-
-        has_significant_vulns = kev_vulns or high_epss_vulns or critical_vulns
-        if not has_significant_vulns:
+        kev_vulns, high_epss_vulns, priority_vulns = _categorize_vulnerabilities(vulnerability_findings)
+        if not priority_vulns:
             return
 
         # Order: KEV first, then higher EPSS, then more severe.
         top_vulns = sorted(
-            critical_vulns,
+            priority_vulns,
             key=lambda x: (
                 not x.get("in_kev", False),
                 -(x.get("epss_score") or 0),
@@ -230,7 +225,7 @@ async def send_scan_notifications(
             project.name,
             kev_vulns,
             high_epss_vulns,
-            critical_vulns,
+            priority_vulns,
             top_vulns,
             scan_link,
         )
@@ -240,7 +235,7 @@ async def send_scan_notifications(
             project_name=settings.PROJECT_NAME,
             project_name_scanned=project.name,
             vulnerabilities=top_vulns,
-            critical_count=len(critical_vulns),
+            priority_count=len(priority_vulns),
             has_kev=bool(kev_vulns),
             kev_count=len(kev_vulns),
             kev_vulnerabilities=kev_vulns,
@@ -252,7 +247,7 @@ async def send_scan_notifications(
             project_name=project.name,
             kev_count=len(kev_vulns),
             high_epss_count=len(high_epss_vulns),
-            critical_count=len(critical_vulns),
+            priority_count=len(priority_vulns),
             top_vulns=top_vulns,
             scan_link=scan_link,
         )
@@ -260,7 +255,7 @@ async def send_scan_notifications(
             project_name=project.name,
             kev_count=len(kev_vulns),
             high_epss_count=len(high_epss_vulns),
-            critical_count=len(critical_vulns),
+            priority_count=len(priority_vulns),
             top_vulns=top_vulns,
             scan_link=scan_link,
         )
@@ -278,7 +273,7 @@ async def send_scan_notifications(
         logger.info(
             f"Sent vulnerability_found notification for project {project.name}: "
             f"{len(kev_vulns)} KEV, {len(high_epss_vulns)} high EPSS, "
-            f"{len(critical_vulns)} critical/high"
+            f"{len(priority_vulns)} priority"
         )
 
         try:
@@ -287,8 +282,8 @@ async def send_scan_notifications(
                 scan_id=scan_id,
                 project_id=str(project.id),
                 project_name=project.name,
-                critical_count=sum(1 for v in critical_vulns if v.get("severity") == "CRITICAL"),
-                high_count=sum(1 for v in critical_vulns if v.get("severity") == "HIGH"),
+                critical_count=sum(1 for v in priority_vulns if v["severity"] == "CRITICAL"),
+                high_count=sum(1 for v in priority_vulns if v["severity"] == "HIGH"),
                 kev_count=len(kev_vulns),
                 high_epss_count=len(high_epss_vulns),
                 top_vulnerabilities=top_vulns,

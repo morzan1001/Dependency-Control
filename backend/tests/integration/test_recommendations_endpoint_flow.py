@@ -139,6 +139,29 @@ async def test_the_first_dependency_naming_a_source_target_reaches_the_engine(
 
 
 @pytest.mark.asyncio
+async def test_the_live_per_cve_threat_intel_reaches_the_engine(client, db, owner_auth_headers_proj, monkeypatch):
+    from app.schemas.enrichment import VulnerabilityEnrichment
+
+    await _insert_scan(db, "s")
+    finding = _finding("f1", "vulnerability")
+    finding["details"] = {"vulnerabilities": [{"id": "CVE-2023-0001", "aliases": ["CVE-2023-0002"]}]}
+    await db.findings.insert_one(finding)
+    live = {cve: VulnerabilityEnrichment(cve=cve, risk_score=20.0) for cve in ("CVE-2023-0001", "CVE-2023-0002")}
+
+    async def _enrich(cves):
+        return {cve: live[cve] for cve in cves}
+
+    monkeypatch.setattr(rec_module, "get_cve_enrichment", _enrich)
+    seen: dict = {}
+    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert seen["threat_intel"] == live
+
+
+@pytest.mark.asyncio
 async def test_the_summary_tallies_findings_and_recommendations_into_their_buckets(
     client, db, owner_auth_headers_proj, monkeypatch
 ):

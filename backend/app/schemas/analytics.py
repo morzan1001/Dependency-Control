@@ -41,6 +41,7 @@ class DependencyUsage(BaseModel):
 
     name: str
     type: str
+    group: str | None = None
     # The newest versions in use; version_count is how many distinct ones the estate holds.
     versions: list[str]
     version_count: int
@@ -175,7 +176,8 @@ class DependencyMetadata(BaseModel):
     """Aggregated metadata for a dependency across all projects."""
 
     name: str
-    version: str
+    version: str = Field(..., description="The version the metadata describes")
+    versions: list[str] = Field([], description="Every version of the package in scope, newest first")
     type: str
     purl: str | None = None
 

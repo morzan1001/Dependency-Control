@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -9,6 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
 from app.core.config import settings
+from app.core.constants import INSTANCE_ID
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
     worker_active_count,
@@ -248,8 +248,7 @@ class AnalysisWorkerManager:
         return False
 
     async def worker(self, name: str) -> None:
-        hostname = os.getenv("HOSTNAME", "unknown")
-        worker_id = f"{hostname}/{name}"
+        worker_id = f"{INSTANCE_ID}/{name}"
         logger.info(f"Worker {worker_id} started")
 
         while True:

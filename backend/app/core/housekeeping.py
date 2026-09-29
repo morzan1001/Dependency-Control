@@ -154,15 +154,14 @@ async def _create_rescan_for_project(
     project: Project, source_scan: dict, db: Any, worker_manager: "WorkerManager"
 ) -> None:
     """Atomically create a rescan after acquiring the distributed lock."""
-    import os
-
     from app.repositories import DistributedLocksRepository
+    from app.repositories.distributed_locks import new_lock_holder
     from app.services.scan_manager import queue_rescan  # scan_manager imports the worker, which imports this module
 
     source_scan_id = str(source_scan["_id"])
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"rescan_create:{project.id}:{source_scan_id}"
-    holder_id = f"housekeeping-{os.getenv('HOSTNAME', 'unknown')}"
+    holder_id = new_lock_holder()
 
     if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS):
         logger.debug(f"Could not acquire lock for rescanning {project.name}/{source_scan_id}.")

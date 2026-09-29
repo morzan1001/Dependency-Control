@@ -3,7 +3,6 @@
 import asyncio
 import json
 import logging
-import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -18,6 +17,7 @@ from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
 from app.repositories import DependencyRepository, DistributedLocksRepository
+from app.repositories.distributed_locks import new_lock_holder
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,
@@ -30,7 +30,7 @@ from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.dependency_store import store_scan_dependencies
-from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs
+from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, make_gridfs_ref
 from app.services.notifications.service import safe_notify_project_event
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.scan_manager import ScanManager
@@ -148,13 +148,7 @@ async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_i
         metadata={"contentType": "application/json", "scan_id": scan_id},
     )
     del sbom_bytes
-    return {
-        "storage": "gridfs",
-        "file_id": str(file_id),
-        "filename": filename,
-        "type": "gridfs_reference",
-        "gridfs_id": str(file_id),
-    }
+    return make_gridfs_ref(file_id, filename)
 
 
 def _parse_one_sbom(sbom: Any, index: int, warnings: list[str]) -> Any:
@@ -252,7 +246,7 @@ async def ingest_sbom(
     # Serialise concurrent ingests of the same scan_id (CI retries) best-effort.
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"sbom_ingest:{scan_id}"
-    lock_holder = f"ingest-{os.getenv('HOSTNAME', 'unknown')}-{uuid.uuid4().hex[:8]}"
+    lock_holder = new_lock_holder()
     locked = False
     for _ in range(20):
         locked = await lock_repo.acquire_lock(lock_name, lock_holder, ttl_seconds=120)
@@ -298,7 +292,7 @@ async def ingest_sbom(
         )
 
         if previous and sbom_refs:
-            new_ids = {ref["gridfs_id"] for ref in sbom_refs}
+            new_ids = set(extract_gridfs_ids_from_refs(sbom_refs))
             superseded = [
                 gid for gid in extract_gridfs_ids_from_refs(previous.get("sbom_refs", [])) if gid not in new_ids
             ]

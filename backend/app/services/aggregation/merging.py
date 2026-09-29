@@ -5,17 +5,12 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from app.core.constants import AGG_KEY_SAST, get_severity_value
+from app.core.constants import get_severity_value
+from app.core.cve import advisory_ids, entry_cves
+from app.services.normalizers.utils import FindingIdPrefix
 from app.models.finding import Finding, FindingType
 from app.schemas.finding import VulnerabilityEntry
-from app.services.aggregation.versions import parse_version_key, resolve_fixed_versions
-
-
-def _extend_unique(target: list[Any], items: list[Any]) -> None:
-    """Append items to target list, skipping duplicates."""
-    for item in items:
-        if item not in target:
-            target.append(item)
+from app.services.aggregation.versions import VersionKey, parse_version_key, split_fixed_versions
 
 
 def _sast_entry(f: Finding) -> dict[str, Any]:
@@ -24,8 +19,6 @@ def _sast_entry(f: Finding) -> dict[str, Any]:
         "id": f.details.get("rule_id", "unknown"),
         "scanner": f.scanners[0] if f.scanners else "unknown",
         "severity": f.severity,
-        "title": f.details.get("title", f.description[:50]),
-        "description": f.description,
         "details": f.details,
     }
 
@@ -41,9 +34,6 @@ def merge_sast_findings(findings: list[Finding]) -> Finding | None:
         "sast_findings": [],
         "file": base.component,
         "line": base.details.get("line") or base.details.get("start", {}).get("line"),
-        "cwe_ids": [],
-        "category_groups": [],
-        "owasp": [],
     }
 
     merged_scanners: set = set()
@@ -58,16 +48,13 @@ def merge_sast_findings(findings: list[Finding]) -> Finding | None:
 
         merged_scanners.update(f.scanners)
         merged_details["sast_findings"].append(_sast_entry(f))
-        _extend_unique(merged_details["cwe_ids"], f.details.get("cwe_ids") or [])
-        _extend_unique(merged_details["category_groups"], f.details.get("category_groups") or [])
-        _extend_unique(merged_details["owasp"], f.details.get("owasp") or [])
 
     description = base.description
     if len(findings) > 1 and len(merged_scanners) > 1:
         description += f" (Confirmed by {len(merged_scanners)} scanners)"
 
     return Finding(
-        id=(base.id if len(findings) == 1 else f"{AGG_KEY_SAST}-{base.component}-{merged_details['line']}"),
+        id=(base.id if len(findings) == 1 else f"{FindingIdPrefix.SAST_AGG}-{base.component}-{merged_details['line']}"),
         type=FindingType.SAST,
         severity=max_severity,
         component=base.component,
@@ -80,10 +67,12 @@ def merge_sast_findings(findings: list[Finding]) -> Finding | None:
     )
 
 
-def _entry_ids(entry: Mapping[str, Any]) -> set[str]:
-    """All ids under which this entry is known: id, aliases, and any resolved CVE."""
-    candidates = [entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])]
-    return {c for c in candidates if c}
+def _same_advisory(a_ids: set[str], a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    """Shared ids make one advisory unless led by different CVEs naming different sets (distro bundles alias CVEs)."""
+    if a_ids.isdisjoint(advisory_ids(b)):
+        return False
+    cves_a, cves_b = entry_cves(a), entry_cves(b)
+    return not cves_a or not cves_b or cves_a[0] == cves_b[0] or set(cves_a) == set(cves_b)
 
 
 def _canonical_id(a: str, b: str) -> str:
@@ -108,20 +97,24 @@ def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry
     theirs, ours = source_entry.get("description", ""), tv.get("description", "")
     if (len(theirs), ours) > (len(ours), theirs):
         tv["description"] = theirs
-        tv["description_source"] = source_entry.get("description_source", "unknown")
+
+
+def _fix_candidates(value: Any) -> set[tuple[VersionKey, str]]:
+    return {(parse_version_key(v), v) for v in split_fixed_versions(value)}
 
 
 def _merged_fixed_version(a: Any, b: Any) -> str | None:
-    """Union both comma-separated version lists in semantic order, so the result is arrival-order independent."""
-    versions = {v.strip() for value in (a, b) if value for v in str(value).split(",")}
-    versions.discard("")
-    if not versions:
-        return None
-    return ", ".join(sorted(versions, key=lambda v: (parse_version_key(v), v)))
+    """Both scanners' fixes, less those below the higher of their lowest fixes per release line (still vulnerable)."""
+    sides = _fix_candidates(a), _fix_candidates(b)
+    floor: dict[VersionKey, VersionKey] = {}
+    for side in sides:
+        for line, lowest in {key[:2]: key for key, _ in sorted(side, reverse=True)}.items():
+            floor[line] = max(floor.get(line, lowest), lowest)
+    return ", ".join(v for key, v in sorted(sides[0] | sides[1]) if key >= floor[key[:2]]) or None
 
 
 def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Merge fixed_version (union of candidates) and CVSS (taking the higher score)."""
+    """Merge fixed_version (as _merged_fixed_version) and CVSS (taking the higher score)."""
     merged_fix = _merged_fixed_version(tv.get("fixed_version"), source_entry.get("fixed_version"))
     if merged_fix is not None:
         tv["fixed_version"] = merged_fix
@@ -151,8 +144,6 @@ def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: VulnerabilityEnt
         current = target_details.get(key)
         if not current:
             target_details[key] = value
-        elif key == "fixed_version":
-            target_details[key] = _merged_fixed_version(current, value)
         elif isinstance(current, list) and isinstance(value, list):
             target_details[key] = sorted({*current, *value}, key=str)
         elif source_first and current != value:
@@ -167,7 +158,6 @@ _EXPLICITLY_MERGED_KEYS = frozenset(
         "scanners",
         "severity",
         "description",
-        "description_source",
         "fixed_version",
         "cvss_score",
         "cvss_vector",
@@ -212,24 +202,24 @@ def dedupe_vulnerability_entries(entries: list[Any]) -> None:
         changed = False
         i = 0
         while i < len(entries):
-            ids_i = _entry_ids(entries[i])
+            ids_i = advisory_ids(entries[i])
             j = i + 1
             while j < len(entries):
-                if ids_i.isdisjoint(_entry_ids(entries[j])):
+                if not _same_advisory(ids_i, entries[i], entries[j]):
                     j += 1
                     continue
                 _absorb_entry(entries[i], entries.pop(j))
-                ids_i = _entry_ids(entries[i])
+                ids_i = advisory_ids(entries[i])
                 changed = True
             i += 1
 
 
 def merge_vulnerability_into_list(target_list: list[Any], source_entry: VulnerabilityEntry) -> None:
     """Merge a source vuln entry into target list, deduplicating by ID and aliases."""
-    s_ids = _entry_ids(source_entry)
+    s_ids = advisory_ids(source_entry)
 
     for tv in target_list:
-        if s_ids.isdisjoint(_entry_ids(tv)):
+        if not _same_advisory(s_ids, source_entry, tv):
             continue
 
         _absorb_entry(tv, source_entry)
@@ -260,6 +250,3 @@ def merge_findings_data(target: Finding, source: Finding) -> None:
         merge_vulnerability_into_list(t_vulns_list, sv)
 
     target.details["vulnerabilities"] = t_vulns_list
-
-    fvs = [v.get("fixed_version") for v in target.details["vulnerabilities"] if v.get("fixed_version")]
-    target.details["fixed_version"] = resolve_fixed_versions(fvs)

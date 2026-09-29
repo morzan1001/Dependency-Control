@@ -192,8 +192,8 @@ class TestProcessQualityLowScorecard:
 
     def test_impact_contains_average_score(self):
         findings = [
-            _quality(overall_score=2.0, finding_id="q1"),
-            _quality(overall_score=3.0, finding_id="q2"),
+            _quality(component="lib-a", overall_score=2.0, finding_id="q1"),
+            _quality(component="lib-b", overall_score=3.0, finding_id="q2"),
         ]
         recs = process_quality(findings)
         low_recs = [r for r in recs if "Low-Quality" in r.title]
@@ -491,3 +491,39 @@ class TestUnmaintainedFromMaintenanceRollup:
         }
         recs = process_quality([finding])
         assert any(r.title == "Replace Unmaintained Dependencies" for r in recs)
+
+
+class TestQualityCardsCountPackagesNotVersions:
+    def _versions(self, **kwargs):
+        return [
+            _quality(version=version, finding_id=f"q{n}", **{**kwargs, "overall_score": score})
+            for n, (version, score) in enumerate((("1.0", 4.0), ("2.0", 2.0), ("3.0", 3.0)))
+        ]
+
+    def test_an_unmaintained_package_at_three_versions_is_one_package(self):
+        [rec] = [
+            r for r in process_quality(self._versions(critical_issues=["Maintained"])) if "Unmaintained" in r.title
+        ]
+
+        assert rec.description.startswith("Found 1 potentially unmaintained packages.")
+        assert rec.impact["total"] == 1
+        assert rec.action["packages"] == [
+            {"name": "old-lib", "score": 2.0, "url": "https://github.com/example/old-lib"}
+        ]
+
+    def test_a_low_quality_package_at_three_versions_is_one_package(self):
+        [rec] = [r for r in process_quality(self._versions()) if "Low-Quality" in r.title]
+
+        assert rec.description.startswith("Found 1 packages with OpenSSF Scorecard")
+        assert rec.impact == {"total": 1, "average_score": 2.0}
+        assert rec.action["packages"] == [{"name": "old-lib", "score": 2.0, "issues": []}]
+
+    def test_a_vulnerable_package_at_three_versions_is_one_package(self):
+        [rec] = [
+            r
+            for r in process_quality(self._versions(critical_issues=["Vulnerabilities"]))
+            if "Vulnerability" in r.title
+        ]
+
+        assert rec.description.startswith("1 packages have unaddressed security vulnerabilities")
+        assert rec.impact["total"] == 1

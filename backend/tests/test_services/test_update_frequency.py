@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 import app.services.update_frequency as update_frequency_module
+from app.core.purl import parse_purl
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
 from app.repositories.update_frequency import (
@@ -854,6 +855,24 @@ class TestIdentityKeying:
         assert m.total_updates == 1
         assert m.recent_updates[0].update_type == "minor"
 
+    @pytest.mark.parametrize(
+        ("before", "after", "updates"),
+        [
+            ("pkg:pypi/PyYAML@6.0", "pkg:pypi/pyyaml@6.0.1", 1),
+            ("pkg:pypi/zope.interface@5.0", "pkg:pypi/zope-interface@5.1", 1),
+            ("pkg:NPM/x@1.0.0", "pkg:npm/x@1.0.1", 1),
+            ("pkg:maven/g1/core@1.0", "pkg:maven/g2/core@1.1", 0),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_a_respelled_package_is_a_version_bump(self, before, after, updates):
+        def dep(scan_id: str, purl: str) -> dict[str, Any]:
+            return self._raw_dep(scan_id, parse_purl(purl).name, parse_purl(purl).version, purl)
+
+        m = await self._compute({"s1": [dep("s1", before)], "s2": [dep("s2", after)]})
+
+        assert m.total_updates == updates
+
     @pytest.mark.asyncio
     async def test_deps_without_purl_key_by_name_and_type(self):
         # The non-purl fallback identity path must still diff correctly.
@@ -1696,6 +1715,39 @@ class TestStreamingOrchestrator:
         assert ("maven", "log4j-core") not in fetcher.calls[0]
         # Observations re-keyed to the deps.dev name -> adoption latency resolves (15d).
         assert m.adoption_latency_days_median == 15.0
+
+    @pytest.mark.asyncio
+    async def test_an_ecosystem_deps_dev_does_not_serve_is_never_requested(self):
+        def _composer_dep(scan_id: str, version: str) -> dict[str, Any]:
+            return {
+                "scan_id": scan_id,
+                "name": "framework",
+                "version": version,
+                "type": "library",
+                "purl": f"pkg:composer/laravel/framework@{version}",
+            }
+
+        class FakeFetcher:
+            def __init__(self):
+                self.calls: list[Sequence[tuple[str, str]]] = []
+
+            async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
+                self.calls.append(list(packages))
+                return {}
+
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_composer_dep("s1", "10.0.0")], "s2": [_composer_dep("s2", "10.1.0")]}
+        fetcher = FakeFetcher()
+        await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            release_fetcher=fetcher,
+        )
+
+        assert fetcher.calls == []
 
     def test_comparison_semaphore_reusable_across_event_loops(self):
         # The concurrency semaphore must be created per call so it binds to the

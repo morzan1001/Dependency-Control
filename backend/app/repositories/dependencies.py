@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from app.core.purl import package_identity_expr
 from app.models.dependency import Dependency
 from app.repositories.base import BaseRepository
 
@@ -40,7 +41,7 @@ class DependencyRepository(BaseRepository[Dependency]):
     async def get_unique_packages(self, scan_ids: list[str]) -> int:
         pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
-            {"$group": {"_id": "$name"}},
+            {"$group": {"_id": package_identity_expr()}},
             {"$count": "count"},
         ]
         result = await self.aggregate(pipeline)

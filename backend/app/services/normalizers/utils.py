@@ -1,6 +1,7 @@
 """Shared helpers for normalizing scanner result data."""
 
 import re
+from enum import StrEnum
 from typing import Any
 
 from app.core.constants import SEVERITY_ALIASES
@@ -63,6 +64,18 @@ def safe_get(
     """Like dict.get but returns default when the value is None, not just missing."""
     value = data.get(key)
     return value if value is not None else default
+
+
+class FindingIdPrefix(StrEnum):
+    """Id prefixes that readers dispatch on (quality buckets, waiver signatures, SAST merging)."""
+
+    SCORECARD = "SCORECARD"
+    MAINT = "MAINT"
+    OPENGREP = "OPENGREP"
+    BEARER = "BEARER"
+    KICS = "KICS"
+    SECRET = "SECRET"
+    SAST_AGG = "SAST-AGG"
 
 
 def build_finding_id(

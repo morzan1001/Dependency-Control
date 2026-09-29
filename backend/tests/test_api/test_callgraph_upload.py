@@ -119,10 +119,10 @@ _PRODUCERS = [
     pytest.param(
         _envelope("generic", "python", _PYTHON_DATA),
         "python",
-        # A first-party absolute import ("app.config") is indistinguishable from a
-        # distribution at parse time, so it gets a usage entry; only analyzed_modules gates
-        # the unreachable verdict.
-        {"requests", "urllib3", "app"},
+        # Keys keep the imported module path: a first-party absolute import ("app.config") is
+        # indistinguishable from a distribution at parse time, so it gets a usage entry; only
+        # analyzed_modules gates the unreachable verdict.
+        {"requests", "urllib3.util.retry", "app.config"},
         ["pyyaml", "requests", "urllib3"],
         id="python-ast",
     ),
@@ -221,7 +221,9 @@ class TestProducerUploads:
         assert body["project_id"] == _PROJECT_ID
         assert body["modules_detected"] == len(module_keys)
         assert body["analyzed_modules_count"] == len(analyzed)
-        assert body["warnings"] == []
+        assert body["warnings"] == [
+            f"No scan of pipeline {_PIPELINE_ID} exists yet; its analysis applies this callgraph"
+        ]
 
         stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID, "language": language})
         assert stored is not None
@@ -239,8 +241,8 @@ class TestProducerUploads:
         await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
 
         stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
-        assert stored["module_usage"]["urllib3"]["used_symbols"] == ["Retry"]
-        assert stored["module_usage"]["urllib3"]["import_locations"] == ["app/client.py"]
+        assert stored["module_usage"]["urllib3.util.retry"]["used_symbols"] == ["Retry"]
+        assert stored["module_usage"]["urllib3.util.retry"]["import_locations"] == ["app/client.py"]
 
     @pytest.mark.asyncio
     async def test_java_publishes_no_coverage_universe_by_default(self, client, db):
@@ -308,6 +310,32 @@ class TestPayloadValidation:
 
         assert response.status_code == 400
         assert response.json()["detail"] == "'language' is required for 'generic' callgraph payloads"
+        assert await db.callgraphs.count_documents({}) == 0
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("sent", "stored"), [("golang", "go"), ("Python", "python"), (" JS ", "javascript"), ("ts", "typescript")]
+    )
+    async def test_the_language_is_stored_in_its_canonical_spelling(self, client, db, sent, stored):
+        response = await _upload(client, _envelope("generic", sent, _GO_DATA))
+
+        assert response.status_code == 200, response.text
+        [document] = await db.callgraphs.find({"project_id": _PROJECT_ID}).to_list(None)
+        assert document["language"] == stored
+
+    @pytest.mark.asyncio
+    async def test_a_golang_upload_keeps_whole_module_paths(self, client, db):
+        await _upload(client, _envelope("generic", "golang", _GO_DATA))
+
+        stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        assert set(stored["module_usage"]) == {"github.com/gin-gonic/gin", "github.com/sirupsen/logrus"}
+
+    @pytest.mark.asyncio
+    async def test_a_language_without_callgraph_support_is_rejected(self, client, db):
+        response = await _upload(client, _envelope("generic", "rust", _GO_DATA))
+
+        assert response.status_code == 400
+        assert "rust" in response.json()["detail"]
         assert await db.callgraphs.count_documents({}) == 0
 
     @pytest.mark.asyncio
@@ -457,6 +485,37 @@ async def _seed_scan_with_findings(db) -> None:
         )
 
 
+_RESCAN_ID = "rescan-of-pipeline-scan"
+
+
+async def _seed_rescan(db) -> None:
+    """A rescan of the pipeline scan: its own findings and inventory, no pipeline id of its own."""
+    await db.scans.insert_one(
+        {
+            "_id": _RESCAN_ID,
+            "project_id": _PROJECT_ID,
+            "branch": _BRANCH,
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+            "is_rescan": True,
+            "original_scan_id": _SCAN_ID,
+            "pipeline_id": None,
+            "reachability_pending": True,
+        }
+    )
+    await db.findings.insert_one(_finding("CVE-PY", "requests", scan_id=_RESCAN_ID))
+    await db.dependencies.insert_one(
+        {
+            "_id": "dep-requests",
+            "scan_id": _RESCAN_ID,
+            "name": "requests",
+            "version": "1.0.0",
+            "type": "pypi",
+            "purl": "pkg:pypi/requests@1.0.0",
+        }
+    )
+
+
 class TestReachabilityVerdicts:
     @pytest.mark.asyncio
     async def test_second_language_upload_is_also_applied(self, client, db):
@@ -480,6 +539,24 @@ class TestReachabilityVerdicts:
 
         py_finding = await db.findings.find_one({"_id": "f-CVE-PY"})
         assert py_finding["reachable"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_upload_after_a_rescan_also_reaches_the_rescan(self, client, db):
+        """Callgraphs land on the pipeline scan; a rescan created before the upload is its lineage's head."""
+        await db.scans.insert_one(
+            {
+                "_id": _SCAN_ID,
+                "project_id": _PROJECT_ID,
+                "branch": _BRANCH,
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc),
+            }
+        )
+        await _seed_rescan(db)
+
+        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert (await db.findings.find_one({"_id": "f-CVE-PY"}))["reachable"] is True
 
     @pytest.mark.asyncio
     async def test_analyzed_but_unimported_package_is_unreachable(self, client, db):
@@ -574,3 +651,57 @@ class TestForeignScanId:
         assert await db.callgraphs.count_documents({"scan_id": _FOREIGN_SCAN_ID}) == 0
         stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
         assert stored["scan_id"] == _SCAN_ID
+
+
+class TestScanResolution:
+    @pytest.mark.asyncio
+    async def test_an_upload_without_the_commit_reaches_the_pipeline_s_analysed_scan(self, client, db):
+        await _seed_scan_with_findings(db)
+        await db.scans.update_one({"_id": _SCAN_ID}, {"$set": {"pipeline_id": _PIPELINE_ID}})
+        payload = _envelope("generic", "python", _PYTHON_DATA)
+        del payload["commit_hash"]
+
+        response = await _upload(client, payload)
+
+        assert response.json()["warnings"] == []
+        assert (await db.callgraphs.find_one({"project_id": _PROJECT_ID}))["scan_id"] == _SCAN_ID
+        assert (await db.findings.find_one({"_id": "f-CVE-PY"}))["reachable"] is True
+
+    @pytest.mark.asyncio
+    async def test_an_upload_before_the_analysis_says_the_analysis_will_apply_it(self, client, db):
+        response = await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert response.json()["warnings"] == [
+            f"No scan of pipeline {_PIPELINE_ID} exists yet; its analysis applies this callgraph"
+        ]
+        assert (await db.callgraphs.find_one({"project_id": _PROJECT_ID}))["scan_id"] == _SCAN_ID
+
+    @pytest.mark.asyncio
+    async def test_an_upload_without_a_pipeline_says_it_gives_no_verdicts(self, client, db):
+        payload = _envelope("generic", "python", _PYTHON_DATA)
+        del payload["pipeline_id"]
+
+        response = await _upload(client, payload)
+
+        assert response.json()["warnings"] == [
+            "No pipeline_id: the callgraph is stored project-level and is not used for reachability verdicts"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_language_filter_reads_the_canonical_spelling(self, client, db):
+        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+        headers = await _seed_user(db, "admin", PRESET_ADMIN)
+
+        response = await client.get(
+            f"/api/v1/projects/{_PROJECT_ID}/callgraph", params={"language": "Python"}, headers=headers
+        )
+
+        assert response.status_code == 200, response.text
+        assert response.json()["language"] == "python"
+
+
+def test_one_ci_run_names_one_scan():
+    from app.services.scan_manager import deterministic_scan_id
+
+    assert deterministic_scan_id(_PROJECT_ID, _PIPELINE_ID, _COMMIT) == _SCAN_ID
+    assert deterministic_scan_id(_PROJECT_ID, None, _COMMIT) is None

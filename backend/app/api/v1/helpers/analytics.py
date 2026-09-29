@@ -1,6 +1,6 @@
 """Helper functions for analytics endpoints."""
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -18,7 +18,6 @@ from app.core.constants import (
     EPSS_VERY_HIGH_BOOST,
     EPSS_VERY_HIGH_THRESHOLD,
     EXPLOIT_MATURITY_BOOST,
-    EXPLOIT_MATURITY_ORDER,
     IMPACT_AGE_BOOST,
     IMPACT_FIX_AVAILABLE_BOOST,
     IMPACT_MAX_SCORE_BOOST,
@@ -29,14 +28,20 @@ from app.core.constants import (
     KEV_OVERDUE_BOOST,
     KEV_RANSOMWARE_BOOST,
     RELEASE_ENVIRONMENT_PATTERN,
+    SEVERITY_ORDER,
     SEVERITY_WEIGHTS,
+    get_severity_value,
 )
+from app.core.cve import counted_cves
 from app.core.permissions import Permissions, has_permission
+from app.core.purl import package_identity_expr
 from app.models.user import User
 from app.schemas.analytics import CVEEnrichmentResult
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.projections import ProjectWithScanId
-from app.services.aggregation.components import build_component_index
-from app.services.recommendation.common import get_attr
+from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
+from app.services.enrichment.scoring import fold_enrichments
+from app.services.recommendation.common import live_advisories, live_cves
 
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
@@ -184,48 +189,33 @@ def calculate_days_known(first_seen: datetime | None) -> int | None:
         return None
 
 
-def extract_fix_versions(details_list: list[Any]) -> set:
-    """Extract fix versions from finding details."""
-    fix_versions = set()
-    for details in details_list:
-        if isinstance(details, dict):
-            if details.get("fixed_version"):
-                fix_versions.add(details["fixed_version"])
-            for vuln in details.get("vulnerabilities", []):
-                if vuln.get("fixed_version"):
-                    fix_versions.add(vuln["fixed_version"])
-    return fix_versions
+def extract_fix_versions(details_list: list[Any], installed_version: str | None) -> set[str]:
+    """The versions fixing every advisory of the group, else each advisory's own fixes."""
+    advisories = [vuln for details in details_list for vuln in live_advisories(details)]
+    fixes_all = aggregate_fixed_version(advisories, installed_version)
+    if fixes_all:
+        return set(split_fixed_versions(fixes_all))
+    return {part for vuln in advisories for part in split_fixed_versions(vuln.get("fixed_version"))}
 
 
-def process_cve_enrichments(finding_ids: list[str], enrichments: dict[str, Any]) -> CVEEnrichmentResult:
-    """Process CVE enrichment data and extract the maximum/worst-case values."""
-    result = CVEEnrichmentResult()
-
-    for fid in finding_ids:
-        if fid not in enrichments:
-            continue
-
-        enr = enrichments[fid]
-
-        if enr.epss_score is not None and (result.max_epss is None or enr.epss_score > result.max_epss):
-            result.max_epss = enr.epss_score
-            result.max_percentile = enr.epss_percentile
-
-        if enr.risk_score is not None and (result.max_risk is None or enr.risk_score > result.max_risk):
-            result.max_risk = enr.risk_score
-
-        if enr.is_kev:
-            result.has_kev = True
-            result.kev_count += 1
-            if enr.kev_ransomware_use:
-                result.kev_ransomware_use = True
-            if enr.kev_due_date and (result.kev_due_date is None or enr.kev_due_date < result.kev_due_date):
-                result.kev_due_date = enr.kev_due_date
-
-        if EXPLOIT_MATURITY_ORDER.get(enr.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(result.exploit_maturity, 0):
-            result.exploit_maturity = enr.exploit_maturity
-
-    return result
+def process_cve_enrichments(
+    cve_ids: list[str], enrichments: Mapping[str, VulnerabilityEnrichment]
+) -> CVEEnrichmentResult:
+    """The worst case across a group's CVEs, by the fold scan-time enrichment stores."""
+    matched = [enrichments[cve] for cve in cve_ids if cve in enrichments]
+    worst = fold_enrichments(matched)
+    if worst is None:
+        return CVEEnrichmentResult()
+    return CVEEnrichmentResult(
+        max_epss=worst.epss_score,
+        max_percentile=worst.epss_percentile,
+        max_risk=worst.risk_score,
+        has_kev=worst.is_kev,
+        kev_count=sum(1 for enr in matched if enr.is_kev),
+        kev_ransomware_use=worst.kev_ransomware_use,
+        kev_due_date=worst.kev_due_date,
+        exploit_maturity=worst.exploit_maturity,
+    )
 
 
 def _calculate_kev_boost(enrichment_data: CVEEnrichmentResult) -> float:
@@ -360,45 +350,66 @@ def build_priority_reasons(
     return reasons
 
 
-def count_severities(severities: list[str | None]) -> dict[str, int]:
-    """Count severities from a list."""
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    for sev in severities:
-        if sev:
-            sev_lower = sev.lower()
-            if sev_lower in counts:
-                counts[sev_lower] += 1
+# Slim details before $group so the group never accumulates the raw analyzer payload: keep the
+# per-advisory fields the CVE counts, severities, enrichment and fix versions read.
+SLIM_DETAILS_EXPR: dict[str, Any] = {
+    "vulnerabilities": {
+        "$map": {
+            "input": {"$ifNull": ["$details.vulnerabilities", []]},
+            "as": "v",
+            "in": {
+                "id": "$$v.id",
+                "resolved_cve": "$$v.resolved_cve",
+                "aliases": "$$v.aliases",
+                "severity": "$$v.severity",
+                "fixed_version": "$$v.fixed_version",
+                "waived": "$$v.waived",
+            },
+        }
+    },
+}
+
+
+def severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
+    """Distinct live CVEs per worst severity; the buckets are disjoint and sum to len(live_cves)."""
+    worst: dict[str, str] = {}
+    for details in details_list:
+        for vuln in live_advisories(details):
+            sev = str(vuln.get("severity") or "").upper()
+            sev = sev if sev in SEVERITY_ORDER else "UNKNOWN"
+            for cve in counted_cves(vuln):
+                if cve not in worst or get_severity_value(sev) > get_severity_value(worst[cve]):
+                    worst[cve] = sev
+    counts = {sev.lower(): 0 for sev in SEVERITY_ORDER}
+    for sev in worst.values():
+        counts[sev.lower()] += 1
     return counts
 
 
-def build_findings_severity_map(
-    findings: list[Any],
-) -> dict[str, dict[str, int]]:
-    """Map component names to their severity counts, plus unambiguous bare-artifact aliases."""
-    findings_map: dict[str, dict[str, int]] = {}
-
-    for finding in findings:
-        component = get_attr(finding, "component")
-        if not component:
-            continue
-
-        severity = get_attr(finding, "severity", "UNKNOWN")
-
-        if component not in findings_map:
-            findings_map[component] = {
-                "critical": 0,
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "total": 0,
-            }
-
-        sev_lower = severity.lower()
-        if sev_lower in findings_map[component]:
-            findings_map[component][sev_lower] += 1
-        findings_map[component]["total"] += 1
-
-    return build_component_index(findings_map)
+async def vuln_details_by(finding_repo: Any, field: str, match: dict[str, Any]) -> dict[str, list[Any]]:
+    """The distinct live advisories of the vulnerability findings `match` selects, per value of `field`."""
+    rows = await finding_repo.aggregate(
+        [
+            {MONGO_MATCH: {**match, "type": "vulnerability", "waived": {"$ne": True}}},
+            {"$unwind": "$details.vulnerabilities"},
+            {MONGO_MATCH: {"details.vulnerabilities.waived": {"$ne": True}}},
+            {
+                MONGO_GROUP: {
+                    "_id": f"${field}",
+                    "advisories": {
+                        "$addToSet": {
+                            "id": "$details.vulnerabilities.id",
+                            "resolved_cve": "$details.vulnerabilities.resolved_cve",
+                            "aliases": "$details.vulnerabilities.aliases",
+                            "severity": "$details.vulnerabilities.severity",
+                        }
+                    },
+                }
+            },
+        ],
+        allow_disk_use=True,
+    )
+    return {r["_id"]: [{"vulnerabilities": r["advisories"]}] for r in rows if r["_id"]}
 
 
 def build_hotspot_priority_reasons(
@@ -434,51 +445,24 @@ def build_hotspot_priority_reasons(
     return reasons
 
 
-def cross_project_cve_pipeline(scan_ids: list[str]) -> list[dict[str, Any]]:
-    """CVE ids per scan; they only exist nested in details.vulnerabilities[].id."""
-    return [
-        {
-            MONGO_MATCH: {
-                "scan_id": {"$in": scan_ids},
-                "type": "vulnerability",
-            }
-        },
-        {"$unwind": "$details.vulnerabilities"},
-        {
-            MONGO_GROUP: {
-                "_id": "$scan_id",
-                "cves": {"$addToSet": "$details.vulnerabilities.id"},
-            }
-        },
-    ]
-
-
 def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> list[dict[str, Any]]:
     """Packages carrying more than one version across the compared scans.
 
     Grouped in Mongo rather than by pushing each scan's package list to the caller: the answer is
-    a version count per package name, and a per-scan sample of the input cannot produce it.
-    Names are lower-cased because that is the identity the recommendation reports under.
+    a version count per package, and a per-scan sample of the input cannot produce it.
     """
     return [
-        {MONGO_MATCH: {"scan_id": {"$in": scan_ids}, "name": {"$nin": [None, ""]}}},
-        {
-            "$project": {
-                "package": {"$toLower": "$name"},
-                "package_version": {"$ifNull": ["$version", "unknown"]},
-                "project_id": 1,
-            }
-        },
+        {MONGO_MATCH: {"scan_id": {"$in": scan_ids}}},
         {
             MONGO_GROUP: {
-                "_id": "$package",
-                "versions": {"$addToSet": "$package_version"},
+                "_id": package_identity_expr(),
+                "versions": {"$addToSet": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
             }
         },
         {
             "$project": {
-                "name": "$_id",
+                "name": "$_id.path",
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
                 "project_count": {"$size": "$project_ids"},
@@ -544,8 +528,8 @@ async def gather_cross_project_data(
     )
     scan_stats_map = {s.id: s.stats for s in other_scans if s.stats}
 
-    cve_results = await finding_repo.aggregate(cross_project_cve_pipeline(other_scan_ids))
-    scan_cves_map = {r["_id"]: [c for c in r["cves"] if c] for r in cve_results}
+    details_by_scan = await vuln_details_by(finding_repo, "scan_id", {"scan_id": {"$in": other_scan_ids}})
+    scan_cves_map = {scan_id: live_cves(details) for scan_id, details in details_by_scan.items()}
 
     cross_project_data["shared_packages"] = await dep_repo.aggregate(
         cross_project_package_pipeline(other_scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)

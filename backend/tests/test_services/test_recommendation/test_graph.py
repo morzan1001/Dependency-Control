@@ -1,5 +1,6 @@
 """Tests for app.services.recommendation.graph."""
 
+from app.core.constants import DEEP_CHAIN_MEDIUM_IMPACT_DEPTH, MAX_DEPENDENCY_DEPTH
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.graph import (
     analyze_deep_dependency_chains,
@@ -32,7 +33,6 @@ class TestAnalyzeDeepDependencyChainsShallow:
         assert len(result) == 0
 
     def test_shallow_transitive_no_warning(self):
-        # depth 2, well within default max_dependency_depth=8
         parent = _dep("express", version="4.18.0", direct=True)
         child = _dep("body-parser", version="1.20.0", direct=False, parent_components=["pkg:npm/express@4.18.0"])
         result = analyze_deep_dependency_chains([parent, child], max_dependency_depth=8)
@@ -236,35 +236,112 @@ class TestAnalyzeDeepDependencyChainsDepthResolution:
         result = analyze_deep_dependency_chains([root, child], max_dependency_depth=1)
         assert result[0].affected_components == ["child@2.0 (depth: 2)"]
 
-    def test_depth_resolution_stops_after_ten_passes(self):
-        # Listed deepest-first, each pass resolves one more level of the chain.
-        chain = [_dep("pkg-0", direct=True)] + [
-            _dep(f"pkg-{i}", parent_components=[f"pkg:npm/pkg-{i - 1}@1.0"]) for i in range(1, 13)
+
+def _chain(length):
+    return [_dep("pkg-0", direct=True)] + [
+        _dep(f"pkg-{i}", parent_components=[f"pkg:npm/pkg-{i - 1}@1.0"]) for i in range(1, length)
+    ]
+
+
+def _depths(deps, threshold=1):
+    """Depth per reported package, read off the card's population."""
+    [rec] = [r for r in analyze_deep_dependency_chains(deps, max_dependency_depth=threshold) if "max depth" in r.title]
+    return {c.split("@")[0]: int(c.split("depth: ")[1].rstrip(")")) for c in rec.affected_components}
+
+
+def _cycle_members(deps):
+    [rec] = [r for r in analyze_deep_dependency_chains(deps, max_dependency_depth=50) if "Circular" in r.title]
+    return sorted(rec.affected_components)
+
+
+class TestDepthIsTheShortestNestingFromADirectDependency:
+    def test_depths_do_not_depend_on_document_order(self):
+        # root -> a -> b -> c -> leaf, and root -> leaf directly.
+        deps = [
+            _dep("root", direct=True),
+            _dep("a", parent_components=["pkg:npm/root@1.0"]),
+            _dep("b", parent_components=["pkg:npm/a@1.0"]),
+            _dep("c", parent_components=["pkg:npm/b@1.0"]),
+            _dep("leaf", parent_components=["pkg:npm/c@1.0", "pkg:npm/root@1.0"]),
         ]
-        result = analyze_deep_dependency_chains(list(reversed(chain)), max_dependency_depth=8)
-        assert len(result) == 1
-        assert result[0].affected_components == [
-            "pkg-10@1.0 (depth: 11)",
-            "pkg-9@1.0 (depth: 10)",
-            "pkg-8@1.0 (depth: 9)",
+        expected = {"a": 2, "b": 3, "c": 4, "leaf": 2}
+
+        assert _depths(deps) == expected
+        assert _depths(list(reversed(deps))) == expected
+        assert _depths(sorted(deps, key=lambda d: d["name"])) == expected
+
+    def test_a_chain_listed_child_first_is_measured_to_its_end(self):
+        assert _depths(list(reversed(_chain(15))), threshold=10) == {f"pkg-{i}": i + 1 for i in range(10, 15)}
+
+    def test_a_cycle_near_the_root_keeps_the_chain_below_it(self):
+        chain = _chain(10)
+        chain[1]["parent_components"].append("pkg:npm/x@1.0")
+        chain.append(_dep("x", parent_components=["pkg:npm/pkg-1@1.0"]))
+
+        assert _depths(chain, threshold=8) == {"pkg-8": 9, "pkg-9": 10}
+
+    def test_duplicate_documents_of_one_node_are_one_dependency(self):
+        chain = _chain(4)
+
+        result = analyze_deep_dependency_chains([*chain, *chain], max_dependency_depth=2)
+
+        assert result[0].impact["total"] == 2
+        assert result[0].affected_components == ["pkg-3@1.0 (depth: 4)", "pkg-2@1.0 (depth: 3)"]
+
+    def test_the_default_threshold_is_the_production_one(self):
+        assert [r.title for r in analyze_deep_dependency_chains(_chain(MAX_DEPENDENCY_DEPTH + 1))] == [
+            f"Deep dependency chains detected (max depth: {MAX_DEPENDENCY_DEPTH + 1})"
         ]
 
-    def test_deep_recommendation_splits_impact_at_depth_seven_and_previews_parents(self):
-        chain = [_dep("pkg-0", direct=True)] + [
-            _dep(f"pkg-{i}", parent_components=[f"pkg:npm/pkg-{i - 1}@1.0", "pkg:npm/pkg-0@1.0"]) for i in range(1, 9)
+    def test_impact_splits_at_the_named_medium_depth(self):
+        threshold = DEEP_CHAIN_MEDIUM_IMPACT_DEPTH - 3
+        rec = analyze_deep_dependency_chains(
+            _chain(DEEP_CHAIN_MEDIUM_IMPACT_DEPTH + 1), max_dependency_depth=threshold
+        )[0]
+
+        assert rec.impact == {"critical": 0, "high": 0, "medium": 2, "low": 2, "total": 4}
+
+
+class TestChainPreviewIsARealPath:
+    def test_sibling_parents_are_not_presented_as_a_chain(self):
+        deps = _chain(7)
+        deps += [_dep(name, parent_components=["pkg:npm/pkg-6@1.0"]) for name in ("a", "b", "c")]
+        deps.append(_dep("leaf", parent_components=["pkg:npm/a@1.0", "pkg:npm/b@1.0", "pkg:npm/c@1.0"]))
+
+        rec = analyze_deep_dependency_chains(deps, max_dependency_depth=8)[0]
+
+        assert rec.action["deepest_chains"] == [
+            {
+                "package": "leaf",
+                "depth": 9,
+                "chain_preview": " → ".join([*(f"pkg-{i}@1.0" for i in range(7)), "a@1.0", "leaf@1.0"]),
+            }
         ]
-        result = analyze_deep_dependency_chains(chain, max_dependency_depth=6)
-        assert len(result) == 1
-        rec = result[0]
-        assert rec.title == "Deep dependency chains detected (max depth: 9)"
-        assert rec.impact == {"critical": 0, "high": 0, "medium": 2, "low": 1, "total": 3}
-        assert rec.action["deepest_chains"][0] == {
-            "package": "pkg-8",
-            "depth": 9,
-            "chain_preview": "pkg:npm/pkg-7@1.0 → pkg:npm/pkg-0@1.0",
-            "parents_total": 2,
-        }
-        assert rec.action["deepest_chains_total"] == 3
+
+
+class TestCycleMembershipIsEveryNodeOnACycle:
+    def test_a_node_that_re_enters_the_cycle_is_a_member(self):
+        # a -> b, b -> c -> b, b -> dd -> c
+        deps = [
+            _dep("a", direct=True),
+            _dep("b", parent_components=["pkg:npm/a@1.0", "pkg:npm/c@1.0"]),
+            _dep("c", parent_components=["pkg:npm/b@1.0", "pkg:npm/dd@1.0"]),
+            _dep("dd", parent_components=["pkg:npm/b@1.0"]),
+        ]
+
+        assert _cycle_members(deps) == ["b@1.0", "c@1.0", "dd@1.0"]
+
+    def test_duplicate_documents_count_once_in_the_title(self):
+        a = _dep("a", direct=True, parent_components=["pkg:npm/b@1.0"])
+        b = _dep("b", parent_components=["pkg:npm/a@1.0"])
+
+        [rec] = analyze_deep_dependency_chains([a, b, dict(b)], max_dependency_depth=50)
+
+        assert rec.title == "Circular dependencies detected (2 packages)"
+        assert rec.impact["total"] == rec.affected_components_total == 2
+
+    def test_a_self_parent_is_a_cycle(self):
+        assert _cycle_members([_dep("a", direct=True, parent_components=["pkg:npm/a@1.0"])]) == ["a@1.0"]
 
 
 class TestAnalyzeDuplicatePackagesEmpty:
@@ -354,3 +431,23 @@ class TestAnalyzeDuplicatePackagesMultipleCategories:
         components = " ".join(rec.affected_components)
         assert "HTTP Clients" in components
         assert "Date/Time Libraries" in components
+
+
+class TestDuplicatePackagesMatchTheQualifiedName:
+    def test_scoped_packages_match_their_duplicate_group(self):
+        deps = [
+            {"name": "react", "version": "11.0.0", "purl": "pkg:npm/%40emotion/react@11.0.0"},
+            {"name": "styled-components", "version": "6.0.0", "purl": "pkg:npm/styled-components@6.0.0"},
+        ]
+
+        [rec] = analyze_duplicate_packages(deps)
+
+        assert rec.action["duplicates"][0]["found"] == ["styled-components", "@emotion/react"]
+
+    def test_a_maven_artifact_is_not_an_npm_package_of_the_same_name(self):
+        deps = [
+            {"name": "request", "version": "1.0", "purl": "pkg:maven/com.example/request@1.0"},
+            {"name": "axios", "version": "1.0", "purl": "pkg:npm/axios@1.0"},
+        ]
+
+        assert analyze_duplicate_packages(deps) == []

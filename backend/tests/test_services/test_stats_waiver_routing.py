@@ -681,6 +681,48 @@ class TestWhatAWaiverMatchesOn:
         assert (await seeded_db.findings.find_one({"_id": "f-rule-b"}))["waived"] is True
 
     @pytest.mark.asyncio
+    async def test_a_rule_scope_waiver_taken_on_a_line_less_hit_still_covers_every_file(self, seeded_db):
+        """A hit at line 0 gets no line segment in its id; the rule is still the rule."""
+        rule = {"sast_findings": [{"id": "ruby_lang_logger"}]}
+        await _insert_finding(
+            seeded_db,
+            {
+                "_id": "f-rule-a",
+                "type": "sast",
+                "finding_id": "BEARER-ruby_lang_logger-app/models/user.rb",
+                "component": "app/models/user.rb",
+                "details": rule,
+            },
+        )
+        await _insert_finding(
+            seeded_db,
+            {
+                "_id": "f-rule-b",
+                "type": "sast",
+                "finding_id": "BEARER-ruby_lang_logger-app/models/order.rb-12",
+                "component": "app/models/order.rb",
+                "details": rule,
+            },
+        )
+        await seeded_db.waivers.insert_one(
+            {
+                "_id": "w-rule",
+                "project_id": PROJECT_ID,
+                "scope": "rule",
+                "rule_id": "ruby_lang_logger",
+                "finding_type": "sast",
+                "finding_id": "BEARER-ruby_lang_logger-app/models/user.rb",
+                "package_name": "app/models/user.rb",
+                "reason": "rule accepted project-wide",
+                "created_by": "tester",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert (await seeded_db.findings.find_one({"_id": "f-rule-b"}))["waived"] is True
+
+    @pytest.mark.asyncio
     async def test_a_file_scope_waiver_on_an_id_that_carries_no_line_number_still_matches_it(self, seeded_db):
         """Only a trailing line number is a line number: stripping the last segment of any
         hyphenated id turns the waiver into a regex that matches nothing."""

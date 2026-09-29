@@ -240,3 +240,21 @@ describe("AnalyticsDependencyModal scope", () => {
     expect(useDependencyMetadata).toHaveBeenCalledWith("pkg", "1.0.0", undefined, undefined);
   });
 });
+
+describe("AnalyticsDependencyModal version", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("says the metadata describes one of several versions in use", () => {
+    renderModal({ ...baseMetadata, version: "2.0.0", versions: ["3.0.0", "2.0.0", "1.0.0"] });
+
+    expect(screen.getByText("Most used of 3 versions")).toHaveAttribute("title", "3.0.0, 2.0.0, 1.0.0");
+  });
+
+  it("says nothing more when only one version is in use", () => {
+    renderModal({ ...baseMetadata, versions: ["1.0.0"] });
+
+    expect(screen.queryByText(/Most used of/)).not.toBeInTheDocument();
+  });
+});

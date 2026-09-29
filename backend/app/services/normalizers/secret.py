@@ -5,7 +5,7 @@ from app.models.finding import Finding, FindingType
 from app.schemas.finding_details import SecretDetails
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.enrichment.scoring import calculate_secret_risk_score, calculate_secret_severity
-from app.services.normalizers.utils import build_finding_id
+from app.services.normalizers.utils import FindingIdPrefix, build_finding_id
 
 if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
@@ -44,7 +44,7 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any],
         # waiver's match.rule_key); app.core.trufflehog resolves it to a name at render time.
         detector = str(finding.DetectorType or "Generic Secret")
 
-        finding_id = build_finding_id("SECRET", detector, (finding.RawHash or "nohash")[:8])
+        finding_id = build_finding_id(FindingIdPrefix.SECRET, detector, (finding.RawHash or "nohash")[:8])
 
         git_meta = _extract_git_metadata(finding.SourceMetadata)
         in_current_tree = finding.DcInCurrentTree

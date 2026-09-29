@@ -24,7 +24,7 @@ class TestBuildVulnerabilityMessageReportLink:
             "proj",
             kev_vulns=[],
             high_epss_vulns=[],
-            critical_vulns=[{"severity": "CRITICAL"}],
+            priority_vulns=[{"severity": "CRITICAL"}],
             top_vulns=[],
             scan_link=scan_link,
         )
@@ -33,8 +33,8 @@ class TestBuildVulnerabilityMessageReportLink:
         assert "View full report: 3f2a-uuid" not in message
 
 
-def _finding(fid, severity, epss=None, in_kev=False):
-    details = {"severity": severity}
+def _finding(fid, severity, epss=None, in_kev=False, aliases=None):
+    details = {"id": fid, "severity": severity, "aliases": aliases or []}
     if epss is not None:
         details["epss_score"] = epss
     if in_kev:
@@ -46,11 +46,11 @@ def _finding(fid, severity, epss=None, in_kev=False):
         component="pkg",
         version="1.0.0",
         model_dump=lambda details=details, fid=fid, severity=severity: {
-            "id": fid,
             "type": "vulnerability",
             "severity": severity,
             "component": "pkg",
             "version": "1.0.0",
+            "id": f"pkg:1.0.0:{fid}",
             "details": {"vulnerabilities": [details]},
         },
     )
@@ -116,7 +116,7 @@ class TestSendScanNotificationsMessage:
         ]
         captured = await _capture_vuln_message(findings)
         msg = captured["message"]
-        # only CRITICAL/HIGH are in critical_vulns; both appear, CRIT first
+        # the LOW entry is no priority; both priorities appear, CRIT first
         crit_idx = msg.index("CVE-CRIT")
         high_idx = msg.index("CVE-HIGH")
         assert crit_idx < high_idx
@@ -144,6 +144,33 @@ class TestSendScanNotificationsMessage:
         assert captured["webhook"]["high_epss_count"] == 1
 
 
+class TestPriorityVulnerabilities:
+    @pytest.mark.asyncio
+    async def test_a_medium_kev_is_counted_and_listed_as_priority(self):
+        captured = await _capture_vuln_message([_finding("CVE-KEV", "MEDIUM", in_kev=True)])
+        assert "Priority (Critical/High/KEV/High EPSS): 1" in captured["message"]
+        assert "CVE-KEV" in captured["message"]
+        assert (captured["webhook"]["critical_count"], captured["webhook"]["kev_count"]) == (0, 1)
+
+    @pytest.mark.asyncio
+    async def test_an_alert_raised_by_high_epss_lists_what_raised_it(self):
+        captured = await _capture_vuln_message([_finding("CVE-EPSS", "MEDIUM", epss=0.5)])
+        assert "Top Priority Vulnerabilities (1 of 1)" in captured["message"]
+        assert "CVE-EPSS" in captured["message"]
+
+    @pytest.mark.asyncio
+    async def test_the_high_epss_line_names_the_threshold_it_counts_by(self):
+        captured = await _capture_vuln_message([_finding("CVE-EPSS", "MEDIUM", epss=EPSS_HIGH_THRESHOLD)])
+        assert "(EPSS >= 10%)" in captured["message"]
+
+    @pytest.mark.asyncio
+    async def test_an_advisory_is_alerted_under_its_cve(self):
+        ghsa = _finding("GHSA-35jh-r3h4-6jhm", "HIGH", aliases=["CVE-2021-23337"])
+        captured = await _capture_vuln_message([ghsa])
+        assert "CVE-2021-23337" in captured["message"]
+        assert "GHSA-35jh-r3h4-6jhm" not in captured["message"]
+
+
 class TestVulnerabilityWebhookCounters:
     @pytest.mark.asyncio
     async def test_the_webhook_counts_criticals_and_highs_separately(self):
@@ -159,6 +186,31 @@ class TestVulnerabilityWebhookCounters:
 
         assert captured["webhook"]["critical_count"] == 2
         assert captured["webhook"]["high_count"] == 1
+
+
+class TestAnalysisCompletedSeverityCounts:
+    @pytest.mark.asyncio
+    async def test_a_scanner_error_is_not_counted_as_a_high_finding(self):
+        findings = [
+            SimpleNamespace(type="system_warning", severity="HIGH"),
+            SimpleNamespace(type="vulnerability", severity="CRITICAL"),
+        ]
+        blocks = patch.object(notifications, "build_analysis_completed_blocks", return_value=[])
+        fake_notify = SimpleNamespace(notify_project_members=AsyncMock())
+        fake_webhook = SimpleNamespace(trigger_scan_completed=AsyncMock())
+        with (
+            blocks as build_blocks,
+            patch.object(notifications, "notification_service", fake_notify),
+            patch.object(notifications, "webhook_service", fake_webhook),
+        ):
+            await send_scan_notifications(
+                scan_id="scan-abc-123",
+                project=SimpleNamespace(id="proj-1", name="MyProject"),
+                aggregated_findings=findings,
+                results_summary=["osv: Partial"],
+                db=_FakeDB(),
+            )
+        assert build_blocks.call_args.kwargs["severity_counts"] == {"CRITICAL": 1, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
 
 
 class TestAnalysisCompletedReachesSubscribers:

@@ -280,3 +280,39 @@ class TestNormalizeMaintainerRisk:
     def test_empty_issues(self):
         self.agg.aggregate("maintainer_risk", {"maintainer_issues": []})
         assert len(self.agg.findings) == 0
+
+
+class TestQualityIssueTypeFollowsTheNormalizerPrefix:
+    def test_scorecard_and_maintainer_findings_land_in_their_buckets(self):
+        agg = ResultAggregator()
+        agg.aggregate(
+            "deps_dev",
+            {
+                "scorecard_issues": [
+                    {
+                        "component": "lodash",
+                        "version": "4.17.0",
+                        "scorecard": {"overallScore": 3.5, "checks": []},
+                        "failed_checks": [],
+                        "critical_issues": [],
+                    }
+                ]
+            },
+        )
+        agg.aggregate(
+            "maintainer_risk",
+            {
+                "maintainer_issues": [
+                    {
+                        "component": "lodash",
+                        "version": "4.17.0",
+                        "severity": "MEDIUM",
+                        "risks": [{"type": "stale_package", "message": "No releases in 2+ years"}],
+                    }
+                ]
+            },
+        )
+
+        [quality] = agg.get_findings()
+
+        assert sorted(issue["type"] for issue in quality.details["quality_issues"]) == ["maintainer_risk", "scorecard"]

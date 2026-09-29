@@ -2,6 +2,9 @@
 
 from typing import Any
 
+from app.core.epss import HIGH_EPSS_LABEL
+from app.schemas.notification import PRIORITY_VULNS_LABEL
+
 _AFFECTED_PROJECTS_SHOWN = 15
 _PROJECT_FINDINGS_SHOWN = 5
 
@@ -104,7 +107,7 @@ def build_vulnerability_found_props(
     project_name: str,
     kev_count: int,
     high_epss_count: int,
-    critical_count: int,
+    priority_count: int,
     top_vulns: list[dict[str, Any]],
     scan_link: str,
 ) -> dict[str, Any]:
@@ -113,16 +116,18 @@ def build_vulnerability_found_props(
     if kev_count:
         fields.append({"short": True, "title": "\u26a0\ufe0f KEV Vulnerabilities", "value": str(kev_count)})
     if high_epss_count:
-        fields.append({"short": True, "title": "\U0001f4c8 High EPSS (>10%)", "value": str(high_epss_count)})
+        fields.append(
+            {"short": True, "title": f"\U0001f4c8 High EPSS ({HIGH_EPSS_LABEL})", "value": str(high_epss_count)}
+        )
     fields.append(
-        {"short": True, "title": f"{_SEVERITY_EMOJI['CRITICAL']} Critical/High", "value": str(critical_count)}
+        {"short": True, "title": f"{_SEVERITY_EMOJI['CRITICAL']} {PRIORITY_VULNS_LABEL}", "value": str(priority_count)}
     )
 
     text = f"Security scan detected critical vulnerabilities in **{project_name}**."
 
     if top_vulns:
         vuln_lines = [_format_vuln_line(i, v) for i, v in enumerate(top_vulns, 1)]
-        text += f"\n\n**Top Priority Vulnerabilities ({len(top_vulns)} of {critical_count})**\n"
+        text += f"\n\n**Top Priority Vulnerabilities ({len(top_vulns)} of {priority_count})**\n"
         text += "\n".join(vuln_lines)
 
     text += f"\n\n[View Full Report \u2192]({scan_link})"

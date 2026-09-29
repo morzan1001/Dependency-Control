@@ -26,7 +26,7 @@ interface AnalyticsTab {
 }
 
 export default function AnalyticsPage() {
-  const [selectedComponent, setSelectedComponent] = useState<{ name: string; version?: string } | null>(null)
+  const [selectedComponent, setSelectedComponent] = useState<{ name: string; version?: string; type?: string } | null>(null)
   const [showFindingsModal, setShowFindingsModal] = useState(false)
   // Undefined is head mode, the default every tab reports until the scope control names an environment.
   const [releaseEnvironment, setReleaseEnvironment] = useState<string | undefined>(undefined)
@@ -63,8 +63,8 @@ export default function AnalyticsPage() {
   // there and the switch names what is on screen instead of a mode nothing below it obeys.
   const scopeEnvironment = headOnlyTab === undefined ? releaseEnvironment : undefined
 
-  const handleComponentSelect = (name: string, version?: string) => {
-    setSelectedComponent({ name, version })
+  const handleComponentSelect = (name: string, version?: string, type?: string) => {
+    setSelectedComponent({ name, version, type })
     setShowFindingsModal(true)
   }
 
@@ -108,7 +108,10 @@ export default function AnalyticsPage() {
                 <DependencyTypesChart />
               </div>
               <DependencyStats 
-                onSelectDependency={(dep) => handleComponentSelect(dep.name)}
+                // Maven findings name the full coordinate; the inventory keeps the group apart.
+                onSelectDependency={(dep) => handleComponentSelect(
+                  dep.type === 'maven' && dep.group ? `${dep.group}:${dep.name}` : dep.name, undefined, dep.type,
+                )}
               />
             </TabsContent>
           )}
@@ -176,6 +179,7 @@ export default function AnalyticsPage() {
         <AnalyticsDependencyModal
           component={selectedComponent?.name || ''}
           version={selectedComponent?.version}
+          type={selectedComponent?.type}
           open={showFindingsModal}
           onOpenChange={setShowFindingsModal}
         />

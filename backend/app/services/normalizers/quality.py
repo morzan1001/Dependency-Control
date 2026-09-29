@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding_details import MaintainerRiskDetails, ScorecardIssueDetails, TyposquattingDetails
-from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
+from app.services.normalizers.utils import FindingIdPrefix, build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
@@ -76,7 +76,7 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], 
 
         aggregator.add_finding(
             Finding(
-                id=build_finding_id("SCORECARD", component),
+                id=build_finding_id(FindingIdPrefix.SCORECARD, component),
                 type=FindingType.QUALITY,
                 severity=severity,
                 component=component,
@@ -141,7 +141,7 @@ def normalize_maintainer_risk(
 
         aggregator.add_finding(
             Finding(
-                id=build_finding_id("MAINT", component),
+                id=build_finding_id(FindingIdPrefix.MAINT, component),
                 type=FindingType.QUALITY,
                 severity=safe_severity(item.get("severity"), default=Severity.MEDIUM),
                 component=component,

@@ -20,8 +20,9 @@ def _dep(name, version="1.0.0", direct=False, parents=None, direct_inferred=Fals
     }
 
 
-def _findings(total=0, critical=0, high=0, medium=0, low=0):
-    return {"total": total, "critical": critical, "high": high, "medium": medium, "low": low}
+def _findings(critical=0, high=0, medium=0, low=0):
+    """A component's distinct CVEs per worst severity, as the tree overlay reads them."""
+    return {"critical": critical, "high": high, "medium": medium, "low": low}
 
 
 def _by_id(graph):
@@ -123,7 +124,7 @@ class TestDependencyGraphBuilder:
     def test_findings_are_mapped_onto_nodes(self):
         a = _dep("a", direct=True)
 
-        graph = _graph([a], {"a": _findings(total=3, critical=1, high=2)})
+        graph = _graph([a], {"a": _findings(critical=1, high=2)})
 
         node = _by_name(graph)["a"]
         assert node.has_findings is True
@@ -135,7 +136,7 @@ class TestDependencyGraphBuilder:
         low = _dep("low", direct=True)
         high = _dep("high", direct=True)
 
-        graph = _graph([low, high], {"low": _findings(total=1), "high": _findings(total=5)})
+        graph = _graph([low, high], {"low": _findings(low=1), "high": _findings(low=5)})
 
         assert _root_names(graph) == ["high", "low"]
 
@@ -144,7 +145,7 @@ class TestDependencyGraphBuilder:
         low = _dep("low", parents=[a["purl"]])
         high = _dep("high", parents=[a["purl"]])
 
-        graph = _graph([a, low, high], {"low": _findings(total=1), "high": _findings(total=9)})
+        graph = _graph([a, low, high], {"low": _findings(low=1), "high": _findings(low=9)})
 
         assert _child_names(graph, _by_name(graph)["a"]) == ["high", "low"]
 
@@ -199,6 +200,16 @@ class TestDependencyGraphBuilder:
         assert sum(1 for n in graph.nodes if n.name == "x") == 1  # x deduped to one node
         assert _child_names(graph, by_name["a"]) == ["x"]
         assert _child_names(graph, by_name["c"]) == ["x"]
+
+    def test_a_node_is_a_root_when_any_of_its_documents_is_direct(self):
+        a = _dep("a", direct=True)
+        x_transitive = _dep("x", parents=[a["purl"]])
+        x_direct = _dep("x", direct=True)
+
+        graph = _graph([a, x_transitive, x_direct], {})
+
+        assert sorted(_root_names(graph)) == ["a", "x"]
+        assert _by_name(graph)["x"].direct is True
 
     def test_findings_absent_yields_no_severity(self):
         node = _by_name(_graph([_dep("a", direct=True)], {}))["a"]

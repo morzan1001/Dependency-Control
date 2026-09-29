@@ -10,7 +10,7 @@ from app.models.finding import FindingType, Severity
 from app.models.project import Scan
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.component_identity import build_component_index, lookup_component
 
 FINDINGS_COLUMNS = [
     "branch",

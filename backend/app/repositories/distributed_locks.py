@@ -1,10 +1,18 @@
 """Distributed locks for multi-pod coordination (e.g. Slack token refresh)."""
 
+import uuid
 from datetime import datetime, timedelta, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
 from pymongo.errors import DuplicateKeyError
+
+from app.core.constants import INSTANCE_ID
+
+
+def new_lock_holder() -> str:
+    """A holder unique to one acquisition, so a release never drops a lock someone took over."""
+    return f"{INSTANCE_ID}:{uuid.uuid4().hex[:12]}"
 
 
 class DistributedLocksRepository:
@@ -57,14 +65,6 @@ class DistributedLocksRepository:
         # Scope delete to holder so a pod can't delete a lock another pod took over after TTL.
         result = await self.collection.delete_one({"_id": lock_name, "holder": holder_id})
         return result.deleted_count > 0
-
-    async def get_lock_info(self, lock_name: str) -> dict | None:
-        return await self._reads.find_one({"_id": lock_name})
-
-    async def is_locked(self, lock_name: str) -> bool:
-        now = datetime.now(timezone.utc)
-        lock = await self._reads.find_one({"_id": lock_name, "expires_at": {"$gt": now}})
-        return lock is not None
 
     async def held_locks(self, lock_names: list[str]) -> set[str]:
         now = datetime.now(timezone.utc)

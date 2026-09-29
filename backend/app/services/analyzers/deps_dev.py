@@ -16,7 +16,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
-from .purl_utils import parse_purl
+from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,16 @@ def _validated_threshold(
     return default
 
 
+def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
+    """``(cache key, deps.dev system, deps.dev name)`` of a component deps.dev can look up at its version."""
+    parsed = parse_purl(component.get("purl", ""))
+    version = component.get("version", "")
+    if not parsed or not parsed.deps_dev_system or not parsed.deps_dev_name or not version:
+        return None
+    system, name = parsed.deps_dev_system, parsed.deps_dev_name
+    return CacheKeys.deps_dev(system, name, version), system, name
+
+
 class DepsDevAnalyzer(Analyzer):
     """Fetches package metadata and OpenSSF Scorecard data from the deps.dev API (Redis-cached)."""
 
@@ -44,65 +54,43 @@ class DepsDevAnalyzer(Analyzer):
 
     MAX_CONCURRENT = ANALYZER_BATCH_SIZES.get("deps_dev", 10)
 
-    def _resolve_scorecard_threshold(self, settings: dict[str, Any] | None) -> float:
-        """Resolve the configured scorecard threshold, validating range."""
-        threshold = SCORECARD_UNMAINTAINED_THRESHOLD
-        if not settings or "scorecard_threshold" not in settings:
-            return threshold
-        try:
-            custom_threshold = float(settings["scorecard_threshold"])
-            if 0 <= custom_threshold <= 10:
-                return custom_threshold
-        except (ValueError, TypeError):
-            pass
-        return threshold
-
-    def _collect_cached(
-        self,
-        cached_results: dict[str, Any],
+    @staticmethod
+    def _collect(
+        component: dict[str, Any],
+        key: str,
+        payload: Any,
         threshold: float,
         package_metadata: dict[str, Any],
         scorecard_issues: list[Any],
     ) -> None:
-        """Apply cached deps.dev results to outputs, re-checking the threshold."""
-        for key, data in cached_results.items():
-            if not data:
-                continue
-            package_metadata[key] = data.get("metadata")
-            scorecard_issue = data.get("scorecard_issue")
-            if not scorecard_issue:
-                continue
-            score = scorecard_issue.get("scorecard", {}).get("overallScore", 10)
-            if score < threshold:
-                scorecard_issues.append(scorecard_issue)
-
-    def _collect_live_result(self, result: Any, package_metadata: dict[str, Any], scorecard_issues: list[Any]) -> None:
-        """Apply a single live fetch result to outputs."""
-        if isinstance(result, Exception):
-            logger.warning(f"deps_dev check failed: {result}")
+        """Apply a payload under this scan's component (a cached one names its fetcher), re-checking the threshold."""
+        if isinstance(payload, Exception):
+            logger.warning(f"deps_dev check failed: {payload}")
             return
-        if not result:
+        if not payload:
             return
-        if result.get("scorecard_issue"):
-            scorecard_issues.append(result["scorecard_issue"])
-        if result.get("metadata"):
-            key = f"{result['metadata']['name']}@{result['metadata']['version']}"
-            package_metadata[key] = result["metadata"]
+        name, version, purl = component.get("name", ""), component.get("version", ""), component.get("purl", "")
+        if payload.get("metadata"):
+            package_metadata[key] = {**payload["metadata"], "name": name, "version": version, "purl": purl}
+        issue = payload.get("scorecard_issue")
+        if issue and issue.get("scorecard", {}).get("overallScore", 10) < threshold:
+            scorecard_issues.append({**issue, "component": name, "version": version, "purl": purl})
 
     async def _fetch_uncached(
         self,
-        uncached_components: list[dict[str, Any]],
+        keys: list[str],
+        targets: dict[str, tuple[dict[str, Any], str, str]],
         threshold: float,
         severity_thresholds: dict[str, float],
     ) -> list[Any]:
-        """Fetch deps.dev data for uncached components with bounded concurrency."""
+        """Fetch deps.dev data for uncached packages with bounded concurrency."""
         semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
         timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
 
         async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
             tasks = [
-                self._check_component_with_limit(semaphore, client, c, threshold, severity_thresholds)
-                for c in uncached_components
+                self._check_component_with_limit(semaphore, client, key, *targets[key], threshold, severity_thresholds)
+                for key in keys
             ]
             results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
             return results
@@ -117,7 +105,7 @@ class DepsDevAnalyzer(Analyzer):
         scorecard_issues: list[Any] = []
         package_metadata: dict[str, Any] = {}
 
-        threshold = self._resolve_scorecard_threshold(settings)
+        threshold = _validated_threshold(settings, "scorecard_threshold", SCORECARD_UNMAINTAINED_THRESHOLD)
         # Thread thresholds per-call, never on the singleton instance: analyzers are shared
         # across concurrent scans with awaits between resolving and using them.
         severity_thresholds = {
@@ -126,88 +114,47 @@ class DepsDevAnalyzer(Analyzer):
             "low": _validated_threshold(settings, "scorecard_low_threshold", 5.0),
         }
 
-        cached_results, uncached_components = await self._get_cached_components(components)
-        self._collect_cached(cached_results, threshold, package_metadata, scorecard_issues)
+        targets: dict[str, tuple[dict[str, Any], str, str]] = {}
+        for component in components:
+            target = _lookup_target(component)
+            if target is not None:
+                targets.setdefault(target[0], (component, target[1], target[2]))
 
-        logger.debug(f"deps_dev: {len(cached_results)} from cache, {len(uncached_components)} to fetch")
+        cached: dict[str, Any] = await cache_service.mget(list(targets))
+        payloads = {key: data for key, data in cached.items() if data}
+        uncached = [key for key in targets if key not in payloads]
+        logger.debug(f"deps_dev: {len(payloads)} from cache, {len(uncached)} to fetch")
 
-        if uncached_components:
-            component_results = await self._fetch_uncached(uncached_components, threshold, severity_thresholds)
-            for result in component_results:
-                self._collect_live_result(result, package_metadata, scorecard_issues)
+        if uncached:
+            fetched = await self._fetch_uncached(uncached, targets, threshold, severity_thresholds)
+            payloads.update(zip(uncached, fetched, strict=True))
+
+        for key, payload in payloads.items():
+            self._collect(targets[key][0], key, payload, threshold, package_metadata, scorecard_issues)
 
         return {
             "scorecard_issues": scorecard_issues,
             "package_metadata": package_metadata,
         }
 
-    def _get_cache_key_for_component(self, component: dict[str, Any]) -> str | None:
-        """Get cache key for a component."""
-        purl = component.get("purl", "")
-        version = component.get("version", "")
-
-        parsed = parse_purl(purl)
-        if not parsed or not parsed.registry_system or not version:
-            return None
-
-        return CacheKeys.deps_dev(parsed.registry_system, parsed.deps_dev_name, version)
-
-    async def _get_cached_components(
-        self, components: list[dict[str, Any]]
-    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-        """Check cache for components, return cached data and uncached components."""
-        cached_results = {}
-        uncached_components = []
-
-        cache_keys = []
-        component_map: dict[str, Any] = {}
-
-        for component in components:
-            purl = component.get("purl", "")
-            version = component.get("version", "")
-
-            parsed = parse_purl(purl)
-            if not parsed or not parsed.registry_system or not version:
-                continue
-
-            cache_key = CacheKeys.deps_dev(parsed.registry_system, parsed.deps_dev_name, version)
-            cache_keys.append(cache_key)
-            component_map[cache_key] = component
-
-        if not cache_keys:
-            return {}, components
-
-        cached_data: dict[str, Any] = await cache_service.mget(cache_keys)
-
-        for cache_key, data in cached_data.items():
-            cached_comp = component_map.get(cache_key)
-            if not cached_comp:
-                continue
-
-            if data:
-                key = f"{cached_comp.get('name')}@{cached_comp.get('version')}"
-                cached_results[key] = data
-            else:
-                uncached_components.append(cached_comp)
-
-        return cached_results, uncached_components
-
     async def _check_component_with_limit(
         self,
         semaphore: asyncio.Semaphore,
         client: InstrumentedAsyncClient,
+        cache_key: str,
         component: dict[str, Any],
+        system: str,
+        lookup_name: str,
         threshold: float,
         severity_thresholds: dict[str, float],
     ) -> dict[str, Any] | None:
         """Fetch component data with concurrency limit and distributed lock."""
-        cache_key = self._get_cache_key_for_component(component)
-        if not cache_key:
-            return None
 
         async def fetch_component() -> dict[str, Any] | None:
             async with semaphore:
-                return await self._check_component(client, component, threshold, severity_thresholds)
+                return await self._check_component(
+                    client, component, system, lookup_name, threshold, severity_thresholds
+                )
 
         # Distributed lock prevents multiple pods fetching the same package.
         return await cache_service.get_or_fetch_with_lock(
@@ -308,6 +255,8 @@ class DepsDevAnalyzer(Analyzer):
         self,
         client: InstrumentedAsyncClient,
         component: dict[str, Any],
+        system: str,
+        lookup_name: str,
         threshold: float,
         severity_thresholds: dict[str, float],
     ) -> dict[str, Any] | None:
@@ -315,15 +264,6 @@ class DepsDevAnalyzer(Analyzer):
         purl = component.get("purl", "")
         name = component.get("name", "")
         version = component.get("version", "")
-
-        parsed = parse_purl(purl)
-        if not parsed:
-            return None
-
-        system = parsed.registry_system
-        lookup_name = parsed.deps_dev_name
-        if not system or not lookup_name or not version:
-            return None
 
         encoded_name = quote(lookup_name, safe="")
         encoded_version = quote(version, safe="")

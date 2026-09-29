@@ -1,4 +1,4 @@
-"""The vuln_status_map pipeline in search_dependencies_advanced must restrict to the active scan_ids so a component fixed in the latest scan is not flagged vulnerable by older-scan findings."""
+"""The vulnerability-filter pipeline in search_dependencies_advanced must restrict to the active scan_ids so a component fixed in the latest scan is not flagged vulnerable by older-scan findings."""
 
 import asyncio
 from typing import Any
@@ -49,7 +49,7 @@ def _make_dep(project_id="proj-1", name="lodash", version="4.17.11"):
 
 
 class TestSearchDependenciesVulnScanScope:
-    """search_dependencies_advanced vuln_status_map must be scoped to scan_ids."""
+    """search_dependencies_advanced vulnerability-filter pipeline must be scoped to scan_ids."""
 
     def _run_search(
         self,
@@ -114,7 +114,7 @@ class TestSearchDependenciesVulnScanScope:
             vuln_agg_results=[],
             has_vulnerabilities=True,
         )
-        assert pipelines, "aggregate() was never called for the vuln_status_map"
+        assert pipelines, "aggregate() was never called for the vulnerability filter"
         match_stage = pipelines[0][0]["$match"]
         assert "scan_id" in match_stage, "$match must include scan_id"
         assert match_stage["scan_id"] == {"$in": ["scan-latest"]}
@@ -133,7 +133,7 @@ class TestSearchDependenciesVulnScanScope:
 
     def test_active_scan_vuln_marks_component_as_vulnerable(self):
         dep = _make_dep(name="lodash", project_id="proj-1")
-        agg_results = [{"_id": {"project_id": "proj-1", "component": "lodash"}}]
+        agg_results = [{"_id": {"project_id": "proj-1", "component": "lodash"}, "versions": [dep["version"]]}]
         response, _ = self._run_search(
             dep_list=[dep],
             vuln_agg_results=agg_results,
@@ -142,7 +142,7 @@ class TestSearchDependenciesVulnScanScope:
         assert len(response.items) == 1
         assert response.items[0].package == "lodash"
 
-    def test_waived_excluded_from_vuln_status_map(self):
+    def test_waived_excluded_from_the_vulnerability_filter(self):
         dep = _make_dep()
         _, pipelines = self._run_search(
             dep_list=[dep],

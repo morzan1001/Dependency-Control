@@ -339,7 +339,6 @@ interface QualityIssueEntry {
   severity: string
   description: string
   scanners: string[]
-  source?: string
   details: Record<string, unknown>
 }
 

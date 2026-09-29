@@ -2,10 +2,10 @@
 
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
-from app.core.constants import MAX_DEPENDENCY_DEPTH, OUTDATED_DEPENDENCY_THRESHOLD_DAYS
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation
 from app.services.recommendation import (
     common,
@@ -93,10 +93,6 @@ def _deduplicate_recommendations(
 class RecommendationEngine:
     """Generates remediation recommendations, delegating to modules in app.services.recommendation."""
 
-    def __init__(self) -> None:
-        self.outdated_threshold_days = OUTDATED_DEPENDENCY_THRESHOLD_DAYS
-        self.max_dependency_depth = MAX_DEPENDENCY_DEPTH
-
     @staticmethod
     def _collect_typosquat_findings(malware_findings: list[ModelOrDict]) -> list[ModelOrDict]:
         """The typosquatting analyzer emits its hits as ``FindingType.MALWARE`` carrying
@@ -132,8 +128,9 @@ class RecommendationEngine:
         cve_recurrence: dict[str, trends.CveRecurrence] | None = None,
         recurrence_window_scans: int = 0,
         cross_project_data: dict[str, Any] | None = None,
+        threat_intel: Mapping[str, VulnerabilityEnrichment] | None = None,
     ) -> list[Recommendation]:
-        """Generate prioritized remediation recommendations across all finding types."""
+        """Prioritized remediation across all finding types; ``threat_intel`` is the per-CVE KEV/EPSS just enriched."""
         findings_list: list[ModelOrDict] = list(findings) if findings else []
         dependencies_list: list[ModelOrDict] = list(dependencies) if dependencies else []
         previous_findings_list: list[ModelOrDict] | None = (
@@ -257,9 +254,7 @@ class RecommendationEngine:
         # 9. Graph Analysis (Deep chains, Duplicates)
         _safe_extend(
             recommendations,
-            lambda: graph.analyze_deep_dependency_chains(
-                dependencies_list, max_dependency_depth=self.max_dependency_depth
-            ),
+            lambda: graph.analyze_deep_dependency_chains(dependencies_list),
             "deep_dependency_chains",
         )
         _safe_extend(
@@ -288,14 +283,8 @@ class RecommendationEngine:
         # 11. Risks & Hotspots
         _safe_extend(
             recommendations,
-            lambda: risks.detect_critical_hotspots(findings_list, dependencies_list),
-            "critical_hotspots",
-        )
-
-        _safe_extend(
-            recommendations,
-            lambda: risks.detect_toxic_dependencies(findings_list, dependencies_list),
-            "toxic_dependencies",
+            lambda: risks.detect_package_risks(findings_list),
+            "package_risks",
         )
 
         _safe_extend(
@@ -313,7 +302,7 @@ class RecommendationEngine:
 
         _safe_extend(
             recommendations,
-            lambda: incidents.detect_known_exploits(findings_by_type.get("vulnerability", [])),
+            lambda: incidents.detect_known_exploits(findings_by_type.get("vulnerability", []), threat_intel),
             "known_exploits",
         )
 

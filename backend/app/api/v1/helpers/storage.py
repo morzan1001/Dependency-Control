@@ -1,13 +1,12 @@
 """Shared utilities for GridFS and file storage operations."""
 
-import json
 import logging
 from typing import Any
 
-from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
+from app.db.mongodb import primary_gridfs_bucket
+from app.services.gridfs_maintenance import gridfs_ref_id, load_gridfs_json
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +17,7 @@ async def load_from_gridfs(
 ) -> dict[str, Any] | None:
     """Load and parse JSON content from GridFS, or None if loading fails."""
     try:
-        fs = primary_gridfs_bucket(db)
-        grid_out = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
-        content: bytes = await grid_out.read()
-        data: dict[str, Any] = json.loads(content)
+        data: dict[str, Any] = await load_gridfs_json(primary_gridfs_bucket(db), file_id)
         return data
     except Exception as e:
         logger.exception("Failed to load file from GridFS: %s", e)
@@ -40,33 +36,29 @@ async def resolve_sbom_refs(
     fs = primary_gridfs_bucket(db)
 
     for index, item in enumerate(sbom_items):
-        if isinstance(item, dict) and item.get("type") == "gridfs_reference":
-            gridfs_id = item.get("gridfs_id") or item.get("file_id")
-            if gridfs_id:
-                try:
-                    stream = await open_gridfs_download_with_retry(fs, ObjectId(gridfs_id))
-                    content: bytes = await stream.read()
-                    sbom_data = json.loads(content)
-                    resolved_sboms.append(
-                        {
-                            "index": index,
-                            "filename": item.get("filename"),
-                            "storage": "gridfs",
-                            "sbom": sbom_data,
-                        }
-                    )
-                except Exception as e:
-                    logger.exception("Failed to load SBOM from GridFS: %s", e)
-                    resolved_sboms.append(
-                        {
-                            "index": index,
-                            "filename": item.get("filename"),
-                            "storage": "gridfs",
-                            "error": "Failed to load SBOM from storage",
-                            "sbom": None,
-                        }
-                    )
-        else:
+        gridfs_id = gridfs_ref_id(item)
+        if not gridfs_id:
             logger.warning(f"Invalid SBOM reference format at index {index}: {type(item)}")
+            continue
+        try:
+            resolved_sboms.append(
+                {
+                    "index": index,
+                    "filename": item.get("filename"),
+                    "storage": "gridfs",
+                    "sbom": await load_gridfs_json(fs, gridfs_id),
+                }
+            )
+        except Exception as e:
+            logger.exception("Failed to load SBOM from GridFS: %s", e)
+            resolved_sboms.append(
+                {
+                    "index": index,
+                    "filename": item.get("filename"),
+                    "storage": "gridfs",
+                    "error": "Failed to load SBOM from storage",
+                    "sbom": None,
+                }
+            )
 
     return resolved_sboms

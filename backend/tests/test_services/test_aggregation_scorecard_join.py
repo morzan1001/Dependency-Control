@@ -59,7 +59,7 @@ class TestScorecardReachesRequalifiedComponents:
 
     def test_a_scoped_npm_key_keeps_its_package_name(self):
         """The '@' that opens an npm scope is not the version separator."""
-        finding = _vuln("core", "21.1.5")
+        finding = _vuln("@angular/core", "21.1.5")
 
         enrich_with_scorecard([finding], {"@angular/core@21.1.5": SCORECARD})
 
@@ -85,3 +85,20 @@ class TestScorecardContextFlags:
         context = finding.details["scorecard_context"]
         assert context["maintenance_risk"] is False
         assert context["has_vulnerabilities_issue"] is True
+
+
+class TestScorecardStaysOnPackageFindings:
+    def test_a_file_finding_named_like_a_package_gets_no_scorecard(self):
+        secret = Finding(
+            id="SECRET-bin-rails",
+            type=FindingType.SECRET,
+            severity=Severity.HIGH,
+            component="bin/rails",
+            version="",
+            description="leaked key",
+            scanners=["trufflehog"],
+        )
+
+        enrich_with_scorecard([secret], {"rails@7.0.0": SCORECARD})
+
+        assert "scorecard_context" not in secret.details

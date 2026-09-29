@@ -32,6 +32,15 @@ def _make_vuln_finding(
             "purl": purl or f"pkg:pypi/{component}@{version}",
             "in_kev": is_kev,
             "epss_score": epss_score,
+            "vulnerabilities": [
+                {
+                    "id": finding_id,
+                    "severity": severity,
+                    "fixed_version": fixed_version,
+                    "in_kev": is_kev,
+                    "epss_score": epss_score,
+                }
+            ],
         },
         "reachable": reachable,
         "reachability_level": None,
@@ -584,16 +593,6 @@ class TestGenerateRecommendationsTyposquatting:
         assert any(r.type == RecommendationType.MALWARE_DETECTED for r in result)
 
 
-class TestEngineInitialization:
-    def test_engine_has_outdated_threshold(self):
-        engine = RecommendationEngine()
-        assert engine.outdated_threshold_days > 0
-
-    def test_engine_has_max_dependency_depth(self):
-        engine = RecommendationEngine()
-        assert engine.max_dependency_depth > 0
-
-
 class TestTyposquatCollection:
     """The typosquatting analyzer stores the imitated name under details.imitated_package
     (2,572 production findings; zero carry a details.similar_to)."""
@@ -622,3 +621,58 @@ class TestTyposquatCollection:
         recs = await engine.generate_recommendations(findings=[self._malware_finding("evil-pkg")])
 
         assert not [r for r in recs if r.type == RecommendationType.TYPOSQUAT_DETECTED]
+
+
+class TestOnePackageAcrossCardTypes:
+    @staticmethod
+    def _dep(name, version, direct):
+        return {"name": name, "version": version, "purl": f"pkg:npm/{name}@{version}", "direct": direct}
+
+    @pytest.mark.asyncio
+    async def test_two_installed_versions_survive_deduplication_as_two_update_cards(self):
+        findings = [
+            _make_vuln_finding("CVE-1", component="minimist", version="0.0.8", fixed_version="0.2.1"),
+            _make_vuln_finding("CVE-2", component="minimist", version="1.2.0", fixed_version="1.2.6"),
+        ]
+        deps = [self._dep("minimist", "0.0.8", False), self._dep("minimist", "1.2.0", False)]
+
+        result = await RecommendationEngine().generate_recommendations(findings=findings, dependencies=deps)
+
+        transitive = [r for r in result if r.type == RecommendationType.TRANSITIVE_FIX_VIA_PARENT]
+        assert sorted(r.affected_components[0] for r in transitive) == ["minimist@0.0.8", "minimist@1.2.0"]
+
+    @pytest.mark.asyncio
+    async def test_unreachable_criticals_put_the_hotspot_and_the_update_on_one_tier(self):
+        findings = [
+            _make_vuln_finding(f"CVE-{v}", severity="CRITICAL", component="lib", version=v, reachable=False)
+            for v in ("1.0.0", "1.1.0", "1.2.0")
+        ]
+        deps = [self._dep("lib", v, True) for v in ("1.0.0", "1.1.0", "1.2.0")]
+
+        result = await RecommendationEngine().generate_recommendations(findings=findings, dependencies=deps)
+
+        tiers = {
+            r.priority
+            for r in result
+            if r.type in (RecommendationType.CRITICAL_HOTSPOT, RecommendationType.DIRECT_DEPENDENCY_UPDATE)
+        }
+        assert tiers == {Priority.HIGH}
+
+
+@pytest.mark.asyncio
+async def test_the_kev_card_names_the_cve_the_live_threat_intel_marks():
+    from app.schemas.enrichment import VulnerabilityEnrichment
+
+    finding = _make_vuln_finding(component="openssl-libs", is_kev=True)
+    finding["details"]["vulnerabilities"] = [
+        {"id": "CVE-2023-0001", "aliases": ["ALAS2-2023-2001", "CVE-2023-0002"], "in_kev": True}
+    ]
+    threat_intel = {
+        "CVE-2023-0001": VulnerabilityEnrichment(cve="CVE-2023-0001", risk_score=20.0),
+        "CVE-2023-0002": VulnerabilityEnrichment(cve="CVE-2023-0002", risk_score=40.0, is_kev=True),
+    }
+
+    result = await RecommendationEngine().generate_recommendations(findings=[finding], threat_intel=threat_intel)
+
+    [kev_card] = [r for r in result if r.type == RecommendationType.KNOWN_EXPLOIT]
+    assert kev_card.action["cves"] == ["CVE-2023-0002"]

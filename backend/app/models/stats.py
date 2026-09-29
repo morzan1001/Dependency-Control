@@ -6,12 +6,14 @@ class ThreatIntelligenceStats(BaseModel):
 
     kev_count: int = Field(0, description="Count of findings in CISA KEV catalog")
     kev_ransomware_count: int = Field(0, description="Count of KEV findings with known ransomware use")
-    high_epss_count: int = Field(0, description="Count of findings with EPSS > 10%")
-    medium_epss_count: int = Field(0, description="Count of findings with EPSS 1-10%")
+    high_epss_count: int = Field(0, description="Count of findings with EPSS >= 10%")
+    medium_epss_count: int = Field(0, description="Count of findings with EPSS >= 1% and below 10%")
     avg_epss_score: float | None = Field(None, description="Average EPSS score")
     max_epss_score: float | None = Field(None, description="Maximum EPSS score")
-    weaponized_count: int = Field(0, description="Count of weaponized vulnerabilities")
-    active_exploitation_count: int = Field(0, description="Count of actively exploited vulnerabilities")
+    weaponized_count: int = Field(0, description="Count of findings with exploit maturity weaponized (KEV ransomware)")
+    active_exploitation_count: int = Field(
+        0, description="Count of findings with exploit maturity active or weaponized (KEV-listed)"
+    )
 
 
 class ReachabilityStats(BaseModel):
@@ -22,7 +24,7 @@ class ReachabilityStats(BaseModel):
         0,
         description=(
             "Count of vulnerabilities in an ecosystem a callgraph could ever analyze "
-            "(npm/PyPI/Go); zero means reachability cannot help this project"
+            "(npm/PyPI/Go/Maven); zero means reachability cannot help this project"
         ),
     )
     reachable_count: int = Field(
@@ -71,7 +73,7 @@ class SecretPrioritizedCounts(BaseModel):
     in_current_tree_count: int = Field(0, description="Secrets whose file exists at the scanned commit's tree")
     historical_only_count: int = Field(0, description="Secrets whose file no longer exists in the current tree")
     unknown_tree_count: int = Field(0, description="Secrets with no current-tree information available")
-    actionable_count: int = Field(0, description="Verified secrets still present in the current tree")
+    actionable_count: int = Field(0, description="Verified secrets (live leak until rotated), regardless of tree state")
     deprioritized_count: int = Field(0, description="Unverified secrets no longer present in the current tree")
 
 

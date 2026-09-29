@@ -223,6 +223,11 @@ function DependencyMetadataSection({ metadata }: Readonly<{ metadata: Dependency
             <Badge variant="outline" className="text-base font-mono">
               {metadata.version}
             </Badge>
+            {metadata.versions && metadata.versions.length > 1 && (
+              <span className="text-xs text-muted-foreground" title={metadata.versions.join(", ")}>
+                Most used of {metadata.versions.length} versions
+              </span>
+            )}
             <Badge variant="secondary">{metadata.type}</Badge>
             {metadata.deps_dev?.is_deprecated && (
               <Badge variant="destructive">Deprecated</Badge>

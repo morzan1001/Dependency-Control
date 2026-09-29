@@ -119,3 +119,29 @@ class TestThroughTheAggregator:
         assert by_type[FindingType.VULNERABILITY].details["additional_finding_types"] == [
             {"type": "eol", "severity": "MEDIUM"}
         ]
+
+
+class TestContextStaysWithItsVersion:
+    def test_two_versions_of_one_package_link_but_exchange_no_context(self):
+        vuln = _vuln()
+        vuln.version = "4.17.20"
+        outdated = _finding("OUTDATED-lodash", FindingType.OUTDATED, Severity.INFO, "lodash", current_version="3.0.0")
+        outdated.version = "3.0.0"
+
+        cross_link_pair(vuln, outdated)
+
+        assert outdated.id in vuln.related_findings
+        assert vuln.id in outdated.related_findings
+        for key in ("outdated_info", "eol_info", "vulnerability_info", "additional_finding_types"):
+            assert key not in vuln.details
+            assert key not in outdated.details
+
+    def test_one_version_spelled_with_a_v_prefix_still_exchanges_context(self):
+        vuln = _vuln()
+        vuln.version = "v1.2.3"
+        outdated = _finding("OUTDATED-lodash", FindingType.OUTDATED, Severity.INFO, "lodash")
+        outdated.version = "1.2.3"
+
+        cross_link_pair(vuln, outdated)
+
+        assert outdated.details["vulnerability_info"]["vuln_count"] == 2

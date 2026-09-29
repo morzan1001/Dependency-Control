@@ -301,13 +301,11 @@ async def _seed_inflight_rescan(db: FakeDatabase, original_scan_id: str = _SOURC
     )
 
 
-async def _seed_expired_lock(db: FakeDatabase) -> DistributedLocksRepository:
+async def _seed_expired_lock(db: FakeDatabase) -> None:
     """A stale entry under the source's lock name: only a take-over of that exact name clears it."""
-    locks = DistributedLocksRepository(db)
-    await locks.acquire_lock(
+    await DistributedLocksRepository(db).acquire_lock(
         _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_EXPIRED_LOCK_TTL_SECONDS
     )
-    return locks
 
 
 async def _rescans(db: FakeDatabase) -> list[dict[str, Any]]:
@@ -532,11 +530,11 @@ class TestCreateRescanForProject:
     @pytest.mark.asyncio
     async def test_the_lock_is_released_once_the_rescan_is_created(self, db: FakeDatabase, worker: AsyncMock) -> None:
         source = await _seed_scan(db)
-        locks = await _seed_expired_lock(db)
+        await _seed_expired_lock(db)
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
-        assert await locks.get_lock_info(_lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)) is None
+        assert await db.distributed_locks.find_one({"_id": _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)}) is None
 
     @pytest.mark.asyncio
     async def test_the_lock_is_released_when_an_active_rescan_aborts_the_creation(
@@ -544,11 +542,11 @@ class TestCreateRescanForProject:
     ) -> None:
         source = await _seed_scan(db)
         await _seed_inflight_rescan(db)
-        locks = await _seed_expired_lock(db)
+        await _seed_expired_lock(db)
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
-        assert await locks.get_lock_info(_lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)) is None
+        assert await db.distributed_locks.find_one({"_id": _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)}) is None
 
     @pytest.mark.asyncio
     async def test_an_active_rescan_of_this_source_stops_the_creation(

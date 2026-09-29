@@ -21,6 +21,7 @@ from app.core.constants import (
     SLOWEST_PACKAGES_LIMIT,
     UPDATE_SAMPLE_RANK,
 )
+from app.core.purl import package_identity, parse_purl
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -38,7 +39,6 @@ from app.schemas.analytics import (
     UpdateFrequencyComparison,
     UpdateFrequencyMetrics,
 )
-from app.services.analyzers.purl_utils import parse_purl
 from app.services.release_history import (
     Observation,
     ReleaseHistoryFetcher,
@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 # pytest-asyncio tests) can't raise "bound to a different event loop".
 _COMPARISON_CONCURRENCY = 3
 
-DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1}
+DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "group": 1}
 
 DAYS_PER_MONTH = 30.44
 
@@ -101,41 +101,31 @@ def classify_version_change(old_version: str, new_version: str) -> str:
 
 
 def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
-    """``(identity, info)`` for one dependency document.
-
-    Identity comes from the purl (type + namespace + name) so same-named
-    packages across ecosystems/namespaces — and npm names stored without
-    their scope — never collide; bare ``name`` stays in the info for joins
-    against analyzer results, which are keyed by that name.
-    """
+    """``(package_identity, info)`` of a dependency; info keeps the bare ``name`` analyzer results are keyed by."""
     name = dep.get("name", "")
     if not name:
         return None
     purl = dep.get("purl", "")
+    identity = ":".join(package_identity(purl, name, dep.get("type"), dep.get("group")))
     parsed = parse_purl(purl) if purl else None
     if parsed:
-        # deps_dev_name folds ecosystem naming (Maven group:artifact, npm scope,
-        # PEP 503 for PyPI) so the same package keeps one identity across scans
-        # even when the purl name casing/separators vary.
         deps_dev_name = parsed.deps_dev_name
-        identity = f"{parsed.type}:{deps_dev_name}"
         display = parsed.full_name
         # SBOM component types ("library") say nothing about the ecosystem; the purl type does.
         dep_type = parsed.type
-        registry_system = parsed.registry_system or ""
+        deps_dev_system = parsed.deps_dev_system or ""
     else:
         deps_dev_name = ""
-        identity = f"{dep.get('type', 'unknown')}::{name}"
         display = name
         dep_type = dep.get("type", "unknown")
-        registry_system = ""
+        deps_dev_system = ""
     return identity, {
         "version": dep.get("version", ""),
         "type": dep_type,
         "purl": purl,
         "name": name,
         "display": display,
-        "registry_system": registry_system,
+        "deps_dev_system": deps_dev_system,
         "deps_dev_name": deps_dev_name,
     }
 
@@ -612,7 +602,7 @@ class _AccumulatorState:
             name = info["name"]
             if name not in self.dep_type_map:
                 self.dep_type_map[name] = info["type"]
-            system = info["registry_system"]
+            system = info["deps_dev_system"]
             if system and identity not in self.package_specs:
                 self.package_specs[identity] = (system, info["deps_dev_name"])
 

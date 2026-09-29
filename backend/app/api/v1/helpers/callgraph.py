@@ -4,7 +4,7 @@ from typing import Any
 
 
 from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
-from app.services.aggregation.components import canonical_module_key, npm_package_key
+from app.services.component_identity import canonical_module_key, npm_package_key
 
 _NODE_MODULES = "node_modules/"
 _ANALYZED_MODULES_KEY = "__analyzed_modules__"

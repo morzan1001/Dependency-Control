@@ -35,6 +35,7 @@ export interface SearchResult {
 export interface DependencyUsage {
   name: string;
   type: string;
+  group?: string | null;
   // The newest versions in use; version_count is how many distinct ones the estate holds.
   versions: string[];
   version_count: number;
@@ -271,7 +272,10 @@ export type ComponentFinding = Finding & { project_id: string; project_name: str
 
 export interface DependencyMetadata {
   name: string;
+  // The version the metadata describes; without a requested version, the one most projects run.
   version: string;
+  // Every version of the package in scope, newest first.
+  versions?: string[];
   type: string;
   purl?: string;
   description?: string;

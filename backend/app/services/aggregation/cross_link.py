@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from app.core.constants import get_severity_value
 from app.models.finding import Finding, FindingType
+from app.services.aggregation.versions import normalize_version
 
 
 def cross_link_pair(f1: Finding, f2: Finding) -> None:
-    """Cross-reference two findings on the same package and exchange their context blocks."""
+    """Cross-reference two findings on the same package; context blocks only pass between one version."""
     if f2.id not in f1.related_findings:
         f1.related_findings.append(f2.id)
     if f1.id not in f2.related_findings:
         f2.related_findings.append(f1.id)
+
+    if not _same_version(f1.version, f2.version):
+        return
 
     for primary, other in ((f1, f2), (f2, f1)):
         add_context_to_vulnerability(primary, other)
@@ -39,15 +45,18 @@ def _record_additional_type(finding: Finding, other: Finding) -> None:
     types.sort(key=lambda entry: entry["type"])
 
 
-def _vulnerability_count(vuln_finding: Finding) -> int:
-    entries = vuln_finding.details.get("vulnerabilities")
-    return len(entries) if entries else 1
+def _same_version(a: str | None, b: str | None) -> bool:
+    return not a or not b or normalize_version(a) == normalize_version(b)
 
 
-def _entry_severities(vuln_finding: Finding) -> list[str]:
-    entries = vuln_finding.details.get("vulnerabilities") or []
+def _vulnerability_context(entries: list[Any], fallback_severity: str) -> dict[str, int]:
     severities = [str(e.get("severity")) for e in entries if isinstance(e, dict) and e.get("severity")]
-    return severities or [str(vuln_finding.severity)]
+    severities = severities or [fallback_severity]
+    return {
+        "vuln_count": len(entries) or 1,
+        "critical_count": severities.count("CRITICAL"),
+        "high_count": severities.count("HIGH"),
+    }
 
 
 def _add_vulnerability_context(finding: Finding, vuln_finding: Finding) -> None:
@@ -55,14 +64,35 @@ def _add_vulnerability_context(finding: Finding, vuln_finding: Finding) -> None:
     if finding.type == FindingType.VULNERABILITY or vuln_finding.type != FindingType.VULNERABILITY:
         return
 
-    severities = _entry_severities(vuln_finding)
     info = finding.details.setdefault(
         "vulnerability_info",
         {"has_vulnerabilities": True, "vuln_count": 0, "critical_count": 0, "high_count": 0},
     )
-    info["vuln_count"] += _vulnerability_count(vuln_finding)
-    info["critical_count"] += sum(1 for s in severities if s == "CRITICAL")
-    info["high_count"] += sum(1 for s in severities if s == "HIGH")
+    context = _vulnerability_context(vuln_finding.details.get("vulnerabilities") or [], str(vuln_finding.severity))
+    for key, count in context.items():
+        info[key] += count
+
+
+def refresh_vulnerability_info(records: list[dict[str, Any]]) -> None:
+    """Recount each sibling's vulnerability_info once enrichment has folded GHSA-linked advisories."""
+    by_id: dict[Any, list[dict[str, Any]]] = {}
+    for record in records:
+        by_id.setdefault(record.get("id"), []).append(record)
+    for record in records:
+        info = (record.get("details") or {}).get("vulnerability_info")
+        related = record.get("related_findings") or []
+        # A related record the ad-hoc cap cut can no longer be recounted.
+        if not info or any(i not in by_id for i in related):
+            continue
+        contexts = [
+            _vulnerability_context(vuln["details"].get("vulnerabilities") or [], str(vuln.get("severity")))
+            for i in related
+            for vuln in by_id[i]
+            if vuln.get("type") == FindingType.VULNERABILITY
+            and _same_version(record.get("version"), vuln.get("version"))
+        ]
+        for key in ("vuln_count", "critical_count", "high_count"):
+            info[key] = sum(context[key] for context in contexts)
 
 
 def add_context_to_vulnerability(vuln_finding: Finding, other_finding: Finding) -> None:

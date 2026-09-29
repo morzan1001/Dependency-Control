@@ -126,22 +126,23 @@ class VulnerabilityEntryDetails(_DetailsModel):
     id: str | None = None
     severity: str | None = None
     description: str | None = None
-    description_source: str | None = None
     fixed_version: str | None = None
     cvss_score: float | None = None
     cvss_vector: str | None = None
     references: list[Any] = []
     aliases: list[str] = []
     scanners: list[str] = []
-    source: str | None = None
     details: VulnerabilityScannerDetails | None = None
     ecosystem_specific: dict[str, Any] | None = None
     # enrichment (enrichment.service)
     epss_score: float | None = None
     epss_percentile: float | None = None
     in_kev: bool | None = None
+    kev_date_added: str | None = None
     kev_due_date: str | None = None
+    kev_required_action: str | None = None
     kev_ransomware_use: bool | None = None
+    risk_score: float | None = None
     github_advisory_url: str | None = None
     resolved_cve: str | None = None
     # per-entry waiver state (services.waivers.apply.restamp_waivers)
@@ -269,7 +270,6 @@ class QualityIssueEntry(_DetailsModel):
     severity: str | None = None
     description: str | None = None
     scanners: list[str] = []
-    source: str | None = None
     details: dict[str, Any] = {}
 
 
@@ -320,8 +320,6 @@ class SastFindingEntry(_DetailsModel):
     id: str | None = None
     scanner: str | None = None
     severity: str | None = None
-    title: str | None = None
-    description: str | None = None
     details: SastScannerDetails | None = None
 
 
@@ -331,9 +329,6 @@ class SastDetails(_DetailsModel):
     sast_findings: list[SastFindingEntry] = []
     file: str | None = None
     line: int | None = None
-    cwe_ids: list[str] = []
-    category_groups: list[Any] = []
-    owasp: list[str] = []
 
 
 class IacDetails(_DetailsModel):

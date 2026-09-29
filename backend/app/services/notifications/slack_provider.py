@@ -22,25 +22,20 @@ class SlackProvider(NotificationProvider):
         self._cached_token: str | None = None
         self._cached_token_expires_at: float = 0
 
-    async def _acquire_distributed_lock(self, db: Any, lock_name: str, ttl_seconds: int = 30) -> bool:
-        """Acquire a distributed lock (TTL auto-expires if the holder crashes)."""
+    async def _acquire_distributed_lock(self, db: Any, lock_name: str, ttl_seconds: int = 30) -> str | None:
+        """Acquire a distributed lock (TTL auto-expires if the holder crashes); the holder on success."""
+        from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
+
+        holder = new_lock_holder()
+        if await DistributedLocksRepository(db).acquire_lock(lock_name, holder, ttl_seconds):
+            return holder
+        return None
+
+    async def _release_distributed_lock(self, db: Any, lock_name: str, holder: str) -> None:
+        """Release a distributed lock; scoped to the holder so it never releases another's."""
         from app.repositories.distributed_locks import DistributedLocksRepository
 
-        locks_repo = DistributedLocksRepository(db)
-
-        return await locks_repo.acquire_lock(lock_name, self._lock_holder_id, ttl_seconds)
-
-    @property
-    def _lock_holder_id(self) -> str:
-        """Stable per-instance holder id so release is scoped to the holder that acquired."""
-        return f"slack-provider-{id(self)}"
-
-    async def _release_distributed_lock(self, db: Any, lock_name: str) -> None:
-        """Release a distributed lock; scoped to this holder so it never releases another's."""
-        from app.repositories.distributed_locks import DistributedLocksRepository
-
-        locks_repo = DistributedLocksRepository(db)
-        await locks_repo.release_lock(lock_name, self._lock_holder_id)
+        await DistributedLocksRepository(db).release_lock(lock_name, holder)
 
     async def _refresh_token(self, system_settings: SystemSettings) -> str | None:
         """Refresh the Slack access token and persist the new token and expiry."""
@@ -129,9 +124,9 @@ class SlackProvider(NotificationProvider):
                     else:
                         # Distributed lock for inter-pod coordination.
                         db = await get_database()
-                        lock_acquired = await self._acquire_distributed_lock(db, "slack_token_refresh", ttl_seconds=30)
+                        lock_holder = await self._acquire_distributed_lock(db, "slack_token_refresh", ttl_seconds=30)
 
-                        if lock_acquired:
+                        if lock_holder:
                             try:
                                 logger.info("Acquired distributed lock for Slack token refresh")
                                 from app.repositories.system_settings import (
@@ -164,7 +159,7 @@ class SlackProvider(NotificationProvider):
                                             "Failed to refresh Slack token, attempting to use existing token."
                                         )
                             finally:
-                                await self._release_distributed_lock(db, "slack_token_refresh")
+                                await self._release_distributed_lock(db, "slack_token_refresh", lock_holder)
                         else:
                             logger.info("Another pod is refreshing Slack token, waiting...")
                             await asyncio.sleep(2)
