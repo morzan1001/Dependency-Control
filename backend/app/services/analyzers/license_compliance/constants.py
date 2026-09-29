@@ -5,7 +5,7 @@ from __future__ import annotations
 import functools
 import re
 
-from app.core.constants import LICENSE_ALIASES
+from app.core.constants import LICENSE_ALIASES, SEVERITY_ORDER
 from app.models.finding import Severity
 from app.models.license import LicenseCategory, LicenseInfo
 
@@ -67,17 +67,8 @@ LICENSE_INCOMPATIBILITIES: dict[tuple, str] = {
     (SPDX_SSPL_1_0, SPDX_AGPL_3_0): f"{SPDX_SSPL_1_0} is not compatible with {SPDX_AGPL_3_0}.",
 }
 
-SEVERITY_RANK: dict[str | None, int] = {
-    None: 0,
-    Severity.INFO.value: 1,
-    Severity.LOW.value: 2,
-    Severity.MEDIUM.value: 3,
-    Severity.HIGH.value: 4,
-    Severity.CRITICAL.value: 5,
-}
-
 # Every policy escape in evaluate_license lands below HIGH, so HIGH is the first rank policy did not soften.
-POLICY_VIOLATION_MIN_RANK = SEVERITY_RANK[Severity.HIGH.value]
+POLICY_VIOLATION_MIN_RANK = SEVERITY_ORDER[Severity.HIGH.value]
 
 
 LICENSE_DATABASE: dict[str, LicenseInfo] = {

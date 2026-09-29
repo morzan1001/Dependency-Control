@@ -660,3 +660,16 @@ class TestRankedListsSayHowManyWereRankedOut:
         result = detect_toxic_dependencies(findings, [])
 
         assert [(r.rank, r.ranked_out_of) for r in result] == [(0, 0)]
+
+
+class TestHotspotRiskScoreScale:
+    def test_an_unenriched_finding_counts_on_the_enriched_0_to_100_scale(self):
+        findings = [
+            _vuln("pkg", "CRITICAL", finding_id="CVE-2024-001"),
+            _vuln("pkg", "HIGH", finding_id="CVE-2024-002"),
+            _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
+            _vuln("pkg", "UNKNOWN", finding_id="CVE-2024-004"),
+        ]
+        [hotspot] = detect_critical_hotspots(findings, [])
+        # 40 + 30 + 16, plus the 20 calculate_risk_score assumes for a CVE without a CVSS score.
+        assert hotspot.impact["risk_score"] == 106.0

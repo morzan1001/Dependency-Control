@@ -11,6 +11,7 @@ from app.core.constants import (
     ANALYZER_TIMEOUTS,
     OSV_BATCH_API_URL,
     OSV_VULN_API_URL,
+    get_severity_value,
 )
 from app.core.cvss import cvss_base_score
 from app.core.http_utils import InstrumentedAsyncClient
@@ -526,24 +527,7 @@ class OSVAnalyzer(Analyzer):
         return value if math.isfinite(value) else None
 
     def _get_highest_severity(self, vulns: list[dict[str, Any]]) -> str:
-        """Get the highest severity from a list of vulnerabilities."""
-        if not vulns:
-            return Severity.INFO.value
-
-        severity_order = [
-            Severity.CRITICAL.value,
-            Severity.HIGH.value,
-            Severity.MEDIUM.value,
-            Severity.LOW.value,
-            Severity.INFO.value,
-        ]
-
-        for sev in severity_order:
-            for vuln in vulns:
-                if vuln.get("severity") == sev:
-                    return sev
-
-        return Severity.UNKNOWN.value
+        return max((vuln["severity"] for vuln in vulns), key=get_severity_value, default=Severity.INFO.value)
 
     def _create_summary_message(self, component: str, version: str, vulns: list[dict[str, Any]]) -> str:
         """Create a summary message for the component's vulnerabilities."""

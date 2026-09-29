@@ -1,21 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from app.models.finding import Severity
-
 from .purl_utils import normalize_hash_algorithm
-
-
-def map_vendor_severity(raw_severity: str | None) -> str:
-    """Map a vendor severity label to the internal Severity enum; unknown labels fall back to MEDIUM."""
-    return {
-        "CRITICAL": Severity.CRITICAL.value,
-        "HIGH": Severity.HIGH.value,
-        "MEDIUM": Severity.MEDIUM.value,
-        "LOW": Severity.LOW.value,
-        "NEGLIGIBLE": Severity.INFO.value,
-        "UNKNOWN": Severity.INFO.value,
-    }.get((raw_severity or "").upper(), Severity.MEDIUM.value)
 
 
 class Analyzer(ABC):

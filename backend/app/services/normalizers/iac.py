@@ -1,6 +1,5 @@
 from typing import TYPE_CHECKING, Any
 
-from app.core.constants import KICS_SEVERITY_MAP
 from app.models.finding import Finding, FindingType
 from app.schemas.finding_details import IacDetails, LineSpan
 from app.services.normalizers.utils import (
@@ -76,8 +75,7 @@ def normalize_kics(aggregator: "ResultAggregator", result: dict[str, Any], sourc
         return
 
     for query in queries:
-        sev_str = (query.get("severity") or "INFO").upper()
-        severity = safe_severity(KICS_SEVERITY_MAP.get(sev_str, sev_str))
+        severity = safe_severity(query.get("severity") or "INFO")
 
         for f in query.get("files") or []:
             _process_kics_file(aggregator, f, query, severity, source)

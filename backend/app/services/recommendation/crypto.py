@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 
+from app.core.constants import get_severity_value
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import ModelOrDict, get_attr, sampled
 
@@ -118,7 +119,7 @@ def _build_recommendation(
         return None
 
     severities = [str(get_attr(f, "severity", "UNKNOWN")) for f in findings]
-    top_severity = _highest_severity(severities)
+    top_severity = max(severities, key=get_severity_value)
     priority = _SEVERITY_TO_PRIORITY.get(top_severity, Priority.MEDIUM)
     effort = _TYPE_TO_EFFORT.get(finding_type, Effort.MEDIUM)
 
@@ -245,14 +246,6 @@ def _suggested_replacement(finding_type: str, asset_name: str, findings: list[Mo
     if finding_type == "crypto_quantum_vulnerable":
         return "Per /api/v1/analytics/crypto/pqc-migration plan output"
     return None
-
-
-def _highest_severity(severities: list[str]) -> str:
-    order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
-    for s in order:
-        if s in severities:
-            return s
-    return "UNKNOWN"
 
 
 def _bom_ref(finding: ModelOrDict) -> str | None:

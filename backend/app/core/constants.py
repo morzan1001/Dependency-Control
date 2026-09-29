@@ -3,22 +3,16 @@
 import re
 from typing import Any, Literal, get_args
 
+from app.models.finding import Severity
+
 # Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
 # finding's ``details`` dict by the enrichment writer. Every reader of persisted
 # finding details MUST use these exact keys.
 DETAILS_KEY_IN_KEV = "in_kev"
 DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
 
-# Severity order for sorting (higher value = more severe)
-SEVERITY_ORDER: dict[str, int] = {
-    "CRITICAL": 5,
-    "HIGH": 4,
-    "MEDIUM": 3,
-    "LOW": 2,
-    "NEGLIGIBLE": 1,
-    "INFO": 0,
-    "UNKNOWN": 0,
-}
+# Higher = more severe, in Severity's declaration order; UNKNOWN (0) also ranks any unrecognised label.
+SEVERITY_ORDER: dict[str, int] = {level.value: rank for rank, level in enumerate(reversed(Severity))}
 
 
 def get_severity_value(severity: str | None) -> int:
@@ -232,8 +226,8 @@ API_KEY_SURFACE_MCP: ApiKeySurface = "mcp"
 API_KEY_SURFACE_ADHOC: ApiKeySurface = "adhoc"
 API_KEY_SURFACES: frozenset[str] = frozenset(get_args(ApiKeySurface))
 
-# Weights for calculating risk scores
-SEVERITY_WEIGHTS: dict[str, float] = {
+# Per-finding base of the impact pre-score, before reach and threat-intel boosts.
+IMPACT_SEVERITY_WEIGHTS: dict[str, float] = {
     "CRITICAL": 10.0,
     "HIGH": 7.0,
     "MEDIUM": 4.0,
@@ -242,13 +236,6 @@ SEVERITY_WEIGHTS: dict[str, float] = {
     # Not yet rated rather than harmless: the KEV/EPSS boosts multiply this base.
     "UNKNOWN": 4.0,
 }
-
-
-def get_severity_weight(severity: str | None) -> float:
-    """Get risk weight for a severity level (case-insensitive)."""
-    if not severity:
-        return 0.0
-    return SEVERITY_WEIGHTS.get(severity.upper(), 0.0)
 
 
 # Common patterns for development dependencies
@@ -717,28 +704,9 @@ SEVERITY_ALIASES: dict[str, str] = {
     "TRACE": "INFO",
 }
 
-# KICS (IaC scanner) severity mapping - only non-identity mappings needed
-# Standard severities (HIGH, MEDIUM, LOW, INFO) pass through via safe_severity()
-KICS_SEVERITY_MAP: dict[str, str] = {
-    "TRACE": "INFO",
-}
-
-# OpenGrep/Semgrep (SAST scanner) severity mapping
-OPENGREP_SEVERITY_MAP: dict[str, str] = {
-    "ERROR": "HIGH",
-    "WARNING": "MEDIUM",
-    "INFO": "LOW",
-}
-
-# Bearer (SAST scanner) severity mapping
-BEARER_SEVERITY_MAP: dict[str, str] = {
-    "critical": "CRITICAL",
-    "high": "HIGH",
-    "medium": "MEDIUM",
-    "low": "LOW",
-    "warning": "LOW",
-    "info": "INFO",
-}
+# Scanner-specific overrides applied before safe_severity and SEVERITY_ALIASES.
+OPENGREP_SEVERITY_MAP: dict[str, str] = {"INFO": "LOW"}
+BEARER_SEVERITY_MAP: dict[str, str] = {"warning": "LOW"}
 
 # Notification channel identifiers
 NOTIFICATION_CHANNEL_EMAIL = "email"
@@ -1044,7 +1012,8 @@ CVSS_SEVERITY_SCORES: dict[str, float] = {
     "MEDIUM": 4.0,
     "LOW": 1.0,
     "INFO": 0.0,
-    "UNKNOWN": 0.0,
+    # The midpoint calculate_risk_score assumes for a CVE without a CVSS score.
+    "UNKNOWN": 5.0,
 }
 
 # Per-severity fallback risk score (0-100) for findings without EPSS/KEV enrichment.
@@ -1053,7 +1022,7 @@ CVSS_SEVERITY_SCORES: dict[str, float] = {
 SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
     sev: round((cvss / 10.0) * 40.0, 1) for sev, cvss in CVSS_SEVERITY_SCORES.items()
 }
-# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, INFO/UNKNOWN=0.0
+# Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, INFO=0.0, UNKNOWN=20.0
 
 # GitLab JWKS cache TTLs (in seconds)
 GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour

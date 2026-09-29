@@ -5,7 +5,7 @@ from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     EPSS_HIGH_THRESHOLD,
     SCORECARD_LOW_THRESHOLD,
-    get_severity_weight,
+    SEVERITY_CALCULATED_RISK_SCORES,
 )
 from app.schemas.recommendation import (
     PackageHotspot,
@@ -119,7 +119,7 @@ def _record_vulnerability(pkg_data: dict[str, Any], f: ModelOrDict, severity: st
     if get_attr(f, "reachable") is True:
         pkg_data["reachable_count"] += 1
     risk_score = details_dict.get("risk_score", 0)
-    pkg_data["total_risk_score"] += risk_score or get_severity_weight(severity)
+    pkg_data["total_risk_score"] += risk_score or SEVERITY_CALCULATED_RISK_SCORES.get(severity, 0.0)
 
 
 _FINDING_TYPE_BUCKETS = {

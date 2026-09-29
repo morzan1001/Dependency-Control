@@ -25,13 +25,13 @@ from app.core.constants import (
     IMPACT_FIX_AVAILABLE_BOOST,
     IMPACT_MAX_SCORE_BOOST,
     IMPACT_REACH_MULTIPLIER_CAP,
+    IMPACT_SEVERITY_WEIGHTS,
     KEV_DEFAULT_BOOST,
     KEV_DUE_SOON_BOOST,
     KEV_DUE_SOON_DAYS,
     KEV_OVERDUE_BOOST,
     KEV_RANSOMWARE_BOOST,
     RELEASE_ENVIRONMENT_PATTERN,
-    SEVERITY_WEIGHTS,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
@@ -265,7 +265,7 @@ def impact_pre_score(severity_counts: dict[str, int], affected_projects: int) ->
     # severity_counts may use lowercase or original-case keys
     severity_score = sum(
         severity_counts.get(sev.lower(), severity_counts.get(sev, 0)) * weight
-        for sev, weight in SEVERITY_WEIGHTS.items()
+        for sev, weight in IMPACT_SEVERITY_WEIGHTS.items()
     )
     reach_multiplier = min(affected_projects, IMPACT_REACH_MULTIPLIER_CAP)
     return float(severity_score * reach_multiplier)

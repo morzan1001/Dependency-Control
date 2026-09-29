@@ -40,16 +40,6 @@ FINDINGS_COLUMNS = [
     "cve_aliases",
 ]
 
-_SEVERITY_ORDER = [
-    Severity.CRITICAL,
-    Severity.HIGH,
-    Severity.MEDIUM,
-    Severity.LOW,
-    Severity.NEGLIGIBLE,
-    Severity.INFO,
-    Severity.UNKNOWN,
-]
-
 # Findings carry no top-level purl/direct; those come from the dependencies join below.
 # `details.purl` is the license normalizer's nesting spot, used as a fallback.
 _PROJECTION = {
@@ -136,8 +126,8 @@ async def iter_findings_rows(db: AsyncIOMotorDatabase, scans: list[Scan]) -> Asy
     findings = FindingRepository(db)
     for scan in scans:
         dep_lookup = await _dependency_lookup(db, scan)
-        # One query per severity bucket keeps streaming order without an in-memory sort.
-        for severity in _SEVERITY_ORDER:
+        # One query per severity, most severe first, keeps streaming order without an in-memory sort.
+        for severity in Severity:
             query = {"scan_id": scan.id, "severity": severity.value}
             async for doc in findings.iterate_raw(query, _PROJECTION, [("type", 1), ("finding_id", 1)]):
                 yield _row(scan, doc, dep_lookup)

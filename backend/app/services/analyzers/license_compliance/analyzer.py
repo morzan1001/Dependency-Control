@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.constants import get_severity_value
 from app.models.license import (
     DeploymentModel,
     DistributionModel,
@@ -17,7 +18,6 @@ from . import compatibility, evaluator, normalizer
 from .constants import (
     CATEGORY_STAT_KEY,
     LICENSE_DATABASE,
-    SEVERITY_RANK,
 )
 
 
@@ -263,7 +263,8 @@ class LicenseAnalyzer(Analyzer):
                     purl=comp_purl,
                     policy=policy,
                 )
-                evaluated.append((SEVERITY_RANK[issue["severity"] if issue else None], issue))
+                # No issue ranks below every severity, INFO included.
+                evaluated.append((get_severity_value(issue["severity"]) if issue else -1, issue))
             worst_rank, worst_issue = max(evaluated, key=lambda pair: pair[0])
             candidates.append((worst_rank, and_group, worst_issue))
 
