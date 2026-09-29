@@ -304,8 +304,6 @@ class TestCaseInsensitiveEmails:
 
     @pytest.mark.asyncio
     async def test_a_returning_sso_user_whose_provider_capitalises_the_domain_keeps_their_account(self, db):
-        """The stored address has its domain lowercased; an exact lookup missed it and the second
-        login tried to create the account again, which the unique email index refused with a 500."""
         await _oidc_login(db, email="Max.Mustermann@REWE-Digital.COM", preferred_username="max")
         await _oidc_login(db, email="Max.Mustermann@REWE-Digital.COM", preferred_username="max")
 

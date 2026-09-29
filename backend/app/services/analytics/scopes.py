@@ -43,11 +43,7 @@ def scope_probe_limit() -> int:
 
 
 async def project_ids_matching(db: AsyncIOMotorDatabase, query: dict[str, Any]) -> list[str]:
-    """Every project id the access query admits, under the ceiling every scope shares.
-
-    Shared rather than restated: two spellings of one access rule drift, and the half that
-    drifts is invisible until someone is shown a project the other spelling would have hidden.
-    """
+    """Every project id the access query admits, under the ceiling every scope shares."""
     cursor = db.projects.find(query, {"_id": 1}).limit(scope_probe_limit())
     return [str(d["_id"]) for d in ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))]
 

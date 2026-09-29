@@ -776,7 +776,6 @@ async def forgot_password(
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
 
-    # Skip OIDC users without a local password.
     if user and user.get("is_active", True) and is_local_account(user):
         await send_password_reset_email(
             background_tasks,

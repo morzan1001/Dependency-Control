@@ -232,7 +232,6 @@ class TestGetLatestActiveScanIds:
         assert result == {}
 
     def test_a_pointer_less_project_costs_one_index_seek_rather_than_a_sort_of_its_history(self):
-        """The rank-first aggregation fetched and sorted every usable scan the project ever held."""
         history = [_scan(f"old-{index}", "p5", "main", index + 2) for index in range(20)]
         result, reads = asyncio.run(
             _resolve(

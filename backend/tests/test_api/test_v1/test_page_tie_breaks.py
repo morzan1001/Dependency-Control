@@ -78,7 +78,7 @@ async def test_a_paged_find_breaks_ties_on_the_id(method):
         ("status", "asc", {"status": 1, "created_at": -1, "_id": 1}),
         ("branch", "desc", {"branch": -1, "created_at": 1}),
         ("pipeline_iid", "asc", {"pipeline_iid": 1, "created_at": -1, "_id": 1}),
-        # The dashboard's recent-scans call; {created_at: -1} serves it and stops after the page.
+        # created_at alone, so the {created_at: -1} index serves the sort and stops after the page.
         ("created_at", "desc", {"created_at": -1}),
     ],
 )
