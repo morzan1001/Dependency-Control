@@ -1,9 +1,11 @@
 """Saturating severity-weighted risk score for scan stats and the projects dashboard fallback, plus
-the actionable/deprioritized predicates scan stats, recommendations and secret scoring must agree on."""
+the classifications (exploit maturity, actionable/deprioritized) that stats, enrichment,
+recommendations, chat and secret scoring must agree on."""
 
 from typing import Any
 
 from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD
+from app.core.epss import bucket_epss
 
 # Relative weight per finding: 1 CRITICAL = 5 HIGH = 20 MEDIUM = 80 LOW; INFO/UNKNOWN/NEGLIGIBLE carry none.
 RISK_SEVERITY_WEIGHTS: dict[str, float] = {
@@ -57,6 +59,21 @@ def risk_score_expr(count_paths: dict[str, str]) -> dict[str, Any]:
             1,
         ]
     }
+
+
+# details.exploit_maturity values meaning actively exploited in the wild (KEV-listed).
+ACTIVELY_EXPLOITED_MATURITY = ("active", "weaponized")
+
+
+def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: float | None) -> str:
+    """Maturity level: weaponized > active > high/medium/low (EPSS) > unknown."""
+    if kev_ransomware:
+        return "weaponized"
+    if is_kev:
+        return "active"
+    if epss_score is not None:
+        return bucket_epss(epss_score)
+    return "unknown"
 
 
 def is_actionable_vulnerability(*, epss_score: float | None, is_kev: bool, reachable: bool | None) -> bool:

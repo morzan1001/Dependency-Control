@@ -6,21 +6,9 @@ from app.core.constants import (
     EXPLOIT_MATURITY_ORDER,
     SEVERITY_CALCULATED_RISK_SCORES,
 )
-from app.core.epss import bucket_epss
 from app.core.risk_scoring import is_deprioritized_secret
 from app.models.finding import Severity
 from app.schemas.enrichment import VulnerabilityEnrichment
-
-
-def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: float | None) -> str:
-    """Maturity level: weaponized > active > high/medium/low (EPSS) > unknown."""
-    if kev_ransomware:
-        return "weaponized"
-    if is_kev:
-        return "active"
-    if epss_score is not None:
-        return bucket_epss(epss_score)
-    return "unknown"
 
 
 def fold_enrichments(enrichments: Iterable[VulnerabilityEnrichment]) -> VulnerabilityEnrichment | None:

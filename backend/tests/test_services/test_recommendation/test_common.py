@@ -269,11 +269,6 @@ class TestCalculateScore:
                 id="medium_epss",
             ),
             pytest.param(
-                _impact(total=1, active_exploitation_count=1),
-                _impact(total=1, active_exploitation_count=0),
-                id="active_exploitation",
-            ),
-            pytest.param(
                 _impact(total=1, reachable_count=2, reachable_critical=1, reachable_high=1),
                 _impact(total=1, reachable_count=0),
                 id="reachability",
@@ -284,7 +279,7 @@ class TestCalculateScore:
                 id="actionable",
             ),
             pytest.param(
-                _impact(critical=1, total=1, kev_count=1, high_epss_count=1, active_exploitation_count=1),
+                _impact(critical=1, total=1, kev_count=1, high_epss_count=1),
                 _impact(critical=1, total=1, kev_count=1),
                 id="combined_threat_intel",
             ),

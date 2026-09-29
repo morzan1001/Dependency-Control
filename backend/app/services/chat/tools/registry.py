@@ -25,6 +25,7 @@ from app.core.constants import (
 from app.core.cve import canonical_cve
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
+from app.core.risk_scoring import ACTIVELY_EXPLOITED_MATURITY
 from app.models.finding import FindingType, Severity
 from app.models.project import Project
 from app.models.user import User
@@ -42,7 +43,6 @@ from app.services.reachability_enrichment import reachability_display_tier
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
     _SEVERITY_RANK,
-    KEV_EQUIVALENT_MATURITY,
     MAX_DAY_WINDOW,
     MAX_FINDING_ROWS,
     MAX_PLAN_STEPS,
@@ -1014,7 +1014,7 @@ class ChatToolRegistry:
         fix = details.get("fixed_version")
 
         reasons = []
-        if maturity in KEV_EQUIVALENT_MATURITY:
+        if maturity in ACTIVELY_EXPLOITED_MATURITY:
             return {
                 "suggested_reason": (
                     "NOT RECOMMENDED TO WAIVE. This vulnerability has exploit_maturity="
@@ -1092,7 +1092,7 @@ class ChatToolRegistry:
             ctx.db,
             {
                 "scan_id": {"$in": list(latest.values())},
-                "details.exploit_maturity": {"$in": list(KEV_EQUIVALENT_MATURITY)},
+                "details.exploit_maturity": {"$in": list(ACTIVELY_EXPLOITED_MATURITY)},
                 "waived": {"$ne": True},
             },
             limit,
@@ -1218,7 +1218,7 @@ class ChatToolRegistry:
             "epss_score": vuln.get("epss_score") or details.get("epss_score"),
             "epss_percentile": details.get("epss_percentile"),
             "exploit_maturity": details.get("exploit_maturity"),
-            "actively_exploited": details.get("exploit_maturity") in KEV_EQUIVALENT_MATURITY,
+            "actively_exploited": details.get("exploit_maturity") in ACTIVELY_EXPLOITED_MATURITY,
             "description": _clip_value(vuln.get("description") or ""),
             "fixed_version": vuln.get("fixed_version"),
             "references": (vuln.get("references") or [])[:5],

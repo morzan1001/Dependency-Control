@@ -6,12 +6,14 @@ class ThreatIntelligenceStats(BaseModel):
 
     kev_count: int = Field(0, description="Count of findings in CISA KEV catalog")
     kev_ransomware_count: int = Field(0, description="Count of KEV findings with known ransomware use")
-    high_epss_count: int = Field(0, description="Count of findings with EPSS > 10%")
-    medium_epss_count: int = Field(0, description="Count of findings with EPSS 1-10%")
+    high_epss_count: int = Field(0, description="Count of findings with EPSS >= 10%")
+    medium_epss_count: int = Field(0, description="Count of findings with EPSS >= 1% and below 10%")
     avg_epss_score: float | None = Field(None, description="Average EPSS score")
     max_epss_score: float | None = Field(None, description="Maximum EPSS score")
-    weaponized_count: int = Field(0, description="Count of weaponized vulnerabilities")
-    active_exploitation_count: int = Field(0, description="Count of actively exploited vulnerabilities")
+    weaponized_count: int = Field(0, description="Count of findings with exploit maturity weaponized (KEV ransomware)")
+    active_exploitation_count: int = Field(
+        0, description="Count of findings with exploit maturity active or weaponized (KEV-listed)"
+    )
 
 
 class ReachabilityStats(BaseModel):

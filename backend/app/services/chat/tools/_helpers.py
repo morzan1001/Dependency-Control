@@ -37,9 +37,6 @@ MAX_SUMMARY_ROWS = 50
 MAX_PLAN_STEPS = 25
 MAX_DAY_WINDOW = 365
 
-# details.exploit_maturity values meaning actively exploited in the wild.
-KEV_EQUIVALENT_MATURITY = ("active", "weaponized")
-
 _FINDING_TOPLEVEL_FIELDS = (
     "finding_id",
     "severity",

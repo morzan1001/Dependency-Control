@@ -273,7 +273,6 @@ _KEV_BONUS = RECOMMENDATION_SCORING_WEIGHTS["kev_bonus"]
 _KEV_RANSOMWARE_BONUS = RECOMMENDATION_SCORING_WEIGHTS["kev_ransomware_bonus"]
 _HIGH_EPSS_BONUS = RECOMMENDATION_SCORING_WEIGHTS["high_epss_bonus"]
 _MEDIUM_EPSS_BONUS = RECOMMENDATION_SCORING_WEIGHTS["medium_epss_bonus"]
-_ACTIVE_EXPLOIT_BONUS = RECOMMENDATION_SCORING_WEIGHTS["active_exploitation_bonus"]
 _REACH_CRITICAL_BONUS = REACHABILITY_SCORING_WEIGHTS["critical_bonus"]
 _REACH_HIGH_BONUS = REACHABILITY_SCORING_WEIGHTS["high_bonus"]
 _REACH_OTHER_BONUS = REACHABILITY_SCORING_WEIGHTS["other_bonus"]
@@ -312,10 +311,6 @@ def calculate_score(rec: Recommendation) -> int:
     medium_epss_count = impact.get("medium_epss_count", 0)
     if medium_epss_count > 0:
         threat_intel_score += medium_epss_count * _MEDIUM_EPSS_BONUS
-
-    active_exploitation = impact.get("active_exploitation_count", 0)
-    if active_exploitation > 0:
-        threat_intel_score += active_exploitation * _ACTIVE_EXPLOIT_BONUS
 
     reachability_modifier = 1.0
 

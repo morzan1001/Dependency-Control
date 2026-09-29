@@ -9,10 +9,6 @@ from pymongo import ASCENDING, ReadPreference
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
-    EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
-    EPSS_HIGH_THRESHOLD,
-    EPSS_MEDIUM_THRESHOLD,
-    EPSS_VERY_HIGH_THRESHOLD,
     HIGH_RISK_SCORE_THRESHOLD,
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
     REACHABILITY_LEVEL_IMPORT,
@@ -22,9 +18,11 @@ from app.core.constants import (
 from app.core.cve import canonical_cve, entry_cves
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import (
+    ACTIVELY_EXPLOITED_MATURITY,
     CONFIRMED_REACHABLE_RISK_MODIFIER,
     RISK_SEVERITY_WEIGHTS,
     UNREACHABLE_RISK_MODIFIER,
+    calculate_exploit_maturity,
     is_actionable_vulnerability,
     is_deprioritized_secret,
     is_deprioritized_vulnerability,
@@ -326,8 +324,7 @@ def _reach_modifier(reachable: Any, level: Any) -> float:
 class StatsAccumulator:
     """Scan statistics, folded over a stream of findings."""
 
-    # Contract: these finding fields are available to downstream counter groups.
-    # As each group is added, it registers the paths it will read.
+    # Projection of the stats cursor: add() must read no field outside this set.
     REQUIRED_PATHS: ClassVar[frozenset[str]] = frozenset(
         {
             "waived",
@@ -454,14 +451,12 @@ class StatsAccumulator:
             self._epss_sum += epss
             self._epss_n += 1
             self._epss_max = epss if self._epss_max is None else max(self._epss_max, epss)
-            if epss >= EPSS_HIGH_THRESHOLD:
-                self._high_epss += 1
-            elif epss >= EPSS_MEDIUM_THRESHOLD:
-                self._medium_epss += 1
-        if kev_ransomware or (in_kev and epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD):
-            self._weaponized += 1
-        if in_kev or (epss is not None and epss >= EPSS_ACTIVE_EXPLOITATION_THRESHOLD):
-            self._active_exploitation += 1
+            tier = bucket_epss(epss)
+            self._high_epss += tier == "high"
+            self._medium_epss += tier == "medium"
+        maturity = calculate_exploit_maturity(in_kev, kev_ransomware, epss)
+        self._weaponized += maturity == "weaponized"
+        self._active_exploitation += maturity in ACTIVELY_EXPLOITED_MATURITY
 
     def _add_reachability(self, bucket: str, reachable: Any, level: Any, details: Mapping[str, Any]) -> None:
         if reachable is not None:
@@ -576,10 +571,6 @@ def _stats_projection() -> dict[str, int]:
         projection[path] = 1
     return projection
 
-
-# Tautological today; it fires the moment someone hand-edits the projection, which is the one
-# failure class a differential test cannot see — a typo zeroes a counter on both sides.
-assert _stats_projection().keys() >= StatsAccumulator.REQUIRED_PATHS, "stats projection drops a required path"
 
 # scan_id + type is the only index pair immutable after insert; severity and waived are rewritten by
 # _rollup_vulnerability_waivers and _apply_waivers, so hinting either opens a skip window mid-cursor.

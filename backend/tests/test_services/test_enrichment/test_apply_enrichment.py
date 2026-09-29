@@ -6,8 +6,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.constants import EXPLOIT_MATURITY_ORDER
+from app.core.risk_scoring import calculate_exploit_maturity
 from app.schemas.enrichment import GHSAData, VulnerabilityEnrichment
-from app.services.enrichment.scoring import calculate_exploit_maturity, fold_enrichments
+from app.services.enrichment.scoring import fold_enrichments
 from app.services.enrichment.service import VulnerabilityEnrichmentService, apply_enrichments
 
 

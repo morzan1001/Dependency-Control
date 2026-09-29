@@ -11,17 +11,14 @@ from app.core.constants import (
 )
 from app.core.cve import entry_cves
 from app.core.http_utils import InstrumentedAsyncClient
+from app.core.risk_scoring import calculate_exploit_maturity
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry, VulnerabilityEnrichment
 from app.services.aggregation.merging import dedupe_vulnerability_entries
 from app.services.aggregation.versions import aggregate_fixed_version
 from app.services.enrichment.epss import EPSSProvider
 from app.services.enrichment.ghsa import GHSAProvider
 from app.services.enrichment.kev import KEVProvider
-from app.services.enrichment.scoring import (
-    calculate_exploit_maturity,
-    calculate_risk_score,
-    fold_enrichments,
-)
+from app.services.enrichment.scoring import calculate_risk_score, fold_enrichments
 
 logger = logging.getLogger(__name__)
 

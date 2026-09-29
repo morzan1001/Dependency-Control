@@ -9,11 +9,11 @@ Database = AsyncIOMotorDatabase
 
 
 class EPSSScoreCounts(TypedDict):
-    """Counts of findings by EPSS score range."""
+    """Counts of findings per bucket_epss bucket."""
 
-    high: int  # > 0.1 (10%)
-    medium: int  # 0.01 - 0.1 (1-10%)
-    low: int  # < 0.01 (< 1%)
+    high: int
+    medium: int
+    low: int
 
 
 class ExploitMaturityCounts(TypedDict):

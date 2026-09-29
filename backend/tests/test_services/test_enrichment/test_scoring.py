@@ -2,10 +2,10 @@
 
 import pytest
 
+from app.core.risk_scoring import calculate_exploit_maturity
 from app.models.finding import Severity
 from app.services.enrichment.scoring import (
     calculate_adjusted_risk_score,
-    calculate_exploit_maturity,
     calculate_risk_score,
     calculate_secret_risk_score,
     calculate_secret_severity,

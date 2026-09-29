@@ -8,7 +8,6 @@ import pytest
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
-    EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
     EPSS_HIGH_THRESHOLD,
     EPSS_MEDIUM_THRESHOLD,
     EPSS_VERY_HIGH_THRESHOLD,
@@ -16,12 +15,15 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_SYMBOL,
 )
+from app.schemas.enrichment import EPSSData, KEVEntry
 from app.services.analysis.stats import (
     StatsAccumulator,
     _stats_projection,
+    build_epss_kev_summary,
     calculate_comprehensive_stats,
     compute_stats,
 )
+from app.services.enrichment.service import _build_enrichment, apply_enrichments
 from app.services.reachability_enrichment import ComponentLanguages, component_language_map
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -33,6 +35,29 @@ _UNREACHABLE_CRITICAL_SCORE = 3.1
 
 def _finding(ftype="vulnerability", severity="HIGH", **details):
     return {"type": ftype, "severity": severity, "component": "pkg", "details": dict(details), "waived": False}
+
+
+def _enriched(cve, *, kev=False, ransomware=False, epss=None):
+    """A vulnerability finding as the enrichment writer leaves it."""
+    kev_entry = (
+        KEVEntry(
+            cve=cve,
+            vendor_project="v",
+            product="p",
+            vulnerability_name="n",
+            date_added="2024-01-01",
+            short_description="d",
+            required_action="patch",
+            due_date="2024-02-01",
+            known_ransomware_use=ransomware,
+        )
+        if kev
+        else None
+    )
+    epss_entry = EPSSData(cve=cve, epss_score=epss, percentile=0.9, date="2024-01-01") if epss is not None else None
+    finding = _finding(vulnerabilities=[{"id": cve, "severity": "HIGH"}])
+    apply_enrichments(finding["details"], {cve: _build_enrichment(cve, kev_entry, epss_entry)})
+    return finding
 
 
 class TestVulnerabilityGate:
@@ -162,13 +187,6 @@ class TestThreatIntelBoundaries:
         t = compute_stats([_finding(epss_score=EPSS_HIGH_THRESHOLD)], {}).threat_intel
         assert (t.high_epss_count, t.medium_epss_count) == (1, 0)
 
-    def test_weaponized_needs_kev_alongside_very_high_epss(self):
-        assert compute_stats([_finding(epss_score=0.9)], {}).threat_intel.weaponized_count == 0
-        assert (
-            compute_stats([_finding(epss_score=0.9, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel.weaponized_count
-            == 1
-        )
-
     def test_ransomware_alone_is_weaponized(self):
         t = compute_stats([_finding(**{DETAILS_KEY_KEV_RANSOMWARE: True})], {}).threat_intel
         assert t.weaponized_count == 1
@@ -190,33 +208,27 @@ class TestThreatIntelBoundaries:
         assert t.medium_epss_count == 1
         assert t.high_epss_count == 0
 
-    def test_very_high_epss_threshold_is_inclusive_for_weaponized(self):
-        """Boundary: EPSS_VERY_HIGH_THRESHOLD is inclusive for weaponized (with KEV)."""
-        kev = {DETAILS_KEY_IN_KEV: True}
-        t = compute_stats([_finding(epss_score=EPSS_VERY_HIGH_THRESHOLD, **kev)], {}).threat_intel
-        assert t.weaponized_count == 1
+    def test_epss_alone_never_counts_as_exploited(self):
+        t = compute_stats([_finding(epss_score=1.0)], {}).threat_intel
+        assert (t.weaponized_count, t.active_exploitation_count) == (0, 0)
 
-    def test_active_exploitation_threshold_is_inclusive_at_the_boundary(self):
-        """Boundary: EPSS_ACTIVE_EXPLOITATION_THRESHOLD is inclusive."""
-        t = compute_stats([_finding(epss_score=EPSS_ACTIVE_EXPLOITATION_THRESHOLD)], {}).threat_intel
-        assert t.active_exploitation_count == 1
+    def test_kev_with_very_high_epss_is_active_not_weaponized(self):
+        t = compute_stats([_finding(epss_score=1.0, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
+        assert (t.weaponized_count, t.active_exploitation_count) == (0, 1)
 
-    def test_very_high_epss_with_kev_below_threshold_does_not_weaponize(self):
-        """Constant swap guard: KEV + EPSS between HIGH and VERY_HIGH thresholds must not weaponize."""
-        kev = {DETAILS_KEY_IN_KEV: True}
-        t = compute_stats([_finding(epss_score=EPSS_HIGH_THRESHOLD, **kev)], {}).threat_intel
-        assert t.weaponized_count == 0
-
-    def test_very_high_epss_threshold_without_kev_does_not_weaponize(self):
-        """Conjunct guard: EPSS_VERY_HIGH_THRESHOLD without KEV does not count."""
-        t = compute_stats([_finding(epss_score=EPSS_VERY_HIGH_THRESHOLD)], {}).threat_intel
-        assert t.weaponized_count == 0
-
-    def test_below_active_exploitation_threshold_does_not_activate(self):
-        """Below active: EPSS just below EPSS_ACTIVE_EXPLOITATION_THRESHOLD does not count."""
-        below = EPSS_ACTIVE_EXPLOITATION_THRESHOLD - 0.01
-        t = compute_stats([_finding(epss_score=below)], {}).threat_intel
-        assert t.active_exploitation_count == 0
+    def test_stats_count_exploitation_as_the_findings_own_maturity_does(self):
+        """The scan stats and the raw EPSS/KEV view of one scan name the same findings weaponized and active."""
+        findings = [
+            _enriched("CVE-2021-0001", kev=True, epss=0.6),
+            _enriched("CVE-2021-0002", epss=0.8),
+            _enriched("CVE-2021-0003", kev=True, ransomware=True, epss=0.2),
+            _enriched("CVE-2021-0004", epss=0.5),
+            _enriched("CVE-2021-0005", kev=True),
+        ]
+        maturity = build_epss_kev_summary(findings)["exploit_maturity"]
+        t = compute_stats(findings, {}).threat_intel
+        assert t.weaponized_count == maturity["weaponized"] == 1
+        assert t.active_exploitation_count == maturity["weaponized"] + maturity["active"] == 3
 
 
 class TestReachabilityTriState:
@@ -450,7 +462,7 @@ def _oracle_documents() -> list[dict[str, Any]]:
             "reachable": True,
             "reachability_level": REACHABILITY_LEVEL_IMPORT,
             "details": {
-                "epss_score": EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
+                "epss_score": EPSS_HIGH_THRESHOLD,
                 DETAILS_KEY_IN_KEV: True,
                 DETAILS_KEY_KEV_RANSOMWARE: False,
                 "reachability": {"confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD},
