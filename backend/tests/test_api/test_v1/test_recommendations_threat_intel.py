@@ -6,6 +6,8 @@ from unittest.mock import patch
 
 from app.api.v1.endpoints.analytics.recommendations import _apply_live_threat_intel
 from app.schemas.enrichment import VulnerabilityEnrichment
+from app.schemas.recommendation import RecommendationType
+from app.services.recommendation.incidents import detect_known_exploits
 
 
 def _live(cve: str, **fields) -> VulnerabilityEnrichment:
@@ -95,3 +97,27 @@ class TestApplyLiveThreatIntel:
 
         with patch(f"{MODULE}.get_cve_enrichment", new=_down):
             assert asyncio.run(_apply_live_threat_intel([f])) == {}
+
+
+class TestRefreshedCards:
+    def test_a_cve_listed_after_the_scan_leaves_the_epss_card_for_the_ransomware_card(self):
+        f = _finding({"vulnerabilities": [{"id": "CVE-2021-44228", "epss_score": 0.8}]})
+        live = _run([f], {"CVE-2021-44228": _live("CVE-2021-44228", is_kev=True, kev_ransomware_use=True)})
+
+        cards = {r.type for r in detect_known_exploits([f], live)}
+
+        assert RecommendationType.RANSOMWARE_RISK in cards
+        assert RecommendationType.ACTIVELY_EXPLOITED not in cards
+
+    def test_a_waived_advisory_is_not_refreshed(self):
+        f = _finding({"vulnerabilities": [{"id": "CVE-1", "waived": True}, {"id": "CVE-2"}]})
+        requested: list[str] = []
+
+        async def _fake(cves):
+            requested.extend(cves)
+            return {}
+
+        with patch(f"{MODULE}.get_cve_enrichment", new=_fake):
+            asyncio.run(_apply_live_threat_intel([f]))
+
+        assert requested == ["CVE-2"]
