@@ -1,5 +1,6 @@
 """Raw results: one row per scan, analyzer and source, replaced on resubmission, refused with a 413 when too large."""
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -136,20 +137,37 @@ async def test_a_retried_scanner_job_replaces_the_result_of_the_first_attempt(cl
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_resubmission_replaces_a_row_stored_without_a_source(db):
-    await db.analysis_results.insert_one(
-        {
-            "_id": "legacy-row",
-            "scan_id": "scan-1",
-            "analyzer_name": "kics",
-            "result": {"queries": [_KICS_QUERY]},
-            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
-        }
+async def test_a_resubmission_replaces_every_row_stored_without_a_source(db):
+    # the append-only writer left one row per CI attempt
+    await db.analysis_results.insert_many(
+        [
+            {
+                "_id": f"legacy-row-{attempt}",
+                "scan_id": "scan-1",
+                "analyzer_name": "kics",
+                "result": {"queries": [_KICS_QUERY]},
+                "created_at": datetime(2026, 1, attempt, tzinfo=timezone.utc),
+            }
+            for attempt in (1, 2)
+        ]
     )
 
     await AnalysisResultRepository(db).save_result("scan-1", "kics", {"queries": []})
 
-    assert [(row["_id"], row["result"]) for row in await _rows(db, "scan-1")] == [("legacy-row", {"queries": []})]
+    assert [row["result"] for row in await _rows(db, "scan-1")] == [{"queries": []}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_concurrent_first_writes_of_one_scanner_leave_a_single_row(db):
+    repo = AnalysisResultRepository(db)
+    scan_ids = [f"scan-{i}" for i in range(20)]
+
+    for scan_id in scan_ids:
+        await asyncio.gather(*(repo.save_result(scan_id, "kics", {"queries": [_KICS_QUERY]}) for _ in range(2)))
+
+    rows = await db.analysis_results.find({}, {"scan_id": 1}).to_list(None)
+    assert sorted(row["scan_id"] for row in rows) == sorted(scan_ids)
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,5 @@
 """Repository for analysis results."""
 
-import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -22,15 +21,14 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
     async def save_result(
         self, scan_id: str, analyzer_name: str, result: Mapping[str, Any], source: str | None = None
     ) -> None:
-        """Replace the row of this scan, analyzer and source; ``None`` also matches legacy rows stored without one."""
+        """Replace the row of this scan, analyzer and source; ``None`` also replaces legacy rows stored without one."""
+        key = {"scan_id": scan_id, "analyzer_name": analyzer_name, "source": source}
+        # Upserting on a key-derived _id lets the unique _id index merge concurrent first writes into one row.
+        row_id = ":".join(filter(None, (scan_id, analyzer_name, source)))
         await self.collection.update_one(
-            {"scan_id": scan_id, "analyzer_name": analyzer_name, "source": source},
-            {
-                "$set": {"result": result, "created_at": datetime.now(timezone.utc)},
-                "$setOnInsert": {"_id": str(uuid.uuid4())},
-            },
-            upsert=True,
+            {"_id": row_id}, {"$set": {**key, "result": result, "created_at": datetime.now(timezone.utc)}}, upsert=True
         )
+        await self.collection.delete_many({**key, "_id": {"$ne": row_id}})
 
     async def carry_over(self, from_scan_id: str, to_scan_id: str, exclude_names: list[str]) -> None:
         """Copy a scan's rows onto a rescan server-side; the derived ``_id`` makes a repeated copy a no-op."""
