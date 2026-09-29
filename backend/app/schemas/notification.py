@@ -10,7 +10,6 @@ class AdvisoryPackage(BaseModel):
 
 
 class BroadcastRequest(BaseModel):
-    type: Literal["general", "advisory"] = Field(..., description="Type of message")
     target_type: Literal["global", "teams", "advisory"] = Field(..., description="Target audience")
     target_teams: list[str] | None = Field(None, description="List of Team IDs if target_type is 'teams'")
     channels: list[str] | None = Field(None, description="Channels to send to (email, slack, mattermost)")

@@ -6,10 +6,8 @@ export interface AdvisoryPackage {
 
 export type BroadcastTargetType = 'global' | 'teams' | 'advisory';
 export type NotificationChannel = 'email' | 'slack' | 'mattermost' | 'teams';
-export type BroadcastType = 'general' | 'advisory';
 
 export interface BroadcastRequest {
-  type: BroadcastType;
   target_type: BroadcastTargetType;
   target_teams?: string[];
   packages?: AdvisoryPackage[];

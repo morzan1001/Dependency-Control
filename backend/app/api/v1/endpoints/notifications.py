@@ -510,7 +510,7 @@ async def broadcast_message(
 
     if not payload.dry_run:
         history_entry = Broadcast(
-            type=payload.type,
+            type="advisory" if payload.target_type == "advisory" else "general",
             target_type=payload.target_type,
             subject=payload.subject,
             message=payload.message,

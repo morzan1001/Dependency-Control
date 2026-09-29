@@ -95,7 +95,6 @@ export default function Broadcasts() {
     try {
       if (activeTab === "announcement") {
          const result = await sendBroadcast({
-            type: "general",
             target_type: announcementTarget,
             target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
             subject: "Dry Run",
@@ -110,7 +109,6 @@ export default function Broadcasts() {
          if (validPackages.length === 0) return
 
          const result = await sendBroadcast({
-            type: "advisory",
             target_type: "advisory",
             packages: validPackages,
             subject: "Dry Run",
@@ -131,7 +129,6 @@ export default function Broadcasts() {
   const handleSendAnnouncement = async () => {
     try {
       const result = await sendBroadcast({
-        type: "general",
         target_type: announcementTarget,
         target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
         subject: announcementSubject,
@@ -158,7 +155,6 @@ export default function Broadcasts() {
       const validPackages = packages.filter(p => p.name.trim() !== "")
 
       const result = await sendBroadcast({
-        type: "advisory",
         target_type: "advisory",
         packages: validPackages,
         subject: advisorySubject,
