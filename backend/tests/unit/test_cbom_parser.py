@@ -201,3 +201,25 @@ def test_invalid_not_valid_after_is_none():
     ]
     assets = parse_crypto_components(components)
     assert assets[0].not_valid_after is None
+
+
+def test_related_crypto_material_carries_its_size_and_algorithm_ref():
+    parsed = parse_crypto_components(
+        [
+            {
+                "type": "cryptographic-asset",
+                "bom-ref": "pubkey",
+                "name": "public key",
+                "cryptoProperties": {
+                    "assetType": "related-crypto-material",
+                    "relatedCryptoMaterialProperties": {"type": "public-key", "size": 1024, "algorithmRef": "rsa"},
+                },
+            }
+        ]
+    )
+    (key,) = parsed
+    assert (key.asset_type, key.key_size_bits, key.algorithm_ref) == (
+        CryptoAssetType.RELATED_CRYPTO_MATERIAL,
+        1024,
+        "rsa",
+    )

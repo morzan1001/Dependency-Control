@@ -420,18 +420,16 @@ class CryptoCertificateDetails(_DetailsModel):
     days_expired: int | None = None
     not_valid_after: str | None = None
     days_until_expiry: int | None = None
-    threshold_matched: str | None = None
     days_until_valid: int | None = None
     not_valid_before: str | None = None
     algorithm_name: str | None = None
     related_algo_bom_ref: str | None = None
     key_size_bits: int | None = None
     min_key_size_bits: int | None = None
-    subject: str | None = None
-    issuer: str | None = None
     validity_days: int | None = None
     threshold: int | None = None
     rule_id: str | None = None
+    matched_rules: list[MatchedRuleEntry] | None = None
 
 
 class CryptoProtocolDetails(_DetailsModel):

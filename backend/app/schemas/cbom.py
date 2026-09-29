@@ -61,6 +61,9 @@ class ParsedCryptoAsset(BaseModel):
     subject_public_key_ref: str | None = None
     certificate_format: str | None = None
 
+    # Related-crypto-material-only
+    algorithm_ref: str | None = None
+
     # Protocol-only
     protocol_type: str | None = None
     version: str | None = None

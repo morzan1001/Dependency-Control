@@ -37,6 +37,19 @@ def crypto_findings_for_assets(
     return findings
 
 
+def strictest_rule(rules: Sequence[CryptoRule]) -> CryptoRule:
+    return max(rules, key=lambda r: get_severity_value(r.default_severity))
+
+
+def matched_rule_entry(rule: CryptoRule, severity: str | None = None) -> MatchedRuleEntry:
+    return MatchedRuleEntry(
+        rule_id=rule.rule_id,
+        rule_name=rule.name,
+        policy_source=rule.source,
+        severity=severity or rule.default_severity,
+    )
+
+
 class CryptoRuleAnalyzer(Analyzer):
     def __init__(self, name: str, finding_types: set[FindingType]):
         self.name = name
@@ -68,21 +81,10 @@ class CryptoRuleAnalyzer(Analyzer):
 
 
 def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule], scanner: str) -> dict[str, Any]:
-    # Lead rule (strictest by default_severity) drives top-level fields; the rest
-    # are recorded under details.matched_rules.
-    lead = max(rules, key=lambda r: get_severity_value(r.default_severity))
+    lead = strictest_rule(rules)
     ft = lead.finding_type
     component_label = f"{asset.name}" + (f" ({asset.variant})" if asset.variant else "") + f" [bom-ref:{asset.bom_ref}]"
 
-    matched_rules_detail = [
-        MatchedRuleEntry(
-            rule_id=r.rule_id,
-            rule_name=r.name,
-            policy_source=r.source,
-            severity=r.default_severity,
-        )
-        for r in rules
-    ]
     aggregated_references: list[str] = []
     seen_refs: set = set()
     for r in rules:
@@ -107,7 +109,7 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule], scanner: s
             rule_id=lead.rule_id,
             rule_name=lead.name,
             policy_source=lead.source,
-            matched_rules=matched_rules_detail,
+            matched_rules=[matched_rule_entry(r) for r in rules],
             bom_ref=asset.bom_ref,
             asset_name=asset.name,
             asset_type=asset.asset_type,

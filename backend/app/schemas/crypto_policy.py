@@ -103,6 +103,10 @@ class CryptoRule(BaseModel):
 RULE_DRIVEN_FINDING_TYPES: frozenset[FindingType] = frozenset(
     {FindingType.CRYPTO_WEAK_ALGORITHM, FindingType.CRYPTO_WEAK_KEY, FindingType.CRYPTO_QUANTUM_VULNERABLE}
 )
+# The lifecycle analyzer reads a rule of these types for its enabled flag and severity alone.
+_CERT_CHECK_TYPES = frozenset(
+    {FindingType.CRYPTO_CERT_EXPIRED, FindingType.CRYPTO_CERT_NOT_YET_VALID, FindingType.CRYPTO_CERT_SELF_SIGNED}
+)
 _EXPIRY_LADDER = ("expiry_critical_days", "expiry_high_days", "expiry_medium_days", "expiry_low_days")
 _BOUNDED_LISTS = (
     "match_name_patterns",
@@ -123,7 +127,7 @@ def _unevaluable(rule: CryptoRule) -> str | None:
         return f"{', '.join(oversized)} hold more than {_MAX_LIST_ITEMS} entries"
     if not rule.enabled:
         return None
-    # The lifecycle and cipher analyzers select rules by these fields, not by finding type.
+    # Each family of fields is evaluated only on rules of the listed finding types.
     families = [
         finding_types
         for finding_types, used in (
@@ -140,7 +144,7 @@ def _unevaluable(rule: CryptoRule) -> str | None:
         )
         if used
     ]
-    allowed = set.intersection(*map(set, families)) if families else set(RULE_DRIVEN_FINDING_TYPES)
+    allowed = set.intersection(*map(set, families)) if families else RULE_DRIVEN_FINDING_TYPES | _CERT_CHECK_TYPES
     if not allowed:
         return "sets fields that no single analyzer evaluates together"
     if rule.finding_type not in allowed:

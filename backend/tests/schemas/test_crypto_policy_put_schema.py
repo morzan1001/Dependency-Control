@@ -81,6 +81,14 @@ def test_a_finding_type_no_analyzer_evaluates_for_the_rule_is_refused(finding_ty
     assert "'r1'" in _refused(_rule(finding_type=finding_type, **fields))
 
 
+@pytest.mark.parametrize(
+    "finding_type", ["crypto_cert_expired", "crypto_cert_not_yet_valid", "crypto_cert_self_signed"]
+)
+def test_a_certificate_check_rule_needs_no_matcher_fields(finding_type):
+    """The lifecycle analyzer reads such a rule by finding type to set that check's severity or turn it off."""
+    CryptoPolicyPutRequest(rules=[_rule(finding_type=finding_type, match_primitive=None, match_name_patterns=[])])
+
+
 def test_an_inverted_expiry_ladder_is_refused():
     lifecycle = {"finding_type": "crypto_cert_expiring_soon", "match_primitive": None, "match_name_patterns": []}
 

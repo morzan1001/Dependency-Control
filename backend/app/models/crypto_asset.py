@@ -28,7 +28,7 @@ class CryptoAsset(MongoDocument):
     )
     mode: str | None = Field(None, description="Cipher mode (e.g. GCM, CBC, OFB) for algorithm assets")
     padding: str | None = Field(None, description="Padding scheme (e.g. PKCS1v15, OAEP, PSS) for algorithm assets")
-    key_size_bits: int | None = Field(None, description="Key size in bits for algorithm assets")
+    key_size_bits: int | None = Field(None, description="Key size in bits for algorithm and key material assets")
     curve: str | None = Field(None, description="Elliptic curve identifier (e.g. P-256, secp384r1)")
 
     # Certificate-only
@@ -40,9 +40,12 @@ class CryptoAsset(MongoDocument):
         None, description="bom-ref of the algorithm used to sign this certificate (the CA's signing key)"
     )
     subject_public_key_ref: str | None = Field(
-        None, description="bom-ref of the algorithm asset representing this certificate's own subject public key"
+        None, description="bom-ref of this certificate's own subject public key (key material or its algorithm)"
     )
     certificate_format: str | None = Field(None, description="Certificate format identifier (e.g. X.509)")
+
+    # Related-crypto-material-only
+    algorithm_ref: str | None = Field(None, description="bom-ref of the algorithm this key material belongs to")
 
     # Protocol-only
     protocol_type: str | None = Field(

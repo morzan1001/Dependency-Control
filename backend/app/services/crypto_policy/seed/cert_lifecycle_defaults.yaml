@@ -1,7 +1,6 @@
-# Certificate lifecycle defaults — Phase 2
-# The analyzer picks severity via the threshold ladder on each rule.
-# Rules with all thresholds unset produce no finding; so an admin who wants to
-# disable expiry detection can simply set enabled=false on this rule.
+# The analyzer picks the expiring-soon severity via the threshold ladder on each rule.
+# Disabling cert-expiry-default silences only the expiring-soon warnings; expired, not-yet-valid
+# and self-signed certificates are governed by a rule of that finding type, if the policy has one.
 
 rules:
   - rule_id: cert-expiry-default

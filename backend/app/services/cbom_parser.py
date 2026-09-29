@@ -105,6 +105,10 @@ def _parse_one(comp: dict[str, Any], idx: int) -> ParsedCryptoAsset | None:
         _populate_certificate(asset, crypto_props.get("certificateProperties") or {})
     elif asset_type == CryptoAssetType.PROTOCOL:
         _populate_protocol(asset, crypto_props.get("protocolProperties") or {})
+    elif asset_type == CryptoAssetType.RELATED_CRYPTO_MATERIAL:
+        material = crypto_props.get("relatedCryptoMaterialProperties") or {}
+        asset.key_size_bits = _coerce_positive_int(material.get("size"))
+        asset.algorithm_ref = material.get("algorithmRef")
 
     _populate_evidence(asset, comp.get("evidence") or {})
     return asset
