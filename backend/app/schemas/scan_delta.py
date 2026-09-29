@@ -90,8 +90,8 @@ DeltaItem = FindingDeltaItem | ComponentDeltaItem | CryptoDeltaItem
 
 
 class ScanDeltaReachability(BaseModel):
-    """Reachability coverage of one side of a delta. A rescan has no callgraph, so one side can be
-    coverable-but-unanalysed while the other is enriched, and their risk scores are then not comparable."""
+    """Reachability coverage of one side of a delta. A build without a callgraph is coverable-but-unanalysed
+    while the other side can be enriched, and their risk scores are then not comparable."""
 
     model_config = ConfigDict(extra="forbid")
 

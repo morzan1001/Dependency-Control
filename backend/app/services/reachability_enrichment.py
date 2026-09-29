@@ -233,27 +233,21 @@ async def fetch_callgraphs(
     scan_id: str,
     db: AsyncIOMotorDatabase,
 ) -> list[Any]:
-    """
-    Fetch all callgraphs for a scan (one per language), falling back to pipeline_id match.
-
-    Returns a list of callgraph objects (may be empty).
-    """
+    """Every callgraph of the scan (one per language): those uploaded under its id, else those of the
+    build a rescan re-analyses, else those of its pipeline. May be empty."""
     from app.repositories.callgraphs import CallgraphRepository
     from app.repositories.scans import ScanRepository
 
     callgraph_repo = CallgraphRepository(db)
-    scan_repo = ScanRepository(db)
-
-    # Priority: exact scan_id match > fallback to pipeline_id match
     callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
     if callgraphs:
         return callgraphs
 
-    # Fallback: try to find callgraphs via pipeline_id
-    scan = await scan_repo.get_by_id(scan_id)
+    scan = await ScanRepository(db).get_by_id(scan_id)
+    if scan and scan.original_scan_id:
+        return await fetch_callgraphs(project_id, scan.original_scan_id, db)
     if scan and scan.pipeline_id:
         return await callgraph_repo.find_all_minimal_by_pipeline(project_id, scan.pipeline_id)
-
     return []
 
 

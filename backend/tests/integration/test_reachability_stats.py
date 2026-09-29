@@ -231,3 +231,39 @@ async def test_coverable_count_is_zero_without_dependencies(db):
     await db.findings.insert_one(_finding("CVE-1", "libssl3"))
     stats = await calculate_comprehensive_stats(db, _SCAN_ID)
     assert stats.reachability.coverable_count == 0
+
+
+@pytest.mark.asyncio
+async def test_a_rescan_is_enriched_from_the_callgraph_of_the_build_it_re_analyses(db):
+    """CI uploads the callgraph under the original build's id; a rescan carries a fresh id."""
+    from app.repositories.analysis_results import AnalysisResultRepository
+    from app.repositories.scans import ScanRepository
+    from app.services.analysis.engine import _run_reachability_enrichment
+
+    rescan_id = "rescan-reach"
+    await _seed_callgraph(db)
+    for name in ("requests", "urllib3"):
+        await db.dependencies.insert_one(
+            {"_id": f"rescan-dep-{name}", "scan_id": rescan_id, "name": name, "purl": f"pkg:pypi/{name}@1.0.0"}
+        )
+    await db.scans.insert_one(
+        {
+            "_id": rescan_id,
+            "project_id": _PROJECT_ID,
+            "branch": "main",
+            "status": "processing",
+            "created_at": datetime.now(timezone.utc),
+            "is_rescan": True,
+            "original_scan_id": _SCAN_ID,
+        }
+    )
+    findings = [{**_finding("CVE-1", "requests"), "scan_id": rescan_id}]
+    summary: list[str] = []
+
+    await _run_reachability_enrichment(
+        findings, rescan_id, _PROJECT_ID, db, AnalysisResultRepository(db), ScanRepository(db), summary
+    )
+
+    assert summary == ["reachability: Success (1 enriched)"]
+    assert findings[0]["reachable"] is True
+    assert not (await db.scans.find_one({"_id": rescan_id})).get("reachability_pending")
