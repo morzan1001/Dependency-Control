@@ -56,7 +56,7 @@ def test_direct_result_carries_max_nested_cvss():
         waived=False,
         waiver_reason=None,
     )
-    result = _build_direct_vuln_result(finding, _stored_details(), False, False, None, {"p1": "P1"})
+    result = _build_direct_vuln_result(finding, _stored_details(), {"p1": "P1"})
     assert result.cvss_score == 9.8
 
 
@@ -75,5 +75,5 @@ def test_direct_result_cvss_none_when_no_nested_scores():
         waiver_reason=None,
     )
     details = {"fixed_version": None, "vulnerabilities": [{"id": "CVE-1", "cvss_score": None}]}
-    result = _build_direct_vuln_result(finding, details, False, False, None, {"p1": "P1"})
+    result = _build_direct_vuln_result(finding, details, {"p1": "P1"})
     assert result.cvss_score is None

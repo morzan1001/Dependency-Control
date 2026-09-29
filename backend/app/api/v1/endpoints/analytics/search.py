@@ -223,23 +223,6 @@ def _get_description(vuln: dict, finding: Any) -> str | None:
     return None
 
 
-def _aggregate_kev_status(details: dict[str, Any], nested_vulns: list[dict[str, Any]]) -> tuple[bool, bool, Any]:
-    """Return (in_kev_status, kev_ransomware, kev_due_date) merged across nested vulns."""
-    in_kev_status = details.get(DETAILS_KEY_IN_KEV, False)
-    kev_ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE, False)
-    kev_due_date = details.get("kev_due_date")
-
-    for vuln in nested_vulns:
-        if vuln.get(DETAILS_KEY_IN_KEV):
-            in_kev_status = True
-        if vuln.get(DETAILS_KEY_KEV_RANSOMWARE):
-            kev_ransomware = True
-        if vuln.get("kev_due_date") and (not kev_due_date or vuln["kev_due_date"] < kev_due_date):
-            kev_due_date = vuln["kev_due_date"]
-
-    return in_kev_status, kev_ransomware, kev_due_date
-
-
 def _check_fix_availability(nested_vulns: list[dict[str, Any]]) -> bool:
     return any(vuln.get("fixed_version") for vuln in nested_vulns)
 
@@ -255,12 +238,7 @@ def _max_nested_cvss(details: dict[str, Any]) -> float | None:
 
 
 def _build_direct_vuln_result(
-    finding: Any,
-    details: dict[str, Any],
-    in_kev_status: bool,
-    kev_ransomware: bool,
-    kev_due_date: Any,
-    project_name_map: dict[str, str],
+    finding: Any, details: dict[str, Any], project_name_map: dict[str, str]
 ) -> VulnerabilitySearchResult:
     return VulnerabilitySearchResult(
         vulnerability_id=finding.finding_id,
@@ -269,9 +247,9 @@ def _build_direct_vuln_result(
         cvss_score=_max_nested_cvss(details),
         epss_score=details.get("epss_score"),
         epss_percentile=details.get("epss_percentile"),
-        in_kev=in_kev_status,
-        kev_ransomware=kev_ransomware,
-        kev_due_date=kev_due_date,
+        in_kev=bool(details.get(DETAILS_KEY_IN_KEV)),
+        kev_ransomware=bool(details.get(DETAILS_KEY_KEV_RANSOMWARE)),
+        kev_due_date=details.get("kev_due_date"),
         component=finding.component or "",
         version=finding.version or "",
         project_id=finding.project_id or "",
@@ -299,13 +277,7 @@ def _nested_vuln_waived(vuln: dict[str, Any], finding: Any) -> bool:
 
 
 def _build_nested_vuln_result(
-    vuln: dict[str, Any],
-    finding: Any,
-    details: dict[str, Any],
-    in_kev_status: bool,
-    kev_ransomware: bool,
-    kev_due_date: Any,
-    project_name_map: dict[str, str],
+    vuln: dict[str, Any], finding: Any, details: dict[str, Any], project_name_map: dict[str, str]
 ) -> VulnerabilitySearchResult:
     project_id = finding.project_id or ""
     return VulnerabilitySearchResult(
@@ -315,9 +287,9 @@ def _build_nested_vuln_result(
         cvss_score=vuln.get("cvss_score"),
         epss_score=(vuln.get("epss_score") or details.get("epss_score")),
         epss_percentile=(vuln.get("epss_percentile") or details.get("epss_percentile")),
-        in_kev=vuln.get(DETAILS_KEY_IN_KEV, False) or in_kev_status,
-        kev_ransomware=(vuln.get(DETAILS_KEY_KEV_RANSOMWARE, False) or kev_ransomware),
-        kev_due_date=vuln.get("kev_due_date") or kev_due_date,
+        in_kev=bool(vuln.get(DETAILS_KEY_IN_KEV) or details.get(DETAILS_KEY_IN_KEV)),
+        kev_ransomware=bool(vuln.get(DETAILS_KEY_KEV_RANSOMWARE) or details.get(DETAILS_KEY_KEV_RANSOMWARE)),
+        kev_due_date=vuln.get("kev_due_date") or details.get("kev_due_date"),
         component=finding.component or "",
         version=finding.version or "",
         project_id=project_id,
@@ -380,8 +352,7 @@ def _vuln_results_for_finding(
     details = finding.details
     nested_vulns = details.get("vulnerabilities", [])
 
-    in_kev_status, kev_ransomware, kev_due_date = _aggregate_kev_status(details, nested_vulns)
-    if in_kev is not None and in_kev != in_kev_status:
+    if in_kev is not None and in_kev != bool(details.get(DETAILS_KEY_IN_KEV)):
         return []
 
     has_fix_status = _check_fix_availability(nested_vulns)
@@ -395,13 +366,8 @@ def _vuln_results_for_finding(
     ]
 
     if not matched_vulns:
-        return [
-            _build_direct_vuln_result(finding, details, in_kev_status, kev_ransomware, kev_due_date, project_name_map)
-        ]
-    return [
-        _build_nested_vuln_result(vuln, finding, details, in_kev_status, kev_ransomware, kev_due_date, project_name_map)
-        for vuln in matched_vulns
-    ]
+        return [_build_direct_vuln_result(finding, details, project_name_map)]
+    return [_build_nested_vuln_result(vuln, finding, details, project_name_map) for vuln in matched_vulns]
 
 
 @router.get("/vulnerability-search", responses=RESP_AUTH)
