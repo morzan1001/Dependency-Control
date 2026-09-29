@@ -6,6 +6,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.models.project import Project
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.repositories import (
@@ -31,10 +32,14 @@ _LOCK_MAX_RETRIES = 5
 _LOCK_RETRY_BASE_DELAY = 0.2
 
 
+# What a pass writes, when an active waiver expires, and the creation time (defaulted on load for a document
+# without one) do not change how a waiver stamps.
+_NOT_STAMPED = {"last_eval_scan_id", "last_match_count", "expiration_date", "is_active", "created_at"}
+
+
 def _waiver_fingerprint(waivers: list[Waiver]) -> str:
-    """Names the waiver set a scan was stamped with, from what decides the stamping; the bookkeeping a pass writes
-    and the creation time (defaulted on load for a document without one) are left out."""
-    dumps = sorted(w.model_dump_json(exclude={"last_eval_scan_id", "last_match_count", "created_at"}) for w in waivers)
+    """Names the waiver set a scan was stamped with, from what decides the stamping."""
+    dumps = sorted(w.model_dump_json(exclude=_NOT_STAMPED) for w in waivers)
     return hashlib.sha256("\n".join(dumps).encode()).hexdigest()
 
 
@@ -73,17 +78,23 @@ async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> l
     return sorted({analysis.scan_id for analysis in resolved.values()})
 
 
+async def _branch_tip_ids(scan_repo: ScanRepository, project: Project) -> list[str]:
+    tips = await scan_repo.branch_tips(project.id, project.deleted_branches)
+    return [tip["_id"] for _branch, _count, tip in tips if tip]
+
+
 async def recalculate_project_stats(
     project_id: str, db: AsyncIOMotorDatabase, reach: dict[str, Any] | None = None
 ) -> Stats | None:
-    """Recalculate a project's stats from its head scan and active waivers, and re-stamp the same
-    waiver set onto the scans release mode reports.
+    """Re-stamp the project's active waiver set onto its head, every branch tip and the scans release
+    mode reports, and carry head's stats onto the project.
 
-    Restamps under a distributed lock to prevent races when pods modify waivers concurrently; a
-    released scan already stamped with this waiver set is left alone. ``reach`` is a finding filter:
-    a project none of whose scans holds a match is not recalculated. Returns None if nothing ran.
+    Restamps under a distributed lock to prevent races when pods modify waivers concurrently; a scan
+    already stamped with this waiver set is left alone. ``reach`` is a finding filter: a project none
+    of whose scans holds a match is not recalculated. Returns head's new stats, None if head needed none.
     """
     project_repo = ProjectRepository(db)
+    scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
     waiver_repo = WaiverRepository(db)
     lock_repo = DistributedLocksRepository(db)
@@ -92,9 +103,10 @@ async def recalculate_project_stats(
     if not project:
         return None
 
-    scan_id = await ScanRepository(db).get_latest_active_scan_id(project)
-    released_ids = [rid for rid in await _released_analysis_ids(db, project_id) if rid != scan_id]
-    scan_ids = [*([scan_id] if scan_id else []), *released_ids]
+    scan_id = await scan_repo.get_latest_active_scan_id(project)
+    others = {*await _released_analysis_ids(db, project_id), *await _branch_tip_ids(scan_repo, project)}
+    other_ids = sorted(others - {scan_id})
+    scan_ids = [*([scan_id] if scan_id else []), *other_ids]
     if not scan_ids or (reach is not None and not await finding_repo.any_in_scans(scan_ids, reach)):
         return None
 
@@ -127,29 +139,27 @@ async def recalculate_project_stats(
         return None
 
     try:
-        logger.info(
-            f"Recalculating stats for project {project_id} (head {scan_id}, released {released_ids}) "
-            f"with lock {lock_name}"
-        )
-
         waivers = await waiver_repo.find_active_for_project(project_id)
         fingerprint = _waiver_fingerprint(waivers)
-        stamped = await ScanRepository(db).find_many_raw(
-            {"_id": {"$in": released_ids}, "waiver_fingerprint": fingerprint}, projection={"_id": 1}
+        stamped = await scan_repo.find_many_raw(
+            {"_id": {"$in": scan_ids}, "waiver_fingerprint": fingerprint}, projection={"_id": 1}
         )
         current = {doc["_id"] for doc in stamped}
-        stale_released = [rid for rid in released_ids if rid not in current]
+        # Head also records each project waiver's outcome there, which a pass on another scan does not.
+        head_current = scan_id in current and all(w.last_eval_scan_id == scan_id for w in waivers if w.project_id)
+        stale = [sid for sid in other_ids if sid not in current]
+        logger.info(
+            f"Recalculating project {project_id} with lock {lock_name}: head {scan_id} "
+            f"{'current' if head_current else 'stale'}, {len(stale)} of {len(other_ids)} other scans stale"
+        )
+        stats = None
         # Head first and alone records waiver outcomes and signatures: those describe head, and the
-        # released passes then see the signatures head back-filled.
-        stats = await _restamp_scan(scan_id, db, waivers, fingerprint, finding_repo, waiver_repo) if scan_id else None
-        for released_id in stale_released:
-            await _restamp_scan(released_id, db, waivers, fingerprint, finding_repo, None)
-        if stats is None:
-            return None
-
-        await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
-
-        logger.info(f"Stats updated for project {project_id}: {stats.model_dump()}")
+        # other passes then see the signatures head back-filled.
+        if scan_id and not head_current:
+            stats = await _restamp_scan(scan_id, db, waivers, fingerprint, finding_repo, waiver_repo)
+            await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
+        for other_id in stale:
+            await _restamp_scan(other_id, db, waivers, fingerprint, finding_repo, None)
         return stats
 
     finally:

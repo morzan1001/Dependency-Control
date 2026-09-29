@@ -238,13 +238,37 @@ def _record_restamps(monkeypatch) -> list[str]:
 
 class TestRecalculateReachesTheReleasedBuild:
     @pytest.mark.asyncio
-    async def test_an_unchanged_waiver_set_leaves_the_released_build_alone(self, released_db, monkeypatch):
+    async def test_an_unchanged_waiver_set_restamps_nothing(self, released_db, monkeypatch):
+        """A second trigger for the same change, or a recalc after an analysis already stamped, is a no-op."""
         await recalculate_project_stats(PROJECT_ID, released_db)
+        restamped = _record_restamps(monkeypatch)
+
+        assert await recalculate_project_stats(PROJECT_ID, released_db) is None
+
+        assert restamped == []
+
+    @pytest.mark.asyncio
+    async def test_an_expiry_moved_to_another_future_date_restamps_nothing(self, released_db, monkeypatch):
+        await recalculate_project_stats(PROJECT_ID, released_db)
+        await released_db.waivers.update_one(
+            {"_id": "w-1"}, {"$set": {"expiration_date": datetime(2099, 1, 1, tzinfo=timezone.utc)}}
+        )
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert restamped == []
+
+    @pytest.mark.asyncio
+    async def test_head_is_restamped_until_each_project_waiver_was_evaluated_there(self, released_db, monkeypatch):
+        await recalculate_project_stats(PROJECT_ID, released_db)
+        await released_db.waivers.update_one({"_id": "w-1"}, {"$set": {"last_eval_scan_id": "scan-before"}})
         restamped = _record_restamps(monkeypatch)
 
         await recalculate_project_stats(PROJECT_ID, released_db)
 
         assert restamped == [SCAN_ID]
+        assert (await released_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == SCAN_ID
 
     @pytest.mark.asyncio
     async def test_a_changed_waiver_restamps_the_released_build_again(self, released_db, monkeypatch):
@@ -370,6 +394,43 @@ class TestRecalculateReachesTheReleasedBuild:
 # waiver query ({}) would match all findings, so the restamp must
 # skip criteria-less waivers.
 # ---------------------------------------------------------------------------
+
+
+FEATURE_SCAN_ID = "scan-w4-feature"
+
+
+class TestRecalculateReachesEveryBranchTip:
+    @pytest_asyncio.fixture
+    async def branch_db(self, seeded_db):
+        """A feature branch whose tip still carries the flag of a waiver nobody holds any more."""
+        await seeded_db.scans.insert_one(
+            {
+                "_id": FEATURE_SCAN_ID,
+                "project_id": PROJECT_ID,
+                "branch": "feature/login",
+                "status": "completed",
+                "created_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+            }
+        )
+        stale = _finding("f-feature", "CRITICAL", cvss_score=9.1, waived=True)
+        stale["scan_id"] = FEATURE_SCAN_ID
+        stale["waiver_reason"] = STALE_WAIVER_REASON
+        await seeded_db.findings.insert_one(stale)
+        return seeded_db
+
+    @pytest.mark.asyncio
+    async def test_a_revoked_waiver_stops_hiding_a_finding_on_another_branch(self, branch_db):
+        await recalculate_project_stats(PROJECT_ID, branch_db)
+
+        tip_finding = await branch_db.findings.find_one({"_id": "f-feature"})
+        assert (tip_finding["waived"], tip_finding["waiver_reason"]) == (False, None)
+        assert (await branch_db.scans.find_one({"_id": FEATURE_SCAN_ID}))["stats"]["critical"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_tip_stamps_the_waivers_without_recording_their_outcome(self, branch_db):
+        await recalculate_project_stats(PROJECT_ID, branch_db)
+
+        assert (await branch_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == SCAN_ID
 
 
 class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
