@@ -914,7 +914,8 @@ async def trigger_rescan(
 
     if not worker_manager:
         raise HTTPException(status_code=500, detail="Worker manager not available")
-    return await queue_rescan(db, scan, project_id, worker_manager)
+    rescan, _ = await queue_rescan(db, scan, project_id, worker_manager)
+    return rescan
 
 
 @router.get(

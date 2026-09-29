@@ -1,5 +1,6 @@
 """Characterisation of the scheduled-rescan path as it behaves today."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock
@@ -560,6 +561,20 @@ class TestCreateRescanForProject:
 
         assert [r["_id"] for r in await _rescans(db)] == [_INFLIGHT_RESCAN_ID]
         worker.add_job.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_an_active_rescan_is_logged_as_active_not_as_queued(
+        self, db: FakeDatabase, worker: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        source = await _seed_scan(db)
+        await _seed_inflight_rescan(db)
+
+        with caplog.at_level(logging.DEBUG, logger=housekeeping.logger.name):
+            await _create_rescan_for_project(_project(), source, db, worker)
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("already has an active rescan" in m and _INFLIGHT_RESCAN_ID in m for m in messages)
+        assert not any("is queued" in m for m in messages)
 
     @pytest.mark.asyncio
     async def test_an_active_scan_on_another_branch_of_the_project_does_not_stop_the_creation(

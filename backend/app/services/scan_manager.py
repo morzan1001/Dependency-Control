@@ -60,13 +60,13 @@ def build_rescan(source_scan: dict[str, Any], project_id: str) -> Scan:
 
 async def queue_rescan(
     db: AsyncIOMotorDatabase, source_scan: dict[str, Any], project_id: str, queue: AnalysisWorkerManager
-) -> Scan:
-    """Queue a rescan of the lineage (the root shows it pending and restarts its clock), or return the active one."""
+) -> tuple[Scan, bool]:
+    """Queue a rescan of the lineage (the root shows it pending, its clock restarts); an active one returns unqueued."""
     scan_repo = ScanRepository(db)
     root = _lineage_root(source_scan)
     active = await scan_repo.find_active_rescan(project_id, root)
     if active:
-        return Scan(**active)
+        return Scan(**active), False
 
     rescan = build_rescan(source_scan, project_id)
     await scan_repo.create(rescan)
@@ -82,7 +82,7 @@ async def queue_rescan(
         },
     )
     await queue.add_job(rescan.id)
-    return rescan
+    return rescan, True
 
 
 class ScanManager:

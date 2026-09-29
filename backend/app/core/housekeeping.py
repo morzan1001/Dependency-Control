@@ -169,8 +169,11 @@ async def _create_rescan_for_project(
         return
 
     try:
-        rescan = await queue_rescan(db, source_scan, project.id, worker_manager)
-        logger.info(f"Rescan {rescan.id} of {source_scan_id} is queued for project {project.name}")
+        rescan, queued = await queue_rescan(db, source_scan, project.id, worker_manager)
+        if queued:
+            logger.info(f"Rescan {rescan.id} of {source_scan_id} is queued for project {project.name}")
+        else:
+            logger.debug(f"Project {project.name} already has an active rescan {rescan.id} of {source_scan_id}")
     finally:
         await lock_repo.release_lock(lock_name, holder_id)
 
