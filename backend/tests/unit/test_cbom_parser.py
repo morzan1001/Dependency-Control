@@ -223,3 +223,26 @@ def test_related_crypto_material_carries_its_size_and_algorithm_ref():
         1024,
         "rsa",
     )
+
+
+def test_cipher_suite_code_points_are_kept_in_the_catalog_spelling():
+    suites = [
+        {"name": "A", "identifiers": ["0xC0", "0x30"]},
+        {"name": "B", "identifiers": ["0xc0,0x30"]},
+        {"name": ""},
+        {"name": "C", "identifiers": ["0xC030"]},
+        "D",
+        {"name": "E", "identifiers": ["0x13"]},
+    ]
+    (proto,) = parse_crypto_components(
+        [
+            {
+                "type": "cryptographic-asset",
+                "bom-ref": "proto",
+                "name": "TLS",
+                "cryptoProperties": {"assetType": "protocol", "protocolProperties": {"cipherSuites": suites}},
+            }
+        ]
+    )
+    assert proto.cipher_suites == ["A", "B", "C", "D", "E"]
+    assert proto.cipher_suite_ids == ["0xC0,0x30", "0xC0,0x30", "0xC0,0x30", None, None]

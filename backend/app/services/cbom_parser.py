@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -204,14 +205,20 @@ def _populate_protocol(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None:
     asset.version = props.get("version")
     cipher_suites = props.get("cipherSuites") or []
     if isinstance(cipher_suites, list):
-        names = []
-        for c in cipher_suites:
-            # CycloneDX 1.6: cipherSuites entries are objects with a "name"
-            # (IANA suite name). Tolerate the non-spec plain-string form too.
-            name = c.get("name") if isinstance(c, dict) else c
-            if name:
-                names.append(str(name))
-        asset.cipher_suites = names
+        for entry in cipher_suites:
+            # CycloneDX 1.6 cipherSuites entries are objects; tolerate the non-spec plain-string form too.
+            suite = entry if isinstance(entry, dict) else {"name": entry}
+            if suite.get("name"):
+                asset.cipher_suites.append(str(suite["name"]))
+                asset.cipher_suite_ids.append(_cipher_suite_id(suite.get("identifiers")))
+
+
+def _cipher_suite_id(identifiers: Any) -> str | None:
+    """The IANA catalog's spelling: ["0xC0", "0x30"], ["0xc0,0x30"] and ["0xC030"] all give "0xC0,0x30"."""
+    if not isinstance(identifiers, list):
+        return None
+    digits = re.sub(r"0x|[\s,]", "", ",".join(map(str, identifiers)).lower()).upper()
+    return f"0x{digits[:2]},0x{digits[2:]}" if re.fullmatch(r"[0-9A-F]{4}", digits) else None
 
 
 def _populate_evidence(asset: ParsedCryptoAsset, evidence: dict[str, Any]) -> None:

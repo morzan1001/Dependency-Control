@@ -447,3 +447,4 @@ class CryptoProtocolDetails(_DetailsModel):
     weakness_tags: list[str] = []
     catalog_version: int | str | None = None
     rule_id: str | None = None
+    matched_rules: list[MatchedRuleEntry] | None = None

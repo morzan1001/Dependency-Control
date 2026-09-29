@@ -68,6 +68,7 @@ class ParsedCryptoAsset(BaseModel):
     protocol_type: str | None = None
     version: str | None = None
     cipher_suites: list[str] = Field(default_factory=list)
+    cipher_suite_ids: list[str | None] = Field(default_factory=list)
 
     # Context
     occurrence_locations: list[str] = Field(default_factory=list)

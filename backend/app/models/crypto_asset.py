@@ -55,6 +55,10 @@ class CryptoAsset(MongoDocument):
     cipher_suites: list[str] = Field(
         default_factory=list, description="Cipher suites advertised/negotiated by a protocol asset"
     )
+    cipher_suite_ids: list[str | None] = Field(
+        default_factory=list,
+        description="IANA code point of each cipher suite (0xHH,0xHH), None where the CBOM has none",
+    )
 
     # Context
     occurrence_locations: list[str] = Field(
