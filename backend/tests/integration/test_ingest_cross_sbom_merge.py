@@ -8,6 +8,9 @@ from bson import ObjectId
 from app.api.v1.endpoints.ingest import _process_sboms
 from app.core.init_db import create_indexes
 from app.repositories.dependencies import DependencyRepository
+from app.schemas.sbom import ParsedDependency
+from app.services import dependency_store
+from app.services.dependency_store import store_scan_dependencies
 
 _PROJECT_ID = "test-project-id"
 _SCAN_ID = "8e0d76a5-1291-5949-8e0d-0d90b4bd9e02"
@@ -163,3 +166,69 @@ async def test_the_fake_index_treats_a_null_purl_as_a_colliding_value(db):
     # A different artifact does not collide, so the guard is not matching everything.
     await db.dependencies.insert_one({"_id": "d", **explicit_null, "name": "other-blob"})
     assert await db.dependencies.count_documents({"scan_id": _SCAN_ID}) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_store_merges_duplicates_its_caller_did_not(db):
+    await create_indexes(db)
+    first = ParsedDependency(name="libssl3", version="3.0.11", purl=_PURL, locations=["/usr/lib/libssl.so.3"])
+    second = ParsedDependency(name="libssl3", version="3.0.11", purl=_PURL, locations=["/usr/share/doc/libssl3"])
+
+    stored = await store_scan_dependencies([first, second], _PROJECT_ID, _SCAN_ID, DependencyRepository(db))
+
+    assert stored == 1
+    docs = [d async for d in db.dependencies.find({"scan_id": _SCAN_ID})]
+    assert [d["locations"] for d in docs] == [["/usr/lib/libssl.so.3", "/usr/share/doc/libssl3"]]
+
+
+def _dep(name: str, **fields) -> ParsedDependency:
+    return ParsedDependency(name=name, version="1.0", purl=f"pkg:npm/{name}@1.0", **fields)
+
+
+async def _inventory(db) -> dict[str, dict]:
+    return {d["name"]: d async for d in db.dependencies.find({"scan_id": _SCAN_ID})}
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_store_that_fails_part_way_keeps_the_previous_inventory(db, monkeypatch):
+    """A re-ingest that dies between chunks must not leave the scan with a truncated inventory."""
+    await create_indexes(db)
+    repo = DependencyRepository(db)
+    await store_scan_dependencies([_dep("old-only"), _dep("shared")], _PROJECT_ID, _SCAN_ID, repo)
+
+    build = dependency_store._parsed_dep_to_dependency
+
+    def fail_on_second_chunk(parsed_dep, *args):
+        if parsed_dep.name == "new-b":
+            raise ConnectionResetError("network gone mid-replace")
+        return build(parsed_dep, *args)
+
+    monkeypatch.setattr(dependency_store, "_DEP_CHUNK_SIZE", 2)
+    monkeypatch.setattr(dependency_store, "_parsed_dep_to_dependency", fail_on_second_chunk)
+    with pytest.raises(ConnectionResetError):
+        await store_scan_dependencies(
+            [_dep("shared", scope="runtime"), _dep("new-a"), _dep("new-b")], _PROJECT_ID, _SCAN_ID, repo
+        )
+
+    assert sorted(await _inventory(db)) == ["new-a", "old-only", "shared"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_finished_store_leaves_exactly_the_new_inventory(db):
+    await create_indexes(db)
+    repo = DependencyRepository(db)
+    unidentified = ParsedDependency(name="vendored-blob", version="1.0")
+    await store_scan_dependencies([_dep("old-only"), _dep("shared"), unidentified], _PROJECT_ID, _SCAN_ID, repo)
+    kept_id = (await _inventory(db))["shared"]["_id"]
+
+    stored = await store_scan_dependencies(
+        [_dep("shared", scope="runtime"), _dep("new"), unidentified], _PROJECT_ID, _SCAN_ID, repo
+    )
+
+    inventory = await _inventory(db)
+    assert stored == 3
+    assert sorted(inventory) == ["new", "shared", "vendored-blob"]
+    assert (inventory["shared"]["_id"], inventory["shared"]["scope"]) == (kept_id, "runtime")
+    assert all(isinstance(doc["_id"], str) for doc in inventory.values())

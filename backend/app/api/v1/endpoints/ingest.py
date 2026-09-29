@@ -42,7 +42,7 @@ from app.schemas.trufflehog import TruffleHogIngest
 from app.services.dependency_store import store_scan_dependencies
 from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs
 from app.services.notifications.service import safe_notify_project_event
-from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
+from app.services.sbom_parser import parse_sbom
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
 
@@ -239,14 +239,9 @@ async def _process_sboms(
         if parsed_sboms:
             warnings.append("Dependency inventory left unchanged: at least one SBOM of this payload failed to process")
     else:
-        # The unique index spans the scan, so duplicates across the payload's SBOMs must be
-        # merged before the first insert or the later ones lose their locations/CPEs/parents.
-        dependencies, _ = merge_duplicate_dependencies(
-            [dep for parsed_sbom in parsed_sboms for dep in parsed_sbom.dependencies]
+        total_deps_inserted = await store_scan_dependencies(
+            [dep for parsed_sbom in parsed_sboms for dep in parsed_sbom.dependencies], project_id, scan_id, dep_repo
         )
-        total_deps_inserted = await store_scan_dependencies(dependencies, project_id, scan_id, dep_repo)
-        if total_deps_inserted < len(dependencies):
-            warnings.append(f"Only {total_deps_inserted} of {len(dependencies)} parsed dependencies were stored")
 
     return sbom_refs, warnings, len(parsed_sboms), sboms_failed, total_deps_inserted
 

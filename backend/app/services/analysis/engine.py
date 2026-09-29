@@ -77,7 +77,7 @@ from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.github import is_public_github
 from app.services.reachability_enrichment import enrich_findings_with_reachability
-from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
+from app.services.sbom_parser import parse_sbom
 from app.services.update_frequency_rollup import record_scan_update_delta
 
 logger = logging.getLogger(__name__)
@@ -1136,11 +1136,9 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         results_summary.extend(sbom_results)
 
     if deps_to_store is not None and deps_to_store.parsed and project_id:
-        dependencies, _ = merge_duplicate_dependencies(deps_to_store.items)
+        stored = await store_scan_dependencies(deps_to_store.items, project_id, scan_id, DependencyRepository(db))
         del deps_to_store
-        inserted = await store_scan_dependencies(dependencies, project_id, scan_id, DependencyRepository(db))
-        logger.info(f"Stored {inserted} of {len(dependencies)} dependencies for scan {scan_id}")
-        del dependencies
+        logger.info(f"Stored {stored} dependencies for scan {scan_id}")
 
     external_load_start = datetime.now(timezone.utc)
     await _aggregate_external_results(aggregator, result_repo, scan_id, results_summary)

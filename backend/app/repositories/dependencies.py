@@ -1,6 +1,9 @@
 """Repository for dependencies."""
 
+from datetime import datetime
 from typing import Any
+
+from pymongo import UpdateOne
 
 from app.models.dependency import Dependency
 from app.repositories.base import BaseRepository, find_window
@@ -22,8 +25,22 @@ class DependencyRepository(BaseRepository[Dependency]):
         """Every dependency of one scan, unbounded: a scan's inventory is read whole to be folded."""
         return await self.collection.find({"scan_id": scan_id}, projection).to_list(None)
 
-    async def delete_by_scan(self, scan_id: str) -> int:
-        return await self.delete_many({"scan_id": scan_id})
+    async def upsert_many(self, dependencies: list[Dependency]) -> None:
+        """Write each dependency over its scan's row with the same (name, version, purl)."""
+        await self.collection.bulk_write(
+            [
+                UpdateOne(
+                    {"scan_id": d.scan_id, "name": d.name, "version": d.version, "purl": d.purl},
+                    {"$set": d.model_dump(by_alias=True, exclude={"id"}), "$setOnInsert": {"_id": d.id}},
+                    upsert=True,
+                )
+                for d in dependencies
+            ],
+            ordered=False,
+        )
+
+    async def delete_other_writes(self, scan_id: str, written_at: datetime) -> None:
+        await self.delete_many({"scan_id": scan_id, "created_at": {"$ne": written_at}})
 
     async def count_by_scan(self, project_id: str, scan_id: str) -> int:
         return await self.count({"project_id": project_id, "scan_id": scan_id})
