@@ -88,6 +88,7 @@ from app.services.update_frequency_rollup import record_scan_update_delta
 logger = logging.getLogger(__name__)
 
 _BULK_CHUNK_SIZE = 500
+_HEAD_SYNC_ATTEMPTS = 3
 
 # Run inside the engine (not registered in ``analyzers``); regenerated per run, never carried over.
 _POST_PROCESSOR_ANALYZERS = frozenset({"epss_kev", "reachability"})
@@ -833,10 +834,15 @@ async def _persist_findings_and_waivers(
 
 
 async def _sync_project_head(project_id: str, scan_repo: ScanRepository, project_repo: ProjectRepository) -> None:
-    project_doc = await project_repo.get_by_id(project_id)
-    if project_doc:
+    # A pointer moved in between belongs to a finalizer that saw newer scans, so the head is derived again.
+    for _ in range(_HEAD_SYNC_ATTEMPTS):
+        project_doc = await project_repo.get_by_id(project_id)
+        if not project_doc:
+            return
         head = await scan_repo.head_fields(project_doc)
-        await project_repo.update_raw(project_id, {"$set": {**head, "last_scan_at": datetime.now(timezone.utc)}})
+        update = {"$set": {**head, "last_scan_at": datetime.now(timezone.utc)}}
+        if await project_repo.update_raw(project_id, update, guard={"latest_scan_id": project_doc.latest_scan_id}):
+            return
 
 
 async def _apply_handed_over_callgraphs(
