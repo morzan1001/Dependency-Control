@@ -14,7 +14,7 @@ from app.core.constants import (
     SOURCE_TYPE_IMAGE,
     SPDX_ORGANIZATION_PREFIX,
 )
-from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
+from app.schemas.sbom import UNKNOWN_VERSION, ParsedDependency, ParsedSBOM, SBOMFormat, has_known_version
 from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type, parse_purl
 from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
 from app.services.cbom_parser import parse_crypto_components
@@ -223,9 +223,9 @@ class SBOMParser:
     @classmethod
     def _normalize_version(cls, raw: Any) -> str:
         if raw is None or not isinstance(raw, (str, int, float)):
-            return "unknown"
+            return UNKNOWN_VERSION
         version = str(raw).strip()
-        return "unknown" if version.lower() in cls._PLACEHOLDER_VERSIONS else version
+        return UNKNOWN_VERSION if version.lower() in cls._PLACEHOLDER_VERSIONS else version
 
     @staticmethod
     def _extract_cyclonedx_tool(tools: Any) -> tuple[str | None, str | None]:
@@ -673,7 +673,7 @@ class SBOMParser:
                 if not cpes:
                     return None
                 purl = None
-            elif version == "unknown":
+            elif not has_known_version(version):
                 # Neither a real identifier nor a comparable version.
                 return None
             else:
@@ -1024,7 +1024,7 @@ class SBOMParser:
             return None
 
         if not purl:
-            if version == "unknown":
+            if not has_known_version(version):
                 # Neither a real identifier nor a comparable version.
                 return None
             purl = self._construct_purl(pkg_type, name, version)
@@ -1386,7 +1386,7 @@ class SBOMParser:
         purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs") or [])
 
         if not purl:
-            if version == "unknown":
+            if not has_known_version(version):
                 # Neither a real identifier nor a comparable version.
                 return None
             inferred_type = self._infer_spdx_pkg_type_from_download(pkg.get("downloadLocation") or "")

@@ -265,6 +265,8 @@ DEV_DEPENDENCY_PATTERN = re.compile(
 )
 # Runtime packages that share a dev tool's prefix.
 DEV_DEPENDENCY_RUNTIME_PACKAGES = frozenset({"eslint-scope", "jest-worker", "playwright-core", "puppeteer-core"})
+# CycloneDX scopes of components that do not ship at runtime.
+NON_RUNTIME_SCOPES = frozenset({"optional", "excluded"})
 
 
 # Scoring weights for identifying "Quick Win" updates

@@ -7,6 +7,12 @@ from pydantic import BaseModel, Field
 
 from app.schemas.cbom import ParsedCryptoAsset
 
+UNKNOWN_VERSION = "unknown"
+
+
+def has_known_version(version: str | None) -> bool:
+    return bool(version) and version != UNKNOWN_VERSION
+
 
 class SBOMFormat(Enum):
     """Supported SBOM formats."""
