@@ -19,6 +19,7 @@ from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.policy_audit import PolicyAuditAction
+from app.schemas.project import LicensePolicySchema
 
 logger = logging.getLogger(__name__)
 
@@ -223,44 +224,13 @@ async def _notify_relevant_users(
         )
 
 
-# Fields compared to detect a license-policy change; all values are scalar.
-_LICENSE_COMPARED_FIELDS: tuple[str, ...] = (
-    "distribution_model",
-    "deployment_model",
-    "library_usage",
-    "allow_strong_copyleft",
-    "allow_network_copyleft",
-    "ignore_dev_dependencies",
-    "ignore_transitive",
-)
-
-
-def compute_license_policy_change_summary(
-    old: dict[str, Any] | None,
-    new: dict[str, Any] | None,
-) -> str:
-    """Deterministic one-line summary of a license-policy transition."""
-    if old is None and new is None:
-        return _NO_CHANGES_SUMMARY
-    old = old or {}
-    new = new or {}
-    if not old:
-        return f"Initial license policy ({len(new)} setting(s))"
-    if not new:
-        return "License policy cleared"
-
-    parts: list[str] = []
-    for field in _LICENSE_COMPARED_FIELDS:
-        old_v = old.get(field)
-        new_v = new.get(field)
-        if old_v == new_v:
-            continue
-        if old_v is None:
-            parts.append(f"added {field}={new_v}")
-        elif new_v is None:
-            parts.append(f"removed {field}")
-        else:
-            parts.append(f"{field}: {old_v} -> {new_v}")
+def compute_license_policy_change_summary(old: dict[str, Any], new: dict[str, Any]) -> str:
+    """Deterministic one-line summary of the change between two resolved license policies."""
+    parts = [
+        f"{field}: {old[field]} -> {new[field]}"
+        for field in LicensePolicySchema.model_fields
+        if old[field] != new[field]
+    ]
     if not parts:
         return _NO_CHANGES_SUMMARY
     return ", ".join(parts)[:POLICY_CHANGE_SUMMARY_MAX_LENGTH]
@@ -270,8 +240,8 @@ async def record_license_policy_change(
     db: AsyncIOMotorDatabase,
     *,
     project_id: str,
-    old_policy: dict[str, Any] | None,
-    new_policy: dict[str, Any] | None,
+    old_policy: dict[str, Any],
+    new_policy: dict[str, Any],
     action: PolicyAuditAction,
     actor: Any,
     comment: str | None = None,
@@ -298,7 +268,7 @@ async def record_license_policy_change(
         actor_user_id=_actor_id(actor),
         actor_display_name=_actor_display_name(actor),
         timestamp=datetime.now(timezone.utc),
-        snapshot=dict(new_policy or {}),
+        snapshot=new_policy,
         change_summary=summary,
         comment=comment,
     )

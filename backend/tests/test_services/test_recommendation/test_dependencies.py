@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.core.constants import NON_RUNTIME_SCOPES
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.dependencies import (
     analyze_dev_in_production,
@@ -247,8 +248,8 @@ class TestAnalyzeDevInProductionFlagged:
 
 
 class TestAnalyzeDevInProductionNotFlagged:
-    @pytest.mark.parametrize("scope", ["dev", "development", "test"])
-    def test_a_dev_package_inside_a_dev_scope_is_not_flagged(self, scope):
+    @pytest.mark.parametrize("scope", sorted(NON_RUNTIME_SCOPES))
+    def test_a_dev_package_inside_a_non_runtime_scope_is_not_flagged(self, scope):
         assert analyze_dev_in_production([_dep(name="jest", version="29.0.0", scope=scope, type="npm")]) == []
 
     @pytest.mark.parametrize(

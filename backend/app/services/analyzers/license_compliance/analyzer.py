@@ -4,14 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.constants import get_severity_value
-from app.models.license import (
-    DeploymentModel,
-    DistributionModel,
-    LibraryUsage,
-    LicenseInfo,
-    LicensePolicy,
-)
+from app.core.constants import NON_RUNTIME_SCOPES, get_severity_value
+from app.models.license import LicenseInfo
+from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 
 from ..base import Analyzer
 from . import compatibility, evaluator, normalizer
@@ -33,23 +28,7 @@ class LicenseAnalyzer(Analyzer):
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Analyze SBOM components for license compliance issues."""
-        settings = settings or {}
-        ignore_dev = settings.get("ignore_dev_dependencies", True)
-        ignore_transitive = settings.get("ignore_transitive", False)
-
-        # Nested license_policy takes precedence over top-level policy keys.
-        policy_raw = settings.get("license_policy", {})
-        if not policy_raw and any(k in settings for k in ("distribution_model", "deployment_model", "library_usage")):
-            policy_raw = settings
-        policy = LicensePolicy(
-            distribution_model=DistributionModel(policy_raw.get("distribution_model", "distributed")),
-            deployment_model=DeploymentModel(policy_raw.get("deployment_model", "network_facing")),
-            library_usage=LibraryUsage(policy_raw.get("library_usage", "mixed")),
-            allow_strong_copyleft=policy_raw.get("allow_strong_copyleft", settings.get("allow_strong_copyleft", False)),
-            allow_network_copyleft=policy_raw.get(
-                "allow_network_copyleft", settings.get("allow_network_copyleft", False)
-            ),
-        )
+        policy = license_policy_from_settings(settings)
 
         components = self._get_components(sbom, parsed_components)
         issues: list[dict[str, Any]] = []
@@ -67,17 +46,9 @@ class LicenseAnalyzer(Analyzer):
         }
 
         for component in components:
-            self._analyze_component(
-                component,
-                stats,
-                issues,
-                component_licenses,
-                ignore_dev=ignore_dev,
-                ignore_transitive=ignore_transitive,
-                policy=policy,
-            )
+            self._analyze_component(component, stats, issues, component_licenses, policy=policy)
 
-        compatibility_issues = compatibility.check_license_compatibility(components, ignore_dev)
+        compatibility_issues = compatibility.check_license_compatibility(components, policy.ignore_dev_dependencies)
         issues.extend(compatibility_issues)
 
         return {"license_issues": issues, "summary": stats, "component_licenses": component_licenses}
@@ -89,19 +60,20 @@ class LicenseAnalyzer(Analyzer):
         issues: list[dict[str, Any]],
         component_licenses: list[dict[str, Any]],
         *,
-        ignore_dev: bool,
-        ignore_transitive: bool,
-        policy: LicensePolicy,
+        policy: LicensePolicySchema,
     ) -> None:
-        comp_scope = (component.get("scope") or "").lower()
+        # The distro descriptor is kept for EOL detection; it is not a licensed dependency.
+        if component.get("type") == "operating-system":
+            stats["skipped"] += 1
+            return
 
-        if ignore_dev and comp_scope in ("dev", "development", "test", "optional"):
+        if policy.ignore_dev_dependencies and (component.get("scope") or "").lower() in NON_RUNTIME_SCOPES:
             stats["skipped"] += 1
             return
 
         # Default to direct when unknown so unknown deps are never skipped or downgraded.
         is_transitive = not component.get("direct", True)
-        if ignore_transitive and is_transitive:
+        if policy.ignore_transitive and is_transitive:
             stats["skipped"] += 1
             return
 
@@ -213,7 +185,7 @@ class LicenseAnalyzer(Analyzer):
         component_licenses: list[dict[str, Any]],
         *,
         is_transitive: bool,
-        policy: LicensePolicy,
+        policy: LicensePolicySchema,
     ) -> None:
         """Resolve an OR-expression to the alternative a consumer would take, or report it undeterminable."""
         readable_groups, unreadable = compatibility.partition_or_groups(or_groups)
@@ -250,7 +222,7 @@ class LicenseAnalyzer(Analyzer):
         comp_version: str,
         comp_purl: str,
         readable_groups: list[list[str]],
-        policy: LicensePolicy,
+        policy: LicensePolicySchema,
     ) -> tuple[list[str] | None, dict[str, Any] | None]:
         """Choose the OR-alternative a consumer would take: lowest-severity group, each ranked by its worst
         AND-member. Returns the chosen group and its verdict, or (None, None) when nothing is readable."""

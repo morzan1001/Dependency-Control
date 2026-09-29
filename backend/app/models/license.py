@@ -55,17 +55,6 @@ class LibraryUsage(str, Enum):
 
 
 @dataclass
-class LicensePolicy:
-    """Project-level license compliance policy that provides context for severity decisions."""
-
-    distribution_model: DistributionModel = DistributionModel.DISTRIBUTED
-    deployment_model: DeploymentModel = DeploymentModel.NETWORK_FACING
-    library_usage: LibraryUsage = LibraryUsage.MIXED
-    allow_strong_copyleft: bool = False
-    allow_network_copyleft: bool = False
-
-
-@dataclass
 class LicenseInfo:
     """Detailed information about a license."""
 

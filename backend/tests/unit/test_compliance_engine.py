@@ -6,6 +6,7 @@ import pytest
 from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks.base import EvaluationInput
@@ -363,44 +364,38 @@ async def test_gather_inputs_union_filter_when_framework_unknown():
 
 
 @pytest.mark.asyncio
-async def test_gather_inputs_prepends_project_license_policy():
-    """The resolved project license policy must be plumbed into policy_rules[0]."""
-    license_policy = {"allow_strong_copyleft": True, "allow_network_copyleft": False}
+async def test_gather_inputs_passes_the_saved_license_policy_beside_the_crypto_rules():
     db, _, projects_mock = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}],
-        project_doc={"_id": "p1", "license_policy": license_policy},
+        project_doc={"_id": "p1", "analyzer_settings": {"license_compliance": {"allow_strong_copyleft": True}}},
     )
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     engine = ComplianceReportEngine()
 
     result, _ = await _run_gather(engine, db, resolved, LicenseAuditFramework())
 
-    assert result.policy_rules[0] == license_policy
+    assert result.license_policy == LicensePolicySchema(allow_strong_copyleft=True)
+    assert result.policy_rules == []
     projects_mock.find_one.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_gather_inputs_prefers_analyzer_settings_license_policy():
-    """analyzer_settings.license_compliance takes precedence over top-level project.license_policy."""
+async def test_gather_inputs_ignores_a_stored_legacy_license_policy():
+    """The scan grades under analyzer_settings alone, so the report must not judge by the legacy field."""
     db, _, _ = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}],
-        project_doc={
-            "_id": "p1",
-            "license_policy": {"allow_strong_copyleft": False},
-            "analyzer_settings": {"license_compliance": {"allow_strong_copyleft": True}},
-        },
+        project_doc={"_id": "p1", "license_policy": {"allow_strong_copyleft": True}},
     )
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     engine = ComplianceReportEngine()
 
     result, _ = await _run_gather(engine, db, resolved, LicenseAuditFramework())
 
-    assert result.policy_rules[0] == {"allow_strong_copyleft": True}
+    assert result.license_policy == LicensePolicySchema()
 
 
 @pytest.mark.asyncio
-async def test_gather_inputs_no_license_policy_for_multi_project_scope():
-    """A multi-project team/user scope must not prepend a single project policy."""
+async def test_gather_inputs_uses_the_default_license_policy_for_a_multi_project_scope():
     db, _, projects_mock = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}, {"_id": "p2", "scan_id": "s2"}],
     )
@@ -409,7 +404,7 @@ async def test_gather_inputs_no_license_policy_for_multi_project_scope():
 
     result, _ = await _run_gather(engine, db, resolved, LicenseAuditFramework())
 
-    assert result.policy_rules == []
+    assert result.license_policy == LicensePolicySchema()
     projects_mock.find_one.assert_not_awaited()
 
 

@@ -841,8 +841,8 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
-    license_policy = request.license_policy.model_dump() if request.license_policy else None
-    settings_for = _build_settings_resolver(SystemSettings(), license_policy, None)
+    license_settings = {"license_compliance": request.license_policy.model_dump()} if request.license_policy else None
+    settings_for = _build_settings_resolver(SystemSettings(), license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
 

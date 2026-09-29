@@ -361,13 +361,10 @@ def _resolve_effective_analyzers(
 
 def _build_settings_resolver(
     system_settings: Any,
-    project_license_policy: dict[str, Any] | None,
     project_analyzer_settings: dict[str, dict[str, Any]] | None,
 ) -> Callable[[str], dict[str, Any]]:
     """Return a function that yields per-analyzer settings dicts."""
     base_settings = system_settings.model_dump() if system_settings else {}
-    if project_license_policy:
-        base_settings["license_policy"] = project_license_policy
 
     def _settings_for(analyzer_name: str) -> dict[str, Any]:
         merged = dict(base_settings)
@@ -388,7 +385,6 @@ async def _process_sbom(
     aggregator: ResultAggregator,
     active_analyzers: list[str],
     system_settings: Any,
-    project_license_policy: dict[str, Any] | None = None,
     project_analyzer_settings: dict[str, dict[str, Any]] | None = None,
     project_id: str | None = None,
     scan_type: str | None = None,
@@ -408,7 +404,7 @@ async def _process_sbom(
 
     effective_analyzers = _resolve_effective_analyzers(active_analyzers, parsed_sbom, parsed_components, scan_type)
 
-    settings_for = _build_settings_resolver(system_settings, project_license_policy, project_analyzer_settings)
+    settings_for = _build_settings_resolver(system_settings, project_analyzer_settings)
 
     tasks = [
         process_analyzer(
@@ -600,16 +596,11 @@ async def _run_reachability_enrichment(
 
 async def _load_project_settings_overrides(
     project_id: str | None, project_repo: ProjectRepository
-) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]] | None]:
-    """Load license_policy and analyzer_settings from project doc."""
+) -> dict[str, dict[str, Any]] | None:
     if not project_id:
-        return None, None
+        return None
     project_doc = await project_repo.get_by_id(project_id)
-    if not project_doc:
-        return None, None
-    license_policy = getattr(project_doc, "license_policy", None) or None
-    analyzer_settings = getattr(project_doc, "analyzer_settings", None) or None
-    return license_policy, analyzer_settings
+    return project_doc.analyzer_settings if project_doc else None
 
 
 def _resolve_sboms_to_process(sboms: list[dict[str, Any]], scan_type: str | None) -> list[dict[str, Any]]:
@@ -1095,7 +1086,7 @@ async def run_analysis(
     settings_repo = SystemSettingsRepository(db)
     system_settings = await settings_repo.get()
 
-    project_license_policy, project_analyzer_settings = await _load_project_settings_overrides(project_id, project_repo)
+    project_analyzer_settings = await _load_project_settings_overrides(project_id, project_repo)
 
     if sbom_load_failures:
         logger.warning(
@@ -1118,7 +1109,6 @@ async def run_analysis(
             aggregator,
             active_analyzers,
             system_settings,
-            project_license_policy=project_license_policy,
             project_analyzer_settings=project_analyzer_settings,
             project_id=project_id,
             scan_type=scan_type,

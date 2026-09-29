@@ -64,7 +64,7 @@ async def test_suppressed_transitive_finding_still_classifies():
 
 @pytest.mark.asyncio
 async def test_dev_scoped_component_is_not_classified():
-    result = await _analyze([_component("jest", "29.0.0", "MIT", scope="dev")])
+    result = await _analyze([_component("jest", "29.0.0", "MIT", scope="excluded")])
 
     assert result["component_licenses"] == []
     assert result["summary"]["skipped"] == 1

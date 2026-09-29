@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
-from app.schemas.project import LicensePolicySchema
+from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 
 
 def test_schema_fields_reuse_license_enums():
@@ -41,6 +41,8 @@ def test_serialization_contract_identical():
         "library_usage": "modified",
         "allow_strong_copyleft": False,
         "allow_network_copyleft": False,
+        "ignore_dev_dependencies": True,
+        "ignore_transitive": False,
     }
     for key in ("distribution_model", "deployment_model", "library_usage"):
         assert type(dumped[key]) is str
@@ -52,6 +54,8 @@ def test_serialization_contract_identical():
         "library_usage": "mixed",
         "allow_strong_copyleft": False,
         "allow_network_copyleft": False,
+        "ignore_dev_dependencies": True,
+        "ignore_transitive": False,
     }
     for key in ("distribution_model", "deployment_model", "library_usage"):
         assert type(defaults[key]) is str
@@ -60,3 +64,25 @@ def test_serialization_contract_identical():
 def test_json_mode_serializes_to_strings():
     policy = LicensePolicySchema(distribution_model="internal_only")
     assert policy.model_dump(mode="json")["distribution_model"] == "internal_only"
+
+
+def test_the_stored_entry_resolves_to_the_policy_with_defaults_for_what_it_leaves_out():
+    policy = license_policy_from_settings({"distribution_model": "internal_only", "ignore_transitive": True})
+
+    assert policy == LicensePolicySchema(distribution_model="internal_only", ignore_transitive=True)
+
+
+def test_no_stored_entry_resolves_to_the_default_policy():
+    assert license_policy_from_settings(None) == LicensePolicySchema()
+
+
+def test_a_legacy_string_boolean_reads_as_the_bool_it_spells():
+    """Entries stored before write validation hold 'false', which a truthiness test read as allowed."""
+    assert license_policy_from_settings({"allow_strong_copyleft": "false"}).allow_strong_copyleft is False
+
+
+def test_settings_merged_with_other_keys_resolve_to_the_policy_keys_alone():
+    """The scan hands the analyzer the system settings merged with the entry."""
+    policy = license_policy_from_settings({"deployment_model": "cli_batch", "retention_days": 30})
+
+    assert policy == LicensePolicySchema(deployment_model="cli_batch")

@@ -1,65 +1,64 @@
-"""PUT /api/v1/projects/{id} records a license-policy audit entry when the license policy changes."""
+"""PUT /api/v1/projects/{id} records a license-policy audit entry when the effective license policy changes."""
 
 import pytest
 
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 
 
+def _license_settings(**entry):
+    return {"analyzer_settings": {"license_compliance": entry}}
+
+
+async def _license_entries(db):
+    return await PolicyAuditRepository(db).list(policy_scope="project", project_id="p", policy_type="license", limit=10)
+
+
 @pytest.mark.asyncio
 async def test_project_update_records_license_policy_change(client, db, owner_auth_headers_proj):
-    # Initial update sets license policy — counts as CREATE.
     resp = await client.put(
         "/api/v1/projects/p",
-        json={
-            "license_policy": {
-                "distribution_model": "distributed",
-                "deployment_model": "network_facing",
-                "library_usage": "mixed",
-                "allow_strong_copyleft": False,
-                "allow_network_copyleft": False,
-            }
-        },
+        json=_license_settings(distribution_model="internal_only"),
         headers=owner_auth_headers_proj,
     )
     assert resp.status_code == 200, resp.text
 
-    entries = await PolicyAuditRepository(db).list(
-        policy_scope="project", project_id="p", policy_type="license", limit=10
+    [first] = await _license_entries(db)
+    assert (first.version, first.action, first.change_summary) == (
+        1,
+        "create",
+        "distribution_model: distributed -> internal_only",
     )
-    assert len(entries) == 1, f"expected 1 entry, got {len(entries)}"
-    first = entries[0]
-    assert first.policy_type == "license"
-    assert first.version == 1
-    assert "Initial license policy" in first.change_summary
 
-    # Second update flips allow_strong_copyleft — counts as UPDATE.
     resp = await client.put(
         "/api/v1/projects/p",
-        json={
-            "license_policy": {
-                "distribution_model": "distributed",
-                "deployment_model": "network_facing",
-                "library_usage": "mixed",
-                "allow_strong_copyleft": True,
-                "allow_network_copyleft": False,
-            }
-        },
+        json=_license_settings(distribution_model="internal_only", allow_strong_copyleft=True),
         headers=owner_auth_headers_proj,
     )
     assert resp.status_code == 200
 
-    entries = await PolicyAuditRepository(db).list(
-        policy_scope="project", project_id="p", policy_type="license", limit=10
+    latest, _ = await _license_entries(db)
+    assert (latest.version, latest.action, latest.change_summary) == (
+        2,
+        "update",
+        "allow_strong_copyleft: False -> True",
     )
-    assert len(entries) == 2
-    latest = entries[0]  # sorted desc
-    assert latest.version == 2
-    assert "allow_strong_copyleft: False -> True" in latest.change_summary
+
+
+@pytest.mark.asyncio
+async def test_restating_the_default_policy_creates_no_audit_entry(client, db, owner_auth_headers_proj):
+    """The scan grades exactly as before, so there is nothing to audit."""
+    resp = await client.put(
+        "/api/v1/projects/p",
+        json=_license_settings(distribution_model="distributed", allow_strong_copyleft=False),
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 200
+
+    assert await _license_entries(db) == []
 
 
 @pytest.mark.asyncio
 async def test_project_update_without_license_change_creates_no_audit_entry(client, db, owner_auth_headers_proj):
-    # Update a non-license field — audit repo should be unchanged.
     resp = await client.put(
         "/api/v1/projects/p",
         json={"retention_days": 60},
@@ -67,17 +66,14 @@ async def test_project_update_without_license_change_creates_no_audit_entry(clie
     )
     assert resp.status_code == 200
 
-    entries = await PolicyAuditRepository(db).list(
-        policy_scope="project", project_id="p", policy_type="license", limit=10
-    )
-    assert entries == []
+    assert await _license_entries(db) == []
 
 
 @pytest.mark.asyncio
 async def test_license_policy_audit_list_endpoint(client, db, owner_auth_headers_proj):
     await client.put(
         "/api/v1/projects/p",
-        json={"license_policy": {"distribution_model": "distributed"}},
+        json=_license_settings(distribution_model="internal_only"),
         headers=owner_auth_headers_proj,
     )
     resp = await client.get(
@@ -96,7 +92,7 @@ async def test_license_policy_audit_list_endpoint(client, db, owner_auth_headers
 async def test_license_policy_audit_get_by_version_endpoint(client, db, owner_auth_headers_proj):
     await client.put(
         "/api/v1/projects/p",
-        json={"license_policy": {"distribution_model": "distributed"}},
+        json=_license_settings(distribution_model="internal_only"),
         headers=owner_auth_headers_proj,
     )
     resp = await client.get(
@@ -122,15 +118,7 @@ async def test_license_policy_audit_404_on_unknown_version(client, db, owner_aut
 async def test_license_policy_entries_isolated_from_crypto(client, db, owner_auth_headers_proj):
     resp = await client.put(
         "/api/v1/projects/p",
-        json={
-            "license_policy": {
-                "distribution_model": "internal_only",
-                "deployment_model": "cli_batch",
-                "library_usage": "unmodified",
-                "allow_strong_copyleft": False,
-                "allow_network_copyleft": False,
-            }
-        },
+        json=_license_settings(distribution_model="internal_only", deployment_model="cli_batch"),
         headers=owner_auth_headers_proj,
     )
     assert resp.status_code == 200

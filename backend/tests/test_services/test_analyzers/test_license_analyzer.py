@@ -4,14 +4,15 @@ from typing import Any, ClassVar
 
 import pytest
 
+from app.core.constants import NON_RUNTIME_SCOPES
 from app.models.finding import Severity
 from app.models.license import (
     DeploymentModel,
     DistributionModel,
     LibraryUsage,
     LicenseCategory,
-    LicensePolicy,
 )
+from app.schemas.project import LicensePolicySchema
 from app.services.analyzers.license_compliance import LicenseAnalyzer
 from app.services.analyzers.license_compliance.compatibility import (
     check_license_compatibility,
@@ -77,7 +78,7 @@ class TestEvaluateLicense:
 
     def _evaluate(self, spdx_id, allow_strong=False, allow_network=False):
         info = self._get_license_info(spdx_id)
-        policy = LicensePolicy(
+        policy = LicensePolicySchema(
             allow_strong_copyleft=allow_strong,
             allow_network_copyleft=allow_network,
         )
@@ -183,7 +184,7 @@ class TestLicenseDatabase:
 
 
 class TestEvaluateLicenseWithContext:
-    """Context-aware license evaluation driven by LicensePolicy."""
+    """Context-aware license evaluation driven by LicensePolicySchema."""
 
     def setup_method(self):
         self.analyzer = LicenseAnalyzer()
@@ -193,7 +194,7 @@ class TestEvaluateLicenseWithContext:
 
     def _evaluate_with_policy(self, spdx_id, **policy_kwargs):
         info = self._get_license_info(spdx_id)
-        policy = LicensePolicy(**policy_kwargs)
+        policy = LicensePolicySchema(**policy_kwargs)
         return evaluate_license(
             component="test-pkg",
             version="1.0.0",
@@ -348,14 +349,14 @@ class TestSpdxExpressionEvaluation:
         ],
     )
     def test_an_or_offering_a_permissive_alternative_raises_no_issue(self, or_groups):
-        policy = LicensePolicy()
+        policy = LicensePolicySchema()
         _, result = self.analyzer._select_or_alternative(
             "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
         )
         assert result is None
 
     def test_evaluate_or_gpl_or_lgpl_picks_lgpl(self):
-        policy = LicensePolicy()
+        policy = LicensePolicySchema()
         or_groups = [["GPL-3.0"], ["LGPL-3.0"]]
         _, result = self.analyzer._select_or_alternative(
             "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
@@ -367,10 +368,10 @@ class TestSpdxExpressionEvaluation:
     @pytest.mark.parametrize(
         ("policy", "or_groups", "expected_severity"),
         [
-            pytest.param(LicensePolicy(), [["MIT", "GPL-3.0"]], Severity.HIGH, id="and-picks-most-restrictive"),
+            pytest.param(LicensePolicySchema(), [["MIT", "GPL-3.0"]], Severity.HIGH, id="and-picks-most-restrictive"),
             # Both become INFO with internal_only, but GPL is evaluated first.
             pytest.param(
-                LicensePolicy(distribution_model=DistributionModel.INTERNAL_ONLY),
+                LicensePolicySchema(distribution_model=DistributionModel.INTERNAL_ONLY),
                 [["GPL-3.0"], ["AGPL-3.0"]],
                 Severity.INFO,
                 id="or-respects-policy",
@@ -456,8 +457,8 @@ class TestLicenseCompatibility:
         [
             pytest.param([("a", "1.0", "MIT"), ("b", "1.0", "Apache-2.0")], id="permissive-only"),
             pytest.param(
-                [("a", "1.0", "GPL-2.0-only"), ("b", "1.0", "GPL-3.0-only", "dev")],
-                id="incompatible-pair-in-dev-scope",
+                [("a", "1.0", "GPL-2.0-only"), ("b", "1.0", "GPL-3.0-only", "excluded")],
+                id="incompatible-pair-in-excluded-scope",
             ),
             pytest.param([("a", "1.0", "GPL-3.0"), ("b", "1.0", "GPL-3.0")], id="same-license-twice"),
         ],
@@ -592,7 +593,7 @@ class TestIgnoredScopes:
         }
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("scope", ["dev", "development", "test", "optional"])
+    @pytest.mark.parametrize("scope", sorted(NON_RUNTIME_SCOPES))
     async def test_non_shipped_scope_is_skipped(self, scope):
         result = await self.analyzer.analyze(sbom={}, settings={}, parsed_components=[self._gpl_component(scope)])
         assert result["license_issues"] == []
@@ -601,9 +602,81 @@ class TestIgnoredScopes:
 
     @pytest.mark.asyncio
     async def test_runtime_scope_is_still_evaluated(self):
-        result = await self.analyzer.analyze(sbom={}, settings={}, parsed_components=[self._gpl_component("runtime")])
+        result = await self.analyzer.analyze(sbom={}, settings={}, parsed_components=[self._gpl_component("required")])
         assert result["summary"]["skipped"] == 0
         assert len(result["license_issues"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_an_excluded_component_takes_no_part_in_a_licence_conflict(self):
+        """CycloneDX 'excluded' is test and build tooling, so its GPL-2.0 cannot conflict with shipped GPL-3.0."""
+        components = _parsed_cyclonedx(
+            [
+                {
+                    "type": "library",
+                    "name": "gpl2-test-tool",
+                    "version": "1.0",
+                    "scope": "excluded",
+                    "purl": "pkg:npm/gpl2-test-tool@1.0",
+                    "licenses": [{"license": {"id": "GPL-2.0-only"}}],
+                },
+                {
+                    "type": "library",
+                    "name": "gpl3-lib",
+                    "version": "1.0",
+                    "scope": "required",
+                    "purl": "pkg:npm/gpl3-lib@1.0",
+                    "licenses": [{"license": {"id": "GPL-3.0-only"}}],
+                },
+            ]
+        )
+
+        result = await self.analyzer.analyze(sbom={}, settings={}, parsed_components=components)
+
+        assert [issue["component"] for issue in result["license_issues"]] == ["gpl3-lib"]
+
+    @pytest.mark.asyncio
+    async def test_the_operating_system_descriptor_is_not_a_licensed_dependency(self):
+        components = _parsed_cyclonedx(
+            [
+                {"type": "operating-system", "name": "debian", "version": "12"},
+                {
+                    "type": "library",
+                    "name": "libc6",
+                    "version": "2.36",
+                    "purl": "pkg:deb/debian/libc6@2.36",
+                    "licenses": [{"license": {"id": "MIT"}}],
+                },
+            ]
+        )
+
+        result = await self.analyzer.analyze(sbom={}, settings={}, parsed_components=components)
+
+        assert result["license_issues"] == []
+        assert (result["summary"]["skipped"], result["summary"]["unknown"]) == (1, 0)
+
+
+class TestStoredPolicy:
+    """The analyzer grades against the policy stored in analyzer_settings, read the way the write validator stores it."""
+
+    _GPL: ClassVar[dict[str, Any]] = {
+        "name": "gpl-lib",
+        "version": "1.0",
+        "purl": "pkg:pypi/gpl-lib@1.0",
+        "license": "GPL-3.0",
+        "direct": True,
+    }
+
+    async def _severities(self, settings):
+        result = await LicenseAnalyzer().analyze(sbom={}, settings=settings, parsed_components=[self._GPL])
+        return [issue["severity"] for issue in result["license_issues"]]
+
+    @pytest.mark.asyncio
+    async def test_a_legacy_string_false_does_not_allow_strong_copyleft(self):
+        assert await self._severities({"allow_strong_copyleft": "false"}) == [Severity.HIGH.value]
+
+    @pytest.mark.asyncio
+    async def test_the_flat_policy_decides_the_verdict(self):
+        assert await self._severities({"distribution_model": "internal_only"}) == [Severity.INFO.value]
 
 
 _UNREADABLE_ALTERNATIVE = "Acme-1.0"

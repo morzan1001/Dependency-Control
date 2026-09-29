@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.constants import NON_RUNTIME_SCOPES
 from app.models.finding import Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS
 
@@ -100,8 +101,7 @@ def collect_component_licenses(
     """Collect resolved licenses per non-dev component."""
     result: list[dict[str, Any]] = []
     for idx, comp in enumerate(components):
-        comp_scope = (comp.get("scope") or "").lower()
-        if ignore_dev and comp_scope in ("dev", "development", "test", "optional"):
+        if ignore_dev and (comp.get("scope") or "").lower() in NON_RUNTIME_SCOPES:
             continue
         result.extend(
             {

@@ -12,8 +12,8 @@ from app.models.license import (
     LibraryUsage,
     LicenseCategory,
     LicenseInfo,
-    LicensePolicy,
 )
+from app.schemas.project import LicensePolicySchema
 
 from .constants import (
     POLICY_VIOLATION_MIN_RANK,
@@ -35,7 +35,7 @@ def evaluate_license(
     license_info: LicenseInfo,
     lic_url: str | None,
     purl: str,
-    policy: LicensePolicy,
+    policy: LicensePolicySchema,
 ) -> dict[str, Any] | None:
     """Return an issue dict if the license is problematic under `policy`, else None."""
 
@@ -82,7 +82,7 @@ def evaluate_weak_copyleft(
     license_info: LicenseInfo,
     lic_url: str | None,
     purl: str,
-    policy: LicensePolicy,
+    policy: LicensePolicySchema,
 ) -> dict[str, Any] | None:
     """Weak copyleft (LGPL, MPL, EPL, CDDL): obligation only on modification."""
     if policy.library_usage == LibraryUsage.UNMODIFIED:
@@ -120,7 +120,7 @@ def evaluate_strong_copyleft(
     license_info: LicenseInfo,
     lic_url: str | None,
     purl: str,
-    policy: LicensePolicy,
+    policy: LicensePolicySchema,
 ) -> dict[str, Any] | None:
     """Strong copyleft (GPL): obligations trigger only upon distribution."""
     if policy.distribution_model == DistributionModel.INTERNAL_ONLY:
@@ -215,7 +215,7 @@ def evaluate_network_copyleft(
     license_info: LicenseInfo,
     lic_url: str | None,
     purl: str,
-    policy: LicensePolicy,
+    policy: LicensePolicySchema,
 ) -> dict[str, Any] | None:
     """Network copyleft (AGPL, SSPL): obligations trigger on network interaction; CLI/desktop/embedded are exempt."""
     if policy.deployment_model in (
@@ -242,7 +242,7 @@ def evaluate_network_copyleft(
             license_url=lic_url,
             context_reason=(
                 "Severity reduced: project deployment model is "
-                f"'{policy.deployment_model.value}', AGPL/SSPL network clause "
+                f"'{policy.deployment_model}', AGPL/SSPL network clause "
                 "does not apply."
             ),
             effective_severity=Severity.CRITICAL.value,

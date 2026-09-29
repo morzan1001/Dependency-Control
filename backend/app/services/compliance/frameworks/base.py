@@ -2,7 +2,7 @@
 
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any, Protocol, runtime_checkable
@@ -21,6 +21,7 @@ from app.schemas.compliance import (
     ResidualRisk,
 )
 from app.schemas.crypto_policy import CryptoRule
+from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.analyzers.crypto.matcher import asset_in_rule_scope
 
@@ -84,6 +85,7 @@ class EvaluationInput:
     policy_version: int | None
     iana_catalog_version: int | None
     scan_ids: list[str]
+    license_policy: LicensePolicySchema = field(default_factory=LicensePolicySchema)
     # Set for meta-frameworks that run their own DB queries (e.g. PQC).
     db: AsyncIOMotorDatabase[Any] | None = None
     # What `findings` covers of the scope. None where the caller assembled the input itself and

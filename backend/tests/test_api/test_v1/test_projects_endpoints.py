@@ -343,18 +343,26 @@ class TestCreateProjectStoresWhatTheDialogChose:
         assert (stored["retention_days"], stored["retention_action"]) == (90, "delete")
 
     def test_analyzer_settings_are_stored_and_the_license_policy_audited(self):
-        from app.schemas.project import ProjectCreate
+        from app.schemas.project import LicensePolicySchema, ProjectCreate
 
         analyzer_settings = {"license_compliance": {"deployment_model": "cli_batch"}, "trivy": {"x": 1}}
         db, stored = self._create(ProjectCreate(name="New", analyzer_settings=analyzer_settings))
 
         assert stored["analyzer_settings"] == analyzer_settings
         [entry] = db.crypto_policy_history._docs.values()
-        assert (entry["policy_type"], entry["action"], entry["snapshot"]) == (
+        assert (entry["policy_type"], entry["action"], entry["change_summary"]) == (
             "license",
             "create",
-            {"deployment_model": "cli_batch"},
+            "deployment_model: network_facing -> cli_batch",
         )
+        assert entry["snapshot"] == LicensePolicySchema(deployment_model="cli_batch").model_dump()
+
+    def test_a_project_created_with_the_default_policy_writes_no_license_audit_entry(self):
+        from app.schemas.project import ProjectCreate
+
+        db, _ = self._create(ProjectCreate(name="New", analyzer_settings={"trivy": {"x": 1}}))
+
+        assert list(db.crypto_policy_history._docs.values()) == []
 
     def test_the_license_policy_change_reaches_the_team(self):
         from app.schemas.project import ProjectCreate

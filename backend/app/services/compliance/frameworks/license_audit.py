@@ -63,13 +63,11 @@ class LicenseAuditFramework:
     async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
         # yield once so sibling framework tasks can progress
         await asyncio.sleep(0)
-        policy = _extract_license_policy(data)
         findings = data.findings or []
 
         controls: list[ControlResult] = []
         for policy_key, cfg in _POLICY_TO_CATEGORY.items():
-            allowed = bool(policy.get(policy_key, False))
-            if allowed:
+            if getattr(data.license_policy, policy_key):
                 # policy permits this category -> NOT_APPLICABLE
                 controls.append(
                     ControlResult(
@@ -138,17 +136,6 @@ class LicenseAuditFramework:
             residual_risks=build_residual_risks(controls),
             inputs_fingerprint="license-audit-v1",
         )
-
-
-def _extract_license_policy(data: EvaluationInput) -> dict[str, Any]:
-    """Pull the license policy from policy_rules; permissive defaults when unset."""
-    rules = data.policy_rules or []
-    # License policy is a single flat dict placed first in policy_rules.
-    if rules and isinstance(rules[0], dict):
-        first = rules[0]
-        if any(k in first for k in ("allow_strong_copyleft", "allow_network_copyleft", "distribution_model")):
-            return first
-    return {}
 
 
 def _is_license_violation(f: dict[str, Any], categories: list[str]) -> bool:

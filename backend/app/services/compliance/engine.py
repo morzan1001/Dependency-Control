@@ -22,6 +22,7 @@ from app.schemas.compliance import (
     ReportFramework,
     ReportStatus,
 )
+from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
 from app.services.analyzers.crypto.catalogs.loader import CURRENT_IANA_CATALOG_VERSION
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
@@ -116,11 +117,6 @@ class ComplianceReportEngine:
         system = await policy_repo.get_system_policy()
         policy_version = getattr(system, "version", None) if system else None
         policy_rules = [r.model_dump() for r in system.rules] if system else []
-        # License Audit reads its toggles from policy_rules[0]; prepend the
-        # project license policy there. Crypto frameworks key by rule_id and ignore it.
-        license_policy = await self._resolve_license_policy(db, resolved, framework)
-        if license_policy is not None:
-            policy_rules = [license_policy, *policy_rules]
         scope_desc = self._scope_description(resolved)
         return EvaluationInput(
             resolved=resolved,
@@ -128,6 +124,7 @@ class ComplianceReportEngine:
             crypto_assets=assets,
             findings=findings,
             policy_rules=policy_rules,
+            license_policy=await self._resolve_license_policy(db, resolved, framework),
             policy_version=policy_version,
             iana_catalog_version=CURRENT_IANA_CATALOG_VERSION,
             scan_ids=scan_ids,
@@ -234,42 +231,14 @@ class ComplianceReportEngine:
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
         framework: ComplianceFramework | None,
-    ) -> dict[str, Any] | None:
-        """Effective project license policy; None unless scope is a single project carrying the toggles."""
+    ) -> LicensePolicySchema:
+        """The single project's saved policy; every other scope, and a crypto framework, gets the default."""
         key = getattr(framework, "key", None)
-        if key not in (ReportFramework.LICENSE_AUDIT, None):
-            return None
-        project_ids = resolved.project_ids
-        if resolved.scope != "project" or not project_ids or len(project_ids) != 1:
-            return None
-        doc = await db["projects"].find_one(
-            {"_id": project_ids[0]},
-            {"license_policy": 1, "analyzer_settings": 1},
-        )
-        if not doc:
-            return None
-        return self._effective_license_policy(doc)
-
-    @staticmethod
-    def _effective_license_policy(project_doc: dict[str, Any]) -> dict[str, Any] | None:
-        """Precedence: analyzer_settings.license_compliance (or its nested license_policy) over top-level project.license_policy."""
-        license_keys = ("allow_strong_copyleft", "allow_network_copyleft", "distribution_model")
-
-        def _matches(candidate: Any) -> bool:
-            return isinstance(candidate, dict) and any(k in candidate for k in license_keys)
-
-        analyzer_settings = project_doc.get("analyzer_settings") or {}
-        settings = analyzer_settings.get("license_compliance") if isinstance(analyzer_settings, dict) else None
-        if isinstance(settings, dict):
-            nested = settings.get("license_policy")
-            if _matches(nested):
-                return nested
-            if _matches(settings):
-                return settings
-        legacy = project_doc.get("license_policy")
-        if _matches(legacy):
-            return legacy
-        return None
+        project_ids = resolved.project_ids or []
+        if key not in (ReportFramework.LICENSE_AUDIT, None) or resolved.scope != "project" or len(project_ids) != 1:
+            return LicensePolicySchema()
+        doc = await db["projects"].find_one({"_id": project_ids[0]}, {"analyzer_settings.license_compliance": 1})
+        return license_policy_from_settings(((doc or {}).get("analyzer_settings") or {}).get("license_compliance"))
 
     def _scope_description(self, resolved: ResolvedScope) -> str:
         if resolved.scope == "project":
