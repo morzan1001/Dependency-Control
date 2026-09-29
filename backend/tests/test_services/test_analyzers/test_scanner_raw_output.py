@@ -1,4 +1,4 @@
-"""Trivy and Grype results are stored as the scanner wrote them; normalize_trivy/normalize_grype build the findings."""
+"""Trivy results are stored as the scanner wrote them; Grype's keep only the match keys normalize_grype reads."""
 
 import json
 
@@ -8,10 +8,9 @@ from app.services.analyzers.grype import GrypeAnalyzer
 from app.services.analyzers.trivy import TrivyAnalyzer
 
 
-@pytest.mark.parametrize("analyzer", [TrivyAnalyzer(), GrypeAnalyzer()])
-def test_the_stored_result_is_the_parsed_scanner_output(analyzer):
-    raw = {analyzer.empty_result_key: [{"Vulnerabilities": [{"VulnerabilityID": "CVE-1", "Severity": "UNKNOWN"}]}]}
-    assert analyzer._parse_output(json.dumps(raw).encode()) == raw
+def test_the_stored_trivy_result_is_the_parsed_scanner_output():
+    raw = {"Results": [{"Vulnerabilities": [{"VulnerabilityID": "CVE-1", "Severity": "UNKNOWN"}]}]}
+    assert TrivyAnalyzer()._parse_output(json.dumps(raw).encode()) == raw
 
 
 @pytest.mark.parametrize("analyzer", [TrivyAnalyzer(), GrypeAnalyzer()])

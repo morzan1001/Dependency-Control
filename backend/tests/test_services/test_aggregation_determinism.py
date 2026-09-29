@@ -52,9 +52,9 @@ GRYPE = {
                 "description": "brace-expansion is vulnerable to a regular expression denial of service.",
                 "fix": {"versions": ["2.0.3", "1.1.12"], "state": "fixed"},
                 "urls": ["https://github.com/advisories/GHSA-3jxr-9vmj-r5cp"],
-                "relatedVulnerabilities": [{"id": "CVE-2026-13149"}],
                 "cvss": [{"metrics": {"baseScore": 3.1}, "vector": "CVSS:3.1/AV:N/AC:H", "version": "3.1"}],
             },
+            "relatedVulnerabilities": [{"id": "CVE-2026-13149"}],
             "artifact": {"name": "brace-expansion", "version": "2.0.2"},
         },
         {

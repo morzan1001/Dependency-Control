@@ -2,6 +2,9 @@ from typing import Any
 
 from .cli_base import CLIAnalyzer
 
+# normalize_grype reads nothing else; matchDetails and the top-level descriptor, source and distro only add size.
+_READ_MATCH_KEYS = ("vulnerability", "artifact", "relatedVulnerabilities")
+
 
 class GrypeAnalyzer(CLIAnalyzer):
     name = "grype"
@@ -35,6 +38,12 @@ class GrypeAnalyzer(CLIAnalyzer):
         if not msg:
             return True
         return any(p in msg for p in self._RETRYABLE_PATTERNS)
+
+    def _parse_output(self, stdout: bytes) -> dict[str, Any]:
+        parsed = super()._parse_output(stdout)
+        if "error" in parsed:
+            return parsed
+        return {"matches": [{key: m[key] for key in _READ_MATCH_KEYS if key in m} for m in parsed.get("matches") or []]}
 
     def _build_command_args(self, sbom_path: str, settings: dict[str, Any] | None) -> list[str]:
         """Build Grype command arguments.
