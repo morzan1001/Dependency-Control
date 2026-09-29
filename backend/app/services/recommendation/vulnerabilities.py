@@ -135,11 +135,12 @@ def _analyze_base_image_vulns(
     else:
         priority = Priority.LOW
 
-    image_name = source_target or "your base image"
-
-    if source_target and ":" in source_target:
-        parts = source_target.rsplit(":", 1)
-        image_name = parts[0]
+    image_name = "your base image"
+    if source_target:
+        repository = source_target.split("@", 1)[0]
+        # A ':' before the last '/' is a registry port, not a tag separator.
+        tag_colon = repository.rfind(":")
+        image_name = repository[:tag_colon] if tag_colon > repository.rfind("/") else repository
 
     packages_shown, packages_total = sample_components(sorted(affected_packages))
     return Recommendation(

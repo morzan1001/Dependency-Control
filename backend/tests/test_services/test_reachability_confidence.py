@@ -156,7 +156,7 @@ class TestEcosystemFromDependencyMap:
         db = FakeDatabase()
         await db.dependencies.insert_one({"scan_id": "s1", "name": "requests", "version": "2.31.0", "type": "pypi"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "left-pad", "version": "1.3.0", "type": "npm"})
-        await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "version": "v1.0.0", "type": "go-module"})
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "version": "v1.0.0", "type": "golang"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "viapurl", "purl": "pkg:pypi/viapurl@1.0"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "rpmpkg", "type": "rpm"})  # no callgraph lang
         m = await build_component_language_map(db, "s1")

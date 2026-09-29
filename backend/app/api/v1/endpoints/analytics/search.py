@@ -114,7 +114,7 @@ async def search_dependencies_advanced(
     type: Annotated[str | None, Query(description="Filter by package type")] = None,
     source_type: Annotated[
         str | None,
-        Query(description="Filter by source type (image, file-system, directory, application)"),
+        Query(description="Filter by source type (image, directory, file, application)"),
     ] = None,
     has_vulnerabilities: Annotated[bool | None, Query(description="Filter by vulnerability status")] = None,
     project_ids: Annotated[str | None, Query(description="Comma-separated list of project IDs")] = None,

@@ -34,7 +34,7 @@ class Dependency(MongoDocument):
     parent_components: list[str] = Field(default_factory=list, description="The parents' dependency_node_key values")
 
     # Source/Origin info (from SBOM properties)
-    source_type: str | None = Field(None, description="Source type: image, file-system, directory, application")
+    source_type: str | None = Field(None, description="Source type: image, directory, file, application")
     source_target: str | None = Field(None, description="Source target: Docker image name, file path, etc.")
     layer_digest: str | None = Field(None, description="Docker layer digest if from container image")
     found_by: str | None = Field(

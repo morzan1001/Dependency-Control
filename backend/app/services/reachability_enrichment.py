@@ -49,16 +49,13 @@ _FINDINGS_PAGE_SIZE = 1000
 # off is logged and reported, never dropped silently.
 _MAX_FINDINGS_PER_RUN = 100_000
 
-# Ecosystem identifier (a dependency's `type`, e.g. "pypi"/"npm"/"go-module", OR a
-# purl type) -> the callgraph language(s) that can analyze it. Any other ecosystem
+# Purl type -> the callgraph language(s) that can analyze it. Any other ecosystem
 # (cargo, nuget, rpm, deb, ...) has no callgraph producer.
 _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: dict[str, frozenset[str]] = {
     "pypi": frozenset({"python"}),
-    "python": frozenset({"python"}),
     "npm": frozenset({"javascript", "typescript"}),
     "go": frozenset({"go"}),
     "golang": frozenset({"go"}),
-    "go-module": frozenset({"go"}),
     "maven": JVM_LANGUAGES,
 }
 # jdeps cannot see classes loaded through reflection or ServiceLoader, so a missing import is no evidence.

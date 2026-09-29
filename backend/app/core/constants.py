@@ -884,7 +884,6 @@ SOURCE_TYPE_IMAGE = "image"
 SOURCE_TYPE_APPLICATION = "application"
 SOURCE_TYPE_FILE = "file"
 SOURCE_TYPE_DIRECTORY = "directory"
-SOURCE_TYPE_FILE_SYSTEM = "file-system"
 
 # Package types that are typically OS/system packages (from container base images)
 OS_PACKAGE_TYPES = frozenset(
@@ -907,17 +906,11 @@ APP_PACKAGE_TYPES = frozenset(
         "npm",
         "pypi",
         "maven",
-        "gradle",
         "cargo",
         "gem",
         "nuget",
         "golang",
-        "go-module",
         "composer",
-        "pip",
-        "poetry",
-        "yarn",
-        "pnpm",
         "hex",
         "cocoapods",
         "swift",

@@ -1,5 +1,7 @@
 """Unified parsing of CycloneDX, SPDX, and Syft JSON SBOMs into a common representation."""
 
+import base64
+import contextlib
 import logging
 import re
 from typing import Any
@@ -7,15 +9,16 @@ from urllib.parse import quote, urlparse
 
 from app.core.constants import (
     APP_PACKAGE_TYPES,
+    OS_PACKAGE_TYPES,
     SOURCE_TYPE_APPLICATION,
     SOURCE_TYPE_DIRECTORY,
     SOURCE_TYPE_FILE,
-    SOURCE_TYPE_FILE_SYSTEM,
     SOURCE_TYPE_IMAGE,
     SPDX_ORGANIZATION_PREFIX,
 )
 from app.schemas.sbom import UNKNOWN_VERSION, ParsedDependency, ParsedSBOM, SBOMFormat, has_known_version
 from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type, parse_purl
+from app.services.analyzers.base import normalize_hash_algorithm
 from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
 from app.services.cbom_parser import parse_crypto_components
 
@@ -86,6 +89,102 @@ def is_url(value: str) -> bool:
         return False
 
 
+def _hash_map(entries: Any, alg_key: str, value_key: str) -> dict[str, str]:
+    """Algorithm -> digest from a list of hash entries; the first digest per algorithm wins."""
+    hashes: dict[str, str] = {}
+    for entry in entries if isinstance(entries, list) else []:
+        if not isinstance(entry, dict):
+            continue
+        alg, value = entry.get(alg_key), entry.get(value_key)
+        if isinstance(alg, str) and isinstance(value, str) and alg and value:
+            hashes.setdefault(normalize_hash_algorithm(alg), value)
+    return hashes
+
+
+def _people_to_str(value: Any) -> str | None:
+    """Join a people field given as a string, a contact object or a list of either."""
+    entries = value if isinstance(value, list) else [value]
+    names = [(entry.get("name") or entry.get("email")) if isinstance(entry, dict) else entry for entry in entries]
+    return ", ".join(name for name in names if isinstance(name, str) and name) or None
+
+
+def _normalize_cpes(*sources: Any) -> list[str]:
+    """CPE strings from each list source, deduplicated in first-seen order."""
+    # Syft JSON before schema 16 emits plain strings, newer releases {"cpe": ...} dicts.
+    values = (
+        entry.get("cpe") if isinstance(entry, dict) else entry
+        for source in sources
+        if isinstance(source, list)
+        for entry in source
+    )
+    return list(dict.fromkeys(value for value in values if isinstance(value, str) and value))
+
+
+def _group_for(declared: str | None, purl: str | None) -> str | None:
+    """The declared group, else the purl namespace where it is part of the package's name."""
+    if declared:
+        return declared
+    parsed = parse_purl(purl) if purl else None
+    # A golang namespace is the module host and a distro package's the vendor, not part of the name.
+    if parsed is None or parsed.type == "golang" or parsed.type in OS_PACKAGE_TYPES:
+        return None
+    return parsed.namespace
+
+
+_FABRICATED_PURL_TYPES = {"library": "generic", "framework": "generic", "container": "oci"}
+
+
+def _purl_less_identity(
+    kind: str, name: str, version: str, pkg_type: str, group: str | None, cpes: list[str]
+) -> tuple[bool, str | None]:
+    """(keep, purl) for a component without a purl; kind is 'os', 'binary' or 'package'."""
+    if kind == "os":
+        return True, None
+    if kind == "binary":
+        # A fabricated id for a binary-classifier hit matches no feed; only a CPE identifies it.
+        return bool(cpes), None
+    if not has_known_version(version):
+        return False, None
+    purl_type = _FABRICATED_PURL_TYPES.get(pkg_type, pkg_type)
+    namespace = f"{quote(str(group), safe='')}/" if group else ""
+    return True, f"pkg:{purl_type}/{namespace}{quote(str(name), safe='')}@{quote(str(version), safe='')}"
+
+
+_SYFT_TYPE_TO_PURL_TYPE = {
+    "binary": "generic",
+    "dart-pub": "pub",
+    "dotnet": "nuget",
+    "erlang-otp": "otp",
+    "github-action": "github",
+    "go-module": "golang",
+    "java-archive": "maven",
+    "jenkins-plugin": "maven",
+    "lua-rocks": "luarocks",
+    "php-composer": "composer",
+    "php-pear": "pear",
+    "php-pecl": "pecl",
+    "portage": "ebuild",
+    "python": "pypi",
+    "R-package": "cran",
+    "rust-crate": "cargo",
+}
+
+_SYFT_SOURCE_TYPES = (SOURCE_TYPE_IMAGE, SOURCE_TYPE_DIRECTORY, SOURCE_TYPE_FILE)
+
+_SPDX_NO_VALUE = frozenset({"NOASSERTION", "NONE", ""})
+
+
+def _spdx_value(pkg: dict[str, Any], key: str) -> str | None:
+    value = pkg.get(key)
+    return value if isinstance(value, str) and value not in _SPDX_NO_VALUE else None
+
+
+# osv derives a distro binary's source package from these; nothing reads any other raw property.
+_OS_SOURCE_PACKAGE_PROPERTIES = tuple(
+    f"aquasecurity:trivy:{key}" for key in ("SrcName", "SrcVersion", "SrcRelease", "SrcEpoch")
+)
+
+
 class SBOMParser:
     """Universal SBOM parser that handles multiple formats and normalizes output."""
 
@@ -97,78 +196,40 @@ class SBOMParser:
         }
 
     @staticmethod
-    def _detect_cyclonedx(sbom: dict[str, Any]) -> tuple[SBOMFormat, str | None] | None:
-        """Try to detect CycloneDX format."""
-        if sbom.get("bomFormat") == "CycloneDX":
-            return SBOMFormat.CYCLONEDX, sbom.get("specVersion")
-
-        schema = sbom.get("$schema", "")
-        if "cyclonedx" in schema.lower():
-            version_match = re.search(r"bom-(\d+\.\d+)", schema)
-            version = version_match.group(1) if version_match else None
-            return SBOMFormat.CYCLONEDX, version
-
-        # CycloneDX by structure (has components array with purl)
+    def _detect_cyclonedx(sbom: dict[str, Any]) -> SBOMFormat | None:
+        if sbom.get("bomFormat") == "CycloneDX" or "cyclonedx" in sbom.get("$schema", "").lower():
+            return SBOMFormat.CYCLONEDX
         components = sbom.get("components")
         if isinstance(components, list) and components and isinstance(components[0], dict) and "purl" in components[0]:
-            return SBOMFormat.CYCLONEDX, sbom.get("specVersion")
-
+            return SBOMFormat.CYCLONEDX
         return None
 
     @staticmethod
-    def _detect_spdx(sbom: dict[str, Any]) -> tuple[SBOMFormat, str | None] | None:
-        """Try to detect SPDX format."""
-        if sbom.get("spdxVersion"):
-            return SBOMFormat.SPDX, sbom.get("spdxVersion")
-
-        if "SPDX" in sbom.get("$schema", ""):
-            return SBOMFormat.SPDX, None
-
+    def _detect_spdx(sbom: dict[str, Any]) -> SBOMFormat | None:
+        if sbom.get("spdxVersion") or "SPDX" in sbom.get("$schema", ""):
+            return SBOMFormat.SPDX
         return None
 
     @staticmethod
-    def _detect_syft(sbom: dict[str, Any]) -> tuple[SBOMFormat, str | None] | None:
-        """Try to detect Syft JSON format."""
-        if "artifacts" in sbom and isinstance(sbom.get("artifacts"), list):
-            descriptor = sbom.get("descriptor", {})
-            if descriptor.get("name") == "syft":
-                return SBOMFormat.SYFT, descriptor.get("version")
-            if "source" in sbom:
-                return SBOMFormat.SYFT, None
-
-        # Fallback: Check for common Syft patterns
+    def _detect_syft(sbom: dict[str, Any]) -> SBOMFormat | None:
+        if isinstance(sbom.get("artifacts"), list) and (
+            sbom.get("descriptor", {}).get("name") == "syft" or "source" in sbom
+        ):
+            return SBOMFormat.SYFT
         source = sbom.get("source")
-        if isinstance(source, dict) and source.get("type") in [
-            SOURCE_TYPE_IMAGE,
-            SOURCE_TYPE_DIRECTORY,
-            SOURCE_TYPE_FILE,
-        ]:
-            return SBOMFormat.SYFT, None
-
+        if isinstance(source, dict) and source.get("type") in _SYFT_SOURCE_TYPES:
+            return SBOMFormat.SYFT
         return None
 
-    def detect_format(self, sbom: dict[str, Any]) -> tuple[SBOMFormat, str | None]:
-        """Detect the SBOM format and version."""
-        result = self._detect_cyclonedx(sbom)
-        if result:
-            return result
-
-        result = self._detect_spdx(sbom)
-        if result:
-            return result
-
-        result = self._detect_syft(sbom)
-        if result:
-            return result
-
-        return SBOMFormat.UNKNOWN, None
+    def detect_format(self, sbom: dict[str, Any]) -> SBOMFormat:
+        return self._detect_cyclonedx(sbom) or self._detect_spdx(sbom) or self._detect_syft(sbom) or SBOMFormat.UNKNOWN
 
     def parse(self, sbom: dict[str, Any]) -> ParsedSBOM:
         """Parse an SBOM and return normalized representation."""
 
-        format_type, version = self.detect_format(sbom)
+        format_type = self.detect_format(sbom)
 
-        result = ParsedSBOM(format=format_type, format_version=version)
+        result = ParsedSBOM(format=format_type)
 
         # A document-level failure must propagate: swallowing it would report an
         # empty parse as success, and persistence would then replace the scan's
@@ -180,7 +241,7 @@ class SBOMParser:
             last_error: Exception | None = None
             handler_completed = False
             for handler in self.format_handlers.values():
-                candidate = ParsedSBOM(format=format_type, format_version=version)
+                candidate = ParsedSBOM(format=format_type)
                 try:
                     handler(sbom, candidate)
                 except Exception as e:
@@ -221,28 +282,13 @@ class SBOMParser:
     _PLACEHOLDER_VERSIONS = frozenset({"", "unknown", "noassertion", "none"})
 
     @classmethod
-    def _normalize_version(cls, raw: Any) -> str:
-        if raw is None or not isinstance(raw, (str, int, float)):
-            return UNKNOWN_VERSION
-        version = str(raw).strip()
-        return UNKNOWN_VERSION if version.lower() in cls._PLACEHOLDER_VERSIONS else version
-
-    @staticmethod
-    def _extract_cyclonedx_tool(tools: Any) -> tuple[str | None, str | None]:
-        """Extract tool name/version from CycloneDX metadata.tools (list or object form)."""
-        if not tools:
-            return None, None
-        if isinstance(tools, list) and tools:
-            first_tool = tools[0]
-            if isinstance(first_tool, dict):
-                return first_tool.get("name") or first_tool.get("vendor"), first_tool.get("version")
-            return None, None
-        if isinstance(tools, dict):
-            # CycloneDX 1.5+ tools object
-            components = tools.get("components", [])
-            if components:
-                return components[0].get("name"), components[0].get("version")
-        return None, None
+    def _normalize_version(cls, raw: Any, purl: str | None = None) -> str:
+        """The version, else the purl's version, else UNKNOWN_VERSION."""
+        version = str(raw).strip() if isinstance(raw, (str, int, float)) else ""
+        if version.lower() not in cls._PLACEHOLDER_VERSIONS:
+            return version
+        parsed = parse_purl(purl) if purl else None
+        return cls._normalize_version(parsed.version) if parsed else UNKNOWN_VERSION
 
     @staticmethod
     def _build_cyclonedx_deps_graph(
@@ -324,13 +370,6 @@ class SBOMParser:
         """Parse CycloneDX format SBOM."""
 
         metadata = sbom.get("metadata", {})
-        tool_name, tool_version = self._extract_cyclonedx_tool(metadata.get("tools", []))
-        if tool_name is not None:
-            result.tool_name = tool_name
-        if tool_version is not None:
-            result.tool_version = tool_version
-
-        result.created_at = metadata.get("timestamp")
 
         # Source/Subject info (global SBOM source)
         global_source_type, source_target = self._extract_cyclonedx_source(metadata)
@@ -429,7 +468,9 @@ class SBOMParser:
 
             if comp_type == "container":
                 source_type = SOURCE_TYPE_IMAGE
-                source_target = f"{comp_name}:{comp_version}" if comp_version else comp_name
+                # An OCI tag never contains ':', so a version that does is a digest.
+                separator = "@" if ":" in str(comp_version) else ":"
+                source_target = f"{comp_name}{separator}{comp_version}" if comp_version else comp_name
             elif comp_type in ["application", "library"]:
                 source_type = SOURCE_TYPE_APPLICATION
                 source_target = comp_name
@@ -442,11 +483,7 @@ class SBOMParser:
             name = prop.get("name", "")
             value = prop.get("value", "")
 
-            if name == "syft:source:type":
-                source_type = value
-            elif name == "syft:source:target":
-                source_target = value
-            elif name == "aquasecurity:trivy:ImageName":
+            if name == "aquasecurity:trivy:ImageName":
                 source_type = SOURCE_TYPE_IMAGE
                 source_target = value
             elif "image" in name.lower() and not source_type:
@@ -472,20 +509,6 @@ class SBOMParser:
             return SOURCE_TYPE_IMAGE
 
         return global_source_type
-
-    def _construct_purl(self, pkg_type: str, name: str, version: str, group: str | None = None) -> str:
-        """Construct a PURL from component metadata; segments are encoded so names with spaces stay legal PURLs."""
-        type_mapping = {
-            "library": "generic",
-            "application": "generic",
-            "container": "oci",
-            "binary": "generic",
-            "framework": "generic",
-        }
-        purl_type = type_mapping.get(pkg_type, pkg_type)
-
-        namespace = f"{quote(str(group), safe='')}/" if group else ""
-        return f"pkg:{purl_type}/{namespace}{quote(str(name), safe='')}@{quote(str(version), safe='')}"
 
     @staticmethod
     def _resolve_cyclonedx_directness(
@@ -534,13 +557,12 @@ class SBOMParser:
             field = syft_location.group(1) if syft_location else None
             if field == "layerID":
                 return (prop_value if not current_layer else None), None, None
-            if field in ("path", "accessPath") and prop_value:
+            if field == "path" and prop_value:
                 return None, None, prop_value
-            # Anything else (annotations:evidence etc.) describes the location
-            # but is not a path.
+            # Anything else (accessPath, annotations:evidence etc.) is no canonical path.
             return None, None, None
         lower = prop_name.lower()
-        if ("location" in lower or "path" in lower) and prop_value:
+        if ("location" in lower or "path" in lower) and prop_value and not prop_name.startswith("syft:"):
             return None, None, prop_value
         return None, None, None
 
@@ -588,7 +610,7 @@ class SBOMParser:
             if loc:
                 locations.append(loc)
 
-        return layer_digest, found_by, list(dict.fromkeys(locations)), properties, list(dict.fromkeys(cpes))
+        return layer_digest, found_by, list(dict.fromkeys(locations)), properties, cpes
 
     @staticmethod
     def _normalize_vcs_url(raw: str) -> str | None:
@@ -610,11 +632,12 @@ class SBOMParser:
     def _extract_cyclonedx_external_refs(
         cls,
         external_refs: list[dict[str, Any]],
-    ) -> tuple[str | None, str | None, str | None]:
-        """Return (homepage, repository_url, download_url) from externalReferences."""
+    ) -> tuple[str | None, str | None, str | None, list[Any]]:
+        """Return (homepage, repository_url, download_url, distribution hash entries) from externalReferences."""
         homepage: str | None = None
         repository_url: str | None = None
         download_url: str | None = None
+        distribution_hashes: list[Any] = []
         for ref in external_refs if isinstance(external_refs, list) else []:
             if not isinstance(ref, dict):
                 continue
@@ -624,9 +647,11 @@ class SBOMParser:
                 homepage = ref_url
             elif ref_type in ("vcs", "git") and not repository_url:
                 repository_url = cls._normalize_vcs_url(ref_url)
-            elif ref_type in ("distribution", "download") and not download_url:
-                download_url = ref_url
-        return homepage, repository_url, download_url
+            elif ref_type in ("distribution", "download"):
+                download_url = download_url or ref_url
+                if isinstance(ref.get("hashes"), list):
+                    distribution_hashes.extend(ref["hashes"])
+        return homepage, repository_url, download_url, distribution_hashes
 
     def _parse_cyclonedx_component(
         self,
@@ -642,7 +667,7 @@ class SBOMParser:
 
         purl = comp.get("purl")
         name = comp.get("name")
-        version = self._normalize_version(comp.get("version"))
+        version = self._normalize_version(comp.get("version"), purl)
         bom_ref = comp.get("bom-ref")
         component_type = comp.get("type", "library")
         group = comp.get("group")
@@ -650,35 +675,26 @@ class SBOMParser:
         if not name:
             return None
         # Every other producer names a scoped npm package "@scope/name"; the bare name is another package.
-        if isinstance(group, str) and group.startswith("@") and get_purl_type(purl) == "npm":
+        if (
+            isinstance(group, str)
+            and group.startswith("@")
+            and not name.startswith("@")
+            and get_purl_type(purl) == "npm"
+        ):
             name = f"{group}/{name}"
 
-        layer_digest, found_by, locations, properties, prop_cpes = self._extract_cyclonedx_properties(comp)
-
-        # CycloneDX defines a single string field `cpe` (there is no `cpes` array in
-        # the 1.4-1.6 spec). Read the spec field; also accept a non-standard `cpes`
-        # list (dict- or string-form) as a defensive fallback, plus the syft:cpe23
-        # property form syft-generated SBOMs use for their full CPE list.
-        listed = [c.get("cpe") if isinstance(c, dict) else c for c in [*(comp.get("cpes") or []), *prop_cpes]]
-        cpes = list(dict.fromkeys(val for val in [comp.get("cpe"), *listed] if val))
+        layer_digest, found_by, locations, raw_properties, prop_cpes = self._extract_cyclonedx_properties(comp)
+        # The spec field is the single string `cpe`; syft lists its CPEs as syft:cpe23 properties.
+        cpes = _normalize_cpes([comp.get("cpe")], comp.get("cpes"), prop_cpes)
+        syft_type = raw_properties.get("syft:package:type")
+        pkg_type = _SYFT_TYPE_TO_PURL_TYPE.get(syft_type, syft_type) if syft_type else component_type
 
         if not purl:
-            if component_type == "operating-system":
-                # OS descriptors stay (they feed base-image EOL detection) but a
-                # fabricated pkg:generic id matches no vulnerability source.
-                purl = None
-            elif component_type == "application":
-                # Binary-classifier hits: without a real purl or CPE nothing can
-                # ever match them across scans or feeds.
-                if not cpes:
-                    return None
-                purl = None
-            elif not has_known_version(version):
-                # Neither a real identifier nor a comparable version.
+            # OS descriptors stay without a purl: they feed base-image EOL detection.
+            kind = {"operating-system": "os", "application": "binary"}.get(component_type, "package")
+            keep, purl = _purl_less_identity(kind, name, version, pkg_type, group, cpes)
+            if not keep:
                 return None
-            else:
-                purl = self._construct_purl(component_type, name, version, group)
-                logger.debug(f"Constructed PURL for {name}@{version}: {purl}")
 
         check_ref = bom_ref or purl
         direct, direct_inferred = self._resolve_cyclonedx_directness(
@@ -691,40 +707,30 @@ class SBOMParser:
 
         license_str, license_url = self._extract_cyclonedx_licenses_full(comp.get("licenses") or [])
 
-        hashes: dict[str, str] = {}
-        raw_hashes = comp.get("hashes")
-        for h in raw_hashes if isinstance(raw_hashes, list) else []:
-            if not isinstance(h, dict):
-                continue
-            alg = h.get("alg", "").lower()
-            content = h.get("content", "")
-            if alg and content:
-                hashes[alg] = content
-
-        homepage, repository_url, download_url = self._extract_cyclonedx_external_refs(
+        homepage, repository_url, download_url, distribution_hashes = self._extract_cyclonedx_external_refs(
             comp.get("externalReferences", [])
         )
 
         determined_source_type = self._determine_component_source(
             purl=purl,
-            pkg_type=component_type,
+            pkg_type=pkg_type,
             layer_digest=layer_digest,
             global_source_type=global_source_type,
         )
 
-        # Inventory presents `type` as the ecosystem, so emit the purl vocabulary;
-        # a fabricated purl only says "generic", so real generator hints win there.
-        source_purl_type = get_purl_type(purl) if comp.get("purl") else None
-        dep_type = source_purl_type or properties.get("syft:package:type") or get_purl_type(purl) or component_type
+        scope = comp.get("scope")
+        if not scope and raw_properties.get("cdx:npm:package:development") == "true":
+            scope = "excluded"
 
         return ParsedDependency(
             name=name,
             version=version,
             purl=purl,
-            type=dep_type,
+            # Inventory presents `type` as the ecosystem, so emit the purl vocabulary.
+            type=get_purl_type(purl) or pkg_type,
             license=license_str,
             license_url=license_url,
-            scope=comp.get("scope"),
+            scope=scope,
             direct=direct,
             direct_inferred=direct_inferred,
             parent_components=parent_components,
@@ -735,14 +741,17 @@ class SBOMParser:
             locations=locations,
             cpes=cpes,
             description=comp.get("description"),
-            author=comp.get("author"),
-            publisher=comp.get("publisher"),
-            group=comp.get("group"),
+            author=_people_to_str(comp.get("author") or comp.get("authors")),
+            publisher=_people_to_str(comp.get("publisher") or comp.get("supplier")),
+            group=_group_for(group, purl),
             homepage=homepage,
             repository_url=repository_url,
             download_url=download_url,
-            hashes=hashes,
-            properties=properties,
+            hashes={
+                **_hash_map(distribution_hashes, "alg", "content"),
+                **_hash_map(comp.get("hashes"), "alg", "content"),
+            },
+            properties={key: raw_properties[key] for key in _OS_SOURCE_PACKAGE_PROPERTIES if key in raw_properties},
         )
 
     @staticmethod
@@ -806,24 +815,21 @@ class SBOMParser:
 
         return ", ".join(filter(None, license_names)), license_url
 
-    _SYFT_KNOWN_SOURCE_TYPES = (
-        SOURCE_TYPE_IMAGE,
-        SOURCE_TYPE_DIRECTORY,
-        SOURCE_TYPE_FILE,
-        SOURCE_TYPE_FILE_SYSTEM,
-    )
-
-    @classmethod
-    def _resolve_syft_source(cls, source: dict[str, Any]) -> tuple[str | None, str | None]:
-        """Return (source_type, source_target) parsed from a syft source dict."""
-        source_type_raw = source.get("type", "")
-        if source_type_raw not in cls._SYFT_KNOWN_SOURCE_TYPES:
+    @staticmethod
+    def _resolve_syft_source(source: dict[str, Any]) -> tuple[str | None, str | None]:
+        """Return (source_type, source_target) from a syft source of any JSON schema version."""
+        source_type = source.get("type")
+        if source_type not in _SYFT_SOURCE_TYPES:
             return None, None
-        if source_type_raw == SOURCE_TYPE_IMAGE:
-            metadata = source.get("metadata", {})
-            target = source.get("target", "") or metadata.get("userInput", "") or metadata.get("imageID", "")
-            return SOURCE_TYPE_IMAGE, target
-        return source_type_raw, source.get("target", "")
+        target = source.get("target")
+        # Schema 5 keeps image details in a `target` object; newer schemas moved them to `metadata`.
+        details = [d for d in (target, source.get("metadata")) if isinstance(d, dict)]
+        candidates = (
+            target,
+            *(d.get(key) for d in details for key in ("userInput", "imageID", "path")),
+            source.get("name"),
+        )
+        return source_type, next((c for c in candidates if isinstance(c, str) and c), None)
 
     @staticmethod
     def _build_syft_dependency_graph(
@@ -895,10 +901,6 @@ class SBOMParser:
     def _parse_syft(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse Syft JSON format SBOM."""
 
-        descriptor = sbom.get("descriptor", {})
-        result.tool_name = descriptor.get("name", "syft")
-        result.tool_version = descriptor.get("version")
-
         source = sbom.get("source", {})
         source_id = source.get("id", "")
         source_type, source_target = self._resolve_syft_source(source)
@@ -961,42 +963,31 @@ class SBOMParser:
         location_entries: list[dict[str, Any]],
     ) -> tuple[list[str], str | None]:
         """Return (locations, first_layer_digest) from a syft location list."""
-        locations: list[str] = []
-        layer_digest: str | None = None
-        for loc in location_entries:
-            path = loc.get("path", "")
-            access_path = loc.get("accessPath", "")
-            effective_path = access_path if access_path and access_path != path else path
-            if effective_path:
-                locations.append(effective_path)
-            layer_id = loc.get("layerID", "")
-            if layer_id and not layer_digest:
-                layer_digest = layer_id
-        return list(dict.fromkeys(locations)), layer_digest
+        # `path` is the resolved file; `accessPath` may be a symlink to it.
+        locations = list(dict.fromkeys(loc["path"] for loc in location_entries if loc.get("path")))
+        layer_digest = next((loc["layerID"] for loc in location_entries if loc.get("layerID")), None)
+        return locations, layer_digest
 
     @staticmethod
-    def _extract_syft_author(metadata: dict[str, Any]) -> str | None:
-        """Extract author/maintainer string from syft metadata."""
-        authors = metadata.get("authors")
-        if authors:
-            if isinstance(authors, list):
-                return ", ".join(authors)
-            return str(authors)
-        return metadata.get("author") or metadata.get("maintainer")
-
-    @staticmethod
-    def _extract_syft_hashes(metadata: dict[str, Any]) -> dict[str, str]:
-        """Extract hashes from syft metadata (direct fields + digests array)."""
-        hashes: dict[str, str] = {}
-        for hash_type in ("md5", "sha1", "sha256", "sha512"):
-            if metadata.get(hash_type):
-                hashes[hash_type] = metadata[hash_type]
-        for digest in metadata.get("digests", []):
-            alg = digest.get("algorithm", "").lower()
-            value = digest.get("value", "")
-            if alg and value:
-                hashes[alg] = value
-        return hashes
+    def _extract_syft_hashes(pkg_type: str, metadata: dict[str, Any]) -> dict[str, str]:
+        """Hashes from syft metadata: plain fields, SRI integrity strings, digests and Cargo.lock checksums."""
+        entries: list[dict[str, Any]] = [
+            {"algorithm": alg, "value": metadata.get(alg)} for alg in ("md5", "sha1", "sha256")
+        ]
+        resolution = metadata.get("resolution")
+        sri_values = (
+            metadata.get("integrity"),
+            resolution.get("integrity") if isinstance(resolution, dict) else None,
+            metadata.get("sha512"),
+        )
+        for token in " ".join(v for v in sri_values if isinstance(v, str)).split():
+            alg, _, digest = token.partition("-")
+            if alg in ("sha1", "sha256", "sha512"):
+                with contextlib.suppress(ValueError):
+                    entries.append({"algorithm": alg, "value": base64.b64decode(digest, validate=True).hex()})
+        if pkg_type == "cargo":
+            entries.append({"algorithm": "sha256", "value": metadata.get("checksum")})
+        return {**_hash_map(entries, "algorithm", "value"), **_hash_map(metadata.get("digest"), "algorithm", "value")}
 
     @staticmethod
     def _resolve_syft_direct(is_direct: bool, metadata: dict[str, Any]) -> bool:
@@ -1017,86 +1008,65 @@ class SBOMParser:
 
         purl = artifact.get("purl")
         name = artifact.get("name")
-        version = self._normalize_version(artifact.get("version"))
-        pkg_type = artifact.get("type", "unknown")
+        version = self._normalize_version(artifact.get("version"), purl)
+        raw_type = artifact.get("type", "unknown")
+        pkg_type = _SYFT_TYPE_TO_PURL_TYPE.get(raw_type, raw_type)
 
         if not name:
             return None
 
+        cpes = _normalize_cpes(artifact.get("cpes"))
         if not purl:
-            if not has_known_version(version):
-                # Neither a real identifier nor a comparable version.
+            kind = "binary" if raw_type == "binary" else "package"
+            keep, purl = _purl_less_identity(kind, name, version, pkg_type, None, cpes)
+            if not keep:
                 return None
-            purl = self._construct_purl(pkg_type, name, version)
-            logger.debug(f"Constructed PURL for Syft artifact {name}@{version}: {purl}")
 
         license_str, license_url = self._extract_syft_licenses_full(artifact.get("licenses") or [])
         locations, layer_digest = self._extract_syft_locations(artifact.get("locations") or [])
-        # Syft JSON schema < 16.0 emits `cpes` as a list of plain strings; newer
-        # releases use a list of dicts ({"cpe": "..."}). Handle both so a legacy
-        # SBOM does not crash the artifact loop and silently drop dependencies.
-        cpes = [(c.get("cpe") if isinstance(c, dict) else c) for c in artifact.get("cpes") or [] if c]
-        cpes = [c for c in cpes if c]
-        found_by = artifact.get("foundBy")
 
         metadata = artifact.get("metadata")
         if not isinstance(metadata, dict):
             metadata = {}
-        direct = self._resolve_syft_direct(is_direct, metadata)
-        description = metadata.get("description") or metadata.get("summary")
-        author = self._extract_syft_author(metadata)
-        homepage = metadata.get("homepage") or metadata.get("url")
-        # deb/rpm metadata.source is the *source package name*, not a URL.
+        # npm's `url` is package.json's repository; deb/rpm's `source` names the source package.
+        repository_candidates = (
+            metadata.get("repository"),
+            metadata.get("source"),
+            metadata.get("url") if pkg_type == "npm" else None,
+        )
         repository_url = next(
-            (v for v in (metadata.get("source"), metadata.get("repository")) if isinstance(v, str) and is_url(v)),
+            (url for url in (self._normalize_vcs_url(v) for v in repository_candidates if isinstance(v, str)) if url),
             None,
         )
-        hashes = self._extract_syft_hashes(metadata)
-
-        # Syft puts language on the artifact itself; metadata only backfills.
-        properties = {}
-        for key in ("language", "origin", "architecture", "filesAnalyzed"):
-            value = artifact.get(key) or metadata.get(key)
-            if value:
-                properties[key] = str(value)
-
-        # Determine component-specific source type
-        determined_source_type = self._determine_component_source(
-            purl=purl,
-            pkg_type=pkg_type,
-            layer_digest=layer_digest,
-            global_source_type=source_type,
-        )
-
-        # Inventory presents `type` as the ecosystem: purl vocabulary when the
-        # SBOM carried a purl, the raw syft artifact type otherwise.
-        dep_type = (get_purl_type(purl) if artifact.get("purl") else None) or pkg_type
+        homepage = metadata.get("homepage") or (None if pkg_type == "npm" else metadata.get("url")) or None
 
         return ParsedDependency(
             name=name,
             version=version,
             purl=purl,
-            type=dep_type,
+            # Inventory presents `type` as the ecosystem, so emit the purl vocabulary.
+            type=get_purl_type(purl) or pkg_type,
             license=license_str,
             license_url=license_url,
-            scope=None,
-            direct=direct,
+            direct=self._resolve_syft_direct(is_direct, metadata),
             direct_inferred=direct_inferred,
-            source_type=determined_source_type,
+            source_type=self._determine_component_source(
+                purl=purl,
+                pkg_type=pkg_type,
+                layer_digest=layer_digest,
+                global_source_type=source_type,
+            ),
             source_target=source_target,
             layer_digest=layer_digest,
-            found_by=found_by,
+            found_by=artifact.get("foundBy"),
             locations=locations,
             cpes=cpes,
-            description=description,
-            author=author,
-            publisher=None,  # Syft doesn't typically have publisher
-            group=None,  # Could parse from purl if needed
+            description=metadata.get("description") or metadata.get("summary"),
+            author=_people_to_str(metadata.get("authors") or metadata.get("author") or metadata.get("maintainer")),
+            group=_group_for(None, purl),
             homepage=homepage,
             repository_url=repository_url,
-            download_url=None,  # Not typically in Syft
-            hashes=hashes,
-            properties=properties,
+            hashes=self._extract_syft_hashes(pkg_type, metadata),
         )
 
     @staticmethod
@@ -1219,9 +1189,17 @@ class SBOMParser:
     def _parse_spdx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse SPDX format SBOM."""
 
-        result.tool_name = "spdx"
-        result.format_version = sbom.get("spdxVersion")
-        result.created_at = sbom.get("creationInfo", {}).get("created")
+        creation_info = sbom.get("creationInfo")
+        creators = creation_info.get("creators") if isinstance(creation_info, dict) else None
+        # osv reads a set found_by as "syft catalogued this", which only the syft creator tool can vouch for.
+        found_by = next(
+            (
+                creator.removeprefix("Tool: ")
+                for creator in (creators if isinstance(creators, list) else [])
+                if isinstance(creator, str) and creator.startswith("Tool: syft-")
+            ),
+            None,
+        )
 
         relationships = sbom.get("relationships") or []
         doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
@@ -1252,7 +1230,9 @@ class SBOMParser:
             is_direct = inferred or pkg_spdx_id in direct_package_ids
 
             try:
-                parsed = self._parse_spdx_package(pkg, is_direct, inferred, result.source_type, result.source_target)
+                parsed = self._parse_spdx_package(
+                    pkg, is_direct, inferred, result.source_type, result.source_target, found_by
+                )
             except Exception:
                 logger.warning("Skipping malformed SPDX package %r", pkg.get("name"), exc_info=True)
                 self._count_skipped(result, "parse-error")
@@ -1289,9 +1269,9 @@ class SBOMParser:
             locator = ref.get("referenceLocator", "")
             if ref_type == "purl" and not purl:
                 purl = locator
-            elif ref_type in ("cpe22Type", "cpe23Type") and locator:
+            elif ref_type in ("cpe22Type", "cpe23Type"):
                 cpes.append(locator)
-        return purl, cpes
+        return purl, _normalize_cpes(cpes)
 
     @classmethod
     def _infer_spdx_pkg_type_from_download(cls, download_loc: str) -> str:
@@ -1327,45 +1307,16 @@ class SBOMParser:
         author: str | None = None
         publisher: str | None = None
 
-        originator = pkg.get("originator")
-        if originator and originator != "NOASSERTION":
-            if originator.startswith(SPDX_ORGANIZATION_PREFIX):
-                publisher = originator.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
-            elif originator.startswith("Person:"):
-                author = originator.replace("Person:", "").strip()
-            else:
-                author = originator
+        originator = _spdx_value(pkg, "originator")
+        if originator and originator.startswith(SPDX_ORGANIZATION_PREFIX):
+            publisher = originator.removeprefix(SPDX_ORGANIZATION_PREFIX).strip()
+        elif originator:
+            author = originator.removeprefix("Person:").strip()
 
-        supplier = pkg.get("supplier")
-        if supplier and supplier != "NOASSERTION" and not publisher and supplier.startswith(SPDX_ORGANIZATION_PREFIX):
-            publisher = supplier.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
+        supplier = _spdx_value(pkg, "supplier")
+        if supplier and not publisher and supplier.startswith(SPDX_ORGANIZATION_PREFIX):
+            publisher = supplier.removeprefix(SPDX_ORGANIZATION_PREFIX).strip()
         return author, publisher
-
-    @staticmethod
-    def _build_spdx_properties(pkg: dict[str, Any]) -> dict[str, str]:
-        """Build the SPDX-specific 'properties' dict."""
-        properties: dict[str, str] = {}
-        if pkg.get("filesAnalyzed") is not None:
-            properties["filesAnalyzed"] = str(pkg["filesAnalyzed"])
-        if pkg.get("packageFileName"):
-            properties["packageFileName"] = pkg["packageFileName"]
-        if pkg.get("sourceInfo"):
-            properties["sourceInfo"] = pkg["sourceInfo"]
-        copyright_text = pkg.get("copyrightText")
-        if copyright_text and copyright_text != "NOASSERTION":
-            properties["copyright"] = copyright_text
-        return properties
-
-    @staticmethod
-    def _extract_spdx_hashes(pkg: dict[str, Any]) -> dict[str, str]:
-        """Extract a hash map from an SPDX package's checksums array."""
-        hashes: dict[str, str] = {}
-        for checksum in pkg.get("checksums", []):
-            alg = checksum.get("algorithm", "").lower()
-            value = checksum.get("checksumValue", "")
-            if alg and value:
-                hashes[alg] = value
-        return hashes
 
     def _parse_spdx_package(
         self,
@@ -1374,49 +1325,31 @@ class SBOMParser:
         direct_inferred: bool = False,
         global_source_type: str | None = None,
         source_target: str | None = None,
+        found_by: str | None = None,
     ) -> ParsedDependency | None:
         """Parse a single SPDX package with all available fields."""
 
-        name = pkg.get("name")
-        version = self._normalize_version(pkg.get("versionInfo"))
-
-        if not name or name in ("NOASSERTION", "NONE"):
+        name = _spdx_value(pkg, "name")
+        if not name:
             return None
 
         purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs") or [])
+        version = self._normalize_version(pkg.get("versionInfo"), purl)
+        download_url = _spdx_value(pkg, "downloadLocation")
 
         if not purl:
-            if not has_known_version(version):
-                # Neither a real identifier nor a comparable version.
+            kind = {"OPERATING-SYSTEM": "os", "APPLICATION": "binary"}.get(
+                str(pkg.get("primaryPackagePurpose")), "package"
+            )
+            inferred_type = self._infer_spdx_pkg_type_from_download(download_url or "")
+            keep, purl = _purl_less_identity(kind, name, version, inferred_type, None, cpes)
+            if not keep:
                 return None
-            inferred_type = self._infer_spdx_pkg_type_from_download(pkg.get("downloadLocation") or "")
-            purl = self._construct_purl(inferred_type, name, version)
-            logger.debug(f"Constructed PURL for SPDX package {name}@{version}: {purl}")
 
         license_str, license_url = self._resolve_spdx_license(pkg)
         pkg_type = get_purl_type(purl) or "unknown"
-        hashes = self._extract_spdx_hashes(pkg)
-
-        homepage = pkg.get("homepage")
-        if homepage == "NOASSERTION":
-            homepage = None
-
-        download_url = pkg.get("downloadLocation")
-        if download_url in ("NOASSERTION", "NONE"):
-            download_url = None
-
         author, publisher = self._resolve_spdx_originator(pkg)
-        properties = self._build_spdx_properties(pkg)
-
-        parsed_purl = parse_purl(purl) if purl else None
         package_file_name = pkg.get("packageFileName")
-
-        determined_source_type = self._determine_component_source(
-            purl=purl,
-            pkg_type=pkg_type,
-            layer_digest=None,  # SPDX doesn't have layer info
-            global_source_type=global_source_type,
-        )
 
         return ParsedDependency(
             name=name,
@@ -1425,24 +1358,25 @@ class SBOMParser:
             type=pkg_type,
             license=license_str,
             license_url=license_url,
-            scope=None,
             direct=is_direct,
             direct_inferred=direct_inferred,
-            source_type=determined_source_type,
+            source_type=self._determine_component_source(
+                purl=purl,
+                pkg_type=pkg_type,
+                layer_digest=None,
+                global_source_type=global_source_type,
+            ),
             source_target=source_target,
-            layer_digest=None,
-            found_by=None,
+            found_by=found_by,
             locations=[package_file_name] if package_file_name else [],
             cpes=cpes,
             description=pkg.get("description") or pkg.get("summary"),
             author=author,
             publisher=publisher,
-            group=parsed_purl.namespace if parsed_purl else None,
-            homepage=homepage,
-            repository_url=None,  # Not directly in SPDX package
+            group=_group_for(None, purl),
+            homepage=_spdx_value(pkg, "homepage"),
             download_url=download_url,
-            hashes=hashes,
-            properties=properties,
+            hashes=_hash_map(pkg.get("checksums"), "algorithm", "checksumValue"),
         )
 
 
