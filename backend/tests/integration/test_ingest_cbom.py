@@ -125,3 +125,60 @@ async def test_successful_ingest_counts_as_a_success_in_the_ingest_metric(client
 
     assert resp.status_code == 202, resp.text
     assert _ingests("success") == before + 1
+
+
+@pytest.mark.asyncio
+async def test_a_queueing_failure_after_the_store_announces_nothing_and_leaves_the_scan_pending(
+    client, db, api_key_headers
+):
+    """The assets are stored, so the retry must find the scan claimable and announce the ingest once."""
+    from unittest.mock import AsyncMock, patch
+
+    before = _ingests("error")
+    with (
+        patch(
+            "app.services.scan_manager.ScanManager.register_result",
+            AsyncMock(side_effect=RuntimeError("primary stepped down")),
+        ),
+        patch("app.api.v1.endpoints.cbom_ingest.webhook_service.safe_trigger_webhooks", AsyncMock()) as webhooks,
+        pytest.raises(RuntimeError, match="primary stepped down"),
+    ):
+        await client.post(
+            "/api/v1/ingest/cbom",
+            json={"pipeline_id": 7, "commit_hash": "abc123", "cbom": _load("legacy_crypto_mixed.json")},
+            headers=api_key_headers,
+        )
+
+    webhooks.assert_not_awaited()
+    assert _ingests("error") == before, "a stored upload is not a persistence error"
+    scan = await db.scans.find_one({"pipeline_id": 7})
+    assert (scan["status"], scan["scan_type"]) == ("pending", "cbom")
+
+
+@pytest.mark.asyncio
+async def test_another_scanner_of_the_pipeline_keeps_the_cbom_tag(client, db, api_key_headers):
+    """The engine selects crypto analyzers from the tag, so a later scanner upload must not clear it."""
+    pipeline = {"pipeline_id": 8, "commit_hash": "abc123", "branch": "main"}
+    cbom = await client.post(
+        "/api/v1/ingest/cbom", json={**pipeline, "cbom": _load("legacy_crypto_mixed.json")}, headers=api_key_headers
+    )
+    scanner = await client.post("/api/v1/ingest/opengrep", json={**pipeline, "findings": []}, headers=api_key_headers)
+
+    assert (cbom.status_code, scanner.status_code) == (202, 200), scanner.text
+    assert (await db.scans.find_one({"_id": cbom.json()["scan_id"]}))["scan_type"] == "cbom"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_asset_store_leaves_the_shared_pipeline_scan_readable(client, db, api_key_headers):
+    """The pipeline's SBOM analysis lives in the same scan, so a CBOM write error must not fail it."""
+    from unittest.mock import AsyncMock, patch
+
+    pipeline = {"pipeline_id": 9, "commit_hash": "abc123", "cbom": _load("legacy_crypto_mixed.json")}
+    first = await client.post("/api/v1/ingest/cbom", json=pipeline, headers=api_key_headers)
+    await db.scans.update_one({"_id": first.json()["scan_id"]}, {"$set": {"status": "completed"}})
+
+    with patch.object(CryptoAssetRepository, "bulk_upsert", AsyncMock(side_effect=RuntimeError("write failed"))):
+        resp = await client.post("/api/v1/ingest/cbom", json=pipeline, headers=api_key_headers)
+
+    assert resp.status_code == 500
+    assert (await db.scans.find_one({"_id": first.json()["scan_id"]}))["status"] == "completed"

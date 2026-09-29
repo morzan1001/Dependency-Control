@@ -37,9 +37,10 @@ class ScanManager:
             return f"{data.project_url}/-/pipelines/{data.pipeline_id}"
         return None
 
-    async def find_or_create_scan(self, data: BaseIngest) -> ScanContext:
+    async def find_or_create_scan(self, data: BaseIngest, scan_type: str | None = None) -> ScanContext:
         """Find or create the scan for this pipeline, keyed by a deterministic UUID5 so all
-        scanners for the same commit+pipeline share one scan across pods."""
+        scanners for the same commit+pipeline share one scan across pods. ``scan_type`` is only
+        ever set, never cleared, since the other scanners of the pipeline pass none."""
         pipeline_url = self.build_pipeline_url(data)
 
         if data.pipeline_id and data.commit_hash:
@@ -80,6 +81,9 @@ class ScanManager:
                 "sbom_refs": [],
             },
         }
+
+        if scan_type is not None:
+            scan_update["$set"]["scan_type"] = scan_type
 
         from app.repositories.releases import ReleaseRepository
         from app.repositories.scans import ScanRepository

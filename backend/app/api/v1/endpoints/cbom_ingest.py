@@ -131,18 +131,13 @@ async def ingest_cbom(
             ),
         )
 
-    # Route through ScanManager so the scan lifecycle matches other ingest paths.
+    # The cbom tag makes the analysis engine run the crypto analyzers even without an SBOM.
     manager = ScanManager(db, project)
-    scan_ctx = await manager.find_or_create_scan(payload)
-    scan_id = scan_ctx.scan_id
-
-    # Tag as CBOM so the analysis engine forces crypto analyzers even without an SBOM.
-    from app.repositories.scans import ScanRepository
-
-    await ScanRepository(db).update_raw(scan_id, {"$set": {"scan_type": "cbom"}})
+    scan_id = (await manager.find_or_create_scan(payload, scan_type="cbom")).scan_id
+    project_id = str(project.id)
 
     try:
-        stored = await _persist_crypto_assets(db, project, scan_id, parsed)
+        summary = await _store_crypto_assets(db, project_id, scan_id, parsed)
     except Exception as exc:
         logger.exception("cbom_ingest failed for scan %s: %s", scan_id, exc)
         cbom_ingests_total.labels(status="error").inc()
@@ -151,56 +146,15 @@ async def ingest_cbom(
             detail="Failed to persist crypto assets. Please retry the upload.",
         ) from exc
 
-    return CBOMIngestResponse(
-        scan_id=scan_id,
-        status="accepted",
-        assets_received=len(parsed.assets),
-        assets_stored=stored,
-    )
+    await manager.register_result(scan_id, "cbom", trigger_analysis=True)
 
-
-async def _persist_crypto_assets(
-    db: AsyncIOMotorDatabase,
-    project: Project,
-    scan_id: str,
-    parsed: ParsedCBOM,
-) -> int:
-    """Bulk-upsert CryptoAsset records then register the scan result via ScanManager."""
-    manager = ScanManager(db, project)
-    project_id = str(project.id)
-
-    crypto_assets = [
-        CryptoAsset(
-            project_id=project_id,
-            scan_id=scan_id,
-            **a.model_dump(),
-        )
-        for a in parsed.assets
-    ]
-
-    await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
-
-    # The summary counts persisted docs, so duplicate bom_refs in one payload are reported honestly
-    # (bulk_upsert returns submitted ops, which always equals the input length).
-    summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
-    stored = int(summary["total"])
-
-    logger.info("cbom_ingest: persisted %d assets for scan %s; registering result", stored, scan_id)
-
-    # Fire ingest webhook (best-effort).
     await webhook_service.safe_trigger_webhooks(
         db,
         WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
-        {
-            "scan_id": scan_id,
-            "project_id": project_id,
-            "total": summary["total"],
-            "by_type": summary["by_type"],
-        },
+        {"scan_id": scan_id, "project_id": project_id, "total": summary["total"], "by_type": summary["by_type"]},
         project_id,
         context="cbom_ingest",
     )
-
     await safe_notify_project_event(
         db,
         project_id=project_id,
@@ -209,7 +163,25 @@ async def _persist_crypto_assets(
         message=f"{summary['total']} crypto asset(s) ingested for scan {scan_id}.",
         context="cbom_ingest",
     )
-
-    await manager.register_result(scan_id, "cbom", trigger_analysis=True)
     cbom_ingests_total.labels(status="success").inc()
-    return stored
+
+    return CBOMIngestResponse(
+        scan_id=scan_id,
+        status="accepted",
+        assets_received=len(parsed.assets),
+        assets_stored=int(summary["total"]),
+    )
+
+
+async def _store_crypto_assets(
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, parsed: ParsedCBOM
+) -> dict[str, Any]:
+    """Bulk-upsert the scan's CryptoAssets and return the summary of what is stored."""
+    crypto_assets = [CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in parsed.assets]
+    repo = CryptoAssetRepository(db)
+    await repo.bulk_upsert(project_id, scan_id, crypto_assets)
+    # Counts persisted docs, so duplicate bom_refs in one payload are reported honestly
+    # (bulk_upsert returns submitted ops, which always equals the input length).
+    summary: dict[str, Any] = await repo.summary_for_scan(project_id, scan_id)
+    logger.info("cbom_ingest: persisted %d assets for scan %s", summary["total"], scan_id)
+    return summary
