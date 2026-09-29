@@ -32,10 +32,7 @@ from app.services.aggregation.merging import (
 )
 from app.services.aggregation.quality import update_quality_description
 from app.services.aggregation.scorecard import enrich_with_scorecard
-from app.services.aggregation.versions import (
-    normalize_version,
-    resolve_fixed_versions,
-)
+from app.services.aggregation.versions import aggregate_fixed_version, normalize_version
 from app.services.analyzers.license_compliance.constants import (
     CATEGORY_RESTRICTIVENESS,
     LICENSE_DATABASE,
@@ -414,6 +411,7 @@ class ResultAggregator:
             entries = f.details.get("vulnerabilities") if isinstance(f.details, dict) else None
             if entries:
                 entries.sort(key=lambda entry: str(entry.get("id")))
+                f.details["fixed_version"] = aggregate_fixed_version(entries, f.version)
 
         self._link_related_findings_by_component(final_findings)
         enrich_with_scorecard(final_findings, self._scorecard_cache)
@@ -532,9 +530,6 @@ class ResultAggregator:
         if source and source not in existing.found_in:
             existing.found_in.append(source)
 
-        fvs = [str(v.get("fixed_version")) for v in vuln_list if v.get("fixed_version")]
-        existing.details["fixed_version"] = resolve_fixed_versions(fvs) if fvs else None
-
     def _add_vulnerability_finding(self, finding: Finding, source: str | None = None) -> None:
         comp_key, version_key = _package_key(finding)
         agg_key = f"{AGG_KEY_VULNERABILITY}:{comp_key}:{version_key}"
@@ -544,12 +539,7 @@ class ResultAggregator:
         if agg_key in self.findings:
             self._merge_vuln_into_existing(self.findings[agg_key], finding, vuln_entry, source)
         else:
-            agg_details: VulnerabilityAggregatedDetails = {
-                "vulnerabilities": [vuln_entry],
-                "fixed_version": (
-                    str(finding.details.get("fixed_version")) if finding.details.get("fixed_version") else None
-                ),
-            }
+            agg_details: VulnerabilityAggregatedDetails = {"vulnerabilities": [vuln_entry]}
 
             self.findings[agg_key] = Finding(
                 id=f"{finding.component}:{finding.version}",

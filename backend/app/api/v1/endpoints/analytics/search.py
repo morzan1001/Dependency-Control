@@ -239,9 +239,7 @@ def _aggregate_kev_status(details: dict[str, Any], nested_vulns: list[dict[str, 
     return in_kev_status, kev_ransomware, kev_due_date
 
 
-def _check_fix_availability(details: dict[str, Any], nested_vulns: list[dict[str, Any]]) -> bool:
-    if details.get("fixed_version"):
-        return True
+def _check_fix_availability(nested_vulns: list[dict[str, Any]]) -> bool:
     return any(vuln.get("fixed_version") for vuln in nested_vulns)
 
 
@@ -327,7 +325,7 @@ def _build_nested_vuln_result(
         finding_id=finding.finding_id,
         finding_type=finding.type or "vulnerability",
         description=_get_description(vuln, finding),
-        fixed_version=(vuln.get("fixed_version") or details.get("fixed_version")),
+        fixed_version=vuln.get("fixed_version"),
         waived=_nested_vuln_waived(vuln, finding),
         waiver_reason=(vuln.get("waiver_reason") or finding.waiver_reason),
     )
@@ -385,7 +383,7 @@ def _vuln_results_for_finding(
     if in_kev is not None and in_kev != in_kev_status:
         return []
 
-    has_fix_status = _check_fix_availability(details, nested_vulns)
+    has_fix_status = _check_fix_availability(nested_vulns)
     if has_fix is not None and has_fix != has_fix_status:
         return []
 

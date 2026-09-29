@@ -9,7 +9,7 @@ from app.core.constants import get_severity_value
 from app.services.normalizers.utils import FindingIdPrefix
 from app.models.finding import Finding, FindingType
 from app.schemas.finding import VulnerabilityEntry
-from app.services.aggregation.versions import parse_version_key, resolve_fixed_versions
+from app.services.aggregation.versions import VersionKey, parse_version_key
 
 
 def _extend_unique(target: list[Any], items: list[Any]) -> None:
@@ -112,13 +112,20 @@ def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry
         tv["description_source"] = source_entry.get("description_source", "unknown")
 
 
+def _lowest_fix_per_line(value: Any) -> dict[VersionKey, tuple[VersionKey, str]]:
+    lowest: dict[VersionKey, tuple[VersionKey, str]] = {}
+    for version in {v.strip() for v in str(value or "").split(",")} - {""}:
+        key = parse_version_key(version)
+        lowest[key[:2]] = min(lowest.get(key[:2], (key, version)), (key, version))
+    return lowest
+
+
 def _merged_fixed_version(a: Any, b: Any) -> str | None:
-    """Union both comma-separated version lists in semantic order, so the result is arrival-order independent."""
-    versions = {v.strip() for value in (a, b) if value for v in str(value).split(",")}
-    versions.discard("")
-    if not versions:
-        return None
-    return ", ".join(sorted(versions, key=lambda v: (parse_version_key(v), v)))
+    """Per release line, the higher of both scanners' lowest fixes: the lower claim may still be vulnerable."""
+    merged = _lowest_fix_per_line(a)
+    for line, claim in _lowest_fix_per_line(b).items():
+        merged[line] = max(merged.get(line, claim), claim)
+    return ", ".join(version for _, version in sorted(merged.values())) or None
 
 
 def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
@@ -261,6 +268,3 @@ def merge_findings_data(target: Finding, source: Finding) -> None:
         merge_vulnerability_into_list(t_vulns_list, sv)
 
     target.details["vulnerabilities"] = t_vulns_list
-
-    fvs = [v.get("fixed_version") for v in target.details["vulnerabilities"] if v.get("fixed_version")]
-    target.details["fixed_version"] = resolve_fixed_versions(fvs)

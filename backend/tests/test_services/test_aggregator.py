@@ -14,7 +14,7 @@ from app.services.aggregation.merging import (
     merge_vulnerability_into_list,
 )
 from app.services.aggregation.versions import (
-    calculate_aggregated_fixed_version,
+    aggregate_fixed_version,
     normalize_version,
     parse_version_key,
 )
@@ -142,12 +142,11 @@ class TestExtractArtifactName:
         assert extract_artifact_name(component) == expected
 
 
-class TestCalculateAggregatedFixedVersion:
-    """Tests for _calculate_aggregated_fixed_version."""
+def _entries(*fixes):
+    return [{"fixed_version": fix} for fix in fixes]
 
-    def setup_method(self):
-        self.agg = ResultAggregator()
 
+class TestAggregateFixedVersion:
     @pytest.mark.parametrize(
         ("fixes", "expected"),
         [
@@ -156,33 +155,42 @@ class TestCalculateAggregatedFixedVersion:
         ],
     )
     def test_one_major_line_answers_with_one_version(self, fixes, expected):
-        assert calculate_aggregated_fixed_version(fixes) == expected
+        assert aggregate_fixed_version(_entries(*fixes), None) == expected
 
     @pytest.mark.parametrize(
-        ("fixes", "first", "second"),
+        ("fixes", "expected"),
         [
             # Per major line the highest fix wins: max(1.2.5, 1.2.6) and max(2.0.1, 2.0.3).
-            pytest.param(["1.2.5, 2.0.1", "1.2.6, 2.0.3"], "1.2.6", "2.0.3", id="two-vulns-two-majors"),
-            pytest.param(["1.5.0, 2.1.0"], "1.5.0", "2.1.0", id="one-vuln-two-majors"),
+            pytest.param(["1.2.5, 2.0.1", "1.2.6, 2.0.3"], "1.2.6, 2.0.3", id="two-vulns-two-majors"),
+            pytest.param(["1.5.0, 2.1.0"], "1.5.0, 2.1.0", id="one-vuln-two-majors"),
         ],
     )
-    def test_every_major_line_that_covers_all_vulns_is_returned(self, fixes, first, second):
-        result = calculate_aggregated_fixed_version(fixes)
-        assert first in result
-        assert second in result
+    def test_every_major_line_that_covers_all_vulns_is_returned(self, fixes, expected):
+        assert aggregate_fixed_version(_entries(*fixes), None) == expected
 
-    def test_empty_list_returns_none(self):
-        assert calculate_aggregated_fixed_version([]) is None
+    def test_no_entries_returns_none(self):
+        assert aggregate_fixed_version([], None) is None
 
     def test_major_must_cover_all_vulns(self):
-        """If a major version only covers some vulns, it should be excluded."""
-        # Vuln 1: fixed in 1.x and 2.x
-        # Vuln 2: fixed only in 2.x
-        # -> Only major 2 covers both
-        result = calculate_aggregated_fixed_version(["1.5.0, 2.0.1", "2.0.3"])
-        assert "2.0.3" in result
-        # Major 1 should not be in result since it doesn't cover vuln 2
-        assert "1.5.0" not in result
+        assert aggregate_fixed_version(_entries("1.5.0, 2.0.1", "2.0.3"), None) == "2.0.3"
+
+    def test_an_advisory_without_a_fix_leaves_the_record_unfixed(self):
+        entries = [{"id": "CVE-A", "fixed_version": None}, {"id": "CVE-B", "fixed_version": "3.0.11-1~deb12u2"}]
+        assert aggregate_fixed_version(entries, "3.0.9-1") is None
+
+    @pytest.mark.parametrize(
+        ("installed", "fixes", "expected"),
+        [
+            pytest.param("2.13.0", ["2.12.7.1, 2.13.4.2"], "2.13.4.2", id="jackson-backport-below-install"),
+            pytest.param("2.14.1", ["2.15.0, 2.12.2, 2.3.1", "2.16.0, 2.12.2, 2.3.1"], "2.16.0", id="log4j-two-cves"),
+            pytest.param("9.9.9", ["1.2.3"], "1.2.3", id="no-candidate-above-install-keeps-the-list"),
+        ],
+    )
+    def test_fixes_below_the_installed_release_are_not_upgrade_targets(self, installed, fixes, expected):
+        assert aggregate_fixed_version(_entries(*fixes), installed) == expected
+
+    def test_mixed_numeric_and_named_majors_sort_numerically(self):
+        assert aggregate_fixed_version(_entries("9.1.0, 10.2.0, r5"), None) == "9.1.0, 10.2.0, r5"
 
     @pytest.mark.parametrize(
         "fixes",
@@ -193,7 +201,7 @@ class TestCalculateAggregatedFixedVersion:
         ],
     )
     def test_unusual_version_shapes_still_answer_a_fix(self, fixes):
-        assert calculate_aggregated_fixed_version(fixes) is not None
+        assert aggregate_fixed_version(_entries(*fixes), None) is not None
 
 
 class TestMergeVulnerabilityIntoList:
@@ -288,7 +296,9 @@ class TestMergeVulnerabilityIntoList:
     @pytest.mark.parametrize(
         ("target_fixed", "entry_fixed", "expected"),
         [
-            pytest.param("1.2.3", "1.2.4", "1.2.3, 1.2.4", id="unions-both-entries"),
+            pytest.param("1.2.3", "1.2.4", "1.2.4", id="one-release-line-keeps-the-higher-claim"),
+            pytest.param("1.2.6", "1.2.5", "1.2.6", id="higher-claim-wins-in-either-order"),
+            pytest.param("1.2.5, 2.0.1", "1.2.6", "1.2.6, 2.0.1", id="distinct-lines-are-kept"),
             pytest.param("2.21.4, 2.18.8", "2.21.4, 2.2.0", "2.2.0, 2.18.8, 2.21.4", id="deduplicated-and-ordered"),
             pytest.param(None, "1.2.3", "1.2.3", id="added-when-target-has-none"),
         ],
@@ -478,12 +488,42 @@ class TestAddVulnerabilityFinding:
         agg = next(iter(self.agg.findings.values()))
         assert "sbom.json" in agg.found_in
 
-    def test_fixed_version_calculated(self):
+    def test_fixed_version_covers_every_advisory(self):
         self.agg.add_finding(self._make_vuln("CVE-1", "pkg", "1.0", fixed_version="1.2.3"))
         self.agg.add_finding(self._make_vuln("CVE-2", "pkg", "1.0", fixed_version="1.2.5"))
-        agg = next(iter(self.agg.findings.values()))
-        # Should calculate aggregated fix covering both vulns
-        assert agg.details.get("fixed_version") is not None
+        [finding] = self.agg.get_findings()
+        assert finding.details["fixed_version"] == "1.2.5"
+
+    def test_single_and_multi_scanner_aggregates_agree_on_the_fixed_version(self):
+        single = ResultAggregator()
+        single.add_finding(self._make_vuln("CVE-1", "lodash", "4.17.0", fixed_version="4.17.21, 4.17.12"))
+        double = ResultAggregator()
+        double.add_finding(self._make_vuln("CVE-1", "lodash", "4.17.0", fixed_version="4.17.21, 4.17.12"))
+        double.add_finding(self._make_vuln("CVE-1", "lodash", "4.17.0", fixed_version="4.17.12"))
+
+        [only] = single.get_findings()
+        [merged] = double.get_findings()
+        assert only.details["fixed_version"] == merged.details["fixed_version"] == "4.17.12"
+
+    def test_a_cve_without_a_fix_leaves_the_component_without_one(self):
+        self.agg.add_finding(self._make_vuln("CVE-A", "libssl3", "3.0.9-1", severity="CRITICAL"))
+        self.agg.add_finding(self._make_vuln("CVE-B", "libssl3", "3.0.9-1", "LOW", fixed_version="3.0.11-1~deb12u2"))
+        [finding] = self.agg.get_findings()
+        assert finding.severity == "CRITICAL"
+        assert finding.details["fixed_version"] is None
+
+    def test_fixed_version_is_derived_once_per_final_finding(self, monkeypatch):
+        from app.services.aggregation import aggregator as aggregator_module
+
+        calls = []
+        real = aggregator_module.aggregate_fixed_version
+        monkeypatch.setattr(
+            aggregator_module, "aggregate_fixed_version", lambda *args: calls.append(args) or real(*args)
+        )
+        for n in range(5):
+            self.agg.add_finding(self._make_vuln(f"CVE-{n}", "linux-libc-dev", "6.1.0", fixed_version=f"6.1.{n + 1}"))
+        self.agg.get_findings()
+        assert len(calls) == 1
 
 
 class TestAddQualityFinding:

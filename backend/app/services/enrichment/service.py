@@ -6,7 +6,7 @@ from app.core.constants import ANALYZER_TIMEOUTS, EXPLOIT_MATURITY_ORDER
 from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry, VulnerabilityEnrichment
 from app.services.aggregation.merging import dedupe_vulnerability_entries
-from app.services.aggregation.versions import resolve_fixed_versions
+from app.services.aggregation.versions import aggregate_fixed_version
 from app.services.enrichment.epss import EPSSProvider
 from app.services.enrichment.ghsa import GHSAProvider
 from app.services.enrichment.kev import KEVProvider
@@ -188,8 +188,7 @@ def _dedupe_finding_vulnerabilities(findings: list[dict[str, Any]]) -> None:
         before = len(vulns)
         dedupe_vulnerability_entries(vulns)
         if len(vulns) != before:
-            fvs = [str(v["fixed_version"]) for v in vulns if v.get("fixed_version")]
-            finding["details"]["fixed_version"] = resolve_fixed_versions(fvs) if fvs else None
+            finding["details"]["fixed_version"] = aggregate_fixed_version(vulns, finding.get("version"))
 
 
 def _apply_enrichment_to_vuln(

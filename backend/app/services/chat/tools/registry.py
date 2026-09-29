@@ -1219,7 +1219,7 @@ class ChatToolRegistry:
             "exploit_maturity": details.get("exploit_maturity"),
             "actively_exploited": details.get("exploit_maturity") in KEV_EQUIVALENT_MATURITY,
             "description": _clip_value(vuln.get("description") or ""),
-            "fixed_version": vuln.get("fixed_version") or details.get("fixed_version"),
+            "fixed_version": vuln.get("fixed_version"),
             "references": (vuln.get("references") or [])[:5],
             "affected_component": f"{finding.get('component', '')}@{finding.get('version', '')}",
             "source_scanners": vuln.get("scanners"),

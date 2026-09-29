@@ -451,7 +451,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                             </div>
                                                             <div className="flex items-center gap-2">
                                                                 <span className="text-xs text-muted-foreground">
-                                                                    Fixed in: <span className="font-medium text-foreground">{vuln.fixed_version || finding.details?.fixed_version || "None"}</span>
+                                                                    Fixed in: <span className="font-medium text-foreground">{vuln.fixed_version || "None"}</span>
                                                                 </span>
                                                                 {canCreateWaiver && (
                                                                     <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => handleWaive(vuln.id || getFindingId(finding))}>
