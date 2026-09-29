@@ -15,11 +15,6 @@ SLACK_OAUTH_URL = "https://slack.com/api/oauth.v2.access"
 class SlackOAuthError(Exception):
     """Exception raised when Slack OAuth fails."""
 
-    def __init__(self, message: str, error_code: str | None = None):
-        self.message = message
-        self.error_code = error_code
-        super().__init__(self.message)
-
 
 _SLACK_OAUTH_TIMEOUT = 30.0
 
@@ -44,44 +39,29 @@ async def exchange_slack_code_for_token(
 
             if response.status_code != 200:
                 logger.error(f"Slack OAuth HTTP error: status={response.status_code}")
-                raise SlackOAuthError(
-                    f"HTTP error from Slack: {response.status_code}",
-                    error_code="http_error",
-                )
+                raise SlackOAuthError(f"HTTP error from Slack: {response.status_code}")
 
             result = response.json()
 
             if not result.get("ok"):
                 error = result.get("error", "unknown_error")
                 logger.error(f"Slack OAuth API error: {error}")
-                raise SlackOAuthError(
-                    f"Slack API error: {error}",
-                    error_code=error,
-                )
+                raise SlackOAuthError(f"Slack API error: {error}")
 
             result_data: dict[str, Any] = result
             return result_data
 
     except httpx.TimeoutException as e:
         logger.exception("Slack OAuth timeout: %s", e)
-        raise SlackOAuthError(
-            "Request to Slack timed out",
-            error_code="timeout",
-        ) from e
+        raise SlackOAuthError("Request to Slack timed out") from e
 
     except httpx.ConnectError as e:
         logger.exception("Slack OAuth connection error: %s", e)
-        raise SlackOAuthError(
-            "Could not connect to Slack",
-            error_code="connection_error",
-        ) from e
+        raise SlackOAuthError("Could not connect to Slack") from e
 
     except httpx.RequestError as e:
         logger.exception("Slack OAuth request error: %s", e)
-        raise SlackOAuthError(
-            f"Request error: {e!s}",
-            error_code="request_error",
-        ) from e
+        raise SlackOAuthError(f"Request error: {e!s}") from e
 
 
 def extract_slack_tokens(oauth_response: dict[str, Any]) -> dict[str, Any]:
