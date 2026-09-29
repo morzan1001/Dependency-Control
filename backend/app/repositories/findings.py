@@ -8,6 +8,7 @@ from pymongo import UpdateOne
 
 from app.core import ensure_utc
 from app.core.constants import get_severity_value
+from app.core.cve import advisory_match
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
 
@@ -56,24 +57,12 @@ class FindingRepository(BaseRepository[FindingRecord]):
             "scan_id": scan_id,
             **{k: v for k, v in (scope or {}).items() if k != "type"},
             "type": "vulnerability",
-            "$or": [
-                {"details.vulnerabilities.id": vulnerability_id},
-                {"details.vulnerabilities.aliases": vulnerability_id},
-                {"details.vulnerabilities.resolved_cve": vulnerability_id},
-            ],
+            **advisory_match(vulnerability_id),
         }
         result = await self.collection.update_many(
             query,
             {"$set": update_data},
-            array_filters=[
-                {
-                    "$or": [
-                        {"vuln.id": vulnerability_id},
-                        {"vuln.aliases": vulnerability_id},
-                        {"vuln.resolved_cve": vulnerability_id},
-                    ]
-                }
-            ],
+            array_filters=[advisory_match(vulnerability_id, prefix="vuln")],
         )
         await self._rollup_vulnerability_waivers(query, waiver_reason)
         return result.matched_count

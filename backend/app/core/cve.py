@@ -16,6 +16,16 @@ def advisory_id(raw: Any) -> str | None:
     return ident
 
 
+def advisory_ids(entry: Mapping[str, Any]) -> set[str]:
+    """Every id an advisory is known under: its id, its aliases and its resolved CVE."""
+    return {i for i in (entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])) if i}
+
+
+def advisory_match(value: Any, prefix: str = "details.vulnerabilities") -> dict[str, Any]:
+    """Mongo clause for the advisories known under `value` (an id or an operator on one), as advisory_ids lists them."""
+    return {"$or": [{f"{prefix}.{field}": value} for field in ("id", "aliases", "resolved_cve")]}
+
+
 def entry_cves(entry: Mapping[str, Any]) -> list[str]:
     """Every CVE an advisory names, resolved_cve first, then its id, then its aliases."""
     ids = (advisory_id(i) for i in (entry.get("resolved_cve"), entry.get("id"), *(entry.get("aliases") or [])))

@@ -31,6 +31,7 @@ from app.core.constants import (
     TOP_PYPI_PACKAGES_URL,
     get_severity_value,
 )
+from app.core.cve import advisory_ids
 from app.models.crypto_asset import CryptoAsset
 from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
@@ -830,8 +831,7 @@ def _waive_matching_advisories(record: dict[str, Any], waiver: Waiver) -> None:
     entries = (record.get("details") or {}).get("vulnerabilities") or []
     hit = False
     for entry in entries:
-        known_as = {entry.get("id"), entry.get("resolved_cve")} | set(entry.get("aliases") or [])
-        if waiver.vulnerability_id in known_as:
+        if waiver.vulnerability_id in advisory_ids(entry):
             entry["waived"] = True
             entry["waiver_reason"] = waiver.reason
             hit = True

@@ -30,7 +30,7 @@ from app.schemas.analytics import (
 )
 from app.services.aggregation.versions import normalize_version
 from app.services.component_identity import build_component_index, lookup_component
-from app.services.recommendation.common import get_attr
+from app.services.recommendation.common import get_attr, max_advisory_cvss
 
 router = CustomAPIRouter()
 
@@ -223,16 +223,6 @@ def _get_description(vuln: dict, finding: Any) -> str | None:
     return None
 
 
-def _max_nested_cvss(details: dict[str, Any]) -> float | None:
-    """Aggregated findings carry CVSS only per CVE in details.vulnerabilities[]."""
-    scores = [
-        vuln["cvss_score"]
-        for vuln in details.get("vulnerabilities") or []
-        if isinstance(vuln, dict) and vuln.get("cvss_score") is not None
-    ]
-    return max(scores) if scores else None
-
-
 def _build_direct_vuln_result(
     finding: Any, details: dict[str, Any], project_name_map: dict[str, str]
 ) -> VulnerabilitySearchResult:
@@ -240,7 +230,7 @@ def _build_direct_vuln_result(
         vulnerability_id=finding.finding_id,
         aliases=finding.aliases or [],
         severity=finding.severity or "UNKNOWN",
-        cvss_score=_max_nested_cvss(details),
+        cvss_score=max_advisory_cvss(details),
         epss_score=details.get("epss_score"),
         epss_percentile=details.get("epss_percentile"),
         in_kev=bool(details.get(DETAILS_KEY_IN_KEV)),

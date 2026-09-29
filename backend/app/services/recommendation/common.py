@@ -97,6 +97,16 @@ def live_advisories(details: Any) -> list[dict[str, Any]]:
     return [a for a in details.get("vulnerabilities") or [] if isinstance(a, dict) and not a.get("waived")]
 
 
+def max_advisory_cvss(details: dict[str, Any]) -> float | None:
+    """Aggregated findings carry CVSS only per advisory in details.vulnerabilities[]."""
+    scores = [
+        vuln["cvss_score"]
+        for vuln in details.get("vulnerabilities") or []
+        if isinstance(vuln, dict) and vuln.get("cvss_score") is not None
+    ]
+    return max(scores) if scores else None
+
+
 def finding_cve_ids(finding: ModelOrDict) -> list[str]:
     """Every unwaived advisory a stored vulnerability finding names, collapsed to its CVE identity.
 
