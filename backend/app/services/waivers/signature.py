@@ -10,7 +10,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from app.models.match_signature import MatchSignature
+from app.models.match_signature import AnchorKind, MatchSignature
 
 # Deterministic preference when several scanners confirm one SAST finding.
 _SCANNER_PREFERENCE = ("opengrep", "bearer")
@@ -36,8 +36,8 @@ class _DocSignatureSource:
     component: str
 
 
-def normalize_snippet(text: str | None) -> str | None:
-    """Whitespace-insensitive hash input. Empty/blank -> None (sentinel)."""
+def snippet_hash(text: str | None) -> str | None:
+    """SHA-1 of whitespace-normalized text; None for blank input."""
     if not text:
         return None
     lines = [_WS.sub(" ", ln).strip() for ln in text.splitlines()]
@@ -47,14 +47,8 @@ def normalize_snippet(text: str | None) -> str | None:
     return hashlib.sha1(joined.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
-def _hash(text: str | None) -> str | None:
-    return normalize_snippet(text)
-
-
-def _select_sast_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
+def _select_sast_entry(entries: list[dict[str, Any]]) -> dict[str, Any]:
     """Pick a deterministic per-scanner entry (preference list, then sorted by (scanner, id))."""
-    if not entries:
-        return None
     for pref in _SCANNER_PREFERENCE:
         matches = [e for e in entries if (e.get("scanner") or "") == pref]
         if matches:
@@ -62,87 +56,64 @@ def _select_sast_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
     return min(entries, key=lambda e: (str(e.get("scanner") or ""), str(e.get("id") or "")))
 
 
-def _sast_signature(finding: SignatureSource) -> MatchSignature | None:
+def _sast_signature(finding: SignatureSource) -> MatchSignature:
     details = finding.details or {}
-    entries = details.get("sast_findings") or []
+    # An unmerged finding (crypto-misuse rules keep their own type) is its own single entry.
+    entries = details.get("sast_findings") or [
+        {"scanner": (finding.id or "").split("-", 1)[0].lower(), "id": details.get("rule_id"), "details": details}
+    ]
     entry = _select_sast_entry(entries)
-    if entry is None:
-        return None
     edetails = entry.get("details") or {}
-    scanner = entry.get("scanner") or "unknown"
-    rule_id = entry.get("id") or "unknown"
-    fingerprint = edetails.get("fingerprint") or edetails.get("old_fingerprint")
-    content_hash = _hash(edetails.get("code_extract"))
+    rule_key = f"{entry.get('scanner') or 'unknown'}:{entry.get('id') or 'unknown'}"
+    fingerprint = edetails.get("fingerprint")
+    content_hash = snippet_hash(edetails.get("code_extract"))
     line = details.get("line") or (edetails.get("start") or {}).get("line")
-    rule_keys = sorted({f"{e.get('scanner') or 'unknown'}:{e.get('id') or 'unknown'}" for e in entries})
-
+    kind: AnchorKind
     if fingerprint:
-        return MatchSignature(
-            rule_key=f"{scanner}:{rule_id}",
-            file_key=finding.component,
-            anchor=fingerprint,
-            anchor_kind="scanner_fp",
-            content_hash=content_hash,
-            last_line=line,
-            rule_keys=rule_keys,
-        )
+        anchor, kind = fingerprint, "scanner_fp"
+    else:
+        # Without the scanner's fingerprint or the code, only the exact location identifies the instance.
+        content_hash = content_hash or snippet_hash(f"{rule_key}\x00{finding.component}\x00{line}")
+        anchor, kind = content_hash, "content_hash"
     return MatchSignature(
-        rule_key=f"{scanner}:{rule_id}",
+        rule_key=rule_key,
         file_key=finding.component,
-        anchor=content_hash,
-        anchor_kind="content_hash",
+        anchor=anchor,
+        anchor_kind=kind,
         content_hash=content_hash,
         last_line=line,
-        rule_keys=rule_keys,
+        rule_keys=sorted({f"{e.get('scanner') or 'unknown'}:{e.get('id') or 'unknown'}" for e in entries}),
     )
 
 
-def _iac_signature(finding: SignatureSource) -> MatchSignature | None:
+def _iac_signature(finding: SignatureSource) -> MatchSignature:
     details = finding.details or {}
-    rule_id = details.get("rule_id") or "unknown"
-    content_hash = _hash("\n".join(str(details.get(k) or "") for k in ("actual_value", "expected_value")))
-    line = (details.get("start") or {}).get("line")
+    kics_key = f"KICS:{details.get('rule_id') or 'unknown'}"
+    content_hash = snippet_hash("\n".join(str(details.get(k) or "") for k in ("actual_value", "expected_value")))
     similarity_id = details.get("similarity_id")
     search_key = details.get("search_key")
-
-    kics_key = f"KICS:{rule_id}"
-    if similarity_id:
-        return MatchSignature(
-            rule_key=kics_key,
-            file_key=finding.component,
-            anchor=similarity_id,
-            anchor_kind="similarity_id",
-            content_hash=content_hash,
-            last_line=line,
-            rule_keys=[kics_key],
-        )
-    if search_key:
-        return MatchSignature(
-            rule_key=kics_key,
-            file_key=finding.component,
-            anchor=search_key,
-            anchor_kind="search_key",
-            content_hash=content_hash,
-            last_line=line,
-            rule_keys=[kics_key],
-        )
+    kind: AnchorKind
+    anchor, kind = (
+        (similarity_id, "similarity_id")
+        if similarity_id
+        else (search_key, "search_key")
+        if search_key
+        else (content_hash, "content_hash")
+    )
     return MatchSignature(
         rule_key=kics_key,
         file_key=finding.component,
-        anchor=content_hash,
-        anchor_kind="content_hash",
+        anchor=anchor,
+        anchor_kind=kind,
         content_hash=content_hash,
-        last_line=line,
+        last_line=(details.get("start") or {}).get("line"),
         rule_keys=[kics_key],
     )
 
 
-def _secret_signature(finding: SignatureSource) -> MatchSignature | None:
-    details = finding.details or {}
-    detector = details.get("detector") or "unknown"
-    secret_hash = finding.id.rsplit("-", 1)[-1] if finding.id else None
-    if not secret_hash:
-        return None
+def _secret_signature(finding: SignatureSource) -> MatchSignature:
+    detector = (finding.details or {}).get("detector") or "unknown"
+    secret_hash = (finding.id or "").rsplit("-", 1)[-1]
     return MatchSignature(
         rule_key=detector,
         file_key=finding.component,
@@ -159,7 +130,7 @@ def compute_match_signature(finding: SignatureSource) -> MatchSignature | None:
     fid = finding.id or ""
     details = finding.details or {}
 
-    if details.get("sast_findings") is not None or fid.startswith(("OPENGREP-", "BEARER-", "SAST-AGG-")):
+    if details.get("sast_findings") is not None or fid.startswith(("OPENGREP-", "BEARER-")):
         return _sast_signature(finding)
     if fid.startswith("KICS-"):
         return _iac_signature(finding)

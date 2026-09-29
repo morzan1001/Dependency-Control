@@ -37,6 +37,7 @@ from app.core.constants import (
     WEBHOOK_HEADER_USER_AGENT,
     WEBHOOK_RESPONSE_BODY_LIMIT_BYTES,
     WEBHOOK_USER_AGENT_VALUE,
+    WebhookType,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
@@ -50,7 +51,7 @@ from app.services.webhooks.types import (
     TestWebhookPayload,
     VulnerabilityFoundPayload,
 )
-from app.services.webhooks.validation import build_pinned_transport
+from app.services.webhooks.validation import build_pinned_transport, effective_webhook_type
 
 
 def _normalize_event_name(event_type: str) -> str:
@@ -244,25 +245,11 @@ class WebhookService:
 
     def _format_payload(
         self,
-        webhook: Webhook,
+        webhook_type: WebhookType,
         event_type: str,
         raw_payload: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        # A generic-typed webhook pointing at a Teams URL must be formatted as Teams, else Power Automate rejects the raw JSON.
-        effective_type = webhook.webhook_type
-        if effective_type != "teams":
-            from app.services.webhooks.validation import detect_webhook_type
-
-            if detect_webhook_type(webhook.url) == "teams":
-                logger.warning(
-                    "Webhook %s is stored as %s but URL matches a Teams workflow; "
-                    "formatting as Teams. Set webhook_type=teams to silence this warning.",
-                    webhook.id,
-                    effective_type,
-                )
-                effective_type = "teams"
-
-        if effective_type != "teams":
+        if webhook_type != "teams":
             return raw_payload
 
         normalized = _normalize_event_name(event_type)
@@ -293,8 +280,6 @@ class WebhookService:
             )
         if normalized in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
             return self._build_policy_changed_card(normalized, raw_payload)
-        if event_type == "test":  # "test" has no alias; event_type == normalized here
-            return TeamsFormatter.build_test_card()
         return TeamsFormatter.build_generic_card(
             subject=normalized.replace(".", " ").title(),
             message=f"Event for project **{project_name}**",
@@ -352,11 +337,9 @@ class WebhookService:
         event_type: str,
     ) -> bool:
         """Send a single webhook with retries. Retries are in-memory — delivery is lost if the pod crashes mid-retry."""
-        formatted_payload = self._format_payload(webhook, event_type, payload)
-        json_payload = json.dumps(formatted_payload)
-        # Teams: sign the raw event payload so relays can verify X-Webhook-Signature.
-        signing_payload = json.dumps(payload) if webhook.webhook_type == "teams" else json_payload
-        headers = self._build_headers(webhook, event_type, signing_payload)
+        webhook_type = effective_webhook_type(webhook.webhook_type, webhook.url)
+        json_payload = json.dumps(self._format_payload(webhook_type, event_type, payload))
+        headers = self._build_headers(webhook, event_type, json_payload)
 
         retry_count = 0
         last_error: str | None = None
@@ -651,16 +634,10 @@ class WebhookService:
             },
         }
 
-        # Bypass _format_payload for Teams: test_payload's event would produce a scan card, not the test card.
-        formatted_test_payload: Mapping[str, Any]
-        if webhook.webhook_type == "teams":
-            formatted_test_payload = TeamsFormatter.build_test_card()
-        else:
-            formatted_test_payload = self._format_payload(webhook, event_type, test_payload)
-        json_payload = json.dumps(formatted_test_payload)
-        # Teams: sign the raw event payload so relays can verify X-Webhook-Signature.
-        signing_payload = json.dumps(test_payload) if webhook.webhook_type == "teams" else json_payload
-        headers = self._build_headers(webhook, event_type, signing_payload, is_test=True)
+        # Teams gets the test card: formatting test_payload's event would produce a scan card.
+        teams = effective_webhook_type(webhook.webhook_type, webhook.url) == "teams"
+        json_payload = json.dumps(TeamsFormatter.build_test_card() if teams else test_payload)
+        headers = self._build_headers(webhook, event_type, json_payload, is_test=True)
 
         start_time = time.monotonic()
 

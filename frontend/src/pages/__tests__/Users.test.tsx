@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import UsersPage from '../Users'
@@ -8,11 +8,14 @@ import { SMALL_PAGE_SIZE } from '@/lib/constants'
 const mockUseUsers = vi.fn()
 const mockUsePendingInvitations = vi.fn()
 const noopMutation = () => ({ mutate: vi.fn(), isPending: false })
+const mockDeleteUser = vi.fn()
+const mockRevokeInvitation = vi.fn()
 
 vi.mock('@/hooks/queries/use-users', () => ({
   useUsers: (...args: unknown[]) => mockUseUsers(...args),
   usePendingInvitations: () => mockUsePendingInvitations(),
-  useDeleteUser: () => noopMutation(),
+  useDeleteUser: () => ({ mutate: mockDeleteUser, isPending: false }),
+  useRevokeInvitation: () => ({ mutate: mockRevokeInvitation, isPending: false }),
   useInviteUser: () => noopMutation(),
 }))
 
@@ -54,6 +57,8 @@ function makeInvitation(i: number): SystemInvitation {
 beforeEach(() => {
   mockUseUsers.mockReset()
   mockUsePendingInvitations.mockReset()
+  mockDeleteUser.mockReset()
+  mockRevokeInvitation.mockReset()
 })
 
 describe('UsersPage - invitations & pagination', () => {
@@ -95,5 +100,22 @@ describe('UsersPage - invitations & pagination', () => {
 
     expect(screen.queryAllByText('Invited')).toHaveLength(0)
     expect(screen.getByText(`user${limit}`)).toBeInTheDocument()
+  })
+})
+
+describe('UsersPage - removing a row', () => {
+  it('revokes a pending invitation instead of deleting a user', () => {
+    mockUseUsers.mockReturnValue({ data: [makeUser(0)], isLoading: false, error: null })
+    mockUsePendingInvitations.mockReturnValue({ data: [makeInvitation(0)], isLoading: false })
+
+    render(<UsersPage />)
+
+    const row = screen.getAllByText('invite0@example.com')[0].closest('tr') as HTMLElement
+    const buttons = within(row).getAllByRole('button')
+    fireEvent.click(buttons[buttons.length - 1])
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+
+    expect(mockRevokeInvitation).toHaveBeenCalledWith('invite-0', expect.anything())
+    expect(mockDeleteUser).not.toHaveBeenCalled()
   })
 })

@@ -14,21 +14,23 @@ from app.api.v1.helpers import (
     build_team_enrichment_pipeline,
     check_team_access,
     fetch_and_enrich_team,
-    get_member_role,
     get_team_with_access,
+    visible_teams_filter,
 )
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
+    RESP_AUTH_400_404_409,
     RESP_AUTH_400_404_409_502,
     RESP_AUTH_404,
 )
-from app.core.constants import TEAM_ROLE_ADMIN
+from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_SEPARATOR
 from app.core.log_utils import sanitize_for_log
-from app.core.permissions import Permissions, has_permission
+from app.core.permissions import Permissions
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
 from app.models.user import User
-from app.repositories import TeamRepository, UserRepository
+from app.repositories import ProjectRepository, TeamRepository, UserRepository, WebhookRepository
+from app.repositories.base import and_filters
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.projects import remove_team_pipeline
@@ -51,6 +53,7 @@ router = CustomAPIRouter()
 
 _MSG_ALREADY_IN_TEAM = "User already in team"
 _MSG_LAST_ADMIN = "Cannot remove the last admin. Add another admin first."
+_MSG_LAST_ADMIN_DEMOTE = "Cannot demote the last admin. Add another admin first."
 _MSG_TEAM_NOT_FOUND = "Team not found"
 _MSG_NO_VERIFIED_USER = "No user has verified this email address"
 
@@ -58,7 +61,7 @@ _MSG_NO_VERIFIED_USER = "No user has verified this email address"
 @router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED, responses=RESP_AUTH)
 async def create_team(
     team_in: TeamCreate,
-    current_user: Annotated[User, Depends(deps.PermissionChecker("team:create"))],
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.TEAM_CREATE))],
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Create a new team. The creator becomes an admin."""
@@ -89,18 +92,11 @@ async def read_teams(
     """List teams."""
     team_repo = TeamRepository(db)
 
-    query: dict[str, Any] = {}
-    if search:
-        query["name"] = {"$regex": re.escape(search), "$options": "i"}
-
-    if has_permission(current_user.permissions, "team:read_all"):
-        final_query = query
-    elif has_permission(current_user.permissions, "team:read"):
-        permission_query = {"members.user_id": str(current_user.id)}
-
-        final_query = {"$and": [query, permission_query]} if query else permission_query
-    else:
+    visible = visible_teams_filter(current_user)
+    if visible is None:
         raise HTTPException(status_code=403, detail="Not enough permissions")
+    search_query = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
+    final_query = and_filters(search_query, visible)
 
     sort_direction = 1 if sort_order == "asc" else -1
 
@@ -154,25 +150,19 @@ async def delete_team(
     db: DatabaseDep,
 ) -> None:
     """Delete a team (admin role); unassigns it from projects and removes team webhooks."""
-    from app.repositories import ProjectRepository
-
-    if not has_permission(current_user.permissions, "team:delete"):
-        await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
+    await get_team_with_access(team_id, current_user, db, global_permission=Permissions.TEAM_DELETE)
 
     safe_team_id = sanitize_for_log(team_id)
 
-    project_repo = ProjectRepository(db)
-    updated_count = await project_repo.update_many_raw({"team_ids": team_id}, remove_team_pipeline(team_id))
-
+    updated_count = await ProjectRepository(db).update_many_raw({"team_ids": team_id}, remove_team_pipeline(team_id))
     if updated_count > 0:
         logger.info("Team %s deleted: unassigned from %d project(s)", safe_team_id, updated_count)
 
-    webhook_result = await db.webhooks.delete_many({"team_id": team_id})
-    if webhook_result.deleted_count > 0:
-        logger.info("Team %s deleted: removed %d webhook(s)", safe_team_id, webhook_result.deleted_count)
+    removed_webhooks = await WebhookRepository(db).delete_many({"team_id": team_id})
+    if removed_webhooks > 0:
+        logger.info("Team %s deleted: removed %d webhook(s)", safe_team_id, removed_webhooks)
 
-    team_repo = TeamRepository(db)
-    await team_repo.delete(team_id)
+    await TeamRepository(db).delete(team_id)
 
 
 async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDatabase) -> GitHubTeamBinding:
@@ -259,7 +249,7 @@ async def _reject_taken_binding(
 async def set_team_binding(
     team_id: str,
     binding_in: TeamBindingRequest,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> TeamResponse:
     """Bind a team to a group on one instance, which is what makes it resolvable from that
@@ -302,7 +292,7 @@ async def set_team_binding(
 async def clear_team_binding(
     team_id: str,
     instance_id: str,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> TeamResponse:
     """Remove a team's binding for one instance, leaving the ones it holds on the others. Its
@@ -352,7 +342,25 @@ async def add_team_member(
     return await fetch_and_enrich_team(team_id, db)
 
 
-@router.put("/{team_id}/members/{user_id}", responses=RESP_AUTH_404)
+async def _ensure_hand_editable_member(team: Team, user_id: str, db: AsyncIOMotorDatabase) -> None:
+    """404 for a non-member; 409 for an entry a live sync owns, which its next ingest would restore."""
+    member = next((m for m in team.members if m.user_id == user_id), None)
+    if member is None:
+        raise HTTPException(status_code=404, detail="User not in team")
+    provider, _, instance_id = member.source.partition(TEAM_SOURCE_SEPARATOR)
+    binding = next((b for b in team.bindings if b.provider == provider and b.instance_id == instance_id), None)
+    if binding is None:
+        return
+    instances = GitHubInstanceRepository(db) if provider == TEAM_SOURCE_GITHUB else GitLabInstanceRepository(db)
+    instance = await instances.get_by_id(instance_id)
+    if instance is not None and instance.sync_teams:
+        raise HTTPException(
+            status_code=409,
+            detail=f"This member is synced from {_binding_conflict(binding)}; change their membership there.",
+        )
+
+
+@router.put("/{team_id}/members/{user_id}", responses=RESP_AUTH_400_404_409)
 async def update_team_member(
     team_id: str,
     user_id: str,
@@ -361,19 +369,16 @@ async def update_team_member(
     db: DatabaseDep,
 ) -> TeamResponse:
     """Update a member's role. Requires 'admin' role."""
-    team_repo = TeamRepository(db)
-
     team = await get_team_with_access(team_id, current_user, db)
+    await _ensure_hand_editable_member(team, user_id, db)
 
-    if get_member_role(team, user_id) is None:
-        raise HTTPException(status_code=404, detail="User not in team")
-
-    await team_repo.update_member_role(team_id, user_id, member_in.role, datetime.now(timezone.utc))
+    if not await TeamRepository(db).update_member_role(team_id, user_id, member_in.role, datetime.now(timezone.utc)):
+        raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_DEMOTE)
 
     return await fetch_and_enrich_team(team_id, db)
 
 
-@router.delete("/{team_id}/members/{user_id}", responses=RESP_AUTH_400_404)
+@router.delete("/{team_id}/members/{user_id}", responses=RESP_AUTH_400_404_409)
 async def remove_team_member(
     team_id: str,
     user_id: str,
@@ -381,13 +386,10 @@ async def remove_team_member(
     db: DatabaseDep,
 ) -> TeamResponse:
     """Remove a member from the team. Requires 'admin' role."""
-    team_repo = TeamRepository(db)
     team = await get_team_with_access(team_id, current_user, db)
+    await _ensure_hand_editable_member(team, user_id, db)
 
-    if get_member_role(team, user_id) is None:
-        raise HTTPException(status_code=404, detail="User not in team")
-
-    if not await team_repo.remove_member(team_id, user_id, datetime.now(timezone.utc)):
+    if not await TeamRepository(db).remove_member(team_id, user_id, datetime.now(timezone.utc)):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN)
 
     return await fetch_and_enrich_team(team_id, db)

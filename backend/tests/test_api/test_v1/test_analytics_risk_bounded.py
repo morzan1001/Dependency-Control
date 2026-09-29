@@ -16,6 +16,7 @@ from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
 from app.schemas.analytics import CVEEnrichmentResult
 from tests.mocks.fake_mongo import FakeCollection
+from tests.helpers.analytics_scope import projections
 
 MODULE = "app.api.v1.endpoints.analytics.risk"
 
@@ -130,8 +131,8 @@ def _run_impact(
     captured: list[list[dict[str, Any]]] = []
     captured_kwargs: list[dict[str, Any]] = []
 
-    async def _fake_get_user_project_ids(_u, _d):
-        return ["proj-1"]
+    async def _fake_get_user_projects(_u, _d):
+        return projections(["proj-1"])
 
     async def _fake_get_projects_with_scans(_pids, _d, **_kw):
         return {"proj-1": "Project 1"}, ["scan-latest"]
@@ -148,7 +149,7 @@ def _run_impact(
         return {}
 
     with (
-        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
         patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
@@ -173,8 +174,8 @@ def _run_hotspots(
     captured: list[list[dict[str, Any]]] = []
     captured_kwargs: list[dict[str, Any]] = []
 
-    async def _fake_get_user_project_ids(_u, _d):
-        return ["proj-1"]
+    async def _fake_get_user_projects(_u, _d):
+        return projections(["proj-1"])
 
     async def _fake_get_projects_with_scans(_pids, _d, **_kw):
         return {"proj-1": "Project 1"}, ["scan-latest"]
@@ -194,7 +195,7 @@ def _run_hotspots(
         return {}
 
     with (
-        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
         patch(f"{MODULE}.DependencyRepository", return_value=mock_dep_repo),
@@ -723,8 +724,8 @@ def _impact_aggregate_calls(*limits: int) -> int:
     db = MagicMock()
     calls = {"n": 0}
 
-    async def _fake_get_user_project_ids(_u, _d):
-        return ["proj-1"]
+    async def _fake_get_user_projects(_u, _d):
+        return projections(["proj-1"])
 
     async def _fake_get_projects_with_scans(_p, _d, **_kw):
         return {"proj-1": "P1"}, ["scan-latest"]
@@ -741,7 +742,7 @@ def _impact_aggregate_calls(*limits: int) -> int:
         return {}
 
     with (
-        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=repo),
         patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
@@ -758,8 +759,8 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
     db = MagicMock()
     calls = {"n": 0}
 
-    async def _fake_get_user_project_ids(_u, _d):
-        return ["proj-1"]
+    async def _fake_get_user_projects(_u, _d):
+        return projections(["proj-1"])
 
     async def _fake_get_projects_with_scans(_p, _d, **_kw):
         return {"proj-1": "P1"}, ["scan-latest"]
@@ -778,7 +779,7 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
         return {}
 
     with (
-        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=repo),
         patch(f"{MODULE}.DependencyRepository", return_value=dep_repo),
@@ -810,8 +811,8 @@ class TestAnalyticsResultCache:
         user = _admin_user()
         db = MagicMock()
 
-        async def _fake_get_user_project_ids(_u, _d):
-            return ["proj-1"]
+        async def _fake_get_user_projects(_u, _d):
+            return projections(["proj-1"])
 
         async def _fake_get_projects_with_scans(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
@@ -826,7 +827,7 @@ class TestAnalyticsResultCache:
             return {}
 
         with (
-            patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+            patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
             patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
             patch(f"{MODULE}.FindingRepository", return_value=repo),
             patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
@@ -967,7 +968,7 @@ class TestHistoricalFirstSeen:
         row["first_seen"] = recent
 
         async def _gupi(_u, _d):
-            return ["proj-1"]
+            return projections(["proj-1"])
 
         async def _gpws(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
@@ -984,7 +985,7 @@ class TestHistoricalFirstSeen:
             return {}
 
         with (
-            patch(f"{MODULE}.get_user_project_ids", new=_gupi),
+            patch(f"{MODULE}.get_user_projects", new=_gupi),
             patch(f"{MODULE}.get_projects_with_scans", new=_gpws),
             patch(f"{MODULE}.FindingRepository", return_value=repo),
             patch(f"{MODULE}.get_cve_enrichment", new=_enr),
@@ -1006,7 +1007,7 @@ class TestHistoricalFirstSeen:
         old = datetime.now(timezone.utc) - timedelta(days=200)
 
         async def _gupi(_u, _d):
-            return ["proj-1"]
+            return projections(["proj-1"])
 
         async def _gpws(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
@@ -1025,7 +1026,7 @@ class TestHistoricalFirstSeen:
             return {}
 
         with (
-            patch(f"{MODULE}.get_user_project_ids", new=_gupi),
+            patch(f"{MODULE}.get_user_projects", new=_gupi),
             patch(f"{MODULE}.get_projects_with_scans", new=_gpws),
             patch(f"{MODULE}.FindingRepository", return_value=repo),
             patch(f"{MODULE}.DependencyRepository", return_value=dep_repo),

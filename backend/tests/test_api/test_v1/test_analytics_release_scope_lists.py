@@ -11,6 +11,7 @@ from app.api.v1.endpoints.analytics.summary import get_dependency_types, get_top
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
+from tests.helpers.analytics_scope import projections
 
 _SUMMARY = "app.api.v1.endpoints.analytics.summary"
 _RISK = "app.api.v1.endpoints.analytics.risk"
@@ -36,7 +37,7 @@ def _user():
 @pytest.mark.asyncio
 async def test_top_dependencies_forwards_the_environment():
     with (
-        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_NO_SCANS)) as scan_ids,
     ):
         result = await get_top_dependencies(
@@ -50,8 +51,8 @@ async def test_top_dependencies_forwards_the_environment():
 @pytest.mark.asyncio
 async def test_dependency_types_forwards_the_environment():
     with (
-        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
-        patch(f"{_SUMMARY}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS))) as resolve,
+        patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
+        patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_NO_SCANS)) as resolve,
     ):
         result = await get_dependency_types(
             current_user=_user(), db=MagicMock(), release_environment=DEFAULT_RELEASE_ENVIRONMENT
@@ -64,7 +65,7 @@ async def test_dependency_types_forwards_the_environment():
 @pytest.mark.asyncio
 async def test_impact_forwards_the_environment():
     with (
-        patch(f"{_RISK}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_RISK}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(f"{_RISK}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS))) as resolve,
     ):
         result = await get_impact_analysis(
@@ -78,7 +79,7 @@ async def test_impact_forwards_the_environment():
 @pytest.mark.asyncio
 async def test_hotspots_forwards_the_environment():
     with (
-        patch(f"{_RISK}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_RISK}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(f"{_RISK}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS))) as resolve,
     ):
         result = await get_vulnerability_hotspots(
@@ -98,21 +99,19 @@ async def test_hotspots_forwards_the_environment():
 @pytest.mark.asyncio
 async def test_the_default_stays_the_branch_tip():
     with (
-        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_SUMMARY}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_NO_SCANS)) as scan_ids,
-        patch(f"{_SUMMARY}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS))) as resolve,
     ):
         await get_top_dependencies(current_user=_user(), db=MagicMock(), limit=_LIMIT, type=None)
         await get_dependency_types(current_user=_user(), db=MagicMock())
 
-    assert scan_ids.await_args.kwargs["release_environment"] is None
-    assert resolve.await_args.kwargs["release_environment"] is None
+    assert [call.kwargs["release_environment"] for call in scan_ids.await_args_list] == [None, None]
 
 
 @pytest.mark.asyncio
 async def test_the_risk_endpoints_default_to_the_branch_tip():
     with (
-        patch(f"{_RISK}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_RISK}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(f"{_RISK}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS))) as resolve,
     ):
         await get_impact_analysis(current_user=_user(), db=MagicMock(), limit=_LIMIT)
@@ -155,7 +154,7 @@ async def test_the_impact_cache_does_not_serve_head_results_to_a_release_request
     finding_repo.aggregate = _fake_aggregate
 
     with (
-        patch(f"{_RISK}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_RISK}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(f"{_RISK}.get_projects_with_scans", new=_resolver_per_environment()),
         patch(f"{_RISK}.FindingRepository", return_value=finding_repo),
     ):
@@ -183,7 +182,7 @@ async def test_the_hotspot_cache_does_not_serve_head_results_to_a_release_reques
     dep_repo.aggregate = AsyncMock(return_value=[])
 
     with (
-        patch(f"{_RISK}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_RISK}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(f"{_RISK}.get_projects_with_scans", new=_resolver_per_environment()),
         patch(f"{_RISK}.FindingRepository", return_value=finding_repo),
         patch(f"{_RISK}.DependencyRepository", return_value=dep_repo),

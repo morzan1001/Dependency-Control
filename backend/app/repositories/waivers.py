@@ -1,9 +1,11 @@
 """Repository for waivers."""
 
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReturnDocument, UpdateOne
 
 from app.core.metrics import track_db_operation
 from app.models.waiver import Waiver
@@ -11,12 +13,16 @@ from app.models.waiver import Waiver
 _COL = "waivers"
 
 
-def _non_expired_filter(now: datetime | None = None) -> dict[str, Any]:
-    """Return a MongoDB $or clause matching waivers whose expiration_date is absent, null, or in the future."""
-    ts = now or datetime.now(timezone.utc)
-    return {
-        "$or": [{"expiration_date": {"$exists": False}}, {"expiration_date": None}, {"expiration_date": {"$gt": ts}}]
-    }
+def non_expired_waiver_filter(now: datetime) -> dict[str, Any]:
+    """MongoDB clause for waivers whose expiration_date is absent, null, or in the future; mirrors is_waiver_active."""
+    # An equality with null also matches a document that lacks the field.
+    return {"$or": [{"expiration_date": None}, {"expiration_date": {"$gt": now}}]}
+
+
+def _active_for_project_filter(project_id: str) -> dict[str, Any]:
+    """The project's own and the global waivers that have not expired."""
+    project_or_global = {"$or": [{"project_id": project_id}, {"project_id": None}]}
+    return {"$and": [project_or_global, non_expired_waiver_filter(datetime.now(timezone.utc))]}
 
 
 class WaiverRepository:
@@ -37,13 +43,24 @@ class WaiverRepository:
 
     async def create(self, waiver: Waiver) -> Waiver:
         with track_db_operation(_COL, "insert_one"):
-            await self.collection.insert_one(waiver.model_dump(by_alias=True))
+            await self.collection.insert_one(waiver.model_dump(by_alias=True, exclude={"is_active"}))
         return waiver
 
     async def update(self, waiver_id: str, update_data: dict[str, Any]) -> Waiver | None:
-        with track_db_operation(_COL, "update_one"):
-            await self.collection.update_one({"_id": waiver_id}, {"$set": update_data})
-        return await self.get_by_id(waiver_id)
+        with track_db_operation(_COL, "find_one_and_update"):
+            data = await self.collection.find_one_and_update(
+                {"_id": waiver_id}, {"$set": update_data}, return_document=ReturnDocument.AFTER
+            )
+        return Waiver(**data) if data else None
+
+    async def set_fields_many(self, fields_by_id: Mapping[str, dict[str, Any]]) -> None:
+        if not fields_by_id:
+            return
+        with track_db_operation(_COL, "bulk_write"):
+            await self.collection.bulk_write(
+                [UpdateOne({"_id": wid}, {"$set": fields}) for wid, fields in fields_by_id.items()],
+                ordered=False,
+            )
 
     async def delete(self, waiver_id: str) -> bool:
         with track_db_operation(_COL, "delete_one"):
@@ -83,25 +100,16 @@ class WaiverRepository:
         with track_db_operation(_COL, "count"):
             return await self.collection.count_documents(query or {})
 
-    async def find_active_for_project(self, project_id: str, include_global: bool = True) -> list[Waiver]:
-        """Active (non-expired) waivers for a project; include_global also matches global waivers (project_id=None)."""
-        now = datetime.now(timezone.utc)
-
-        project_filter = (
-            {"$or": [{"project_id": project_id}, {"project_id": None}]}
-            if include_global
-            else {"project_id": project_id}
-        )
-        query: dict[str, Any] = {"$and": [project_filter, _non_expired_filter(now=now)]}
-
+    async def find_active_for_project(self, project_id: str) -> list[Waiver]:
+        """Active (non-expired) waivers that apply to a project: its own and the global ones (project_id=None)."""
         with track_db_operation(_COL, "find"):
-            cursor = self.collection.find(query)
+            cursor = self.collection.find(_active_for_project_filter(project_id))
             docs = await cursor.to_list(None)
         return [Waiver(**doc) for doc in docs]
 
     async def find_active_global(self) -> list[Waiver]:
         """Active (non-expired) waivers that apply to every project (project_id=None)."""
-        query: dict[str, Any] = {"$and": [{"project_id": None}, _non_expired_filter(now=datetime.now(timezone.utc))]}
+        query: dict[str, Any] = {"$and": [{"project_id": None}, non_expired_waiver_filter(datetime.now(timezone.utc))]}
 
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find(query)

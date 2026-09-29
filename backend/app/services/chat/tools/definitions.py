@@ -1,8 +1,9 @@
 """Static tool metadata: TOOL_DEFINITIONS, TOOL_PERMISSIONS, get_tool_definitions()."""
 
-from typing import Any
+from typing import Any, get_args
 
 from app.core.permissions import Permissions
+from app.schemas.analytics import ScopeKind
 
 _DESC_PROJECT_ID = "The project ID"
 _DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."
@@ -309,7 +310,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_teams",
-            "description": "List all teams the user belongs to.",
+            "description": "List the teams the user can read.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -1052,7 +1053,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scope": {"type": "string", "enum": ["project", "team", "global", "user"]},
+                    "scope": {"type": "string", "enum": list(get_args(ScopeKind))},
                     "scope_id": {"type": "string"},
                     "framework": {
                         "type": "string",
@@ -1073,14 +1074,32 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+_TEAM_READ = [Permissions.TEAM_READ, Permissions.TEAM_READ_ALL]
+_WAIVER_READ = [Permissions.WAIVER_READ, Permissions.WAIVER_READ_ALL]
+_ARCHIVE_READ = [Permissions.ARCHIVE_READ, Permissions.ARCHIVE_READ_ALL]
+# The same any-of pair require_analytics_permission checks on the matching REST route.
+_ANALYTICS_SEARCH = [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_SEARCH]
+
 TOOL_PERMISSIONS: dict[str, list[str]] = {
-    # A tool not named here is project-scoped: build_user_project_query is what demands a
-    # project-read permission of the caller and narrows the answer to the projects they hold.
-    "list_global_waivers": [Permissions.WAIVER_READ_ALL],
+    # Any-of, checked before the handler runs; the handler still applies the per-resource rule.
+    "search_findings": _ANALYTICS_SEARCH,
+    "get_findings_by_cve": _ANALYTICS_SEARCH,
+    "get_cve_details": _ANALYTICS_SEARCH,
+    "find_component_usage": _ANALYTICS_SEARCH,
+    "generate_remediation_plan": [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_RECOMMENDATIONS],
+    "get_analytics_summary": [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_SUMMARY],
+    "list_teams": _TEAM_READ,
+    "get_team_details": _TEAM_READ,
+    "get_team_projects": _TEAM_READ,
+    "get_team_risk_overview": _TEAM_READ,
+    "list_project_waivers": _WAIVER_READ,
+    "list_global_waivers": _WAIVER_READ,
+    "get_waiver_status": _WAIVER_READ,
+    "get_expiring_waivers": _WAIVER_READ,
     "get_system_settings": [Permissions.SYSTEM_MANAGE],
     "get_system_health": [Permissions.SYSTEM_MANAGE],
-    "list_archives": [Permissions.ARCHIVE_READ],
-    "get_archive_details": [Permissions.ARCHIVE_READ],
+    "list_archives": _ARCHIVE_READ,
+    "get_archive_details": _ARCHIVE_READ,
 }
 
 

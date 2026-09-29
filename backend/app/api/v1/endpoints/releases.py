@@ -8,14 +8,14 @@ import pymongo
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import CurrentUserDep, DatabaseDep, ReleaseWriteDep
+from app.api.deps import CurrentUserDep, DatabaseDep, ProjectWriteDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_409
 from app.core import ensure_utc
-from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, PROJECT_ROLE_VIEWER, RELEASE_ENVIRONMENT_PATTERN
+from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, RELEASE_ENVIRONMENT_PATTERN
 from app.core.init_db import RELEASES_LATEST_SORT
-from app.models.release import Release
+from app.models.release import Release, release_identity
 from app.repositories import ReleaseRepository, ScanRepository
 from app.repositories.scans import LineageAnalysis
 from app.schemas.release import ReleaseItem, ReleaseListResponse, ReleaseMarkRequest, ReleaseUnmarkResponse
@@ -65,7 +65,7 @@ async def _to_items(db: AsyncIOMotorDatabase, rows: list[dict[str, Any]]) -> lis
     responses=RESP_AUTH_404_409,
 )
 async def mark_release(
-    project_id: ReleaseWriteDep,
+    project_id: ProjectWriteDep,
     payload: ReleaseMarkRequest,
     db: DatabaseDep,
 ) -> ReleaseItem:
@@ -89,16 +89,14 @@ async def mark_release(
         raise HTTPException(status_code=404, detail=f"No scan found for commit {payload.commit_hash}")
 
     scan_id = str(scan["_id"])
-    environment = payload.environment or DEFAULT_RELEASE_ENVIRONMENT
+    environment, version = release_identity(payload.environment, payload.version, scan.get("commit_tag"))
     released_at = ensure_utc(payload.released_at) or datetime.now(timezone.utc)
 
     await ReleaseRepository(db).record(
         Release(
             project_id=project_id,
             environment=environment,
-            # A CI producer sends an unset tag as "", and ReleaseRepository.record only skips a
-            # None version, so an empty one would be stored as the release's name.
-            version=payload.version or scan.get("commit_tag") or None,
+            version=version,
             scan_id=scan_id,
             released_at=released_at,
         )
@@ -123,7 +121,7 @@ async def mark_release(
     responses=RESP_AUTH_404,
 )
 async def unmark_release(
-    project_id: ReleaseWriteDep,
+    project_id: ProjectWriteDep,
     scan_id: str,
     db: DatabaseDep,
     environment: _EnvironmentQuery = DEFAULT_RELEASE_ENVIRONMENT,
@@ -177,7 +175,7 @@ async def list_releases(
 ) -> ReleaseListResponse:
     """Every release of a project, newest first — one entry per environment a scan was deployed to,
     so an environment's current release is its first entry."""
-    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
+    await check_project_access(project_id, current_user, db)
 
     query: dict[str, Any] = {"project_id": project_id}
     if environment:

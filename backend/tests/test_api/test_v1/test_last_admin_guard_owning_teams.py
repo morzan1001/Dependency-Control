@@ -17,7 +17,8 @@ from tests.mocks.fake_mongo import FakeDatabase
 _PROJECT = "p-admins"
 _LAST_ADMIN = "u-admin"
 
-_CALLER = User(id="superuser", username="su", email="su@test.com", permissions=["project:update"])
+# The last admin removing themselves: a write superuser is exempt from the guard altogether.
+_CALLER = User(id=_LAST_ADMIN, username="admin", email="admin@test.com", permissions=["project:read"])
 
 _NO_ADMINS = [{"user_id": "u-plain", "role": "member"}]
 _HAS_ADMIN = [{"user_id": "u-team-admin", "role": "admin"}]

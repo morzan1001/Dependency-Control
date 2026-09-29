@@ -23,7 +23,7 @@ from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
 from app.core import ensure_utc
-from app.core.constants import MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
+from app.core.constants import MAX_RESCAN_HOPS, SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING, SCAN_USABLE_STATUSES
 from app.core.metrics import track_db_operation
 from app.models.project import Scan
 from app.schemas.projections import ScanMinimal, ScanWithStats
@@ -226,10 +226,31 @@ class ScanRepository:
             return await self.collection.find_one(query, sort=sort)
         return await self.collection.find_one(query)
 
+    async def branch_scan_times(self, project_id: str) -> dict[str, tuple[datetime | None, datetime | None]]:
+        """Per branch: when its newest scan and its newest usable scan were created."""
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"project_id": project_id}},
+            {
+                "$group": {
+                    "_id": "$branch",
+                    "last_scan_at": {"$max": "$created_at"},
+                    # Ranked on separately: a branch whose newest scans all failed renders nothing.
+                    "last_usable_at": {
+                        "$max": {"$cond": [{"$in": ["$status", list(SCAN_USABLE_STATUSES)]}, "$created_at", None]}
+                    },
+                }
+            },
+        ]
+        return {
+            doc["_id"]: (doc["last_scan_at"], doc.get("last_usable_at"))
+            for doc in await self.aggregate(pipeline)
+            if doc["_id"] is not None
+        }
+
     async def branch_tips(
-        self, project_id: str, deleted_branches: list[str] | None = None
+        self, project_id: str, deleted_branches: list[str] | None = None, since: datetime | None = None
     ) -> list[tuple[str, int, dict[str, Any] | None]]:
-        """``(branch, scan_count, tip)`` per branch, over every scan the project holds.
+        """``(branch, scan_count, tip)`` per branch, over the project's scans (created at or after ``since``, if given).
 
         The tip is the module's head rule scoped to one branch: the branch's newest build,
         resolved to the freshest analysis of it, so the project tile reports the same numbers
@@ -239,6 +260,8 @@ class ScanRepository:
         match: dict[str, Any] = {"project_id": project_id}
         if deleted_branches:
             match["branch"] = {"$nin": list(deleted_branches)}
+        if since is not None:
+            match["created_at"] = {"$gte": since}
         rows = await self.aggregate(_branch_tip_pipeline(match))
         builds: list[tuple[str, int, str | None]] = []
         for row in rows:
@@ -302,15 +325,34 @@ class ScanRepository:
                 return await self.collection.count_documents(query or {}, limit=limit)
             return await self.collection.count_documents(query or {})
 
-    async def get_latest_active_scan(self, project: Any, deleted_branches: list[str] | None = None) -> Scan | None:
-        """The project's head as a full document. ``project`` may be a model or a raw dict, and
-        ``deleted_branches`` overrides the project's own set, which housekeeping needs while the
-        freshly-computed one is not yet persisted."""
+    async def get_latest_active_scan_id(self, project: Any, deleted_branches: list[str] | None = None) -> str | None:
+        """The project's head id; ``deleted_branches`` overrides the stored set before housekeeping saves it."""
         project_id, scope = _head_scope(project, deleted_branches)
         if not project_id:
             return None
-        scan_id = (await self._head_scan_ids({project_id: scope})).get(project_id)
+        return (await self._head_scan_ids({project_id: scope})).get(project_id)
+
+    async def get_latest_active_scan(self, project: Any, deleted_branches: list[str] | None = None) -> Scan | None:
+        """The project's head as a full document."""
+        scan_id = await self.get_latest_active_scan_id(project, deleted_branches)
         return await self.get_by_id(scan_id) if scan_id else None
+
+    async def belongs_to_project(self, scan_ids: set[str], project_id: str) -> bool:
+        """Whether every one of ``scan_ids`` is a scan of ``project_id``."""
+        return (
+            await self.count({"_id": {"$in": list(scan_ids)}, "project_id": project_id}, limit=len(scan_ids))
+        ) == len(scan_ids)
+
+    async def find_active_rescan(self, project_id: str, original_scan_id: str) -> dict[str, Any] | None:
+        """The lineage's pending or processing rescan, read from the primary so one queued a moment ago counts."""
+        with track_db_operation(_COL, "find_one"):
+            return await self._primary().find_one(
+                {
+                    "project_id": project_id,
+                    "original_scan_id": original_scan_id,
+                    "status": {"$in": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
+                }
+            )
 
     async def get_preceding_scan(self, scan_id: str) -> Scan | None:
         """The build the given scan succeeded: the newest usable build on its own branch that

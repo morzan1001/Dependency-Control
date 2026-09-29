@@ -1,4 +1,4 @@
-"""Endpoint-level authz tests for the project write paths: every write path routes through check_project_access(required_role="admin"), so a project:update holder passes all and a plain reader is denied 403."""
+"""Endpoint-level authz tests for the project write paths: every write path routes through check_project_access(required_role="admin"); project:update passes the edits, project:delete only the deletion, and a plain reader is denied 403."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -38,7 +38,7 @@ def _update_user():
 
 
 def _delete_only_user():
-    """Non-member who holds ONLY project:delete (a write superuser too)."""
+    """Non-member who holds ONLY project:delete."""
     return _user("pd-1", [Permissions.PROJECT_DELETE])
 
 
@@ -86,86 +86,46 @@ class TestRotateApiKeyRoutesThroughGate:
         assert exc_info.value.status_code == 403
 
 
-class TestLoadProjectForUpdateRoutesThroughGate:
+class TestUpdateProjectRoutesThroughGate:
     def test_update_holder_routes_through_gate(self):
-        from app.api.v1.endpoints.projects import _load_project_for_update
-
-        user = _update_user()
-        project = _project(members=[])
-
-        with patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project) as mock_gate:
-            result = asyncio.run(_load_project_for_update("proj-1", user, MagicMock()))
-
-        mock_gate.assert_awaited_once()
-        assert mock_gate.call_args.kwargs.get("required_role") == "admin"
-        assert result.id == "proj-1"
-
-    def test_nonmember_without_update_denied(self):
-        from app.api.v1.endpoints.projects import _load_project_for_update
-
-        user = _plain_member()
+        from app.api.v1.endpoints.projects import update_project
+        from app.schemas.project import ProjectUpdate
 
         with (
             patch(
                 f"{ENDPOINTS}.check_project_access",
                 new_callable=AsyncMock,
                 side_effect=HTTPException(status_code=403, detail="nope"),
-            ),
-            pytest.raises(HTTPException) as exc_info,
+            ) as mock_gate,
+            pytest.raises(HTTPException),
         ):
-            asyncio.run(_load_project_for_update("proj-1", user, MagicMock()))
-        assert exc_info.value.status_code == 403
+            asyncio.run(update_project("proj-1", ProjectUpdate(name="x"), _update_user(), MagicMock()))
+
+        assert mock_gate.call_args.kwargs.get("required_role") == "admin"
 
 
-class TestTransferTeamSuperuser:
+class TestGrantTeamSuperuser:
     @staticmethod
-    def _hand_over(user, project, team_repo, chosen=("new-team",)):
-        from app.api.v1.endpoints.projects import _assert_may_hand_to_teams
+    def _grant(user, gained=("new-team",)):
+        from app.api.v1.endpoints.projects import _assert_may_grant_teams
 
-        team_repo.get_by_id = AsyncMock(side_effect=lambda team_id: {"_id": team_id})
-        return asyncio.run(_assert_may_hand_to_teams(project, set(chosen), user, team_repo))
-
-    def test_update_holder_can_transfer_without_target_membership(self):
         team_repo = MagicMock()
-        team_repo.is_member = AsyncMock(return_value=False)
+        team_repo.members_by_team = AsyncMock(return_value={team_id: [] for team_id in gained})
+        return asyncio.run(_assert_may_grant_teams(set(gained), user, team_repo))
 
-        # project:update bypasses target-team membership.
-        self._hand_over(_update_user(), _project(team_ids=["old-team"]), team_repo)
-        team_repo.is_member.assert_not_called()
+    def test_update_holder_can_grant_without_target_membership(self):
+        self._grant(_update_user())
 
-    def test_delete_only_holder_can_transfer_without_target_membership(self):
-        """project:delete is part of the write-superuser set, so a delete-only non-member may also transfer the team."""
-        team_repo = MagicMock()
-        team_repo.is_member = AsyncMock(return_value=False)
-
-        self._hand_over(_delete_only_user(), _project(team_ids=["old-team"]), team_repo)
-        team_repo.is_member.assert_not_called()
-
-    def test_nonmember_without_update_denied_transfer(self):
-        team_repo = MagicMock()
-        team_repo.is_member = AsyncMock(return_value=False)
-
+    def test_delete_only_holder_cannot_grant_without_target_membership(self):
+        """project:delete deletes projects and nothing else."""
         with pytest.raises(HTTPException) as exc_info:
-            self._hand_over(_plain_member(), _project(team_ids=["old-team"]), team_repo)
+            self._grant(_delete_only_user())
         assert exc_info.value.status_code == 403
 
-    def test_a_team_that_already_owns_the_project_is_no_transfer_at_all(self):
-        team_repo = MagicMock()
-        team_repo.is_member = AsyncMock(return_value=False)
-
-        self._hand_over(_plain_member(), _project(team_ids=["old-team"]), team_repo, chosen=("old-team",))
-        team_repo.is_member.assert_not_called()
-
-    def test_the_owner_cap_stops_even_a_superuser(self):
-        from app.core.constants import MAX_PROJECT_TEAMS
-
-        team_repo = MagicMock()
-        team_repo.is_member = AsyncMock(return_value=True)
-        picked = [f"t-{n}" for n in range(MAX_PROJECT_TEAMS + 1)]
-
+    def test_nonmember_without_update_denied_grant(self):
         with pytest.raises(HTTPException) as exc_info:
-            self._hand_over(_update_user(), _project(), team_repo, chosen=picked)
-        assert exc_info.value.status_code == 400
+            self._grant(_plain_member())
+        assert exc_info.value.status_code == 403
 
 
 class TestDeleteProjectRoutesThroughGate:
@@ -182,6 +142,8 @@ class TestDeleteProjectRoutesThroughGate:
             "ReleaseRepository": MagicMock(),
             "InvitationRepository": MagicMock(),
             "CallgraphRepository": MagicMock(),
+            "WebhookRepository": MagicMock(),
+            "CryptoPolicyRepository": MagicMock(),
         }
         scan_repo = repos["ScanRepository"]
 
@@ -195,6 +157,8 @@ class TestDeleteProjectRoutesThroughGate:
         repos["InvitationRepository"].delete_project_invitations_by_project = AsyncMock(return_value=None)
         repos["CallgraphRepository"].delete_by_project = AsyncMock(return_value=None)
         repos["ProjectRepository"].delete = AsyncMock(return_value=None)
+        repos["WebhookRepository"].delete_many = AsyncMock(return_value=0)
+        repos["CryptoPolicyRepository"].delete_project_policy = AsyncMock(return_value=None)
 
         patches = [patch(f"{ENDPOINTS}.{name}", return_value=repo) for name, repo in repos.items()]
         gate = patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project)
@@ -211,6 +175,7 @@ class TestDeleteProjectRoutesThroughGate:
 
         mock_gate.assert_awaited_once()
         assert mock_gate.call_args.kwargs.get("required_role") == "admin"
+        assert mock_gate.call_args.kwargs.get("global_permission") == Permissions.PROJECT_DELETE
 
     def test_nonmember_without_update_denied(self):
         from app.api.v1.endpoints.projects import delete_project
@@ -240,7 +205,6 @@ class TestUpdateProjectTeamAssignment:
         project_repo.get_by_id_strong = AsyncMock(return_value=project)
 
         team_repo = MagicMock()
-        team_repo.is_member = AsyncMock(return_value=True)
 
         system_settings = MagicMock()
         system_settings.retention_mode = None
@@ -257,8 +221,8 @@ class TestUpdateProjectTeamAssignment:
         with (
             patch(f"{ENDPOINTS}.ProjectRepository", return_value=project_repo),
             patch(f"{ENDPOINTS}.TeamRepository", return_value=team_repo),
-            patch(f"{ENDPOINTS}._load_project_for_update", new_callable=AsyncMock, return_value=project),
-            patch(f"{ENDPOINTS}._assert_may_hand_to_teams", new_callable=AsyncMock),
+            patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project),
+            patch(f"{ENDPOINTS}._assert_may_grant_teams", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}._assert_gitlab_mr_token_present", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}.deps.get_system_settings", new_callable=AsyncMock, return_value=system_settings),
             patch(f"{ENDPOINTS}.apply_system_settings_enforcement", side_effect=lambda d, *_: d),

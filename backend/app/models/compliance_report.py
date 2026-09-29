@@ -1,16 +1,17 @@
 """One document per compliance-report job; artifact lives in GridFS, metadata persists after it expires."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import Field
 
 from app.models.types import MongoDocument
+from app.schemas.analytics import ScopeKind
 from app.schemas.compliance import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
 
 
 class ComplianceReport(MongoDocument):
-    scope: Literal["project", "team", "global", "user"]
+    scope: ScopeKind
     scope_id: str | None = None
     framework: ReportFramework
     format: ReportFormat

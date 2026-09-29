@@ -29,8 +29,7 @@ async def send_verification_email(
     system_settings: SystemSettings | None = None,
 ) -> None:
     """Send a verification email to the user."""
-    # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
-    if not (system_settings and system_settings.smtp_host):
+    if not (system_settings and system_settings.email_configured):
         return
 
     token = security.create_email_verification_token(email)
@@ -78,8 +77,7 @@ async def send_password_reset_email(
     system_settings: SystemSettings | None = None,
 ) -> None:
     """Send a password reset email to the user."""
-    # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
-    if not (system_settings and system_settings.smtp_host):
+    if not (system_settings and system_settings.email_configured):
         return
 
     token = security.create_password_reset_token(email)
@@ -111,8 +109,7 @@ async def send_system_invitation_email(
     system_settings: SystemSettings | None = None,
 ) -> None:
     """Send a system invitation email to a new user."""
-    # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
-    if not (system_settings and system_settings.smtp_host):
+    if not (system_settings and system_settings.email_configured):
         return
 
     html_content = get_system_invitation_template(
@@ -143,8 +140,7 @@ def send_project_member_added_email(
     system_settings: SystemSettings | None = None,
 ) -> None:
     """Send a notification email when a user is added to a project."""
-    # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
-    if not (system_settings and system_settings.smtp_host):
+    if not (system_settings and system_settings.email_configured):
         return
 
     link = f"{settings.FRONTEND_BASE_URL}/projects/{project_id}"

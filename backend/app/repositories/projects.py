@@ -9,7 +9,7 @@ from pymongo import ReadPreference, ReturnDocument
 from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_SOURCE_MANUAL
 from app.core.metrics import track_db_operation
 from app.models.project import Project
-from app.schemas.projections import ProjectMinimal, ProjectWithScanId
+from app.schemas.projections import ProjectWithScanId
 
 _COL = "projects"
 _MEMBERS_USER_ID = "members.user_id"
@@ -131,16 +131,26 @@ def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[
     element equality, so the project would drop out of the unassigned view and every ownership
     view at once.
     """
+    held_elsewhere = {"$setDifference": [{"$ifNull": ["$team_ids", []]}, _retired_by(source)]}
     return [
         {
             "$set": {
-                "team_ids": {
-                    "$setUnion": [
-                        {"$setDifference": [{"$ifNull": ["$team_ids", []]}, _retired_by(source)]},
-                        team_ids,
+                "team_ids": {"$setUnion": [held_elsewhere, team_ids]},
+                # Owners held through another writer stay unstamped, so the provider never retires a hand assignment.
+                "team_sources": {
+                    "$mergeObjects": [
+                        _sources_except(source),
+                        {
+                            "$arrayToObject": {
+                                "$map": {
+                                    "input": {"$setDifference": [{"$literal": team_ids}, held_elsewhere]},
+                                    "as": "owner",
+                                    "in": {"k": "$$owner", "v": source},
+                                }
+                            }
+                        },
                     ]
                 },
-                "team_sources": {"$mergeObjects": [_sources_except(source), dict.fromkeys(team_ids, source)]},
             }
         },
         *scalar_mirror_stages(),
@@ -231,28 +241,12 @@ def ownership_fields(team_ids: list[str], source: str) -> dict[str, Any]:
     }
 
 
-def _surviving_admin_filter(user_id: str, required: bool) -> dict[str, Any]:
-    """Match only while a member other than ``user_id`` is an admin, so a write that would take
-    the last one finds nothing to write to instead of racing a count from an earlier read."""
-    if not required:
-        return {}
-    return {"members": {"$elemMatch": {"user_id": {"$ne": user_id}, "role": PROJECT_ROLE_ADMIN}}}
-
-
-def surviving_owner_admin_filter(incumbent_admin_owners: list[str]) -> dict[str, Any]:
-    """Match only while the project still holds an admin — a direct member, or one of the owners
-    that supplies one and the write leaves in place.
-
-    The same shape as ``_surviving_admin_filter`` and for the same reason: two concurrent writes
-    each taking one of the last two admin-supplying owners both pass a check made beforehand, and
-    the project ends up with nobody who can administer it.
-    """
-    return {
-        "$or": [
-            {"members": {"$elemMatch": {"role": PROJECT_ROLE_ADMIN}}},
-            {"team_ids": {"$in": incumbent_admin_owners}},
-        ]
-    }
+def surviving_admin_filter(admin_owners: list[str], leaving_member: str | None = None) -> dict[str, Any]:
+    """Match only while an admin other than ``leaving_member`` remains; the write checks it, so no race removes both."""
+    other_admin: dict[str, Any] = {"role": PROJECT_ROLE_ADMIN}
+    if leaving_member is not None:
+        other_admin["user_id"] = {"$ne": leaving_member}
+    return {"$or": [{"members": {"$elemMatch": other_admin}}, {"team_ids": {"$in": admin_owners}}]}
 
 
 class ProjectRepository:
@@ -407,15 +401,6 @@ class ProjectRepository:
         docs = await cursor.to_list(limit)
         return [ProjectWithScanId(**doc) for doc in docs]
 
-    async def find_many_minimal(
-        self,
-        query: dict[str, Any],
-        limit: int,
-    ) -> list[ProjectMinimal]:
-        cursor = self.collection.find(query, {"_id": 1, "name": 1}).limit(limit)
-        docs = await cursor.to_list(limit)
-        return [ProjectMinimal(**doc) for doc in docs]
-
     async def count(self, query: dict[str, Any] | None = None) -> int:
         with track_db_operation(_COL, "count"):
             return await self.collection.count_documents(query or {})
@@ -448,29 +433,31 @@ class ProjectRepository:
         )
         return bool(result.matched_count)
 
-    async def remove_member(self, project_id: str, user_id: str, *, require_another_admin: bool = False) -> bool:
-        """False when require_another_admin holds and no other member is an admin."""
+    async def remove_member(self, project_id: str, user_id: str, guard: dict[str, Any] | None = None) -> bool:
+        """False when ``guard`` no longer holds, e.g. ``surviving_admin_filter``."""
         result = await self.collection.update_one(
-            {"_id": project_id, **_surviving_admin_filter(user_id, require_another_admin)},
+            {"_id": project_id, **(guard or {})},
             {"$pull": {"members": {"user_id": user_id}}},
         )
         return bool(result.matched_count)
+
+    async def remove_user_from_all(self, user_id: str) -> None:
+        await self.collection.update_many({_MEMBERS_USER_ID: user_id}, {"$pull": {"members": {"user_id": user_id}}})
 
     async def update_member(
         self,
         project_id: str,
         user_id: str,
         member_fields: dict[str, Any],
-        *,
-        require_another_admin: bool = False,
+        guard: dict[str, Any] | None = None,
     ) -> bool:
         """member_fields are plain member field names, e.g. {'role': 'admin'}.
 
         The member is addressed by identity because a concurrent $pull shifts array indices.
-        False when require_another_admin holds and no other member is an admin.
+        False when ``guard`` no longer holds.
         """
         result = await self.collection.update_one(
-            {"_id": project_id, **_surviving_admin_filter(user_id, require_another_admin)},
+            {"_id": project_id, **(guard or {})},
             {"$set": {f"members.$[m].{field}": value for field, value in member_fields.items()}},
             array_filters=[{"m.user_id": user_id}],
         )

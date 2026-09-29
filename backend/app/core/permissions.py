@@ -69,87 +69,12 @@ class Permissions:
     ANALYZE_ADHOC = "analyze:adhoc"
 
 
-# All permissions in the system (excluding internal/special permissions like auth:setup_2fa)
-ALL_PERMISSIONS: list[str] = [
-    # System
-    Permissions.SYSTEM_MANAGE,
-    # User
-    Permissions.USER_CREATE,
-    Permissions.USER_READ,
-    Permissions.USER_READ_ALL,
-    Permissions.USER_UPDATE,
-    Permissions.USER_DELETE,
-    Permissions.USER_MANAGE_PERMISSIONS,
-    # Team
-    Permissions.TEAM_CREATE,
-    Permissions.TEAM_READ,
-    Permissions.TEAM_READ_ALL,
-    Permissions.TEAM_UPDATE,
-    Permissions.TEAM_DELETE,
-    # Project
-    Permissions.PROJECT_CREATE,
-    Permissions.PROJECT_READ,
-    Permissions.PROJECT_READ_ALL,
-    Permissions.PROJECT_UPDATE,
-    Permissions.PROJECT_DELETE,
-    # Analytics
-    Permissions.ANALYTICS_READ,
-    Permissions.ANALYTICS_SUMMARY,
-    Permissions.ANALYTICS_DEPENDENCIES,
-    Permissions.ANALYTICS_TREE,
-    Permissions.ANALYTICS_IMPACT,
-    Permissions.ANALYTICS_HOTSPOTS,
-    Permissions.ANALYTICS_SEARCH,
-    Permissions.ANALYTICS_RECOMMENDATIONS,
-    Permissions.ANALYTICS_GLOBAL,
-    # Notifications
-    Permissions.NOTIFICATIONS_BROADCAST,
-    # Waivers
-    Permissions.WAIVER_READ,
-    Permissions.WAIVER_READ_ALL,
-    Permissions.WAIVER_MANAGE,
-    Permissions.WAIVER_DELETE,
-    # Webhooks
-    Permissions.WEBHOOK_CREATE,
-    Permissions.WEBHOOK_READ,
-    Permissions.WEBHOOK_UPDATE,
-    Permissions.WEBHOOK_DELETE,
-    # Archives
-    Permissions.ARCHIVE_READ,
-    Permissions.ARCHIVE_RESTORE,
-    Permissions.ARCHIVE_DOWNLOAD,
-    Permissions.ARCHIVE_READ_ALL,
-    # Chat
-    Permissions.CHAT_ACCESS,
-    Permissions.CHAT_HISTORY_READ,
-    Permissions.CHAT_HISTORY_DELETE,
-    # MCP
-    Permissions.MCP_ACCESS,
-    # Ad-hoc analysis
-    Permissions.ANALYZE_ADHOC,
-]
+# auth:setup_2fa is an internal marker, not a grantable permission, so it is not a class attribute.
+ALL_PERMISSIONS: list[str] = [v for k, v in vars(Permissions).items() if k.isupper()]
 
 
-def has_permission(
-    user_permissions: list[str],
-    required: str | list[str],
-    require_all: bool = False,
-) -> bool:
-    """Check whether the user has ALL (require_all) or ANY (default) of the required permissions."""
+def has_permission(user_permissions: list[str], required: str | list[str]) -> bool:
+    """Whether the user holds ANY of the required permissions."""
     if isinstance(required, str):
         required = [required]
-
-    if require_all:
-        return all(perm in user_permissions for perm in required)
     return any(perm in user_permissions for perm in required)
-
-
-def get_missing_permissions(
-    user_permissions: list[str],
-    required: str | list[str],
-) -> list[str]:
-    """Return the subset of required permissions the user does not have."""
-    if isinstance(required, str):
-        required = [required]
-
-    return [perm for perm in required if perm not in user_permissions]

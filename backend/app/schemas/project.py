@@ -1,13 +1,14 @@
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field
 
 from app.core.constants import (
     DEFAULT_ACTIVE_ANALYZERS,
     PROJECT_ROLE_VIEWER,
     PROJECT_ROLES,
     RETENTION_ACTION_DELETE,
+    ProjectRole,
     RetentionAction,
 )
 from app.core.notification_prefs import NotificationPreferences
@@ -160,36 +161,19 @@ class ProjectMemberInvite(BaseModel):
         description="Email address of the user to invite",
         examples=["colleague@example.com"],
     )
-    role: str = Field(
+    role: ProjectRole = Field(
         PROJECT_ROLE_VIEWER,
         description=f"Role to assign ({', '.join(PROJECT_ROLES)})",
         examples=[PROJECT_ROLE_VIEWER],
     )
 
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, v: str) -> str:
-        if v not in PROJECT_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
-        return v
-
 
 class ProjectMemberUpdate(BaseModel):
-    role: str | None = Field(
-        None,
+    role: ProjectRole = Field(
+        ...,
         description=f"New role to assign ({', '.join(PROJECT_ROLES)})",
         examples=[PROJECT_ROLE_VIEWER],
     )
-    notification_preferences: NotificationPreferences = Field(
-        None, description="Notification preferences for the member"
-    )
-
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, v: str | None) -> str | None:
-        if v and v not in PROJECT_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
-        return v
 
 
 class ProjectNotificationSettings(BaseModel):
@@ -204,7 +188,7 @@ class ProjectNotificationSettings(BaseModel):
         ],
     )
     enforce_notification_settings: bool | None = Field(
-        None, description="Enforce these settings for all members (Owner only)"
+        None, description="Enforce these settings for all members (project admins only)"
     )
 
 

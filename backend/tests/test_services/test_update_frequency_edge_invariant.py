@@ -22,6 +22,7 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _fold_branch,
     _rollup_project_metrics,
 )
+from app.models.project import Project
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
 from app.repositories.update_frequency import BranchWindowActivity
 from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
@@ -118,9 +119,7 @@ async def _live(db: FakeDatabase) -> UpdateFrequencyMetrics:
 
 
 async def _rollup(db: FakeDatabase) -> UpdateFrequencyMetrics | None:
-    return await _rollup_project_metrics(
-        db, {"_id": PROJECT, "name": "Project One", "default_branch": None, "deleted_branches": []}, WINDOW_DAYS
-    )
+    return await _rollup_project_metrics(db, Project(id=PROJECT, name="Project One"), WINDOW_DAYS)
 
 
 async def _both(db: FakeDatabase) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics]:

@@ -8,7 +8,6 @@ from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import (
-    ANALYTICS_MAX_QUERY_LIMIT,
     BLAST_RADIUS_THRESHOLD,
     CROSS_PROJECT_MIN_OCCURRENCES,
     DAYS_KNOWN_OVERDUE_THRESHOLD,
@@ -34,8 +33,8 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
+from app.schemas.projections import ProjectWithScanId
 from app.services.aggregation.components import build_component_index
 from app.services.recommendation.common import get_attr
 
@@ -97,8 +96,15 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> list[str
     return resolved.project_ids or []
 
 
+async def get_user_projects(user: User, db: AsyncIOMotorDatabase) -> list[ProjectWithScanId]:
+    """The projects the user may read, as the one read that feeds names and scan resolution."""
+    from app.services.analytics.scopes import ScopeResolver
+
+    return await ScopeResolver(db, user).list_user_projects()
+
+
 async def get_latest_scan_ids(
-    project_ids: list[str],
+    projects: list[ProjectWithScanId],
     db: AsyncIOMotorDatabase,
     *,
     release_environment: str | None = None,
@@ -106,27 +112,21 @@ async def get_latest_scan_ids(
     """Scan IDs representing the given projects; the branch tip, or their release when asked."""
     from app.services.releases import resolve_scan_ids
 
-    resolved = await resolve_scan_ids(db, project_ids, release_environment=release_environment)
+    resolved = await resolve_scan_ids(
+        db, [p.id for p in projects], release_environment=release_environment, projects=projects
+    )
     return list(resolved.values())
 
 
 async def get_projects_with_scans(
-    project_ids: list[str],
+    projects: list[ProjectWithScanId],
     db: AsyncIOMotorDatabase,
     *,
     release_environment: str | None = None,
 ) -> tuple[dict[str, str], list[str]]:
     """Return (project_name_map, scan_ids) for the given projects."""
-    from app.services.releases import resolve_scan_ids
-
-    projects = await ProjectRepository(db).find_many_with_scan_id(
-        {"_id": {"$in": project_ids}},
-        limit=ANALYTICS_MAX_QUERY_LIMIT,
-    )
-    project_name_map = {p.id: p.name for p in projects}
-    resolved = await resolve_scan_ids(db, project_ids, release_environment=release_environment, projects=projects)
-
-    return project_name_map, list(resolved.values())
+    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
+    return {p.id: p.name for p in projects}, scan_ids
 
 
 def scope_resolution_counts(project_ids: Sequence[str], scan_ids: Sequence[str]) -> tuple[int, int]:

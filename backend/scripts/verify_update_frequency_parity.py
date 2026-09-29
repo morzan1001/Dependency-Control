@@ -55,6 +55,7 @@ from app.api.v1.endpoints.analytics.update_frequency import (
 )
 from app.core.config import settings
 from app.core.constants import SCAN_USABLE_STATUSES
+from app.models.project import Project
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
 from app.repositories.update_frequency import WINDOW_HARD_LIMIT, ScanUpdateDeltaRepository
 from app.schemas.analytics import UpdateFrequencyMetrics
@@ -343,7 +344,7 @@ async def verify_project(db: Any, project: dict[str, Any], window_days: int) -> 
     since = cast(datetime, window_cutoff(window_days))
 
     live = await _live_metrics(db, project, window_days)
-    rollup = await _rollup_project_metrics(db, project, window_days)
+    rollup = await _rollup_project_metrics(db, Project(**project), window_days)
     if rollup is None:
         return ProjectReport(
             project_id=project_id,

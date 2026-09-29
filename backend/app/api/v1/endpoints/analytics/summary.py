@@ -9,8 +9,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
     ReleaseEnvironmentQuery,
     get_latest_scan_ids,
-    get_projects_with_scans,
-    get_user_project_ids,
+    get_user_projects,
     require_analytics_permission,
     require_any_analytics_permission,
     scope_resolution_counts,
@@ -52,13 +51,14 @@ async def get_analytics_scope(
     """
     require_any_analytics_permission(current_user)
 
-    project_ids = await get_user_project_ids(current_user, db)
+    projects = await get_user_projects(current_user, db)
 
-    if not project_ids:
+    if not projects:
         return AnalyticsScope(release_environments=[], resolved_projects=0, projects_without_release=0)
 
+    project_ids = [p.id for p in projects]
     environments: list[str] = sorted(await db.releases.distinct("environment", {"project_id": {"$in": project_ids}}))
-    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
+    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     resolved_projects, projects_without_release = scope_resolution_counts(project_ids, scan_ids)
 
     return AnalyticsScope(
@@ -78,20 +78,9 @@ async def get_analytics_summary(
     """Get analytics summary across all accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SUMMARY)
 
-    project_ids = await get_user_project_ids(current_user, db)
-
-    if not project_ids:
-        return AnalyticsSummary(
-            total_dependencies=0,
-            total_vulnerabilities=0,
-            unique_packages=0,
-            dependency_types=[],
-            severity_distribution=SeverityBreakdown(),
-            resolved_projects=0,
-            projects_without_release=0,
-        )
-
-    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
+    projects = await get_user_projects(current_user, db)
+    project_ids = [p.id for p in projects]
+    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     resolved_projects, projects_without_release = scope_resolution_counts(project_ids, scan_ids)
 
     if not scan_ids:
@@ -161,13 +150,9 @@ async def get_top_dependencies(
     """Get most frequently used dependencies across all accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_DEPENDENCIES)
 
-    project_ids = await get_user_project_ids(current_user, db)
-
-    if not project_ids:
-        return []
-
-    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
-
+    projects = await get_user_projects(current_user, db)
+    project_ids = [p.id for p in projects]
+    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
 
@@ -236,13 +221,8 @@ async def get_dependency_types(
     """Get list of all dependency types used across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
-    project_ids = await get_user_project_ids(current_user, db)
-
-    if not project_ids:
-        return []
-
-    _, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
-
+    projects = await get_user_projects(current_user, db)
+    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
 

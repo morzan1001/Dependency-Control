@@ -30,7 +30,7 @@ async def list_crypto_assets(
     limit: int = Query(100, ge=1, le=MAX_CRYPTO_ASSET_PAGE),
 ) -> dict[str, Any]:
     """List crypto assets for a scan with pagination and optional filtering."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
 
     repo = CryptoAssetRepository(db)
     items = await repo.list_by_scan(
@@ -61,7 +61,7 @@ async def get_crypto_asset(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get a single crypto asset by ID."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
 
     asset = await CryptoAssetRepository(db).get(project_id, asset_id)
     if asset is None:
@@ -77,6 +77,6 @@ async def crypto_assets_summary(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get a summary of crypto assets for a scan, grouped by type."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
 
     return await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)

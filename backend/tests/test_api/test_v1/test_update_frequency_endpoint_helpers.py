@@ -24,6 +24,7 @@ from app.api.v1.endpoints.analytics.update_frequency import (
 from app.core.cache import CacheTTL
 from app.core.config import settings
 from app.core.permissions import ALL_PERMISSIONS
+from app.models.project import Project
 from app.models.user import User
 from app.schemas.analytics import UpdateFrequencyComparison, UpdateFrequencyMetrics
 
@@ -573,23 +574,21 @@ class TestProjectReadPathSelection:
     def _run(rollup: Any, live: Any, *, use_rollup: bool, **query: Any) -> Any:
         cache = FakeCache()
         db = _fake_db()
-        project = {"_id": "p1", "name": "Project One"}
+        project = Project(id="p1", name="Project One")
         with patch(f"{MODULE}.cache_service", cache):
-            with patch(f"{MODULE}.get_user_project_ids", AsyncMock(return_value=["p1"])):
-                with patch(f"{MODULE}.ProjectRepository") as repo_cls:
-                    repo_cls.return_value.get_raw_by_id = AsyncMock(return_value=project)
-                    with patch(f"{MODULE}._rollup_project_metrics", rollup):
-                        with patch(f"{MODULE}.compute_update_frequency", live):
-                            with patch.object(settings, "UPDATE_FREQUENCY_USE_ROLLUP", use_rollup):
-                                return asyncio.run(
-                                    get_project_update_frequency(
-                                        project_id="p1",
-                                        request=FakeRequest(),
-                                        current_user=_user("u1"),
-                                        db=db,
-                                        **query,
-                                    )
+            with patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)):
+                with patch(f"{MODULE}._rollup_project_metrics", rollup):
+                    with patch(f"{MODULE}.compute_update_frequency", live):
+                        with patch.object(settings, "UPDATE_FREQUENCY_USE_ROLLUP", use_rollup):
+                            return asyncio.run(
+                                get_project_update_frequency(
+                                    project_id="p1",
+                                    request=FakeRequest(),
+                                    current_user=_user("u1"),
+                                    db=db,
+                                    **query,
                                 )
+                            )
 
     def test_the_windowed_default_view_reads_the_rollup(self):
         rollup = AsyncMock(return_value=_metrics("rollup"))

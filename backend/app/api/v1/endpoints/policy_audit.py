@@ -20,7 +20,7 @@ from app.api.v1.helpers.responses import (
     RESP_404,
 )
 from app.core.config import settings
-from app.core.constants import MAX_POLICY_AUDIT_PAGE
+from app.core.constants import MAX_POLICY_AUDIT_PAGE, PROJECT_ROLE_ADMIN
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
@@ -121,7 +121,7 @@ async def list_project_audit(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     entries = await PolicyAuditRepository(db).list(
         policy_scope="project",
         project_id=project_id,
@@ -138,7 +138,7 @@ async def get_project_audit_entry(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope="project",
         project_id=project_id,
@@ -156,8 +156,7 @@ async def revert_project_policy(
     db: DatabaseDep,
     body: PolicyRevertRequest,
 ) -> dict[str, Any]:
-    # 'owner' is not a project role; PROJECT_ROLES = viewer|editor|admin.
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     target_version = body.target_version
     comment = body.comment
     await _revert_policy(
@@ -179,7 +178,7 @@ async def prune_project_audit(
     db: DatabaseDep,
     before: str = Query(...),
 ) -> dict[str, Any]:
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     cutoff = _parse_datetime(before)
     _enforce_min_prune_cutoff(cutoff)
     deleted = await PolicyAuditRepository(db).delete_older_than(
@@ -199,7 +198,7 @@ async def list_project_license_audit(
     limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
     """List license-policy audit entries for a project (viewer+ role)."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     entries = await PolicyAuditRepository(db).list(
         policy_scope="project",
         project_id=project_id,
@@ -218,7 +217,7 @@ async def get_project_license_audit_entry(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Fetch a single license-policy audit entry by version."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope="project",
         project_id=project_id,

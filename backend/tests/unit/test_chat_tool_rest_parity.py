@@ -148,3 +148,119 @@ async def test_a_caller_rest_lets_read_webhooks_is_answered(
 
     assert [hook["id"] for hook in listing["webhooks"]] == [_WEBHOOK]
     assert [row["status_code"] for row in deliveries["deliveries"]] == [_DELIVERY_STATUS]
+
+
+_TEAM_WEBHOOK = "hook-team"
+_GLOBAL_WEBHOOK = "hook-global"
+
+
+def _with_team_and_global_webhooks(db: FakeDatabase) -> FakeDatabase:
+    for hook_id, project_id, team_id in ((_TEAM_WEBHOOK, None, _TEAM), (_GLOBAL_WEBHOOK, None, None)):
+        db.webhooks._docs[hook_id] = {
+            **db.webhooks._docs[_WEBHOOK],
+            "_id": hook_id,
+            "project_id": project_id,
+            "team_id": team_id,
+        }
+        db.webhook_deliveries._docs[f"wd-{hook_id}"] = {
+            "_id": f"wd-{hook_id}",
+            "webhook_id": hook_id,
+            "status_code": _DELIVERY_STATUS,
+            "timestamp": _NOW,
+        }
+    return db
+
+
+@pytest.mark.parametrize(
+    ("permissions", "team_role"),
+    [([*PRESET_USER, Permissions.WEBHOOK_READ], "member"), (PRESET_USER, "admin")],
+    ids=["webhook-read-team-member", "team-admin"],
+)
+@pytest.mark.asyncio
+async def test_a_team_webhook_s_deliveries_answer_whom_rest_lets_read_the_webhook(
+    permissions: list[str], team_role: str
+) -> None:
+    db = _with_team_and_global_webhooks(_seeded(team_role=team_role))
+
+    deliveries = await _call("get_webhook_deliveries", {"webhook_id": _TEAM_WEBHOOK}, _user(permissions), db)
+
+    assert [row["status_code"] for row in deliveries["deliveries"]] == [_DELIVERY_STATUS]
+
+
+@pytest.mark.parametrize(
+    ("permissions", "team_role", "webhook_id"),
+    [
+        (PRESET_USER, "member", _TEAM_WEBHOOK),
+        ([*PRESET_USER, Permissions.WEBHOOK_READ], None, _TEAM_WEBHOOK),
+        ([*PRESET_USER, Permissions.WEBHOOK_READ], "admin", _GLOBAL_WEBHOOK),
+    ],
+    ids=["team-member-without-webhook-read", "webhook-read-outside-the-team", "global-without-system-manage"],
+)
+@pytest.mark.asyncio
+async def test_team_and_global_deliveries_are_refused_as_if_the_webhook_were_absent(
+    permissions: list[str], team_role: str | None, webhook_id: str
+) -> None:
+    db = _with_team_and_global_webhooks(_seeded(team_role=team_role))
+    user = _user(permissions)
+
+    deliveries = await _call("get_webhook_deliveries", {"webhook_id": webhook_id}, user, db)
+
+    assert deliveries == await _call("get_webhook_deliveries", {"webhook_id": "hook-absent"}, user, db)
+
+
+@pytest.mark.asyncio
+async def test_a_system_manager_reads_a_global_webhook_s_deliveries() -> None:
+    db = _with_team_and_global_webhooks(_seeded())
+
+    deliveries = await _call("get_webhook_deliveries", {"webhook_id": _GLOBAL_WEBHOOK}, _user(PRESET_ADMIN), db)
+
+    assert [row["status_code"] for row in deliveries["deliveries"]] == [_DELIVERY_STATUS]
+
+
+@pytest.mark.parametrize(
+    ("permissions", "member_role", "team_role", "expected"),
+    [
+        ([*PRESET_USER, Permissions.WEBHOOK_READ], "viewer", "member", {_WEBHOOK: "project", _TEAM_WEBHOOK: "team"}),
+        ([*PRESET_USER, Permissions.WEBHOOK_READ], "viewer", None, {_WEBHOOK: "project"}),
+        (
+            PRESET_ADMIN,
+            None,
+            None,
+            {_WEBHOOK: "project", _TEAM_WEBHOOK: "team", _GLOBAL_WEBHOOK: "global"},
+        ),
+    ],
+    ids=["team-member", "project-member-only", "system-manager"],
+)
+@pytest.mark.asyncio
+async def test_a_project_s_webhook_list_holds_every_hook_that_fires_for_it_the_caller_may_read(
+    permissions: list[str], member_role: str | None, team_role: str | None, expected: dict[str, str]
+) -> None:
+    db = _with_team_and_global_webhooks(_seeded(member_role=member_role, team_role=team_role))
+
+    listing = await _call("list_project_webhooks", {"project_id": _PROJECT}, _user(permissions), db)
+
+    assert {hook["id"]: hook["scope"] for hook in listing["webhooks"]} == expected
+
+
+@pytest.mark.parametrize("tool_name", ["get_team_details", "get_team_projects", "get_team_risk_overview"])
+@pytest.mark.asyncio
+async def test_a_team_refusal_is_indistinguishable_from_the_team_not_existing(tool_name: str) -> None:
+    db = _seeded(member_role="viewer")
+    user = _user(PRESET_USER)
+
+    denied = await _call(tool_name, {"team_id": _TEAM}, user, db)
+
+    assert denied == await _call(tool_name, {"team_id": "t-absent"}, user, db)
+    assert "not found or access denied" in denied["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_stored_webhook_the_model_rejects_answers_as_absent_without_quoting_its_secret() -> None:
+    db = _seeded()
+    del db.webhooks._docs[_WEBHOOK]["events"]
+    user = _user(PRESET_ADMIN)
+
+    deliveries = await _call("get_webhook_deliveries", {"webhook_id": _WEBHOOK}, user, db)
+
+    assert deliveries == await _call("get_webhook_deliveries", {"webhook_id": "hook-absent"}, user, db)
+    assert _HMAC_SECRET not in json.dumps(deliveries, default=str)

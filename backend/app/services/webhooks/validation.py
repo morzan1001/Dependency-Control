@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -16,6 +16,7 @@ from app.core.constants import (
     WEBHOOK_BLOCKED_HOSTNAMES,
     WEBHOOK_LOOPBACK_HOSTS,
     WEBHOOK_VALID_EVENTS,
+    WebhookType,
 )
 
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
@@ -177,7 +178,7 @@ def validate_webhook_event_type(event_type: str) -> str:
     return event_type
 
 
-def detect_webhook_type(url: str) -> Literal["generic", "teams"]:
+def detect_webhook_type(url: str) -> WebhookType:
     """Returns "teams" for *.webhook.office.com, *.logic.azure.com/workflows/, and *.api.powerplatform.com/workflows/."""
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").lower()
@@ -190,3 +191,8 @@ def detect_webhook_type(url: str) -> Literal["generic", "teams"]:
     if (hostname == "api.powerplatform.com" or hostname.endswith(".api.powerplatform.com")) and "/workflows/" in path:
         return "teams"
     return "generic"
+
+
+def effective_webhook_type(stored: WebhookType, url: str) -> WebhookType:
+    """Delivered as Teams when stored so or when the URL is a Teams workflow, whatever type was stored."""
+    return "teams" if stored == "teams" else detect_webhook_type(url)

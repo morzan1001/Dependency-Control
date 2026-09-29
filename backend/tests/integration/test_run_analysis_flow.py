@@ -34,51 +34,19 @@ def notified(monkeypatch) -> list[Stats]:
     return sent
 
 
-def _waivers_active(monkeypatch, active: bool) -> None:
-    async def _has_active_waivers(project_id, db):
-        return active
-
-    monkeypatch.setattr(engine, "_project_has_active_waivers", _has_active_waivers)
-
-
-def _recalc_returns(monkeypatch, result: Stats | None) -> list[str]:
+@pytest.mark.asyncio
+async def test_an_analysis_stamps_only_its_own_scan_and_notifies_its_own_stats(db, notified, monkeypatch):
+    """Its one waiver pass is the analysed scan's: no project recalculation follows it."""
+    await db.waivers.insert_one(
+        {"_id": "w-1", "project_id": _PROJECT_ID, "finding_id": "x", "reason": "r", "created_by": "u"}
+    )
     calls: list[str] = []
 
-    async def _recalculate(project_id, db):
+    async def _recalculate(project_id, *args, **kwargs):
         calls.append(project_id)
-        return result
+        return Stats(critical=7)
 
     monkeypatch.setattr("app.services.stats.recalculate_project_stats", _recalculate)
-    return calls
-
-
-@pytest.mark.asyncio
-async def test_active_waivers_route_the_recalculated_stats_to_notifications(db, notified, monkeypatch):
-    recalculated = Stats(critical=7)
-    _waivers_active(monkeypatch, True)
-    calls = _recalc_returns(monkeypatch, recalculated)
-
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
-
-    assert calls == [_PROJECT_ID]
-    assert notified == [recalculated]
-
-
-@pytest.mark.asyncio
-async def test_a_recalc_that_yields_nothing_leaves_the_scan_stats_for_notifications(db, notified, monkeypatch):
-    _waivers_active(monkeypatch, True)
-    calls = _recalc_returns(monkeypatch, None)
-
-    assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
-
-    assert calls == [_PROJECT_ID]
-    assert notified == [Stats()]
-
-
-@pytest.mark.asyncio
-async def test_without_active_waivers_no_recalc_runs(db, notified, monkeypatch):
-    _waivers_active(monkeypatch, False)
-    calls = _recalc_returns(monkeypatch, Stats(critical=7))
 
     assert await engine.run_analysis(await _seed_scan(db), [], [], db) is True
 

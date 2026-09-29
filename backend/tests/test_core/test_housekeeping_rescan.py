@@ -1,5 +1,6 @@
 """Characterisation of the scheduled-rescan path as it behaves today."""
 
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock
@@ -15,7 +16,6 @@ from app.core.constants import (
     SCAN_STATUS_PROCESSING,
 )
 from app.core.housekeeping import (
-    _build_rescan,
     _create_rescan_for_project,
     _is_rescan_due,
     _process_project_rescan,
@@ -28,6 +28,7 @@ from app.models.release import Release
 from app.models.system import SystemSettings
 from app.repositories import DistributedLocksRepository
 from app.repositories.system_settings import SystemSettingsRepository
+from app.services.scan_manager import build_rescan
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT_ID = "p1"
@@ -401,7 +402,7 @@ class TestIsRescanDue:
 
 class TestBuildRescan:
     def test_carries_the_source_ci_metadata_into_a_fresh_pending_scan(self) -> None:
-        rescan = _build_rescan(_project(), _scan_doc())
+        rescan = build_rescan(_scan_doc(), _PROJECT_ID)
 
         assert rescan.id != _SOURCE_SCAN_ID
         assert rescan.status == SCAN_STATUS_PENDING
@@ -421,28 +422,28 @@ class TestBuildRescan:
         assert rescan.project_name == _PROJECT_NAME
 
     def test_the_pipeline_id_is_dropped_so_a_rescan_cannot_be_mistaken_for_an_ingest(self) -> None:
-        assert _build_rescan(_project(), _scan_doc()).pipeline_id is None
+        assert build_rescan(_scan_doc(), _PROJECT_ID).pipeline_id is None
 
     def test_a_source_carrying_no_branch_field_is_rescanned_as_unknown(self) -> None:
         source = _scan_doc()
         del source["branch"]
 
-        assert _build_rescan(_project(), source).branch == _UNKNOWN_BRANCH
+        assert build_rescan(source, _PROJECT_ID).branch == _UNKNOWN_BRANCH
 
     def test_the_release_flag_is_not_inherited(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(is_release=True)).is_release is False
+        assert build_rescan(_scan_doc(is_release=True), _PROJECT_ID).is_release is False
 
     def test_the_cbom_scan_type_is_carried_so_the_rescan_selects_the_same_analyzers(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(scan_type=_CBOM_SCAN_TYPE)).scan_type == _CBOM_SCAN_TYPE
+        assert build_rescan(_scan_doc(scan_type=_CBOM_SCAN_TYPE), _PROJECT_ID).scan_type == _CBOM_SCAN_TYPE
 
     def test_a_source_carrying_no_scan_type_produces_a_rescan_without_one(self) -> None:
-        assert _build_rescan(_project(), _scan_doc()).scan_type is None
+        assert build_rescan(_scan_doc(), _PROJECT_ID).scan_type is None
 
     def test_the_pipeline_user_is_not_inherited(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(pipeline_user=_PIPELINE_USER)).pipeline_user is None
+        assert build_rescan(_scan_doc(pipeline_user=_PIPELINE_USER), _PROJECT_ID).pipeline_user is None
 
     def test_the_rescan_clock_is_not_inherited_so_the_fresh_scan_starts_from_its_own_creation(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(last_rescanned_at=_NOW)).last_rescanned_at is None
+        assert build_rescan(_scan_doc(last_rescanned_at=_NOW), _PROJECT_ID).last_rescanned_at is None
 
     def test_the_scan_model_holds_exactly_the_pinned_fields(self) -> None:
         """Widening Scan is a decision about what a rescan inherits, so it has to be made here."""
@@ -451,7 +452,7 @@ class TestBuildRescan:
     def test_a_rescan_carries_exactly_the_pinned_fields_and_nothing_else(self) -> None:
         source = _saturated_scan_doc()
 
-        assert _carried_fields(source, _build_rescan(_project(), source)) == _CARRIED_FROM_SOURCE
+        assert _carried_fields(source, build_rescan(source, _PROJECT_ID)) == _CARRIED_FROM_SOURCE
 
 
 class TestCreateRescanForProject:
@@ -480,13 +481,14 @@ class TestCreateRescanForProject:
         assert stored_source["last_rescanned_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_the_source_scan_is_not_given_a_latest_run_summary(self, db: FakeDatabase, worker: AsyncMock) -> None:
+    async def test_the_source_scan_shows_the_pending_run(self, db: FakeDatabase, worker: AsyncMock) -> None:
         source = await _seed_scan(db)
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
         stored_source = await db.scans.find_one({"_id": _SOURCE_SCAN_ID})
-        assert stored_source.get("latest_run") is None
+        assert stored_source["latest_run"]["scan_id"] == stored_source["latest_rescan_id"]
+        assert stored_source["latest_run"]["status"] == SCAN_STATUS_PENDING
 
     @pytest.mark.asyncio
     async def test_a_lock_held_for_this_source_stops_the_creation(self, db: FakeDatabase, worker: AsyncMock) -> None:
@@ -559,6 +561,20 @@ class TestCreateRescanForProject:
 
         assert [r["_id"] for r in await _rescans(db)] == [_INFLIGHT_RESCAN_ID]
         worker.add_job.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_an_active_rescan_is_logged_as_active_not_as_queued(
+        self, db: FakeDatabase, worker: AsyncMock, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        source = await _seed_scan(db)
+        await _seed_inflight_rescan(db)
+
+        with caplog.at_level(logging.DEBUG, logger=housekeeping.logger.name):
+            await _create_rescan_for_project(_project(), source, db, worker)
+
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("already has an active rescan" in m and _INFLIGHT_RESCAN_ID in m for m in messages)
+        assert not any("is queued" in m for m in messages)
 
     @pytest.mark.asyncio
     async def test_an_active_scan_on_another_branch_of_the_project_does_not_stop_the_creation(

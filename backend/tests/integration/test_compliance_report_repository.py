@@ -68,8 +68,14 @@ async def test_list_by_scope_and_status(db):
                 requested_at=datetime.now(timezone.utc),
             )
         )
-    listed = await repo.list(scope="user", limit=10)
+    listed = await repo.list(visibility={"requested_by": "u1"}, scope="user", limit=10)
     assert len(listed) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_listing_cannot_leave_out_who_may_see_the_reports(db):
+    with pytest.raises(TypeError):
+        await ComplianceReportRepository(db).list(scope="user", limit=10)
 
 
 @pytest.mark.asyncio
@@ -124,6 +130,6 @@ async def test_list_returns_newest_requested_first(db):
     for report in (oldest, newest, middle):
         await repo.insert(report)
 
-    listed = await repo.list(scope="project", scope_id="p-order", limit=10)
+    listed = await repo.list(visibility={"scope": "project"}, scope_id="p-order", limit=10)
 
     assert [r.id for r in listed] == [newest.id, middle.id, oldest.id]

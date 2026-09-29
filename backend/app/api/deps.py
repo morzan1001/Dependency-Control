@@ -14,6 +14,8 @@ from app.core.constants import (
     API_KEY_SURFACE_ADHOC,
     API_KEY_SURFACE_MCP,
     MAX_PROJECT_TEAMS,
+    PROJECT_ROLE_ADMIN,
+    PROJECT_ROLE_EDITOR,
     TEAM_SOURCE_GITHUB,
     TEAM_SOURCE_GITLAB,
     team_source,
@@ -227,7 +229,8 @@ def _team_subset_stages(project: Project, source: str, resolved: list[str] | Non
         return []
     # Every CI job of every pipeline arrives here, so an unchanged owner set writes nothing. The
     # second half catches a document whose provenance names an owner the list never gained.
-    if owned_here == set(owners) and owned_here <= set(project.team_ids):
+    stamped = set(owners) - (set(project.team_ids) - owned_here)
+    if owned_here == stamped and owned_here <= set(project.team_ids):
         return []
     return replace_team_subset_pipeline(source, owners)
 
@@ -370,7 +373,7 @@ async def _handle_gitlab_oidc(
         )
 
     initial_member_id = await _resolve_initial_member_id(user_repo, payload.user_email)
-    members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
+    members = [ProjectMember(user_id=initial_member_id, role=PROJECT_ROLE_ADMIN)] if initial_member_id else []
 
     owners: list[str] = []
     gitlab_source = team_source(TEAM_SOURCE_GITLAB, instance_id)
@@ -469,7 +472,7 @@ async def _handle_github_oidc(
         )
 
     actor = (await github_service.resolve_login(gh_payload.actor, user_repo)).user
-    members = [ProjectMember(user_id=str(actor["_id"]), role="admin")] if actor else []
+    members = [ProjectMember(user_id=str(actor["_id"]), role=PROJECT_ROLE_ADMIN)] if actor else []
 
     owners: list[str] = []
     github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)
@@ -585,7 +588,7 @@ async def get_project_for_ingest(
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
 
 
-async def authorize_callgraph_write(
+async def authorize_project_write(
     project_id: str,
     x_api_key: str | None = Header(None, alias="X-API-Key"),
     oidc_token: str | None = Header(None, alias="Job-Token"),
@@ -593,38 +596,8 @@ async def authorize_callgraph_write(
     db: AsyncIOMotorDatabase = Depends(get_database),
     settings_: SystemSettings = Depends(get_system_settings),
 ) -> str:
-    """Authorize a callgraph write for CI credentials or a logged-in user; returns the project id."""
-    from app.api.v1.helpers.callgraph import check_callgraph_access
-
-    if x_api_key or oidc_token:
-        project = await get_project_for_ingest(x_api_key=x_api_key, oidc_token=oidc_token, db=db, settings=settings_)
-        if str(project.id) != project_id:
-            raise HTTPException(status_code=403, detail="CI credentials do not match the target project")
-        return project_id
-
-    if token:
-        user = await get_current_user(db=db, token=token)
-        await check_callgraph_access(project_id, await get_current_active_user(user), db, require_write=True)
-        return project_id
-
-    raise HTTPException(status_code=401, detail="Missing authentication credentials")
-
-
-async def authorize_release_write(
-    project_id: str,
-    x_api_key: str | None = Header(None, alias="X-API-Key"),
-    oidc_token: str | None = Header(None, alias="Job-Token"),
-    token: str | None = Depends(optional_oauth2_scheme),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-    settings_: SystemSettings = Depends(get_system_settings),
-) -> str:
-    """Authorize a release mark for CI credentials or a logged-in editor; returns the project id.
-
-    The deploy stage runs long after the build, so the CD job marks with the same credentials it
-    ingested with, while a human correcting a mistake has only a session.
-    """
+    """Authorize a project write for the project's CI credentials or a logged-in editor; returns the project id."""
     from app.api.v1.helpers.projects import check_project_access
-    from app.core.constants import PROJECT_ROLE_EDITOR
 
     if x_api_key or oidc_token:
         project = await get_project_for_ingest(x_api_key=x_api_key, oidc_token=oidc_token, db=db, settings=settings_)
@@ -733,9 +706,14 @@ def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Await
 
 DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
-CallgraphWriteDep = Annotated[str, Depends(authorize_callgraph_write)]
-ReleaseWriteDep = Annotated[str, Depends(authorize_release_write)]
+ProjectWriteDep = Annotated[str, Depends(authorize_project_write)]
 AdhocKeyDep = Annotated[
     tuple[User, dict[str, Any]],
     Depends(require_api_key(API_KEY_SURFACE_ADHOC)),
 ]
+McpKeyDep = Annotated[
+    tuple[User, dict[str, Any]],
+    Depends(require_api_key(API_KEY_SURFACE_MCP, touch=True)),
+]
+ProjectIngestDep = Annotated[Project, Depends(get_project_for_ingest)]
+SystemManagerDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]

@@ -1,4 +1,4 @@
-"""Deactivating an account leaves its project and team memberships in place, so the fan-out must drop it."""
+"""Who the project fan-out reaches (a deactivated account keeps its memberships) and whose preferences it enforces."""
 
 import pytest
 
@@ -112,3 +112,79 @@ async def test_an_active_admins_enforced_prefs_still_apply_past_a_deactivated_on
     )
 
     assert await _notify(db, project) == {("mattermost", "@u-admin"), ("mattermost", "@u-member")}
+
+
+async def _seed_team(db, *members: tuple[str, str]) -> None:
+    await db.teams.insert_one(
+        {"_id": "alpha", "name": "Alpha", "members": [{"user_id": uid, "role": role} for uid, role in members]}
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_team_admins_project_overrides_are_enforced_on_every_member(db):
+    await _seed_user(db, "u-team-admin")
+    await _seed_user(db, "u-member")
+    await _seed_team(db, ("u-team-admin", "admin"))
+    project = Project(
+        id="p",
+        name="p",
+        team_ids=["alpha"],
+        enforce_notification_settings=True,
+        notification_overrides={"u-team-admin": {_EVENT: ["slack"]}},
+        members=[ProjectMember(user_id="u-member", notification_preferences={_EVENT: ["email"]})],
+    )
+
+    assert await _notify(db, project) == {("slack", "u-team-admin"), ("slack", "u-member")}
+
+
+@pytest.mark.asyncio
+async def test_a_direct_viewer_who_admins_an_owning_team_enforces_their_member_prefs(db):
+    await _seed_user(db, "u-team-admin")
+    await _seed_user(db, "u-member")
+    await _seed_team(db, ("u-team-admin", "admin"))
+    project = Project(
+        id="p",
+        name="p",
+        team_ids=["alpha"],
+        enforce_notification_settings=True,
+        members=[
+            ProjectMember(user_id="u-member", notification_preferences={_EVENT: ["email"]}),
+            ProjectMember(user_id="u-team-admin", role="viewer", notification_preferences={_EVENT: ["mattermost"]}),
+        ],
+    )
+
+    assert await _notify(db, project) == {("mattermost", "@u-team-admin"), ("mattermost", "@u-member")}
+
+
+@pytest.mark.asyncio
+async def test_a_direct_admins_prefs_win_over_a_team_admins_overrides(db):
+    await _seed_user(db, "u-team-admin")
+    await _seed_user(db, "u-admin")
+    await _seed_team(db, ("u-team-admin", "admin"))
+    project = Project(
+        id="p",
+        name="p",
+        team_ids=["alpha"],
+        enforce_notification_settings=True,
+        notification_overrides={"u-team-admin": {_EVENT: ["slack"]}},
+        members=[ProjectMember(user_id="u-admin", role="admin", notification_preferences={_EVENT: ["email"]})],
+    )
+
+    assert await _notify(db, project) == {("email", "u-admin@test.com"), ("email", "u-team-admin@test.com")}
+
+
+@pytest.mark.asyncio
+async def test_a_plain_team_members_overrides_enforce_nothing(db):
+    await _seed_user(db, "u-team-member")
+    await _seed_user(db, "u-member")
+    await _seed_team(db, ("u-team-member", "member"))
+    project = Project(
+        id="p",
+        name="p",
+        team_ids=["alpha"],
+        enforce_notification_settings=True,
+        notification_overrides={"u-team-member": {_EVENT: ["slack"]}},
+        members=[ProjectMember(user_id="u-member", notification_preferences={_EVENT: ["email"]})],
+    )
+
+    assert await _notify(db, project) == {("slack", "u-team-member"), ("email", "u-member@test.com")}

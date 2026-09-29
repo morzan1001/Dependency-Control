@@ -155,7 +155,7 @@ class ComplianceReportEngine:
         """(project_id, scan_id) pairs so callers avoid re-querying each scan's project."""
         from app.services.releases import resolve_scan_ids
 
-        return list((await resolve_scan_ids(db, resolved.project_ids)).items())
+        return list((await resolve_scan_ids(db, resolved.project_ids, projects=resolved.projects)).items())
 
     async def _collect_crypto_assets(
         self,

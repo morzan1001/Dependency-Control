@@ -87,7 +87,7 @@ async def test_inline_enrichment_reaches_the_stats_pipeline(db):
     for finding in findings:
         await db.findings.insert_one(finding)
 
-    stats = await calculate_comprehensive_stats(db, _SCAN_ID)
+    stats = (await calculate_comprehensive_stats(db, _SCAN_ID)).stats
     assert stats.reachability.analyzed_count == 2
     assert stats.reachability.reachable_count == 1
     assert stats.reachability.unreachable_count == 1
@@ -222,12 +222,12 @@ async def test_coverable_count_excludes_os_packages(db):
     ):
         await db.findings.insert_one(_finding(finding_id, component))
 
-    stats = await calculate_comprehensive_stats(db, _SCAN_ID)
+    stats = (await calculate_comprehensive_stats(db, _SCAN_ID)).stats
     assert stats.reachability.coverable_count == 1
 
 
 @pytest.mark.asyncio
 async def test_coverable_count_is_zero_without_dependencies(db):
     await db.findings.insert_one(_finding("CVE-1", "libssl3"))
-    stats = await calculate_comprehensive_stats(db, _SCAN_ID)
+    stats = (await calculate_comprehensive_stats(db, _SCAN_ID)).stats
     assert stats.reachability.coverable_count == 0

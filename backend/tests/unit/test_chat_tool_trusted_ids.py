@@ -32,7 +32,11 @@ def _caller() -> User:
         id=_CALLER,
         username="caller",
         email="caller@test.com",
-        permissions=[p for p in PRESET_ADMIN if p not in {"project:read_all", "team:read_all"}],
+        permissions=[
+            p
+            for p in PRESET_ADMIN
+            if p not in {"project:read_all", "project:update", "team:read_all", "waiver:read_all", "archive:read_all"}
+        ],
     )
 
 
@@ -77,7 +81,13 @@ def _seed_project(db: FakeDatabase, project_id: str, marker: str, member: str) -
             "created_at": _EARLIER - timedelta(days=90),
         }
     db.waivers._docs[f"{project_id}-w"] = {"_id": f"{project_id}-w", "project_id": project_id, "reason": marker}
-    db.webhooks._docs[f"{project_id}-h"] = {"_id": f"{project_id}-h", "project_id": project_id, "secret": marker}
+    db.webhooks._docs[f"{project_id}-h"] = {
+        "_id": f"{project_id}-h",
+        "project_id": project_id,
+        "url": "https://receiver.test/hook",
+        "events": ["scan_completed"],
+        "secret": marker,
+    }
     db.webhook_deliveries._docs[f"{project_id}-d"] = {
         "_id": f"{project_id}-d",
         "webhook_id": f"{project_id}-h",

@@ -88,6 +88,20 @@ class TestGetWaiverStatusExpiry:
         assert result["expired_waiver"]["id"] == "w-1"
 
     @pytest.mark.asyncio
+    async def test_an_expired_waiver_is_reported_inactive_whatever_its_document_says(self, db, admin_user):
+        _seed_project(db)
+        _seed_waiver(db, expiration_date=datetime.now(timezone.utc) - timedelta(days=1), is_active=True)
+
+        result = await ChatToolRegistry()._dispatch(
+            "get_waiver_status",
+            {"project_id": "proj-1", "finding_id": "QUALITY:foo:1.0"},
+            admin_user,
+            db,
+        )
+
+        assert result["expired_waiver"]["is_active"] is False
+
+    @pytest.mark.asyncio
     async def test_active_waiver_no_finding_doc_reports_present_but_not_suppressing(self, db, admin_user):
         # No finding doc in the latest scan: the active waiver is present but suppresses nothing.
         _seed_project(db)

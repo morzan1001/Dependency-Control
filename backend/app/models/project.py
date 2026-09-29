@@ -1,9 +1,9 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, ProjectRole
 from app.core.notification_prefs import NotificationPreferences
 from app.models.base import CreatedAtModel
 from app.models.finding import Finding
@@ -13,17 +13,12 @@ from app.models.types import MongoDocument
 
 class ProjectMember(BaseModel):
     user_id: str
-    role: str = PROJECT_ROLE_VIEWER
+    role: ProjectRole = PROJECT_ROLE_VIEWER
     notification_preferences: NotificationPreferences = Field(default_factory=dict)
     username: str | None = None
     inherited_from: str | None = None  # e.g. "Team: DevOps"
-
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, v: str) -> str:
-        if v not in PROJECT_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
-        return v
+    # Read-side only: the role check_project_access grants, MAX(direct, owning teams).
+    effective_role: ProjectRole | None = None
 
 
 class Project(MongoDocument, CreatedAtModel):
@@ -52,6 +47,8 @@ class Project(MongoDocument, CreatedAtModel):
     retention_action: str = "delete"  # "delete", "archive", or "none"
     default_branch: str | None = None
     enforce_notification_settings: bool = False
+    # Preferences of users who reach the project only through an owning team, keyed by user id.
+    notification_overrides: dict[str, NotificationPreferences] = Field(default_factory=dict)
     # GitLab Integration (Multi-Instance Support)
     gitlab_instance_id: str | None = Field(
         None, description="Reference to GitLabInstance._id. Required if gitlab_project_id is set."

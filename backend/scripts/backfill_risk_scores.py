@@ -124,7 +124,7 @@ async def backfill_scans(db: Any, batch_size: int, sleep_ms: int, limit: int, ex
             scan_id = doc["_id"]
             try:
                 stored = doc.get("stats") or {}
-                computed = await calculate_comprehensive_stats(db, scan_id)
+                computed = (await calculate_comprehensive_stats(db, scan_id)).stats
 
                 counters["processed"] += 1
                 if _bucket_total(computed.model_dump()) == 0 and _bucket_total(stored) > 0:

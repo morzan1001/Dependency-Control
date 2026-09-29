@@ -8,21 +8,18 @@ export const PROJECT_ROLE_ADMIN = 'admin';
 
 const ROLE_HIERARCHY: string[] = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN];
 
-// 'owner' for the project owner, the member role, or null if not a member.
+// The effective member role, or null if not a member.
 export function getUserProjectRole(
   project: Project,
   userId: string
-): 'owner' | 'admin' | 'editor' | 'viewer' | null {
-  if (project.owner_id === userId) {
-    return 'owner';
-  }
+): 'admin' | 'editor' | 'viewer' | null {
   const member = project.members?.find(m => m.user_id === userId);
-  return (member?.role as 'admin' | 'editor' | 'viewer') ?? null;
+  return ((member?.effective_role ?? member?.role) as 'admin' | 'editor' | 'viewer') ?? null;
 }
 
-// Minimum-role gate: viewer = read, editor/admin = write. project:update or
-// project:delete bypass membership for any request (write implies read);
-// project:read_all grants read only; owner satisfies any role.
+// Minimum-role gate: viewer = read, editor/admin = write. project:update bypasses
+// membership for any request (write implies read); project:read_all grants read only.
+// project:delete opens canDeleteProject alone.
 export function hasProjectRole(
   project: Project,
   userId: string,
@@ -31,10 +28,7 @@ export function hasProjectRole(
 ): boolean {
   const isWriteRequest = requiredRole === 'editor' || requiredRole === 'admin';
 
-  if (
-    globalPermissions?.includes('project:update') ||
-    globalPermissions?.includes('project:delete')
-  ) {
+  if (globalPermissions?.includes('project:update')) {
     return true;
   }
 
@@ -44,7 +38,6 @@ export function hasProjectRole(
 
   const role = getUserProjectRole(project, userId);
   if (role === null) return false;
-  if (role === 'owner') return true;
   return ROLE_HIERARCHY.indexOf(role) >= ROLE_HIERARCHY.indexOf(requiredRole);
 }
 
@@ -70,13 +63,12 @@ export function canUpdateProject(
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isProjectAdmin(project, userId, globalPermissions)
-    || globalPermissions.includes('project:update');
+  return isProjectAdmin(project, userId, globalPermissions);
 }
 
-/** Set or change the GitLab binding: system:manage OR a global project write grant */
+/** Set or change the GitLab binding: system:manage OR global project:update */
 export function canBindGitLabProject(globalPermissions: string[]): boolean {
-  return ['system:manage', 'project:update', 'project:delete'].some(p => globalPermissions.includes(p));
+  return ['system:manage', 'project:update'].some(p => globalPermissions.includes(p));
 }
 
 /** Rotate API key: project admin OR global project:update */
@@ -85,8 +77,7 @@ export function canRotateApiKey(
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isProjectAdmin(project, userId, globalPermissions)
-    || globalPermissions.includes('project:update');
+  return isProjectAdmin(project, userId, globalPermissions);
 }
 
 /** Invite / update / remove members: project admin */
@@ -98,14 +89,13 @@ export function canManageProjectMembers(
   return isProjectAdmin(project, userId, globalPermissions);
 }
 
-/** Delete project: project admin OR global project:delete */
+/** Delete project: project admin by role OR global project:delete (project:update does not delete) */
 export function canDeleteProject(
   project: Project,
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isProjectAdmin(project, userId, globalPermissions)
-    || globalPermissions.includes('project:delete');
+  return isProjectAdmin(project, userId) || globalPermissions.includes('project:delete');
 }
 
 /** Toggle enforce notification settings: project admin OR global project:update */
@@ -114,8 +104,7 @@ export function canEnforceNotifications(
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isProjectAdmin(project, userId, globalPermissions)
-    || globalPermissions.includes('project:update');
+  return isProjectAdmin(project, userId, globalPermissions);
 }
 
 // The project admin gate already opens for the global write grant, so a webhook permission only
@@ -148,14 +137,13 @@ export function canDeleteProjectWebhook(
   return canWriteProjectWebhook(project, userId, globalPermissions, 'webhook:delete');
 }
 
-/** Create waiver (project-scoped): project editor or higher OR global waiver:manage */
+/** Create waiver (project-scoped): project editor or higher; waiver:manage covers global waivers only */
 export function canCreateProjectWaiver(
   project: Project,
   userId: string,
   globalPermissions: string[]
 ): boolean {
-  return isProjectEditor(project, userId, globalPermissions)
-    || globalPermissions.includes('waiver:manage');
+  return isProjectEditor(project, userId, globalPermissions);
 }
 
 /** Delete waiver (project-scoped): project admin OR global waiver:delete */

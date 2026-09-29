@@ -2,9 +2,9 @@ import logging
 import math
 from datetime import datetime, timezone
 from enum import Enum, auto
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import HTTPException, status
 
 from app.api import deps
 from app.api.deps import DatabaseDep
@@ -17,9 +17,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_502,
 )
-from app.core.permissions import Permissions
 from app.models.github_instance import GitHubInstance
-from app.models.user import User
 from app.repositories import ProjectRepository
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.schemas.github_instance import (
@@ -60,7 +58,7 @@ def _to_response(instance: GitHubInstance) -> GitHubInstanceResponse:
 @router.get("/", response_model=GitHubInstanceList, responses=RESP_AUTH)
 async def list_instances(
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     page: int = 1,
     size: int = 100,
     active_only: bool = False,
@@ -86,7 +84,7 @@ async def list_instances(
 async def get_instance(
     instance_id: str,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> GitHubInstanceResponse:
     """Get a specific GitHub instance by ID."""
     instance_repo = GitHubInstanceRepository(db)
@@ -104,7 +102,7 @@ async def get_instance(
 async def create_instance(
     instance_data: GitHubInstanceCreate,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> GitHubInstanceResponse:
     """Create a new GitHub instance after validating uniqueness and JWKS reachability."""
     instance_repo = GitHubInstanceRepository(db)
@@ -166,7 +164,7 @@ async def update_instance(
     instance_id: str,
     update_data: GitHubInstanceUpdate,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> GitHubInstanceResponse:
     """Update a GitHub instance; only provided fields are changed, with uniqueness validation."""
     instance_repo = GitHubInstanceRepository(db)
@@ -233,7 +231,7 @@ async def update_instance(
 async def delete_instance(
     instance_id: str,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     force: bool = False,
 ) -> None:
     """Delete a GitHub instance; fails if projects are still linked unless force=true (which orphans them)."""
@@ -324,7 +322,7 @@ async def _refused_listing(github_service: GitHubService, subject: str, scope_hi
 async def list_instance_organisations(
     instance_id: str,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> list[str]:
     """The organisations this instance's token belongs to, to pick from when binding a team."""
     instance = await _load_instance(instance_id, db)
@@ -344,7 +342,7 @@ async def list_organisation_teams(
     instance_id: str,
     org: str,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> list[GitHubOrgTeam]:
     """The teams of one organisation, to pick from when binding a team."""
     instance = await _load_instance(instance_id, db)
@@ -454,7 +452,7 @@ async def _probe_team_access(
 async def test_connection(
     instance_id: str,
     db: DatabaseDep,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
 ) -> GitHubInstanceTestConnectionResponse:
     """Fetch the JWKS from the configured issuer and, for a team-syncing instance, exercise the token."""
     instance_repo = GitHubInstanceRepository(db)

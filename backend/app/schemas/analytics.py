@@ -7,6 +7,8 @@ from pydantic import BaseModel, Field
 
 from app.schemas.team import TeamRef
 
+ScopeKind = Literal["project", "team", "global", "user"]
+
 
 class CVEEnrichmentResult(BaseModel):
     """Result of CVE enrichment data processing from process_cve_enrichments()."""
@@ -502,7 +504,7 @@ class HotspotEntry(BaseModel):
 class HotspotResponse(BaseModel):
     """Paginated hotspot response for a given scope."""
 
-    scope: Literal["project", "team", "global", "user"]
+    scope: ScopeKind
     scope_id: str | None = None
     grouping_dimension: str
     items: list[HotspotEntry] = Field(default_factory=list)

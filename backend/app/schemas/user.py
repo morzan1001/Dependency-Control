@@ -3,6 +3,7 @@ from typing import Annotated
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator
 
+from app.core.constants import AUTH_PROVIDER_LOCAL
 from app.core.notification_prefs import NotificationPreferences
 from app.models.types import PyObjectId
 
@@ -26,26 +27,23 @@ LowercaseEmail = Annotated[EmailStr, AfterValidator(str.lower)]
 Username = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class UserBase(BaseModel):
-    email: EmailStr
+class UserCreate(BaseModel):
+    """An administrator creates password accounts only; identity-provider accounts appear at first login."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    email: LowercaseEmail
     username: str
-    is_active: bool | None = True
-    auth_provider: str | None = "local"
+    password: str
+    is_active: bool = True
     permissions: list[str] = []
     slack_username: str | None = None
     mattermost_username: str | None = None
     notification_preferences: NotificationPreferences = None
 
-
-class UserCreate(UserBase):
-    email: LowercaseEmail
-    password: str | None = None
-
     @field_validator("password")
     @classmethod
-    def validate_password(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
+    def validate_password(cls, v: str) -> str:
         return validate_password_strength(v)
 
 
@@ -64,6 +62,8 @@ class UserSignup(BaseModel):
 
 
 class UserUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     email: LowercaseEmail | None = None
     username: Username | None = None
     is_active: bool | None = None
@@ -71,7 +71,6 @@ class UserUpdate(BaseModel):
     slack_username: str | None = None
     mattermost_username: str | None = None
     notification_preferences: NotificationPreferences = None
-    password: str | None = None
 
     @field_validator("email", "username")
     @classmethod
@@ -114,17 +113,21 @@ class UserMigrateToLocal(BaseModel):
         return validate_password_strength(v)
 
 
-class UserInDBBase(UserBase):
+class UserResponse(BaseModel):
     id: PyObjectId = Field(validation_alias="_id")
+    email: EmailStr
+    username: str
+    is_active: bool | None = True
+    auth_provider: str | None = AUTH_PROVIDER_LOCAL
+    permissions: list[str] = []
+    slack_username: str | None = None
+    mattermost_username: str | None = None
+    notification_preferences: NotificationPreferences = None
     totp_enabled: bool = False
     is_verified: bool = False
     pending_email: str | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
-
-
-class User(UserInDBBase):
-    pass
 
 
 class User2FASetup(BaseModel):

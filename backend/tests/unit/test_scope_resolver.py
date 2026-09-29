@@ -1,7 +1,10 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pymongo.errors import ServerSelectionTimeoutError
 
+from app.repositories.projects import ProjectRepository
+from tests.helpers.analytics_scope import projections
 from app.services.analytics.scopes import (
     ScopeResolutionError,
     ScopeResolver,
@@ -30,21 +33,10 @@ async def test_project_scope_denied_nonmember():
 
 
 @pytest.mark.asyncio
-async def test_team_scope_expands_to_projects():
-    db = MagicMock()
-    user = MagicMock(id="u1", permissions=frozenset())
-    resolver = ScopeResolver(db, user)
-    resolver._check_team_member = AsyncMock(return_value=True)
-    resolver._list_team_project_ids = AsyncMock(return_value=["p1", "p2"])
-    result = await resolver.resolve(scope="team", scope_id="t1")
-    assert result.project_ids == ["p1", "p2"]
-
-
-@pytest.mark.asyncio
 async def test_team_scope_denied_for_a_user_the_team_does_not_list(db):
     await db.teams.insert_one({"_id": "t1", "name": "Alpha", "members": [{"user_id": "someone-else"}]})
     await db.projects.insert_one({"_id": "p1", "name": "P1", "team_ids": ["t1"]})
-    resolver = ScopeResolver(db, MagicMock(id="u1", permissions=frozenset()))
+    resolver = ScopeResolver(db, MagicMock(id="u1", permissions=frozenset({"team:read", "project:read"})))
     with pytest.raises(ScopeResolutionError):
         await resolver.resolve(scope="team", scope_id="t1")
 
@@ -53,7 +45,7 @@ async def test_team_scope_denied_for_a_user_the_team_does_not_list(db):
 async def test_team_scope_allowed_for_a_user_the_team_lists(db):
     await db.teams.insert_one({"_id": "t1", "name": "Alpha", "members": [{"user_id": "u1"}]})
     await db.projects.insert_one({"_id": "p1", "name": "P1", "team_ids": ["t1"]})
-    resolver = ScopeResolver(db, MagicMock(id="u1", permissions=frozenset()))
+    resolver = ScopeResolver(db, MagicMock(id="u1", permissions=frozenset({"team:read", "project:read"})))
     result = await resolver.resolve(scope="team", scope_id="t1")
     assert result.project_ids == ["p1"]
 
@@ -82,7 +74,7 @@ async def test_user_scope_expands_to_accessible_projects():
     db = MagicMock()
     user = MagicMock(id="u1", permissions=frozenset())
     resolver = ScopeResolver(db, user)
-    resolver._list_user_project_ids = AsyncMock(return_value=["p1", "p2", "p3"])
+    resolver.list_user_projects = AsyncMock(return_value=projections(["p1", "p2", "p3"]))
     result = await resolver.resolve(scope="user", scope_id=None)
     assert result.scope == "user"
     assert result.project_ids == ["p1", "p2", "p3"]
@@ -93,3 +85,15 @@ async def test_unknown_scope_errors():
     resolver = ScopeResolver(MagicMock(), MagicMock(id="u", permissions=frozenset()))
     with pytest.raises(ScopeResolutionError):
         await resolver.resolve(scope="nonsense", scope_id=None)
+
+
+@pytest.mark.asyncio
+async def test_a_database_failure_in_the_project_gate_is_not_a_refusal(db):
+    down = ServerSelectionTimeoutError("no primary")
+    with (
+        patch.object(ProjectRepository, "get_by_id", AsyncMock(side_effect=down)),
+        pytest.raises(ServerSelectionTimeoutError),
+    ):
+        await ScopeResolver(db, MagicMock(id="u1", permissions=["project:read"])).resolve(
+            scope="project", scope_id="p1"
+        )

@@ -144,7 +144,7 @@ class PQCMigrationPlanGenerator:
             project_ids = resolved.project_ids
         repo = CryptoAssetRepository(self.db)
         canonical_families = {m.source_family for m in self.mappings.mappings}
-        for pid, scan_id in (await resolve_scan_ids(self.db, project_ids)).items():
+        for pid, scan_id in (await resolve_scan_ids(self.db, project_ids, projects=resolved.projects)).items():
             assets = await repo.list_by_scan(pid, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
             out.extend(self._filter_vulnerable(assets, canonical_families))
         return out

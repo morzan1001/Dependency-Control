@@ -1,5 +1,5 @@
 from app.models.finding import Finding
-from app.services.waivers.signature import compute_match_signature, compute_match_signature_from_doc, normalize_snippet
+from app.services.waivers.signature import compute_match_signature, compute_match_signature_from_doc, snippet_hash
 
 
 def _sast_merged(component, line, scanner, rule_id, fingerprint, code):
@@ -31,17 +31,17 @@ def _sast_merged(component, line, scanner, rule_id, fingerprint, code):
     )
 
 
-class TestNormalizeSnippet:
+class TestSnippetHash:
     def test_whitespace_and_indent_irrelevant(self):
-        assert normalize_snippet("  foo( a , b )  ") == normalize_snippet("foo( a , b )")
-        assert normalize_snippet("foo(\n    a,\n    b)") == normalize_snippet("foo(\na,\nb)")
+        assert snippet_hash("  foo( a , b )  ") == snippet_hash("foo( a , b )")
+        assert snippet_hash("foo(\n    a,\n    b)") == snippet_hash("foo(\na,\nb)")
 
     def test_token_change_matters(self):
-        assert normalize_snippet("foo(a)") != normalize_snippet("foo(b)")
+        assert snippet_hash("foo(a)") != snippet_hash("foo(b)")
 
     def test_empty_returns_none(self):
-        assert normalize_snippet(None) is None
-        assert normalize_snippet("   \n  ") is None
+        assert snippet_hash(None) is None
+        assert snippet_hash("   \n  ") is None
 
 
 class TestSastSignature:
@@ -231,3 +231,84 @@ def test_finding_and_raw_doc_produce_same_signature():
     assert sig_finding is not None, "compute_match_signature returned None for a valid SAST finding"
     assert sig_doc is not None, "compute_match_signature_from_doc returned None for the equivalent doc"
     assert sig_finding.model_dump() == sig_doc.model_dump()
+
+
+def _aggregated(normalize, result):
+    from app.services.aggregation import ResultAggregator
+
+    aggregator = ResultAggregator()
+    normalize(aggregator, result)
+    return aggregator.get_findings()
+
+
+def _opengrep_item(line, fingerprint, lines, check_id="python.lang.sqli", path="app/db.py"):
+    return {
+        "check_id": check_id,
+        "path": path,
+        "start": {"line": line, "col": 1},
+        "end": {"line": line, "col": 20},
+        "extra": {"severity": "ERROR", "message": "m", "fingerprint": fingerprint, "lines": lines},
+    }
+
+
+def test_semgrep_login_placeholder_never_anchors_and_never_shows_as_code():
+    from app.services.normalizers.sast import normalize_opengrep
+
+    findings = _aggregated(
+        normalize_opengrep,
+        {
+            "results": [
+                _opengrep_item(10, "requires login", "requires login"),
+                _opengrep_item(50, "requires login", "requires login"),
+            ]
+        },
+    )
+
+    sigs = [f.match for f in findings]
+    assert all(s.anchor_kind == "content_hash" and not s.is_strong for s in sigs)
+    assert sigs[0].anchor != sigs[1].anchor
+    entries = [f.details["sast_findings"][0]["details"] for f in findings]
+    assert all("fingerprint" not in e and "code_extract" not in e for e in entries)
+
+
+def test_bearer_ordinal_fingerprint_never_anchors():
+    from app.services.normalizers.sast import normalize_bearer
+
+    item = {
+        "id": "python_lang_sqli",
+        "filename": "app/db.py",
+        "line_number": 20,
+        "code_extract": "cursor.execute(q_b)",
+        "fingerprint": "edb203edb203edb203edb203edb20300_1",
+        "old_fingerprint": "edb203edb203edb203edb203edb20300_4",
+        "severity": "high",
+        "title": "SQLi",
+    }
+    (finding,) = _aggregated(normalize_bearer, {"findings": [item]})
+
+    assert finding.match.anchor_kind == "content_hash"
+    assert finding.match.anchor == snippet_hash("cursor.execute(q_b)")
+    assert "fingerprint" not in finding.details["sast_findings"][0]["details"]
+
+
+def test_a_finding_without_fingerprint_or_snippet_is_bound_to_its_line():
+    no_evidence = [_sast_merged("a.py", line, "opengrep", "r", None, None) for line in (10, 11)]
+    sigs = [compute_match_signature(f) for f in no_evidence]
+    assert all(s.anchor_kind == "content_hash" and s.anchor == s.content_hash for s in sigs)
+    assert sigs[0].anchor is not None
+    assert sigs[0].anchor != sigs[1].anchor
+
+
+def test_crypto_misuse_opengrep_finding_gets_the_same_signature_as_its_raw_doc():
+    from app.services.normalizers.sast import normalize_opengrep
+
+    item = _opengrep_item(12, "fp-crypto", "key = b'x'", check_id="crypto-misuse-hardcoded-key", path="src/a.py")
+    (finding,) = _aggregated(normalize_opengrep, {"results": [item]})
+
+    assert finding.type == "crypto_key_management"
+    assert finding.match.anchor_kind == "scanner_fp"
+    assert finding.match.anchor == "fp-crypto"
+    assert finding.match.rule_key == "opengrep:crypto-misuse-hardcoded-key"
+    assert finding.match.last_line == 12
+    doc = {"finding_id": finding.id, "component": finding.component, "details": finding.details}
+    assert compute_match_signature_from_doc(doc) == finding.match

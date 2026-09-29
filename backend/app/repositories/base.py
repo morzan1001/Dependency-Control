@@ -12,6 +12,14 @@ from app.core.metrics import track_db_operation
 logger = logging.getLogger(__name__)
 
 
+def and_filters(*filters: dict[str, Any]) -> dict[str, Any]:
+    """Every non-empty filter under ``$and``, as a key-by-key merge would let one ``$or`` or ``_id`` replace another."""
+    present = [f for f in filters if f]
+    if len(present) > 1:
+        return {"$and": present}
+    return dict(present[0]) if present else {}
+
+
 class BaseRepository[T: BaseModel]:
     """Generic CRUD base. Subclasses set ``collection_name`` and ``model_class``."""
 

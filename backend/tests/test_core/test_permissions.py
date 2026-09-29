@@ -3,7 +3,6 @@
 from app.core.permissions import (
     ALL_PERMISSIONS,
     Permissions,
-    get_missing_permissions,
     has_permission,
 )
 from tests.helpers.permission_presets import (
@@ -25,7 +24,6 @@ class TestHasPermission:
             has_permission(
                 user_permissions,
                 [Permissions.SYSTEM_MANAGE, Permissions.PROJECT_READ],
-                require_all=False,
             )
             is True
         )
@@ -35,27 +33,6 @@ class TestHasPermission:
             has_permission(
                 viewer_permissions,
                 [Permissions.SYSTEM_MANAGE, Permissions.USER_DELETE],
-                require_all=False,
-            )
-            is False
-        )
-
-    def test_all_mode_all_present(self, admin_permissions):
-        assert (
-            has_permission(
-                admin_permissions,
-                [Permissions.USER_READ, Permissions.USER_DELETE],
-                require_all=True,
-            )
-            is True
-        )
-
-    def test_all_mode_one_missing(self, user_permissions):
-        assert (
-            has_permission(
-                user_permissions,
-                [Permissions.USER_READ, Permissions.USER_DELETE],
-                require_all=True,
             )
             is False
         )
@@ -68,31 +45,6 @@ class TestHasPermission:
 
     def test_empty_required_list_returns_false(self):
         assert has_permission([Permissions.USER_READ], []) is False
-
-
-class TestGetMissingPermissions:
-    def test_none_missing(self, admin_permissions):
-        missing = get_missing_permissions(admin_permissions, ALL_PERMISSIONS)
-        assert missing == []
-
-    def test_some_missing(self, viewer_permissions):
-        missing = get_missing_permissions(
-            viewer_permissions,
-            [Permissions.USER_READ, Permissions.USER_DELETE],
-        )
-        assert Permissions.USER_DELETE in missing
-        assert Permissions.USER_READ not in missing
-
-    def test_string_required(self):
-        missing = get_missing_permissions([], "user:read")
-        assert missing == ["user:read"]
-
-    def test_all_missing(self):
-        missing = get_missing_permissions(
-            [],
-            [Permissions.USER_READ, Permissions.USER_DELETE],
-        )
-        assert len(missing) == 2
 
 
 class TestPresets:
@@ -121,11 +73,6 @@ class TestPresets:
         admin_copy = PRESET_ADMIN.copy()
         admin_copy.append("test:permission")
         assert "test:permission" not in ALL_PERMISSIONS
-
-    def test_all_permissions_count(self):
-        # Ensure consistency between Permissions class and ALL_PERMISSIONS list
-        perm_attrs = [v for k, v in vars(Permissions).items() if not k.startswith("_") and isinstance(v, str)]
-        assert set(perm_attrs) == set(ALL_PERMISSIONS)
 
     # Archive permission tests
     def test_admin_has_all_archive_permissions(self):

@@ -1,14 +1,13 @@
 """Ingest CycloneDX 1.6 CBOM payloads; creates a scan and persists CryptoAssets."""
 
 import logging
-from typing import Annotated, Any
+from typing import Any
 
 from fastapi import Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.api import deps
-from app.api.deps import DatabaseDep
+from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
 from app.core.constants import MAX_CBOM_BODY_BYTES, MAX_CRYPTO_ASSETS_PER_SCAN, WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED
 from app.core.metrics import cbom_ingests_total
@@ -24,8 +23,6 @@ from app.services.webhooks import webhook_service
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
-
-ProjectIngestDep = deps.get_project_for_ingest
 
 
 def _enforce_body_size_limit(request: Request) -> None:
@@ -106,7 +103,7 @@ class CBOMIngestResponse(BaseModel):
 async def ingest_cbom(
     payload: CBOMIngest,
     db: DatabaseDep,
-    project: Annotated[Project, Depends(ProjectIngestDep)],
+    project: ProjectIngestDep,
 ) -> CBOMIngestResponse:
     """Upload a CBOM for a project; parsed and persisted synchronously so nothing is lost after the response."""
     parsed = parse_cbom(payload.cbom)
@@ -128,8 +125,7 @@ async def ingest_cbom(
 
     # Route through ScanManager so the scan lifecycle matches other ingest paths.
     manager = ScanManager(db, project)
-    scan_ctx = await manager.find_or_create_scan(payload)
-    scan_id = scan_ctx.scan_id
+    scan_id = await manager.find_or_create_scan(payload)
 
     # Tag as CBOM so the analysis engine forces crypto analyzers even without an SBOM.
     from app.repositories.scans import ScanRepository

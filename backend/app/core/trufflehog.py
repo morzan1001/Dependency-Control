@@ -15,6 +15,8 @@ then rewrite DETECTOR_TYPE_NAMES from its ``NAME = <ordinal>;`` members, keeping
 entries — an ordinal is never reused upstream, so regeneration only ever adds.
 """
 
+from typing import Any
+
 SECRET_DESCRIPTION_PREFIX = "Secret detected: "
 
 DETECTOR_TYPE_NAMES: dict[int, str] = {
@@ -1089,3 +1091,11 @@ def resolve_detector_name(raw: object) -> str | None:
     if not text.isdigit():
         return None
     return DETECTOR_TYPE_NAMES.get(int(text))
+
+
+def resolve_secret_detectors(rows: list[dict[str, Any]]) -> None:
+    """Show detector names instead of the stored ordinals in ``details.detector``, in place and for display only."""
+    for row in rows:
+        details = row.get("details")
+        if isinstance(details, dict) and (name := resolve_detector_name(details.get("detector"))):
+            details["detector"] = name

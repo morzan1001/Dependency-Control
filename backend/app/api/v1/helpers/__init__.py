@@ -24,7 +24,6 @@ from app.api.v1.helpers.auth import (
     send_verification_email,
 )
 from app.api.v1.helpers.callgraph import (
-    check_callgraph_access,
     detect_format,
     parse_generic_format,
     parse_madge_format,
@@ -44,12 +43,13 @@ from app.api.v1.helpers.integrations import (
 )
 from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.projects import (
-    admin_survival_guard,
     apply_system_settings_enforcement,
+    authorize_waiver_read,
     build_user_project_query,
     check_project_access,
     generate_project_api_key,
     is_write_superuser,
+    last_admin_guard,
     may_read_projects,
 )
 from app.api.v1.helpers.responses import (
@@ -79,10 +79,10 @@ from app.api.v1.helpers.teams import (
     check_team_access,
     enrich_team_with_usernames,
     fetch_and_enrich_team,
-    get_member_role,
     get_team_with_access,
     resolve_team_names,
     team_refs,
+    visible_teams_filter,
 )
 from app.api.v1.helpers.users import (
     check_admin_or_self,
@@ -120,9 +120,9 @@ __all__ = [
     # Integration helpers
     "SlackOAuthError",
     # Project helpers
-    "admin_survival_guard",
     "aggregate_stats_by_category",
     "apply_system_settings_enforcement",
+    "authorize_waiver_read",
     "build_findings_severity_map",
     "build_hotspot_priority_reasons",
     # Pagination helpers
@@ -137,7 +137,6 @@ __all__ = [
     # User helpers
     "check_admin_or_self",
     # Callgraph helpers
-    "check_callgraph_access",
     "check_project_access",
     "check_team_access",
     # Webhook helpers
@@ -165,7 +164,6 @@ __all__ = [
     "get_latest_scan_ids",
     # Auth helpers
     "get_logo_path",
-    "get_member_role",
     "get_projects_with_scans",
     "get_sort_field",
     "get_team_with_access",
@@ -174,6 +172,7 @@ __all__ = [
     "get_webhook_or_404",
     "is_2fa_setup_mode",
     "is_write_superuser",
+    "last_admin_guard",
     "load_from_gridfs",
     "may_read_projects",
     "parse_generic_format",
@@ -191,4 +190,5 @@ __all__ = [
     "send_system_invitation_email",
     "send_verification_email",
     "team_refs",
+    "visible_teams_filter",
 ]

@@ -495,37 +495,27 @@ class TestRemoveTeamMember:
 
 
 class TestDeleteTeamPermissions:
-    """delete_team has dual-path permission logic: team:delete OR owner role."""
+    """team:delete deletes any team; everyone else has to be an admin of it."""
 
-    def test_user_with_team_delete_bypasses_ownership_check(self, admin_user):
+    def test_user_with_team_delete_needs_no_membership(self, admin_user):
         from app.api.v1.endpoints.teams import delete_team
 
-        db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN)])
+        db = _fake_db_with_team([("someone-else", TEAM_ROLE_ADMIN)])
 
-        # check_team_access is NOT called when has_permission("team:delete") is True
-        with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock) as mock_access:
-            asyncio.run(delete_team(team_id="team-1", current_user=admin_user, db=db))
+        asyncio.run(delete_team(team_id="team-1", current_user=admin_user, db=db))
 
-        mock_access.assert_not_called()
         assert "team-1" not in db.teams._docs
 
-    def test_user_without_team_delete_must_be_owner(self, regular_user):
+    def test_user_without_team_delete_must_be_a_team_admin(self, regular_user):
         from app.api.v1.endpoints.teams import delete_team
 
-        with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock) as mock_access:
-            mock_access.side_effect = HTTPException(status_code=403, detail="Not enough permissions")
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(
-                    delete_team(
-                        team_id="team-1",
-                        current_user=regular_user,
-                        db=MagicMock(),
-                    )
-                )
+        db = _fake_db_with_team([("someone-else", TEAM_ROLE_ADMIN), (regular_user.id, TEAM_ROLE_MEMBER)])
+
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(delete_team(team_id="team-1", current_user=regular_user, db=db))
 
         assert exc_info.value.status_code == 403
-        call_kwargs = mock_access.call_args
-        assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_ADMIN
+        assert "team-1" in db.teams._docs
 
 
 class TestTeamScopingAndRolePersistence:

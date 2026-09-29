@@ -2,86 +2,12 @@
 
 from typing import Any
 
-from fastapi import HTTPException
-from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.v1.helpers.projects import (
-    is_write_superuser,
-    max_project_role,
-    may_read_projects,
-    team_derived_role,
-)
-from app.core.constants import (
-    PROJECT_ROLE_EDITOR,
-    PROJECT_ROLES,
-)
-from app.core.permissions import Permissions, has_permission
 from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
-from app.models.user import User
-from app.repositories import ProjectRepository, TeamRepository
 from app.services.aggregation.components import canonical_module_key, npm_package_key
 
-_MSG_ACCESS_DENIED = "Access denied"
 _NODE_MODULES = "node_modules/"
 _ANALYZED_MODULES_KEY = "__analyzed_modules__"
-
-
-def _member_role(members: list[dict[str, Any]], user_id: str) -> str | None:
-    """Return the role of ``user_id`` in a members list, or None if absent."""
-    for member in members:
-        if member.get("user_id") == user_id:
-            return member.get("role")
-    return None
-
-
-async def _effective_project_role(
-    project: dict[str, Any],
-    user_id: str,
-    team_repo: TeamRepository,
-) -> str | None:
-    """MAX(direct member role, role from any owning team), or None if not a member."""
-    direct_role = _member_role(project.get("members", []), user_id)
-    team_role = await team_derived_role(project.get("team_ids") or [], user_id, team_repo)
-
-    return max_project_role(direct_role, team_role)
-
-
-async def check_callgraph_access(
-    project_id: str,
-    user: User,
-    db: AsyncIOMotorDatabase,
-    require_write: bool = False,
-) -> dict[str, Any]:
-    """Verify callgraph access and return the raw project document, or raise 403/404.
-
-    Mirrors ``check_project_access``: project:update/project:delete is the write
-    superuser, project:read_all is read-only, members need editor or admin to write,
-    and a member must hold a project-read permission besides their role.
-    """
-    project_repo = ProjectRepository(db)
-    team_repo = TeamRepository(db)
-
-    project = await project_repo.get_raw_by_id(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    if is_write_superuser(user):
-        return project
-
-    if not require_write and has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
-        return project
-
-    role = await _effective_project_role(project, str(user.id), team_repo)
-    if role is None:
-        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
-
-    if not may_read_projects(user):
-        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
-
-    if require_write and PROJECT_ROLES.index(role) < PROJECT_ROLES.index(PROJECT_ROLE_EDITOR):
-        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
-
-    return project
 
 
 def callgraph_entry_count(data: dict[str, Any]) -> int:

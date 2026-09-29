@@ -9,7 +9,7 @@ import pytest
 
 from app.models.project import ProjectMember
 from app.models.user import User
-from app.schemas.project import ProjectMemberUpdate, ProjectNotificationSettings
+from app.schemas.project import ProjectNotificationSettings
 from app.schemas.user import UserSignup, UserUpdate, UserUpdateMe
 
 _TYPO = {"scan_kompletiert": ["email"], "vulnerability_found": ["email"]}
@@ -25,7 +25,6 @@ _SANE = {"vulnerability_found": ["email"]}
             lambda p: UserSignup(email="a@b.co", username="u", password="Str0ng!pass", notification_preferences=p),
             id="UserSignup",
         ),
-        pytest.param(lambda p: ProjectMemberUpdate(notification_preferences=p), id="ProjectMemberUpdate"),
         pytest.param(
             lambda p: ProjectNotificationSettings(notification_preferences=p), id="ProjectNotificationSettings"
         ),
@@ -35,7 +34,7 @@ def test_request_schemas_drop_what_the_reader_would_drop(build):
     assert build(_TYPO).notification_preferences == _SANE
 
 
-@pytest.mark.parametrize("schema", [UserUpdate, UserUpdateMe, ProjectMemberUpdate])
+@pytest.mark.parametrize("schema", [UserUpdate, UserUpdateMe])
 def test_a_field_the_client_never_sent_stays_absent(schema):
     """`model_dump(exclude_unset=True)` drives these updates, so an unsent field must not arrive as
     an empty dict and wipe the stored preferences."""

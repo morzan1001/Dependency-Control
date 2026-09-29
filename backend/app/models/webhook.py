@@ -3,10 +3,10 @@ Webhook model for MongoDB storage.
 """
 
 from datetime import datetime
-from typing import Literal
 
 from pydantic import ConfigDict, field_validator
 
+from app.core.constants import WebhookType
 from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
 from app.services.webhooks.validation import (
@@ -25,7 +25,7 @@ class Webhook(MongoDocument, CreatedAtModel):
     secret: str | None = None
     headers: dict[str, str] | None = None
     is_active: bool = True
-    webhook_type: Literal["generic", "teams"] = "generic"
+    webhook_type: WebhookType = "generic"
     last_triggered_at: datetime | None = None
     last_failure_at: datetime | None = None
 

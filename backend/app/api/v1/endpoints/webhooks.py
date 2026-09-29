@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import HTTPException, Query
 
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -18,7 +18,6 @@ from app.api.v1.helpers import (
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
 from app.core.permissions import Permissions
-from app.models.user import User
 from app.models.webhook import Webhook
 from app.repositories import WebhookRepository
 from app.schemas.webhook import (
@@ -79,7 +78,7 @@ async def list_webhooks(
 @router.post("/global/", response_model=WebhookResponse, status_code=201, responses=RESP_AUTH)
 async def create_global_webhook(
     webhook_in: WebhookCreate,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> Webhook:
     """Create a global webhook, triggered for all projects."""
@@ -93,7 +92,7 @@ async def create_global_webhook(
 
 @router.get("/global/", responses=RESP_AUTH)
 async def list_global_webhooks(
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    current_user: deps.SystemManagerDep,
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,

@@ -11,6 +11,7 @@ from packaging.version import parse as parse_version
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.projects import project_admin_ids
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from app.core.config import settings
 from app.core.permissions import Permissions
@@ -314,28 +315,18 @@ def _build_advisory_html(
     return final_html, findings_text_block
 
 
-def _collect_admin_ids(affected_projects_map: dict[str, Project]) -> set[str]:
-    """Collect unique admin member IDs across all affected projects."""
-    admin_ids: set[str] = set()
-    for project in affected_projects_map.values():
-        for member in project.members:
-            if member.role == "admin":
-                admin_ids.add(member.user_id)
-    return admin_ids
-
-
 def _group_projects_by_admin(
     affected_projects_map: dict[str, Project],
+    admins_by_project: dict[str, set[str]],
     project_findings: dict[str, list[str]],
     users_dict: dict[str, Any],
 ) -> dict[str, dict]:
     """Group affected projects under each admin user that should be notified."""
     user_notification_map: dict[str, dict] = {}
     for pid, project in affected_projects_map.items():
-        for member in project.members:
-            if member.role != "admin" or member.user_id not in users_dict:
+        for uid in sorted(admins_by_project[pid]):
+            if uid not in users_dict:
                 continue
-            uid = member.user_id
             if uid not in user_notification_map:
                 user_notification_map[uid] = {"user": users_dict[uid], "projects": []}
             user_notification_map[uid]["projects"].append(
@@ -398,12 +389,15 @@ async def _notify_advisory_admins(
     forced_channels: Any,
 ) -> int:
     """Group affected projects by admin members and queue advisory notifications. Returns unique user count."""
-    all_admin_ids = _collect_admin_ids(affected_projects_map)
+    admins_by_project = await project_admin_ids(list(affected_projects_map.values()), TeamRepository(db))
+    all_admin_ids = set().union(*admins_by_project.values())
 
     admin_users = await user_repo.find_many({"_id": {"$in": list(all_admin_ids)}, "is_active": True}, limit=2000)
     users_dict = {str(u.id): u for u in admin_users}
 
-    user_notification_map = _group_projects_by_admin(affected_projects_map, project_findings, users_dict)
+    user_notification_map = _group_projects_by_admin(
+        affected_projects_map, admins_by_project, project_findings, users_dict
+    )
 
     if not payload.dry_run:
         for data in user_notification_map.values():

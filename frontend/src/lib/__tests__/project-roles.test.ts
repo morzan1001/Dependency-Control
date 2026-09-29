@@ -16,7 +16,10 @@ import {
 } from '../project-roles'
 import type { Project } from '@/types/project'
 
-function makeProject(members: Array<{ user_id: string; role: string; inherited_from?: string }> = [], ownerId?: string): Project {
+function makeProject(
+  members: Array<{ user_id: string; role: string; inherited_from?: string; effective_role?: string }> = [],
+  ownerId?: string,
+): Project {
   return {
     id: 'p1',
     name: 'Proj',
@@ -53,9 +56,13 @@ describe('hasProjectRole — project:read_all is READ-ONLY (audit #1)', () => {
     expect(canUpdateProject(project, AUDITOR, readAll)).toBe(false)
     expect(canCreateProjectWaiver(project, AUDITOR, readAll)).toBe(false)
   })
+
+  it('waiver:manage governs global waivers only; a project waiver needs an editor role', () => {
+    expect(canCreateProjectWaiver(project, AUDITOR, ['waiver:manage'])).toBe(false)
+  })
 })
 
-describe('hasProjectRole — WRITE superuser (project:update / project:delete)', () => {
+describe('hasProjectRole — WRITE superuser (project:update); project:delete deletes only', () => {
   const project = makeProject()
 
   it('project:update satisfies any required role and bypasses membership', () => {
@@ -66,22 +73,28 @@ describe('hasProjectRole — WRITE superuser (project:update / project:delete)',
     expect(isProjectAdmin(project, STRANGER, perms)).toBe(true)
     // member management gate (admin-only) must open for the write superuser
     expect(canManageProjectMembers(project, STRANGER, perms)).toBe(true)
-    expect(canDeleteProject(project, STRANGER, perms)).toBe(true)
   })
 
-  it('project:delete also satisfies the admin gate', () => {
+  it('project:update does not open the deletion', () => {
+    expect(canDeleteProject(project, STRANGER, ['project:update'])).toBe(false)
+  })
+
+  it('project:delete opens the deletion and nothing else', () => {
     const perms = ['project:delete']
-    expect(isProjectAdmin(project, STRANGER, perms)).toBe(true)
     expect(canDeleteProject(project, STRANGER, perms)).toBe(true)
-    expect(canManageProjectMembers(project, STRANGER, perms)).toBe(true)
+    expect(isProjectAdmin(project, STRANGER, perms)).toBe(false)
+    expect(canManageProjectMembers(project, STRANGER, perms)).toBe(false)
+    expect(canRotateApiKey(project, STRANGER, perms)).toBe(false)
+    expect(canBindGitLabProject(perms)).toBe(false)
   })
 })
 
 describe('getUserProjectRole / role hierarchy', () => {
-  it('owner beats everything', () => {
+  it('a legacy owner_id grants nothing, as check_project_access ignores it', () => {
     const project = makeProject([], 'owner-1')
-    expect(getUserProjectRole(project, 'owner-1')).toBe('owner')
-    expect(isProjectAdmin(project, 'owner-1', [])).toBe(true)
+    expect(getUserProjectRole(project, 'owner-1')).toBeNull()
+    expect(isProjectAdmin(project, 'owner-1', [])).toBe(false)
+    expect(canDeleteProject(project, 'owner-1', [])).toBe(false)
   })
 
   it('direct member roles resolve and respect the hierarchy', () => {
@@ -102,6 +115,13 @@ describe('getUserProjectRole / role hierarchy', () => {
     const project = makeProject([{ user_id: 'a', role: 'admin' }])
     expect(getUserProjectRole(project, STRANGER)).toBeNull()
     expect(hasProjectRole(project, STRANGER, 'viewer', [])).toBe(false)
+  })
+
+  it('a direct viewer the API reports as effective admin is gated as admin', () => {
+    const project = makeProject([{ user_id: 'v', role: 'viewer', effective_role: 'admin' }])
+    expect(getUserProjectRole(project, 'v')).toBe('admin')
+    expect(canManageProjectMembers(project, 'v', [])).toBe(true)
+    expect(canDeleteProject(project, 'v', ['project:update'])).toBe(true)
   })
 
   it('team-derived members are already merged into project.members by the API (team admin -> admin)', () => {
@@ -145,16 +165,14 @@ describe('project webhook writes need membership or the global write grant', () 
   })
 
   it('the global write grant writes without membership', () => {
-    for (const grant of ['project:update', 'project:delete']) {
-      expect(canCreateProjectWebhook(project, STRANGER, [grant])).toBe(true)
-      expect(canDeleteProjectWebhook(project, STRANGER, [grant])).toBe(true)
-    }
+    expect(canCreateProjectWebhook(project, STRANGER, ['project:update'])).toBe(true)
+    expect(canDeleteProjectWebhook(project, STRANGER, ['project:update'])).toBe(true)
   })
 })
 
 describe('the GitLab binding follows the API: system:manage or the global write grant', () => {
   it('opens for each of those grants', () => {
-    for (const grant of ['system:manage', 'project:update', 'project:delete']) {
+    for (const grant of ['system:manage', 'project:update']) {
       expect(canBindGitLabProject([grant])).toBe(true)
     }
   })

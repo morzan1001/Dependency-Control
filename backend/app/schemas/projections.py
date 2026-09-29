@@ -14,15 +14,6 @@ from app.models.stats import Stats
 from app.models.types import PyObjectId
 
 
-class ProjectMinimal(BaseModel):
-    """Project with ID and name only (for lookups/maps)."""
-
-    id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
-    name: str
-
-    model_config = ConfigDict(populate_by_name=True)
-
-
 class ProjectWithScanId(BaseModel):
     """Project with ID, name, latest scan ID, and the branch fields head resolution reads."""
 

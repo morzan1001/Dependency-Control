@@ -14,6 +14,8 @@ class TeamMemberSchema(BaseModel):
     # Deliberately not TeamRole: read_team serves from an aggregate that bypasses the storage
     # model, so this is the last view that can still render a team holding a pre-existing bad role.
     role: str
+    # "manual", or the "<provider>:<instance id>" of the sync that owns the entry.
+    source: str | None = None
 
 
 class TeamRef(BaseModel):

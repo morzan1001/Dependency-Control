@@ -232,7 +232,7 @@ class TestHTTP422OnOutOfBoundsParams:
     def _patched_findings_call(self, test_client, limit):
         """Fire a findings request with handler internals stubbed so only Query validation decides 422."""
         with (
-            patch(f"{ENDPOINTS}._resolve_scan_for_findings", new_callable=AsyncMock),
+            patch(f"{ENDPOINTS}._require_scan_access", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}.FindingRepository") as mock_repo_cls,
             patch(
                 f"{ENDPOINTS}.build_pagination_response",

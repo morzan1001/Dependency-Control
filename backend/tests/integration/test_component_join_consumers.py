@@ -140,7 +140,12 @@ async def test_remediation_plan_marks_the_package_direct(db, seeded):
     from app.services.chat.tools.registry import ChatToolRegistry
 
     await db.findings.update_one({"_id": "f1"}, {"$set": {"severity": "CRITICAL"}})
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
     plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
 
     step = plan["plan"][0]
@@ -195,7 +200,12 @@ async def test_find_component_usage_accepts_a_qualified_component(db, seeded):
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry
 
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
     result = await ChatToolRegistry().execute_tool("find_component_usage", {"component_name": QUALIFIED}, user, db)
 
     assert [m["component"] for m in result["matches"]] == [BARE]
@@ -257,7 +267,12 @@ async def test_inferred_direct_is_reported_the_same_way_by_both_tools(db, seeded
 
     await db.dependencies.update_one({"_id": "d1"}, {"$set": {"direct_inferred": True}})
     await db.findings.update_one({"_id": "f1"}, {"$set": {"severity": "CRITICAL"}})
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
     registry = ChatToolRegistry()
 
     plan = await registry.execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
@@ -285,7 +300,12 @@ async def test_declared_direct_still_outranks_inferred_direct_in_the_plan(db, se
     declared["purl"] = f"pkg:maven/io.netty/netty-common@{VERSION}"
     await db.dependencies.insert_one(declared)
 
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
     plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
 
     assert [s["direct_confidence"] for s in plan["plan"]] == ["declared", "inferred"]

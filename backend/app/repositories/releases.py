@@ -36,10 +36,9 @@ class ReleaseRepository(BaseRepository[Release]):
             "environment": release.environment,
             "scan_id": release.scan_id,
         }
-        # Only carried when this payload names one, so a later job of the same CI pipeline
-        # cannot null the version the deploy job recorded.
+        # CI sends an unset tag as "", which must not blank the version the deploy job recorded.
         changes: dict[str, Any] = {"released_at": release.released_at}
-        if release.version is not None:
+        if release.version:
             changes["version"] = release.version
         with track_db_operation(self.collection_name, "update_one"):
             try:

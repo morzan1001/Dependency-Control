@@ -482,3 +482,23 @@ class TestIncidentCardsBucketPerAdvisory:
         cards = self._cards(finding)
 
         assert set(cards) == {RecommendationType.RANSOMWARE_RISK}
+
+
+class TestWaivedAdvisoriesMakeNoCard:
+    def _log4j(self):
+        doc = _vuln("log4j-core", severity="MEDIUM", is_kev=True, kev_ransomware=True, epss_score=0.93)
+        waived = {"id": _RANSOMWARE_CVE, "in_kev": True, "kev_ransomware_use": True, "epss_score": 0.93}
+        doc["details"]["vulnerabilities"] = [{**waived, "waived": True}, {"id": "CVE-2021-45105", "epss_score": 0.01}]
+        return doc
+
+    def test_a_waived_ransomware_cve_raises_no_card(self):
+        assert detect_known_exploits([self._log4j()]) == []
+
+    def test_a_card_names_only_the_live_cves_it_is_about(self):
+        doc = self._log4j()
+        doc["details"]["vulnerabilities"].append({"id": _KEV_ONLY_CVE, "in_kev": True, "kev_ransomware_use": True})
+
+        (card,) = detect_known_exploits([doc])
+
+        assert card.type == RecommendationType.RANSOMWARE_RISK
+        assert card.action["cves"] == [_KEV_ONLY_CVE]

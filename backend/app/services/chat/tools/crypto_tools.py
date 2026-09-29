@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.user import User
+from app.schemas.analytics import ScopeKind
 from app.services.compliance.renderers.base import coverage_statement
 
 _NOISY_RULE_SAMPLE = 10
@@ -192,13 +193,12 @@ async def get_crypto_trends(
 async def generate_pqc_migration_plan(
     db: AsyncIOMotorDatabase,
     *,
-    user: User,
     project_id: str,
     limit: int = 500,
 ) -> dict[str, Any]:
-    """Generate the PQC migration plan for one project; ScopeResolver re-runs the project-member check."""
+    """Generate the PQC migration plan for one project the caller already authorised."""
     pkg = _pkg()
-    resolved = await pkg.ScopeResolver(db, user).resolve(scope="project", scope_id=project_id)
+    resolved = pkg.ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     gen = pkg.PQCMigrationPlanGenerator(db)
     resp = await gen.generate(resolved=resolved, limit=limit)
     dumped: dict[str, Any] = resp.model_dump()
@@ -208,11 +208,11 @@ async def generate_pqc_migration_plan(
 async def list_compliance_reports(
     db: AsyncIOMotorDatabase,
     *,
-    project_id: str | None = None,
+    visibility: dict[str, Any],
     framework: str | None = None,
     limit: int = 10,
 ) -> dict[str, Any]:
-    """Recent compliance reports (metadata only, no artifacts)."""
+    """Recent compliance reports among those ``visibility`` admits (metadata only, no artifacts)."""
     pkg = _pkg()
     fw: Any | None = None
     if framework:
@@ -220,12 +220,7 @@ async def list_compliance_reports(
             fw = pkg.ReportFramework(framework)
         except ValueError:
             fw = None
-    reports = await pkg.ComplianceReportRepository(db).list(
-        scope="project" if project_id else None,
-        scope_id=project_id,
-        framework=fw,
-        limit=limit,
-    )
+    reports = await pkg.ComplianceReportRepository(db).list(visibility=visibility, framework=fw, limit=limit)
     return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 
 
@@ -261,7 +256,7 @@ async def get_framework_evaluation_summary(
         return {"error": f"Unknown framework: {framework}"}
     resolver = pkg.ScopeResolver(db, user)
     resolved = await resolver.resolve(
-        scope=cast(Literal["project", "team", "global", "user"], scope),
+        scope=cast(ScopeKind, scope),
         scope_id=scope_id,
     )
 

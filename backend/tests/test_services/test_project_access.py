@@ -47,7 +47,7 @@ def _run(user, *, required_role=None, project=None, team_doc=None):
     mock_proj_repo.get_by_id = AsyncMock(return_value=project)
 
     mock_team_repo = MagicMock()
-    mock_team_repo.get_raw_by_id = AsyncMock(return_value=team_doc)
+    mock_team_repo.members_by_team = AsyncMock(return_value={team_doc["_id"]: team_doc["members"]} if team_doc else {})
 
     with patch(f"{HELPERS_PROJECTS}.ProjectRepository", return_value=mock_proj_repo):
         with patch(f"{HELPERS_PROJECTS}.TeamRepository", return_value=mock_team_repo):

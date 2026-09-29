@@ -8,9 +8,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import RELEASE_FLAG_RECONCILE_BATCH_SIZE
 from app.core.init_db import RELEASES_LATEST_SORT
-from app.repositories import ProjectRepository, ScanRepository
+from app.repositories import ScanRepository
 from app.schemas.projections import ProjectWithScanId
-from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
+from app.services.analytics.scopes import read_scope_projects
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,5 @@ async def resolve_scan_ids(
 
     if projects is None:
         query: dict[str, Any] = {} if project_ids is None else {"_id": {"$in": list(project_ids)}}
-        projects = ensure_whole_scope(
-            await ProjectRepository(db).find_many_with_scan_id(query, limit=scope_probe_limit())
-        )
+        projects = await read_scope_projects(db, query)
     return await ScanRepository(db).get_latest_active_scan_ids(list(projects))

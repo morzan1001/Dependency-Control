@@ -19,6 +19,7 @@ from app.api.v1.helpers.analytics import (
     get_user_project_ids,
     require_analytics_permission,
 )
+from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service
@@ -26,6 +27,7 @@ from app.core.config import settings
 from app.core.constants import SCAN_USABLE_STATUSES, SLOWEST_PACKAGES_LIMIT
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
+from app.models.project import Project
 from app.repositories import (
     AnalysisResultRepository,
     DependencyRepository,
@@ -67,8 +69,6 @@ from app.services.update_frequency_fold import (
     select_window,
     window_bars,
 )
-
-from ._shared import _MSG_ACCESS_DENIED
 
 logger = logging.getLogger(__name__)
 
@@ -208,15 +208,7 @@ async def get_project_update_frequency(
     scanned live branch) so cross-branch differences are not counted as updates.
     """
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
-
-    project_repo = ProjectRepository(db)
-    project = await project_repo.get_raw_by_id(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    user_project_ids = await get_user_project_ids(current_user, db)
-    if project_id not in user_project_ids:
-        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
+    project = await check_project_access(project_id, current_user, db)
 
     # The rollup covers exactly the default view; an explicit branch or the
     # max_scans mode still needs the live walk over the scan history.
@@ -244,7 +236,7 @@ async def get_project_update_frequency(
             request,
             compute_update_frequency(
                 project_id=project_id,
-                project_name=project.get("name", "Unknown"),
+                project_name=project.name,
                 scan_repo=ScanRepository(db),
                 dep_repo=DependencyRepository(db),
                 analysis_repo=AnalysisResultRepository(db),
@@ -252,8 +244,8 @@ async def get_project_update_frequency(
                 window_days=window_days,
                 release_fetcher=_build_release_fetcher(),
                 branch=branch,
-                deleted_branches=project.get("deleted_branches"),
-                default_branch=project.get("default_branch"),
+                deleted_branches=project.deleted_branches,
+                default_branch=project.default_branch,
             ),
         )
 
@@ -482,20 +474,18 @@ async def _rollup_slowest_packages(
     ], len(counts)
 
 
-async def _rollup_project_metrics(
-    db: DatabaseDep, project: dict[str, Any], window_days: int
-) -> UpdateFrequencyMetrics | None:
+async def _rollup_project_metrics(db: DatabaseDep, project: Project, window_days: int) -> UpdateFrequencyMetrics | None:
     """Metrics folded from the delta ledger, or None when it cannot answer for this project.
 
     A partial fold falls back to the live walk rather than being served: one
     project's walk is affordable, and it reads the scans the ledger has not
     reached yet.
     """
-    project_id = str(project["_id"])
+    project_id = project.id
     since = cast(datetime, window_cutoff(window_days))
     activity = await window_scans_by_branch(ScanRepository(db), [project_id], since)
     by_branch = {branch: seen for (_project_id, branch), seen in activity.items()}
-    branch = select_primary_branch(by_branch, project.get("default_branch"), project.get("deleted_branches"))
+    branch = select_primary_branch(by_branch, project.default_branch, project.deleted_branches)
     if branch is None:
         return None
 
@@ -510,7 +500,7 @@ async def _rollup_project_metrics(
     slowest_packages, outdated_backlog = await _rollup_slowest_packages(db, resolved.bars)
     return folded.to_metrics(
         project_id,
-        project.get("name", "Unknown"),
+        project.name,
         branch=resolved.branch,
         slowest_packages=slowest_packages,
         window_scan_cap=resolved.window_scan_cap,

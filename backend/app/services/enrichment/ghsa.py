@@ -66,10 +66,7 @@ class GHSAProvider:
                     if response.status_code == 404:
                         logger.debug(f"GHSA advisory not found: {ghsa_id}")
                         # Empty payload becomes a negative cache entry.
-                        return GHSAData(
-                            ghsa_id=ghsa_id,
-                            github_url=f"https://github.com/advisories/{ghsa_id}",
-                        ).model_dump()
+                        return GHSAData(ghsa_id=ghsa_id).model_dump()
 
                     if response.status_code == 403:
                         wait_time = self._retry_delay * (2**attempt)
@@ -108,7 +105,7 @@ class GHSAProvider:
                         published_at=data.get("published_at"),
                         updated_at=data.get("updated_at"),
                         withdrawn_at=data.get("withdrawn_at"),
-                        github_url=data.get("html_url", f"https://github.com/advisories/{ghsa_id}"),
+                        github_url=data.get("html_url") or "",
                         aliases=aliases,
                     )
 
@@ -199,10 +196,7 @@ class GHSAProvider:
                     results[ghsa_id] = ghsa_data
                 else:
                     # Empty placeholder for lookups that failed all retries.
-                    results[ghsa_id] = GHSAData(
-                        ghsa_id=ghsa_id,
-                        github_url=f"https://github.com/advisories/{ghsa_id}",
-                    )
+                    results[ghsa_id] = GHSAData(ghsa_id=ghsa_id)
 
         logger.info(
             f"Resolved {len(results)} GHSA IDs "

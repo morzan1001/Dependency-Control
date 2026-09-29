@@ -7,7 +7,7 @@ from pymongo import DESCENDING
 
 from app.core.metrics import track_db_operation
 from app.models.compliance_report import ComplianceReport
-from app.repositories.base import BaseRepository
+from app.repositories.base import BaseRepository, and_filters
 from app.schemas.compliance import EvaluationCoverage, ReportFramework, ReportStatus
 
 
@@ -27,14 +27,15 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
     async def list(
         self,
         *,
+        visibility: dict[str, Any],
         scope: str | None = None,
         scope_id: str | None = None,
         framework: ReportFramework | None = None,
         status: ReportStatus | None = None,
         skip: int = 0,
         limit: int = 50,
-        extra_filter: dict[str, Any] | None = None,
     ) -> list[ComplianceReport]:
+        """Reports matching the filters among those ``visibility`` admits; every caller must say who sees what."""
         query: dict[str, Any] = {}
         if scope:
             query["scope"] = scope
@@ -44,9 +45,7 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
             query["framework"] = framework.value if hasattr(framework, "value") else framework
         if status:
             query["status"] = status.value if hasattr(status, "value") else status
-        if extra_filter:
-            # $and so an $or visibility clause doesn't collide with the field-level filters.
-            query = {"$and": [query, extra_filter]} if query else extra_filter
+        query = and_filters(query, visibility)
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find(query).sort("requested_at", DESCENDING).skip(skip).limit(limit)
             docs = await cursor.to_list(length=limit)

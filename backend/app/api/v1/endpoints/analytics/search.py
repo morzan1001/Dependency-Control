@@ -4,19 +4,21 @@ import re
 from typing import Annotated, Any
 
 from fastapi import Query
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
     ReleaseEnvironmentQuery,
     get_projects_with_scans,
-    get_user_project_ids,
+    get_user_projects,
     require_analytics_permission,
     scope_resolution_counts,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
 from app.core.permissions import Permissions
+from app.models.user import User
 from app.repositories import (
     DependencyRepository,
     FindingRepository,
@@ -31,6 +33,24 @@ from app.services.aggregation.components import build_component_index, lookup_co
 from app.services.recommendation.common import get_attr
 
 router = CustomAPIRouter()
+
+
+async def _resolve_search_scope(
+    current_user: User, db: AsyncIOMotorDatabase, project_ids: str | None, release_environment: str | None
+) -> tuple[dict[str, str], list[str], dict[str, int]]:
+    """(project names, scans to search, scope counters) over the caller's projects, narrowed to ``project_ids``."""
+    require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
+    projects = await get_user_projects(current_user, db)
+    if project_ids:
+        requested = {pid.strip() for pid in project_ids.split(",")}
+        projects = [p for p in projects if p.id in requested]
+    project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
+    resolved, without_release = scope_resolution_counts([p.id for p in projects], scan_ids)
+    return project_name_map, scan_ids, {"resolved_projects": resolved, "projects_without_release": without_release}
+
+
+def _page_fields(skip: int, limit: int, counts: dict[str, int]) -> dict[str, int]:
+    return {"page": skip // limit + 1, "size": limit, **counts}
 
 
 def _passes_vuln_filter(
@@ -114,36 +134,12 @@ async def search_dependencies_advanced(
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> DependencySearchResponse:
     """Advanced dependency search with multiple filters and pagination."""
-    require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
-
-    accessible_project_ids = await get_user_project_ids(current_user, db)
-
-    if project_ids:
-        requested_ids = [pid.strip() for pid in project_ids.split(",")]
-        accessible_project_ids = [pid for pid in accessible_project_ids if pid in requested_ids]
-
-    if not accessible_project_ids:
-        return DependencySearchResponse(
-            items=[], total=0, page=0, size=limit, resolved_projects=0, projects_without_release=0
-        )
+    project_name_map, scan_ids, counts = await _resolve_search_scope(current_user, db, project_ids, release_environment)
+    if not scan_ids:
+        return DependencySearchResponse(items=[], total=0, **_page_fields(skip, limit, counts))
 
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
-
-    project_name_map, scan_ids = await get_projects_with_scans(
-        accessible_project_ids, db, release_environment=release_environment
-    )
-    resolved_projects, projects_without_release = scope_resolution_counts(accessible_project_ids, scan_ids)
-
-    if not scan_ids:
-        return DependencySearchResponse(
-            items=[],
-            total=0,
-            page=0,
-            size=limit,
-            resolved_projects=resolved_projects,
-            projects_without_release=projects_without_release,
-        )
 
     query = {"scan_id": {"$in": scan_ids}, "name": {"$regex": re.escape(q), "$options": "i"}}
     if version:
@@ -199,14 +195,7 @@ async def search_dependencies_advanced(
 
     results = _build_search_results(dependencies, has_vulnerabilities, vuln_status_map, project_name_map)
 
-    return DependencySearchResponse(
-        items=results,
-        total=total_count,
-        page=(skip // limit) + 1 if limit > 0 else 1,
-        size=limit,
-        resolved_projects=resolved_projects,
-        projects_without_release=projects_without_release,
-    )
+    return DependencySearchResponse(items=results, total=total_count, **_page_fields(skip, limit, counts))
 
 
 def _get_description(vuln: dict, finding: Any) -> str | None:
@@ -428,35 +417,11 @@ async def search_vulnerabilities(
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> VulnerabilitySearchResponse:
     """Search vulnerabilities across accessible projects by id, aliases, nested ids, and description."""
-    require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
-
-    accessible_project_ids = await get_user_project_ids(current_user, db)
-
-    if project_ids:
-        requested_ids = [pid.strip() for pid in project_ids.split(",")]
-        accessible_project_ids = [pid for pid in accessible_project_ids if pid in requested_ids]
-
-    if not accessible_project_ids:
-        return VulnerabilitySearchResponse(
-            items=[], total=0, page=0, size=limit, resolved_projects=0, projects_without_release=0
-        )
+    project_name_map, scan_ids, counts = await _resolve_search_scope(current_user, db, project_ids, release_environment)
+    if not scan_ids:
+        return VulnerabilitySearchResponse(items=[], total=0, **_page_fields(skip, limit, counts))
 
     finding_repo = FindingRepository(db)
-
-    project_name_map, scan_ids = await get_projects_with_scans(
-        accessible_project_ids, db, release_environment=release_environment
-    )
-    resolved_projects, projects_without_release = scope_resolution_counts(accessible_project_ids, scan_ids)
-
-    if not scan_ids:
-        return VulnerabilitySearchResponse(
-            items=[],
-            total=0,
-            page=0,
-            size=limit,
-            resolved_projects=resolved_projects,
-            projects_without_release=projects_without_release,
-        )
 
     query = _build_vuln_query(scan_ids, q, severity, finding_type, include_waived)
 
@@ -485,11 +450,4 @@ async def search_vulnerabilities(
             reverse=(sort_order == "desc"),
         )
 
-    return VulnerabilitySearchResponse(
-        items=results,
-        total=total_count,
-        page=(skip // limit) + 1 if limit > 0 else 1,
-        size=limit,
-        resolved_projects=resolved_projects,
-        projects_without_release=projects_without_release,
-    )
+    return VulnerabilitySearchResponse(items=results, total=total_count, **_page_fields(skip, limit, counts))

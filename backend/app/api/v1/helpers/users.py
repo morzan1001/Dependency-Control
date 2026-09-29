@@ -28,19 +28,20 @@ async def fetch_updated_user(user_id: str, db: AsyncIOMotorDatabase) -> dict[str
     return user
 
 
-def check_admin_or_self(
-    current_user: User,
-    target_user_id: str,
-    permissions: list[str],
-) -> bool:
-    """Require the current user to be an admin or the target user; return True if admin.
+async def ensure_identity_available(
+    user_repo: UserRepository, *, email: str | None = None, username: str | None = None
+) -> None:
+    """400 when the email, in any case, or the username already names an account."""
+    if email is not None and await user_repo.exists_by_email(email):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    if username is not None and await user_repo.exists_by_username(username):
+        raise HTTPException(status_code=400, detail="Username already taken")
 
-    Raises 403 if neither.
-    """
-    has_admin_perm = has_permission(current_user.permissions, permissions)
-    if not has_admin_perm and str(current_user.id) != target_user_id:
+
+def check_admin_or_self(current_user: User, target_user_id: str, permissions: list[str]) -> None:
+    """Raise 403 unless the current user holds one of ``permissions`` or is the target user."""
+    if not has_permission(current_user.permissions, permissions) and str(current_user.id) != target_user_id:
         raise HTTPException(status_code=403, detail="Not enough permissions")
-    return has_admin_perm
 
 
 def ensure_can_manage_target(caller: User, target: dict[str, Any]) -> None:

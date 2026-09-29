@@ -40,10 +40,6 @@ class BearerFinding(BaseModel):
     # Code context
     code_extract: str | None = Field(None, description="Code snippet showing the finding")
 
-    # Fingerprinting for deduplication
-    fingerprint: str | None = Field(None, description="Unique fingerprint for dedup")
-    old_fingerprint: str | None = Field(None, description="Previous fingerprint if rule changed")
-
 
 class BearerIngest(BaseIngest):
     """Schema for Bearer SAST/Data Security scan results."""

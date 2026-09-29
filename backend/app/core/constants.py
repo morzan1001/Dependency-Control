@@ -1,7 +1,7 @@
 """Shared constants used across the application."""
 
 import re
-from typing import Any, Literal, get_args
+from typing import Any, Final, Literal, get_args
 
 # Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
 # finding's ``details`` dict by the enrichment writer. Every reader of persisted
@@ -167,11 +167,12 @@ UNKNOWN_LICENSE_PATTERNS = {
     "PROPRIETARY",
 }
 
-# Project Roles
-PROJECT_ROLE_ADMIN = "admin"
-PROJECT_ROLE_EDITOR = "editor"
-PROJECT_ROLE_VIEWER = "viewer"
-PROJECT_ROLES = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN]
+# Project roles, weakest first: the order is the hierarchy.
+ProjectRole = Literal["viewer", "editor", "admin"]
+PROJECT_ROLE_ADMIN: ProjectRole = "admin"
+PROJECT_ROLE_EDITOR: ProjectRole = "editor"
+PROJECT_ROLE_VIEWER: ProjectRole = "viewer"
+PROJECT_ROLES: list[str] = list(get_args(ProjectRole))
 
 # Owning teams per project. Every project access resolves each owner's document to derive the
 # caller's role, so the list is a per-request cost, and a sync resolving past this many teams has
@@ -485,6 +486,9 @@ SCAN_DEPENDENCY_READ_LIMIT: int = 10_000
 # Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000
 
+# Projects one analytics scope may hold; the $in of 120 000 ids encodes to 4.8 MiB against the 16 MB BSON limit.
+ANALYTICS_MAX_SCOPE_PROJECTS: int = 100_000
+
 # Page ceilings for services reachable both through their REST endpoint and through a chat tool.
 # One name per concept, so the two entry points cannot bound the same read at different numbers.
 MAX_CRYPTO_ASSET_PAGE: int = 500
@@ -497,9 +501,6 @@ MAX_POLICY_AUDIT_PAGE: int = 200
 # post-$group $slice: it can't shrink a materialized accumulator, and capping in
 # MATCH order would drop high-EPSS/KEV CVEs. They keep the working set small via
 # pre-$group $project slimming, scalar $sum/$cond counts, $addToSet, and allowDiskUse.
-
-# Permission required to query analytics at global scope (all projects)
-PERMISSION_ANALYTICS_GLOBAL: str = "analytics:global"
 
 # Impact score calculation parameters
 IMPACT_REACH_MULTIPLIER_CAP: int = 10  # Max multiplier for affected projects
@@ -822,7 +823,6 @@ SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
 
 # Authentication providers
 AUTH_PROVIDER_LOCAL = "local"
-AUTH_PROVIDER_OIDC = "oidc"
 
 # Token expiration times
 EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS: int = 24
@@ -883,6 +883,7 @@ WEBHOOK_HEADER_EVENT = "X-Webhook-Event"
 WEBHOOK_HEADER_TIMESTAMP = "X-Webhook-Timestamp"
 WEBHOOK_HEADER_ID = "X-Webhook-ID"
 WEBHOOK_HEADER_SIGNATURE = "X-Webhook-Signature"
+WebhookType = Literal["generic", "teams"]
 WEBHOOK_HEADER_TEST = "X-Webhook-Test"
 WEBHOOK_USER_AGENT_VALUE = "DependencyControl-Webhook/1.0"
 
@@ -1021,13 +1022,15 @@ AGG_KEY_SAST = "SAST-AGG"
 MAX_CROSS_LINK_GROUP_SIZE: int = 100
 
 # Waiver status values
-WAIVER_STATUS_ACCEPTED_RISK = "accepted_risk"
-WAIVER_STATUS_FALSE_POSITIVE = "false_positive"
+WAIVER_STATUS_ACCEPTED_RISK: Final = "accepted_risk"
+WAIVER_STATUS_FALSE_POSITIVE: Final = "false_positive"
 
-WAIVER_STATUSES = [
-    WAIVER_STATUS_ACCEPTED_RISK,
-    WAIVER_STATUS_FALSE_POSITIVE,
-]
+WaiverStatus = Literal["accepted_risk", "false_positive"]
+# "finding" = exact match, "file" = same rule in same file, "rule" = same rule project-wide.
+WaiverScope = Literal["finding", "file", "rule"]
+
+# A waiver change restamps only the tips of branches built within this many days.
+WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS: int = 30
 
 # Default CVSS scores used when actual score is not available
 CVSS_SEVERITY_SCORES: dict[str, float] = {

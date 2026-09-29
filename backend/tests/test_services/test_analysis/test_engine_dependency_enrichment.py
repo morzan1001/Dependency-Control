@@ -203,3 +203,14 @@ def test_empty_payload_entries_are_skipped():
     _run(db, [_entry("lodash", "4.17.21", "pkg:npm/lodash@4.17.21", {})])
 
     assert asyncio.run(db.dependency_enrichments.count_documents({})) == 0
+
+
+def test_the_recorded_sources_accumulate_across_scans_like_the_data_they_describe():
+    db = FakeDatabase()
+    purl = "pkg:npm/lodash@4.17.21"
+
+    _run(db, [_entry("lodash", "4.17.21", purl, {"license": "MIT", "enrichment_sources": ["license_compliance"]})])
+    _run(db, [_entry("lodash", "4.17.21", purl, {"deps_dev": {"stars": 1}, "enrichment_sources": ["deps_dev"]})])
+
+    doc = asyncio.run(db.dependency_enrichments.find_one({"purl": purl}))
+    assert sorted(doc["enrichment_sources"]) == ["deps_dev", "license_compliance"]

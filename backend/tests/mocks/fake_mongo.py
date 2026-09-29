@@ -1112,8 +1112,9 @@ def _run_pipeline(docs: list, pipeline: list, database: Any = None) -> list:
         elif "$addFields" in stage or "$set" in stage:
             spec = stage.get("$addFields") or stage["$set"]
             for d in results:
-                for field, expr in spec.items():
-                    value = _eval_expr(d, expr)
+                # Every field of one stage reads the stage's input, as on the server, not its siblings.
+                values = {field: _eval_expr(d, expr) for field, expr in spec.items()}
+                for field, value in values.items():
                     if value is not _REMOVE:
                         FakeCollection._set_dotted(d, field, value)
         elif "$lookup" in stage:
@@ -1702,7 +1703,8 @@ class FakeCollection:
                 upserted += 1
                 doc: dict = {}
                 doc.update(upd.get(_SET_ON_INSERT, {}))
-                doc.update(upd.get("$set", {}))
+                # The server applies every operator to the inserted document, not only $set.
+                self._apply_update(doc, upd, skip_set_on_insert=True)
                 if "_id" not in doc:
                     # Fall back to a deterministic composite key from filter fields
                     # (matches the unique-index strategy in crypto-asset upserts).
@@ -1815,3 +1817,6 @@ class FakeDatabase:
 
     def __getitem__(self, name: str) -> FakeCollection:
         return getattr(self, name)
+
+    def with_options(self, **_kwargs) -> FakeDatabase:
+        return self

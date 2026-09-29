@@ -70,8 +70,14 @@ _CASES = [
     pytest.param(
         [{"user_id": "u-1", "role": "member", "source": "manual"}],
         [TeamMember(user_id="u-1", role="admin", source=_OWN)],
-        [{"user_id": "u-1", "role": "admin", "source": _OWN}],
-        id="a hand-added member the group also holds is not duplicated",
+        [{"user_id": "u-1", "role": "member", "source": "manual"}],
+        id="a hand-added member the group also holds keeps the entry an admin gave them",
+    ),
+    pytest.param(
+        [{"user_id": "u-1", "role": "member", "source": _THEIRS}],
+        [TeamMember(user_id="u-1", role="admin", source=_OWN)],
+        [{"user_id": "u-1", "role": "member", "source": _THEIRS}],
+        id="a member another instance holds is not duplicated",
     ),
 ]
 

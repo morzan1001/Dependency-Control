@@ -3,7 +3,7 @@
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any
 
 from bson import ObjectId
 from fastapi import BackgroundTasks, HTTPException, Query
@@ -19,23 +19,25 @@ from app.core.constants import (
     MAX_CONCURRENT_COMPLIANCE_REPORTS,
     WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
 )
+from app.core.permissions import Permissions, has_permission
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
+from app.schemas.analytics import ScopeKind
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
-from app.services.analytics.scopes import ScopeResolver
+from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
+from app.services.compliance.visibility import report_visibility_filter
 
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter(prefix="/compliance", tags=["compliance-reports"])
 
-_SCOPE_PATTERN = "^(project|team|global|user)$"
 _REPORT_NOT_FOUND = "Report not found"
 
 
 class ReportRequest(BaseModel):
-    scope: Literal["project", "team", "global", "user"] = Field(..., pattern=_SCOPE_PATTERN)
+    scope: ScopeKind
     scope_id: str | None = None
     framework: ReportFramework
     format: ReportFormat
@@ -65,15 +67,7 @@ async def create_report(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ReportAck:
-    try:
-        await ScopeResolver(db, current_user).resolve(
-            scope=req.scope,
-            scope_id=req.scope_id,
-        )
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=403, detail=f"Scope resolution failed: {exc}") from exc
+    await ScopeResolver(db, current_user).resolve(scope=req.scope, scope_id=req.scope_id)
 
     repo = ComplianceReportRepository(db)
     pending_count = await repo.count_pending_for_user(current_user.id)
@@ -103,72 +97,33 @@ async def create_report(
 async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: ComplianceReport) -> bool:
     """True iff the ScopeResolver resolves the report's scope for this user; scope='user' is gated on requester id (ScopeResolver ignores scope_id there) with system:manage as an admin escape."""
     if report.scope == "user":
-        if report.requested_by == str(user.id):
-            return True
-        from app.core.permissions import Permissions, has_permission
-
-        return has_permission(getattr(user, "permissions", []) or [], Permissions.SYSTEM_MANAGE)
+        return report.requested_by == str(user.id) or has_permission(user.permissions, Permissions.SYSTEM_MANAGE)
     try:
         await ScopeResolver(db, user).resolve(scope=report.scope, scope_id=report.scope_id)
-        return True
-    except Exception:
-        # Any resolution failure (permission or missing project) must hide the report.
+    except ScopeResolutionError:
         return False
-
-
-async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict[str, Any]:
-    """Build the $or filter capturing every scope a user may see, so list pagination runs on already-filtered results."""
-    from app.core.permissions import Permissions, has_permission
-    from app.repositories.teams import TeamRepository
-
-    perms = getattr(user, "permissions", []) or []
-    is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
-    user_id = str(user.id)
-
-    branches: list[dict[str, Any]] = []
-
-    user_branch: dict[str, Any] = {"scope": "user"}
-    if not is_super:
-        user_branch["requested_by"] = user_id
-    branches.append(user_branch)
-
-    project_ids = await ScopeResolver(db, user)._list_user_project_ids()
-    if project_ids:
-        branches.append({"scope": "project", "scope_id": {"$in": project_ids}})
-
-    team_repo = TeamRepository(db)
-    user_teams = await team_repo.find_by_member(user_id)
-    team_ids = [str(t.id) for t in user_teams]
-    if team_ids:
-        branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
-
-    if is_super or has_permission(perms, Permissions.ANALYTICS_GLOBAL):
-        branches.append({"scope": "global"})
-
-    return {"$or": branches}
+    return True
 
 
 @router.get("/reports")
 async def list_reports(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    scope: str | None = Query(None, pattern=_SCOPE_PATTERN),
+    scope: ScopeKind | None = Query(None),
     scope_id: str | None = None,
     framework: ReportFramework | None = None,
     status: ReportStatus | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=MAX_COMPLIANCE_REPORT_PAGE),
 ) -> dict[str, Any]:
-    repo = ComplianceReportRepository(db)
-    visibility = await _build_visibility_filter(db, current_user)
-    reports = await repo.list(
+    reports = await ComplianceReportRepository(db).list(
+        visibility=await report_visibility_filter(db, current_user),
         scope=scope,
         scope_id=scope_id,
         framework=framework,
         status=status,
         skip=skip,
         limit=limit,
-        extra_filter=visibility,
     )
     return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 
@@ -194,7 +149,6 @@ async def get_report(
 @router.get(
     "/reports/{report_id}/download",
     responses={
-        403: {"description": "Forbidden"},
         404: {"description": "Report not found"},
         409: {"description": "Report not ready"},
         410: {"description": "Artifact expired or unavailable"},
@@ -206,19 +160,13 @@ async def download_report(
     db: DatabaseDep,
 ) -> StreamingResponse:
     r = await ComplianceReportRepository(db).get(report_id)
-    if r is None:
+    if r is None or not await _user_can_see_report(db, current_user, r):
         raise HTTPException(status_code=404, detail=_REPORT_NOT_FOUND)
     status_val = _status_str(r.status)
     if status_val != "completed":
         raise HTTPException(status_code=409, detail=f"Report not ready (status: {status_val})")
     if r.artifact_gridfs_id is None:
         raise HTTPException(status_code=410, detail="Artifact expired or missing")
-    try:
-        await ScopeResolver(db, current_user).resolve(scope=r.scope, scope_id=r.scope_id)
-    except PermissionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=403, detail=f"Scope resolution failed: {exc}") from exc
 
     bucket = AsyncIOMotorGridFSBucket(db)
     try:

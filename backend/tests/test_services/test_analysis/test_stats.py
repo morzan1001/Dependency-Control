@@ -703,7 +703,7 @@ async def _seed(findings):
 
 async def _risk_score(findings):
     db = await _seed(findings)
-    stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+    stats = (await calculate_comprehensive_stats(db, _W5_SCAN)).stats
     return stats.risk_score
 
 

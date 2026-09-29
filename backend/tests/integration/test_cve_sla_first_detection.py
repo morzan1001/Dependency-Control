@@ -61,7 +61,7 @@ def _versionless_sast() -> Finding:
 
 async def _persist(db, scan_id: str, scan_created_at: datetime, *findings: Finding, project_id: str = _PROJECT):
     records, _ = _prepare_finding_records(list(findings), scan_id, project_id, scan_created_at)
-    await _persist_findings_and_waivers(records, scan_id, project_id, FindingRepository(db), db)
+    await _persist_findings_and_waivers(records, scan_id, project_id, FindingRepository(db), db, head=False)
     return await db.findings.find({"scan_id": scan_id}).to_list(None)
 
 

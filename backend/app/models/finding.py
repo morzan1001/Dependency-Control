@@ -45,6 +45,12 @@ class FindingType(str, Enum):
     OTHER = "other"
 
 
+# Findings a scanner places at a source location; their waivers bind by match signature and follow line drift.
+LOCATION_FINDING_TYPES = frozenset(
+    {FindingType.SAST, FindingType.IAC, FindingType.SECRET, FindingType.CRYPTO_KEY_MANAGEMENT}
+)
+
+
 class Finding(BaseModel):
     id: str = Field(..., description="Unique identifier for the finding")
     type: FindingType = Field(..., description="Type of finding")

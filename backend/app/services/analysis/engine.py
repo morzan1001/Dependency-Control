@@ -44,8 +44,6 @@ from app.core.metrics import (
 from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Project, Scan
-from app.models.stats import Stats
-from app.models.waiver import Waiver
 from app.repositories import (
     AnalysisResultRepository,
     CallgraphRepository,
@@ -53,6 +51,7 @@ from app.repositories import (
     FindingRepository,
     ProjectRepository,
     ScanRepository,
+    WaiverRepository,
 )
 from app.repositories.findings import finding_identity
 from app.repositories.system_settings import SystemSettingsRepository
@@ -81,6 +80,8 @@ from app.services.github import is_public_github
 from app.services.reachability_enrichment import enrich_findings_with_reachability, persist_reachability_result
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.update_frequency_rollup import record_scan_update_delta
+from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
+from app.services.waivers.matching import route_waiver
 
 logger = logging.getLogger(__name__)
 
@@ -88,19 +89,6 @@ _BULK_CHUNK_SIZE = 500
 
 # Run inside the engine (not registered in ``analyzers``); regenerated per run, never carried over.
 _POST_PROCESSOR_ANALYZERS = frozenset({"epss_kev", "reachability"})
-
-
-def _get_waiver_type(waiver: Waiver) -> str:
-    """Determine the type of a waiver based on its fields."""
-    if waiver.finding_id:
-        return "finding_id"
-    if waiver.package_name:
-        return "package"
-    if waiver.finding_type:
-        return "type"
-    if waiver.vulnerability_id:
-        return "vulnerability_id"
-    return "other"
 
 
 async def _get_github_instance_token(db: Database) -> str | None:
@@ -560,13 +548,15 @@ async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id
 
         purl = entry["purl"]
         if purl:
-            enrichment_ops.append(
-                UpdateOne(
-                    {"purl": purl},
-                    {"$set": {**entry["data"], "purl": purl, "name": entry["name"], "version": entry["version"]}},
-                    upsert=True,
-                )
-            )
+            data = dict(entry["data"])
+            # The document merges every scan's findings, so the list of who supplied them accumulates too.
+            sources = data.pop("enrichment_sources", [])
+            update: dict[str, Any] = {
+                "$set": {**data, "purl": purl, "name": entry["name"], "version": entry["version"]}
+            }
+            if sources:
+                update["$addToSet"] = {"enrichment_sources": {"$each": sources}}
+            enrichment_ops.append(UpdateOne({"purl": purl}, update, upsert=True))
 
         if len(bulk_ops) >= _BULK_CHUNK_SIZE:
             try:
@@ -697,20 +687,6 @@ async def _run_reachability_enrichment(
     except Exception as e:
         results_summary.append("reachability: Failed")
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
-
-
-def _track_waiver_metrics(active_waivers: list[Waiver]) -> None:
-    """Track Prometheus metrics for applied waivers."""
-    if not analysis_waivers_applied_total:
-        return
-
-    waiver_types: dict[str, int] = {}
-    for waiver in active_waivers:
-        waiver_type = _get_waiver_type(waiver)
-        waiver_types[waiver_type] = waiver_types.get(waiver_type, 0) + 1
-
-    for waiver_type, count in waiver_types.items():
-        analysis_waivers_applied_total.labels(type=waiver_type).inc(count)
 
 
 async def _check_race_condition(scan_id: str, external_load_start: datetime, scan_repo: ScanRepository) -> bool:
@@ -919,8 +895,10 @@ async def _persist_findings_and_waivers(
     project_id: str | None,
     finding_repo: FindingRepository,
     db: Database,
-) -> tuple[int, int, list[Waiver]]:
-    """Insert findings, apply waivers, return (persisted_count, ignored_count, active_waivers)."""
+    *,
+    head: bool,
+) -> int:
+    """Insert findings, stamp the waiver set on them and the scan (outcomes only for head); returns the count."""
     # Before the delete, so re-analysing a scan still sees the dates its own copies inherited.
     await _stamp_first_seen(findings_to_insert, project_id, finding_repo)
     await finding_repo.delete_many({"scan_id": scan_id})
@@ -928,21 +906,14 @@ async def _persist_findings_and_waivers(
     for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
         persisted_count += await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
 
-    from app.repositories import WaiverRepository
-
-    active_waivers: list[Waiver] = []
-    if project_id:
-        waiver_repo = WaiverRepository(db)
-        active_waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
-
-    from app.services.stats import _apply_waivers
-
-    await _apply_waivers(finding_repo, scan_id, active_waivers)
-    from pymongo import ReadPreference
-
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
-    return persisted_count, ignored_count, active_waivers
+    waiver_repo = WaiverRepository(db)
+    waivers = await waiver_repo.find_active_for_project(project_id) if project_id else []
+    matches = await restamp_waivers(finding_repo, waiver_repo if head else None, scan_id, waivers)
+    await ScanRepository(db).update_raw(scan_id, {"$set": {"waiver_fingerprint": waiver_fingerprint(waivers)}})
+    for waiver in waivers:
+        if matches[waiver.id]:
+            analysis_waivers_applied_total.labels(type=route_waiver(waiver)).inc()
+    return persisted_count
 
 
 def _as_utc(dt: datetime | None) -> datetime | None:
@@ -1166,27 +1137,6 @@ async def _send_integrations_and_notifications(
     await send_scan_notifications(scan_id, project, aggregated_findings, results_summary, db)
 
 
-async def _project_has_active_waivers(project_id: str, db: Database) -> bool:
-    """Cheap existence check: does the project (or a global waiver) have an active waiver?
-    Used to skip the post-analysis recalc when there is nothing to re-anchor/lapse."""
-    from datetime import datetime, timezone
-
-    now = datetime.now(timezone.utc)
-    query = {
-        "$and": [
-            {"$or": [{"project_id": project_id}, {"project_id": None}]},
-            {
-                "$or": [
-                    {"expiration_date": {"$exists": False}},
-                    {"expiration_date": None},
-                    {"expiration_date": {"$gt": now}},
-                ]
-            },
-        ]
-    }
-    return (await db.waivers.count_documents(query, limit=1)) > 0
-
-
 def _release_memory_to_os() -> None:
     """Force gc and release glibc heap pages back to OS (Linux-only)."""
     import gc
@@ -1226,16 +1176,6 @@ def _final_scan_status(scan_id: str, sbom_load_failed: bool, partial_reasons: li
         logger.warning("Scan %s completed with errors: %s", scan_id, error)
         return SCAN_STATUS_COMPLETED_WITH_ERRORS, error
     return SCAN_STATUS_COMPLETED, None
-
-
-async def _notification_stats(project_id: str | None, stats: Stats, db: Database) -> Stats:
-    if project_id and await _project_has_active_waivers(project_id, db):
-        from app.services.stats import recalculate_project_stats
-
-        recalced = await recalculate_project_stats(project_id, db)
-        if recalced is not None:
-            return recalced
-    return stats
 
 
 async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyzers: list[str], db: Database) -> bool:
@@ -1370,19 +1310,26 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         results_summary,
     )
 
-    persisted_findings_count, ignored_count, active_waivers = await _persist_findings_and_waivers(
-        findings_to_insert, scan_id, project_id, finding_repo, db
-    )
-    _track_waiver_metrics(active_waivers)
-
-    stats = await calculate_comprehensive_stats(db, scan_id)
-
     sbom_load_failed = gridfs_expected > 0 and sbom_load_failures >= gridfs_expected
     if sbom_load_failed:
         logger.error(
             "Scan %s: all SBOMs failed to load from GridFS — marking failed (was silently completing)",
             scan_id,
         )
+    authoritative = bool(sboms_to_process)
+    # Decided again at finalize; a mismatch only misplaces the waiver outcomes, which the next recalculation heals.
+    becomes_head = bool(
+        project_id
+        and not sbom_load_failed
+        and await _should_update_project_latest_scan(
+            scan_id, scan_doc, project_id, scan_repo, project_repo, authoritative=authoritative
+        )
+    )
+    persisted_findings_count = await _persist_findings_and_waivers(
+        findings_to_insert, scan_id, project_id, finding_repo, db, head=becomes_head
+    )
+
+    stats, ignored_count = await calculate_comprehensive_stats(db, scan_id)
 
     failed_analyzers = _failed_analyzer_names(results_summary)
     partial_reasons = _partial_run_reasons(
@@ -1426,7 +1373,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         findings_summary=_build_findings_summary(vulnerability_findings),
         failed_analyzers=failed_analyzers,
         enrichment_failures=_enrichment_failure_names(results_summary),
-        authoritative=bool(sboms_to_process),
+        authoritative=authoritative,
     )
     if not finalized:
         # Rescheduled after a late scanner result raced completion; skip notifying on stale results.
@@ -1434,13 +1381,10 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         _release_memory_to_os()
         return False
 
-    # Re-apply/re-anchor waivers before notifying so webhooks report post-re-anchor stats;
-    # skipped when the project has no active waivers.
     if not sbom_load_failed:
-        notify_stats = await _notification_stats(project_id, stats, db)
         notify_findings = await _filter_out_waived_findings(aggregated_findings, scan_id, db)
         await _send_integrations_and_notifications(
-            project_id, scan_id, scan_doc, notify_stats, notify_findings, results_summary, db
+            project_id, scan_id, scan_doc, stats, notify_findings, results_summary, db
         )
 
     del aggregated_findings
