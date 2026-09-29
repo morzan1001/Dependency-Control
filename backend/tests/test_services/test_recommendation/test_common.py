@@ -486,27 +486,3 @@ class TestRecommendationTotal:
 
         assert rec.affected_components_total == covered
         assert rec.to_dict()["affected_components_total"] == covered
-
-
-class TestFindingCveIdsAdvisoryFilter:
-    """A card names the advisories it is about; a seven-CVE component group is not seven KEV CVEs."""
-
-    def _mixed(self):
-        return _stored_vuln(
-            [
-                {"id": "CVE-2021-44228", "in_kev": True, "kev_ransomware_use": True},
-                {"id": "CVE-2021-44832"},
-                {"id": "CVE-2021-45046", "in_kev": True, "kev_ransomware_use": True},
-                {"id": "CVE-2021-45105"},
-            ]
-        )
-
-    def test_only_the_marked_advisories_are_named(self):
-        marked = finding_cve_ids(self._mixed(), lambda a: bool(a.get("kev_ransomware_use")))
-        assert marked == ["CVE-2021-44228", "CVE-2021-45046"]
-
-    def test_a_document_flag_alone_names_no_advisory(self):
-        finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "CVE-2021-44832"}])
-        finding["details"]["kev_ransomware_use"] = True
-
-        assert finding_cve_ids(finding, lambda a: bool(a.get("kev_ransomware_use"))) == []

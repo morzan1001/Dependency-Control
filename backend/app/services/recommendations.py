@@ -2,9 +2,10 @@
 
 import logging
 from collections import defaultdict
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation
 from app.services.recommendation import (
     common,
@@ -127,8 +128,12 @@ class RecommendationEngine:
         cve_recurrence: dict[str, trends.CveRecurrence] | None = None,
         recurrence_window_scans: int = 0,
         cross_project_data: dict[str, Any] | None = None,
+        threat_intel: Mapping[str, VulnerabilityEnrichment] | None = None,
     ) -> list[Recommendation]:
-        """Generate prioritized remediation recommendations across all finding types."""
+        """Generate prioritized remediation recommendations across all finding types.
+
+        ``threat_intel`` is the per-CVE KEV/EPSS the findings were just enriched with.
+        """
         findings_list: list[ModelOrDict] = list(findings) if findings else []
         dependencies_list: list[ModelOrDict] = list(dependencies) if dependencies else []
         previous_findings_list: list[ModelOrDict] | None = (
@@ -300,7 +305,7 @@ class RecommendationEngine:
 
         _safe_extend(
             recommendations,
-            lambda: incidents.detect_known_exploits(findings_by_type.get("vulnerability", [])),
+            lambda: incidents.detect_known_exploits(findings_by_type.get("vulnerability", []), threat_intel),
             "known_exploits",
         )
 

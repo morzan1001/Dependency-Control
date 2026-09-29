@@ -1,5 +1,5 @@
 from collections import Counter
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -90,28 +90,17 @@ def scorecard_details(details: Any) -> dict[str, Any]:
     return {}
 
 
-def finding_cve_ids(
-    finding: ModelOrDict,
-    advisory_filter: Callable[[dict[str, Any]], bool] | None = None,
-) -> list[str]:
+def finding_cve_ids(finding: ModelOrDict) -> list[str]:
     """Every advisory a stored vulnerability finding names, collapsed to its CVE identity.
 
     Aggregation groups one record per (component, version) and its top-level ``id`` is that pair,
     so the advisory identity only ever lives in ``details.vulnerabilities`` — the same place the
     scan delta reads its identity from.
-
-    ``advisory_filter`` narrows the list to the advisories a card is actually about, so a group of
-    seven log4j CVEs is not presented as seven ransomware CVEs.
     """
     details = get_attr(finding, "details", {})
     if not isinstance(details, dict):
         return []
-    entries = [
-        e
-        for e in details.get("vulnerabilities") or []
-        if isinstance(e, dict) and (advisory_filter is None or advisory_filter(e))
-    ]
-    return canonical_cves([{"vulnerabilities": entries}])
+    return canonical_cves([details])
 
 
 # Versions named per package inside an action block; version_count carries the population.

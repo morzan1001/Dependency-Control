@@ -199,8 +199,9 @@ class VulnerabilityEnrichmentService:
 
         return results
 
-    async def enrich_findings(self, findings: list[dict[str, Any]]) -> None:
-        """Resolve GHSA advisories to CVEs, then fold EPSS/KEV onto each advisory and finding in place."""
+    async def enrich_findings(self, findings: list[dict[str, Any]]) -> dict[str, VulnerabilityEnrichment]:
+        """Resolve GHSA advisories to CVEs, then fold EPSS/KEV onto each advisory and finding in place;
+        returns the per-CVE enrichment."""
         ghsa_ids = sorted(
             {i for f in findings for v in _vulnerabilities(f) if (i := v.get("id") or "").startswith("GHSA-")}
         )
@@ -213,3 +214,4 @@ class VulnerabilityEnrichmentService:
         enrichments = await self.enrich_cves(cves)
         for finding in findings:
             apply_enrichments(finding.setdefault("details", {}), enrichments)
+        return enrichments

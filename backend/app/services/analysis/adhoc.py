@@ -37,6 +37,7 @@ from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
 from app.schemas.bearer import BearerFinding
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.kics import KicsQuery
 from app.schemas.opengrep import OpenGrepFinding
 from app.schemas.projections import CallgraphMinimal
@@ -706,15 +707,19 @@ def _aggregate_crypto_rules(
     _record_ran(report, _CRYPTO_RULES)
 
 
-async def _enrich_vulnerabilities(records: list[dict[str, Any]], report: AnalyzerReport) -> dict[str, Any]:
-    """Add EPSS/KEV to the vulnerability records through a service private to this request.
+async def _enrich_vulnerabilities(
+    records: list[dict[str, Any]], report: AnalyzerReport
+) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
+    """Add EPSS/KEV to the vulnerability records through a service private to this request;
+    returns the EPSS/KEV summary and the per-CVE enrichment.
 
     The module singleton carries a mutable GitHub token shared with background scans.
     """
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     service = VulnerabilityEnrichmentService()
+    threat_intel: dict[str, VulnerabilityEnrichment] = {}
     try:
-        await service.enrich_findings(vulnerabilities)
+        threat_intel = await service.enrich_findings(vulnerabilities)
         _record_ran(report, _ENRICHMENT)
     except Exception as exc:
         logger.warning("adhoc: EPSS/KEV enrichment failed: %s", exc)
@@ -722,7 +727,7 @@ async def _enrich_vulnerabilities(records: list[dict[str, Any]], report: Analyze
     finally:
         await service.close()
     refresh_vulnerability_info(records)
-    return dict(build_epss_kev_summary(vulnerabilities))
+    return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], _PreparedCallgraph]:
@@ -951,7 +956,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     # Before enrichment, so waivers, stats and recommendations all describe the returned set.
     records, truncated = _cap_findings(records)
 
-    epss_kev_summary = await _enrich_vulnerabilities(records, report)
+    epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, report)
 
     # One row per package across every posted SBOM, the invariant a stored scan's inventory holds.
     merged, _ = merge_duplicate_dependencies([dep for pi in parsed_inputs for dep in pi.parsed.dependencies])
@@ -974,6 +979,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         findings=[record for record in records if not record.get("waived")],
         dependencies=components,
         source_target=source_target,
+        threat_intel=threat_intel,
     )
 
     # A stage that errored still reached upstream, so attempted is the condition, not success.

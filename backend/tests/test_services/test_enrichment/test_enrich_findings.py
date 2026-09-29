@@ -224,3 +224,13 @@ async def test_every_written_key_is_declared_at_its_level(monkeypatch):
     assert set(details) <= set(VulnerabilityDetails.model_fields)
     for entry in details["vulnerabilities"]:
         assert set(entry) <= set(VulnerabilityEntryDetails.model_fields), entry
+
+
+@pytest.mark.asyncio
+async def test_the_per_cve_enrichment_of_a_bundled_advisory_is_handed_back(monkeypatch):
+    service = _service(monkeypatch, kev=[_kev("CVE-2023-0002", "2024-01-01")])
+    finding = _vuln_finding("openssl-libs", {"id": "CVE-2023-0001", "aliases": ["ALAS2-2023-2001", "CVE-2023-0002"]})
+
+    threat_intel = await service.enrich_findings([finding])
+
+    assert {cve: e.is_kev for cve, e in threat_intel.items()} == {"CVE-2023-0001": False, "CVE-2023-0002": True}

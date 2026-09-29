@@ -648,3 +648,22 @@ class TestOnePackageAcrossCardTypes:
             if r.type in (RecommendationType.CRITICAL_HOTSPOT, RecommendationType.DIRECT_DEPENDENCY_UPDATE)
         }
         assert tiers == {Priority.HIGH}
+
+
+@pytest.mark.asyncio
+async def test_the_kev_card_names_the_cve_the_live_threat_intel_marks():
+    from app.schemas.enrichment import VulnerabilityEnrichment
+
+    finding = _make_vuln_finding(component="openssl-libs", is_kev=True)
+    finding["details"]["vulnerabilities"] = [
+        {"id": "CVE-2023-0001", "aliases": ["ALAS2-2023-2001", "CVE-2023-0002"], "in_kev": True}
+    ]
+    threat_intel = {
+        "CVE-2023-0001": VulnerabilityEnrichment(cve="CVE-2023-0001", risk_score=20.0),
+        "CVE-2023-0002": VulnerabilityEnrichment(cve="CVE-2023-0002", risk_score=40.0, is_kev=True),
+    }
+
+    result = await RecommendationEngine().generate_recommendations(findings=[finding], threat_intel=threat_intel)
+
+    [kev_card] = [r for r in result if r.type == RecommendationType.KNOWN_EXPLOIT]
+    assert kev_card.action["cves"] == ["CVE-2023-0002"]

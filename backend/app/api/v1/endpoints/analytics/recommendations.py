@@ -32,6 +32,7 @@ from app.schemas.analytics import (
     RecommendationResponse,
     RecommendationsResponse,
 )
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
 from app.core.cve import canonical_cves
 from app.services.enrichment import get_cve_enrichment
@@ -80,24 +81,26 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
 }
 
 
-async def _apply_live_threat_intel(findings: list[Any]) -> None:
+async def _apply_live_threat_intel(findings: list[Any]) -> dict[str, VulnerabilityEnrichment]:
     """Refresh each vulnerability finding's advisories with current KEV/EPSS and roll the finding up
-    from them. Ingest rarely writes KEV to findings (in_kev is set on ~0.2%), so the recommendation
-    engine would otherwise almost never raise the KEV/exploit recommendations."""
+    from them; returns the per-CVE enrichment. Ingest rarely writes KEV to findings (in_kev is set
+    on ~0.2%), so the recommendation engine would otherwise almost never raise the KEV/exploit
+    recommendations."""
     vuln_findings = [f for f in findings if get_attr(f, "type") == "vulnerability"]
     all_cves = list({c for f in vuln_findings for c in canonical_cves([get_attr(f, "details", {})])})
     if not all_cves:
-        return
+        return {}
     try:
         enrichments = await get_cve_enrichment(all_cves)
     except Exception as e:
         logger.warning("Recommendations: live CVE enrichment failed, using stored data: %s", e)
-        return
+        return {}
 
     for f in vuln_findings:
         details = get_attr(f, "details", {})
         if isinstance(details, dict):
             apply_enrichments(details, enrichments)
+    return enrichments
 
 
 @router.get("/projects/{project_id}/recommendations", responses=RESP_AUTH_404)
@@ -135,7 +138,7 @@ async def get_project_recommendations(
         return RecommendationsResponse(**cached)
 
     findings = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
-    await _apply_live_threat_intel(findings)
+    threat_intel = await _apply_live_threat_intel(findings)
 
     dependencies, dependencies_total = await dep_repo.find_by_scan(
         project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
@@ -167,6 +170,7 @@ async def get_project_recommendations(
         cve_recurrence=cve_recurrence,
         recurrence_window_scans=len(recent_scan_ids),
         cross_project_data=cross_project_data,
+        threat_intel=threat_intel,
     )
 
     finding_counts = _finding_counts(findings)
