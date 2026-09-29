@@ -409,6 +409,7 @@ class CryptoRuleDetails(_DetailsModel):
     key_size_bits: int | None = None
     primitive: str | None = None
     references: list[Any] = []
+    occurrence_count: int | None = None
 
 
 class CryptoCertificateDetails(_DetailsModel):
@@ -430,6 +431,7 @@ class CryptoCertificateDetails(_DetailsModel):
     threshold: int | None = None
     rule_id: str | None = None
     matched_rules: list[MatchedRuleEntry] | None = None
+    occurrence_count: int | None = None
 
 
 class CryptoProtocolDetails(_DetailsModel):
@@ -448,3 +450,4 @@ class CryptoProtocolDetails(_DetailsModel):
     catalog_version: int | str | None = None
     rule_id: str | None = None
     matched_rules: list[MatchedRuleEntry] | None = None
+    occurrence_count: int | None = None

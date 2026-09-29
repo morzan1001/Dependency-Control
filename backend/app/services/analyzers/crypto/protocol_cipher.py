@@ -14,7 +14,7 @@ from app.schemas.cbom import CryptoAssetType
 from app.schemas.crypto_policy import CryptoRule
 from app.schemas.finding_details import CryptoProtocolDetails
 from app.services.analyzers.base import Analyzer
-from app.services.analyzers.crypto.base import matched_rule_entry, strictest_rule
+from app.services.analyzers.crypto.base import MAX_FINDING_LOCATIONS, matched_rule_entry, strictest_rule
 from app.services.analyzers.crypto.catalogs.loader import (
     CURRENT_IANA_CATALOG_VERSION,
     CipherSuiteEntry,
@@ -143,7 +143,8 @@ def _build_finding(
             catalog_version=CURRENT_IANA_CATALOG_VERSION,
             rule_id=lead.rule_id if lead else None,
             matched_rules=[matched_rule_entry(r) for r in rules] or None,
+            occurrence_count=len(proto.occurrence_locations),
         ).model_dump(exclude_none=True),
-        "found_in": list(proto.occurrence_locations),
+        "found_in": proto.occurrence_locations[:MAX_FINDING_LOCATIONS],
         "aliases": [],
     }

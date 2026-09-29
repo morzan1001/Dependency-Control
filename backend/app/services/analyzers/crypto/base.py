@@ -19,6 +19,9 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
 
+# A crypto asset can occur in thousands of files; every finding on it would store the whole list.
+MAX_FINDING_LOCATIONS = 20
+
 
 def crypto_findings_for_assets(
     assets: Sequence[CryptoAsset], rules: Sequence[CryptoRule], *, scanner: str
@@ -116,7 +119,8 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule], scanner: s
             key_size_bits=asset.key_size_bits,
             primitive=asset.primitive,
             references=aggregated_references,
+            occurrence_count=len(asset.occurrence_locations),
         ).model_dump(exclude_none=True),
-        "found_in": list(asset.occurrence_locations),
+        "found_in": asset.occurrence_locations[:MAX_FINDING_LOCATIONS],
         "aliases": [],
     }

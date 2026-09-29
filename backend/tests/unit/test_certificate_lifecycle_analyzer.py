@@ -751,4 +751,21 @@ async def test_self_signed_details_carry_no_duplicate_subject_and_issuer(db):
     )
     result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
     (finding,) = result["findings"]
-    assert finding["details"] == {"bom_ref": "c1", "subject_name": "CN=self", "issuer_name": "CN=self"}
+    assert finding["details"] == {
+        "bom_ref": "c1",
+        "subject_name": "CN=self",
+        "issuer_name": "CN=self",
+        "occurrence_count": 0,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_certificate_finding_carries_the_first_twenty_locations_and_the_total(db):
+    now = datetime.now(timezone.utc)
+    (cert, *rest) = _spec_cert_chain(now, "SHA1withRSA", "RSA", 1024)
+    cert["evidence"] = {"occurrences": [{"location": f"src/Crypto{index}.java", "line": index} for index in range(25)]}
+    result = await _analyze_spec_cbom(db, [cert, *rest], load_seed_rules())
+    assert result["findings"]
+    for finding in result["findings"]:
+        assert finding["found_in"] == [f"src/Crypto{index}.java" for index in range(20)]
+        assert finding["details"]["occurrence_count"] == 25

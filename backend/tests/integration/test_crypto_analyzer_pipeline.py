@@ -8,6 +8,7 @@ from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analyzers.crypto.base import CryptoRuleAnalyzer, crypto_findings_for_assets
+from app.services.cbom_parser import parse_crypto_components
 
 _SHARED_PROJECT = "p4"
 _SHARED_SCAN = "s4"
@@ -288,3 +289,24 @@ async def test_end_to_end_cbom_ingest_creates_findings(client, db, running_worke
         f for f in findings if f.get("type") == "crypto_weak_algorithm" and f.get("details", {}).get("rule_id") == "md5"
     ]
     assert len(md5_findings) >= 1
+
+
+def test_a_rule_finding_carries_the_first_twenty_locations_and_the_total():
+    (parsed,) = parse_crypto_components(
+        [
+            {
+                "type": "cryptographic-asset",
+                "bom-ref": "md5",
+                "name": "MD5",
+                "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": {"primitive": "hash"}},
+                "evidence": {
+                    "occurrences": [{"location": f"src/Crypto{index}.java", "line": index} for index in range(25)]
+                },
+            }
+        ]
+    )
+    asset = CryptoAsset(project_id="p", scan_id="s", **parsed.model_dump())
+    rule = _rule("md5", FindingType.CRYPTO_WEAK_ALGORITHM, match_name_patterns=["MD5"])
+    (finding,) = crypto_findings_for_assets([asset], [rule], scanner="crypto_weak_algorithm")
+    assert finding["found_in"] == asset.occurrence_locations[:20]
+    assert finding["details"]["occurrence_count"] == 25

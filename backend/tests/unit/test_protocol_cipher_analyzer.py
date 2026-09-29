@@ -120,7 +120,7 @@ async def test_rule_amplifies_with_weakness_match(db):
     assert [m["rule_id"] for m in finding["details"]["matched_rules"]] == ["cnsa20-require-pfs"]
 
 
-async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False):
+async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=None):
     """A CycloneDX 1.6 protocol asset judged by the seeded policy, with the PFS rule toggled."""
     parsed = parse_cbom(
         {
@@ -134,6 +134,7 @@ async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False):
                         "assetType": "protocol",
                         "protocolProperties": {"type": "tls", "version": "1.2", "cipherSuites": cipher_suites},
                     },
+                    "evidence": evidence or {},
                 }
             ],
         }
@@ -197,3 +198,15 @@ async def test_one_suite_under_two_spellings_is_one_finding_with_a_stable_id(db)
     second = await ProtocolCipherSuiteAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
     assert [f["id"] for f in first["findings"]] == ["CRYPTO-crypto_weak_protocol-proto-TLS_RSA_WITH_RC4_128_MD5"]
     assert [f["id"] for f in second["findings"]] == [f["id"] for f in first["findings"]]
+
+
+@pytest.mark.asyncio
+async def test_a_protocol_finding_carries_the_first_twenty_locations_and_the_total(db):
+    result = await _analyze_spec_protocol(
+        db,
+        [{"name": "TLS_RSA_WITH_RC4_128_SHA"}],
+        evidence={"occurrences": [{"location": f"src/Crypto{index}.java", "line": index} for index in range(25)]},
+    )
+    (finding,) = result["findings"]
+    assert finding["found_in"] == [f"src/Crypto{index}.java" for index in range(20)]
+    assert finding["details"]["occurrence_count"] == 25
