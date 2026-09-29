@@ -51,6 +51,8 @@ class TestParseVersionKey:
             pytest.param("1.0", "1.0.post1", id="pep440-post-release-above-release"),
             pytest.param("1.0.post1", "1.0.1", id="post-release-below-next-number"),
             pytest.param("2.36-9", "2.36-9+deb12u4", id="debian-security-update-above-its-base"),
+            pytest.param("3.4-1", "3.4-1+b6", id="debian-binnmu-above-its-base"),
+            pytest.param("3.4-1+b6", "3.4-2", id="debian-binnmu-below-the-next-revision"),
             pytest.param("1.1.1", "1.1.1n", id="openssl-letter-release-above-base"),
             pytest.param("1.1.1", "1.1.1a", id="openssl-letter-a-is-no-alpha"),
             pytest.param("1.1.1n", "1.1.2", id="openssl-letter-release-below-next-patch"),
@@ -73,6 +75,9 @@ class TestNewestFirst:
 
     def test_a_post_release_ranks_above_its_release(self):
         assert newest_first(["1.0", "1.0.post1"]) == ["1.0.post1", "1.0"]
+
+    def test_a_debian_binnmu_ranks_between_its_base_and_the_next_revision(self):
+        assert newest_first(["3.4-1", "3.4-1+b6", "3.4-2"]) == ["3.4-2", "3.4-1+b6", "3.4-1"]
 
     def test_spellings_of_one_version_order_the_same_whatever_the_input_order(self):
         assert newest_first(["v1.0.0", "1.0.0"]) == newest_first(["1.0.0", "v1.0.0"])

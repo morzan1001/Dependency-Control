@@ -27,12 +27,13 @@ _PRERELEASE_RANK = {
 }
 
 
-def _token_key(token: str, next_char: str) -> tuple[int, int | str]:
+def _token_key(token: str, prev_char: str, next_char: str) -> tuple[int, int | str]:
     if token.isdigit():
         return (_NUMBER, int(token))
     rank = _PRERELEASE_RANK.get(token)
-    # A lone letter is a prerelease only before a number (1.0a1, 1.0-M2); OpenSSL's 1.1.1a follows 1.1.1.
-    if rank is None or (len(token) == 1 and not next_char.isdigit()):
+    # A lone letter is a prerelease only before a number (1.0a1, 1.0-M2); OpenSSL's 1.1.1a follows 1.1.1,
+    # and a Debian binNMU's +b6 follows its base.
+    if rank is None or (len(token) == 1 and (prev_char == "+" or not next_char.isdigit())):
         return (_SUFFIX, token)
     return (_PRERELEASE, rank)
 
@@ -40,7 +41,10 @@ def _token_key(token: str, next_char: str) -> tuple[int, int | str]:
 def parse_version_key(v: str) -> tuple[tuple[int, int | str], ...]:
     """Parse a version into (flag, value) pairs that compare in version order; the first carries the major."""
     text = v.lower().removeprefix("v")
-    parts = [_token_key(m.group(), text[m.end() : m.end() + 1]) for m in re.finditer(r"[a-z]+|\d+", text)]
+    parts = [
+        _token_key(m.group(), text[m.start() - 1 : m.start()], text[m.end() : m.end() + 1])
+        for m in re.finditer(r"[a-z]+|\d+", text)
+    ]
     if not parts:
         return ()
     return (*parts, (_END, ""))
