@@ -30,6 +30,7 @@ from app.services.enrichment.scoring import (
     calculate_adjusted_risk_score,
     map_reachability_level_to_modifier,
 )
+from app.services.recommendation.common import name_some
 from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
@@ -440,13 +441,6 @@ _VULNERABLE_SYMBOL_SAMPLE = 10
 _MESSAGE_SYMBOL_SAMPLE = 5
 
 
-def _named_sample(symbols: list[str]) -> str:
-    """The first few symbol names, followed by how many the sentence does not name."""
-    shown = ", ".join(symbols[:_MESSAGE_SYMBOL_SAMPLE])
-    unnamed = len(symbols) - _MESSAGE_SYMBOL_SAMPLE
-    return shown if unnamed <= 0 else f"{shown} and {unnamed} more"
-
-
 def _analyze_reachability(
     finding: dict[str, Any],
     component: str,
@@ -487,13 +481,15 @@ def _analyze_reachability(
         result["confidence_score"] = _calculate_confidence(extracted.confidence, "matched")
         result["analysis_level"] = REACHABILITY_LEVEL_SYMBOL
         result["matched_symbols"] = matched_symbols
-        result["message"] = f"Vulnerable function(s) {_named_sample(matched_symbols)} are used in the codebase."
+        result["message"] = (
+            f"Vulnerable function(s) {name_some(matched_symbols, _MESSAGE_SYMBOL_SAMPLE)} are used in the codebase."
+        )
     elif used_symbols:
         # Symbols were searched and not found: import-level evidence only, never "confirmed".
         result["confidence_score"] = _calculate_confidence(extracted.confidence, "partial")
         result["message"] = (
             f"Package is imported but extracted vulnerable functions "
-            f"({_named_sample(vulnerable_symbols)}) were not found in direct usage. "
+            f"({name_some(vulnerable_symbols, _MESSAGE_SYMBOL_SAMPLE)}) were not found in direct usage. "
             f"May still be reachable through indirect calls."
         )
     else:
