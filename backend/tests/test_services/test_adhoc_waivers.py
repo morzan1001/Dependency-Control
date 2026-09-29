@@ -294,6 +294,15 @@ def test_signature_waiver_waives_the_location_it_was_taken_from():
     assert records[0]["waiver_reason"] == _REASON
 
 
+def test_an_unsigned_location_waiver_binds_one_of_the_records_sharing_its_id():
+    """As in a scan: it takes the signature of the finding it names and waives that location only."""
+    records = [_sast_record(_ANCHOR, _CONTENT_HASH), _sast_record(_MOVED_ANCHOR, _CHANGED_CONTENT_HASH)]
+
+    waiver = _waiver(finding_id=records[0]["finding_id"], finding_type=_TYPE_SAST)
+
+    assert apply_global_waivers_in_memory(records, [waiver]) == 1
+
+
 def test_a_signature_whose_content_changed_lapses_instead_of_waiving():
     records = [_sast_record(_MOVED_ANCHOR, _CHANGED_CONTENT_HASH)]
 

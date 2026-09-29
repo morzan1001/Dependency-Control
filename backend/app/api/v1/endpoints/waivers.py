@@ -37,6 +37,7 @@ def _invalidate_analytics_cache() -> None:
         get_analytics_cache().clear()
 
 
+_MSG_NO_CRITERIA = "A waiver names a finding, package, type, rule or vulnerability to match."
 _MSG_NO_MATCHING_FINDING = (
     "Waiver criteria do not match any finding on the project's current build. "
     "Verify finding_id, finding_type, package_name and package_version. "
@@ -93,17 +94,13 @@ def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
         raise HTTPException(status_code=422, detail=_MSG_NEEDS_PACKAGE_SCOPE.format(finding_type=finding_type))
 
 
-async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> dict | None:
+async def _ensure_waiver_matches_finding(waiver: Waiver, db: AsyncIOMotorDatabase) -> dict | None:
     """Reject finding-scope project waivers matching no finding on the head build; return the matched finding doc, or None when validation is skipped."""
-    if not waiver_in.project_id:
-        return None
-    if waiver_in.scope != "finding":
-        return None
-    if waiver_in.vulnerability_id:
+    if not waiver.project_id or waiver.scope != "finding" or waiver.vulnerability_id:
         return None
 
     project = await db.projects.find_one(
-        {"_id": waiver_in.project_id}, {"latest_scan_id": 1, "default_branch": 1, "deleted_branches": 1}
+        {"_id": waiver.project_id}, {"latest_scan_id": 1, "default_branch": 1, "deleted_branches": 1}
     )
     if not project:
         return None
@@ -111,12 +108,7 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
     if not head_scan_id:
         return None
 
-    probe = Waiver(**waiver_in.model_dump(), created_by="__validation__")
-    finding_query = waiver_query(probe)
-    if not finding_query:
-        return None  # nothing concrete to validate against
-
-    finding_query["scan_id"] = head_scan_id
+    finding_query = {**waiver_query(waiver), "scan_id": head_scan_id}
     finding: dict | None = await db.findings.find_one(finding_query, {"match": 1, "type": 1, "component": 1})
     if finding is None:
         raise HTTPException(status_code=422, detail=_MSG_NO_MATCHING_FINDING)
@@ -151,10 +143,12 @@ async def create_waiver(
     _reject_unscoped_broad_waiver(waiver_in)
     if waiver_in.scope != "finding":
         await _resolve_widened_rule(waiver_in, db)
-    matched_finding = await _ensure_waiver_matches_finding(waiver_in, db)
+    waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
+    if not waiver.vulnerability_id and not waiver_query(waiver):
+        raise HTTPException(status_code=422, detail=_MSG_NO_CRITERIA)
+    matched_finding = await _ensure_waiver_matches_finding(waiver, db)
 
     waiver_repo = WaiverRepository(db)
-    waiver = Waiver(**waiver_in.model_dump(), created_by=current_user.username)
     # Only a named finding is one location; criteria without a finding_id describe every finding they match.
     if matched_finding and matched_finding.get("match") and waiver_in.finding_id:
         waiver.match = MatchSignature(**matched_finding["match"])

@@ -65,7 +65,7 @@ class TestCreateWaiver:
             with patch(f"{MODULE}.recalculate_all_projects"):
                 result = asyncio.run(
                     create_waiver(
-                        waiver_in=WaiverCreate(project_id=None, reason="Global waiver"),
+                        waiver_in=WaiverCreate(project_id=None, package_name="requests", reason="Global waiver"),
                         background_tasks=bg_tasks,
                         current_user=admin_user,
                         db=MagicMock(),
@@ -93,7 +93,7 @@ class TestCreateWaiver:
                 with patch(f"{MODULE}.recalculate_project_stats"):
                     result = asyncio.run(
                         create_waiver(
-                            waiver_in=WaiverCreate(project_id="proj-1", reason="Test"),
+                            waiver_in=WaiverCreate(project_id="proj-1", package_name="requests", reason="Test"),
                             background_tasks=bg_tasks,
                             current_user=admin_user,
                             db=db,
@@ -398,6 +398,30 @@ class TestCreateWaiverValidatesFindingMatch:
 
         assert exc.value.status_code == 422
         assert "package_name" in exc.value.detail
+        mock_repo.create.assert_not_called()
+
+    @pytest.mark.parametrize("project_id", [None, _PROJECT])
+    def test_a_waiver_naming_nothing_to_match_is_rejected(self, admin_user, project_id):
+        """It would match no finding, or every one; the restamp skips it and it sits orphaned."""
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
+                with pytest.raises(HTTPException) as exc:
+                    asyncio.run(
+                        create_waiver(
+                            waiver_in=WaiverCreate(project_id=project_id, package_name="Unknown", reason="r"),
+                            background_tasks=BackgroundTasks(),
+                            current_user=admin_user,
+                            db=MagicMock(),
+                        )
+                    )
+
+        assert exc.value.status_code == 422
         mock_repo.create.assert_not_called()
 
     @pytest.mark.parametrize("finding_id", ["LIC-GPL-2.0-only", "EOL-python-3.8"])
@@ -950,7 +974,7 @@ class TestCreateWaiverPermissions:
                 with patch(f"{MODULE}.recalculate_project_stats"):
                     asyncio.run(
                         create_waiver(
-                            waiver_in=WaiverCreate(project_id="proj-1", reason="Test"),
+                            waiver_in=WaiverCreate(project_id="proj-1", package_name="requests", reason="Test"),
                             background_tasks=bg_tasks,
                             current_user=regular_user,
                             db=db,
@@ -970,7 +994,7 @@ class TestCreateWaiverPermissions:
         with pytest.raises(HTTPException) as exc_info:
             asyncio.run(
                 create_waiver(
-                    waiver_in=WaiverCreate(project_id=None, reason="Global waiver"),
+                    waiver_in=WaiverCreate(project_id=None, package_name="requests", reason="Global waiver"),
                     background_tasks=bg_tasks,
                     current_user=regular_user,
                     db=MagicMock(),

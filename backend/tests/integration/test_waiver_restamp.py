@@ -108,8 +108,11 @@ async def test_a_partial_cve_waiver_does_not_lift_a_whole_finding_waiver_at_inge
 
 
 @pytest.mark.parametrize("_database", _DATABASES)
-async def test_the_stored_scan_and_the_adhoc_gate_agree_on_the_same_waivers(db, _database):
+@pytest.mark.parametrize("cve_first", [False, True], ids=["whole-finding-first", "cve-first"])
+async def test_the_stored_scan_and_the_adhoc_gate_agree_on_the_same_waivers(db, _database, cve_first):
     waivers = [_field_waiver(None), _partial_cve_waiver(None)]
+    if cve_first:
+        waivers.reverse()
     for waiver in waivers:
         await WaiverRepository(db).create(waiver)
     (stored,) = await _persist(db, _FEATURE, _vulnerable_component())
