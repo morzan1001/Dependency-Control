@@ -138,6 +138,16 @@ class TestOperatingSystemPackages:
             ),
             pytest.param(
                 {
+                    "name": "bash",
+                    "version": "5.2.15-2+b2",
+                    "purl": "pkg:deb/Debian/bash@5.2.15-2+b2?arch=amd64&distro=debian-12",
+                    "found_by": "dpkg-db-cataloger",
+                },
+                {"package": {"ecosystem": "Debian:12", "name": "bash"}, "version": "5.2.15-2+b2"},
+                id="namespace_case",
+            ),
+            pytest.param(
+                {
                     "name": "libssl3",
                     "version": "3.0.8-r0",
                     "purl": "pkg:apk/alpine/libssl3@3.0.8-r0?arch=x86_64&upstream=openssl&distro=alpine-3.17.2",
@@ -242,11 +252,12 @@ class TestCachedIdentity:
     @pytest.mark.asyncio
     async def test_a_cached_answer_is_named_after_the_scanning_component(self, cache, monkeypatch):
         purl = "pkg:npm/%40angular/core@17.0.0"
-        vulnerability = {"id": "GHSA-x", "severity": "HIGH", "summary": "s"}
-        cache[CacheKeys.osv(purl)] = {"component": "core", "version": "17.0.0", "vulnerabilities": [vulnerability]}
+        cache[CacheKeys.osv(purl)] = [{"id": "GHSA-x", "modified": "m"}]
+        cache[CacheKeys.osv_vuln("GHSA-x", "m")] = {"id": "GHSA-x", "summary": "s"}
         component = {"name": "@angular/core", "version": "17.0.0", "purl": purl}
 
-        _, result = await _queries(monkeypatch, [component])
+        queries, result = await _queries(monkeypatch, [component])
 
+        assert queries == []
         [entry] = result["osv_vulnerabilities"]
         assert (entry["component"], entry["version"], entry["purl"]) == ("@angular/core", "17.0.0", purl)

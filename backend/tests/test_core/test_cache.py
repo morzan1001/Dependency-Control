@@ -100,7 +100,7 @@ class TestCacheKeysGhsa:
 class TestCacheKeysOsv:
     def _expected_osv_key(self, purl: str) -> str:
         purl_hash = hashlib.md5(purl.encode()).hexdigest()[:16]
-        return f"osv3:{purl_hash}"
+        return f"osv4:{purl_hash}"
 
     def test_basic_purl(self):
         purl = "pkg:pypi/requests@2.31.0"
@@ -124,7 +124,7 @@ class TestCacheKeysOsv:
     def test_long_purl(self):
         long_purl = "pkg:npm/@very-long-scope/very-long-package-name@99.99.99"
         result = CacheKeys.osv(long_purl)
-        assert result.startswith("osv3:")
+        assert result.startswith("osv4:")
         assert result == self._expected_osv_key(long_purl)
 
 

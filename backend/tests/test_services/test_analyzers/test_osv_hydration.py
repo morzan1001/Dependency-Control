@@ -8,10 +8,11 @@ from typing import Any
 import httpx
 import pytest
 
+from app.core.cache import CacheKeys
 from app.services.aggregation import ResultAggregator
 from app.services.analyzers import osv
 from app.services.analyzers.osv import OSVAnalyzer, _HydrationBudget
-from tests.helpers.osv import osv_cache, serve_osv, vuln_ids_fetched
+from tests.helpers.osv import batch_queries, osv_cache, serve_osv, vuln_ids_fetched
 
 _COMPONENTS = [
     {"name": "lodash", "version": "4.17.11", "purl": "pkg:npm/lodash@4.17.11"},
@@ -254,14 +255,33 @@ async def test_a_failure_run_trips_the_circuit_breaker(cache, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_entries_holding_unresolved_stubs_are_not_cached(cache, monkeypatch):
-    """Caching them would serve UNKNOWN for six hours with no partial flag on the next scan."""
+async def test_the_stubs_are_cached_and_an_unresolved_record_is_fetched_again_next_scan(cache, monkeypatch):
+    """The querybatch answer is definitive even when a record fails; the records have their own cache."""
     serve_osv(monkeypatch, _osv(_flask_fails(httpx.Response(404))))
-
     await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
-    component_keys = [k for k in cache if k.startswith("osv3:")]
-    assert len(component_keys) == 1, "only the fully hydrated component may be cached"
+    for component, answer in zip(_COMPONENTS, _BATCH_RESULTS, strict=True):
+        assert cache[CacheKeys.osv(component["purl"])] == answer["vulns"]
+
+    seen = serve_osv(monkeypatch, _osv())
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert batch_queries(seen) == []
+    assert vuln_ids_fetched(seen) == ["GHSA-flask"]
+    assert "partial_vulnerabilities_unhydrated" not in result
+    assert _entries(result)["flask"]["severity"] == "CRITICAL"
+
+
+@pytest.mark.asyncio
+async def test_a_clean_answer_is_cached_and_served_without_a_request(cache, monkeypatch):
+    serve_osv(monkeypatch, _osv(batch=[{}, {}]))
+    await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    seen = serve_osv(monkeypatch, _osv())
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert seen == []
+    assert result == {"osv_vulnerabilities": []}
 
 
 @pytest.mark.asyncio

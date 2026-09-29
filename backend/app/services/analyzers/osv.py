@@ -87,6 +87,8 @@ _TRIVY = "aquasecurity:trivy:"
 
 # (component, versioned purl, querybatch query)
 _Target = tuple[dict[str, Any], str, dict[str, Any]]
+# Each target with the querybatch ``{id, modified}`` stubs naming its vulnerabilities.
+_Pending = list[tuple[_Target, list[dict[str, Any]]]]
 
 
 def _versioned_purl(component: dict[str, Any]) -> str | None:
@@ -110,7 +112,7 @@ def _osv_query(purl: str, component: dict[str, Any]) -> dict[str, Any] | None:
     parsed = parse_purl(purl)
     if parsed is None or not parsed.name or not _PURL_TYPE.fullmatch(parsed.type) or _INVALID_ESCAPE.search(purl):
         return None
-    rule = _OS_ECOSYSTEMS.get((parsed.type, parsed.namespace or ""))
+    rule = _OS_ECOSYSTEMS.get((parsed.type, (parsed.namespace or "").lower()))
     if rule is None:
         return {"package": {"purl": purl}}
     release_pattern, ecosystem = rule
@@ -241,10 +243,13 @@ class OSVAnalyzer(Analyzer):
     ) -> dict[str, Any]:
         targets, unqueryable = _query_targets(self._get_components(sbom, parsed_components))
 
-        results, uncached = await self._get_cached_components(targets)
-        logger.debug(f"OSV: {len(results)} from cache, {len(uncached)} to fetch")
+        pending, uncached = await self._get_cached_stubs(targets)
+        logger.debug(f"OSV: {len(pending)} from cache, {len(uncached)} to fetch")
 
-        skipped, unhydrated = await self._fetch_uncached(uncached, results) if uncached else (0, 0)
+        timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
+        async with InstrumentedAsyncClient(_OSV_SERVICE_LABEL, timeout=timeout) as client:
+            skipped = await self._fetch_uncached(client, uncached, pending)
+            results, unhydrated = await self._hydrate_and_emit(client, pending)
         skipped += unqueryable
         result: dict[str, Any] = {"osv_vulnerabilities": results}
         # Surfaced by the engine as a partial scan; never silently report full coverage.
@@ -254,42 +259,46 @@ class OSVAnalyzer(Analyzer):
             result["partial_vulnerabilities_unhydrated"] = unhydrated
         return result
 
-    async def _fetch_uncached(
-        self,
-        uncached: list[_Target],
-        results: list[dict[str, Any]],
-    ) -> tuple[int, int]:
-        """Drive the chunked batch loop, then hydrate, populating ``results`` in-place.
+    async def _get_cached_stubs(self, targets: list[_Target]) -> tuple[_Pending, list[_Target]]:
+        """``(pending, uncached)``: the targets with their cached querybatch stubs, and the targets without."""
+        keys = [CacheKeys.osv(purl) for _, purl, _ in targets]
+        cached = await cache_service.mget(list(dict.fromkeys(keys)))
+        pending: _Pending = []
+        uncached: list[_Target] = []
+        for target, key in zip(targets, keys, strict=True):
+            stubs = cached.get(key)
+            if stubs is None:
+                uncached.append(target)
+            else:
+                pending.append((target, stubs))
+        return pending, uncached
 
-        Returns ``(components_never_scanned, vulnerability_records_not_fetched)``: dropped
-        batches, rejected queries, persistent rate limiting and truncated responses for the
-        first, OSV records that could not be resolved to their full form for the second.
+    async def _fetch_uncached(self, client: InstrumentedAsyncClient, uncached: list[_Target], pending: _Pending) -> int:
+        """Ask querybatch about ``uncached``, caching each answer's stubs and adding them to ``pending``.
+
+        Returns how many components were never scanned: dropped batches, rejected queries,
+        persistent rate limiting and truncated responses.
         """
-        timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
-        total_skipped = 0
-        # (target, [{id, modified}, ...]) pairs; hydrated together so one id is fetched once.
-        pending: list[tuple[_Target, list[dict[str, Any]]]] = []
-
-        async with InstrumentedAsyncClient(_OSV_SERVICE_LABEL, timeout=timeout) as client:
-            for chunk_start in range(0, len(uncached), batch_size):
-                chunk = uncached[chunk_start : chunk_start + batch_size]
-                total_skipped += await self._send_chunk(client, chunk, pending, chunk_start, _MAX_REJECTION_RESENDS)
-                if chunk_start + batch_size < len(uncached):
-                    await asyncio.sleep(0.2)
-
-            unhydrated = await self._hydrate_and_emit(client, pending, results)
-        return total_skipped, unhydrated
+        skipped = 0
+        fetched: _Pending = []
+        for chunk_start in range(0, len(uncached), batch_size):
+            chunk = uncached[chunk_start : chunk_start + batch_size]
+            skipped += await self._send_chunk(client, chunk, fetched, chunk_start, _MAX_REJECTION_RESENDS)
+            if chunk_start + batch_size < len(uncached):
+                await asyncio.sleep(0.2)
+        if fetched:
+            stubs_by_key = {CacheKeys.osv(purl): stubs for (_, purl, _), stubs in fetched}
+            await cache_service.mset(stubs_by_key, CacheTTL.OSV_VULNERABILITY)
+        pending.extend(fetched)
+        return skipped
 
     async def _hydrate_and_emit(
-        self,
-        client: InstrumentedAsyncClient,
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
-        results: list[dict[str, Any]],
-    ) -> int:
-        """Replace the querybatch stubs with full OSV records, then build the result entries.
+        self, client: InstrumentedAsyncClient, pending: _Pending
+    ) -> tuple[list[dict[str, Any]], int]:
+        """The result entries built from the full OSV records behind ``pending``'s stubs, all hydrated together.
 
-        Returns how many distinct ids stayed unresolved; their stubs are kept, so the
+        Also returns how many distinct ids stayed unresolved; their stubs are kept, so the
         vulnerability is still reported — as UNKNOWN severity rather than an invented one.
         """
         stubs: dict[str, str] = {}
@@ -301,21 +310,13 @@ class OSVAnalyzer(Analyzer):
 
         records, unresolved = await self._fetch_vuln_records(client, stubs)
 
-        cache_mapping: dict[str, dict[str, Any]] = {}
-        for (component, purl, query), vulns in pending:
-            ids = [vuln.get("id", "") for vuln in vulns]
-            hydrated = [records.get(vuln_id, vuln) for vuln_id, vuln in zip(ids, vulns, strict=True)]
+        results: list[dict[str, Any]] = []
+        for (component, _, query), vulns in pending:
+            hydrated = [records.get(vuln.get("id", ""), vuln) for vuln in vulns]
             normalized = self._normalize_vulnerabilities(hydrated, query)
-            # Caching an entry built from unresolved stubs would serve UNKNOWN for the next
-            # six hours with no partial flag, making the failure invisible on the next scan.
-            if not any(vuln_id in unresolved for vuln_id in ids):
-                cache_mapping[CacheKeys.osv(purl)] = {"vulnerabilities": normalized}
             if normalized:
                 results.append(self._result_entry(component, normalized))
-
-        if cache_mapping:
-            await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
-        return len(unresolved)
+        return results, len(unresolved)
 
     async def _fetch_vuln_records(
         self,
@@ -404,7 +405,7 @@ class OSVAnalyzer(Analyzer):
         self,
         client: InstrumentedAsyncClient,
         chunk: list[_Target],
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        pending: _Pending,
         chunk_start: int,
         resends: int,
     ) -> int:
@@ -433,7 +434,7 @@ class OSVAnalyzer(Analyzer):
         self,
         client: InstrumentedAsyncClient,
         chunk: list[_Target],
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        pending: _Pending,
         chunk_start: int,
         rejection: str,
         resends: int,
@@ -454,7 +455,7 @@ class OSVAnalyzer(Analyzer):
         self,
         response: Any,
         chunk: list[_Target],
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        pending: _Pending,
     ) -> int:
         """Parse a 200 response and align its ``{id, modified}`` stubs with their components.
 
@@ -485,20 +486,6 @@ class OSVAnalyzer(Analyzer):
             "purl": component.get("purl", ""),
             "vulnerabilities": vulnerabilities,
         }
-
-    async def _get_cached_components(self, targets: list[_Target]) -> tuple[list[dict[str, Any]], list[_Target]]:
-        """``(cached result entries, uncached targets)``; cached per package version, named for this component."""
-        keys = [CacheKeys.osv(purl) for _, purl, _ in targets]
-        cached_data = await cache_service.mget(list(dict.fromkeys(keys)))
-        cached_results: list[dict[str, Any]] = []
-        uncached: list[_Target] = []
-        for target, key in zip(targets, keys, strict=True):
-            data = cached_data.get(key)
-            if not data:
-                uncached.append(target)
-            elif data.get("vulnerabilities"):
-                cached_results.append(self._result_entry(target[0], data["vulnerabilities"]))
-        return cached_results, uncached
 
     def _normalize_vulnerabilities(self, vulns: list[dict[str, Any]], query: dict[str, Any]) -> list[dict[str, Any]]:
         """The fields normalize_osv reads, resolved for the queried package; retracted records (``withdrawn``) drop."""
