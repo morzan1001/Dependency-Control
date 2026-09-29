@@ -55,7 +55,7 @@ class TestExtractProductsFromCpes:
     @pytest.mark.parametrize(
         "cpes",
         [
-            # "tomcat" maps to "apache-tomcat" via NAME_TO_EOL_MAPPING.
+            # "tomcat" maps to the "tomcat" product via NAME_TO_EOL_MAPPING.
             pytest.param(["cpe:/a:apache:tomcat:9.0.0"], id="vendor_product_combo"),
             pytest.param(["not-valid", "cpe:/a:redis:redis:6.0.0"], id="mixed_valid_and_invalid"),
         ],
