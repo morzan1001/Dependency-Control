@@ -9,7 +9,7 @@ from collections.abc import Callable
 from functools import partial
 
 from app.core.constants import CI_SCANNER_ANALYZERS
-from app.models.finding import FindingType
+from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.services.analyzers import (
     Analyzer,
     CertificateLifecycleAnalyzer,
@@ -44,21 +44,10 @@ analyzer_factories: dict[str, AnalyzerFactory] = {
     "typosquatting": TyposquattingAnalyzer,
     "hash_verification": HashVerificationAnalyzer,
     "maintainer_risk": MaintainerRiskAnalyzer,
-    "crypto_weak_algorithm": partial(
-        CryptoRuleAnalyzer,
-        name="crypto_weak_algorithm",
-        finding_types={FindingType.CRYPTO_WEAK_ALGORITHM},
-    ),
-    "crypto_weak_key": partial(
-        CryptoRuleAnalyzer,
-        name="crypto_weak_key",
-        finding_types={FindingType.CRYPTO_WEAK_KEY},
-    ),
-    "crypto_quantum_vulnerable": partial(
-        CryptoRuleAnalyzer,
-        name="crypto_quantum_vulnerable",
-        finding_types={FindingType.CRYPTO_QUANTUM_VULNERABLE},
-    ),
+    **{
+        finding_type.value: partial(CryptoRuleAnalyzer, name=finding_type.value, finding_types={finding_type})
+        for finding_type in sorted(RULE_DRIVEN_FINDING_TYPES)
+    },
     "crypto_certificate_lifecycle": CertificateLifecycleAnalyzer,
     "crypto_protocol_cipher": ProtocolCipherSuiteAnalyzer,
 }
@@ -73,9 +62,7 @@ post_processor_factories: dict[str, AnalyzerFactory] = {
 VULNERABILITY_ANALYZERS: set[str] = {"trivy", "grype", "osv", "deps_dev"}
 
 CRYPTO_ANALYZERS: set[str] = {
-    "crypto_weak_algorithm",
-    "crypto_weak_key",
-    "crypto_quantum_vulnerable",
+    *(finding_type.value for finding_type in RULE_DRIVEN_FINDING_TYPES),
     "crypto_certificate_lifecycle",
     "crypto_protocol_cipher",
 }
