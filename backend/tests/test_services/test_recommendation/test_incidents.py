@@ -2,6 +2,7 @@
 
 from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.recommendation import incidents
 from app.services.recommendation.incidents import (
     detect_known_exploits,
     process_malware,
@@ -289,6 +290,12 @@ class TestDetectKnownExploitsEpssThreshold:
         findings = [_vuln("pkg", is_kev=False, epss_score=EPSS_VERY_HIGH_THRESHOLD)]
         result = detect_known_exploits(findings)
         assert [r.type for r in result] == [RecommendationType.ACTIVELY_EXPLOITED]
+
+    def test_the_description_states_the_threshold_it_applied(self, monkeypatch):
+        monkeypatch.setattr(incidents, "EPSS_VERY_HIGH_THRESHOLD", 0.3)
+        findings = [_vuln("pkg", is_kev=False, epss_score=0.3)]
+        (rec,) = detect_known_exploits(findings)
+        assert "EPSS score >= 30%" in rec.description
 
 
 class TestDetectKnownExploitsMix:

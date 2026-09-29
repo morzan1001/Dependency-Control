@@ -280,7 +280,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
                 priority=Priority.CRITICAL,
                 title="Very High Exploitation Probability",
                 description=(
-                    f"Found {len(high_epss_vulns)} vulnerabilities with EPSS score > 50%. "
+                    f"Found {len(high_epss_vulns)} vulnerabilities with EPSS score >= {EPSS_VERY_HIGH_THRESHOLD:.0%}. "
                     f"These have a very high probability of being exploited in the next 30 days. "
                     f"Highest EPSS: {max_epss * 100:.1f}%"
                 ),
