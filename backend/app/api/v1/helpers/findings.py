@@ -1,5 +1,7 @@
 """Shared utilities for finding-related operations."""
 
+from app.models.finding import CRYPTO_FINDING_TYPES
+
 TYPE_CATEGORY_MAP: dict[str, str] = {
     "vulnerability": "security",
     "malware": "security",
@@ -10,6 +12,10 @@ TYPE_CATEGORY_MAP: dict[str, str] = {
     "eol": "compliance",
     "outdated": "quality",
     "quality": "quality",
+    # crypto_key_management comes from SAST rules but belongs with the other crypto findings.
+    **dict.fromkeys(sorted(CRYPTO_FINDING_TYPES), "other"),
+    "system_warning": "other",
+    "other": "other",
 }
 
 

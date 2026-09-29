@@ -1,10 +1,12 @@
 """Tests for findings helper functions."""
 
 from app.api.v1.helpers.findings import (
+    TYPE_CATEGORY_MAP,
     aggregate_stats_by_category,
     get_category_for_type,
     get_category_type_filter,
 )
+from app.models.finding import CRYPTO_FINDING_TYPES, FindingType
 
 
 class TestGetCategoryTypeFilter:
@@ -27,8 +29,15 @@ class TestGetCategoryTypeFilter:
         result = get_category_type_filter("quality")
         assert result == {"$in": ["outdated", "quality"]}
 
+    def test_other_selects_the_crypto_and_leftover_types(self):
+        assert get_category_type_filter("other") == {"$in": [*sorted(CRYPTO_FINDING_TYPES), "system_warning", "other"]}
+
     def test_unknown_returns_none(self):
         assert get_category_type_filter("nonexistent") is None
+
+
+def test_every_finding_type_has_a_category():
+    assert sorted({t.value for t in FindingType} - TYPE_CATEGORY_MAP.keys()) == []
 
 
 class TestGetCategoryForType:
