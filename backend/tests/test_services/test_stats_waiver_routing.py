@@ -222,7 +222,40 @@ async def released_db(seeded_db):
     return seeded_db
 
 
+def _record_restamps(monkeypatch) -> list[str]:
+    import app.services.stats as stats_module
+
+    restamped: list[str] = []
+    original = stats_module.restamp_waivers
+
+    async def recording(finding_repo, waiver_repo, scan_id, waivers):
+        restamped.append(scan_id)
+        await original(finding_repo, waiver_repo, scan_id, waivers)
+
+    monkeypatch.setattr(stats_module, "restamp_waivers", recording)
+    return restamped
+
+
 class TestRecalculateReachesTheReleasedBuild:
+    @pytest.mark.asyncio
+    async def test_an_unchanged_waiver_set_leaves_the_released_build_alone(self, released_db, monkeypatch):
+        await recalculate_project_stats(PROJECT_ID, released_db)
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert restamped == [SCAN_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_changed_waiver_restamps_the_released_build_again(self, released_db, monkeypatch):
+        await recalculate_project_stats(PROJECT_ID, released_db)
+        await released_db.waivers.update_one({"_id": "w-1"}, {"$set": {"reason": "reworded"}})
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert restamped == [SCAN_ID, RELEASE_SCAN_ID]
+
     @pytest.mark.asyncio
     async def test_a_revoked_waiver_stops_hiding_a_critical_that_is_in_production(self, released_db):
         """Nothing waives this finding any more, so "what is in production" must stop reading zero."""

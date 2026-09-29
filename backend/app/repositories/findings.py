@@ -79,6 +79,9 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def count_waived(self, scan_id: str) -> int:
         return await self._primary().count_documents({"scan_id": scan_id, "waived": True})
 
+    async def any_in_scans(self, scan_ids: list[str], query: dict[str, Any]) -> bool:
+        return await self.collection.find_one({"scan_id": {"$in": scan_ids}, **query}, {"_id": 1}) is not None
+
     async def find_by_scan(
         self,
         scan_id: str,

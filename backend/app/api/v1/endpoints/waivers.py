@@ -146,7 +146,7 @@ async def create_waiver(
     if waiver.project_id:
         background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
     else:
-        background_tasks.add_task(recalculate_all_projects, db)
+        background_tasks.add_task(recalculate_all_projects, db, waiver)
 
     return waiver
 
@@ -271,7 +271,7 @@ async def update_waiver(
         if updated.project_id:
             background_tasks.add_task(recalculate_project_stats, updated.project_id, db)
         else:
-            background_tasks.add_task(recalculate_all_projects, db)
+            background_tasks.add_task(recalculate_all_projects, db, updated)
 
     return updated
 
@@ -302,4 +302,4 @@ async def delete_waiver(
     if waiver.project_id:
         background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
     else:
-        background_tasks.add_task(recalculate_all_projects, db)
+        background_tasks.add_task(recalculate_all_projects, db, waiver)

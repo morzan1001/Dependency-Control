@@ -142,6 +142,16 @@ def advisory_filter(vulnerability_ids: list[str]) -> list[dict[str, Any]]:
     return [{f"details.vulnerabilities.{name}": {"$in": vulnerability_ids}} for name in _ADVISORY_NAMES]
 
 
+def waiver_reach_filter(waiver: Waiver) -> dict[str, Any] | None:
+    """The findings a waiver can stamp, as a MongoDB filter; None when it can stamp none."""
+    route = route_waiver(waiver)
+    if route == "vulnerability" and waiver.vulnerability_id:
+        return {**waiver_query(waiver), "type": "vulnerability", "$or": advisory_filter([waiver.vulnerability_id])}
+    if route == "signature" and waiver.match is not None:
+        return {"type": {"$in": [t.value for t in LOCATION_FINDING_TYPES]}, "component": waiver.match.file_key}
+    return waiver_query(waiver) or None
+
+
 def waive_advisories(record: dict[str, Any], waiver: Waiver) -> bool:
     """Waive the record's nested advisories known under the waiver's vulnerability_id; False when it holds none."""
     hit = False

@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
 import logging
 import os
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -16,6 +18,7 @@ from app.repositories import (
 from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.releases import released_scan_ids
 from app.services.waivers.apply import restamp_waivers
+from app.services.waivers.matching import waiver_reach_filter
 
 logger = logging.getLogger(__name__)
 
@@ -28,10 +31,18 @@ _LOCK_MAX_RETRIES = 5
 _LOCK_RETRY_BASE_DELAY = 0.2
 
 
+def _waiver_fingerprint(waivers: list[Waiver]) -> str:
+    """Names the waiver set a scan was stamped with, from what decides the stamping; the bookkeeping a pass writes
+    and the creation time (defaulted on load for a document without one) are left out."""
+    dumps = sorted(w.model_dump_json(exclude={"last_eval_scan_id", "last_match_count", "created_at"}) for w in waivers)
+    return hashlib.sha256("\n".join(dumps).encode()).hexdigest()
+
+
 async def _restamp_scan(
     scan_id: str,
     db: AsyncIOMotorDatabase,
     waivers: list[Waiver],
+    fingerprint: str,
     finding_repo: FindingRepository,
     waiver_repo: WaiverRepository | None,
 ) -> Stats:
@@ -42,7 +53,7 @@ async def _restamp_scan(
     ignored_count = await finding_repo.count_waived(scan_id)
     await ScanRepository(db).update_raw(
         scan_id,
-        {"$set": {"stats": stats.model_dump(), "ignored_count": ignored_count}},
+        {"$set": {"stats": stats.model_dump(), "ignored_count": ignored_count, "waiver_fingerprint": fingerprint}},
     )
     return stats
 
@@ -62,12 +73,15 @@ async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> l
     return sorted({analysis.scan_id for analysis in resolved.values()})
 
 
-async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Stats | None:
+async def recalculate_project_stats(
+    project_id: str, db: AsyncIOMotorDatabase, reach: dict[str, Any] | None = None
+) -> Stats | None:
     """Recalculate a project's stats from its head scan and active waivers, and re-stamp the same
     waiver set onto the scans release mode reports.
 
-    Resets ALL waivers for those scans and re-applies them under a distributed lock to
-    prevent races when pods modify waivers concurrently. Returns None if project not found.
+    Restamps under a distributed lock to prevent races when pods modify waivers concurrently; a
+    released scan already stamped with this waiver set is left alone. ``reach`` is a finding filter:
+    a project none of whose scans holds a match is not recalculated. Returns None if nothing ran.
     """
     project_repo = ProjectRepository(db)
     finding_repo = FindingRepository(db)
@@ -80,7 +94,8 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
 
     scan_id = await ScanRepository(db).get_latest_active_scan_id(project)
     released_ids = [rid for rid in await _released_analysis_ids(db, project_id) if rid != scan_id]
-    if not scan_id and not released_ids:
+    scan_ids = [*([scan_id] if scan_id else []), *released_ids]
+    if not scan_ids or (reach is not None and not await finding_repo.any_in_scans(scan_ids, reach)):
         return None
 
     # Acquire distributed lock to prevent race conditions
@@ -118,11 +133,17 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         )
 
         waivers = await waiver_repo.find_active_for_project(project_id)
+        fingerprint = _waiver_fingerprint(waivers)
+        stamped = await ScanRepository(db).find_many_raw(
+            {"_id": {"$in": released_ids}, "waiver_fingerprint": fingerprint}, projection={"_id": 1}
+        )
+        current = {doc["_id"] for doc in stamped}
+        stale_released = [rid for rid in released_ids if rid not in current]
         # Head first and alone records waiver outcomes and signatures: those describe head, and the
         # released passes then see the signatures head back-filled.
-        stats = await _restamp_scan(scan_id, db, waivers, finding_repo, waiver_repo) if scan_id else None
-        for released_id in released_ids:
-            await _restamp_scan(released_id, db, waivers, finding_repo, None)
+        stats = await _restamp_scan(scan_id, db, waivers, fingerprint, finding_repo, waiver_repo) if scan_id else None
+        for released_id in stale_released:
+            await _restamp_scan(released_id, db, waivers, fingerprint, finding_repo, None)
         if stats is None:
             return None
 
@@ -137,12 +158,23 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
             logger.debug(f"Released lock {lock_name} for project {project_id}")
 
 
-async def recalculate_all_projects(db: AsyncIOMotorDatabase) -> int:
-    """Recalculate stats for ALL projects; returns the number processed. Resource intensive."""
-    logger.info("Starting global stats recalculation")
-    count = 0
-    async for project in db.projects.find({}, {"_id": 1}):
-        await recalculate_project_stats(project["_id"], db)
-        count += 1
-    logger.info(f"Global stats recalculation completed: {count} projects processed")
-    return count
+async def recalculate_all_projects(db: AsyncIOMotorDatabase, waiver: Waiver) -> int:
+    """Recalculate every project whose head or released scans hold a finding the changed global ``waiver`` can
+    stamp; returns how many were recalculated. One failing project does not stop the others."""
+    reach = waiver_reach_filter(waiver)
+    if reach is None:
+        logger.info("Global waiver %s can stamp no finding; no project to recalculate", waiver.id)
+        return 0
+    # Read up front: a cursor held open across the whole run times out on the server partway.
+    project_ids = [project["_id"] async for project in db.projects.find({}, {"_id": 1})]
+    recalculated = failed = 0
+    for project_id in project_ids:
+        try:
+            recalculated += await recalculate_project_stats(project_id, db, reach) is not None
+        except Exception:
+            failed += 1
+            logger.exception("Global waiver %s: recalculation failed for project %s", waiver.id, project_id)
+    logger.info(
+        "Global waiver %s: %d of %d projects recalculated, %d failed", waiver.id, recalculated, len(project_ids), failed
+    )
+    return recalculated
