@@ -589,13 +589,14 @@ async def recover_stuck_scans(
 
         async for scan in cursor:
             scan_id = scan["_id"]
-            retry_count = scan.get("retry_count", 0)
+            retry_count = scan.get("stuck_retry_count", 0)
 
             if retry_count < max_retries:
                 logger.warning(
                     f"Scan {scan_id} stuck in processing. Resetting to pending (Retry {retry_count + 1}/{max_retries})."
                 )
-                if await scan_repo.requeue(scan_id, scan.get("worker_id")) and worker_manager:
+                requeued = await scan_repo.requeue(scan_id, scan.get("worker_id"), counter="stuck_retry_count")
+                if requeued and worker_manager:
                     await worker_manager.add_job(str(scan_id))
 
             else:

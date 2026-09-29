@@ -7,7 +7,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED, SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING
+from app.core.constants import (
+    HOUSEKEEPING_MAX_SCAN_RETRIES,
+    SCAN_STATUS_COMPLETED,
+    SCAN_STATUS_FAILED,
+    SCAN_STATUS_PENDING,
+    SCAN_STATUS_PROCESSING,
+)
 from app.core.housekeeping import recover_stuck_scans
 from app.core.worker import AnalysisWorkerManager
 from app.repositories.scans import ScanRepository
@@ -61,6 +67,32 @@ async def test_a_failure_records_its_reason():
     stored = await _stored(db)
     assert failed is True
     assert (stored["status"], stored["error"]) == (SCAN_STATUS_FAILED, "boom")
+    assert stored["completed_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rescan_reports_its_run_on_the_build_it_re_analyses():
+    """Otherwise the build keeps announcing the rescan as pending forever."""
+    db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, is_rescan=True, original_scan_id="root")
+    await db.scans.insert_one({"_id": "root", "latest_run": {"scan_id": _SCAN, "status": SCAN_STATUS_PENDING}})
+
+    await ScanRepository(db).mark_failed(_SCAN, "boom", worker_id=_WORKER_A)
+
+    run = (await db.scans.find_one({"_id": "root"}))["latest_run"]
+    assert run == {"scan_id": _SCAN, "status": SCAN_STATUS_FAILED, "completed_at": (await _stored(db))["completed_at"]}
+
+
+@pytest.mark.asyncio
+async def test_a_failed_rescan_leaves_a_build_re_ingested_since_alone():
+    db = await _seeded(
+        status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, is_rescan=True, original_scan_id="root", sbom_generation=1
+    )
+    own_run = {"scan_id": "root", "status": SCAN_STATUS_COMPLETED}
+    await db.scans.insert_one({"_id": "root", "sbom_generation": 2, "latest_run": own_run})
+
+    await ScanRepository(db).mark_failed(_SCAN, "boom", worker_id=_WORKER_A)
+
+    assert (await db.scans.find_one({"_id": "root"}))["latest_run"] == own_run
 
 
 @pytest.mark.asyncio
@@ -75,7 +107,7 @@ async def test_a_completed_scan_is_not_failed_afterwards():
 async def test_a_requeue_releases_the_worker_and_counts_the_attempt():
     db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, retry_count=1)
 
-    assert await ScanRepository(db).requeue(_SCAN, _WORKER_A) is True
+    assert await ScanRepository(db).requeue(_SCAN, _WORKER_A, counter="retry_count") is True
 
     stored = await _stored(db)
     assert (stored["status"], stored["worker_id"], stored["retry_count"]) == (SCAN_STATUS_PENDING, None, 2)
@@ -85,7 +117,7 @@ async def test_a_requeue_releases_the_worker_and_counts_the_attempt():
 async def test_a_requeue_leaves_a_finished_scan_alone():
     db = await _seeded(status=SCAN_STATUS_COMPLETED, worker_id=_WORKER_A)
 
-    assert await ScanRepository(db).requeue(_SCAN, _WORKER_A) is False
+    assert await ScanRepository(db).requeue(_SCAN, _WORKER_A, counter="retry_count") is False
     assert (await _stored(db))["status"] == SCAN_STATUS_COMPLETED
 
 
@@ -93,7 +125,7 @@ async def test_a_requeue_leaves_a_finished_scan_alone():
 async def test_a_writer_that_lost_the_claim_cannot_requeue_the_run_that_replaced_it():
     db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_B, retry_count=1)
 
-    assert await ScanRepository(db).requeue(_SCAN, _WORKER_A) is False
+    assert await ScanRepository(db).requeue(_SCAN, _WORKER_A, counter="retry_count") is False
     stored = await _stored(db)
     assert (stored["status"], stored["worker_id"], stored["retry_count"]) == (SCAN_STATUS_PROCESSING, _WORKER_B, 1)
 
@@ -113,12 +145,13 @@ async def test_renewing_a_claim_moves_its_lease_only_for_the_holder():
 
 @pytest.mark.asyncio
 async def test_new_input_reopens_only_a_finished_scan():
-    finished = await _seeded(status=SCAN_STATUS_COMPLETED, retry_count=3)
+    finished = await _seeded(status=SCAN_STATUS_COMPLETED, retry_count=3, stuck_retry_count=2)
     running = await _seeded(status=SCAN_STATUS_PROCESSING, retry_count=3)
 
     assert await ScanRepository(finished).reopen_finished(_SCAN) is True
     assert await ScanRepository(running).reopen_finished(_SCAN) is False
-    assert ((await _stored(finished))["status"], (await _stored(finished))["retry_count"]) == (SCAN_STATUS_PENDING, 0)
+    reopened = await _stored(finished)
+    assert (reopened["status"], reopened["retry_count"], reopened["stuck_retry_count"]) == (SCAN_STATUS_PENDING, 0, 0)
     assert (await _stored(running))["status"] == SCAN_STATUS_PROCESSING
 
 
@@ -144,13 +177,33 @@ async def test_stuck_scan_recovery_requeues_and_releases_the_worker():
         await recover_stuck_scans(worker)
 
     stored = await _stored(db)
-    assert (stored["status"], stored["worker_id"], stored["retry_count"]) == (SCAN_STATUS_PENDING, None, 1)
+    assert (stored["status"], stored["worker_id"], stored["stuck_retry_count"]) == (SCAN_STATUS_PENDING, None, 1)
     worker.add_job.assert_awaited_once_with(_SCAN)
 
 
 @pytest.mark.asyncio
+async def test_rescheduling_for_new_input_does_not_use_up_the_budget_for_stuck_runs():
+    db = await _seeded(
+        status=SCAN_STATUS_PROCESSING,
+        worker_id=_WORKER_A,
+        analysis_started_at=None,
+        retry_count=HOUSEKEEPING_MAX_SCAN_RETRIES,
+    )
+
+    with patch("app.core.housekeeping.get_database", AsyncMock(return_value=db)):
+        await recover_stuck_scans(AsyncMock())
+
+    assert (await _stored(db))["status"] == SCAN_STATUS_PENDING
+
+
+@pytest.mark.asyncio
 async def test_giving_up_on_a_stuck_scan_announces_the_failure():
-    db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, analysis_started_at=None, retry_count=99)
+    db = await _seeded(
+        status=SCAN_STATUS_PROCESSING,
+        worker_id=_WORKER_A,
+        analysis_started_at=None,
+        stuck_retry_count=HOUSEKEEPING_MAX_SCAN_RETRIES,
+    )
 
     with (
         patch("app.core.housekeeping.get_database", AsyncMock(return_value=db)),

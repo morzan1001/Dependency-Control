@@ -19,7 +19,7 @@ import logging
 from collections.abc import AsyncGenerator, Awaitable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, NamedTuple
+from typing import Any, Literal, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
@@ -209,16 +209,31 @@ class ScanRepository:
         query: dict[str, Any] = {"_id": scan_id, "status": status}
         if worker_id:
             query["worker_id"] = worker_id
-        result = await self.collection.update_one(query, {"$set": {"status": SCAN_STATUS_FAILED, "error": error}})
-        return bool(result.modified_count)
+        now = datetime.now(timezone.utc)
+        failed = await self.collection.find_one_and_update(
+            query,
+            {"$set": {"status": SCAN_STATUS_FAILED, "error": error, "completed_at": now}},
+            projection={"original_scan_id": 1, "sbom_generation": 1},
+        )
+        if failed and failed.get("original_scan_id"):
+            run = {"scan_id": scan_id, "status": SCAN_STATUS_FAILED, "completed_at": now}
+            await self.report_rescan_run(failed["original_scan_id"], failed.get("sbom_generation"), {"latest_run": run})
+        return failed is not None
 
-    async def requeue(self, scan_id: str, worker_id: str | None) -> bool:
+    async def report_rescan_run(self, root_id: str, sbom_generation: int | None, fields: dict[str, Any]) -> None:
+        """Record a rescan's run on the build it re-analyses, unless that build was re-ingested past the
+        SBOM the rescan analysed."""
+        await self.collection.update_one({"_id": root_id, "sbom_generation": sbom_generation}, {"$set": fields})
+
+    async def requeue(
+        self, scan_id: str, worker_id: str | None, *, counter: Literal["retry_count", "stuck_retry_count"]
+    ) -> bool:
         """Send a processing scan still held by ``worker_id`` back to pending for another attempt."""
         result = await self.collection.update_one(
             {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id},
             {
                 "$set": {"status": SCAN_STATUS_PENDING, "worker_id": None, "analysis_started_at": None},
-                "$inc": {"retry_count": 1},
+                "$inc": {counter: 1},
             },
         )
         return bool(result.modified_count)
@@ -235,7 +250,7 @@ class ScanRepository:
         """Send a finished scan back to pending because new input arrived for it."""
         result = await self.collection.update_one(
             {"_id": scan_id, "status": {"$in": SCAN_USABLE_STATUSES}},
-            {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0}},
+            {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0, "stuck_retry_count": 0}},
         )
         return bool(result.modified_count)
 

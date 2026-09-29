@@ -885,7 +885,7 @@ async def _write_final_state(
     }
     if await scan_repo.collection.find_one_and_update(guard, update) is not None:
         return status
-    if not await scan_repo.requeue(scan_id, worker_id):
+    if not await scan_repo.requeue(scan_id, worker_id, counter="retry_count"):
         logger.warning("Scan %s: the claim moved to another run; leaving the scan to it.", scan_id)
         return None
     logger.warning("Scan %s: new input arrived during analysis; rescheduled instead of finalizing.", scan_id)
@@ -954,10 +954,7 @@ async def _finalize_scan_and_project(
         root_fields: dict[str, Any] = {"latest_run": latest_run_summary}
         if status in SCAN_USABLE_STATUSES:
             root_fields["latest_rescan_id"] = scan_id
-        # A root re-ingested since this rescan was built has moved past the SBOM it analysed.
-        await scan_repo.collection.update_one(
-            {"_id": scan_doc.original_scan_id, "sbom_generation": scan_doc.sbom_generation}, {"$set": root_fields}
-        )
+        await scan_repo.report_rescan_run(scan_doc.original_scan_id, scan_doc.sbom_generation, root_fields)
 
     if project_id and status != SCAN_STATUS_FAILED:
         await _sync_project_head(project_id, scan_repo, project_repo)
@@ -1154,7 +1151,7 @@ async def run_analysis(
         # Retried while the worker still re-queues, so the input that reopened the scan gets analysed.
         if scan_doc.retry_count + 1 < ANALYSIS_MAX_RETRIES:
             logger.warning("Scan %s: an SBOM failed to load; retrying the re-analysis", scan_id)
-            return SCAN_STATUS_PENDING if await scan_repo.requeue(scan_id, worker_id) else None
+            return SCAN_STATUS_PENDING if await scan_repo.requeue(scan_id, worker_id, counter="retry_count") else None
         logger.warning("Scan %s: an SBOM failed to load on the last attempt; keeping the previous analysis", scan_id)
         error = "SBOM could not be loaded for re-analysis; findings are from the previous analysis"
         outcome = await _write_final_state(

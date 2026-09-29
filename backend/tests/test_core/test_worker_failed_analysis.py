@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.worker import AnalysisWorkerManager
 from app.services.analysis.notifications import notify_analysis_failed
+from tests.mocks.fake_mongo import FakeDatabase
 
 
 def _build_manager() -> AnalysisWorkerManager:
@@ -19,6 +20,12 @@ def _build_db_with_scans(update_one: AsyncMock, project: dict | None = None) -> 
     db.scans.update_one = update_one
     db.projects = MagicMock()
     db.projects.find_one = AsyncMock(return_value=project)
+    return db
+
+
+def _db_with_requeued_scan() -> FakeDatabase:
+    db = FakeDatabase()
+    asyncio.run(db.scans.insert_one({"_id": "scan-1", "project_id": "proj-1", "status": "pending"}))
     return db
 
 
@@ -41,8 +48,7 @@ class TestHandleRescheduled:
     def test_at_limit_marks_failed_and_does_not_requeue(self):
         mgr = _build_manager()
         mgr._active_scans = {"scan-1"}
-        update_one = AsyncMock()
-        db = _build_db_with_scans(update_one)
+        db = _db_with_requeued_scan()
         # retry_count=4 in snapshot + 1 (engine inc) = 5, hits ceiling.
         scan = {"_id": "scan-1", "retry_count": 4}
 
@@ -50,16 +56,12 @@ class TestHandleRescheduled:
 
         assert terminal is True
         assert mgr.queue.qsize() == 0
-        update_one.assert_awaited_once()
-        args, _ = update_one.await_args
-        # The engine's requeue left it pending; a scan claimed since is no longer this run's to fail.
-        assert args[0] == {"_id": "scan-1", "status": "pending"}
-        assert args[1]["$set"]["status"] == "failed"
+        assert asyncio.run(db.scans.find_one({"_id": "scan-1"}))["status"] == "failed"
 
     def test_at_limit_announces_the_failure(self):
         mgr = _build_manager()
         mgr._active_scans = {"scan-1"}
-        db = _build_db_with_scans(AsyncMock())
+        db = _db_with_requeued_scan()
         scan = {"_id": "scan-1", "project_id": "proj-1", "retry_count": 4}
 
         with patch("app.core.worker.notify_analysis_failed", new=AsyncMock()) as notify:

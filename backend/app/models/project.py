@@ -132,7 +132,9 @@ class Scan(MongoDocument, CreatedAtModel):
     scan_type: str | None = None
 
     status: str = SCAN_STATUS_PENDING
+    # Engine re-runs and runs that outlived their worker draw on separate budgets.
     retry_count: int = 0
+    stuck_retry_count: int = 0
     worker_id: str | None = None
     # The claim's lease: the holding worker renews it, and housekeeping reclaims a scan once it lapses.
     analysis_started_at: datetime | None = None
