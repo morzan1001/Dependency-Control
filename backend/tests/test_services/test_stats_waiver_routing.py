@@ -1,43 +1,48 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
 
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
-from app.services.stats import _is_signature_waiver, recalculate_project_stats
+from app.schemas.waiver import WaiverCreate
+from app.services.stats import recalculate_project_stats
+from app.services.waivers.matching import may_bind_signature, route_waiver
 from tests.mocks.fake_mongo import FakeDatabase
 
 
-def _waiver(finding_type=None, match=None, scope="finding"):
-    return Waiver(reason="r", created_by="u", finding_type=finding_type, match=match, scope=scope)
+_SIG = MatchSignature(rule_key="OPENGREP:r", file_key="a.py", anchor="fp1", anchor_kind="scanner_fp")
 
 
-class TestIsSignatureWaiver:
-    def test_untyped_non_location_waiver_goes_legacy(self):
-        # finding_type=None, no match -> must NOT be routed to the signature path
-        assert _is_signature_waiver(_waiver(finding_type=None, match=None)) is False
+def _waiver(finding_type=None, match=None, scope="finding", **fields):
+    return Waiver(reason="r", created_by="u", finding_type=finding_type, match=match, scope=scope, **fields)
 
-    def test_typed_license_waiver_goes_legacy(self):
-        assert _is_signature_waiver(_waiver(finding_type="license", match=None)) is False
 
-    def test_location_typed_waiver_goes_signature(self):
-        assert _is_signature_waiver(_waiver(finding_type="sast", match=None)) is True
-        assert _is_signature_waiver(_waiver(finding_type="iac", match=None)) is True
+class TestRouteWaiver:
+    def test_a_waiver_without_a_signature_goes_by_its_criteria(self):
+        assert route_waiver(_waiver(finding_type="sast", finding_id="OPENGREP-r-a.py-1")) == "query"
+        assert route_waiver(_waiver(finding_type="license")) == "query"
 
-    def test_waiver_with_match_goes_signature(self):
-        sig = MatchSignature(rule_key="OPENGREP:r", file_key="a.py", anchor="fp1", anchor_kind="scanner_fp")
-        assert _is_signature_waiver(_waiver(finding_type=None, match=sig)) is True
+    def test_a_finding_scope_waiver_with_a_signature_goes_by_signature(self):
+        assert route_waiver(_waiver(match=_SIG)) == "signature"
 
-    def test_file_scope_location_waiver_goes_legacy(self):
-        # file/rule scope keep broad legacy semantics even for location types
-        assert _is_signature_waiver(_waiver(finding_type="sast", scope="file")) is False
+    def test_a_widened_scope_keeps_its_criteria_whatever_signature_it_carries(self):
+        assert route_waiver(_waiver(finding_type="sast", match=_SIG, scope="file")) == "query"
+        assert route_waiver(_waiver(finding_type="sast", match=_SIG, scope="rule")) == "query"
 
-    def test_rule_scope_location_waiver_goes_legacy(self):
-        assert _is_signature_waiver(_waiver(finding_type="sast", scope="rule")) is False
+    def test_a_vulnerability_id_wins_over_a_signature(self):
+        assert route_waiver(_waiver(match=_SIG, vulnerability_id="CVE-1")) == "vulnerability"
 
-    def test_finding_scope_location_waiver_goes_signature(self):
-        assert _is_signature_waiver(_waiver(finding_type="sast", scope="finding")) is True
+
+class TestMayBindSignature:
+    def test_an_unsigned_location_waiver_naming_a_finding_may_bind(self):
+        assert may_bind_signature(_waiver(finding_type="secret", finding_id="SECRET-AWS-ab12")) is True
+        assert may_bind_signature(_waiver(finding_id="SECRET-AWS-ab12")) is True
+
+    def test_a_waiver_naming_no_finding_or_no_location_type_may_not(self):
+        assert may_bind_signature(_waiver(finding_type="secret", package_name="a.yaml")) is False
+        assert may_bind_signature(_waiver(finding_type="license", finding_id="LIC-GPL")) is False
+        assert may_bind_signature(_waiver(finding_type="sast", finding_id="X", scope="file")) is False
 
 
 # ---------------------------------------------------------------------------
@@ -67,10 +72,13 @@ def _finding(
         details["cvss_score"] = cvss_score
     if risk_score is not None:
         details["risk_score"] = risk_score
+    marks = {}
     if epss_score is not None:
-        details["epss_score"] = epss_score
+        marks["epss_score"] = epss_score
     if is_kev:
-        details["in_kev"] = True
+        marks["in_kev"] = True
+    if marks:
+        details |= {**marks, "vulnerabilities": [{"id": f"CVE-2024-{_id}", **marks}]}
     doc = {
         "_id": _id,
         "finding_id": _id,
@@ -93,9 +101,15 @@ async def seeded_db():
     """A fake DB with a project, scan, and enriched findings (one waived)."""
     db = FakeDatabase()
     await db.projects.insert_one(
-        {"_id": PROJECT_ID, "name": "proj-w4", "latest_scan_id": SCAN_ID, "deleted_branches": []}
+        {
+            "_id": PROJECT_ID,
+            "name": "proj-w4",
+            "latest_scan_id": SCAN_ID,
+            "default_branch": "main",
+            "deleted_branches": [],
+        }
     )
-    await db.scans.insert_one({"_id": SCAN_ID, "project_id": PROJECT_ID, "status": "completed"})
+    await db.scans.insert_one({"_id": SCAN_ID, "project_id": PROJECT_ID, "branch": "main", "status": "completed"})
     findings = [
         _finding(
             "f-crit",
@@ -139,7 +153,7 @@ class TestRecalculateUnifiedStats:
         # recalc resets + re-applies waivers, then computes stats. Comparing
         # comprehensive on the SAME post-recalc state proves identical filtering.
         result = await recalculate_project_stats(PROJECT_ID, seeded_db)
-        comprehensive = await calculate_comprehensive_stats(seeded_db, SCAN_ID)
+        comprehensive = (await calculate_comprehensive_stats(seeded_db, SCAN_ID)).stats
 
         assert result is not None
         # Severity counts identical and exclude the waived CRITICAL finding.
@@ -217,11 +231,68 @@ async def released_db(seeded_db):
     return seeded_db
 
 
+def _record_restamps(monkeypatch) -> list[str]:
+    import app.services.stats as stats_module
+
+    restamped: list[str] = []
+    original = stats_module.restamp_waivers
+
+    async def recording(finding_repo, waiver_repo, scan_id, waivers):
+        restamped.append(scan_id)
+        await original(finding_repo, waiver_repo, scan_id, waivers)
+
+    monkeypatch.setattr(stats_module, "restamp_waivers", recording)
+    return restamped
+
+
 class TestRecalculateReachesTheReleasedBuild:
+    @pytest.mark.asyncio
+    async def test_an_unchanged_waiver_set_restamps_nothing(self, released_db, monkeypatch):
+        """A second trigger for the same change, or a recalc after an analysis already stamped, is a no-op."""
+        await recalculate_project_stats(PROJECT_ID, released_db)
+        restamped = _record_restamps(monkeypatch)
+
+        assert await recalculate_project_stats(PROJECT_ID, released_db) is None
+
+        assert restamped == []
+
+    @pytest.mark.asyncio
+    async def test_an_expiry_moved_to_another_future_date_restamps_nothing(self, released_db, monkeypatch):
+        await recalculate_project_stats(PROJECT_ID, released_db)
+        await released_db.waivers.update_one(
+            {"_id": "w-1"}, {"$set": {"expiration_date": datetime(2099, 1, 1, tzinfo=timezone.utc)}}
+        )
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert restamped == []
+
+    @pytest.mark.asyncio
+    async def test_head_is_restamped_until_each_project_waiver_was_evaluated_there(self, released_db, monkeypatch):
+        await recalculate_project_stats(PROJECT_ID, released_db)
+        await released_db.waivers.update_one({"_id": "w-1"}, {"$set": {"last_eval_scan_id": "scan-before"}})
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert restamped == [SCAN_ID]
+        assert (await released_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == SCAN_ID
+
+    @pytest.mark.asyncio
+    async def test_a_changed_waiver_restamps_the_released_build_again(self, released_db, monkeypatch):
+        await recalculate_project_stats(PROJECT_ID, released_db)
+        await released_db.waivers.update_one({"_id": "w-1"}, {"$set": {"reason": "reworded"}})
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert restamped == [SCAN_ID, RELEASE_SCAN_ID]
+
     @pytest.mark.asyncio
     async def test_a_revoked_waiver_stops_hiding_a_critical_that_is_in_production(self, released_db):
         """Nothing waives this finding any more, so "what is in production" must stop reading zero."""
-        from app.repositories import FindingRepository
+        from app.repositories.findings import FindingRepository
 
         await recalculate_project_stats(PROJECT_ID, released_db)
 
@@ -256,12 +327,173 @@ class TestRecalculateReachesTheReleasedBuild:
         waiver = await released_db.waivers.find_one({"_id": "w-1"})
         assert waiver["last_eval_scan_id"] == SCAN_ID
 
+    @pytest.mark.asyncio
+    async def test_the_released_build_stamps_the_waiver_without_moving_its_signature(self, released_db):
+        at_head = MatchSignature(
+            rule_key="bearer:r", file_key="a.py", anchor="c", anchor_kind="content_hash", content_hash="c", last_line=10
+        )
+        await _insert_finding(released_db, {"_id": "loc-head", "type": "sast", "match": at_head.model_dump()})
+        await _insert_finding(
+            released_db,
+            {
+                "_id": "loc-shipped",
+                "scan_id": RELEASE_SCAN_ID,
+                "type": "sast",
+                "match": {**at_head.model_dump(), "last_line": 40},
+            },
+        )
+        await released_db.waivers.insert_one(
+            {
+                "_id": "w-loc",
+                "project_id": PROJECT_ID,
+                "finding_type": "sast",
+                "match": at_head.model_dump(),
+                "status": "false_positive",
+                "reason": "reviewed",
+                "created_by": "tester",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert (await released_db.findings.find_one({"_id": "loc-shipped"}))["waived"] is True
+        assert MatchSignature(**(await released_db.waivers.find_one({"_id": "w-loc"}))["match"]) == at_head
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", ["accepted_risk", "false_positive"])
+    async def test_a_released_build_lagging_head_by_more_than_the_window_keeps_the_waiver(self, released_db, status):
+        """The waiver's last_line tracks head; a shipped build whose code sits 60 lines higher is still waived."""
+        at_head = MatchSignature(
+            rule_key="bearer:r",
+            file_key="a.py",
+            anchor="c",
+            anchor_kind="content_hash",
+            content_hash="c",
+            last_line=200,
+        )
+        await _insert_finding(released_db, {"_id": "loc-head", "type": "sast", "match": at_head.model_dump()})
+        await _insert_finding(
+            released_db,
+            {
+                "_id": "loc-shipped",
+                "scan_id": RELEASE_SCAN_ID,
+                "type": "sast",
+                "match": {**at_head.model_dump(), "last_line": 140},
+            },
+        )
+        await released_db.waivers.insert_one(
+            {
+                "_id": "w-loc",
+                "project_id": PROJECT_ID,
+                "finding_type": "sast",
+                "match": at_head.model_dump(),
+                "status": status,
+                "reason": "reviewed",
+                "created_by": "tester",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        assert (await released_db.findings.find_one({"_id": "loc-shipped"}))["waived"] is True
+
+
+BRANCH_SCAN_ID = "scan-w4-feature"
+
+
+class TestRecalculateReachesANamedScan:
+    @pytest.mark.asyncio
+    async def test_the_scan_a_waiver_was_written_from_is_restamped(self, seeded_db):
+        """A waiver created from a feature-branch scan shows on that scan now, not after its next pipeline."""
+        await seeded_db.scans.insert_one({"_id": BRANCH_SCAN_ID, "project_id": PROJECT_ID, "status": "completed"})
+        branch_finding = _finding("f-branch", "CRITICAL", cvss_score=9.0, risk_score=90.0)
+        branch_finding.update(scan_id=BRANCH_SCAN_ID, finding_id="f-waived")
+        await seeded_db.findings.insert_one(branch_finding)
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db, restamp=[BRANCH_SCAN_ID])
+
+        assert (await seeded_db.findings.find_one({"_id": "f-branch"}))["waived"] is True
+        branch_scan = await seeded_db.scans.find_one({"_id": BRANCH_SCAN_ID})
+        assert (branch_scan["stats"]["critical"], branch_scan["ignored_count"]) == (0, 1)
+        assert (await seeded_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == SCAN_ID
+
 
 # ---------------------------------------------------------------------------
 # A waiver with no matching criteria must NOT waive every finding: an empty
-# _build_waiver_query ({}) would match all findings, so _apply_waivers must
+# waiver query ({}) would match all findings, so the restamp must
 # skip criteria-less waivers.
 # ---------------------------------------------------------------------------
+
+
+FEATURE_SCAN_ID = "scan-w4-feature"
+
+
+class TestRecalculateReachesEveryBranchTip:
+    @pytest_asyncio.fixture
+    async def branch_db(self, seeded_db):
+        """A feature branch whose tip still carries the flag of a waiver nobody holds any more."""
+        await seeded_db.scans.insert_one(
+            {
+                "_id": FEATURE_SCAN_ID,
+                "project_id": PROJECT_ID,
+                "branch": "feature/login",
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc) - timedelta(days=1),
+            }
+        )
+        stale = _finding("f-feature", "CRITICAL", cvss_score=9.1, waived=True)
+        stale["scan_id"] = FEATURE_SCAN_ID
+        stale["waiver_reason"] = STALE_WAIVER_REASON
+        await seeded_db.findings.insert_one(stale)
+        return seeded_db
+
+    @pytest.mark.asyncio
+    async def test_a_revoked_waiver_stops_hiding_a_finding_on_another_branch(self, branch_db):
+        await recalculate_project_stats(PROJECT_ID, branch_db)
+
+        tip_finding = await branch_db.findings.find_one({"_id": "f-feature"})
+        assert (tip_finding["waived"], tip_finding["waiver_reason"]) == (False, None)
+        assert (await branch_db.scans.find_one({"_id": FEATURE_SCAN_ID}))["stats"]["critical"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_tip_stamps_the_waivers_without_recording_their_outcome(self, branch_db):
+        await recalculate_project_stats(PROJECT_ID, branch_db)
+
+        assert (await branch_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == SCAN_ID
+
+    @pytest.mark.asyncio
+    async def test_a_branch_without_a_build_in_the_window_is_left_alone(self, branch_db, monkeypatch):
+        from app.core.constants import WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
+
+        await branch_db.scans.insert_one(
+            {
+                "_id": "scan-w4-quiet",
+                "project_id": PROJECT_ID,
+                "branch": "feature/abandoned",
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc) - timedelta(days=WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS + 1),
+            }
+        )
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, branch_db)
+
+        assert restamped == [SCAN_ID, FEATURE_SCAN_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_recalc_that_lost_its_lock_stops_before_the_next_scan(self, branch_db, monkeypatch):
+        from app.repositories.distributed_locks import DistributedLocksRepository
+
+        async def taken_over(self, lock_name, holder_id, ttl_seconds=30):
+            return False
+
+        monkeypatch.setattr(DistributedLocksRepository, "renew_lock", taken_over)
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, branch_db)
+
+        assert restamped == [SCAN_ID]
+        assert (await branch_db.findings.find_one({"_id": "f-feature"}))["waived"] is True
 
 
 class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
@@ -305,7 +537,7 @@ class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
 class TestLockContentionRetry:
     @pytest.mark.asyncio
     async def test_recalc_retries_lock_then_succeeds(self, seeded_db, monkeypatch):
-        from app.repositories import DistributedLocksRepository
+        from app.repositories.distributed_locks import DistributedLocksRepository
 
         calls = {"n": 0}
         real_acquire = DistributedLocksRepository.acquire_lock
@@ -337,7 +569,7 @@ class TestLockContentionRetry:
 
     @pytest.mark.asyncio
     async def test_recalc_returns_none_after_exhausting_retries(self, seeded_db, monkeypatch):
-        from app.repositories import DistributedLocksRepository
+        from app.repositories.distributed_locks import DistributedLocksRepository
 
         calls = {"n": 0}
 
@@ -371,7 +603,7 @@ async def test_stats_count_findings_that_carry_no_waived_field():
     del doc["waived"]
     await db.findings.insert_one(doc)
 
-    stats = await calculate_comprehensive_stats(db, SCAN_ID)
+    stats = (await calculate_comprehensive_stats(db, SCAN_ID)).stats
 
     assert stats.critical == 1
 
@@ -395,6 +627,31 @@ async def _insert_finding(db, doc):
 
 class TestWhatAWaiverMatchesOn:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("finding_type", ["sast", None])
+    async def test_a_global_rule_waiver_waives_only_its_rule(self, seeded_db, finding_type):
+        for fid, rule in (("f-rule-x", "X"), ("f-rule-y", "Y")):
+            await _insert_finding(
+                seeded_db,
+                {"_id": fid, "type": "sast", "component": "a.py", "details": {"sast_findings": [{"id": rule}]}},
+            )
+        await seeded_db.waivers.insert_one(
+            {
+                "_id": "w-rule-x",
+                "project_id": None,
+                "scope": "rule",
+                "rule_id": "X",
+                "finding_type": finding_type,
+                "reason": "rule X accepted everywhere",
+                "created_by": "admin",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert (await seeded_db.findings.find_one({"_id": "f-rule-x"}))["waived"] is True
+        assert (await seeded_db.findings.find_one({"_id": "f-rule-y"}))["waived"] is False
+
+    @pytest.mark.asyncio
     async def test_an_unknown_package_version_is_a_placeholder_and_not_a_version_to_match(self, seeded_db):
         """Scanners write "Unknown" where they have no version; matching on it literally would
         leave the waiver suppressing nothing."""
@@ -402,17 +659,15 @@ class TestWhatAWaiverMatchesOn:
             seeded_db,
             {"_id": "f-ghost", "type": "vulnerability", "component": "ghost-pkg", "version": "2.0.0"},
         )
+        waiver_in = WaiverCreate(
+            project_id=PROJECT_ID,
+            finding_type="vulnerability",
+            package_name="ghost-pkg",
+            package_version="Unknown",
+            reason="no version recorded by the scanner",
+        )
         await seeded_db.waivers.insert_one(
-            {
-                "_id": "w-unknown-version",
-                "project_id": PROJECT_ID,
-                "scope": "finding",
-                "finding_type": "vulnerability",
-                "package_name": "ghost-pkg",
-                "package_version": "Unknown",
-                "reason": "no version recorded by the scanner",
-                "created_by": "tester",
-            }
+            Waiver(**waiver_in.model_dump(), created_by="tester").model_dump(by_alias=True)
         )
 
         await recalculate_project_stats(PROJECT_ID, seeded_db)
@@ -424,19 +679,23 @@ class TestWhatAWaiverMatchesOn:
     async def test_a_rule_scope_waiver_reaches_the_same_rule_in_another_file(self, seeded_db):
         """Rule scope means "this rule everywhere"; keeping the waiver's own file in the query
         would silently degrade it to file scope."""
+        rule = {"sast_findings": [{"id": "weak_rng"}]}
         await _insert_finding(
             seeded_db,
-            {"_id": "f-rule-a", "type": "sast", "finding_id": "BEARER-weak_rng-src/a.js-10", "component": "src/a.js"},
+            {"_id": "f-rule-a", "type": "sast", "finding_id": "BEARER-weak_rng-src/a.js-10", "component": "src/a.js"}
+            | {"details": rule},
         )
         await _insert_finding(
             seeded_db,
-            {"_id": "f-rule-b", "type": "sast", "finding_id": "BEARER-weak_rng-src/b.js-42", "component": "src/b.js"},
+            {"_id": "f-rule-b", "type": "sast", "finding_id": "BEARER-weak_rng-src/b.js-42", "component": "src/b.js"}
+            | {"details": rule},
         )
         await seeded_db.waivers.insert_one(
             {
                 "_id": "w-rule",
                 "project_id": PROJECT_ID,
                 "scope": "rule",
+                "rule_id": "weak_rng",
                 "finding_type": "sast",
                 "finding_id": "BEARER-weak_rng-src/a.js-10",
                 "package_name": "src/a.js",
@@ -448,6 +707,48 @@ class TestWhatAWaiverMatchesOn:
         await recalculate_project_stats(PROJECT_ID, seeded_db)
 
         assert (await seeded_db.findings.find_one({"_id": "f-rule-a"}))["waived"] is True
+        assert (await seeded_db.findings.find_one({"_id": "f-rule-b"}))["waived"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_rule_scope_waiver_taken_on_a_line_less_hit_still_covers_every_file(self, seeded_db):
+        """A hit at line 0 gets no line segment in its id; the rule is still the rule."""
+        rule = {"sast_findings": [{"id": "ruby_lang_logger"}]}
+        await _insert_finding(
+            seeded_db,
+            {
+                "_id": "f-rule-a",
+                "type": "sast",
+                "finding_id": "BEARER-ruby_lang_logger-app/models/user.rb",
+                "component": "app/models/user.rb",
+                "details": rule,
+            },
+        )
+        await _insert_finding(
+            seeded_db,
+            {
+                "_id": "f-rule-b",
+                "type": "sast",
+                "finding_id": "BEARER-ruby_lang_logger-app/models/order.rb-12",
+                "component": "app/models/order.rb",
+                "details": rule,
+            },
+        )
+        await seeded_db.waivers.insert_one(
+            {
+                "_id": "w-rule",
+                "project_id": PROJECT_ID,
+                "scope": "rule",
+                "rule_id": "ruby_lang_logger",
+                "finding_type": "sast",
+                "finding_id": "BEARER-ruby_lang_logger-app/models/user.rb",
+                "package_name": "app/models/user.rb",
+                "reason": "rule accepted project-wide",
+                "created_by": "tester",
+            }
+        )
+
+        await recalculate_project_stats(PROJECT_ID, seeded_db)
+
         assert (await seeded_db.findings.find_one({"_id": "f-rule-b"}))["waived"] is True
 
     @pytest.mark.asyncio

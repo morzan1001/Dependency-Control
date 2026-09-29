@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from typing import Any, Literal
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
@@ -14,8 +14,10 @@ from app.core.config import settings
 from app.core.constants import (
     WEBHOOK_ACCEPTED_EVENT_NAMES,
     WEBHOOK_BLOCKED_HOSTNAMES,
+    WEBHOOK_EVENT_ALIASES,
     WEBHOOK_LOOPBACK_HOSTS,
     WEBHOOK_VALID_EVENTS,
+    WebhookType,
 )
 
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
@@ -160,7 +162,7 @@ def validate_webhook_events(events: list[str], allow_empty: bool = False) -> lis
     invalid_events = [e for e in events if e not in WEBHOOK_ACCEPTED_EVENT_NAMES]
     if invalid_events:
         raise ValueError(f"Invalid event types: {invalid_events}. Valid events: {WEBHOOK_VALID_EVENTS}")
-    return events
+    return list(dict.fromkeys(WEBHOOK_EVENT_ALIASES.get(e, e) for e in events))
 
 
 def validate_webhook_events_optional(
@@ -174,10 +176,10 @@ def validate_webhook_events_optional(
 def validate_webhook_event_type(event_type: str) -> str:
     if event_type not in WEBHOOK_ACCEPTED_EVENT_NAMES:
         raise ValueError(f"Invalid event type: {event_type}. Valid events: {WEBHOOK_VALID_EVENTS}")
-    return event_type
+    return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
 
 
-def detect_webhook_type(url: str) -> Literal["generic", "teams"]:
+def detect_webhook_type(url: str) -> WebhookType:
     """Returns "teams" for *.webhook.office.com, *.logic.azure.com/workflows/, and *.api.powerplatform.com/workflows/."""
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").lower()
@@ -190,3 +192,8 @@ def detect_webhook_type(url: str) -> Literal["generic", "teams"]:
     if (hostname == "api.powerplatform.com" or hostname.endswith(".api.powerplatform.com")) and "/workflows/" in path:
         return "teams"
     return "generic"
+
+
+def effective_webhook_type(stored: WebhookType, url: str) -> WebhookType:
+    """Delivered as Teams when stored so or when the URL is a Teams workflow, whatever type was stored."""
+    return "teams" if stored == "teams" else detect_webhook_type(url)

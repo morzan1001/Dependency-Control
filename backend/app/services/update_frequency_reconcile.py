@@ -11,7 +11,6 @@ one at the newest end of a branch leaves the two censuses agreeing and is not se
 
 import asyncio
 import logging
-import os
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -21,7 +20,7 @@ from typing import Any
 from app.core.config import settings
 from app.core.metrics import update_frequency_reconcile_drift_total
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION
-from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     LedgerEntry,
@@ -29,7 +28,6 @@ from app.repositories.update_frequency import (
     ScanUpdateDeltaRepository,
     window_scan_ids_by_branch,
 )
-from app.services.update_frequency import as_utc
 from app.services.update_frequency_rollup import record_scan_update_delta
 
 logger = logging.getLogger(__name__)
@@ -95,7 +93,7 @@ async def run_update_frequency_reconcile(db: Any) -> ReconcileReport | None:
         return None
 
     locks = DistributedLocksRepository(db)
-    holder_id = f"update-frequency-reconcile-{os.getenv('HOSTNAME', 'unknown')}"
+    holder_id = new_lock_holder()
     if not await locks.acquire_lock(_LOCK_NAME, holder_id, ttl_seconds=_LOCK_TTL_SECONDS):
         logger.debug("Update-frequency reconcile skipped: another pod holds the lock")
         return None
@@ -210,7 +208,7 @@ async def _dependents_of(db: Any, chain: tuple[str, str], deleted: set[str], owe
     """
     project_id, branch = chain
     docs = await ScanUpdateDeltaRepository(db).find_dependents(project_id, branch, sorted(deleted))
-    return [_Repair(doc["_id"], as_utc(doc["scan_created_at"]), "dependent") for doc in docs if doc["_id"] in owed]
+    return [_Repair(doc["_id"], doc["scan_created_at"], "dependent") for doc in docs if doc["_id"] in owed]
 
 
 def _publish(report: ReconcileReport) -> None:

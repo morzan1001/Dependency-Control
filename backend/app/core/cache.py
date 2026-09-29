@@ -127,8 +127,8 @@ class CacheKeys:
     def osv(purl: str) -> str:
         # MD5 used only as a fast non-cryptographic shortener for the cache key.
         purl_hash = hashlib.md5(purl.encode(), usedforsecurity=False).hexdigest()[:16]
-        # v2: entries cached before OSV records were hydrated hold placeholder severities.
-        return f"osv2:{purl_hash}"
+        # v3: older entries hold Debian/Alpine packages as clean and Debian advisories a revision fixed as open.
+        return f"osv3:{purl_hash}"
 
     @staticmethod
     def osv_vuln(vuln_id: str, modified: str) -> str:

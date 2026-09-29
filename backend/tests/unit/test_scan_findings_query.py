@@ -2,9 +2,9 @@
 
 from app.api.v1.endpoints.projects import (
     _build_scan_findings_match,
-    _resolve_secret_detectors,
     _scan_findings_sort_stage,
 )
+from app.core.trufflehog import resolve_secret_detectors
 
 
 class TestBuildScanFindingsMatch:
@@ -61,7 +61,7 @@ class TestBuildScanFindingsMatch:
     def test_hide_historical_secrets_composes_with_secret_category(self):
         # On the secrets tab (type=secret) the exclusion still narrows to in-tree/unknown secrets.
         match = _build_scan_findings_match("scan-1", category="secret", hide_historical_secrets=True)
-        assert match["type"] == "secret"
+        assert match["type"] == {"$in": ["secret"]}
         assert match["$nor"] == [{"type": "secret", "details.in_current_tree": False}]
 
 
@@ -69,23 +69,23 @@ class TestScanFindingsSortStage:
     """Every sort must end with the unique _id tiebreaker for stable pagination; finding_id isn't unique per scan (one CVE across N components)."""
 
     def test_severity_sort_has_unique_tiebreaker(self):
-        stage = _scan_findings_sort_stage("severity", "desc")
+        stage = _scan_findings_sort_stage("severity", -1)
         assert stage == {"$sort": {"severity_rank": -1, "component": 1, "_id": 1}}
 
     def test_component_sort_has_unique_tiebreaker(self):
-        stage = _scan_findings_sort_stage("component", "asc")
+        stage = _scan_findings_sort_stage("component", 1)
         assert stage == {"$sort": {"component": 1, "_id": 1}}
 
     def test_legacy_vuln_id_maps_to_finding_id_with_unique_tiebreaker(self):
-        stage = _scan_findings_sort_stage("vuln_id", "desc")
+        stage = _scan_findings_sort_stage("vuln_id", -1)
         assert stage == {"$sort": {"finding_id": -1, "_id": 1}}
 
     def test_scanner_maps_to_first_scanner_scalar(self):
-        stage = _scan_findings_sort_stage("scanner", "asc")
+        stage = _scan_findings_sort_stage("scanner", 1)
         assert stage == {"$sort": {"first_scanner": 1, "_id": 1}}
 
     def test_unknown_sort_by_falls_back_to_severity(self):
-        stage = _scan_findings_sort_stage("does_not_exist", "desc")
+        stage = _scan_findings_sort_stage("does_not_exist", -1)
         assert stage == {"$sort": {"severity_rank": -1, "component": 1, "_id": 1}}
 
 
@@ -95,9 +95,7 @@ class TestScanFindingsPipelineKeepsId:
     def test_id_not_dropped_before_sort_and_excluded_from_data(self):
         from app.api.v1.endpoints.projects import _build_scan_findings_pipeline
 
-        pipeline = _build_scan_findings_pipeline(
-            {"scan_id": "s"}, sort_by="severity", sort_order="desc", skip=0, limit=50
-        )
+        pipeline = _build_scan_findings_pipeline({"scan_id": "s"}, sort_by="severity", sort_dir=-1, skip=0, limit=50)
         sort_idx = next(i for i, st in enumerate(pipeline) if "$sort" in st)
         pre_sort_projects = [st["$project"] for st in pipeline[:sort_idx] if "$project" in st]
         assert all(p.get("_id") != 0 for p in pre_sort_projects)
@@ -116,7 +114,7 @@ class TestScanFindingsDirectOnly:
         from app.api.v1.endpoints.projects import _build_scan_findings_pipeline
 
         return _build_scan_findings_pipeline(
-            {"scan_id": "s"}, sort_by="severity", sort_order="desc", skip=0, limit=50, direct_only=direct_only
+            {"scan_id": "s"}, sort_by="severity", sort_dir=-1, skip=0, limit=50, direct_only=direct_only
         )
 
     def test_direct_only_adds_direct_match_after_addfields(self):
@@ -163,21 +161,21 @@ class TestResolveSecretDetectors:
 
     def test_ordinal_is_rendered_as_the_detector_name(self):
         rows = [self._row()]
-        _resolve_secret_detectors(rows)
+        resolve_secret_detectors(rows)
         assert rows[0]["details"]["detector"] == "URI"
-        assert rows[0]["description"] == "Secret detected: URI"
+        assert rows[0]["description"] == "Secret detected: 17"
 
     def test_stored_identity_fields_are_untouched(self):
         """finding_id and the waiver rule_key derived from it must stay on the ordinal —
         373 of 504 production waivers key on it."""
         rows = [self._row()]
-        _resolve_secret_detectors(rows)
+        resolve_secret_detectors(rows)
         assert rows[0]["finding_id"] == "SECRET-17-b8d80f45"
         assert rows[0]["id"] == "SECRET-17-b8d80f45"
 
     def test_hand_edited_description_is_left_alone(self):
         rows = [self._row(description="Reviewed: token belongs to the sandbox")]
-        _resolve_secret_detectors(rows)
+        resolve_secret_detectors(rows)
         assert rows[0]["details"]["detector"] == "URI"
         assert rows[0]["description"] == "Reviewed: token belongs to the sandbox"
 
@@ -187,7 +185,7 @@ class TestResolveSecretDetectors:
             {"type": "vulnerability", "description": "CVE-2021-1", "details": {"cvss_score": 9.8}},
             {"type": "license", "description": "MIT", "details": None},
         ]
-        _resolve_secret_detectors(rows)
+        resolve_secret_detectors(rows)
         assert rows[0]["details"]["detector"] == "999999"
         assert rows[1]["description"] == "CVE-2021-1"
         assert rows[2]["details"] is None

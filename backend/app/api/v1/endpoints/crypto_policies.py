@@ -1,16 +1,15 @@
 """Admin + project-scoped crypto policy endpoints."""
 
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import HTTPException, status
 
-from app.api.deps import CurrentUserDep, DatabaseDep, PermissionChecker
+from app.api.deps import CurrentUserDep, DatabaseDep, SystemManagerDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_500
-from app.core.permissions import Permissions
+from app.core.constants import PROJECT_ROLE_ADMIN, SETTINGS_MODE_GLOBAL
 from app.models.crypto_policy import CryptoPolicy
-from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
@@ -21,12 +20,10 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 
 router = CustomAPIRouter(tags=["crypto-policies"])
 
-AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]
-
 
 @router.get("/crypto-policies/system", responses=RESP_500)
 async def get_system_policy(
-    current_user: AdminUserDep,
+    current_user: SystemManagerDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get the system-level crypto policy. Seeds defaults on first access if missing."""
@@ -42,7 +39,7 @@ async def get_system_policy(
 
 @router.put("/crypto-policies/system")
 async def put_system_policy(
-    current_user: AdminUserDep,
+    current_user: SystemManagerDep,
     db: DatabaseDep,
     body: CryptoPolicyPutRequest,
 ) -> dict[str, Any]:
@@ -52,14 +49,11 @@ async def put_system_policy(
     repo = CryptoPolicyRepository(db)
     existing = await repo.get_system_policy()
     new_version = (existing.version + 1) if existing else 1
-    updated_by = getattr(current_user, "id", None)
-    if updated_by is not None:
-        updated_by = str(updated_by)
     policy = CryptoPolicy(
         scope="system",
         rules=rules,
         version=new_version,
-        updated_by=updated_by,
+        updated_by=current_user.id,
     )
     action = PolicyAuditAction.UPDATE if existing else PolicyAuditAction.CREATE
     await record_policy_change(
@@ -83,7 +77,7 @@ async def get_project_policy(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get the project override policy. Returns a stub with empty rules if none exists."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     policy = await CryptoPolicyRepository(db).get_project_policy(project_id)
     if policy is None:
         return {"scope": "project", "project_id": project_id, "rules": [], "version": 0}
@@ -98,9 +92,9 @@ async def put_project_policy(
     body: CryptoPolicyPutRequest,
 ) -> dict[str, Any]:
     """Create or replace the project override policy. Project owner or admin only."""
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     settings = await SystemSettingsRepository(db).get()
-    if settings.crypto_policy_mode == "global":
+    if settings.crypto_policy_mode == SETTINGS_MODE_GLOBAL:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="System enforces a global crypto policy; project overrides are disabled.",
@@ -110,15 +104,12 @@ async def put_project_policy(
     repo = CryptoPolicyRepository(db)
     existing = await repo.get_project_policy(project_id)
     new_version = (existing.version + 1) if existing else 1
-    updated_by = getattr(current_user, "id", None)
-    if updated_by is not None:
-        updated_by = str(updated_by)
     policy = CryptoPolicy(
         scope="project",
         project_id=project_id,
         rules=rules,
         version=new_version,
-        updated_by=updated_by,
+        updated_by=current_user.id,
     )
     action = PolicyAuditAction.UPDATE if existing else PolicyAuditAction.CREATE
     await record_policy_change(
@@ -145,7 +136,7 @@ async def delete_project_policy(
     db: DatabaseDep,
 ) -> None:
     """Delete the project override policy. Project owner or admin only."""
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     repo = CryptoPolicyRepository(db)
     old_policy = await repo.get_project_policy(project_id)
     new_policy = CryptoPolicy(
@@ -174,7 +165,7 @@ async def get_effective_policy(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get the effective merged policy for a project (system defaults merged with overrides)."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     effective = await CryptoPolicyResolver(db).resolve(project_id)
     return {
         "system_version": effective.system_version,

@@ -36,24 +36,24 @@ async def test_sweep_deletes_expired_reports(db):
     still_live = _report(expires_at=now + timedelta(days=10))
     no_expiry = _report(expires_at=None)
 
-    await repo.insert(expired)
-    await repo.insert(still_live)
-    await repo.insert(no_expiry)
+    await repo.create(expired)
+    await repo.create(still_live)
+    await repo.create(no_expiry)
 
     deleted = await sweep_expired_compliance_reports(db)
     assert deleted == 1
 
-    assert await repo.get(expired.id) is None
-    assert await repo.get(still_live.id) is not None
-    assert await repo.get(no_expiry.id) is not None
+    assert await repo.get_by_id(expired.id) is None
+    assert await repo.get_by_id(still_live.id) is not None
+    assert await repo.get_by_id(no_expiry.id) is not None
 
 
 @pytest.mark.asyncio
 async def test_sweep_is_noop_when_nothing_expired(db):
     repo = ComplianceReportRepository(db)
     future = _report(expires_at=datetime.now(timezone.utc) + timedelta(days=30))
-    await repo.insert(future)
+    await repo.create(future)
 
     deleted = await sweep_expired_compliance_reports(db)
     assert deleted == 0
-    assert await repo.get(future.id) is not None
+    assert await repo.get_by_id(future.id) is not None

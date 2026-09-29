@@ -57,6 +57,8 @@ APP_ROOT = Path(finding_details.__file__).resolve().parents[1]
 ALLOWED_UNDECLARED: dict[tuple[str, str], str] = {
     ("writeErrors", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
     ("nInserted", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
+    ("writeConcernErrors", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
+    ("keyPattern", "app/repositories/users.py"): "pymongo DuplicateKeyError.details key",
 }
 
 # Dotted Mongo paths are validated one level deep through these fields.
@@ -364,3 +366,14 @@ def test_writer_construction_kwargs_are_declared_fields():
                 if kw.arg is not None and kw.arg not in fields
             )
     assert not bad, "writers pass kwargs that are not schema fields:\n" + "\n".join(bad)
+
+
+def test_the_kev_consumers_per_entry_reads_are_walked():
+    """Their vulnerability-entry variables are named ``*_details``, so a key that drifts from the
+    enrichment writer fails the declared-key check instead of silently reading nothing."""
+    stats, notifications = (
+        {use.key for use in _collect_file_uses(APP_ROOT / "services" / "analysis" / name)}
+        for name in ("stats.py", "notifications.py")
+    )
+    assert {"in_kev", "kev_due_date", "kev_ransomware_use", "epss_score", "risk_score"} <= stats
+    assert {"severity", "epss_score", "in_kev", "kev_due_date", "kev_ransomware_use"} <= notifications

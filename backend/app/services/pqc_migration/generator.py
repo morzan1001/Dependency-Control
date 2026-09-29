@@ -8,10 +8,9 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN, SCAN_USABLE_STATUSES
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
-from app.schemas.cbom import CryptoPrimitive
+from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
 from app.schemas.pqc_migration import (
     MigrationItem,
-    MigrationItemStatus,
     MigrationPlanResponse,
     MigrationPlanSummary,
 )
@@ -24,8 +23,6 @@ from app.services.pqc_migration.mappings_loader import (
     normalise_family,
 )
 from app.services.pqc_migration.scoring import priority_score, status_from_score
-
-_QV_PRIMITIVES = {CryptoPrimitive.PKE, CryptoPrimitive.SIGNATURE, CryptoPrimitive.KEM}
 
 _GroupKey = tuple[str, str | None, int | None, str]
 
@@ -104,13 +101,13 @@ class PQCMigrationPlanGenerator:
             project_ids=sorted({a.project_id for a in group}),
             asset_count=len(group),
             source_family=canonical,
-            source_primitive=_enum_value(first_asset.primitive),
+            source_primitive=first_asset.primitive or "",
             use_case=mapping.use_case,
             recommended_pqc=mapping.recommended_pqc,
             recommended_standard=mapping.standard,
             notes=mapping.notes,
             priority_score=score,
-            status=MigrationItemStatus(status_from_score(score)),
+            status=status_from_score(score),
             recommended_deadline=deadline.isoformat() if deadline else None,
         )
 
@@ -118,8 +115,7 @@ class PQCMigrationPlanGenerator:
     def _summarise(items: list[MigrationItem], *, items_returned: int) -> MigrationPlanSummary:
         status_counts: dict[str, int] = {}
         for item in items:
-            key = item.status if isinstance(item.status, str) else item.status.value
-            status_counts[key] = status_counts.get(key, 0) + 1
+            status_counts[item.status] = status_counts.get(item.status, 0) + 1
         deadlines = [i.recommended_deadline for i in items if i.recommended_deadline]
         earliest = min(deadlines) if deadlines else None
         return MigrationPlanSummary(
@@ -144,7 +140,7 @@ class PQCMigrationPlanGenerator:
             project_ids = resolved.project_ids
         repo = CryptoAssetRepository(self.db)
         canonical_families = {m.source_family for m in self.mappings.mappings}
-        for pid, scan_id in (await resolve_scan_ids(self.db, project_ids)).items():
+        for pid, scan_id in (await resolve_scan_ids(self.db, project_ids, projects=resolved.projects)).items():
             assets = await repo.list_by_scan(pid, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
             out.extend(self._filter_vulnerable(assets, canonical_families))
         return out
@@ -156,7 +152,7 @@ class PQCMigrationPlanGenerator:
     ) -> list[CryptoAsset]:
         filtered: list[CryptoAsset] = []
         for a in assets:
-            if _coerce_primitive(a.primitive) not in _QV_PRIMITIVES:
+            if a.primitive not in QUANTUM_VULNERABLE_PRIMITIVES:
                 continue
             canonical = normalise_family(a.name or "", self.mappings)
             if canonical in canonical_families:
@@ -171,7 +167,7 @@ class PQCMigrationPlanGenerator:
         )
 
     def _find_mapping(self, family: str, primitive: Any) -> PQCMapping | None:
-        prim_val = _enum_value(primitive)
+        prim_val = primitive or ""
         exact = next(
             (m for m in self.mappings.mappings if m.source_family == family and m.source_primitive == prim_val),
             None,
@@ -192,20 +188,3 @@ class PQCMigrationPlanGenerator:
         if not applicable:
             return None
         return min(t.deadline for t in applicable)
-
-
-def _enum_value(val: Any) -> str:
-    if hasattr(val, "value"):
-        return str(val.value)
-    return str(val) if val else ""
-
-
-def _coerce_primitive(prim: Any) -> CryptoPrimitive | None:
-    if isinstance(prim, CryptoPrimitive):
-        return prim
-    if isinstance(prim, str):
-        try:
-            return CryptoPrimitive(prim)
-        except ValueError:
-            return None
-    return None

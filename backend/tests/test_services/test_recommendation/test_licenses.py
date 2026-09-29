@@ -263,6 +263,13 @@ class TestDetectLicenseDrift:
         assert len(result) == 1
         assert result[0].priority == Priority.MEDIUM
 
+    def test_a_switch_to_proprietary_counts_as_restrictive_drift_not_copyleft(self):
+        prev = [_drift_finding("a", "1.0", "MIT", "permissive")]
+        curr = [_drift_finding("a", "1.0", "Commercial", "proprietary")]
+        [result] = detect_license_drift(curr, prev)
+        assert result.priority == Priority.HIGH
+        assert result.impact == {"total": 1, "restrictive_drift": 1}
+
     def test_copyleft_to_permissive_not_flagged(self):
         # Drift to a less restrictive license is not a problem.
         prev = [_drift_finding("a", "1.0", "GPL-3.0", "strong_copyleft")]

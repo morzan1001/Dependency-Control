@@ -2,20 +2,33 @@
 
 import logging
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.core.constants import SCAN_STATUS_PENDING, SCAN_USABLE_STATUSES
 from app.core.worker import worker_manager
 from app.models.finding import Finding
 from app.models.project import Project
 from app.models.release import Release
 from app.models.waiver import Waiver
-from app.schemas.ingest import BaseIngest, ScanContext
+from app.repositories.projects import ProjectRepository
+from app.repositories.releases import ReleaseRepository
+from app.repositories.scans import ScanRepository
+from app.schemas.ingest import BaseIngest
+from app.services.waivers.matching import record_matches, route_waiver, waiver_criteria, waiver_strong_match
 
 logger = logging.getLogger(__name__)
+
+
+def deterministic_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
+    """The scan one CI run's SBOM, scanner results and callgraphs share, or None without a pipeline."""
+    if not pipeline_id:
+        return None
+    seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, seed))
 
 
 class ScanManager:
@@ -37,31 +50,14 @@ class ScanManager:
             return f"{data.project_url}/-/pipelines/{data.pipeline_id}"
         return None
 
-    async def find_or_create_scan(self, data: BaseIngest) -> ScanContext:
-        """Find or create the scan for this pipeline, keyed by a deterministic UUID5 so all
-        scanners for the same commit+pipeline share one scan across pods."""
-        pipeline_url = self.build_pipeline_url(data)
-
-        if data.pipeline_id and data.commit_hash:
-            scan_id_seed = f"{self.project.id}-{data.pipeline_id}-{data.commit_hash}"
-            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-        elif data.pipeline_id:
-            # No commit_hash: pipeline_id only (less precise).
-            scan_id_seed = f"{self.project.id}-{data.pipeline_id}"
-            scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
-        else:
-            # Manual upload: random UUID.
-            scan_id = str(uuid.uuid4())
-
-        # Atomic upsert to avoid races between concurrent scanners.
-        now = datetime.now(timezone.utc)
-
-        scan_update: dict[str, Any] = {
+    async def scan_upsert(self, data: BaseIngest, scan_id: str, now: datetime) -> dict[str, Any]:
+        """The scan document every ingest of the run writes, sbom_refs aside; records the release the payload marks."""
+        update: dict[str, Any] = {
             "$set": {
                 "branch": data.branch or "unknown",
                 "commit_hash": data.commit_hash,
                 "project_url": data.project_url,
-                "pipeline_url": pipeline_url,
+                "pipeline_url": self.build_pipeline_url(data),
                 "job_id": data.job_id,
                 "job_started_at": data.job_started_at,
                 "project_name": data.project_name,
@@ -75,78 +71,86 @@ class ScanManager:
                 "project_id": str(self.project.id),
                 "pipeline_id": data.pipeline_id,
                 "pipeline_iid": data.pipeline_iid,
-                "status": "pending",
+                "status": SCAN_STATUS_PENDING,
                 "created_at": now,
-                "sbom_refs": [],
             },
         }
-
-        from app.core.metrics import track_db_operation
-        from app.repositories import ReleaseRepository, ScanRepository
-
         release = data.release_fields(now)
         if release:
             # The row before the flag: the backfill sweeps the release rows and repairs a missing
             # flag, while a flag whose row is missing shows a release that is not there.
-            release_repo = ReleaseRepository(self.db)
-            await release_repo.record(Release(project_id=str(self.project.id), scan_id=scan_id, **release))
-            scan_update["$set"]["is_release"] = True
+            await ReleaseRepository(self.db).record(
+                Release(project_id=str(self.project.id), scan_id=scan_id, **release)
+            )
+            update["$set"]["is_release"] = True
+        return update
 
-        # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
-        scan_repo = ScanRepository(self.db)
-        with track_db_operation("scans", "update_one"):
-            upsert_result = await scan_repo.collection.update_one({"_id": scan_id}, scan_update, upsert=True)
+    def run_scan_id(self, data: BaseIngest) -> str:
+        # pipeline_id 0 derives nothing and still needs a scan of its own.
+        return deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
-        is_new = upsert_result.upserted_id is not None
-
-        return ScanContext(scan_id=scan_id, is_new=is_new, pipeline_url=pipeline_url)
+    async def find_or_create_scan(self, data: BaseIngest, scan_type: str | None = None) -> str:
+        """The run's scan id; the upsert lets concurrent scanners of one run share it across pods.
+        ``scan_type`` is only ever set, never cleared, since the run's other scanners pass none."""
+        scan_id = self.run_scan_id(data)
+        update = await self.scan_upsert(data, scan_id, datetime.now(timezone.utc))
+        update["$setOnInsert"]["sbom_refs"] = []
+        if scan_type is not None:
+            update["$set"]["scan_type"] = scan_type
+        await ScanRepository(self.db).upsert({"_id": scan_id}, update)
+        return scan_id
 
     async def _get_waivers(self) -> list[Waiver]:
         """Fetch active waivers for this project, memoized for this request-scoped instance."""
         if self._waivers is None:
-            from app.repositories import WaiverRepository
+            from app.repositories.waivers import WaiverRepository
 
             waiver_repo = WaiverRepository(self.db)
-            self._waivers = await waiver_repo.find_active_for_project(str(self.project.id), include_global=True)
+            self._waivers = await waiver_repo.find_active_for_project(str(self.project.id))
 
         return self._waivers
 
     def _finding_matches_waiver(self, finding: Finding, waiver: Waiver) -> bool:
-        """Best-effort exact match at ingest. Location-based findings use the strong-anchor
-        signature (no re-anchoring here — the recalc is authoritative for that)."""
-        if finding.match is not None and waiver.match is not None:
-            from app.services.waivers.matching import waiver_strong_match
-
-            return waiver_strong_match(finding.match, waiver.match, waiver.status or "false_positive")
-        # Legacy path for non-location findings (license/eol/vuln-by-type/component).
-        # Mirror _build_waiver_query's AND semantics (services/stats.py): every field the
-        # waiver sets must match the finding; an unset (or "Unknown") field is a wildcard.
-        # Using OR here over-waives, e.g. a secret waiver scoped to one file would suppress
-        # every secret in the whole upload.
-        field_pairs = (
-            (waiver.finding_id, finding.id),
-            (waiver.package_name, finding.component),
-            (waiver.package_version, finding.version),
-            (waiver.finding_type, finding.type),
-        )
-        matched_any = False
-        for waiver_value, finding_value in field_pairs:
-            if not waiver_value or waiver_value == "Unknown":
-                continue
-            if waiver_value != finding_value:
-                return False
-            matched_any = True
-        return matched_any
+        """Best-effort match at ingest; the recalculation re-anchors a moved location finding."""
+        route = route_waiver(waiver)
+        if route == "vulnerability":
+            return False
+        if route == "signature" and waiver.match is not None:
+            return finding.match is not None and waiver_strong_match(finding.match, waiver.match, waiver.status)
+        criteria = waiver_criteria(waiver)
+        record = {
+            "finding_id": finding.id,
+            "component": finding.component,
+            "version": finding.version,
+            "type": finding.type,
+            "details": finding.details,
+        }
+        return bool(criteria) and record_matches(record, criteria)
 
     async def apply_waivers(self, findings: list[Finding]) -> tuple[list[Finding], int]:
         """Apply waivers to findings, returning (non_waived_findings, waived_count)."""
-        waivers = await self._get_waivers()
+        # Keyed by what a matching finding must equal, so each finding meets only the waivers that can match it.
+        by_anchor: dict[tuple[str, str | None], list[Waiver]] = defaultdict(list)
+        by_finding_id: dict[str, list[Waiver]] = defaultdict(list)
+        unkeyed: list[Waiver] = []
+        for waiver in await self._get_waivers():
+            route = route_waiver(waiver)
+            if route == "signature" and waiver.match is not None and waiver.match.is_strong:
+                by_anchor[(waiver.match.file_key, waiver.match.anchor)].append(waiver)
+            elif route == "query" and (criteria := waiver_criteria(waiver)):
+                if "finding_id" in criteria:
+                    by_finding_id[criteria["finding_id"]].append(waiver)
+                else:
+                    unkeyed.append(waiver)
 
         final_findings = []
         waived_count = 0
 
         for finding in findings:
-            is_waived = any(self._finding_matches_waiver(finding, waiver) for waiver in waivers)
+            candidates = [*by_finding_id.get(finding.id, ()), *unkeyed]
+            if finding.match is not None:
+                candidates += by_anchor.get((finding.match.file_key, finding.match.anchor), ())
+            is_waived = any(self._finding_matches_waiver(finding, waiver) for waiver in candidates)
 
             if is_waived:
                 waived_count += 1
@@ -156,23 +160,10 @@ class ScanManager:
 
         return final_findings, waived_count
 
-    async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> str:
-        """Store analysis results in the database using AnalysisResultRepository."""
-        from app.repositories import AnalysisResultRepository
+    async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> None:
+        from app.repositories.analysis_results import AnalysisResultRepository
 
-        result_id = str(uuid.uuid4())
-        result_repo = AnalysisResultRepository(self.db)
-
-        await result_repo.create_raw(
-            {
-                "_id": result_id,
-                "scan_id": scan_id,
-                "analyzer_name": analyzer_name,
-                "result": result,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
-        return result_id
+        await AnalysisResultRepository(self.db).insert_result(scan_id, analyzer_name, result)
 
     async def trigger_aggregation(self, scan_id: str) -> None:
         """Add scan to worker queue for aggregation."""
@@ -193,10 +184,12 @@ class ScanManager:
             },
             "$addToSet": {"received_results": analyzer_name},
         }
-
-        from app.repositories import ScanRepository
+        if analyzer_name == "cbom":
+            # The crypto analyzers read the assets this post replaced, so a run under way must start over.
+            update_ops["$inc"] = {"sbom_generation": 1}
 
         scan_repo = ScanRepository(self.db)
+        await ProjectRepository(self.db).update_raw(str(self.project.id), {"$set": {"last_scan_at": now}})
 
         scan = await self.db.scans.find_one_and_update(
             {"_id": scan_id},
@@ -208,26 +201,14 @@ class ScanManager:
             logger.warning(f"Scan {scan_id} not found during register_result")
             return
 
-        current_status = scan.get("status", "pending")
         should_reaggregate = False
-
-        if current_status in SCAN_USABLE_STATUSES:
+        if scan.get("status") in SCAN_USABLE_STATUSES:
             logger.info(
                 f"Late result from {analyzer_name} for completed scan {scan_id}. "
                 f"Resetting to pending for re-aggregation."
             )
-            await scan_repo.update_raw(
-                scan_id,
-                {"$set": {"status": "pending", "retry_count": 0}},
-            )
-            should_reaggregate = True
+            # Acting on the write rather than on the status read above, so two late results queue one run.
+            should_reaggregate = await scan_repo.reopen_finished(scan_id)
 
         if trigger_analysis or should_reaggregate:
             await self.trigger_aggregation(scan_id)
-
-    async def update_project_last_scan(self) -> None:
-        """Update the project's last_scan_at timestamp via repository."""
-        from app.repositories import ProjectRepository
-
-        project_repo = ProjectRepository(self.db)
-        await project_repo.update_raw(str(self.project.id), {"$set": {"last_scan_at": datetime.now(timezone.utc)}})

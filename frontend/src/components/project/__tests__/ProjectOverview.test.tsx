@@ -79,7 +79,6 @@ function makeScan(overrides: Partial<ScanWithReleases>, stats: EnhancedStats): S
 
 // Annotated, not inferred: an inferred fixture drops a field from the hook's type silently.
 const noReleases: LatestProjectRelease = { latestRelease: undefined, hasReleases: false, isLoading: false }
-const releasesUnknown: LatestProjectRelease = { latestRelease: undefined, hasReleases: false, isLoading: true }
 
 // The endpoint answers this over every scan the project holds; here it answers over the fixture,
 // so a test that says nothing about branch tips still gets the tips its scans imply.
@@ -97,11 +96,7 @@ function deriveTips(scans: ScanWithReleases[]): ProjectBranchTips {
     if (beatsHeld) row.tip = scan
     byBranch.set(scan.branch, row)
   }
-  const flagged = scans.find((scan) => scan.is_release && USABLE_STATUSES.includes(scan.status))
-  return {
-    branches: [...byBranch.values()].sort((a, b) => a.branch.localeCompare(b.branch)),
-    flagged_release_scan: flagged ?? null,
-  }
+  return { branches: [...byBranch.values()].sort((a, b) => a.branch.localeCompare(b.branch)) }
 }
 
 function renderOverview(
@@ -269,11 +264,10 @@ describe('ProjectOverview - a project with more scans than the chart window hold
   const QUIET_CRITICAL = 50
   const BUSY_SCAN_COUNT = 120
   const QUIET_SCAN_COUNT = 1
-  const FLAGGED_SCAN_ID = 's-quiet-tip'
 
   const busyTip = makeScan({ id: 's-busy-tip', branch: BUSY_BRANCH }, { critical: BUSY_CRITICAL, risk_score: 11 })
   const quietTip = makeScan(
-    { id: FLAGGED_SCAN_ID, branch: QUIET_BRANCH, created_at: '2026-01-01T00:00:00Z', is_release: true },
+    { id: 's-quiet-tip', branch: QUIET_BRANCH, created_at: '2026-01-01T00:00:00Z' },
     { critical: QUIET_CRITICAL, risk_score: 97 },
   )
   // The page of scans holds only the busy branch; the quiet branch's newest scan fell out of it.
@@ -283,7 +277,6 @@ describe('ProjectOverview - a project with more scans than the chart window hold
       { branch: BUSY_BRANCH, scan_count: BUSY_SCAN_COUNT, tip: busyTip },
       { branch: QUIET_BRANCH, scan_count: QUIET_SCAN_COUNT, tip: quietTip },
     ],
-    flagged_release_scan: quietTip,
   }
   const selected = [BUSY_BRANCH, QUIET_BRANCH]
 
@@ -298,12 +291,6 @@ describe('ProjectOverview - a project with more scans than the chart window hold
     renderOverview(page, selected, noReleases, [], tips)
 
     expect(screen.getByText(String(BUSY_SCAN_COUNT + QUIET_SCAN_COUNT))).toBeInTheDocument()
-  })
-
-  it('finds a release marked before the page begins', () => {
-    renderOverview(page, selected, noReleases, [], tips)
-
-    expect(screen.getByText('Latest Release')).toBeInTheDocument()
   })
 })
 
@@ -356,7 +343,6 @@ describe('ProjectOverview - release tile', () => {
   const RELEASE_TILE_TITLE = 'Latest Release'
   const NOT_ANALYSED_TEXT = 'Nothing in its rescan chain has finished analysing'
   const CHAIN_BOUNDED_TEXT = 'Rescan chain longer than the walk follows — a newer analysis may exist'
-  const GENERIC_RELEASE_LABEL = 'Release'
 
   function findingsUrl(scanId: string, severity: string): string {
     return `/projects/${PROJECT_ID}/scans/${scanId}?severity=${severity}`
@@ -466,16 +452,6 @@ describe('ProjectOverview - release tile', () => {
 
     expect(screen.queryByText(RELEASE_TILE_TITLE)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: SHOW_RELEASE_BUTTON })).not.toBeInTheDocument()
-  })
-
-  it('waits for the row before falling back to a flagged scan, so no nameless badge flashes up', () => {
-    const flaggedOnly = makeScan(
-      { id: 's-flagged', created_at: RELEASED_AT, is_release: true },
-      { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
-    )
-    renderOverview([head, flaggedOnly], [MAIN_BRANCH], releasesUnknown)
-
-    expect(screen.queryByText(RELEASE_TILE_TITLE)).not.toBeInTheDocument()
   })
 
   it('shows the tile once the project reports one', () => {
@@ -607,18 +583,14 @@ describe('ProjectOverview - release tile', () => {
     expect(screen.getByRole('tab', { name: SECOND_BRANCH })).toBeDisabled()
   })
 
-  it('counts a scan whose release record has not landed yet', () => {
+  it('shows no tile for a release flag no release record backs', () => {
     const flaggedOnly = makeScan(
       { id: 's-flagged', created_at: RELEASED_AT, is_release: true },
       { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
     )
     renderOverview([head, flaggedOnly])
 
-    expect(screen.getByLabelText(GENERIC_RELEASE_LABEL)).toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
-
-    expect(within(tile(CRITICAL_TILE)).getByText(String(RELEASE_CRITICAL))).toBeInTheDocument()
+    expect(screen.queryByText(RELEASE_TILE_TITLE)).not.toBeInTheDocument()
   })
 
   it('names a release that sits outside the branches and the page this view loaded', () => {

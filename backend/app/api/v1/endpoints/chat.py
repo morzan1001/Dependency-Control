@@ -1,18 +1,18 @@
 """Chat API endpoints for the AI security assistant."""
 
 import logging
+from typing import Annotated
 
 import redis.asyncio as redis
-from fastapi import HTTPException, status
+from fastapi import Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api import deps
+from app.api.deps import DatabaseDep, PermissionChecker
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.config import settings
-from app.core.permissions import Permissions, has_permission
-from app.models.system import SystemSettings
+from app.core.permissions import Permissions
 from app.models.user import User
 from app.schemas.chat import (
     ConversationCreate,
@@ -31,13 +31,6 @@ _MSG_CONVERSATION_NOT_FOUND = "Conversation not found"
 router = CustomAPIRouter()
 
 
-async def _get_system_settings(db: AsyncIOMotorDatabase) -> SystemSettings:
-    doc = await db["system_settings"].find_one({"_id": "current"})
-    if doc:
-        return SystemSettings(**doc)
-    return SystemSettings()
-
-
 def _check_chat_enabled() -> None:
     if not settings.CHAT_ENABLED:
         raise HTTPException(
@@ -46,23 +39,21 @@ def _check_chat_enabled() -> None:
         )
 
 
-def _check_permission(user: User, permission: str) -> None:
-    if not has_permission(user.permissions, permission):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions",
-        )
+ChatUserDep = Annotated[User, Depends(PermissionChecker(Permissions.CHAT_ACCESS))]
+ChatHistoryReaderDep = Annotated[User, Depends(PermissionChecker(Permissions.CHAT_HISTORY_READ))]
+ChatHistoryDeleterDep = Annotated[User, Depends(PermissionChecker(Permissions.CHAT_HISTORY_DELETE))]
+# Route dependencies run before parameters, so chat access is refused before history reading.
+_REQUIRES_CHAT_ACCESS = [Depends(PermissionChecker(Permissions.CHAT_ACCESS))]
 
 
 @router.post("/conversations", responses=RESP_AUTH)
 async def create_conversation(
     body: ConversationCreate,
-    current_user: CurrentUserDep,
+    current_user: ChatUserDep,
     db: DatabaseDep,
 ) -> ConversationResponse:
     """Create a new chat conversation."""
     _check_chat_enabled()
-    _check_permission(current_user, Permissions.CHAT_ACCESS)
 
     service = ChatService(db)
     conv = await service.create_conversation(current_user, title=body.title)
@@ -76,15 +67,13 @@ async def create_conversation(
     )
 
 
-@router.get("/conversations", responses=RESP_AUTH)
+@router.get("/conversations", responses=RESP_AUTH, dependencies=_REQUIRES_CHAT_ACCESS)
 async def list_conversations(
-    current_user: CurrentUserDep,
+    current_user: ChatHistoryReaderDep,
     db: DatabaseDep,
 ) -> ConversationListResponse:
     """List the current user's chat conversations."""
     _check_chat_enabled()
-    _check_permission(current_user, Permissions.CHAT_ACCESS)
-    _check_permission(current_user, Permissions.CHAT_HISTORY_READ)
 
     service = ChatService(db)
     convs = await service.list_conversations(current_user)
@@ -104,16 +93,14 @@ async def list_conversations(
     )
 
 
-@router.get("/conversations/{conversation_id}", responses=RESP_AUTH_404)
+@router.get("/conversations/{conversation_id}", responses=RESP_AUTH_404, dependencies=_REQUIRES_CHAT_ACCESS)
 async def get_conversation(
     conversation_id: str,
-    current_user: CurrentUserDep,
+    current_user: ChatHistoryReaderDep,
     db: DatabaseDep,
 ) -> ConversationDetailResponse:
     """Get a conversation with its messages."""
     _check_chat_enabled()
-    _check_permission(current_user, Permissions.CHAT_ACCESS)
-    _check_permission(current_user, Permissions.CHAT_HISTORY_READ)
 
     service = ChatService(db)
     conv = await service.get_conversation(conversation_id, current_user)
@@ -137,12 +124,11 @@ async def get_conversation(
 @router.delete("/conversations/{conversation_id}", responses=RESP_AUTH_404)
 async def delete_conversation(
     conversation_id: str,
-    current_user: CurrentUserDep,
+    current_user: ChatHistoryDeleterDep,
     db: DatabaseDep,
 ) -> dict[str, str]:
     """Delete a conversation and all its messages."""
     _check_chat_enabled()
-    _check_permission(current_user, Permissions.CHAT_HISTORY_DELETE)
 
     service = ChatService(db)
     deleted = await service.delete_conversation(conversation_id, current_user)
@@ -156,13 +142,12 @@ async def delete_conversation(
 async def send_message(
     conversation_id: str,
     body: MessageCreate,
-    current_user: CurrentUserDep,
+    current_user: ChatUserDep,
     db: DatabaseDep,
 ) -> StreamingResponse:
     """Send a message and stream the AI response via SSE."""
     _check_chat_enabled()
-    _check_permission(current_user, Permissions.CHAT_ACCESS)
-    system_settings = await _get_system_settings(db)
+    system_settings = await deps.get_system_settings(db)
 
     try:
         async with redis.from_url(settings.REDIS_URL) as redis_client:
@@ -187,7 +172,13 @@ async def send_message(
         raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
     return StreamingResponse(
-        service.send_message(conversation_id, current_user, body.content, body.images),
+        service.send_message(
+            conversation_id,
+            current_user,
+            body.content,
+            body.images,
+            max_tool_rounds=system_settings.chat_max_tool_rounds,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

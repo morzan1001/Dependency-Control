@@ -22,6 +22,11 @@ from .base import Analyzer
 logger = logging.getLogger(__name__)
 
 
+def _mapped_products(key: str) -> set[str]:
+    target = NAME_TO_EOL_MAPPING.get(key, key)
+    return {target} if isinstance(target, str) else set(target)
+
+
 def _extract_products_from_cpes(cpes: list[str]) -> set[str]:
     """Map CPE strings to endoflife.date product IDs (accepts cpe:2.3:a:, cpe:/2.3:a:, and legacy cpe:/a:)."""
     products: set[str] = set()
@@ -29,24 +34,16 @@ def _extract_products_from_cpes(cpes: list[str]) -> set[str]:
         match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe) or re.match(r"cpe:/a:([^:]+):([^:]+)", cpe)
         if not match:
             continue
-        vendor = match.group(1).lower()
-        product = match.group(2).lower()
-        if product in NAME_TO_EOL_MAPPING:
-            products.add(NAME_TO_EOL_MAPPING[product])
-        elif f"{vendor}_{product}" in NAME_TO_EOL_MAPPING:
-            products.add(NAME_TO_EOL_MAPPING[f"{vendor}_{product}"])
-        else:
-            products.add(product)
+        products |= _mapped_products(match.group(2).lower())
     return products
 
 
 def _resolve_eol_products(name: str, cpes: list[str]) -> set[str]:
-    """Map a component to endoflife.date product IDs (CPEs first, then name)."""
+    """Map a component to endoflife.date product IDs: its CPE products plus its mapped name, else the bare name."""
     products = _extract_products_from_cpes(cpes)
-    if products:
-        return products
-    mapped = NAME_TO_EOL_MAPPING.get(name)
-    return {mapped} if mapped else {name}
+    if name in NAME_TO_EOL_MAPPING:
+        products |= _mapped_products(name)
+    return products or {name}
 
 
 def collect_products_to_check(
@@ -145,7 +142,8 @@ class EndOfLifeAnalyzer(Analyzer):
     ) -> None:
         """Fetch missing products from endoflife.date and emit issues for each."""
         timeout = ANALYZER_TIMEOUTS.get("end_of_life", ANALYZER_TIMEOUTS["default"])
-        async with InstrumentedAsyncClient("endoflife.date API", timeout=timeout) as client:
+        # Upstream renames answer 301; following them keeps a renamed product covered.
+        async with InstrumentedAsyncClient("endoflife.date API", timeout=timeout, follow_redirects=True) as client:
             for product in products_to_fetch:
                 cycles = await cache_service.get_or_fetch_with_lock(
                     key=CacheKeys.eol(product),

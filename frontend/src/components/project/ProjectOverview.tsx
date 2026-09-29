@@ -4,7 +4,6 @@ import { useProjectBranchTips, useProjectScans, useScan, useScanResults } from '
 import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
 import { Scan } from '@/types/scan'
-import { hasUnrecordedRelease } from '@/lib/releases'
 import { resolveRun } from '@/lib/scan-run'
 import { highestRiskBranch } from '@/lib/branches'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -87,20 +86,12 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
     : highestRiskBranch(latestScansByBranch);
   // The tile names the environment the release went to rather than assuming production.
   const { latestRelease, isLoading: releasesLoading } = useLatestProjectRelease(projectId);
-  const { data: markedReleaseScan } = useScan(latestRelease?.analysis_scan_id ?? '');
-  // A release row is what the endpoint lists, so a scan holding only the flag reaches it no other way.
-  const candidate = branchTips?.flagged_release_scan;
-  const flaggedScan = candidate && hasUnrecordedRelease(candidate) ? candidate : undefined;
-  const releaseScan = latestRelease ? markedReleaseScan : flaggedScan;
+  const { data: releaseScan } = useScan(latestRelease?.analysis_scan_id ?? '');
   const releaseEnvironment = latestRelease?.environment ?? null;
   // Hidden entirely on a project that reports no release: an empty tile reads as a missing report.
-  // Withheld while the answer is in flight too, because the flag-only fallback would otherwise put
-  // a nameless badge on screen for the instant before the row names its environment.
-  const showReleaseTile = !releasesLoading && (latestRelease !== undefined || flaggedScan !== undefined);
+  const showReleaseTile = !releasesLoading && latestRelease !== undefined;
   // analysis_scan_id is null while nothing in the release's rescan chain has finished analysing.
-  const releaseHasNumbers = latestRelease
-    ? latestRelease.analysis_scan_id !== null
-    : flaggedScan !== undefined;
+  const releaseHasNumbers = latestRelease?.analysis_scan_id != null;
   const headScan = activeBranch ? latestScansByBranch[activeBranch] : undefined;
   const releaseShown = showRelease ? releaseScan : undefined;
   const activeScan = releaseShown ?? headScan;
@@ -130,9 +121,7 @@ export function ProjectOverview({ projectId, selectedBranches }: Readonly<Projec
   const hasThreatIntelData = threatIntel && (
     (threatIntel.kev_count ?? 0) > 0 ||
     (threatIntel.high_epss_count ?? 0) > 0 ||
-    (threatIntel.medium_epss_count ?? 0) > 0 ||
-    (threatIntel.weaponized_count ?? 0) > 0 ||
-    (threatIntel.active_exploitation_count ?? 0) > 0
+    (threatIntel.medium_epss_count ?? 0) > 0
   )
   const reachability = stats.reachability
   const hasReachabilityData = reachability && (

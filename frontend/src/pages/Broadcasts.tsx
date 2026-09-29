@@ -45,6 +45,7 @@ export default function Broadcasts() {
   ])
   const [impactCount, setImpactCount] = useState<number | null>(null)
   const [impactProjectCount, setImpactProjectCount] = useState<number | null>(null)
+  const [uncomparableVersions, setUncomparableVersions] = useState<string[]>([])
   const [isCalculating, setIsCalculating] = useState(false)
   const [channels, setChannels] = useState<NotificationChannel[]>(["email"])
 
@@ -64,6 +65,7 @@ export default function Broadcasts() {
     setLastImpactInputs({ activeTab, announcementTarget, packages, selectedTeams })
     setImpactCount(null)
     setImpactProjectCount(null)
+    setUncomparableVersions([])
   }
 
   const handleChannelToggle = (channel: NotificationChannel) => {
@@ -95,7 +97,6 @@ export default function Broadcasts() {
     try {
       if (activeTab === "announcement") {
          const result = await sendBroadcast({
-            type: "general",
             target_type: announcementTarget,
             target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
             subject: "Dry Run",
@@ -110,7 +111,6 @@ export default function Broadcasts() {
          if (validPackages.length === 0) return
 
          const result = await sendBroadcast({
-            type: "advisory",
             target_type: "advisory",
             packages: validPackages,
             subject: "Dry Run",
@@ -120,6 +120,7 @@ export default function Broadcasts() {
          })
          setImpactCount(result.recipient_count)
          setImpactProjectCount(result.project_count || 0)
+         setUncomparableVersions(result.uncomparable_versions ?? [])
       }
     } catch {
       // Handled by mutation hook
@@ -131,7 +132,6 @@ export default function Broadcasts() {
   const handleSendAnnouncement = async () => {
     try {
       const result = await sendBroadcast({
-        type: "general",
         target_type: announcementTarget,
         target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
         subject: announcementSubject,
@@ -158,7 +158,6 @@ export default function Broadcasts() {
       const validPackages = packages.filter(p => p.name.trim() !== "")
 
       const result = await sendBroadcast({
-        type: "advisory",
         target_type: "advisory",
         packages: validPackages,
         subject: advisorySubject,
@@ -169,7 +168,7 @@ export default function Broadcasts() {
       setImpactCount(null)
       setImpactProjectCount(null)
       toast.success("Advisory queued", {
-        description: `Sending to owners of ${result.project_count || 0} affected projects in the background.`
+        description: `Sending to ${result.recipient_count} project admins in the background.`
       })
       setAdvisorySubject("")
       setAdvisoryMessage("")
@@ -353,7 +352,7 @@ export default function Broadcasts() {
                             <PackageAutocomplete 
                                 value={pkg.name}
                                 onValueChange={(val) => updatePackage(index, 'name', val)}
-                                placeholder="e.g. log4j-core"
+                                placeholder="e.g. log4j-core or group:artifact"
                             />
                         </div>
                         <div className="w-32 space-y-2">
@@ -377,8 +376,8 @@ export default function Broadcasts() {
                                     <SelectItem value="any">Any</SelectItem>
                                     <SelectItem value="maven">Maven</SelectItem>
                                     <SelectItem value="npm">NPM</SelectItem>
-                                    <SelectItem value="pip">Pip</SelectItem>
-                                    <SelectItem value="go">Go</SelectItem>
+                                    <SelectItem value="pypi">Pip</SelectItem>
+                                    <SelectItem value="golang">Go</SelectItem>
                                     <SelectItem value="nuget">NuGet</SelectItem>
                                 </SelectContent>
                             </Select>
@@ -431,6 +430,11 @@ export default function Broadcasts() {
                         <Badge variant="destructive" className="text-base px-3 py-1">
                             {impactProjectCount} Projects Affected
                         </Badge>
+                    )}
+                    {impactProjectCount !== null && uncomparableVersions.length > 0 && (
+                        <p className="text-sm text-muted-foreground">
+                            Version could not be compared, their admins are told so: {uncomparableVersions.join(", ")}
+                        </p>
                     )}
                 </div>
                 <Button
@@ -512,7 +516,7 @@ export default function Broadcasts() {
                          </TableCell>
                          <TableCell>
                             <div className="flex flex-col text-xs gap-1">
-                               <Badge variant="outline" className="w-fit">{item.unique_user_count ?? item.recipient_count} Users</Badge>
+                               <Badge variant="outline" className="w-fit">{item.recipient_count} Users</Badge>
                                {item.project_count > 0 && <span className="text-muted-foreground">{item.project_count} Projects</span>}
                             </div>
                          </TableCell>

@@ -4,6 +4,7 @@ import pytest
 
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.vulnerabilities import process_vulnerabilities
+from tests.helpers.findings import stored_vulnerability
 
 
 def _make_finding(
@@ -30,10 +31,17 @@ def _make_finding(
         "version": version,
         "details": {
             "fixed_version": fixed_version,
-            "in_kev": is_kev,
-            "epss_score": epss_score,
-            "kev_ransomware_use": kev_ransomware,
-            "vulnerabilities": [{"id": finding_id, "aliases": aliases or []}],
+            "vulnerabilities": [
+                {
+                    "id": finding_id,
+                    "severity": severity,
+                    "fixed_version": fixed_version,
+                    "aliases": aliases or [],
+                    "in_kev": is_kev,
+                    "epss_score": epss_score,
+                    "kev_ransomware_use": kev_ransomware,
+                }
+            ],
         },
         "reachable": reachable,
         "reachability_level": reachability_level,
@@ -98,14 +106,14 @@ class TestDirectDependencyUpdate:
         assert rec.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE
         assert rec.priority == expected_priority
 
-    def test_affected_components_contains_package(self):
+    def test_affected_components_names_the_installed_copy(self):
         finding = _make_finding(component="requests")
         dep = _make_dependency(name="requests")
         dep_by_nv = _build_lookup_maps([dep])
 
         result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
 
-        assert "requests" in result[0].affected_components
+        assert result[0].affected_components == ["requests@1.0.0"]
 
     def test_action_contains_target_version(self):
         finding = _make_finding(fixed_version="2.0.0")
@@ -249,6 +257,26 @@ class TestBaseImageUpdate:
         base_recs = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert len(base_recs) == 1
         assert base_recs[0].priority == Priority.CRITICAL
+
+    def test_os_packages_of_a_directory_scan_get_no_base_image_card(self):
+        finding = _make_finding(severity="CRITICAL", component="libssl")
+        dep = _make_dependency(
+            name="libssl", purl="pkg:deb/debian/libssl@1.0.0", direct=True, source_type="directory", dep_type="deb"
+        )
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], "/srv/rootfs")
+
+        assert [r.type for r in result] == [RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+
+    def test_os_packages_of_an_sbom_naming_no_source_count_as_image(self):
+        finding = _make_finding(severity="CRITICAL", component="libssl")
+        dep = _make_dependency(
+            name="libssl", purl="pkg:deb/debian/libssl@1.0.0", direct=False, source_type=None, dep_type="deb"
+        )
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], "debian:11")
+
+        assert [r.type for r in result] == [RecommendationType.BASE_IMAGE_UPDATE]
 
     def test_few_low_severity_os_vulns_no_recommendation(self):
         """Fewer than 3 low-severity OS vulns should NOT trigger base image update."""
@@ -787,7 +815,182 @@ class TestCveIdOnTheStoredShape:
         dep = _make_dependency()
         dep_by_nv = _build_lookup_maps([dep])
 
-        result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
+        [card] = process_vulnerabilities([finding], dep_by_nv, [dep], None)
 
-        direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
-        assert direct_recs[0].action["cves"] == ["unknown"]
+        assert (card.type, "cves" in card.action) == (RecommendationType.NO_FIX_AVAILABLE, False)
+
+
+class TestUpdateCardsArePerInstalledVersion:
+    def _cards(self, findings, deps, card_type):
+        dep_by_nv = _build_lookup_maps(deps)
+        return [r for r in process_vulnerabilities(findings, dep_by_nv, deps, None) if r.type == card_type]
+
+    def test_each_transitive_version_gets_its_own_card(self):
+        findings = [
+            _make_finding(finding_id="CVE-1", component="minimist", version="0.0.8", fixed_version="0.2.1"),
+            _make_finding(finding_id="CVE-2", component="minimist", version="1.2.0", fixed_version="1.2.6"),
+        ]
+        deps = [_make_dependency(name="minimist", version=v, direct=False) for v in ("0.0.8", "1.2.0")]
+
+        cards = self._cards(findings, deps, RecommendationType.TRANSITIVE_FIX_VIA_PARENT)
+
+        assert sorted(
+            (c.affected_components[0], c.action["current_version"], c.action["target_version"]) for c in cards
+        ) == [
+            ("minimist@0.0.8", "0.0.8", "0.2.1"),
+            ("minimist@1.2.0", "1.2.0", "1.2.6"),
+        ]
+        assert sorted(c.action["cves"][0] for c in cards) == ["CVE-1", "CVE-2"]
+
+    def test_each_direct_version_gets_its_own_card(self):
+        findings = [
+            _make_finding(finding_id="CVE-1", severity="HIGH", version="4.17.15", fixed_version="4.17.21"),
+            _make_finding(finding_id="CVE-2", severity="CRITICAL", version="3.10.1", fixed_version="4.17.12"),
+        ]
+        deps = [_make_dependency(version=v) for v in ("4.17.15", "3.10.1")]
+
+        cards = self._cards(findings, deps, RecommendationType.DIRECT_DEPENDENCY_UPDATE)
+
+        assert {c.title: c.priority for c in cards} == {
+            "Update pkg-name@4.17.15": Priority.HIGH,
+            "Update pkg-name@3.10.1": Priority.CRITICAL,
+        }
+
+    def test_the_transitive_card_reports_the_average_epss_like_the_direct_one(self):
+        finding = _make_finding(component="trans", epss_score=0.2)
+        dep = _make_dependency(name="trans", direct=False)
+
+        [card] = self._cards([finding], [dep], RecommendationType.TRANSITIVE_FIX_VIA_PARENT)
+
+        assert card.impact["avg_epss"] == 0.2
+
+
+class TestInferredDirectnessIsNotPresentedAsDeclared:
+    def test_an_inferred_direct_dependency_says_the_sbom_does_not_record_it(self):
+        finding = _make_finding(component="openssl-lib")
+        dep = {**_make_dependency(name="openssl-lib"), "direct_inferred": True}
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], None)
+
+        [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        assert card.action["direct_inferred"] is True
+        assert card.effort == "medium"
+        assert "does not record whether openssl-lib is a direct dependency" in card.description
+
+    def test_a_declared_direct_dependency_keeps_the_low_effort_update(self):
+        finding = _make_finding()
+        dep = _make_dependency()
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], None)
+
+        [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        assert card.action["direct_inferred"] is False
+        assert card.effort == "low"
+
+
+class TestUpdateCardsReadTheLiveAdvisories:
+    def _direct_card(self, advisories, **details):
+        finding = _make_finding(component="log4j-core", version="2.14.1", severity="MEDIUM", fixed_version="2.17.1")
+        fixed = [a | {"fixed_version": "2.17.1"} for a in advisories]
+        finding["details"] |= {**details, "vulnerabilities": fixed}
+        dep = _make_dependency(name="log4j-core", version="2.14.1")
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], None)
+        [card] = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        return card
+
+    def test_a_kev_cve_waived_on_its_own_neither_raises_the_card_nor_is_named(self):
+        waived = {"id": "CVE-2021-44228", "waived": True, "in_kev": True, "epss_score": 0.94}
+        card = self._direct_card([waived, {"id": "CVE-2021-44832", "epss_score": 0.001}], in_kev=True, epss_score=0.94)
+
+        assert card.priority == Priority.MEDIUM
+        assert (card.impact["kev_count"], card.impact["high_epss_count"]) == (0, 0)
+        assert (card.action["kev_cves"], card.action["high_epss_cves"]) == ([], [])
+        assert card.action["cves"] == ["CVE-2021-44832"]
+
+    def test_the_kev_and_epss_samples_name_the_cve_that_carries_the_mark(self):
+        card = self._direct_card(
+            [
+                {"id": "CVE-2026-0001"},
+                {"id": "GHSA-aaaa-bbbb-cccc", "aliases": ["CVE-2026-0002"], "in_kev": True},
+                {"id": "CVE-2026-0003", "epss_score": 0.5},
+            ],
+            in_kev=True,
+            epss_score=0.5,
+        )
+
+        assert card.action["kev_cves"] == ["CVE-2026-0002"]
+        assert card.action["high_epss_cves"] == ["CVE-2026-0003"]
+        assert card.action["cves"] == ["CVE-2026-0001", "CVE-2026-0002", "CVE-2026-0003"]
+
+
+class TestPartiallyFixableRecords:
+    """One record bundles every advisory of a component@version, and OS images routinely pair a
+    fixable CRITICAL with a LOW the distribution will not fix."""
+
+    def _types(self, finding, dep, target=None):
+        return [r.type for r in process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], target)]
+
+    def test_a_fixed_critical_beside_an_unfixed_low_gets_the_base_image_card(self):
+        finding = stored_vulnerability(
+            "libssl3",
+            "3.0.11-1~deb12u2",
+            [
+                {"id": "CVE-2024-0001", "severity": "CRITICAL", "fixed_version": "3.0.13-1~deb12u1"},
+                {"id": "CVE-2024-0002", "severity": "LOW", "fixed_version": None},
+            ],
+        )
+        dep = _make_dependency(
+            name="libssl3",
+            version="3.0.11-1~deb12u2",
+            purl="pkg:deb/debian/libssl3@3.0.11-1~deb12u2",
+            direct=False,
+            source_type="image",
+            dep_type="deb",
+        )
+
+        assert self._types(finding, dep, "debian:12") == [RecommendationType.BASE_IMAGE_UPDATE]
+
+    def test_the_update_targets_the_fix_of_every_advisory_that_names_one(self):
+        finding = stored_vulnerability(
+            "axios",
+            "1.5.0",
+            [
+                {"id": "CVE-2024-0003", "severity": "HIGH", "fixed_version": "1.6.0"},
+                {"id": "CVE-2024-0004", "severity": "MEDIUM", "fixed_version": "1.5.1"},
+                {"id": "CVE-2024-0005", "severity": "LOW", "fixed_version": None},
+            ],
+        )
+        dep = _make_dependency(name="axios", version="1.5.0")
+
+        [card] = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], None)
+
+        assert card.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE
+        assert card.action["target_version"] == "1.6.0"
+
+    def test_an_unfixed_critical_beside_a_fixed_low_stays_without_a_known_fix(self):
+        finding = stored_vulnerability(
+            "lodash",
+            "4.17.0",
+            [
+                {"id": "CVE-2024-0006", "severity": "CRITICAL", "fixed_version": None},
+                {"id": "CVE-2024-0007", "severity": "LOW", "fixed_version": "4.17.21"},
+            ],
+        )
+
+        assert self._types(finding, _make_dependency(name="lodash", version="4.17.0")) == [
+            RecommendationType.NO_FIX_AVAILABLE
+        ]
+
+    def test_a_waived_unfixed_critical_no_longer_blocks_the_update(self):
+        finding = stored_vulnerability(
+            "express",
+            "4.18.0",
+            [
+                {"id": "CVE-2024-0008", "severity": "CRITICAL", "fixed_version": None, "waived": True},
+                {"id": "CVE-2024-0009", "severity": "HIGH", "fixed_version": "4.19.2"},
+            ],
+        )
+
+        assert self._types(finding, _make_dependency(name="express", version="4.18.0")) == [
+            RecommendationType.DIRECT_DEPENDENCY_UPDATE
+        ]

@@ -5,7 +5,7 @@ from typing import Any
 import pymongo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import TEAM_SOURCE_GITLAB, team_source
+from app.core.constants import SCANS_TIP_SORT, TEAM_SOURCE_GITLAB, team_source
 from app.core.metrics import update_db_stats
 from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
@@ -27,7 +27,6 @@ RELEASES_LATEST_LOOKUP_NAME = "releases_latest_lookup"
 
 # BSON dates are milliseconds, so a date-ordered pick tie-breaks on _id. Each sort is the trailing
 # keys of its index: sorting on anything else turns an indexed seek into a blocking sort.
-SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
 RELEASES_LATEST_SORT: list[tuple[str, int]] = [("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
 
 SCANS_TIP_INDEX_KEY: list[tuple[str, int]] = [
@@ -40,6 +39,8 @@ RELEASES_LATEST_LOOKUP_KEY: list[tuple[str, int]] = [
     ("environment", pymongo.ASCENDING),
     *RELEASES_LATEST_SORT,
 ]
+# The index order left once project_id is matched by equality.
+RELEASES_ENVIRONMENT_SORT = RELEASES_LATEST_LOOKUP_KEY[1:]
 _TIE_BREAK_INDEXES: tuple[tuple[str, list[tuple[str, int]]], ...] = (
     ("scans", SCANS_TIP_INDEX_KEY),
     ("releases", RELEASES_LATEST_LOOKUP_KEY),
@@ -267,6 +268,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
+    # Bounds the anchored purl-prefix match of the per-scan enrichment copy to one scan's range.
+    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("purl", pymongo.ASCENDING)])
 
     # Update-frequency rollups (scan_outdated_sets is only ever read by _id)
     # _id joins the key because the neighbour lookups order by (scan_created_at, _id).
@@ -286,7 +289,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["findings"].create_index("severity")
     await database["findings"].create_index("type")
     await database["findings"].create_index("finding_id")  # Logical CVE id, not _id.
-    await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("severity", pymongo.DESCENDING)])
+    # The CSV export streams each severity bucket in (type, finding_id) order straight off this key.
+    await database["findings"].create_index(
+        [
+            ("scan_id", pymongo.ASCENDING),
+            ("severity", pymongo.ASCENDING),
+            ("type", pymongo.ASCENDING),
+            ("finding_id", pymongo.ASCENDING),
+        ]
+    )
 
     # Finding Records
     await database["finding_records"].create_index(
@@ -326,6 +337,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("project_id", pymongo.ASCENDING),
             ("branch", pymongo.ASCENDING),
             ("created_at", pymongo.DESCENDING),
+        ]
+    )
+    # A branch's tip build is found in one seek, however many rescans of it pile up in front.
+    await database["scans"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("branch", pymongo.ASCENDING),
+            ("is_rescan", pymongo.ASCENDING),
+            *SCANS_TIP_SORT,
         ]
     )
     await database["scans"].create_index([("status", pymongo.ASCENDING), ("analysis_started_at", pymongo.ASCENDING)])
@@ -398,9 +418,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await database["webhook_deliveries"].create_index(
         [("webhook_id", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)]
-    )
-    await database["webhook_deliveries"].create_index(
-        [("success", pymongo.ASCENDING), ("webhook_id", pymongo.ASCENDING)]
     )
     # TTL: drops deliveries after 30 days.
     await database["webhook_deliveries"].create_index([("timestamp", pymongo.ASCENDING)], expireAfterSeconds=2592000)

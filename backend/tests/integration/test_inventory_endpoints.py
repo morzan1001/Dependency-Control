@@ -164,8 +164,9 @@ async def test_components_page_merges_license_and_lifecycle(client, db, member_a
     assert by_name["lodash"]["latest_version"] == "4.17.21"
     assert by_name["lodash"]["license"] == "MIT"
     assert by_name["leftpad"]["eol"] is True
-    assert by_name["leftpad"]["license"] == "ISC"  # enrichment fallback
-    assert by_name["leftpad"]["license_category"] == "permissive"
+    # The scan's own record is authoritative; another scan's enrichment does not name this one's license.
+    assert by_name["leftpad"]["license"] is None
+    assert by_name["leftpad"]["license_category"] is None
 
 
 @pytest.mark.asyncio
@@ -178,20 +179,6 @@ async def test_components_page_reads_license_category_from_dependency_doc(client
     assert resp.status_code == 200
     item = resp.json()["items"][0]
     assert item["license_category"] == "strong_copyleft"
-
-
-@pytest.mark.asyncio
-async def test_components_dependency_doc_license_category_wins_over_enrichment(client, db, member_auth_headers):
-    await _seed_scan(db)
-    await _seed_dep(
-        db, "s1", "c", license_id="GPL-3.0-only", purl="pkg:npm/c@1.0.0", license_category="strong_copyleft"
-    )
-    await db.dependency_enrichments.insert_one({"purl": "pkg:npm/c@1.0.0", "license_category": "permissive"})
-
-    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/components", headers=member_auth_headers)
-
-    assert resp.status_code == 200
-    assert resp.json()["items"][0]["license_category"] == "strong_copyleft"
 
 
 @pytest.mark.asyncio
@@ -226,7 +213,7 @@ async def test_components_export_streams_all_rows_with_purl(client, db, member_a
 
 
 @pytest.mark.asyncio
-async def test_components_export_merges_lifecycle_and_enrichment(client, db, member_auth_headers):
+async def test_components_export_merges_lifecycle_and_takes_the_scans_license(client, db, member_auth_headers):
     await _seed_scan(db)
     await _seed_dep(db, "s1", "lodash", version="4.17.20")
     await _seed_dep(db, "s1", "leftpad", version="0.9.0")
@@ -240,8 +227,8 @@ async def test_components_export_merges_lifecycle_and_enrichment(client, db, mem
     by_name = {r["name"]: r for r in _parse_csv(resp)}
     assert by_name["lodash"]["latest_version"] == "9.9.9"
     assert by_name["lodash"]["outdated"] == "true"
-    assert by_name["leftpad"]["license"] == "ISC"
-    assert by_name["leftpad"]["license_category"] == "permissive"
+    assert by_name["leftpad"]["license"] == ""
+    assert by_name["leftpad"]["license_category"] == ""
 
 
 @pytest.mark.asyncio
@@ -294,11 +281,12 @@ async def test_components_invalid_sort_by_falls_back_to_name(client, db, member_
 
 
 @pytest.mark.asyncio
-async def test_components_sort_by_license_uses_enrichment_fallback(client, db, member_auth_headers):
+async def test_components_sort_by_license_orders_by_the_scans_license(client, db, member_auth_headers):
     await _seed_scan(db)
-    await _seed_dep(db, "s1", "dep-a")
-    await _seed_dep(db, "s1", "dep-b", license_id="MIT")
-    await db.dependency_enrichments.insert_one({"purl": "pkg:npm/dep-a@1.0.0", "license": "ISC"})
+    await _seed_dep(db, "s1", "dep-a", license_id="MIT")
+    await _seed_dep(db, "s1", "dep-b", license_id="Apache-2.0")
+    await _seed_dep(db, "s1", "dep-c")
+    await db.dependency_enrichments.insert_one({"purl": "pkg:npm/dep-c@1.0.0", "license": "Zlib"})
 
     resp = await client.get(
         f"/api/v1/projects/{_PID}/inventory/components",
@@ -307,7 +295,7 @@ async def test_components_sort_by_license_uses_enrichment_fallback(client, db, m
     )
 
     assert resp.status_code == 200
-    assert [i["name"] for i in resp.json()["items"]] == ["dep-a", "dep-b"]
+    assert [i["name"] for i in resp.json()["items"]] == ["dep-c", "dep-b", "dep-a"]
 
 
 @pytest.mark.asyncio
@@ -335,6 +323,34 @@ async def test_licenses_grouped_with_category_and_unknown_bucket(client, db, mem
     assert items["GPL-3.0-only"]["category"] == "strong_copyleft"
     assert items["GPL-3.0-only"]["risks"] == ["copyleft obligations"]
     assert items["unknown"]["component_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_the_unknown_row_takes_no_category_from_another_scans_enrichment(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "d", purl="pkg:npm/d@1.0.0")
+    await db.dependency_enrichments.insert_one(
+        {"purl": "pkg:npm/d@1.0.0", "license": "MIT", "license_category": "permissive"}
+    )
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
+
+    assert {i["license"]: i["category"] for i in resp.json()["items"]} == {"unknown": None}
+
+
+@pytest.mark.asyncio
+async def test_the_tiles_count_what_the_tables_show(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "a", license_id="MIT")
+    await _seed_dep(db, "s1", "b", license_id="Apache-2.0", dep_type="")
+    await _seed_dep(db, "s1", "c")
+
+    stats = (await client.get(f"/api/v1/projects/{_PID}/inventory/stats", headers=member_auth_headers)).json()
+    licenses = (await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)).json()
+    components = (await client.get(f"/api/v1/projects/{_PID}/inventory/components", headers=member_auth_headers)).json()
+
+    assert stats["license_count"] == len(licenses["items"]) == 3
+    assert stats["ecosystem_count"] == len({i["ecosystem"] for i in components["items"]}) == 2
 
 
 @pytest.mark.asyncio
@@ -486,3 +502,37 @@ async def test_crypto_search_escapes_regex_metacharacters(client, db, member_aut
     )
     assert resp.status_code == 200
     assert resp.json()["total"] == 1
+
+
+_INVENTORY_ROUTES = [
+    "stats",
+    "components",
+    "components/export",
+    "licenses",
+    "licenses/export",
+    "crypto",
+    "crypto/export",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", _INVENTORY_ROUTES)
+async def test_every_inventory_route_refuses_a_non_member(client, db, owner_auth_headers_proj_p2, route):
+    await _seed_scan(db)
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/{route}", headers=owner_auth_headers_proj_p2)
+
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", _INVENTORY_ROUTES)
+async def test_every_inventory_route_404s_a_branch_without_a_scan(client, db, member_auth_headers, route):
+    await _seed_scan(db)
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/{route}", params={"branch": "gone"}, headers=member_auth_headers
+    )
+
+    assert resp.status_code == 404
+    assert resp.json()["detail"] == "No completed scan found for branch 'gone'"

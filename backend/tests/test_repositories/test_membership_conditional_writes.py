@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import pytest
 
 from app.core.constants import PROJECT_ROLE_ADMIN, PROJECT_ROLE_VIEWER, TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER
-from app.repositories.projects import ProjectRepository
+from app.repositories.projects import ProjectRepository, surviving_admin_filter
 from app.repositories.teams import TeamRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -102,6 +102,21 @@ async def test_two_admins_removing_each_other_leave_the_team_one_admin() -> None
 
 
 @pytest.mark.asyncio
+async def test_two_admins_demoting_each_other_leave_the_team_one_admin() -> None:
+    db = FakeDatabase()
+    await db.teams.insert_one(_team_doc([(_ADMIN_A, TEAM_ROLE_ADMIN), (_ADMIN_B, TEAM_ROLE_ADMIN)]))
+    repo = TeamRepository(db)
+
+    accepted = await asyncio.gather(
+        repo.update_member_role(_TEAM_ID, _ADMIN_B, TEAM_ROLE_MEMBER, _NOW),
+        repo.update_member_role(_TEAM_ID, _ADMIN_A, TEAM_ROLE_MEMBER, _NOW),
+    )
+
+    assert accepted.count(True) == 1
+    assert len(_admins(await db.teams.find_one({"_id": _TEAM_ID}), TEAM_ROLE_ADMIN)) == 1
+
+
+@pytest.mark.asyncio
 async def test_removing_a_plain_member_needs_no_second_admin() -> None:
     db = FakeDatabase()
     await db.teams.insert_one(_team_doc([(_ADMIN_A, TEAM_ROLE_ADMIN), (_NEWCOMER, TEAM_ROLE_MEMBER)]))
@@ -117,8 +132,8 @@ async def test_two_admins_removing_each_other_leave_the_project_one_admin() -> N
     repo = ProjectRepository(db)
 
     accepted = await asyncio.gather(
-        repo.remove_member(_PROJECT_ID, _ADMIN_B, require_another_admin=True),
-        repo.remove_member(_PROJECT_ID, _ADMIN_A, require_another_admin=True),
+        repo.remove_member(_PROJECT_ID, _ADMIN_B, surviving_admin_filter([], _ADMIN_B)),
+        repo.remove_member(_PROJECT_ID, _ADMIN_A, surviving_admin_filter([], _ADMIN_A)),
     )
 
     assert accepted.count(True) == 1
@@ -133,8 +148,8 @@ async def test_two_admins_demoting_each_other_leave_the_project_one_admin() -> N
     demote = {"role": PROJECT_ROLE_VIEWER}
 
     accepted = await asyncio.gather(
-        repo.update_member(_PROJECT_ID, _ADMIN_B, dict(demote), require_another_admin=True),
-        repo.update_member(_PROJECT_ID, _ADMIN_A, dict(demote), require_another_admin=True),
+        repo.update_member(_PROJECT_ID, _ADMIN_B, dict(demote), surviving_admin_filter([], _ADMIN_B)),
+        repo.update_member(_PROJECT_ID, _ADMIN_A, dict(demote), surviving_admin_filter([], _ADMIN_A)),
     )
 
     assert accepted.count(True) == 1
@@ -143,7 +158,7 @@ async def test_two_admins_demoting_each_other_leave_the_project_one_admin() -> N
 
 @pytest.mark.asyncio
 async def test_an_unguarded_member_update_still_writes() -> None:
-    """The guard is opt-in: a team admin backs the project, so a direct demotion is allowed."""
+    """The guard is opt-in: without one the write is unconditional."""
     db = FakeDatabase()
     await db.projects.insert_one(_project_doc([(_ADMIN_A, PROJECT_ROLE_ADMIN)]))
 

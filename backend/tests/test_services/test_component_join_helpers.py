@@ -4,14 +4,20 @@ Every consumer that joins the two collections on a name goes through these helpe
 the "exact spelling, else the artifact name, never across packages" rule is defined once.
 """
 
-from app.services.aggregation.components import (
+import asyncio
+
+import pytest
+
+from app.services.component_identity import (
     artifact_name_expr,
     build_component_index,
+    cluster_by_package_identity,
     component_match_expr,
     component_match_query,
     extract_artifact_name,
     lookup_component,
 )
+from tests.mocks.fake_mongo import FakeCollection
 
 
 class TestBuildComponentIndexAndLookup:
@@ -45,11 +51,20 @@ class TestBuildComponentIndexAndLookup:
 
 
 class TestMongoFragmentsMirrorThePythonRule:
-    def test_query_matches_exact_and_qualified_forms(self):
-        query = component_match_query("jackson-databind")
+    def test_query_matches_exact_and_qualified_forms_but_not_another_scope(self):
+        stored = [
+            "jackson-databind",
+            "com.fasterxml.jackson.core:jackson-databind",
+            "vendor/jackson-databind",
+            "@types/jackson-databind",
+            "jackson-databind-extra",
+        ]
 
-        assert query["$or"][0] == {"component": "jackson-databind"}
-        assert query["$or"][1]["component"]["$regex"] == "[:/]jackson\\-databind$"
+        assert _matching(stored, component_match_query("jackson-databind")) == [
+            "jackson-databind",
+            "com.fasterxml.jackson.core:jackson-databind",
+            "vendor/jackson-databind",
+        ]
 
     def test_artifact_name_expr_mirrors_extract_artifact_name(self):
         """Same inputs, same outputs; the pipeline copy must not drift from the Python one."""
@@ -73,6 +88,32 @@ class TestMongoFragmentsMirrorThePythonRule:
         assert _matches("com.fasterxml.jackson.core:jackson-databind", "com.fasterxml.jackson.core:jackson-databind")
         assert _matches("xercesImpl", "xerces:xercesImpl")
         assert not _matches("jackson-core", "com.fasterxml.jackson.core:jackson-databind")
+
+
+def _matching(stored: list[str], query: dict) -> list[str]:
+    collection = FakeCollection()
+    collection._docs = {str(n): {"_id": str(n), "component": name} for n, name in enumerate(stored)}
+    return [doc["component"] for doc in asyncio.run(collection.find(query).sort("_id", 1).to_list(None))]
+
+
+class TestAnNpmScopeIsPartOfThePackageName:
+    @pytest.mark.parametrize(
+        ("scoped", "bare"),
+        [("@types/lodash", "lodash"), ("@hapi/joi", "joi"), ("@types/react", "react")],
+    )
+    def test_a_scoped_package_is_not_a_qualified_spelling_of_the_bare_name(self, scoped, bare):
+        assert cluster_by_package_identity([bare, scoped]) == {bare: bare, scoped: scoped}
+
+    def test_a_group_qualified_coordinate_still_owns_its_bare_artifact_name(self):
+        qualified = "org.apache.logging.log4j:log4j-core"
+
+        assert cluster_by_package_identity(["log4j-core", qualified]) == {"log4j-core": qualified, qualified: qualified}
+
+    def test_the_index_gives_a_scoped_entry_no_bare_alias(self):
+        assert lookup_component(build_component_index({"@types/lodash": 3}), "lodash") is None
+
+    def test_the_query_for_a_bare_name_does_not_reach_the_scoped_package(self):
+        assert _matching(["lodash", "@types/lodash"], component_match_query("lodash")) == ["lodash"]
 
 
 def _eval_expr(expr, doc):

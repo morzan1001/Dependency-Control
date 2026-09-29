@@ -1,7 +1,7 @@
 import { Badge } from '@/components/ui/badge'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { AlertTriangle, Loader2 } from 'lucide-react'
-import { SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS } from '@/lib/scan-status'
+import { SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS, isScanInProgress } from '@/lib/scan-status'
 
 export function ScanStatusBadge({ status, failedAnalyzers }: Readonly<{ status: string; failedAnalyzers?: string[] }>) {
   if (status === SCAN_STATUS_COMPLETED_WITH_ERRORS) {
@@ -40,7 +40,7 @@ export function ScanStatusBadge({ status, failedAnalyzers }: Readonly<{ status: 
       variant={status === SCAN_STATUS_COMPLETED ? 'default' : 'secondary'}
       className="flex w-fit items-center gap-1"
     >
-      {['pending', 'processing'].includes(status) && <Loader2 className="h-3 w-3 animate-spin" />}
+      {isScanInProgress(status) && <Loader2 className="h-3 w-3 animate-spin" />}
       {status}
     </Badge>
   )

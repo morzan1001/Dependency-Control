@@ -73,3 +73,41 @@ async def test_a_project_that_names_no_action_is_cleaned_by_deleting(monkeypatch
 
     assert await _surviving_ids(db) == [_FRESH_ID]
     archiver.assert_not_awaited()
+
+
+async def _run_counting_reaper(db: FakeDatabase, monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
+    reaper = AsyncMock()
+    monkeypatch.setattr(f"{MODULE}._reap_orphan_callgraphs", reaper)
+    await _run(db, monkeypatch)
+    return reaper
+
+
+@pytest.mark.asyncio
+async def test_a_stored_retention_no_cutoff_can_be_computed_for_stops_nothing_else(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """timedelta overflows near 740 000 days; one such project used to abort every later group and reaper."""
+    db = FakeDatabase()
+    await db.system_settings.insert_one({"_id": "current", "retention_mode": "project"})
+    await db.projects.insert_one({"_id": "forever", "name": "f", "retention_days": 999999})
+    await db.projects.insert_one({"_id": _PROJECT_ID, "name": "p", "retention_days": _RETENTION_DAYS})
+    await _seed_scans(db)
+
+    reaper = await _run_counting_reaper(db, monkeypatch)
+
+    assert await _surviving_ids(db) == [_FRESH_ID]
+    reaper.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_a_global_retention_no_cutoff_can_be_computed_for_leaves_the_reapers_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = FakeDatabase()
+    await db.system_settings.insert_one({"_id": "current", "retention_mode": "global", "global_retention_days": 999999})
+    await _seed_scans(db)
+
+    reaper = await _run_counting_reaper(db, monkeypatch)
+
+    assert await _surviving_ids(db) == [_EXPIRED_ID, _FRESH_ID]
+    reaper.assert_awaited_once()

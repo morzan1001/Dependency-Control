@@ -1,16 +1,10 @@
-"""A project scope analytics cannot materialise whole is refused, not answered over a subset.
-
-Every analytics answer at team or user scope is computed over a list of project ids, and no
-analytics response carries a field naming the projects a truncated list dropped. The two
-enumerations used to cap silently — one at 10 000 with a log nobody reads, one at 100 000 with
-nothing at all — so a large estate got an answer that looked complete and was not.
-"""
+"""A scope analytics cannot materialise whole is refused, since no response could name the projects a subset drops."""
 
 import pytest
 
 from app.core.permissions import Permissions
 from app.services.analytics import scopes
-from app.services.analytics.scopes import ScopeResolver, ScopeTooLargeError, ensure_whole_scope
+from app.services.analytics.scopes import ScopeResolver, ScopeTooLargeError
 
 _CEILING = 4
 _PAST_THE_CEILING = _CEILING + 1
@@ -20,7 +14,7 @@ _USER = "u1"
 
 @pytest.fixture
 def small_ceiling(monkeypatch):
-    monkeypatch.setattr(scopes, "ANALYTICS_MAX_QUERY_LIMIT", _CEILING)
+    monkeypatch.setattr(scopes, "ANALYTICS_MAX_SCOPE_PROJECTS", _CEILING)
 
 
 def _seed_projects(db, count: int, *, member: bool = False, team_id: str | None = None) -> None:
@@ -42,38 +36,30 @@ def _resolver(db, *, permissions: frozenset[str] = frozenset({Permissions.PROJEC
     return ScopeResolver(db, user)
 
 
-def test_a_scope_at_the_ceiling_is_answered_whole(small_ceiling):
-    assert len(ensure_whole_scope(list(range(_CEILING)))) == _CEILING
-
-
-def test_a_scope_past_the_ceiling_is_refused_with_the_number(small_ceiling):
-    with pytest.raises(ScopeTooLargeError, match=str(_CEILING)):
-        ensure_whole_scope(list(range(_PAST_THE_CEILING)))
-
-
 @pytest.mark.asyncio
 async def test_a_user_scope_at_the_ceiling_still_resolves(db, small_ceiling):
     _seed_projects(db, _CEILING, member=True)
 
-    ids = await _resolver(db)._list_user_project_ids()
+    projects = await _resolver(db).list_user_projects()
 
-    assert len(ids) == _CEILING
+    assert len(projects) == _CEILING
 
 
 @pytest.mark.asyncio
 async def test_a_user_scope_past_the_ceiling_is_refused(db, small_ceiling):
     _seed_projects(db, _PAST_THE_CEILING, member=True)
 
-    with pytest.raises(ScopeTooLargeError):
-        await _resolver(db)._list_user_project_ids()
+    with pytest.raises(ScopeTooLargeError, match=str(_CEILING)):
+        await _resolver(db).list_user_projects()
 
 
 @pytest.mark.asyncio
 async def test_a_team_scope_past_the_ceiling_is_refused(db, small_ceiling):
     _seed_projects(db, _PAST_THE_CEILING, team_id=_TEAM)
+    db.teams._docs[_TEAM] = {"_id": _TEAM, "name": _TEAM, "members": []}
 
     with pytest.raises(ScopeTooLargeError):
-        await _resolver(db)._list_team_project_ids(_TEAM)
+        await _resolver(db, permissions=frozenset({Permissions.PROJECT_READ_ALL})).resolve(scope="team", scope_id=_TEAM)
 
 
 @pytest.mark.asyncio

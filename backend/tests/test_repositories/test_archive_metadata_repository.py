@@ -54,7 +54,7 @@ class TestFindByProject:
     async def test_newest_archive_first_and_this_project_only(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        found = await repo.find_by_project(_PROJECT)
+        found = await repo.find_all(project_id=_PROJECT)
 
         assert [archive.id for archive in found] == ["a-2", "a-1", "a-0", "a-feature"]
 
@@ -62,7 +62,7 @@ class TestFindByProject:
     async def test_pages_from_the_requested_offset(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        page = await repo.find_by_project(_PROJECT, skip=1, limit=2)
+        page = await repo.find_all(project_id=_PROJECT, skip=1, limit=2)
 
         assert [archive.id for archive in page] == ["a-1", "a-0"]
 
@@ -70,15 +70,15 @@ class TestFindByProject:
     async def test_the_branch_and_date_window_narrow_the_result(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        assert [a.id for a in await repo.find_by_project(_PROJECT, branch=_FEATURE)] == ["a-feature"]
-        windowed = await repo.find_by_project(_PROJECT, date_from=_T0 + _DAY, date_to=_T0 + _DAY)
+        assert [a.id for a in await repo.find_all(project_id=_PROJECT, branch=_FEATURE)] == ["a-feature"]
+        windowed = await repo.find_all(project_id=_PROJECT, date_from=_T0 + _DAY, date_to=_T0 + _DAY)
         assert [a.id for a in windowed] == ["a-1"]
 
     @pytest.mark.asyncio
     async def test_a_project_with_no_archives_returns_an_empty_list(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        assert await repo.find_by_project("absent") == []
+        assert await repo.find_all(project_id="absent") == []
 
 
 class TestCountByProject:
@@ -86,9 +86,9 @@ class TestCountByProject:
     async def test_counts_this_project_under_the_same_filters(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        assert await repo.count_by_project(_PROJECT) == _ARCHIVE_COUNT + 1
-        assert await repo.count_by_project(_PROJECT, branch=_FEATURE) == 1
-        assert await repo.count_by_project("absent") == 0
+        assert await repo.count_all(project_id=_PROJECT) == _ARCHIVE_COUNT + 1
+        assert await repo.count_all(project_id=_PROJECT, branch=_FEATURE) == 1
+        assert await repo.count_all(project_id="absent") == 0
 
 
 class TestFindAndDeleteByScanId:

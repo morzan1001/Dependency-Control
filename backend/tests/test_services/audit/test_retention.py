@@ -72,3 +72,17 @@ async def test_prune_disabled_when_retention_zero(monkeypatch):
 
     assert deleted == 0
     assert len(await _remaining_ids(db)) == 8
+
+
+@pytest.mark.asyncio
+async def test_prune_goes_by_age_alone_whatever_the_policy_type(monkeypatch):
+    monkeypatch.setattr(settings, "POLICY_AUDIT_RETENTION_DAYS", 30)
+    db = FakeDatabase()
+    await db[COLLECTION].insert_one(
+        _entry(policy_scope="project", project_id="p3", policy_type="sbom", age_days=100, _id="p3-sbom-old")
+    )
+
+    deleted = await prune_old_audit_entries(db)
+
+    assert deleted == 1
+    assert await _remaining_ids(db) == set()

@@ -2,14 +2,13 @@
 
 import pytest
 
+from app.core.risk_scoring import calculate_exploit_maturity
 from app.models.finding import Severity
 from app.services.enrichment.scoring import (
     calculate_adjusted_risk_score,
-    calculate_exploit_maturity,
     calculate_risk_score,
     calculate_secret_risk_score,
     calculate_secret_severity,
-    map_reachability_level_to_modifier,
 )
 
 
@@ -84,80 +83,24 @@ class TestCalculateRiskScore:
                 f"Non-monotonic at epss={epss_grid[i]}: {scores[i]} < {scores[i - 1]}"
             )
 
-    def test_unreachable_reduces_score(self):
-        base = calculate_risk_score(10.0, None, False, False)
-        reduced = calculate_risk_score(10.0, None, False, False, is_reachable=False)
-        assert reduced == base * 0.4
-
-    @pytest.mark.parametrize(
-        ("reachability_level", "factor"),
-        [
-            pytest.param("unreachable", 0.4, id="unreachable_reduces"),
-            pytest.param("confirmed", 1.1, id="confirmed_boosts"),
-            pytest.param("likely", 1.0, id="likely_has_no_modifier"),
-        ],
-    )
-    def test_reachability_level_scales_the_score(self, reachability_level, factor):
-        base = calculate_risk_score(10.0, None, False, False)
-        scaled = calculate_risk_score(10.0, None, False, False, reachability_level=reachability_level)
-        assert scaled == base * factor
-
     def test_score_capped_at_100(self):
-        score = calculate_risk_score(10.0, 0.95, True, True, reachability_level="confirmed")
-        assert 80.0 <= score <= 100.0
-
-
-class TestMapReachabilityLevelToModifier:
-    """Maps the reachability enrichment vocabulary onto the scoring modifier vocabulary."""
-
-    @pytest.mark.parametrize(
-        ("analysis_level", "is_reachable", "expected"),
-        [
-            pytest.param("import", False, "unreachable", id="not_reachable_maps_to_unreachable"),
-            pytest.param("symbol", True, "confirmed", id="symbol_level_reachable_maps_to_confirmed"),
-            # If callers already speak the modifier vocabulary it is preserved.
-            pytest.param("confirmed", True, "confirmed", id="confirmed_passthrough"),
-            pytest.param("unreachable", False, "unreachable", id="unreachable_passthrough"),
-        ],
-    )
-    def test_level_maps_to_modifier(self, analysis_level, is_reachable, expected):
-        assert map_reachability_level_to_modifier(analysis_level, is_reachable=is_reachable) == expected
-
-    @pytest.mark.parametrize(
-        ("analysis_level", "is_reachable"),
-        [
-            # Import-only is a weaker signal; must NOT boost as if confirmed.
-            pytest.param("import", True, id="import_only_reachable"),
-            pytest.param("none", True, id="none_level_reachable"),
-            pytest.param("unknown", None, id="unknown"),
-        ],
-    )
-    def test_level_without_modifier_is_identity(self, analysis_level, is_reachable):
-        assert map_reachability_level_to_modifier(analysis_level, is_reachable=is_reachable) is None
+        assert calculate_risk_score(30.0, None, False, False) == 100.0
 
 
 class TestCalculateAdjustedRiskScore:
-    def test_no_reachability_returns_base(self):
-        assert calculate_adjusted_risk_score(50.0) == 50.0
-
-    def test_unreachable_returns_40_percent(self):
-        assert calculate_adjusted_risk_score(50.0, is_reachable=False) == 20.0
-
-    def test_confirmed_returns_boosted(self):
-        result = calculate_adjusted_risk_score(50.0, reachability_level="confirmed")
-        assert abs(result - 55.0) < 0.01
-
     @pytest.mark.parametrize(
-        ("base", "reachability_level", "expected"),
+        ("base", "is_reachable", "analysis_level", "expected"),
         [
-            pytest.param(50.0, "unreachable", 20.0, id="unreachable_via_level"),
-            pytest.param(95.0, "confirmed", 100.0, id="confirmed_cap_at_100"),
-            pytest.param(50.0, "likely", 50.0, id="likely_returns_base"),
-            pytest.param(50.0, "unknown", 50.0, id="unknown_level_returns_base"),
+            pytest.param(50.0, None, None, 50.0, id="unanalysed_returns_base"),
+            pytest.param(50.0, False, "import", 20.0, id="unreachable_returns_40_percent"),
+            pytest.param(50.0, True, "symbol", 55.0, id="confirmed_boosts"),
+            pytest.param(95.0, True, "symbol", 100.0, id="confirmed_cap_at_100"),
+            pytest.param(50.0, True, "import", 50.0, id="likely_returns_base"),
+            pytest.param(50.0, True, None, 50.0, id="untiered_reachable_returns_base"),
         ],
     )
-    def test_adjusted_score_for_reachability_level(self, base, reachability_level, expected):
-        assert calculate_adjusted_risk_score(base, reachability_level=reachability_level) == expected
+    def test_adjusted_score_for_reachability(self, base, is_reachable, analysis_level, expected):
+        assert calculate_adjusted_risk_score(base, is_reachable, analysis_level) == pytest.approx(expected)
 
 
 class TestCalculateSecretRiskScore:

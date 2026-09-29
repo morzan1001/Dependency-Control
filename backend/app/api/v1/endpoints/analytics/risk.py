@@ -18,32 +18,34 @@ from app.api.v1.helpers.analytics import (
     calculate_impact_score,
     extract_fix_versions,
     get_projects_with_scans,
-    get_user_project_ids,
+    get_user_projects,
     historical_first_seen,
     process_cve_enrichments,
     require_analytics_permission,
     select_impact_candidates,
+    severity_counts_from_details,
+    SLIM_DETAILS_EXPR,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.core.permissions import Permissions
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
 from app.schemas.analytics import (
     ImpactAnalysisResult,
     SeverityBreakdown,
     VulnerabilityHotspot,
 )
-from app.services.aggregation.components import (
-    artifact_segment,
+from app.services.component_identity import (
     build_component_index,
+    component_name_candidates,
     lookup_component,
 )
 from app.services.analytics.cache import get_analytics_cache
-from app.services.enrichment import canonical_cve, canonical_cves, get_cve_enrichment
-from app.services.recommendation.common import newest_first
+from app.services.aggregation.versions import newest_first
+from app.services.enrichment import get_cve_enrichment
+from app.services.recommendation.common import live_cves
 
 logger = logging.getLogger(__name__)
 
@@ -60,64 +62,12 @@ def _scope_digest(project_ids: list[str], scan_ids: list[str]) -> str:
     return h.hexdigest()[:16]
 
 
-_SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
-_SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-
 # Samples named on a card; each is returned beside the population it was drawn from, so a reader
 # acting on the list knows whether it is the whole of what the row found.
 _AFFECTED_PROJECTS_SHOWN = 5
 _HOTSPOT_PROJECTS_SHOWN = 10
 _FIX_VERSIONS_SHOWN = 3
 _CVES_SHOWN = 5
-
-
-def _worst_severity_by_cve(details_list: list[Any]) -> dict[str, str]:
-    """Map each distinct canonical vulnerability to its worst ranked severity across the group."""
-    worst: dict[str, str] = {}
-    for details in details_list:
-        if not isinstance(details, dict):
-            continue
-        for vuln in details.get("vulnerabilities") or []:
-            if not isinstance(vuln, dict):
-                continue
-            cve = canonical_cve(vuln)
-            if not cve:
-                continue
-            sev = str(vuln.get("severity") or "").lower()
-            if sev not in _SEVERITY_RANK:
-                continue
-            if cve not in worst or _SEVERITY_RANK[sev] > _SEVERITY_RANK[worst[cve]]:
-                worst[cve] = sev
-    return worst
-
-
-def _severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
-    """Distinct vulnerabilities per worst severity. Buckets are disjoint (one CVE, one bucket) and
-    sum to the distinct total, so the breakdown reconciles with the vuln count and the score."""
-    counts = dict.fromkeys(_SEVERITY_BUCKETS, 0)
-    for sev in _worst_severity_by_cve(details_list).values():
-        counts[sev] += 1
-    return counts
-
-
-# Slim details before $group so the group never accumulates the raw analyzer payload: keep the
-# per-advisory id/alias/severity (for distinct-CVE counts, severity, and enrichment) and fix versions.
-_SLIM_DETAILS_EXPR: dict[str, Any] = {
-    "fixed_version": "$details.fixed_version",
-    "vulnerabilities": {
-        "$map": {
-            "input": {"$ifNull": ["$details.vulnerabilities", []]},
-            "as": "v",
-            "in": {
-                "id": "$$v.id",
-                "resolved_cve": "$$v.resolved_cve",
-                "aliases": "$$v.aliases",
-                "severity": "$$v.severity",
-                "fixed_version": "$$v.fixed_version",
-            },
-        }
-    },
-}
 
 
 @router.get("/impact", responses=RESP_AUTH)
@@ -132,11 +82,12 @@ async def get_impact_analysis(
 
     finding_repo = FindingRepository(db)
 
-    project_ids = await get_user_project_ids(current_user, db)
-    if not project_ids:
+    projects = await get_user_projects(current_user, db)
+    if not projects:
         return []
+    project_ids = [p.id for p in projects]
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
+    project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
 
@@ -156,7 +107,7 @@ async def get_impact_analysis(
                 "severity": 1,
                 "finding_id": 1,
                 "scan_created_at": 1,
-                "details": _SLIM_DETAILS_EXPR,
+                "details": SLIM_DETAILS_EXPR,
             }
         },
         {
@@ -186,13 +137,13 @@ async def get_impact_analysis(
 
     # Severity/vuln counts come from the advisory lists (finding_id is only component:version).
     for r in results:
-        r["_severity_counts"] = _severity_counts_from_details(r.get("details_list", []))
+        r["_severity_counts"] = severity_counts_from_details(r.get("details_list", []))
 
     # Rank/limit happen in Python on fix_impact_score; enrich only the groups that can still reach
     # the top `limit` by boosted score.
     candidates = select_impact_candidates(results, limit)
 
-    all_cves = list({cve for r in candidates for cve in canonical_cves(r.get("details_list", []))})
+    all_cves = list({cve for r in candidates for cve in live_cves(r.get("details_list", []))})
 
     enrichments = {}
     if all_cves:
@@ -207,10 +158,10 @@ async def get_impact_analysis(
     for r in candidates:
         severity_counts = r["_severity_counts"]
         total_findings = sum(severity_counts.values())
-        fix_versions = extract_fix_versions(r.get("details_list", []))
+        fix_versions = extract_fix_versions(r.get("details_list", []), r.get("version"))
         has_fix = len(fix_versions) > 0
 
-        enrichment_data = process_cve_enrichments(canonical_cves(r.get("details_list", [])), enrichments)
+        enrichment_data = process_cve_enrichments(live_cves(r.get("details_list", [])), enrichments)
 
         first_seen = first_seen_map.get((r["component"], r.get("version") or "unknown"), r.get("first_seen"))
         days_known = calculate_days_known(first_seen)
@@ -242,7 +193,7 @@ async def get_impact_analysis(
                 version=r.get("version") or "unknown",
                 affected_projects=len(accessible_impact_project_ids),
                 total_findings=total_findings,
-                findings_by_severity=SeverityBreakdown(**severity_counts),
+                findings_by_severity=SeverityBreakdown.from_counts(severity_counts),
                 fix_impact_score=base_impact,
                 affected_project_names=[
                     project_name_map.get(pid, "Unknown")
@@ -283,20 +234,24 @@ def _format_first_seen(first_seen: Any) -> str:
 def _build_hotspot(
     r: dict[str, Any],
     enrichments: dict[str, Any],
-    dep_type_map: dict[str, str],
+    version_type_index: dict[str, set[str]],
+    type_index: dict[str, set[str]],
     project_name_map: dict[str, str],
     project_ids: list[str],
 ) -> VulnerabilityHotspot:
     details_list = r.get("details_list", [])
-    severity_counts = _severity_counts_from_details(details_list)
-    fix_versions = extract_fix_versions(details_list)
+    severity_counts = severity_counts_from_details(details_list)
+    fix_versions = extract_fix_versions(details_list, r["_id"].get("version"))
     has_fix = len(fix_versions) > 0
-    dep_type = lookup_component(dep_type_map, r["_id"]["component"], "unknown")
+    component = r["_id"]["component"]
+    # One name at one version can ship in several ecosystems (a deb and an apk openssl); name them all.
+    types = lookup_component(version_type_index, component) or lookup_component(type_index, component)
+    dep_type = "/".join(sorted(types)) if types else "unknown"
 
     first_seen_str = _format_first_seen(r.get("first_seen"))
     days_known = calculate_days_known(r.get("first_seen"))
 
-    cves = canonical_cves(details_list)
+    cves = live_cves(details_list)
     top_cves = cves[:_CVES_SHOWN]
 
     enrichment_data = process_cve_enrichments(cves, enrichments)
@@ -310,7 +265,7 @@ def _build_hotspot(
         version=r["_id"].get("version") or "unknown",
         type=dep_type,
         finding_count=sum(severity_counts.values()),
-        severity_breakdown=SeverityBreakdown(**severity_counts),
+        severity_breakdown=SeverityBreakdown.from_counts(severity_counts),
         affected_projects=[
             project_name_map.get(pid, "Unknown") for pid in accessible_affected_projects[:_HOTSPOT_PROJECTS_SHOWN]
         ],
@@ -345,7 +300,7 @@ async def get_vulnerability_hotspots(
         str,
         Query(description="Sort field: finding_count, component, first_seen, epss, risk"),
     ] = "finding_count",
-    sort_order: Annotated[str, Query(description="Sort order: asc, desc")] = "desc",
+    sort_order: SortOrderQuery = "desc",
     release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[VulnerabilityHotspot]:
     """Get dependencies with the most vulnerabilities (hotspots)."""
@@ -354,11 +309,12 @@ async def get_vulnerability_hotspots(
     finding_repo = FindingRepository(db)
     dep_repo = DependencyRepository(db)
 
-    project_ids = await get_user_project_ids(current_user, db)
-    if not project_ids:
+    projects = await get_user_projects(current_user, db)
+    if not projects:
         return []
+    project_ids = [p.id for p in projects]
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
+    project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
 
@@ -368,7 +324,7 @@ async def get_vulnerability_hotspots(
     if hit:
         return [VulnerabilityHotspot.model_validate(r) for r in cached]
 
-    sort_direction = -1 if sort_order == "desc" else 1
+    sort_direction = parse_sort_direction(sort_order)
     # finding_count/epss/risk are derived in Python (from advisories / enrichment), so they are
     # sorted and paginated in Python; only component/first_seen can be ordered in Mongo.
     mongo_sort_field = {"component": "_id.component", "first_seen": "first_seen"}.get(sort_by)
@@ -382,7 +338,7 @@ async def get_vulnerability_hotspots(
                 "version": 1,
                 "project_id": 1,
                 "scan_created_at": 1,
-                "details": _SLIM_DETAILS_EXPR,
+                "details": SLIM_DETAILS_EXPR,
             }
         },
         {
@@ -404,7 +360,7 @@ async def get_vulnerability_hotspots(
 
     results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
 
-    all_cves = list({cve for r in results for cve in canonical_cves(r.get("details_list", []))})
+    all_cves = list({cve for r in results for cve in live_cves(r.get("details_list", []))})
 
     enrichments = {}
     if all_cves:
@@ -415,17 +371,36 @@ async def get_vulnerability_hotspots(
 
     # A component can be group-qualified while the inventory keeps the bare artifact name,
     # so both spellings go into the filter and the index resolves either way.
-    components = {r["_id"]["component"] for r in results}
-    # Stored names are case-sensitive, so the candidate must keep the component's own case.
-    candidates = list(components | {artifact_segment(c) for c in components})
+    candidates = list({name for r in results for name in component_name_candidates(r["_id"]["component"])})
     type_pipeline: list[dict[str, Any]] = [
-        {"$match": {"name": {"$in": candidates}}},
-        {"$group": {"_id": "$name", "type": {"$first": "$type"}}},
+        {"$match": {"scan_id": {"$in": scan_ids}, "name": {"$in": candidates}}},
+        {
+            "$group": {
+                "_id": {"name": "$name", "version": {"$ifNull": ["$version", "unknown"]}},
+                "types": {"$addToSet": {"$ifNull": ["$type", "unknown"]}},
+            }
+        },
     ]
-    type_results = await dep_repo.aggregate(type_pipeline, limit=len(candidates) + 1)
-    dep_type_map = build_component_index({d["_id"]: d.get("type", "unknown") for d in type_results})
+    types_by_version: dict[str, dict[str, set[str]]] = {}
+    types_by_name: dict[str, set[str]] = {}
+    for row in await dep_repo.aggregate(type_pipeline):
+        name, version = row["_id"]["name"], row["_id"]["version"]
+        types_by_version.setdefault(version, {})[name] = set(row["types"])
+        types_by_name.setdefault(name, set()).update(row["types"])
+    type_index_by_version = {version: build_component_index(types) for version, types in types_by_version.items()}
+    type_index = build_component_index(types_by_name)
 
-    hotspots = [_build_hotspot(r, enrichments, dep_type_map, project_name_map, project_ids) for r in results]
+    hotspots = [
+        _build_hotspot(
+            r,
+            enrichments,
+            type_index_by_version.get(r["_id"].get("version") or "unknown", {}),
+            type_index,
+            project_name_map,
+            project_ids,
+        )
+        for r in results
+    ]
 
     _post_sort_keys = {
         "finding_count": lambda x: x.finding_count,
@@ -433,7 +408,7 @@ async def get_vulnerability_hotspots(
         "risk": lambda x: x.max_risk_score or 0,
     }
     if post_sort_by:
-        hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=(sort_order == "desc"))
+        hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=sort_direction == -1)
         hotspots = hotspots[skip : skip + limit]
 
     # first_seen/days_known off the active scans is only the current scan's age; replace it on the

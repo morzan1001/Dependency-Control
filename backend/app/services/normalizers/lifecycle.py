@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding_details import EolDetails, OutdatedDetails
-from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
+from app.services.normalizers.utils import FindingIdPrefix, build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
@@ -68,7 +68,7 @@ def normalize_eol(aggregator: "ResultAggregator", result: dict[str, Any], source
 
         aggregator.add_finding(
             Finding(
-                id=build_finding_id("EOL", component, cycle),
+                id=build_finding_id(FindingIdPrefix.EOL, component, cycle),
                 type=FindingType.EOL,
                 severity=safe_severity(item.get("severity"), default=Severity.HIGH),
                 component=component,

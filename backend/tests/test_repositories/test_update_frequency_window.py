@@ -25,7 +25,7 @@ def _delta(scan_id: str, project_id: str, branch: str, minutes: int, **overrides
         "_id": scan_id,
         "project_id": project_id,
         "branch": branch,
-        "scan_created_at": (T0 + timedelta(minutes=minutes)).replace(tzinfo=None),
+        "scan_created_at": T0 + timedelta(minutes=minutes),
         "commit_hash": f"c-{scan_id}",
         "prev_scan_id": None,
         "dep_count": 1,
@@ -174,8 +174,7 @@ async def _seed_scan(db: FakeDatabase, scan_id: str, project_id: str, branch: st
             "_id": scan_id,
             "project_id": project_id,
             "branch": branch,
-            # Mongo stores naive UTC.
-            "created_at": (T0 + timedelta(minutes=minutes)).replace(tzinfo=None),
+            "created_at": T0 + timedelta(minutes=minutes),
             "status": "completed",
             "is_rescan": False,
         }
@@ -239,7 +238,6 @@ class TestWindowScansByBranch:
 
     @pytest.mark.asyncio
     async def test_the_newest_scan_comes_back_utc_aware(self):
-        # A naive timestamp compares wrong against the tz-aware dates the rule ranks by.
         db = FakeDatabase()
         await _seed_scan(db, "s1", "p1", "main", 0)
 
@@ -297,7 +295,7 @@ class TestWindowScansByBranch:
             {
                 "_id": "no-branch",
                 "project_id": "p1",
-                "created_at": T0.replace(tzinfo=None),
+                "created_at": T0,
                 "status": "completed",
                 "is_rescan": False,
             }

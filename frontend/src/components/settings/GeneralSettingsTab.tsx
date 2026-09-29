@@ -16,8 +16,6 @@ import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES } from "@/lib/constants"
 import { useAppConfig } from "@/hooks/queries/use-system"
 import { SettingsTabProps } from "@/types/system"
 
-const DEFAULT_ANALYZERS = ["trivy", "osv", "license_compliance", "end_of_life"];
-
 export function GeneralSettingsTab({
   formData,
   handleInputChange,
@@ -26,7 +24,7 @@ export function GeneralSettingsTab({
   isPending,
 }: Readonly<SettingsTabProps>) {
   const { data: appConfig } = useAppConfig()
-  const analyzers = formData.default_active_analyzers ?? DEFAULT_ANALYZERS;
+  const analyzers = formData.default_active_analyzers ?? [];
 
   const toggleAnalyzer = (analyzerId: string) => {
     const updated = analyzers.includes(analyzerId)
@@ -106,6 +104,7 @@ export function GeneralSettingsTab({
                   id="global-retention"
                   type="number"
                   min="0"
+                  max="36500"
                   value={formData.global_retention_days ?? 90}
                   onChange={(e) => handleInputChange('global_retention_days', Number.parseInt(e.target.value) || 0)}
                 />

@@ -42,13 +42,10 @@ class Callgraph(MongoDocument, CreatedAtModel):
 
     project_id: str
 
-    # Pipeline context - crucial for matching callgraph to correct scans
-    # pipeline_id is the PRIMARY key for matching (unique per CI/CD run)
-    pipeline_id: int | None = None  # GitLab CI pipeline ID (unique)
-    branch: str | None = None  # for reference/fallback
+    # Matched on scan_id (uuid5 of project+pipeline+commit), else on pipeline_id (GitLab pipeline or GitHub run).
+    pipeline_id: int | None = None
+    branch: str | None = None
     commit_hash: str | None = None
-
-    # Link to specific scan if applicable
     scan_id: str | None = None
 
     # Language and tool info

@@ -74,6 +74,15 @@ export const useDeleteUser = () => {
     mutationFn: (userId: string) => userApi.delete(userId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.lists() });
+    },
+  });
+};
+
+export const useRevokeInvitation = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (invitationId: string) => userApi.revokeInvitation(invitationId),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: userKeys.invitations });
     },
   });

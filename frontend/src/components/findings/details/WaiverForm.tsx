@@ -35,6 +35,7 @@ export function WaiverForm({
   finding,
   vulnId,
   projectId,
+  scanId,
   onCancel,
   onSuccess,
   initialReason,
@@ -45,6 +46,7 @@ export function WaiverForm({
   finding: Finding
   vulnId: string | null
   projectId: string
+  scanId?: string
   onCancel: () => void
   onSuccess: () => void
   initialReason?: string
@@ -69,6 +71,7 @@ export function WaiverForm({
 
     createWaiverMutation.mutate({
       project_id: projectId,
+      scan_id: scanId,
       finding_id: vulnId ? undefined : getFindingId(finding),
       vulnerability_id: vulnId || undefined,
       package_name: getFindingPackage(finding),

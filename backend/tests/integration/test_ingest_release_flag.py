@@ -8,7 +8,7 @@ import pymongo
 import pytest
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT
-from app.repositories import ReleaseRepository
+from app.repositories.releases import ReleaseRepository
 
 _COMMIT = "b" * 40
 _BRANCH = "main"

@@ -1,4 +1,4 @@
-"""held_locks is the batched form of is_locked: only unexpired locks count as held."""
+"""held_locks reports which of the named locks are held: only unexpired locks count."""
 
 import asyncio
 from datetime import datetime, timedelta, timezone

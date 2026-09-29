@@ -82,7 +82,7 @@ async def test_the_reconcile_recovers_the_movement_across_a_scan_retention_took(
     await _seed_chain(db, {"s1": "1.0.0", "s2": "2.0.0", "s3": "2.0.0"})
     before = await db.scan_update_deltas.find_one({"_id": "s3"})
     assert (before or {})["prev_scan_id"] == "s2"
-    assert (before or {})["total_updates"] == 0
+    assert (before or {})["updates"]["major"] == 0
 
     with patch("app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket", return_value=AsyncMock()):
         await delete_scans_and_related_data(db, ["s2"], "retention")
@@ -96,7 +96,7 @@ async def test_the_reconcile_recovers_the_movement_across_a_scan_retention_took(
     assert _severed_metric() == exported + 1
     after = await db.scan_update_deltas.find_one({"_id": "s3"})
     assert (after or {})["prev_scan_id"] == "s1"
-    assert (after or {})["total_updates"] == 1
+    assert (after or {})["updates"]["major"] == 1
 
 
 @pytest.mark.asyncio

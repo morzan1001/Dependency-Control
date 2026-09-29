@@ -4,8 +4,6 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel
-
 from app.core.risk_scoring import is_actionable_vulnerability, is_deprioritized_vulnerability
 
 
@@ -73,7 +71,6 @@ class RecommendationType(str, Enum):
     UPGRADE_PROTOCOL = "upgrade_protocol"  # Deprecated TLS / SSH / IPsec version
     PQC_MIGRATION = "pqc_migration"  # Quantum-vulnerable primitive
     ROTATE_CERTIFICATE = "rotate_certificate"  # Expiring or expired cert
-    REPLACE_WEAK_CIPHER_SUITE = "replace_weak_cipher_suite"  # Bad TLS suite
 
 
 class Priority(str, Enum):
@@ -116,7 +113,8 @@ class VulnerabilityInfo:
     """Specific information about a vulnerability finding."""
 
     finding_id: str
-    cve_id: str
+    # The finding's unwaived advisories; every per-CVE mark and name is read off them.
+    advisories: list[dict[str, Any]]
     severity: str
     package_name: str
     current_version: str
@@ -130,6 +128,8 @@ class VulnerabilityInfo:
     is_reachable: bool | None = None
     reachability_level: str | None = None  # confirmed, likely, unknown, unreachable
     risk_score: float | None = None  # 0-100
+    # The SBOM graph does not record the dependency; the parser guessed it is direct.
+    direct_inferred: bool = False
 
     @property
     def is_fixable(self) -> bool:
@@ -144,38 +144,6 @@ class VulnerabilityInfo:
         return is_deprioritized_vulnerability(
             epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable
         )
-
-
-class PackageHotspot(BaseModel):
-    """Aggregated hotspot data for a package with multiple severe issues."""
-
-    package: str
-    version: str = "unknown"
-    vuln_count: int = 0
-    critical_count: int = 0
-    high_count: int = 0
-    kev_count: int = 0
-    high_epss_count: int = 0
-    reachable_count: int = 0
-    risk_score: float = 0.0
-    reasons: list[str] = []
-    fixed_versions: list[str] = []
-    has_malware: bool = False
-    is_eol: bool = False
-
-
-class QuickWinEntry(BaseModel):
-    """A quick win update candidate that fixes multiple vulnerabilities."""
-
-    package: str
-    version: str = "unknown"
-    fixed_version: str = "unknown"
-    vuln_count: int = 0
-    critical_count: int = 0
-    high_count: int = 0
-    kev_count: int = 0
-    is_direct: bool = False
-    score: float = 0.0
 
 
 @dataclass

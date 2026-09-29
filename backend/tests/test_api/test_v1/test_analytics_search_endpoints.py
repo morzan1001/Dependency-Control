@@ -1,4 +1,4 @@
-"""The vuln_status_map pipeline in search_dependencies_advanced must restrict to the active scan_ids so a component fixed in the latest scan is not flagged vulnerable by older-scan findings."""
+"""The vulnerability-filter pipeline in search_dependencies_advanced must restrict to the active scan_ids so a component fixed in the latest scan is not flagged vulnerable by older-scan findings."""
 
 import asyncio
 from typing import Any
@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
+from tests.helpers.analytics_scope import projections
 
 MODULE = "app.api.v1.endpoints.analytics.search"
 
@@ -48,7 +49,7 @@ def _make_dep(project_id="proj-1", name="lodash", version="4.17.11"):
 
 
 class TestSearchDependenciesVulnScanScope:
-    """search_dependencies_advanced vuln_status_map must be scoped to scan_ids."""
+    """search_dependencies_advanced vulnerability-filter pipeline must be scoped to scan_ids."""
 
     def _run_search(
         self,
@@ -64,8 +65,8 @@ class TestSearchDependenciesVulnScanScope:
         db = MagicMock()
         captured_pipelines: list[list[dict[str, Any]]] = []
 
-        async def _fake_get_user_project_ids(_u, _d):
-            return ["proj-1"]
+        async def _fake_get_user_projects(_u, _d):
+            return projections(["proj-1"])
 
         async def _fake_get_projects_with_scans(_project_ids, _d, **_kw):
             return {"proj-1": "Project 1"}, ["scan-latest"]
@@ -82,7 +83,7 @@ class TestSearchDependenciesVulnScanScope:
         mock_finding_repo.aggregate = _fake_aggregate
 
         with (
-            patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+            patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
             patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
             patch(f"{MODULE}.DependencyRepository", return_value=mock_dep_repo),
             patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
@@ -113,7 +114,7 @@ class TestSearchDependenciesVulnScanScope:
             vuln_agg_results=[],
             has_vulnerabilities=True,
         )
-        assert pipelines, "aggregate() was never called for the vuln_status_map"
+        assert pipelines, "aggregate() was never called for the vulnerability filter"
         match_stage = pipelines[0][0]["$match"]
         assert "scan_id" in match_stage, "$match must include scan_id"
         assert match_stage["scan_id"] == {"$in": ["scan-latest"]}
@@ -132,7 +133,7 @@ class TestSearchDependenciesVulnScanScope:
 
     def test_active_scan_vuln_marks_component_as_vulnerable(self):
         dep = _make_dep(name="lodash", project_id="proj-1")
-        agg_results = [{"_id": {"project_id": "proj-1", "component": "lodash"}}]
+        agg_results = [{"_id": {"project_id": "proj-1", "component": "lodash"}, "versions": [dep["version"]]}]
         response, _ = self._run_search(
             dep_list=[dep],
             vuln_agg_results=agg_results,
@@ -141,7 +142,7 @@ class TestSearchDependenciesVulnScanScope:
         assert len(response.items) == 1
         assert response.items[0].package == "lodash"
 
-    def test_waived_excluded_from_vuln_status_map(self):
+    def test_waived_excluded_from_the_vulnerability_filter(self):
         dep = _make_dep()
         _, pipelines = self._run_search(
             dep_list=[dep],

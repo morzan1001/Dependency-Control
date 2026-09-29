@@ -93,7 +93,6 @@ export interface QualityIssue {
   severity?: string;
   description?: string;
   scanners?: string[];
-  source?: string;
   details?: QualityIssueDetails;
 }
 
@@ -201,7 +200,6 @@ export interface FindingDetails {
   epss_percentile?: number;
   epss_date?: string;
   fixed_version?: string;
-  github_advisory_url?: string;
   kev?: boolean;
   kev_due_date?: string;
   urls?: string[];
@@ -276,8 +274,6 @@ export interface FindingDetails {
     email?: string;
     packages_maintained?: number;
   };
-  maintenance_warning?: boolean;
-  maintenance_warning_text?: string;
   scorecard?: ScorecardData;
   maintainer_risk?: MaintainerRiskData;
   error_details?: string | ErrorDetails;
@@ -577,5 +573,4 @@ export interface BranchTip {
 
 export interface ProjectBranchTips {
   branches: BranchTip[];
-  flagged_release_scan: ScanWithReleases | null;
 }

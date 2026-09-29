@@ -2,6 +2,9 @@
 
 from typing import Any
 
+from app.core.epss import HIGH_EPSS_LABEL
+from app.schemas.notification import PRIORITY_VULNS_LABEL
+
 # Slack Block Kit limits: a payload past any of these is rejected outright.
 _HEADER_MAX_LENGTH = 150
 _SECTION_TEXT_MAX_LENGTH = 3000
@@ -170,7 +173,7 @@ def build_vulnerability_found_blocks(
     project_name: str,
     kev_count: int,
     high_epss_count: int,
-    critical_count: int,
+    priority_count: int,
     top_vulns: list[dict[str, Any]],
     scan_link: str,
 ) -> list[dict[str, Any]]:
@@ -198,14 +201,16 @@ def build_vulnerability_found_blocks(
     if kev_count:
         fields.append({"type": "mrkdwn", "text": f"\u26a0\ufe0f *KEV Vulnerabilities:* {kev_count}"})
     if high_epss_count:
-        fields.append({"type": "mrkdwn", "text": f"\U0001f4c8 *High EPSS (>10%):* {high_epss_count}"})
-    fields.append({"type": "mrkdwn", "text": f"{_SEVERITY_EMOJI['CRITICAL']} *Critical/High:* {critical_count}"})
+        fields.append({"type": "mrkdwn", "text": f"\U0001f4c8 *High EPSS ({HIGH_EPSS_LABEL}):* {high_epss_count}"})
+    fields.append(
+        {"type": "mrkdwn", "text": f"{_SEVERITY_EMOJI['CRITICAL']} *{PRIORITY_VULNS_LABEL}:* {priority_count}"}
+    )
 
     blocks.append({"type": "section", "fields": fields})
 
     if top_vulns:
         vuln_lines = [_format_vuln_line(i, v) for i, v in enumerate(top_vulns, 1)]
-        heading = f"*Top Priority Vulnerabilities ({len(top_vulns)} of {critical_count})*"
+        heading = f"*Top Priority Vulnerabilities ({len(top_vulns)} of {priority_count})*"
         blocks.append(
             {
                 "type": "section",

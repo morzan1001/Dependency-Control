@@ -349,7 +349,7 @@ async def test_entries_holding_unresolved_stubs_are_not_cached(_cache_spy, monke
 
     await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
-    component_keys = [k for k in _cache_spy if k.startswith("osv2:")]
+    component_keys = [k for k in _cache_spy if k.startswith("osv3:")]
     assert len(component_keys) == 1, "only the fully hydrated component may be cached"
 
 

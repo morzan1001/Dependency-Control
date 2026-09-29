@@ -22,7 +22,7 @@ from tests.helpers.analyzers import serve_analyzer
 from tests.mocks.fake_mongo import FakeDatabase
 
 _OSV = "osv"
-_FIRST_SBOM_LABEL = "sbom#1"
+_FIRST_SBOM_LABEL = "SBOM #1"
 _DROPPED_BY_DEPTH = "nesting-depth"
 _CVE = "CVE-2024-99999"
 _CRITICAL = "CRITICAL"
@@ -554,26 +554,16 @@ def test_a_large_valid_callgraph_prepares_to_the_pinned_result():
     as_dict, prepared = adhoc._prepare_posted_callgraph(payload)
 
     every_file = [f"app/f{file}.py" for file in range(_LARGE_CALLGRAPH_FILES)]
-    imported_only = {
-        "import_count": _LARGE_CALLGRAPH_FILES,
-        "call_count": 0,
-        "import_locations": every_file,
-        "used_symbols": _SHARED_SYMBOLS,
-        "is_direct_dependency": True,
-    }
+    submodules = [f"{module}.sub{n}" for n in range(3) for module in _LARGE_CALLGRAPH_MODULES]
     assert as_dict["total_imports"] == _LARGE_CALLGRAPH_FILES * len(_LARGE_CALLGRAPH_MODULES)
     assert as_dict["analyzed_modules"] == list(_LARGE_CALLGRAPH_MODULES)
-    assert list(as_dict["module_usage"]) == list(_LARGE_CALLGRAPH_MODULES)
-    assert as_dict["module_usage"]["requests"] == {
-        "module": "requests",
-        **imported_only,
-        "call_count": _LARGE_CALLGRAPH_FILES,
-        "used_symbols": [*_SHARED_SYMBOLS, "post", "get"],
-    }
-    for module in _LARGE_CALLGRAPH_MODULES[1:]:
-        assert as_dict["module_usage"][module] == {"module": module, **imported_only}
-    assert len(prepared.import_map) == _LARGE_CALLGRAPH_FILES
-    assert prepared.import_map["app/f1999.py"] == list(_LARGE_CALLGRAPH_MODULES)
+    assert list(as_dict["module_usage"]) == [*submodules, "requests"]
+    assert as_dict["module_usage"]["requests"]["used_symbols"] == ["post", "get"]
+    for module in _LARGE_CALLGRAPH_MODULES:
+        folded = prepared.usage_index[module]
+        extra_symbols = {"post", "get"} if module == "requests" else set()
+        assert sorted(folded["import_locations"]) == sorted(every_file)
+        assert set(folded["used_symbols"]) == {*_SHARED_SYMBOLS, *extra_symbols}
 
 
 @pytest.mark.asyncio

@@ -1,9 +1,15 @@
-"""Saturating severity-weighted risk score for scan stats and the projects dashboard fallback, plus
-the actionable/deprioritized predicates scan stats, recommendations and secret scoring must agree on."""
+"""Risk score plus the reachability, exploit and actionability classifications all scoring consumers share."""
 
 from typing import Any
 
-from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD
+from app.core.constants import (
+    EPSS_HIGH_THRESHOLD,
+    EPSS_MEDIUM_THRESHOLD,
+    REACHABILITY_LEVEL_IMPORT,
+    REACHABILITY_LEVEL_SYMBOL,
+    ExploitMaturity,
+)
+from app.core.epss import bucket_epss
 
 # Relative weight per finding: 1 CRITICAL = 5 HIGH = 20 MEDIUM = 80 LOW; INFO/UNKNOWN/NEGLIGIBLE carry none.
 RISK_SEVERITY_WEIGHTS: dict[str, float] = {
@@ -17,7 +23,6 @@ RISK_SEVERITY_WEIGHTS: dict[str, float] = {
 # median project lands mid-scale instead of the whole top decile compressing into 99.x.
 RISK_SCORE_HALF_SATURATION: float = 250.0
 
-# Per-finding weight multipliers mirroring the reachability scaling of details.adjusted_risk_score.
 UNREACHABLE_RISK_MODIFIER: float = 0.4
 CONFIRMED_REACHABLE_RISK_MODIFIER: float = 1.1
 
@@ -59,6 +64,43 @@ def risk_score_expr(count_paths: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def reachability_display_tier(is_reachable: bool | None, analysis_level: str | None) -> str:
+    """Persisted reachability (is_reachable + none/import/symbol level) as confirmed/likely/unreachable/unknown."""
+    if is_reachable is False:
+        return "unreachable"
+    if is_reachable is True:
+        if analysis_level == REACHABILITY_LEVEL_SYMBOL:
+            return "confirmed"
+        if analysis_level == REACHABILITY_LEVEL_IMPORT:
+            return "likely"
+    return "unknown"
+
+
+def reachability_risk_modifier(is_reachable: bool | None, analysis_level: str | None) -> float:
+    """Risk weight of a reachability verdict; not reachable is not zero, because analysis is imperfect."""
+    tier = reachability_display_tier(is_reachable, analysis_level)
+    if tier == "unreachable":
+        return UNREACHABLE_RISK_MODIFIER
+    if tier == "confirmed":
+        return CONFIRMED_REACHABLE_RISK_MODIFIER
+    return 1.0
+
+
+# details.exploit_maturity values meaning actively exploited in the wild (KEV-listed).
+ACTIVELY_EXPLOITED_MATURITY = ("active", "weaponized")
+
+
+def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: float | None) -> ExploitMaturity:
+    """Maturity level: weaponized > active > high/medium/low (EPSS) > unknown."""
+    if kev_ransomware:
+        return "weaponized"
+    if is_kev:
+        return "active"
+    if epss_score is not None:
+        return bucket_epss(epss_score)
+    return "unknown"
+
+
 def is_actionable_vulnerability(*, epss_score: float | None, is_kev: bool, reachable: bool | None) -> bool:
     """Exploitable (KEV or high EPSS) and not ruled out by a reachability verdict."""
     exploitable = is_kev or (epss_score is not None and epss_score >= EPSS_HIGH_THRESHOLD)
@@ -74,6 +116,11 @@ def is_deprioritized_vulnerability(*, epss_score: float | None, is_kev: bool, re
     if reachable is False:
         return True
     return not is_kev and epss_score is not None and epss_score < EPSS_MEDIUM_THRESHOLD
+
+
+def is_actionable_secret(verified: bool | None) -> bool:
+    """A verified credential is a live leak until rotated, whether or not its file is still in the tree."""
+    return verified is True
 
 
 def is_deprioritized_secret(verified: bool | None, in_current_tree: bool | None) -> bool:

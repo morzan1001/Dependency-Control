@@ -134,7 +134,6 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
       : [];
 
     return projects.filter(p =>
-      p.owner_id === userId ||
       p.members?.some(m => m.user_id === userId) ||
       p.team_ids?.some(id => userTeamIds.includes(id))
     );

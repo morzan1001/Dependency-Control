@@ -4,25 +4,13 @@ CryptoTrendService — time-bucketed crypto finding + asset aggregations.
 
 import hashlib
 from datetime import datetime, timedelta
-from typing import Any, Literal
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.schemas.analytics import TrendPoint, TrendSeries
+from app.schemas.analytics import Bucket, Metric, TrendPoint, TrendSeries
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
-
-Bucket = Literal["day", "week", "month"]
-Metric = Literal[
-    "total_crypto_findings",
-    "quantum_vulnerable_findings",
-    "weak_algo_findings",
-    "weak_key_findings",
-    "cert_expiring_soon",
-    "cert_expired",
-    "unique_algorithms",
-    "unique_cipher_suites",
-]
 
 _MAX_RANGE = timedelta(days=730)
 
@@ -36,16 +24,12 @@ _METRIC_FILTER: dict[str, dict[str, Any]] = {
 }
 
 
-def _auto_bucket(delta: timedelta) -> Bucket:
+def auto_bucket(delta: timedelta) -> Bucket:
     if delta <= timedelta(days=14):
         return "day"
     if delta <= timedelta(days=90):
         return "week"
     return "month"
-
-
-def _dateTrunc_unit(bucket: Bucket) -> str:
-    return {"day": "day", "week": "week", "month": "month"}[bucket]
 
 
 class CryptoTrendService:
@@ -130,7 +114,7 @@ class CryptoTrendService:
         match["waived"] = {"$ne": True}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
-        trunc = {"$dateTrunc": {"date": "$scan_created_at", "unit": _dateTrunc_unit(bucket)}}
+        trunc = {"$dateTrunc": {"date": "$scan_created_at", "unit": bucket}}
         # Per bucket we count the latest scan per project regardless of scan status;
         # a partial/failed latest scan may under-report, accepted since failed scans
         # typically write no crypto findings.
@@ -195,7 +179,7 @@ class CryptoTrendService:
                             "bucket": {
                                 "$dateTrunc": {
                                     "date": "$created_at",
-                                    "unit": _dateTrunc_unit(bucket),
+                                    "unit": bucket,
                                 }
                             },
                             "value": field_ref,

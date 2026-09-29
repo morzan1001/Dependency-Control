@@ -1,14 +1,14 @@
-"""Components-delta: match SBOM components across two scans by version-stripped purl,
+"""Components-delta: match SBOM components across two scans by version-free package identity,
 so a version bump reads as ``version_changed`` (with both transitions) rather than
 added+removed, and a license-only change reads as ``license_changed``.
 """
 
 from __future__ import annotations
 
-from urllib.parse import unquote
-
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.purl import package_identity
+from app.repositories.base import find_window
 from app.schemas.scan_delta import (
     ComponentDeltaItem,
     DeltaCategory,
@@ -23,51 +23,13 @@ from app.services.analytics._delta_reachability import side_reachability
 _SIDE_SORT: list[tuple[str, int]] = [("name", 1), ("version", 1)]
 
 
-def component_identity_key(comp: dict) -> tuple[str, str]:
-    """Component identity for cross-scan matching.
-
-    Strips version from purl so that a version bump appears as
-    ``version_changed`` instead of added+removed.
-    """
-    purl = comp.get("purl")
-    if purl and purl.startswith("pkg:"):
-        # purl: pkg:<type>/<namespace>/<name>@<version>?qualifiers#subpath
-        body = purl[4:]
-        # Strip qualifiers/subpath first so a '@' inside them isn't read as the version separator.
-        body = body.split("?", 1)[0].split("#", 1)[0]
-        # Version '@' lives in the final path segment; splitting on the first '@' would
-        # eat the npm scope '@' of pkg:npm/@scope/name@1.2.3 and collapse all scoped packages.
-        slash = body.rfind("/")
-        name_seg = body[slash + 1 :]
-        at = name_seg.rfind("@")
-        if at != -1:
-            body = body[: slash + 1] + name_seg[:at]
-        segments = body.split("/")
-        if len(segments) == 1:
-            return (segments[0], "")
-        ptype = segments[0]
-        name = unquote(segments[-1])
-        namespace = "/".join(unquote(s) for s in segments[1:-1])
-        type_key = f"{ptype}:{namespace}" if namespace else ptype
-        return (type_key, name)
-
-    return (comp.get("type") or "unknown", comp.get("name") or "")
-
-
 async def _fetch_components(
     db: AsyncIOMotorDatabase,
     project_id: str,
     scan_id: str,
 ) -> tuple[list[dict], int]:
-    """The side's components and how many it holds. The count costs a round trip only once the
-    fetch has saturated, which is the only case in which the two numbers differ."""
     query = {"project_id": project_id, "scan_id": scan_id}
-    cursor = db["dependencies"].find(query).sort(_SIDE_SORT).limit(MAX_FETCH)
-    docs = [doc async for doc in cursor]
-    if len(docs) < MAX_FETCH:
-        return docs, len(docs)
-    total: int = await db["dependencies"].count_documents(query)
-    return docs, total
+    return await find_window(db["dependencies"], query, MAX_FETCH, sort=_SIDE_SORT)
 
 
 def _to_added_or_removed(doc: dict, change: str) -> ComponentDeltaItem:
@@ -106,8 +68,10 @@ async def compute_components_delta(
     from_docs, from_total = await _fetch_components(db, project_id, from_scan)
     to_docs, to_total = await _fetch_components(db, project_id, to_scan)
 
-    from_map = {component_identity_key(d): d for d in from_docs}
-    to_map = {component_identity_key(d): d for d in to_docs}
+    from_map = {
+        package_identity(d.get("purl"), d.get("name") or "", d.get("type"), d.get("group")): d for d in from_docs
+    }
+    to_map = {package_identity(d.get("purl"), d.get("name") or "", d.get("type"), d.get("group")): d for d in to_docs}
 
     added_keys = to_map.keys() - from_map.keys()
     removed_keys = from_map.keys() - to_map.keys()

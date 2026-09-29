@@ -14,8 +14,9 @@ from app.api.v1.helpers.analytics import (
 from app.core.constants import BLAST_RADIUS_THRESHOLD, IMPACT_MAX_SCORE_BOOST
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
-from app.schemas.analytics import CVEEnrichmentResult
+from app.schemas.analytics import CVEEnrichmentResult, SeverityBreakdown
 from tests.mocks.fake_mongo import FakeCollection
+from tests.helpers.analytics_scope import projections
 
 MODULE = "app.api.v1.endpoints.analytics.risk"
 
@@ -130,8 +131,8 @@ def _run_impact(
     captured: list[list[dict[str, Any]]] = []
     captured_kwargs: list[dict[str, Any]] = []
 
-    async def _fake_get_user_project_ids(_u, _d):
-        return ["proj-1"]
+    async def _fake_get_user_projects(_u, _d):
+        return projections(["proj-1"])
 
     async def _fake_get_projects_with_scans(_pids, _d, **_kw):
         return {"proj-1": "Project 1"}, ["scan-latest"]
@@ -148,7 +149,7 @@ def _run_impact(
         return {}
 
     with (
-        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
         patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
@@ -173,8 +174,8 @@ def _run_hotspots(
     captured: list[list[dict[str, Any]]] = []
     captured_kwargs: list[dict[str, Any]] = []
 
-    async def _fake_get_user_project_ids(_u, _d):
-        return ["proj-1"]
+    async def _fake_get_user_projects(_u, _d):
+        return projections(["proj-1"])
 
     async def _fake_get_projects_with_scans(_pids, _d, **_kw):
         return {"proj-1": "Project 1"}, ["scan-latest"]
@@ -194,7 +195,7 @@ def _run_hotspots(
         return {}
 
     with (
-        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
         patch(f"{MODULE}.DependencyRepository", return_value=mock_dep_repo),
@@ -394,7 +395,7 @@ class TestDistinctSeverityCounts:
         return [{"fixed_version": None, "vulnerabilities": list(vulns)}]
 
     def test_canonical_cve_prefers_cve_over_ghsa(self):
-        from app.services.enrichment import canonical_cve as _canonical_cve
+        from app.core.cve import canonical_cve as _canonical_cve
 
         assert _canonical_cve({"id": "GHSA-x", "resolved_cve": "CVE-1"}) == "CVE-1"
         assert _canonical_cve({"id": "GHSA-x", "aliases": ["CVE-2"]}) == "CVE-2"
@@ -402,18 +403,26 @@ class TestDistinctSeverityCounts:
         assert _canonical_cve({"id": "GHSA-only"}) == "GHSA-only"  # GHSA with no CVE mapping
 
     def test_ghsa_and_cve_alias_count_once(self):
-        from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
+        from app.api.v1.helpers.analytics import severity_counts_from_details
 
         # the same vuln listed as its GHSA and its CVE alias (as prod does) is one critical
         details = self._details(
             {"id": "GHSA-a", "aliases": ["CVE-1"], "severity": "CRITICAL"},
             {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
         )
-        counts = _severity_counts_from_details(details)
-        assert counts == {"critical": 1, "high": 0, "medium": 0, "low": 0}
+        counts = severity_counts_from_details(details)
+        assert {k: v for k, v in counts.items() if v} == {"critical": 1}
+
+    def test_a_multi_cve_advisory_credits_its_severity_to_each_cve(self):
+        from app.api.v1.helpers.analytics import severity_counts_from_details
+
+        details = self._details(
+            {"id": "CVE-1", "aliases": ["ALAS-1", "CVE-2", "CVE-3"], "severity": "HIGH"},
+        )
+        assert {k: v for k, v in severity_counts_from_details(details).items() if v} == {"high": 3}
 
     def test_multi_severity_cve_counts_once_at_worst(self):
-        from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
+        from app.api.v1.helpers.analytics import severity_counts_from_details
 
         # Both orderings must resolve to critical, so the test catches a last-wins bug regardless
         # of iteration order: CVE-A is high-then-critical, CVE-B is critical-then-high.
@@ -423,24 +432,83 @@ class TestDistinctSeverityCounts:
             {"id": "CVE-B", "resolved_cve": "CVE-B", "severity": "CRITICAL"},
             {"id": "CVE-B", "resolved_cve": "CVE-B", "severity": "HIGH"},
         )
-        counts = _severity_counts_from_details(details)
+        counts = severity_counts_from_details(details)
         assert counts["critical"] == 2, "each CVE counts once at its worst severity"
         assert counts["high"] == 0, "a CVE must not also be counted at a lower severity"
 
-    def test_counts_reconcile_with_total_and_ignore_unranked(self):
-        from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
-        from app.services.enrichment import canonical_cves as _canonical_cves
+    def test_counts_reconcile_with_the_cve_total(self):
+        from app.api.v1.helpers.analytics import severity_counts_from_details
+        from app.services.recommendation.common import live_cves
 
         details = self._details(
             {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
             {"id": "CVE-2", "resolved_cve": "CVE-2", "severity": "HIGH"},
             {"id": "CVE-3", "resolved_cve": "CVE-3", "severity": "MEDIUM"},
-            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": "UNKNOWN"},  # unranked -> excluded
+            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": None},
+            {"id": "CVE-5", "resolved_cve": "CVE-5", "severity": "CRITICAL", "waived": True},
         )
-        counts = _severity_counts_from_details(details)
-        assert counts == {"critical": 1, "high": 1, "medium": 1, "low": 0}
-        assert sum(counts.values()) == 3, "unranked severity is not counted as a bucket"
-        assert set(_canonical_cves(details)) == {"CVE-1", "CVE-2", "CVE-3", "CVE-4"}
+        counts = severity_counts_from_details(details)
+        assert {k: v for k, v in counts.items() if v} == {"critical": 1, "high": 1, "medium": 1, "unknown": 1}
+        assert sum(counts.values()) == len(live_cves(details)) == 4
+
+    def test_every_canonical_cve_lands_in_exactly_one_bucket(self):
+        from app.api.v1.helpers.analytics import severity_counts_from_details
+        from app.core.cve import canonical_cves
+
+        details = self._details(
+            {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
+            {"id": "CVE-2", "resolved_cve": "CVE-2", "severity": "HIGH"},
+            {"id": "CVE-3", "resolved_cve": "CVE-3", "severity": "NEGLIGIBLE"},
+            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": "UNKNOWN"},
+            {"id": "CVE-5", "resolved_cve": "CVE-5"},
+            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": "LOW"},
+        )
+        counts = severity_counts_from_details(details)
+
+        assert SeverityBreakdown.from_counts(counts) == SeverityBreakdown(
+            critical=1, high=1, low=1, negligible=1, unknown=1
+        )
+        assert sum(counts.values()) == len(canonical_cves(details)) == 5
+
+    def test_a_hotspot_counts_every_cve_it_names(self):
+        from app.api.v1.endpoints.analytics.risk import _build_hotspot
+
+        group = {
+            "_id": {"component": "left-pad", "version": "1.0.0"},
+            "details_list": self._details(
+                {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "HIGH"},
+                {"id": "CVE-2", "resolved_cve": "CVE-2", "severity": "NEGLIGIBLE"},
+                {"id": "CVE-3", "resolved_cve": "CVE-3", "severity": "UNKNOWN"},
+            ),
+            "project_ids": ["p1"],
+            "first_seen": None,
+        }
+        hotspot = _build_hotspot(group, {}, {}, {}, {"p1": "p1"}, ["p1"])
+
+        assert hotspot.finding_count == hotspot.cve_count == sum(hotspot.severity_breakdown.model_dump().values()) == 3
+
+
+class TestUnratedAdvisoriesWeigh:
+    """A CVE still awaiting NVD/GHSA scoring is where KEV/EPSS should decide, so it needs a base to boost."""
+
+    def test_an_unrated_cve_has_a_base_score(self):
+        assert impact_pre_score({"unknown": 1}, 1) > 0
+
+    def test_an_unrated_broad_fix_is_ranked_among_many_low_ones(self):
+        lows = [_impact_row(f"low{i}", ap=1, low=1) for i in range(30)]
+        unrated = _impact_row("unrated", ap=5)
+        unrated["details_list"] = [
+            {
+                "fixed_version": None,
+                "vulnerabilities": [{"id": "CVE-9", "resolved_cve": "CVE-9", "severity": "UNKNOWN"}],
+            }
+        ]
+
+        response, _, _ = _run_impact(agg_results=[*lows, unrated], limit=20)
+
+        top = response[0]
+        assert (top.component, top.total_findings, top.findings_by_severity.unknown) == ("unrated", 1, 1)
+        assert top.fix_impact_score > 0
 
 
 # epss/risk come from enrichment, not Mongo, so the endpoint re-sorts in Python; the pipeline must not cap the fetch below skip+limit.
@@ -657,7 +725,7 @@ class TestSelectImpactCandidates:
         assert "unreachable" not in names, "the cut must come from the limit-th pre-score"
 
     def test_a_field_that_scores_zero_throughout_keeps_every_group(self):
-        """INFO and UNKNOWN carry no severity weight, so a whole page can pre-score zero; an
+        """INFO carries no severity weight, so a whole page can pre-score zero; an
         exclusive cut then drops the entire field and the endpoint answers with nothing."""
         rows = [_impact_row(f"u{i}", ap=5) for i in range(8)]
 
@@ -723,8 +791,8 @@ def _impact_aggregate_calls(*limits: int) -> int:
     db = MagicMock()
     calls = {"n": 0}
 
-    async def _fake_get_user_project_ids(_u, _d):
-        return ["proj-1"]
+    async def _fake_get_user_projects(_u, _d):
+        return projections(["proj-1"])
 
     async def _fake_get_projects_with_scans(_p, _d, **_kw):
         return {"proj-1": "P1"}, ["scan-latest"]
@@ -741,7 +809,7 @@ def _impact_aggregate_calls(*limits: int) -> int:
         return {}
 
     with (
-        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=repo),
         patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
@@ -758,8 +826,8 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
     db = MagicMock()
     calls = {"n": 0}
 
-    async def _fake_get_user_project_ids(_u, _d):
-        return ["proj-1"]
+    async def _fake_get_user_projects(_u, _d):
+        return projections(["proj-1"])
 
     async def _fake_get_projects_with_scans(_p, _d, **_kw):
         return {"proj-1": "P1"}, ["scan-latest"]
@@ -778,7 +846,7 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
         return {}
 
     with (
-        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=repo),
         patch(f"{MODULE}.DependencyRepository", return_value=dep_repo),
@@ -810,8 +878,8 @@ class TestAnalyticsResultCache:
         user = _admin_user()
         db = MagicMock()
 
-        async def _fake_get_user_project_ids(_u, _d):
-            return ["proj-1"]
+        async def _fake_get_user_projects(_u, _d):
+            return projections(["proj-1"])
 
         async def _fake_get_projects_with_scans(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
@@ -826,7 +894,7 @@ class TestAnalyticsResultCache:
             return {}
 
         with (
-            patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+            patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
             patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
             patch(f"{MODULE}.FindingRepository", return_value=repo),
             patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
@@ -967,7 +1035,7 @@ class TestHistoricalFirstSeen:
         row["first_seen"] = recent
 
         async def _gupi(_u, _d):
-            return ["proj-1"]
+            return projections(["proj-1"])
 
         async def _gpws(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
@@ -984,7 +1052,7 @@ class TestHistoricalFirstSeen:
             return {}
 
         with (
-            patch(f"{MODULE}.get_user_project_ids", new=_gupi),
+            patch(f"{MODULE}.get_user_projects", new=_gupi),
             patch(f"{MODULE}.get_projects_with_scans", new=_gpws),
             patch(f"{MODULE}.FindingRepository", return_value=repo),
             patch(f"{MODULE}.get_cve_enrichment", new=_enr),
@@ -1006,7 +1074,7 @@ class TestHistoricalFirstSeen:
         old = datetime.now(timezone.utc) - timedelta(days=200)
 
         async def _gupi(_u, _d):
-            return ["proj-1"]
+            return projections(["proj-1"])
 
         async def _gpws(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
@@ -1025,7 +1093,7 @@ class TestHistoricalFirstSeen:
             return {}
 
         with (
-            patch(f"{MODULE}.get_user_project_ids", new=_gupi),
+            patch(f"{MODULE}.get_user_projects", new=_gupi),
             patch(f"{MODULE}.get_projects_with_scans", new=_gpws),
             patch(f"{MODULE}.FindingRepository", return_value=repo),
             patch(f"{MODULE}.DependencyRepository", return_value=dep_repo),

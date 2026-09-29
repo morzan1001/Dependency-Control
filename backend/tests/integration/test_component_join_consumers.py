@@ -101,7 +101,7 @@ async def test_scan_findings_lookup_prefers_the_exact_spelling(client, db, seede
 
 @pytest.mark.asyncio
 async def test_hotspots_report_the_dependency_type(client, db, seeded):
-    """risk.py dep_type_map — the hotspot type comes from the inventory."""
+    """risk.py hotspot type — the type comes from the inventory."""
     resp = await client.get("/api/v1/analytics/hotspots", headers=seeded)
     assert resp.status_code == 200, resp.text
     assert resp.json()[0]["type"] == "maven"
@@ -109,7 +109,7 @@ async def test_hotspots_report_the_dependency_type(client, db, seeded):
 
 @pytest.mark.asyncio
 async def test_dependency_search_vulnerability_filter_matches(client, db, seeded):
-    """search.py vuln_status_map — has_vulnerabilities=true must find the Maven dependency."""
+    """search.py vulnerability filter — has_vulnerabilities=true must find the Maven dependency."""
     resp = await client.get(
         "/api/v1/analytics/search",
         params={"q": "jackson", "has_vulnerabilities": "true"},
@@ -140,7 +140,12 @@ async def test_remediation_plan_marks_the_package_direct(db, seeded):
     from app.services.chat.tools.registry import ChatToolRegistry
 
     await db.findings.update_one({"_id": "f1"}, {"$set": {"severity": "CRITICAL"}})
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
     plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
 
     step = plan["plan"][0]
@@ -195,7 +200,12 @@ async def test_find_component_usage_accepts_a_qualified_component(db, seeded):
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry
 
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
     result = await ChatToolRegistry().execute_tool("find_component_usage", {"component_name": QUALIFIED}, user, db)
 
     assert [m["component"] for m in result["matches"]] == [BARE]
@@ -257,7 +267,12 @@ async def test_inferred_direct_is_reported_the_same_way_by_both_tools(db, seeded
 
     await db.dependencies.update_one({"_id": "d1"}, {"$set": {"direct_inferred": True}})
     await db.findings.update_one({"_id": "f1"}, {"$set": {"severity": "CRITICAL"}})
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
     registry = ChatToolRegistry()
 
     plan = await registry.execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
@@ -285,7 +300,186 @@ async def test_declared_direct_still_outranks_inferred_direct_in_the_plan(db, se
     declared["purl"] = f"pkg:maven/io.netty/netty-common@{VERSION}"
     await db.dependencies.insert_one(declared)
 
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
     plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
 
     assert [s["direct_confidence"] for s in plan["plan"]] == ["declared", "inferred"]
+
+
+async def _analytics(client, path: str, headers: dict, **params):
+    resp = await client.get(f"/api/v1/analytics/{path}", params=params, headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
+
+
+@pytest.mark.asyncio
+async def test_a_qualified_hotspot_lists_the_findings_stored_under_the_bare_name(client, db, seeded):
+    """Outdated and license findings keep the SBOM's bare name; the vulnerability carries the coordinate."""
+    for idx, finding_type in enumerate(["outdated", "license"]):
+        await db.findings.insert_one({**_finding(f"bare{idx}", BARE), "type": finding_type, "id": f"{finding_type}-x"})
+
+    findings = await _analytics(client, "component-findings", seeded, component=QUALIFIED)
+    metadata = await _analytics(client, "dependency-metadata", seeded, component=QUALIFIED)
+
+    assert sorted(f["type"] for f in findings) == ["license", "outdated", "vulnerability"]
+    assert metadata["total_finding_count"] == len(findings)
+    assert metadata["total_vulnerability_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_both_panels_decide_a_bare_name_from_the_same_version_scoped_evidence(client, db, seeded):
+    await db.findings.insert_one({**_finding("core-a", "com.a:core"), "version": "1.0"})
+    await db.findings.insert_one({**_finding("core-b", "com.b:core"), "version": "2.0"})
+    await db.dependencies.insert_one({**_dependency("dep-core", name="core"), "version": "1.0"})
+
+    findings = await _analytics(client, "component-findings", seeded, component="core", version="1.0")
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="core", version="1.0")
+
+    assert [f["component"] for f in findings] == ["com.a:core"]
+    assert metadata["total_finding_count"] == len(findings)
+
+
+@pytest.mark.asyncio
+async def test_a_bare_name_shared_by_two_packages_resolves_to_neither(client, db, seeded):
+    await db.findings.insert_one({**_finding("core-a", "com.a:core"), "version": "1.0"})
+    await db.findings.insert_one({**_finding("core-b", "com.b:core"), "version": "1.0"})
+    await db.dependencies.insert_one({**_dependency("dep-core", name="core"), "version": "1.0"})
+
+    findings = await _analytics(client, "component-findings", seeded, component="core")
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="core")
+
+    assert findings == []
+    assert metadata["total_finding_count"] == 0
+
+
+def _maven(_id: str, group: str, name: str = "core", version: str = "1.0", **extra) -> dict:
+    return {
+        **_dependency(_id, name=name),
+        "group": group,
+        "version": version,
+        "purl": f"pkg:maven/{group}/{name}@{version}",
+        **extra,
+    }
+
+
+async def _add_project(db, project_id: str, scan_id: str, members: list | None = None) -> None:
+    now = datetime.now(timezone.utc)
+    await db.scans.insert_one(
+        {"_id": scan_id, "project_id": project_id, "status": "completed", "branch": "main", "created_at": now}
+    )
+    members = [{"user_id": "ownerp", "role": "admin"}] if members is None else members
+    await db.projects.insert_one({"_id": project_id, "name": project_id, "latest_scan_id": scan_id, "members": members})
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_qualified_component_reads_only_its_own_group_s_metadata(client, db, seeded):
+    await db.dependencies.insert_one(_maven("zxing", "com.google.zxing", license="Apache-2.0"))
+    await db.dependencies.insert_one(_maven("jdt", "org.eclipse.jdt", license="EPL-2.0"))
+
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="org.eclipse.jdt:core")
+    bare = await _analytics(client, "dependency-metadata", seeded, component="core")
+
+    assert (metadata["purl"], metadata["license"]) == ("pkg:maven/org.eclipse.jdt/core@1.0", "EPL-2.0")
+    assert bare is None
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_qualified_component_reads_purl_less_rows_by_their_group(client, db, seeded):
+    await db.dependencies.insert_one({**_maven("zxing", "com.google.zxing", license="Apache-2.0"), "purl": None})
+    await db.dependencies.insert_one({**_maven("jdt", "org.eclipse.jdt", license="EPL-2.0"), "purl": None})
+
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="org.eclipse.jdt:core")
+
+    assert (metadata["group"], metadata["license"]) == ("org.eclipse.jdt", "EPL-2.0")
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_metadata_without_a_version_describes_the_most_used_version(client, db, seeded):
+    group = "org.example"
+    await _add_project(db, "p2", "scan-p2")
+    await _add_project(db, "p3", "scan-p3")
+    await db.dependencies.insert_one(_maven("old", group, name="lib", version="1.0"))
+    for project_id in ("p2", "p3"):
+        await db.dependencies.insert_one(
+            {
+                **_maven(f"new-{project_id}", group, name="lib", version="2.0"),
+                "project_id": project_id,
+                "scan_id": f"scan-{project_id}",
+            }
+        )
+
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="lib")
+
+    assert (metadata["version"], metadata["purl"]) == ("2.0", f"pkg:maven/{group}/lib@2.0")
+    assert metadata["versions"] == ["2.0", "1.0"]
+    assert metadata["project_count"] == 3
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_hotspot_type_comes_from_the_hotspot_s_own_scans_and_version(client, db, seeded):
+    await _add_project(db, "elsewhere", "scan-elsewhere", members=[])
+    await db.dependencies.insert_one(
+        {
+            **_dependency("apk-other", name="openssl"),
+            "type": "apk",
+            "purl": None,
+            "scan_id": "scan-elsewhere",
+            "project_id": "elsewhere",
+        }
+    )
+    await db.dependencies.insert_one({**_dependency("deb", name="openssl"), "type": "deb", "purl": None})
+    await db.dependencies.insert_one({**_dependency("zlib-deb", name="zlib"), "type": "deb", "purl": None})
+    await db.dependencies.insert_one({**_dependency("zlib-apk", name="zlib"), "type": "apk", "purl": None})
+    await db.findings.insert_one(_finding("f-ssl", "openssl"))
+    await db.findings.insert_one(_finding("f-zlib", "zlib"))
+
+    types = {row["component"]: row["type"] for row in await _analytics(client, "hotspots", seeded)}
+
+    assert types["openssl"] == "deb"
+    assert types["zlib"] == "apk/deb"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_vulnerability_filter_tells_a_package_s_versions_apart(client, db, seeded):
+    await db.dependencies.insert_one({**_dependency("lodash-old", name="lodash"), "version": "4.17.15", "type": "npm"})
+    await db.dependencies.insert_one({**_dependency("lodash-new", name="lodash"), "version": "4.17.21", "type": "npm"})
+    await db.findings.insert_one({**_finding("f-lodash", "lodash"), "version": "v4.17.15"})
+
+    vulnerable = await _analytics(client, "search", seeded, q="lodash", has_vulnerabilities="true")
+    clean = await _analytics(client, "search", seeded, q="lodash", has_vulnerabilities="false")
+
+    assert [item["version"] for item in vulnerable["items"]] == ["4.17.15"]
+    assert [item["version"] for item in clean["items"]] == ["4.17.21"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_top_dependencies_name_the_group_of_each_same_named_package(client, db, seeded):
+    await db.dependencies.insert_one(_maven("zxing", "com.google.zxing"))
+    await db.dependencies.insert_one(_maven("jdt", "org.eclipse.jdt"))
+
+    rows = await _analytics(client, "dependencies/top", seeded)
+
+    assert sorted(row["group"] for row in rows if row["name"] == "core") == ["com.google.zxing", "org.eclipse.jdt"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_top_dependencies_name_a_package_the_same_whatever_the_row_order(client, db, seeded):
+    django = {"version": "4.2.0", "group": None, "type": "pypi", "purl": "pkg:pypi/django@4.2.0"}
+    await db.dependencies.insert_one({**_dependency("dj-lower", name="django"), **django})
+    await db.dependencies.insert_one({**_dependency("dj-upper", name="Django"), **django})
+
+    rows = await _analytics(client, "dependencies/top", seeded)
+
+    assert [row["name"] for row in rows if row["name"].lower() == "django"] == ["Django"]

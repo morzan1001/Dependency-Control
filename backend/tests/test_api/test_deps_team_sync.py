@@ -294,3 +294,17 @@ async def test_the_provider_is_told_how_much_room_the_project_has_left():
     await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme-org", "acme/widgets", service, db)
 
     assert service.sync_team_from_github.await_args.kwargs == {"owner_budget": MAX_PROJECT_TEAMS - 4}
+
+
+@pytest.mark.asyncio
+async def test_a_hand_assigned_owner_the_sync_also_resolves_survives_its_later_loss():
+    """The picker is the only writer that may take a hand assignment away."""
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=["platform"], team_sources={"platform": "manual"}, team_id="platform")
+
+    _, stages = await _github_sync(db, project, ["platform"])
+    stored, _ = await _github_sync(db, Project(**await db.projects.find_one({"_id": _PROJECT_ID})), [])
+
+    assert stages == []
+    assert stored["team_ids"] == ["platform"]
+    assert stored["team_sources"] == {"platform": "manual"}

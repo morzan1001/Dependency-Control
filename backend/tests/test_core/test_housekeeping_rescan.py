@@ -1,8 +1,9 @@
 """Characterisation of the scheduled-rescan path as it behaves today."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -13,21 +14,23 @@ from app.core.constants import (
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
+    SETTINGS_MODE_GLOBAL,
 )
 from app.core.housekeeping import (
-    _build_rescan,
-    _create_rescan_for_project,
     _is_rescan_due,
     _process_project_rescan,
     _rescan_targets,
     _resolve_rescan_interval,
     check_scheduled_rescans,
 )
+from app.core.worker import AnalysisWorkerManager
 from app.models.project import Project, Scan
 from app.models.release import Release
 from app.models.system import SystemSettings
-from app.repositories import DistributedLocksRepository
+from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
+from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan, create_rescan
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT_ID = "p1"
@@ -80,6 +83,7 @@ _JOB_ID = 5
 _PIPELINE_USER = "ci-bot"
 _CBOM_SCAN_TYPE = "cbom"
 _RETRY_COUNT = 3
+_SBOM_GENERATION = 4
 _WORKER_ID = "worker-1"
 _SCAN_ERROR = "analyzer crashed"
 _FAILED_ANALYZER = "trivy"
@@ -108,9 +112,11 @@ _SCAN_MODEL_FIELDS = frozenset(
         "commit_tag",
         "pipeline_user",
         "sbom_refs",
+        "sbom_generation",
         "scan_type",
         "status",
         "retry_count",
+        "stuck_retry_count",
         "worker_id",
         "analysis_started_at",
         "error",
@@ -149,6 +155,7 @@ _CARRIED_FROM_SOURCE = frozenset(
         "commit_message",
         "commit_tag",
         "sbom_refs",
+        "sbom_generation",
         "scan_type",
     }
 )
@@ -235,8 +242,10 @@ def _saturated_scan_doc() -> dict[str, Any]:
     whose value survives into the rescan is exactly a field the builder copied."""
     return _scan_doc(
         pipeline_user=_PIPELINE_USER,
+        sbom_generation=_SBOM_GENERATION,
         scan_type=_CBOM_SCAN_TYPE,
         retry_count=_RETRY_COUNT,
+        stuck_retry_count=_RETRY_COUNT,
         worker_id=_WORKER_ID,
         analysis_started_at=_NOW - _STALE,
         error=_SCAN_ERROR,
@@ -300,13 +309,11 @@ async def _seed_inflight_rescan(db: FakeDatabase, original_scan_id: str = _SOURC
     )
 
 
-async def _seed_expired_lock(db: FakeDatabase) -> DistributedLocksRepository:
+async def _seed_expired_lock(db: FakeDatabase) -> None:
     """A stale entry under the source's lock name: only a take-over of that exact name clears it."""
-    locks = DistributedLocksRepository(db)
-    await locks.acquire_lock(
+    await DistributedLocksRepository(db).acquire_lock(
         _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_EXPIRED_LOCK_TTL_SECONDS
     )
-    return locks
 
 
 async def _rescans(db: FakeDatabase) -> list[dict[str, Any]]:
@@ -321,7 +328,15 @@ def db() -> FakeDatabase:
 
 @pytest.fixture
 def worker() -> AsyncMock:
-    return AsyncMock()
+    manager = AsyncMock()
+    manager.is_saturated = MagicMock(return_value=False)
+    return manager
+
+
+def _one_worker() -> AnalysisWorkerManager:
+    manager = AnalysisWorkerManager(num_workers=1)
+    manager.queue = asyncio.Queue()
+    return manager
 
 
 class TestResolveRescanInterval:
@@ -359,6 +374,20 @@ class TestResolveRescanInterval:
 
         assert _resolve_rescan_interval(project, _system_settings()) is None
 
+    def test_in_global_mode_the_project_settings_do_not_apply(self) -> None:
+        opted_out = _project(rescan_enabled=False, rescan_interval=_PROJECT_INTERVAL_HOURS)
+        own_interval = _project(rescan_interval=_PROJECT_INTERVAL_HOURS)
+        settings = _system_settings(rescan_mode=SETTINGS_MODE_GLOBAL, global_rescan_interval=_GLOBAL_INTERVAL_HOURS)
+
+        assert _resolve_rescan_interval(opted_out, settings) == _GLOBAL_INTERVAL_HOURS
+        assert _resolve_rescan_interval(own_interval, settings) == _GLOBAL_INTERVAL_HOURS
+
+    def test_in_global_mode_a_project_opt_in_cannot_override_the_global_switch_being_off(self) -> None:
+        opted_in = _project(rescan_enabled=True, rescan_interval=_PROJECT_INTERVAL_HOURS)
+        settings = _system_settings(rescan_mode=SETTINGS_MODE_GLOBAL, global_rescan_enabled=False)
+
+        assert _resolve_rescan_interval(opted_in, settings) is None
+
 
 class TestIsRescanDue:
     """The clock is the source scan's own, so CI traffic on the project cannot postpone it."""
@@ -393,15 +422,10 @@ class TestIsRescanDue:
 
         assert _is_rescan_due(source, _DEFAULT_INTERVAL_HOURS) is False
 
-    def test_a_naive_timestamp_as_mongo_returns_it_is_read_as_utc(self) -> None:
-        naive = (_NOW - _PAST_INTERVAL).replace(tzinfo=None)
-
-        assert _is_rescan_due(_scan_doc(created_at=naive), _DEFAULT_INTERVAL_HOURS) is True
-
 
 class TestBuildRescan:
     def test_carries_the_source_ci_metadata_into_a_fresh_pending_scan(self) -> None:
-        rescan = _build_rescan(_project(), _scan_doc())
+        rescan = build_rescan(_scan_doc())
 
         assert rescan.id != _SOURCE_SCAN_ID
         assert rescan.status == SCAN_STATUS_PENDING
@@ -421,72 +445,89 @@ class TestBuildRescan:
         assert rescan.project_name == _PROJECT_NAME
 
     def test_the_pipeline_id_is_dropped_so_a_rescan_cannot_be_mistaken_for_an_ingest(self) -> None:
-        assert _build_rescan(_project(), _scan_doc()).pipeline_id is None
+        assert build_rescan(_scan_doc()).pipeline_id is None
 
     def test_a_source_carrying_no_branch_field_is_rescanned_as_unknown(self) -> None:
         source = _scan_doc()
         del source["branch"]
 
-        assert _build_rescan(_project(), source).branch == _UNKNOWN_BRANCH
+        assert build_rescan(source).branch == _UNKNOWN_BRANCH
 
     def test_the_release_flag_is_not_inherited(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(is_release=True)).is_release is False
+        assert build_rescan(_scan_doc(is_release=True)).is_release is False
 
     def test_the_cbom_scan_type_is_carried_so_the_rescan_selects_the_same_analyzers(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(scan_type=_CBOM_SCAN_TYPE)).scan_type == _CBOM_SCAN_TYPE
+        assert build_rescan(_scan_doc(scan_type=_CBOM_SCAN_TYPE)).scan_type == _CBOM_SCAN_TYPE
 
     def test_a_source_carrying_no_scan_type_produces_a_rescan_without_one(self) -> None:
-        assert _build_rescan(_project(), _scan_doc()).scan_type is None
+        assert build_rescan(_scan_doc()).scan_type is None
 
     def test_the_pipeline_user_is_not_inherited(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(pipeline_user=_PIPELINE_USER)).pipeline_user is None
+        assert build_rescan(_scan_doc(pipeline_user=_PIPELINE_USER)).pipeline_user is None
 
     def test_the_rescan_clock_is_not_inherited_so_the_fresh_scan_starts_from_its_own_creation(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(last_rescanned_at=_NOW)).last_rescanned_at is None
+        assert build_rescan(_scan_doc(last_rescanned_at=_NOW)).last_rescanned_at is None
 
     def test_the_scan_model_holds_exactly_the_pinned_fields(self) -> None:
         """Widening Scan is a decision about what a rescan inherits, so it has to be made here."""
         assert set(Scan.model_fields) == _SCAN_MODEL_FIELDS
 
+    def test_the_scheduler_reads_every_field_a_rescan_is_built_from(self) -> None:
+        source = _saturated_scan_doc()
+        projected = {field: value for field, value in source.items() if field in RESCAN_SOURCE_PROJECTION}
+
+        built, built_from_projection = build_rescan(source), build_rescan(projected)
+
+        assert built_from_projection.model_dump(exclude={"id", "created_at"}) == built.model_dump(
+            exclude={"id", "created_at"}
+        )
+
     def test_a_rescan_carries_exactly_the_pinned_fields_and_nothing_else(self) -> None:
         source = _saturated_scan_doc()
 
-        assert _carried_fields(source, _build_rescan(_project(), source)) == _CARRIED_FROM_SOURCE
+        assert _carried_fields(source, build_rescan(source)) == _CARRIED_FROM_SOURCE
 
 
 class TestCreateRescanForProject:
     @pytest.mark.asyncio
-    async def test_inserts_the_rescan_points_the_source_at_it_and_queues_the_job(
+    async def test_inserts_the_rescan_announces_it_on_the_source_and_queues_the_job(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
+        """The lineage pointer waits for a delivered rescan; the pending run is what the list shows."""
         source = await _seed_scan(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         rescans = await _rescans(db)
         assert len(rescans) == 1
         assert rescans[0]["original_scan_id"] == _SOURCE_SCAN_ID
         stored_source = await db.scans.find_one({"_id": _SOURCE_SCAN_ID})
-        assert stored_source["latest_rescan_id"] == rescans[0]["_id"]
+        assert stored_source["latest_run"]["scan_id"] == rescans[0]["_id"]
+        assert stored_source["latest_run"]["status"] == SCAN_STATUS_PENDING
+        assert stored_source.get("latest_rescan_id") is None
         worker.add_job.assert_awaited_once_with(rescans[0]["_id"])
+
+    @pytest.mark.asyncio
+    async def test_a_rescan_of_a_rescan_is_rooted_at_the_lineage_root(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _ROOT_SCAN_ID)
+        clicked = await _seed_scan(db, _PREVIOUS_RESCAN_ID, is_rescan=True, original_scan_id=_ROOT_SCAN_ID)
+
+        rescan = await create_rescan(db, clicked, worker)
+
+        assert rescan is not None
+        assert rescan.original_scan_id == _ROOT_SCAN_ID
+        assert (await db.scans.find_one({"_id": _ROOT_SCAN_ID}))["latest_run"]["scan_id"] == rescan.id
 
     @pytest.mark.asyncio
     async def test_creating_a_rescan_stamps_the_clock_on_the_source(self, db: FakeDatabase, worker: AsyncMock) -> None:
         source = await _seed_scan(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         stored_source = await db.scans.find_one({"_id": _SOURCE_SCAN_ID})
         assert stored_source["last_rescanned_at"] is not None
-
-    @pytest.mark.asyncio
-    async def test_the_source_scan_is_not_given_a_latest_run_summary(self, db: FakeDatabase, worker: AsyncMock) -> None:
-        source = await _seed_scan(db)
-
-        await _create_rescan_for_project(_project(), source, db, worker)
-
-        stored_source = await db.scans.find_one({"_id": _SOURCE_SCAN_ID})
-        assert stored_source.get("latest_run") is None
 
     @pytest.mark.asyncio
     async def test_a_lock_held_for_this_source_stops_the_creation(self, db: FakeDatabase, worker: AsyncMock) -> None:
@@ -495,7 +536,7 @@ class TestCreateRescanForProject:
             _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
         )
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert await _rescans(db) == []
         worker.add_job.assert_not_awaited()
@@ -509,7 +550,7 @@ class TestCreateRescanForProject:
             _lock_name(_OTHER_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
         )
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
 
@@ -522,7 +563,7 @@ class TestCreateRescanForProject:
             _lock_name(_PROJECT_ID, _OTHER_SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
         )
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
         worker.add_job.assert_awaited_once()
@@ -530,11 +571,11 @@ class TestCreateRescanForProject:
     @pytest.mark.asyncio
     async def test_the_lock_is_released_once_the_rescan_is_created(self, db: FakeDatabase, worker: AsyncMock) -> None:
         source = await _seed_scan(db)
-        locks = await _seed_expired_lock(db)
+        await _seed_expired_lock(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
-        assert await locks.get_lock_info(_lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)) is None
+        assert await db.distributed_locks.find_one({"_id": _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)}) is None
 
     @pytest.mark.asyncio
     async def test_the_lock_is_released_when_an_active_rescan_aborts_the_creation(
@@ -542,11 +583,11 @@ class TestCreateRescanForProject:
     ) -> None:
         source = await _seed_scan(db)
         await _seed_inflight_rescan(db)
-        locks = await _seed_expired_lock(db)
+        await _seed_expired_lock(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
-        assert await locks.get_lock_info(_lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)) is None
+        assert await db.distributed_locks.find_one({"_id": _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)}) is None
 
     @pytest.mark.asyncio
     async def test_an_active_rescan_of_this_source_stops_the_creation(
@@ -555,7 +596,7 @@ class TestCreateRescanForProject:
         source = await _seed_scan(db)
         await _seed_inflight_rescan(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert [r["_id"] for r in await _rescans(db)] == [_INFLIGHT_RESCAN_ID]
         worker.add_job.assert_not_awaited()
@@ -567,7 +608,7 @@ class TestCreateRescanForProject:
         source = await _seed_scan(db)
         await _seed_scan(db, _ACTIVE_SCAN_ID, branch=_FEATURE_BRANCH, status=SCAN_STATUS_PROCESSING, created_at=_NOW)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
         worker.add_job.assert_awaited_once()
@@ -579,7 +620,7 @@ class TestCreateRescanForProject:
         source = await _seed_scan(db)
         await _seed_inflight_rescan(db, original_scan_id=_OTHER_SOURCE_SCAN_ID)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         created = [r for r in await _rescans(db) if r["_id"] != _INFLIGHT_RESCAN_ID]
         assert len(created) == 1
@@ -594,7 +635,7 @@ class TestCreateRescanForProject:
             db, _FOREIGN_SCAN_ID, project_id=_OTHER_PROJECT_ID, status=SCAN_STATUS_PENDING, created_at=_NOW
         )
 
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
 
@@ -604,8 +645,8 @@ class TestCreateRescanForProject:
     ) -> None:
         source = await _seed_scan(db)
 
-        await _create_rescan_for_project(_project(), source, db, worker)
-        await _create_rescan_for_project(_project(), source, db, worker)
+        await create_rescan(db, source, worker)
+        await create_rescan(db, source, worker)
 
         assert len(await _rescans(db)) == 1
         assert worker.add_job.await_count == 1
@@ -670,7 +711,7 @@ class TestProcessProjectRescan:
         assert len(created) == 1
         assert created[0]["original_scan_id"] == _ROOT_SCAN_ID
         root = await db.scans.find_one({"_id": _ROOT_SCAN_ID})
-        assert root["latest_rescan_id"] == created[0]["_id"]
+        assert root["latest_run"]["scan_id"] == created[0]["_id"]
         previous = await db.scans.find_one({"_id": _PREVIOUS_RESCAN_ID})
         assert previous.get("latest_rescan_id") is None
 
@@ -724,6 +765,19 @@ class TestProcessProjectRescan:
         assert rescans[0]["branch"] == _MAIN_BRANCH
 
     @pytest.mark.asyncio
+    async def test_the_tip_is_the_build_head_reports_when_a_newer_scan_carries_no_sbom(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER)
+        await _seed_scan(db, _EMPTY_SBOM_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _RECENT, sbom_refs=[])
+        project = _project(default_branch=_MAIN_BRANCH)
+
+        targets = await _rescan_targets(project, db)
+        head = await ScanRepository(db).get_latest_active_scan(project)
+
+        assert [t["_id"] for t in targets] == [head.id] == [_SOURCE_SCAN_ID]
+
+    @pytest.mark.asyncio
     async def test_the_newest_branch_wins_when_the_vcs_names_no_default(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
@@ -765,6 +819,17 @@ class TestProcessProjectRescan:
         targets = await _rescan_targets(_project(), db)
 
         assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_project_whose_ci_only_builds_tags_still_has_its_tip_rescanned(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        """Head falls back to the tag build when nothing else exists, so the rescan has to follow it."""
+        await _seed_scan(db, _TAG_BUILD_SCAN_ID, branch=_COMMIT_TAG, created_at=_NOW - _RECENT)
+
+        targets = await _rescan_targets(_project(), db)
+
+        assert [t["_id"] for t in targets] == [_TAG_BUILD_SCAN_ID]
 
     @pytest.mark.asyncio
     async def test_a_project_gets_exactly_one_rescan_however_many_branches_are_usable(
@@ -932,7 +997,29 @@ class TestReleaseRescanTargets:
         created = [r for r in await _rescans(db) if r["_id"] != _PREVIOUS_RESCAN_ID]
         assert [r["original_scan_id"] for r in created] == [_RELEASED_SCAN_ID]
         marked = await db.scans.find_one({"_id": _RELEASED_SCAN_ID})
-        assert marked["latest_rescan_id"] == created[0]["_id"], "the chain stays one link deep"
+        assert marked["latest_run"]["scan_id"] == created[0]["_id"], "the chain stays one link deep"
+
+    @pytest.mark.asyncio
+    async def test_a_release_whose_scan_failed_is_rescanned(self, db: FakeDatabase, worker: AsyncMock) -> None:
+        """Otherwise the environment reports no analysis until someone re-marks it by hand."""
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER, status=SCAN_STATUS_FAILED)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+
+        targets = await _rescan_targets(_project(), db)
+
+        assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID, _RELEASED_SCAN_ID]
+
+    @pytest.mark.parametrize("status", [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING])
+    @pytest.mark.asyncio
+    async def test_a_release_still_being_analysed_is_not_a_target(
+        self, db: FakeDatabase, worker: AsyncMock, status: str
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER, status=status)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+
+        assert [t["_id"] for t in await _rescan_targets(_project(), db)] == [_SOURCE_SCAN_ID]
 
 
 class TestRescanClockIsIndependentOfCiTraffic:
@@ -1029,6 +1116,34 @@ class TestCheckScheduledRescans:
         await check_scheduled_rescans(worker)
 
         assert seen == [_OTHER_PROJECT_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_pass_stops_creating_rescans_once_jobs_wait_for_every_worker(
+        self, db: FakeDatabase, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The rest stay due for a later pass, possibly in another process, so CI scans do not queue behind them."""
+        await _seed_system_settings(db)
+        for project_id in (_PROJECT_ID, _OTHER_PROJECT_ID, _UNSCANNED_PROJECT_ID):
+            await db.projects.insert_one(_project_doc(_id=project_id, name=project_id))
+            await _seed_scan(db, f"build-{project_id}", project_id=project_id)
+        manager = _one_worker()
+        monkeypatch.setattr(housekeeping, "get_database", AsyncMock(return_value=db))
+
+        await check_scheduled_rescans(manager)
+
+        assert len(await _rescans(db)) == 1
+        assert manager.queue.qsize() == 1
+
+    @pytest.mark.asyncio
+    async def test_a_saturated_worker_stops_the_rescans_of_a_projects_further_targets(self, db: FakeDatabase) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+        manager = _one_worker()
+
+        await _process_project_rescan(_project_doc(), _system_settings(), db, manager)
+
+        assert len(await _rescans(db)) == 1
 
     @pytest.mark.asyncio
     async def test_a_database_failure_is_swallowed_so_the_housekeeping_loop_survives(

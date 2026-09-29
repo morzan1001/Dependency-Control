@@ -1,7 +1,7 @@
 """PQC Migration Plan framework; async-only (generator issues DB queries), one ControlResult per plan item."""
 
 from datetime import datetime, timezone
-from typing import Any, ClassVar
+from typing import ClassVar
 
 from app.models.finding import Severity
 from app.schemas.compliance import (
@@ -13,7 +13,7 @@ from app.schemas.compliance import (
     InputCoverage,
     ReportFramework,
 )
-from app.schemas.pqc_migration import MigrationItem, MigrationPlanResponse
+from app.schemas.pqc_migration import MigrationItem, MigrationItemStatus, MigrationPlanResponse
 from app.services.compliance.frameworks.base import (
     EvaluationInput,
     build_residual_risks,
@@ -24,18 +24,18 @@ from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 # One control per migratable group, so the plan's own ceiling is this report's control ceiling.
 _PLAN_ITEM_LIMIT = 1000
 
-_STATUS_MAP: dict[str, ControlStatus] = {
-    "migrate_now": ControlStatus.FAILED,
-    "migrate_soon": ControlStatus.FAILED,
-    "plan_migration": ControlStatus.NOT_APPLICABLE,
-    "monitor": ControlStatus.NOT_APPLICABLE,
+_STATUS_MAP: dict[MigrationItemStatus, ControlStatus] = {
+    MigrationItemStatus.MIGRATE_NOW: ControlStatus.FAILED,
+    MigrationItemStatus.MIGRATE_SOON: ControlStatus.FAILED,
+    MigrationItemStatus.PLAN_MIGRATION: ControlStatus.NOT_APPLICABLE,
+    MigrationItemStatus.MONITOR: ControlStatus.NOT_APPLICABLE,
 }
 
-_SEVERITY_MAP: dict[str, Severity] = {
-    "migrate_now": Severity.HIGH,
-    "migrate_soon": Severity.MEDIUM,
-    "plan_migration": Severity.LOW,
-    "monitor": Severity.INFO,
+_SEVERITY_MAP: dict[MigrationItemStatus, Severity] = {
+    MigrationItemStatus.MIGRATE_NOW: Severity.HIGH,
+    MigrationItemStatus.MIGRATE_SOON: Severity.MEDIUM,
+    MigrationItemStatus.PLAN_MIGRATION: Severity.LOW,
+    MigrationItemStatus.MONITOR: Severity.INFO,
 }
 
 
@@ -96,9 +96,6 @@ def _coverage(data: EvaluationInput, plan: MigrationPlanResponse) -> EvaluationC
 
 
 def _item_to_control(item: MigrationItem) -> ControlResult:
-    bucket = _bucket(item.status)
-    status = _STATUS_MAP.get(bucket, ControlStatus.NOT_APPLICABLE)
-    sev = _SEVERITY_MAP.get(bucket, Severity.INFO)
     return ControlResult(
         control_id=f"PQC-{item.source_family}-{item.asset_bom_ref}",
         title=f"{item.source_family} -> {item.recommended_pqc}",
@@ -108,17 +105,13 @@ def _item_to_control(item: MigrationItem) -> ControlResult:
             f"{item.recommended_pqc} ({item.recommended_standard}). "
             f"Priority score: {item.priority_score}. {item.notes}"
         ),
-        status=status,
-        severity=sev,
+        status=_STATUS_MAP[item.status],
+        severity=_SEVERITY_MAP[item.status],
         evidence_finding_ids=[],
         evidence_asset_bom_refs=[item.asset_bom_ref],
         waiver_reasons=[],
         remediation=(f"Replace {item.source_family} with {item.recommended_pqc} per {item.recommended_standard}."),
     )
-
-
-def _bucket(status: Any) -> str:
-    return status if isinstance(status, str) else str(status.value)
 
 
 def _fingerprint(plan: MigrationPlanResponse) -> str:

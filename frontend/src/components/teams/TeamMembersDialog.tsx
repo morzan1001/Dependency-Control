@@ -79,6 +79,9 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
                         <div className="flex flex-col min-w-0">
                           <span className="font-medium truncate">{member.username || 'Unknown'}</span>
                           <span className="text-xs text-muted-foreground break-all">{member.user_id}</span>
+                          {member.source && member.source !== 'manual' && (
+                            <span className="text-xs text-muted-foreground">Synced from {member.source}</span>
+                          )}
                         </div>
                       </TableCell>
                       <TableCell>

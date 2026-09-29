@@ -128,18 +128,20 @@ def _vulnerability_record(component: str = _COMPONENT) -> dict:
 
 
 def _bearer_record(finding_id: str, component: str) -> dict:
+    rule = _OTHER_BEARER_RULE if finding_id == _OTHER_RULE_FINDING_ID else _BEARER_RULE
     return {
         "id": finding_id,
         "finding_id": finding_id,
         "type": _TYPE_SAST,
         "component": component,
         "version": "",
+        "details": {"sast_findings": [{"id": rule, "scanner": _BEARER}]},
     }
 
 
 def _bearer_waiver(scope: str) -> Waiver:
-    """Taken from the line the scanner first reported, as the UI records it."""
-    return _waiver(finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=scope)
+    """Taken from the line the scanner first reported, with the rule create_waiver stores for it."""
+    return _waiver(finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=scope, rule_id=_BEARER_RULE)
 
 
 def _sast_record(anchor: str, content_hash: str) -> dict:
@@ -292,6 +294,15 @@ def test_signature_waiver_waives_the_location_it_was_taken_from():
     assert records[0]["waiver_reason"] == _REASON
 
 
+def test_an_unsigned_location_waiver_binds_one_of_the_records_sharing_its_id():
+    """As in a scan: it takes the signature of the finding it names and waives that location only."""
+    records = [_sast_record(_ANCHOR, _CONTENT_HASH), _sast_record(_MOVED_ANCHOR, _CHANGED_CONTENT_HASH)]
+
+    waiver = _waiver(finding_id=records[0]["finding_id"], finding_type=_TYPE_SAST)
+
+    assert apply_global_waivers_in_memory(records, [waiver]) == 1
+
+
 def test_a_signature_whose_content_changed_lapses_instead_of_waiving():
     records = [_sast_record(_MOVED_ANCHOR, _CHANGED_CONTENT_HASH)]
 
@@ -339,7 +350,9 @@ async def test_opt_in_applies_the_global_waiver_and_writes_nothing(_osv):
 async def test_a_widened_scope_is_covered_by_the_control_the_response_reports():
     """``waivers_applied`` names every scope the run honours, so a widened one must be applied."""
     db = FakeDatabase()
-    await _seed_waiver(db, finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=_SCOPE_FILE)
+    await _seed_waiver(
+        db, finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=_SCOPE_FILE, rule_id=_BEARER_RULE
+    )
 
     payload = {
         "findings": [
@@ -371,3 +384,21 @@ async def test_a_project_scoped_waiver_is_not_applied_to_a_project_less_run(_osv
 
     assert response.waivers_applied == "global"
     assert response.waived_count == 0
+
+
+def test_a_global_rule_waiver_waives_only_the_records_of_its_rule():
+    def record(finding_id, rule):
+        return {
+            **_bearer_record(finding_id, _BEARER_FILE),
+            "details": {"sast_findings": [{"id": rule, "scanner": _BEARER}]},
+        }
+
+    records = [record(_WAIVED_FINDING_ID, _BEARER_RULE), record(_OTHER_RULE_FINDING_ID, _OTHER_BEARER_RULE)]
+
+    assert (
+        apply_global_waivers_in_memory(
+            records, [_waiver(scope=_SCOPE_RULE, rule_id=_BEARER_RULE, finding_type=_TYPE_SAST)]
+        )
+        == 1
+    )
+    assert records[0]["waived"] is True

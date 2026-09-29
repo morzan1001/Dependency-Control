@@ -7,7 +7,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.project import Scan
 from app.repositories.dependencies import DependencyRepository
-from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
+from app.repositories.dependency_enrichments import ENRICHMENT_LOOKUP_CHUNK, DependencyEnrichmentRepository
 from app.schemas.inventory import LicenseItem
 from app.services.analyzers.license_compliance.normalizer import tokenize_license_string
 
@@ -18,8 +18,11 @@ UNKNOWN_LICENSE = "unknown"
 # enrichment document found answers the whole group. The sample only decides how many purls
 # one round trip tries before the walk falls back to the rest of them.
 _FIRST_PASS_PURLS_PER_LICENSE = 5
-# Bounds the width of one $in, not how far the walk goes.
-_ENRICHMENT_LOOKUP_CHUNK = 500
+
+
+def license_ids(raw: str | None) -> list[str]:
+    """The license rows a component is listed under; one without a license is listed as unknown."""
+    return tokenize_license_string(raw or "") or [UNKNOWN_LICENSE]
 
 
 def _add_to_group(
@@ -29,7 +32,7 @@ def _add_to_group(
     purl: str | None,
     category: str | None,
     risks: list[str] | None,
-    single_token: bool,
+    seeds_enrichment: bool,
 ) -> None:
     group = groups.setdefault(
         license_id,
@@ -45,9 +48,7 @@ def _add_to_group(
     if component not in group["component_names"]:
         group["component_names"].add(component)
         group["components"].append(component)
-    # A composite expression's purl reflects the worst-member license, not any single token,
-    # so it must not seed the enrichment lookup for its constituent groups.
-    if single_token and purl and purl not in group["purl_names"]:
+    if seeds_enrichment and purl and purl not in group["purl_names"]:
         group["purl_names"].add(purl)
         group["purls"].append(purl)
     group["category"] = group["category"] or category
@@ -81,8 +82,8 @@ async def _load_enrichment(
         if _answered(group, enrichment):
             continue
         rest = group["purls"][_FIRST_PASS_PURLS_PER_LICENSE:]
-        for start in range(0, len(rest), _ENRICHMENT_LOOKUP_CHUNK):
-            found = await repo.get_many_by_purls(rest[start : start + _ENRICHMENT_LOOKUP_CHUNK])
+        for start in range(0, len(rest), ENRICHMENT_LOOKUP_CHUNK):
+            found = await repo.get_many_by_purls(rest[start : start + ENRICHMENT_LOOKUP_CHUNK])
             if found:
                 enrichment.update(found)
                 break
@@ -108,14 +109,15 @@ def _aggregate_category_risks(group: dict[str, Any], enrichment: dict[str, Any])
 
 async def build_license_rows(db: AsyncIOMotorDatabase, scan: Scan) -> list[LicenseItem]:
     groups: dict[str, dict[str, Any]] = {}
-    cursor = DependencyRepository(db).collection.find(
+    docs = DependencyRepository(db).iterate_raw(
         {"scan_id": scan.id},
         {"name": 1, "version": 1, "license": 1, "purl": 1, "license_category": 1, "license_risks": 1},
     )
-    async for doc in cursor:
-        tokens = tokenize_license_string(doc.get("license") or "") or [UNKNOWN_LICENSE]
+    async for doc in docs:
+        tokens = license_ids(doc.get("license"))
         component = f"{doc.get('name')}@{doc.get('version')}"
-        single_token = len(tokens) == 1
+        # A composite or unknown license's purl names no single license, so it cannot seed enrichment.
+        seeds_enrichment = len(tokens) == 1 and tokens != [UNKNOWN_LICENSE]
         for license_id in tokens:
             _add_to_group(
                 groups,
@@ -124,7 +126,7 @@ async def build_license_rows(db: AsyncIOMotorDatabase, scan: Scan) -> list[Licen
                 doc.get("purl"),
                 doc.get("license_category"),
                 doc.get("license_risks"),
-                single_token,
+                seeds_enrichment,
             )
 
     enrichment = await _load_enrichment(DependencyEnrichmentRepository(db), groups)

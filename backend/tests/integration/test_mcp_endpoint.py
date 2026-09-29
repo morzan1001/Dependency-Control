@@ -1,7 +1,7 @@
 """HTTP behaviour of POST /api/v1/mcp.
 
-The route resolves its caller inline from a raw Authorization header rather than through a
-dependency, so only a request through the app proves the tool surface is behind a key at all.
+The route resolves its caller through the MCP key dependency, so only a request through the app
+proves the tool surface is behind a key at all.
 """
 
 import pytest

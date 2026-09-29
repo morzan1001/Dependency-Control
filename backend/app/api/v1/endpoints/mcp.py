@@ -4,23 +4,20 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Header, Request, status
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import DatabaseDep, require_api_key
+from app.api.deps import DatabaseDep, McpKeyDep
 from app.api.router import CustomAPIRouter
-from app.core.constants import API_KEY_SURFACE_MCP
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry, get_tool_definitions
 
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
-
-_authenticate = require_api_key(API_KEY_SURFACE_MCP, touch=True)
 
 SERVER_NAME = "dependency-control"
 SERVER_VERSION = "1.0"
@@ -142,9 +139,9 @@ async def _dispatch(method: str, params: dict[str, Any], user: User, db: AsyncIO
 async def mcp_rpc(
     request: Request,
     db: DatabaseDep,
-    authorization: Annotated[str, Header()] = "",
+    auth: McpKeyDep,
 ) -> Any:
-    user, _ = await _authenticate(authorization=authorization, db=db)
+    user, _ = auth
 
     try:
         payload = await request.json()

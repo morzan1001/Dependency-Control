@@ -166,3 +166,29 @@ async def test_vulnerability_search_pages_ascending_from_the_first_component(cli
 
     assert resp.status_code == 200, resp.text
     assert [row["component"] for row in resp.json()["items"]] == ["alpha-pkg"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", [_SEARCH_PATH, _VULN_SEARCH_PATH])
+async def test_an_empty_scope_reports_the_first_page_as_page_one(client, owner_auth_headers_proj, path):
+    resp = await client.get(path, params={"q": "anything"}, headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["page"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_vulnerability_search_finds_a_high_cve_inside_a_critical_component(client, db, scanned):
+    finding = _vulnerability("log4j-core")
+    finding["severity"] = "CRITICAL"
+    finding["details"]["vulnerabilities"] = [
+        {"id": "CVE-2026-9002", "severity": "CRITICAL", "aliases": []},
+        {"id": _CVE, "severity": "HIGH", "aliases": []},
+    ]
+    await db.findings.insert_one(finding)
+
+    resp = await client.get(_VULN_SEARCH_PATH, params={"q": "CVE-2026-900", "severity": "HIGH"}, headers=scanned)
+
+    assert resp.status_code == 200, resp.text
+    assert [row["vulnerability_id"] for row in resp.json()["items"]] == [_CVE]

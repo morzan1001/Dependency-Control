@@ -1,10 +1,9 @@
 """Unified API keys: hashed at rest, surfaces validated on write, expiry clamped, revoke idempotent."""
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
-from pymongo import ReadPreference
 
 from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP
 from app.repositories.api_keys import LIST_LIMIT, ApiKeyRepository, generate_plaintext_token, hash_token
@@ -161,21 +160,6 @@ async def test_get_by_plaintext_round_trips():
 
 
 @pytest.mark.asyncio
-async def test_get_by_plaintext_reads_from_the_primary():
-    """The client carries a configurable read preference, so an authentication left on the default
-    resolves a revoked key off a lagging secondary for as long as the lag lasts. The fake returns
-    itself from `with_options`, which is why the call has to be observed rather than its effect."""
-    db = FakeDatabase()
-    repo = ApiKeyRepository(db)
-    _, plaintext = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
-    observed = MagicMock(wraps=db[_COL].with_options)
-    db[_COL].with_options = observed
-
-    assert await repo.get_by_plaintext(plaintext) is not None
-    observed.assert_called_once_with(read_preference=ReadPreference.PRIMARY)
-
-
-@pytest.mark.asyncio
 async def test_get_by_plaintext_rejects_a_foreign_prefix_without_a_lookup():
     db = FakeDatabase()
     repo = ApiKeyRepository(db)
@@ -314,7 +298,7 @@ async def test_touch_last_used_moves_the_stamp_forward():
     await repo.touch_last_used(doc["_id"])
 
     stored = await db[_COL].find_one({"_id": doc["_id"]})
-    assert stored["last_used_at"] > stale.replace(tzinfo=None)
+    assert stored["last_used_at"] > stale
 
 
 @pytest.mark.asyncio

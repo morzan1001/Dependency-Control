@@ -1,7 +1,6 @@
 """Enrich vulnerability findings with call-graph reachability: import-based (reliable) and symbol-based (heuristic)."""
 
 import logging
-import uuid
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -12,6 +11,7 @@ from pymongo import UpdateOne
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
+    MAX_RESCAN_HOPS,
     REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS,
     REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO,
     REACHABILITY_CONFIDENCE_NOT_USED,
@@ -20,17 +20,21 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
+    REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE,
     REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED,
     REACHABILITY_REASON_NO_COVERAGE_UNIVERSE,
     REACHABILITY_REASON_OUTSIDE_COVERAGE,
     REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM,
 )
-from app.services.aggregation.components import build_component_index, canonical_module_key, lookup_component
-from app.services.analyzers.purl_utils import get_purl_type
-from app.services.enrichment.scoring import (
-    calculate_adjusted_risk_score,
-    map_reachability_level_to_modifier,
+from app.services.component_identity import (
+    JVM_LANGUAGES,
+    build_component_index,
+    canonical_module_key,
+    lookup_component,
 )
+from app.core.purl import get_purl_type
+from app.services.enrichment.scoring import calculate_adjusted_risk_score
+from app.services.recommendation.common import name_some
 from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
@@ -46,20 +50,25 @@ _FINDINGS_PAGE_SIZE = 1000
 _MAX_FINDINGS_PER_RUN = 100_000
 
 # Ecosystem identifier (a dependency's `type`, e.g. "pypi"/"npm"/"go-module", OR a
-# purl type) -> the callgraph language(s) that can actually analyze it. Anything
-# else (maven, cargo, nuget, rpm, deb, ...) has no callgraph support, so a missing
-# package in those ecosystems is never treated as unreachable.
-_ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: dict[str, frozenset] = {
+# purl type) -> the callgraph language(s) that can analyze it. Any other ecosystem
+# (cargo, nuget, rpm, deb, ...) has no callgraph producer.
+_ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: dict[str, frozenset[str]] = {
     "pypi": frozenset({"python"}),
     "python": frozenset({"python"}),
     "npm": frozenset({"javascript", "typescript"}),
     "go": frozenset({"go"}),
     "golang": frozenset({"go"}),
     "go-module": frozenset({"go"}),
+    "maven": JVM_LANGUAGES,
 }
+# jdeps cannot see classes loaded through reflection or ServiceLoader, so a missing import is no evidence.
+_NON_FALSIFYING_LANGUAGES = JVM_LANGUAGES
+
+# Per component name, one (version, callgraph languages) candidate per ecosystem that lists it.
+ComponentLanguages = Mapping[str, list[tuple[str, frozenset[str]]]]
 
 
-def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset:
+def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset[str]:
     """Callgraph language(s) that can analyze a package, derived from its
     dependency ecosystem/type or (fallback) its purl. Empty when undeterminable
     or unsupported."""
@@ -74,27 +83,40 @@ def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset:
     return frozenset()
 
 
-def component_language_map(deps: Iterable[Mapping[str, Any]]) -> dict[str, frozenset[str]]:
-    """Map component name -> callgraph language(s) that could analyze it, from dependency ``type``/``purl``.
+def component_language_map(deps: Iterable[Mapping[str, Any]]) -> dict[str, list[tuple[str, frozenset[str]]]]:
+    """Map component name -> a (version, callgraph languages) candidate per ecosystem listing it.
 
     This is the reliable ecosystem signal: vulnerability findings carry no purl (the OSV/Trivy/Grype
     normalizers do not persist one), so the fail-closed gate looks the package up in the inventory.
+    Ecosystems sharing a name stay separate, so one ecosystem's callgraph never speaks for another.
     """
-    out: dict[str, frozenset[str]] = {}
+    out: dict[str, dict[tuple[str, frozenset[str]], None]] = {}
     for dep in deps:
         name = dep.get("name")
         if not name:
             continue
         langs = _ecosystem_languages(dep.get("type"), dep.get("purl"))
         if langs:
-            out[name] = out.get(name, frozenset()) | langs
+            out.setdefault(name, {})[(str(dep.get("version") or ""), langs)] = None
     # Findings carry the qualified component while the inventory keeps the bare name.
-    return build_component_index(out)
+    return build_component_index({name: list(candidates) for name, candidates in out.items()})
 
 
-async def build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) -> dict[str, frozenset[str]]:
-    deps = await db.dependencies.find({"scan_id": scan_id}, {"name": 1, "type": 1, "purl": 1}).to_list(None)
+async def build_component_language_map(
+    db: AsyncIOMotorDatabase, scan_id: str
+) -> dict[str, list[tuple[str, frozenset[str]]]]:
+    projection = {"name": 1, "version": 1, "type": 1, "purl": 1}
+    deps = await db.dependencies.find({"scan_id": scan_id}, projection).to_list(None)
     return component_language_map(deps)
+
+
+def _candidate_languages(
+    component_languages: ComponentLanguages | None, component: str, version: str | None
+) -> list[frozenset[str]]:
+    """The language sets of every ecosystem a finding's package may belong to, narrowed by its version."""
+    candidates = lookup_component(component_languages or {}, component) or []
+    matching = [langs for candidate_version, langs in candidates if candidate_version == version]
+    return list(dict.fromkeys(matching or [langs for _, langs in candidates]))
 
 
 @dataclass(frozen=True)
@@ -103,16 +125,34 @@ class _PreparedCallgraph:
 
     language: str
     usage_index: dict[str, Any]
-    import_map: dict[str, list[str]]
     analyzed_index: dict[str, bool]
+
+
+def _with_enclosing_packages(module_usage: dict[str, Any]) -> dict[str, Any]:
+    """Fold each submodule's usage into every enclosing package key, as unresolved from-imports name the module path."""
+    locations: dict[str, dict[str, None]] = {}
+    symbols: dict[str, dict[str, None]] = {}
+    for key, usage in module_usage.items():
+        parts = key.split(".")
+        for depth in range(1, len(parts) + 1):
+            target = ".".join(parts[:depth])
+            locations.setdefault(target, {}).update(dict.fromkeys(usage.get("import_locations") or []))
+            symbols.setdefault(target, {}).update(dict.fromkeys(usage.get("used_symbols") or []))
+    return {
+        key: {**module_usage.get(key, {}), "import_locations": list(found), "used_symbols": list(symbols[key])}
+        for key, found in locations.items()
+    }
 
 
 def _prepare_callgraph(callgraph: Any) -> _PreparedCallgraph:
     analyzed_modules = callgraph.analyzed_modules or []
+    language = callgraph.language or "unknown"
+    module_usage = callgraph.module_usage or {}
+    if language.lower() == "python":
+        module_usage = _with_enclosing_packages(module_usage)
     return _PreparedCallgraph(
-        language=callgraph.language or "unknown",
-        usage_index=build_component_index(callgraph.module_usage or {}),
-        import_map=callgraph.import_map or {},
+        language=language,
+        usage_index=build_component_index(module_usage),
         analyzed_index=build_component_index(dict.fromkeys(analyzed_modules, True)),
     )
 
@@ -127,89 +167,53 @@ def _find_usage(prepared: _PreparedCallgraph, component: str) -> Any | None:
     return lookup_component(prepared.usage_index, component) or lookup_component(prepared.usage_index, normalized)
 
 
-def _find_import_locations(prepared: _PreparedCallgraph, component: str) -> list[str]:
-    return _check_package_in_imports(_normalize_component(component, prepared.language), prepared.import_map)
-
-
-def _callgraph_can_falsify(
-    prepared: _PreparedCallgraph,
-    component: str,
-    component_languages: dict[str, frozenset] | None,
-) -> bool:
-    """True only when this callgraph's absence of a component is real evidence.
-
-    Requires the producer to have listed the component in its coverage universe
-    (``analyzed_modules``) for a language that covers the component's ecosystem;
-    anything weaker means the package was never inspected.
-    """
-    langs = lookup_component(component_languages or {}, component) or frozenset()
-    if prepared.language not in langs:
-        return False
-    if not prepared.analyzed_index:
-        return False
+def _lists_package(prepared: _PreparedCallgraph, component: str) -> bool:
+    """Whether the producer listed the package in its coverage universe (``analyzed_modules``)."""
     normalized = _normalize_component(component, prepared.language)
     return bool(
         lookup_component(prepared.analyzed_index, component) or lookup_component(prepared.analyzed_index, normalized)
     )
 
 
-def _apply_adjusted_risk_score(finding: dict[str, Any], reachability: Mapping[str, Any]) -> None:
-    """Apply the reachability modifier to ``details.risk_score`` and store ``adjusted_risk_score``.
+def _falsifying_languages(
+    component: str, prepared_graphs: list[_PreparedCallgraph], language_sets: list[frozenset[str]]
+) -> list[str]:
+    """Languages whose callgraphs covered the package, unused; empty unless every candidate ecosystem has one."""
+    falsifying: list[str] = []
+    for langs in language_sets:
+        covering = [
+            p.language
+            for p in prepared_graphs
+            if p.language in langs and p.language not in _NON_FALSIFYING_LANGUAGES and _lists_package(p, component)
+        ]
+        if not covering:
+            return []
+        falsifying.extend(covering)
+    return list(dict.fromkeys(falsifying))
 
-    Symbol-level reachable boosts (x1.1); not-reachable de-prioritises (x0.4); else
-    identity. No base risk_score -> nothing to adjust.
-    """
+
+def _apply_adjusted_risk_score(finding: dict[str, Any], reachability: Mapping[str, Any]) -> None:
+    """Store ``details.risk_score`` scaled by the reachability verdict as ``adjusted_risk_score``."""
     details = finding.setdefault("details", {})
     base = details.get("risk_score")
     if base is None:
         return
     is_reachable = reachability.get("is_reachable")
     analysis_level = reachability.get("analysis_level")
-    modifier_level = map_reachability_level_to_modifier(analysis_level, is_reachable)
-    down_weighting = is_reachable is False or modifier_level == "unreachable"
-    if down_weighting and analysis_level != REACHABILITY_LEVEL_SYMBOL and details.get(DETAILS_KEY_IN_KEV):
+    if is_reachable is False and analysis_level != REACHABILITY_LEVEL_SYMBOL and details.get(DETAILS_KEY_IN_KEV):
         # A known-exploited CVE is never de-prioritised on import-level absence alone.
-        is_reachable, modifier_level = None, None
-    details["adjusted_risk_score"] = round(
-        calculate_adjusted_risk_score(
-            float(base),
-            is_reachable=is_reachable,
-            reachability_level=modifier_level,
-        ),
-        1,
+        is_reachable, analysis_level = None, None
+    details["adjusted_risk_score"] = round(calculate_adjusted_risk_score(float(base), is_reachable, analysis_level), 1)
+
+
+def is_high_confidence_reachable(is_reachable: Any, confidence: Any) -> bool:
+    """The gate for headline reachable counts; bool is no confidence, True would pass as a perfect 1.0."""
+    return (
+        is_reachable is True
+        and isinstance(confidence, (int, float))
+        and not isinstance(confidence, bool)
+        and confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
     )
-
-
-def is_high_confidence_reachable(reachability_data: dict[str, Any] | None) -> bool:
-    """True only when ``is_reachable=True`` *and* confidence clears the threshold.
-
-    Use this for any user-facing count that drives prioritisation. The
-    raw boolean alone collapses two very different signals (matched
-    symbol vs. "package was imported, rest is heuristic") into one bit;
-    this gate keeps the noisy lower tier out of headline metrics.
-    """
-    if not reachability_data:
-        return False
-    if reachability_data.get("is_reachable") is not True:
-        return False
-    confidence = reachability_data.get("confidence_score")
-    if confidence is None:
-        return False
-    return bool(confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD)
-
-
-def reachability_display_tier(is_reachable: bool | None, analysis_level: str | None) -> str:
-    """Map persisted reachability (is_reachable + analysis_level in
-    none/import/symbol) onto the display vocabulary confirmed/likely/unreachable/
-    unknown. Shared by the comprehensive-stats and persisted-pending summaries so they cannot drift."""
-    if is_reachable is False:
-        return "unreachable"
-    if is_reachable is True:
-        if analysis_level == REACHABILITY_LEVEL_SYMBOL:
-            return "confirmed"
-        if analysis_level == REACHABILITY_LEVEL_IMPORT:
-            return "likely"
-    return "unknown"
 
 
 class ReachabilityResult(TypedDict, total=False):
@@ -228,31 +232,30 @@ class ReachabilityResult(TypedDict, total=False):
     vulnerable_symbol_count: int
 
 
-async def _fetch_callgraphs(
+async def fetch_callgraphs(
     project_id: str,
     scan_id: str,
     db: AsyncIOMotorDatabase,
 ) -> list[Any]:
-    """
-    Fetch all callgraphs for a scan (one per language), falling back to pipeline_id match.
-
-    Returns a list of callgraph objects (may be empty).
-    """
-    from app.repositories import CallgraphRepository, ScanRepository
+    """Every callgraph of the scan (one per language): those uploaded under its id, else those of the
+    build a rescan re-analyses, else those of its pipeline. May be empty."""
+    from app.repositories.callgraphs import CallgraphRepository
+    from app.repositories.scans import ScanRepository
 
     callgraph_repo = CallgraphRepository(db)
     scan_repo = ScanRepository(db)
-
-    # Priority: exact scan_id match > fallback to pipeline_id match
-    callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
-    if callgraphs:
-        return callgraphs
-
-    # Fallback: try to find callgraphs via pipeline_id
-    scan = await scan_repo.get_by_id(scan_id)
+    # Bounded, so a cyclic rescan pointer cannot hang the analysis.
+    for _hop in range(MAX_RESCAN_HOPS + 1):
+        if callgraphs := await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id):
+            return callgraphs
+        scan = await scan_repo.get_minimal_by_id(scan_id)
+        if not scan or not scan.original_scan_id:
+            break
+        scan_id = scan.original_scan_id
+    else:
+        return []
     if scan and scan.pipeline_id:
         return await callgraph_repo.find_all_minimal_by_pipeline(project_id, scan.pipeline_id)
-
     return []
 
 
@@ -286,14 +289,14 @@ def _enrich_single_finding(finding: dict[str, Any], prepared: _PreparedCallgraph
 
 
 def _is_package_in_callgraph(prepared: _PreparedCallgraph, component: str) -> bool:
-    """Check whether a package appears in a callgraph's module usage or imports."""
-    return bool(_find_usage(prepared, component) or _find_import_locations(prepared, component))
+    """Whether the callgraph records usage under the package's whole canonical module key."""
+    return _find_usage(prepared, component) is not None
 
 
 def _unknown_verdict(
     component: str,
     prepared_graphs: list[_PreparedCallgraph],
-    component_languages: dict[str, frozenset] | None,
+    language_sets: list[frozenset[str]],
 ) -> tuple[str, str]:
     """Why absence from the analyzed callgraphs yields no verdict, as (reason, message).
 
@@ -301,24 +304,24 @@ def _unknown_verdict(
     OS packages, which dominate container scans — from the cases a pipeline change would fix.
     Readers must be able to tell those apart without parsing prose.
     """
-    langs = lookup_component(component_languages or {}, component) or frozenset()
-    if not langs:
+    if not language_sets:
         return (
             REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM,
             f"Package '{component}' is in an ecosystem no callgraph tool supports; reachability unknown.",
         )
 
-    covering = [p for p in prepared_graphs if p.language in langs]
-    if not covering:
+    uncovered = next((langs for langs in language_sets if not any(p.language in langs for p in prepared_graphs)), None)
+    if uncovered is not None:
         analyzed = ", ".join(p.language for p in prepared_graphs) or "none"
         return (
             REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED,
             (
-                f"No {'/'.join(sorted(langs))} callgraph was uploaded for this scan "
+                f"No {'/'.join(sorted(uncovered))} callgraph was uploaded for this scan "
                 f"(analyzed: {analyzed}); reachability unknown."
             ),
         )
 
+    covering = [p for p in prepared_graphs if any(p.language in langs for langs in language_sets)]
     covering_langs = ", ".join(p.language for p in covering)
     if all(not p.analyzed_index for p in covering):
         return (
@@ -326,6 +329,14 @@ def _unknown_verdict(
             (
                 f"Package '{component}' is absent from the {covering_langs} callgraph(s), "
                 "which published no coverage universe; reachability unknown."
+            ),
+        )
+    if any(p.language in _NON_FALSIFYING_LANGUAGES and _lists_package(p, component) for p in covering):
+        return (
+            REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE,
+            (
+                f"Package '{component}' was analyzed but is not imported ({covering_langs}); this callgraph "
+                "cannot see reflective loading, so its absence is no evidence; reachability unknown."
             ),
         )
     return (
@@ -340,7 +351,7 @@ def _unknown_verdict(
 def _enrich_finding_from_callgraphs(
     finding: dict[str, Any],
     prepared_graphs: list[_PreparedCallgraph],
-    component_languages: dict[str, frozenset] | None = None,
+    component_languages: ComponentLanguages | None = None,
 ) -> bool:
     """
     Try each callgraph for a finding. Returns True if enriched.
@@ -357,7 +368,8 @@ def _enrich_finding_from_callgraphs(
             _enrich_single_finding(finding, prepared)
             return True
 
-    falsifying = [p.language for p in prepared_graphs if _callgraph_can_falsify(p, component, component_languages)]
+    language_sets = _candidate_languages(component_languages, component, finding.get("version"))
+    falsifying = _falsifying_languages(component, prepared_graphs, language_sets)
     if falsifying:
         reachability: dict[str, Any] = {
             "is_reachable": False,
@@ -370,7 +382,7 @@ def _enrich_finding_from_callgraphs(
             ),
         }
     else:
-        reason, message = _unknown_verdict(component, prepared_graphs, component_languages)
+        reason, message = _unknown_verdict(component, prepared_graphs, language_sets)
         reachability = {
             "is_reachable": None,
             "confidence_score": 0.0,
@@ -387,7 +399,7 @@ def _enrich_finding_from_callgraphs(
 def enrich_findings_from_callgraphs(
     findings: list[dict[str, Any]],
     prepared_graphs: list[_PreparedCallgraph],
-    component_languages: dict[str, frozenset] | None = None,
+    component_languages: ComponentLanguages | None = None,
 ) -> int:
     """Enrich vulnerability findings in place from prepared callgraphs; return how many were enriched."""
     enriched_count = 0
@@ -399,38 +411,17 @@ def enrich_findings_from_callgraphs(
     return enriched_count
 
 
-async def enrich_findings_with_reachability(
+def enrich_findings_with_reachability(
     findings: list[dict[str, Any]],
-    project_id: str,
-    db: AsyncIOMotorDatabase,
-    scan_id: str | None = None,
+    callgraphs: list[Any],
+    component_languages: ComponentLanguages,
 ) -> int:
-    """Enrich vulnerability findings (modified in-place) with reachability; return count enriched.
-
-    Uses the per-language callgraph where each finding's package is imported.
-    """
-    if not findings:
-        return 0
-
-    if not scan_id and findings:
-        scan_id = findings[0].get("scan_id")
-
-    if not scan_id:
-        logger.warning("No scan_id available for reachability enrichment")
-        return 0
-
-    callgraphs = await _fetch_callgraphs(project_id, scan_id, db)
-
-    if not callgraphs:
-        logger.debug(f"No callgraph available for scan {scan_id}")
+    """Enrich the scan's vulnerability findings (in place) from its ``fetch_callgraphs``; returns the count enriched."""
+    if not findings or not callgraphs:
         return 0
 
     prepared_graphs = [_prepare_callgraph(cg) for cg in callgraphs]
-    logger.debug(f"Found {len(callgraphs)} callgraph(s) for scan {scan_id}: {[p.language for p in prepared_graphs]}")
-
-    # Per-finding ecosystem gates the unreachable down-weight to the analyzed languages.
-    component_languages = await build_component_language_map(db, scan_id)
-
+    logger.debug(f"Found {len(callgraphs)} callgraph(s): {[p.language for p in prepared_graphs]}")
     return enrich_findings_from_callgraphs(findings, prepared_graphs, component_languages)
 
 
@@ -438,13 +429,6 @@ async def enrich_findings_with_reachability(
 _IMPORT_LOCATION_SAMPLE = 10
 _VULNERABLE_SYMBOL_SAMPLE = 10
 _MESSAGE_SYMBOL_SAMPLE = 5
-
-
-def _named_sample(symbols: list[str]) -> str:
-    """The first few symbol names, followed by how many the sentence does not name."""
-    shown = ", ".join(symbols[:_MESSAGE_SYMBOL_SAMPLE])
-    unnamed = len(symbols) - _MESSAGE_SYMBOL_SAMPLE
-    return shown if unnamed <= 0 else f"{shown} and {unnamed} more"
 
 
 def _analyze_reachability(
@@ -457,8 +441,8 @@ def _analyze_reachability(
     Callers establish presence with :func:`_is_package_in_callgraph` first, so the
     package is known to be imported here.
     """
-    usage = _find_usage(prepared, component)
-    locations = usage.get("import_locations") or [] if usage else _find_import_locations(prepared, component)
+    usage = _find_usage(prepared, component) or {}
+    locations = usage.get("import_locations") or []
     import_count = len(locations)
 
     result: ReachabilityResult = {
@@ -480,20 +464,22 @@ def _analyze_reachability(
     # get_symbols_for_finding unions across vulnerabilities through a set, so impose an order
     # before any sample is taken from it.
     vulnerable_symbols = sorted(extracted.symbols)
-    used_symbols = usage.get("used_symbols", []) if usage else []
+    used_symbols = usage.get("used_symbols", [])
     matched_symbols = _match_symbols(vulnerable_symbols, used_symbols)
 
     if matched_symbols:
         result["confidence_score"] = _calculate_confidence(extracted.confidence, "matched")
         result["analysis_level"] = REACHABILITY_LEVEL_SYMBOL
         result["matched_symbols"] = matched_symbols
-        result["message"] = f"Vulnerable function(s) {_named_sample(matched_symbols)} are used in the codebase."
+        result["message"] = (
+            f"Vulnerable function(s) {name_some(matched_symbols, _MESSAGE_SYMBOL_SAMPLE)} are used in the codebase."
+        )
     elif used_symbols:
         # Symbols were searched and not found: import-level evidence only, never "confirmed".
         result["confidence_score"] = _calculate_confidence(extracted.confidence, "partial")
         result["message"] = (
             f"Package is imported but extracted vulnerable functions "
-            f"({_named_sample(vulnerable_symbols)}) were not found in direct usage. "
+            f"({name_some(vulnerable_symbols, _MESSAGE_SYMBOL_SAMPLE)}) were not found in direct usage. "
             f"May still be reachable through indirect calls."
         )
     else:
@@ -522,33 +508,6 @@ def _normalize_component(component: str, language: str) -> str:
         component = component.rsplit("@", 1)[0]
 
     return canonical_module_key(component, language)
-
-
-def _check_package_in_imports(package: str, import_map: dict[str, list[str]]) -> list[str]:
-    """
-    Check if a package appears anywhere in the import map.
-    Returns list of files that import it.
-    """
-    files_importing = []
-    package_lower = package.lower()
-
-    for file_path, imports in import_map.items():
-        for imp in imports:
-            imp_lower = imp.lower()
-
-            # Direct match
-            if package_lower == imp_lower:
-                files_importing.append(file_path)
-                break
-
-            # Boundary-anchored subpath/submodule match only: a bare substring test
-            # spuriously matches unrelated packages (npm "ms" -> "forms"), inflating
-            # reachability. Require a real path ("/") or module (".") boundary.
-            if imp_lower.startswith((package_lower + "/", package_lower + ".")):
-                files_importing.append(file_path)
-                break
-
-    return files_importing
 
 
 def _match_symbols(vulnerable_symbols: list[str], used_symbols: list[str]) -> list[str]:
@@ -597,37 +556,6 @@ def _calculate_confidence(extraction_confidence: str, match_type: str) -> float:
     return extraction_score * 0.5
 
 
-async def persist_reachability_result(result_repo: Any, scan_id: str, summary: Mapping[str, Any]) -> None:
-    """Store the scan's single reachability summary, replacing any earlier one.
-
-    Each language's callgraph re-runs enrichment over the full set, so every run supersedes
-    the last; inserting instead would leave the raw-data view rendering a stale duplicate.
-    """
-    await result_repo.collection.update_one(
-        {"scan_id": scan_id, "analyzer_name": "reachability"},
-        {
-            "$set": {"result": summary, "created_at": datetime.now(timezone.utc)},
-            "$setOnInsert": {"_id": str(uuid.uuid4())},
-        },
-        upsert=True,
-    )
-
-
-async def _sync_project_stats_if_latest(
-    db: AsyncIOMotorDatabase,
-    project_id: str,
-    scan_id: str,
-    stats: Any,
-) -> None:
-    """Mirror recomputed scan stats onto the project when this scan is still its latest."""
-    from app.repositories import ProjectRepository
-
-    project_repo = ProjectRepository(db)
-    project = await project_repo.get_raw_by_id(project_id)
-    if project and project.get("latest_scan_id") == scan_id:
-        await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
-
-
 async def _load_vulnerability_findings(finding_repo: Any, scan_id: str) -> tuple[list[Any], int]:
     """Page through a scan's vulnerability findings; second element is how many the cap left behind."""
     query = {"scan_id": scan_id, "type": "vulnerability"}
@@ -659,24 +587,28 @@ async def run_pending_reachability_for_scan(
         "error": None,
     }
 
-    from app.repositories import (
-        AnalysisResultRepository,
-        CallgraphRepository,
-        FindingRepository,
-        ScanRepository,
-    )
+    from app.repositories.analysis_results import AnalysisResultRepository
+    from app.repositories.findings import FindingRepository
+    from app.repositories.scans import ScanRepository
 
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
-    callgraph_repo = CallgraphRepository(db)
     result_repo = AnalysisResultRepository(db)
 
-    scan = await scan_repo.get_by_id(scan_id)
-    if not scan:
+    if not await scan_repo.get_minimal_by_id(scan_id):
         logger.debug(f"Scan {scan_id} not found")
         return result
 
+    finished = {
+        "$unset": {"reachability_pending": "", "reachability_pending_since": ""},
+        "$set": {"reachability_completed_at": datetime.now(timezone.utc)},
+    }
     try:
+        callgraphs = await fetch_callgraphs(project_id, scan_id, db)
+        if not callgraphs:
+            logger.debug(f"No callgraph for scan {scan_id}; reachability stays pending")
+            return result
+
         findings, dropped = await _load_vulnerability_findings(finding_repo, scan_id)
         if dropped:
             result["findings_dropped"] = dropped
@@ -689,25 +621,12 @@ async def run_pending_reachability_for_scan(
 
         if not findings:
             logger.debug(f"No vulnerability findings for scan {scan_id}")
-            await scan_repo.update_raw(
-                scan_id,
-                {
-                    "$unset": {
-                        "reachability_pending": "",
-                        "reachability_pending_since": "",
-                    }
-                },
-            )
+            await scan_repo.update_raw(scan_id, finished)
             return result
 
         findings_dicts = [f.model_dump(by_alias=True) for f in findings]
-
-        enriched_count = await enrich_findings_with_reachability(
-            findings=findings_dicts,
-            project_id=project_id,
-            db=db,
-            scan_id=scan_id,
-        )
+        component_languages = await build_component_language_map(db, scan_id)
+        enriched_count = enrich_findings_with_reachability(findings_dicts, callgraphs, component_languages)
 
         # Chunked unordered bulk_write instead of one update per finding, so a 10k-finding
         # scan doesn't fire 10k serial Mongo calls inline in the callgraph-upload request.
@@ -732,35 +651,17 @@ async def run_pending_reachability_for_scan(
         for i in range(0, len(bulk_ops), _BULK_CHUNK_SIZE):
             await finding_repo.collection.bulk_write(bulk_ops[i : i + _BULK_CHUNK_SIZE], ordered=False)
 
-        # Reuse the canonical builders so the pending and inline paths cannot drift.
-        # Lazy import to avoid the stats -> reachability_enrichment import cycle.
-        from app.services.analysis.stats import build_reachability_summary, calculate_comprehensive_stats
+        # Lazy imports avoid the stats -> reachability_enrichment import cycle.
+        from app.services.analysis.stats import build_reachability_summary
+        from app.services.stats import refresh_scan_stats
 
-        callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
-        if callgraphs:
-            reachability_summary = build_reachability_summary(
-                findings_dicts,
-                [cg.model_dump(by_alias=True) for cg in callgraphs],
-                enriched_count,
-            )
-            await persist_reachability_result(result_repo, scan_id, reachability_summary)
-
-        # The scan's stats were frozen at completion, before any reachability verdict existed.
-        stats = await calculate_comprehensive_stats(db, scan_id)
-        await scan_repo.update_raw(
-            scan_id,
-            {
-                "$unset": {
-                    "reachability_pending": "",
-                    "reachability_pending_since": "",
-                },
-                "$set": {
-                    "reachability_completed_at": datetime.now(timezone.utc),
-                    "stats": stats.model_dump(),
-                },
-            },
+        reachability_summary = build_reachability_summary(
+            findings_dicts, [cg.model_dump(by_alias=True) for cg in callgraphs], enriched_count
         )
-        await _sync_project_stats_if_latest(db, project_id, scan_id, stats)
+        await result_repo.replace_result(scan_id, "reachability", reachability_summary)
+        await scan_repo.update_raw(scan_id, finished)
+        # The scan's stats were frozen at completion, before any reachability verdict existed.
+        await refresh_scan_stats(db, project_id, scan_id, component_languages)
 
         result["findings_enriched"] = enriched_count
         logger.info(f"[reachability] Processed scan {scan_id}: enriched {enriched_count} findings")

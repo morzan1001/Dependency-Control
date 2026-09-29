@@ -1,9 +1,23 @@
 from collections import defaultdict
 from typing import Any
 
-from app.core.constants import SCORECARD_LOW_THRESHOLD
+from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr, sample_components, scorecard_details
+from app.services.recommendation.common import (
+    ModelOrDict,
+    get_attr,
+    sample_components,
+    scorecard_details,
+    scorecard_score,
+)
+
+
+def _keep_lowest(entries: dict[str, dict[str, Any]], entry: dict[str, Any]) -> None:
+    """One entry per component: quality findings come one per installed version; an unscored one yields to a score."""
+    kept = entries.get(entry["component"])
+    score = entry["score"]
+    if kept is None or kept["score"] is None or (score is not None and score < kept["score"]):
+        entries[entry["component"]] = entry
 
 
 def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -12,21 +26,15 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         return []
 
     recommendations = []
-    severity_counts: dict[str, int] = defaultdict(int)
     components_by_issue: dict[str, list[Any]] = defaultdict(list)
-    low_score_packages: list[Any] = []
-    unmaintained_packages: list[Any] = []
+    low_score_by_component: dict[str, dict[str, Any]] = {}
+    unmaintained_by_component: dict[str, dict[str, Any]] = {}
 
     for f in findings:
-        severity = get_attr(f, "severity", "UNKNOWN")
-        severity_counts[severity] += 1
         component = get_attr(f, "component", "unknown")
-        version = get_attr(f, "version", "")
         details = get_attr(f, "details", {})
 
-        overall_score = details.get("overall_score") if isinstance(details, dict) else None
-        if overall_score is None:
-            overall_score = 0.0
+        overall_score = scorecard_score(details)
 
         sc_details = scorecard_details(details)
         critical_issues = sc_details.get("critical_issues") or []
@@ -34,25 +42,21 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         project_url = sc_details.get("project_url") or ""
         has_maintenance = bool(details.get("has_maintenance_issues")) if isinstance(details, dict) else False
 
-        if overall_score < SCORECARD_LOW_THRESHOLD:
-            low_score_packages.append(
+        if overall_score is not None and overall_score < SCORECARD_POOR_QUALITY_THRESHOLD:
+            _keep_lowest(
+                low_score_by_component,
                 {
                     "component": component,
-                    "version": version,
                     "score": overall_score,
                     "project_url": project_url,
                     "critical_issues": critical_issues,
-                }
+                },
             )
 
-        if "Maintained" in critical_issues or has_maintenance:
-            unmaintained_packages.append(
-                {
-                    "component": component,
-                    "version": version,
-                    "score": overall_score,
-                    "project_url": project_url,
-                }
+        if has_maintenance:
+            _keep_lowest(
+                unmaintained_by_component,
+                {"component": component, "score": overall_score, "project_url": project_url},
             )
 
         for issue in critical_issues:
@@ -62,7 +66,8 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             check_name = check.get("name", "") if isinstance(check, dict) else check
             components_by_issue[f"check:{check_name}"].append(component)
 
-    unmaintained_shown, unmaintained_total = sample_components(p["component"] for p in unmaintained_packages)
+    unmaintained_packages = list(unmaintained_by_component.values())
+    unmaintained_shown, unmaintained_total = sample_components(unmaintained_by_component)
     if unmaintained_packages:
         recommendations.append(
             Recommendation(
@@ -70,11 +75,11 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 priority=Priority.HIGH,
                 title="Replace Unmaintained Dependencies",
                 description=(
-                    f"Found {len(unmaintained_packages)} potentially unmaintained packages. "
+                    f"Found {unmaintained_total} potentially unmaintained packages. "
                     "These packages may not receive security updates, putting your application at risk."
                 ),
                 impact={
-                    "total": len(unmaintained_packages),
+                    "total": unmaintained_total,
                     "packages": unmaintained_shown,
                 },
                 affected_components=unmaintained_shown,
@@ -110,11 +115,11 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 priority=Priority.HIGH,
                 title="Address Packages with Known Vulnerability Issues",
                 description=(
-                    f"{len(vuln_packages)} packages have unaddressed security vulnerabilities "
+                    f"{vuln_total} packages have unaddressed security vulnerabilities "
                     "according to OpenSSF Scorecard. These need immediate attention."
                 ),
                 impact={
-                    "total": len(vuln_packages),
+                    "total": vuln_total,
                 },
                 affected_components=vuln_shown,
                 affected_components_total=vuln_total,
@@ -131,7 +136,8 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             )
         )
 
-    low_score_shown, low_score_total = sample_components(p["component"] for p in low_score_packages)
+    low_score_packages = list(low_score_by_component.values())
+    low_score_shown, low_score_total = sample_components(low_score_by_component)
     # Skip when unmaintained packages already cover these.
     if low_score_packages and not unmaintained_packages:
         recommendations.append(
@@ -140,13 +146,13 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 priority=Priority.MEDIUM,
                 title="Review Low-Quality Dependencies",
                 description=(
-                    f"Found {len(low_score_packages)} packages with OpenSSF Scorecard "
-                    f"scores below {SCORECARD_LOW_THRESHOLD}/10. "
+                    f"Found {low_score_total} packages with OpenSSF Scorecard "
+                    f"scores below {SCORECARD_POOR_QUALITY_THRESHOLD}/10. "
                     "These packages may have quality, security, or maintenance concerns."
                 ),
                 impact={
-                    "total": len(low_score_packages),
-                    "average_score": sum(p["score"] for p in low_score_packages) / len(low_score_packages),
+                    "total": low_score_total,
+                    "average_score": sum(p["score"] for p in low_score_packages) / low_score_total,
                 },
                 affected_components=low_score_shown,
                 affected_components_total=low_score_total,
@@ -180,10 +186,10 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 priority=Priority.LOW,
                 title="Dependencies with Limited Code Review",
                 description=(
-                    f"{len(set(code_review_issues))} packages have limited or no code review processes. "
+                    f"{review_total} packages have limited or no code review processes. "
                     "This increases the risk of unreviewed malicious or buggy changes."
                 ),
-                impact={"total": len(set(code_review_issues))},
+                impact={"total": review_total},
                 affected_components=review_shown,
                 affected_components_total=review_total,
                 action={

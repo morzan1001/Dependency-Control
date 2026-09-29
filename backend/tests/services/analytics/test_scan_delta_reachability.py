@@ -1,5 +1,5 @@
-"""A rescan loses its callgraph, so a release side can be reachability-empty against an enriched
-HEAD. The response has to say so per side, or adjusted_risk_score reads as comparable."""
+"""A release side without a callgraph is reachability-empty against an enriched HEAD. The response
+has to say so per side, or adjusted_risk_score reads as comparable."""
 
 from datetime import datetime, timezone
 

@@ -17,9 +17,9 @@ import asyncio
 import sys
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.config import settings
+from app.db.mongodb import create_client
 
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50
@@ -66,7 +66,7 @@ async def cleanup_pass(
 
 
 async def run(args: argparse.Namespace) -> int:
-    client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
+    client = create_client(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
         mode = "EXECUTE" if args.execute else "DRY-RUN"

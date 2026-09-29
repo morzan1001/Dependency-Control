@@ -6,6 +6,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from pathlib import Path
+from typing import cast
 
 from app.core.constants import SMTP_TIMEOUT_SECONDS
 from app.core.metrics import notifications_failed_total, notifications_sent_total
@@ -112,21 +113,17 @@ class EmailProvider(NotificationProvider):
             logger.warning("System settings not provided. Skipping email.")
             return False
 
-        smtp_host = system_settings.smtp_host
+        if not system_settings.email_configured:
+            logger.warning("SMTP host or sender address not configured. Skipping email.")
+            return False
+
+        smtp_host = cast(str, system_settings.smtp_host)  # email_configured implies a host
         smtp_port = system_settings.smtp_port
         smtp_user = system_settings.smtp_user
         smtp_password = system_settings.smtp_password
         smtp_encryption = system_settings.smtp_encryption
         emails_from_email = system_settings.emails_from_email
         emails_from_name = system_settings.emails_from_name
-
-        if not smtp_host:
-            logger.warning("SMTP_HOST not configured. Skipping email.")
-            return False
-
-        if not emails_from_email:
-            logger.warning("EMAILS_FROM not configured. Skipping email.")
-            return False
 
         if emails_from_name:
             sanitized_name = emails_from_name.replace("\r", "").replace("\n", "")

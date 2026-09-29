@@ -17,7 +17,7 @@ _MORE_CVES_THAN_SHOWN = _CVES_SHOWN + 2
 _MORE_FIX_VERSIONS_THAN_SHOWN = _FIX_VERSIONS_SHOWN + 2
 _COMPONENT = "left-pad"
 _VERSION = "1.0.0"
-_NEWEST_FIX = "1.0.12"
+_NEWEST_FIX = "12.0.0"
 
 
 def _project_ids(count: int) -> list[str]:
@@ -25,13 +25,14 @@ def _project_ids(count: int) -> list[str]:
 
 
 def _group(*, project_count: int, cve_count: int, fix_versions: list[str]) -> dict:
+    """Every advisory is fixed on each release line the versions name."""
     vulnerabilities = [
-        {"id": f"CVE-2026-{index:04d}", "severity": "HIGH", "fixed_version": fix_versions[0]}
+        {"id": f"CVE-2026-{index:04d}", "severity": "HIGH", "fixed_version": ", ".join(fix_versions)}
         for index in range(cve_count)
     ]
     return {
         "_id": {"component": _COMPONENT, "version": _VERSION},
-        "details_list": [{"vulnerabilities": vulnerabilities, "fixed_version": version} for version in fix_versions],
+        "details_list": [{"vulnerabilities": vulnerabilities}],
         "project_ids": _project_ids(project_count),
         "first_seen": None,
     }
@@ -41,6 +42,7 @@ def _hotspot(*, project_count: int, cve_count: int, fix_versions: list[str]):
     accessible = _project_ids(project_count)
     return _build_hotspot(
         _group(project_count=project_count, cve_count=cve_count, fix_versions=fix_versions),
+        {},
         {},
         {},
         {pid: pid for pid in accessible},
@@ -63,7 +65,7 @@ def test_the_cve_sample_names_how_many_cves_there_are():
 
 
 def test_the_fix_version_sample_names_how_many_versions_there_are():
-    versions = [f"1.0.{index}" for index in range(_MORE_FIX_VERSIONS_THAN_SHOWN)]
+    versions = [f"{major}.0.0" for major in range(1, _MORE_FIX_VERSIONS_THAN_SHOWN + 1)]
 
     hotspot = _hotspot(project_count=1, cve_count=1, fix_versions=versions)
 
@@ -74,7 +76,7 @@ def test_the_fix_version_sample_names_how_many_versions_there_are():
 def test_the_fix_versions_shown_are_the_newest_ones():
     """The versions come out of a set, which has no order, so the same row samples a different
     three between runs unless they are ranked first."""
-    versions = ["1.0.2", _NEWEST_FIX, "1.0.9", "1.0.1", "1.0.3"]
+    versions = ["2.0.0", _NEWEST_FIX, "9.0.0", "1.0.1", "3.0.0"]
 
     hotspot = _hotspot(project_count=1, cve_count=1, fix_versions=versions)
 

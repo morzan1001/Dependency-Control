@@ -1,7 +1,7 @@
 """Tests for system settings API endpoints (get/update settings, public config, app config, notification channels)."""
 
 import asyncio
-from unittest.mock import ANY, AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.system import SystemSettings
 
@@ -29,16 +29,36 @@ class TestGetSettings:
 
         assert result.instance_name == "My Instance"
 
-    def test_passes_auto_init_true(self, admin_user):
+    def test_reading_the_settings_writes_nothing(self, admin_user):
         from app.api.v1.endpoints.system import get_settings
+        from tests.mocks.fake_mongo import FakeDatabase
 
-        settings = _make_settings()
+        db = FakeDatabase()
+        result = asyncio.run(get_settings(current_user=admin_user, db=db))
 
-        with patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = settings
-            asyncio.run(get_settings(current_user=admin_user, db=MagicMock()))
+        assert result.chat_max_tool_rounds == SystemSettings().chat_max_tool_rounds
+        assert db.system_settings._docs == {}
 
-        mock_get.assert_called_once_with(ANY, auto_init=True)
+    def test_no_operation_exposes_a_persistence_switch(self):
+        from app.main import app
+
+        parameters = {
+            parameter["name"]
+            for path in app.openapi()["paths"].values()
+            for operation in path.values()
+            for parameter in operation.get("parameters", [])
+        }
+        assert "auto_init" not in parameters
+
+    def test_the_tool_round_limit_is_bounded_on_the_way_in(self):
+        import pytest
+        from pydantic import ValidationError
+
+        from app.schemas.system import SystemSettingsUpdate
+
+        for rejected in ({"chat_max_tool_rounds": 0}, {"chat_max_tool_rounds": 51}, {"chat_rate_limit_per_minute": 0}):
+            with pytest.raises(ValidationError):
+                SystemSettingsUpdate(**rejected)
 
 
 class TestUpdateSettings:
@@ -203,6 +223,17 @@ class TestGetAppConfig:
         assert result.notifications.slack is False
         assert result.notifications.mattermost is False
 
+    def test_the_create_dialog_is_seeded_with_the_backend_default_analyzers(self, regular_user):
+        from app.api.v1.endpoints.system import get_app_config
+        from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
+
+        with patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = _make_settings()
+            result = asyncio.run(get_app_config(current_user=regular_user, db=MagicMock()))
+
+        assert result.default_project_analyzers == list(DEFAULT_ACTIVE_ANALYZERS)
+        assert "epss_kev" in result.default_project_analyzers
+
 
 class TestGetNotificationChannels:
     def test_returns_channels_based_on_config(self, regular_user):
@@ -244,3 +275,28 @@ class TestGetNotificationChannels:
             )
 
         assert result == []
+
+
+class TestUpdateSettingsAnalyzerVocabulary:
+    def test_an_unknown_default_analyzer_is_refused_before_anything_is_written(self, admin_user):
+        import pytest
+        from fastapi import HTTPException
+
+        from app.api.v1.endpoints.system import update_settings
+        from app.schemas.system import SystemSettingsUpdate
+
+        mock_repo = MagicMock()
+        mock_repo.update = AsyncMock()
+
+        with patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo), pytest.raises(HTTPException) as exc:
+            asyncio.run(
+                update_settings(
+                    settings_in=SystemSettingsUpdate(default_active_analyzers=["trivy", "Trivy"]),
+                    current_user=admin_user,
+                    db=MagicMock(),
+                )
+            )
+
+        assert exc.value.status_code == 422
+        assert "Trivy" in exc.value.detail
+        mock_repo.update.assert_not_awaited()

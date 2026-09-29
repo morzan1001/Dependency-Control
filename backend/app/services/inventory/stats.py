@@ -6,7 +6,7 @@ from app.models.project import Project, Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.dependencies import DependencyRepository
 from app.schemas.inventory import InventoryScanContext, InventoryStatsResponse
-from app.services.analyzers.license_compliance.normalizer import tokenize_license_string
+from app.services.inventory.licenses import license_ids
 
 
 def scan_context(scan: Scan) -> InventoryScanContext:
@@ -27,7 +27,7 @@ async def build_inventory_stats(db: AsyncIOMotorDatabase, project: Project, scan
         components_total=total,
         direct_count=direct,
         transitive_count=total - direct,
-        license_count=len({t for lic in licenses if lic for t in tokenize_license_string(lic)}),
-        ecosystem_count=len([e for e in ecosystems if e]),
+        license_count=len({t for lic in licenses for t in license_ids(lic)}),
+        ecosystem_count=len({e or "unknown" for e in ecosystems}),
         crypto_asset_count=crypto_count,
     )

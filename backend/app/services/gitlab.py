@@ -29,7 +29,8 @@ from app.models.gitlab_api import (
 )
 from app.models.gitlab_instance import GitLabInstance
 from app.models.team import GitLabGroupBinding, Team, TeamMember, binding_of
-from app.repositories import TeamRepository, UserRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.repositories.teams import MemberSubset
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -372,6 +373,11 @@ class GitLabService:
         if response and response.status_code == 200:
             return GitLabProjectDetails(**response.json())
         return None
+
+    async def get_default_branch(self, project_id: int) -> str | None:
+        """The project's default branch. Returns None on API failure."""
+        details = await self.get_project_details(project_id)
+        return details.default_branch if details else None
 
     async def get_merge_requests_for_commit(self, project_id: int, commit_sha: str) -> list[GitLabMergeRequest]:
         """Fetches merge requests associated with a specific commit."""

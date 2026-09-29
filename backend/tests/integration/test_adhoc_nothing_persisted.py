@@ -60,7 +60,7 @@ _WRITING_AGGREGATION_STAGES = frozenset({"$out", "$merge"})
 
 # Reaching a datastore other than through the injected handle: the module-level accessors,
 # or a driver client/bucket built from scratch, which never touches those modules at all.
-_BYPASS_ENTRY_POINTS = ("get_database", "connect_to_mongo", "primary_gridfs_bucket")
+_BYPASS_ENTRY_POINTS = ("get_database", "connect_to_mongo")
 
 _MOTOR_CLIENT_LABEL = "motor.motor_asyncio.AsyncIOMotorClient"
 _GRIDFS_BUCKET_LABEL = "motor.motor_asyncio.AsyncIOMotorGridFSBucket"
@@ -101,7 +101,7 @@ _UNMODELLED_DRIVER_API = "get_collection"
 _LEAK_ID = "leak"
 _LEAK_SUFFIX = ".adhoc-leak"
 _TEMP_ROOT_NAME = "adhoc-temp"
-_CALLER_DERIVED_CACHE_KEY = "osv2:0123456789abcdef"
+_CALLER_DERIVED_CACHE_KEY = "osv3:0123456789abcdef"
 _SEEDED_POPULAR_PYPI = ["requests", "flask", "django"]
 _MONGO_URL = "mongodb://localhost:27017"
 _BASE_URL = "http://test"
@@ -251,11 +251,6 @@ class _WatchedCollection:
         self._name = name
         self._inner = inner
         self._writes = writes
-
-    def with_options(self, **kwargs: Any) -> _WatchedCollection:
-        # Returning the inner collection here would hand out an unwatched handle.
-        self._inner.with_options(**kwargs)
-        return self
 
     def __getattr__(self, attribute: str) -> Any:
         try:

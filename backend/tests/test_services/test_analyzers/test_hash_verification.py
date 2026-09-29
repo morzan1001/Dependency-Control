@@ -8,6 +8,7 @@ import pytest
 from app.core.constants import NPM_REGISTRY_URL
 from app.models.finding import Severity
 from app.services.analyzers import hash_verification
+from app.services.analyzers.base import normalize_hash_algorithm
 from app.services.analyzers.hash_verification import HashVerificationAnalyzer
 
 
@@ -200,3 +201,18 @@ def test_evaluate_still_handles_scalar_npm_style_dict():
 
     mismatch = analyzer._evaluate_registry_hashes(registry_hashes_flat, {"sha1": "f" * 40}, "left-pad", "1.0.0", "npm")
     assert mismatch is not None and mismatch["mismatch"] is True
+
+
+@pytest.mark.parametrize(
+    ("algorithm", "expected"),
+    [
+        pytest.param("SHA-256", "sha256", id="sha256_uppercase_with_hyphen"),
+        pytest.param("sha512", "sha512", id="sha512_lowercase_no_hyphen"),
+        pytest.param("MD5", "md5", id="md5"),
+        pytest.param("SHA-1", "sha1", id="sha1_with_hyphen"),
+        pytest.param("", "", id="empty_string"),
+        pytest.param(None, "", id="none"),
+    ],
+)
+def test_normalize_hash_algorithm(algorithm, expected):
+    assert normalize_hash_algorithm(algorithm) == expected

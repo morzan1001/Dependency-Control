@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core import ensure_utc
 from app.models.finding import FindingType, Severity
 from app.schemas.scan_delta import ScanDeltaResponse, ScanDeltaSide
 from app.services.analytics.components_delta import compute_components_delta
@@ -95,7 +94,7 @@ async def _describe_sides(
             scan_id=scan_id,
             branch=doc.get("branch"),
             commit_hash=doc.get("commit_hash"),
-            created_at=ensure_utc(doc.get("created_at")),
+            created_at=doc.get("created_at"),
         )
 
     return _side(from_scan), _side(to_scan)

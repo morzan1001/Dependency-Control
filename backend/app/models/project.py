@@ -1,9 +1,16 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.core.constants import (
+    DEFAULT_ACTIVE_ANALYZERS,
+    DEFAULT_RETENTION_DAYS,
+    PROJECT_ROLE_VIEWER,
+    RETENTION_ACTION_DELETE,
+    SCAN_STATUS_PENDING,
+    ProjectRole,
+)
 from app.core.notification_prefs import NotificationPreferences
 from app.models.base import CreatedAtModel
 from app.models.finding import Finding
@@ -13,17 +20,12 @@ from app.models.types import MongoDocument
 
 class ProjectMember(BaseModel):
     user_id: str
-    role: str = PROJECT_ROLE_VIEWER
+    role: ProjectRole = PROJECT_ROLE_VIEWER
     notification_preferences: NotificationPreferences = Field(default_factory=dict)
     username: str | None = None
     inherited_from: str | None = None  # e.g. "Team: DevOps"
-
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, v: str) -> str:
-        if v not in PROJECT_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
-        return v
+    # Read-side only: the role check_project_access grants, MAX(direct, owning teams).
+    effective_role: ProjectRole | None = None
 
 
 class Project(MongoDocument, CreatedAtModel):
@@ -46,12 +48,15 @@ class Project(MongoDocument, CreatedAtModel):
     api_key_hash: str | None = Field(None, exclude=True)
     active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
     stats: Stats | None = None
+    # The last scanner post from any branch; the rescan clock is Scan.last_rescanned_at.
     last_scan_at: datetime | None = None
     latest_scan_id: str | None = None
-    retention_days: int = 90  # Default retention period in days
-    retention_action: str = "delete"  # "delete", "archive", or "none"
+    retention_days: int = DEFAULT_RETENTION_DAYS
+    retention_action: str = RETENTION_ACTION_DELETE
     default_branch: str | None = None
     enforce_notification_settings: bool = False
+    # Preferences of users who reach the project only through an owning team, keyed by user id.
+    notification_overrides: dict[str, NotificationPreferences] = Field(default_factory=dict)
     # GitLab Integration (Multi-Instance Support)
     gitlab_instance_id: str | None = Field(
         None, description="Reference to GitLabInstance._id. Required if gitlab_project_id is set."
@@ -123,14 +128,19 @@ class Scan(MongoDocument, CreatedAtModel):
 
     # This allows us to keep the Scan document small while preserving the raw data.
     sbom_refs: list[dict[str, Any]] = Field(default_factory=list)
+    # Bumped with every SBOM replacement and CBOM post, so a run can tell its inputs were superseded.
+    sbom_generation: int | None = None
 
     # Marks scans whose only source is a CBOM (no SBOM); the analysis engine
     # forces crypto analyzers for these even when no SBOM was attached.
     scan_type: str | None = None
 
-    status: str = "pending"
+    status: str = SCAN_STATUS_PENDING
+    # Engine re-runs and runs that outlived their worker draw on separate budgets.
     retry_count: int = 0
+    stuck_retry_count: int = 0
     worker_id: str | None = None
+    # The claim's lease: the holding worker renews it, and housekeeping reclaims a scan once it lapses.
     analysis_started_at: datetime | None = None
     error: str | None = None
     # Analyzers that crashed or returned partial coverage in the last run.

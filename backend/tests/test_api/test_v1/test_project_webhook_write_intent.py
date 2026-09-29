@@ -194,12 +194,11 @@ class TestViewerMemberWithWebhookWrite:
 
 class TestGlobalWriteGrantWithoutMembership:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("grant", [Permissions.PROJECT_UPDATE, Permissions.PROJECT_DELETE])
-    async def test_manages_project_webhooks(self, grant):
+    async def test_manages_project_webhooks(self):
         from app.api.v1.endpoints.webhooks import create_webhook, delete_webhook, update_webhook
 
         db = await _seeded()
-        manager = _user("platform-admin", grant, *_WEBHOOK_WRITE)
+        manager = _user("platform-admin", Permissions.PROJECT_UPDATE, *_WEBHOOK_WRITE)
 
         created = await create_webhook(
             project_id=_PROJECT,

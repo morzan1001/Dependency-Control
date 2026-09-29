@@ -17,7 +17,6 @@ if TYPE_CHECKING:
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReadPreference
 
 from app.core.config import settings
 from app.core.constants import (
@@ -37,9 +36,11 @@ from app.core.constants import (
     WEBHOOK_HEADER_USER_AGENT,
     WEBHOOK_RESPONSE_BODY_LIMIT_BYTES,
     WEBHOOK_USER_AGENT_VALUE,
+    WebhookType,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
+from app.repositories.webhooks import GLOBAL_WEBHOOK_SCOPE
 from app.services.webhooks.teams_formatter import TeamsFormatter
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
@@ -50,24 +51,13 @@ from app.services.webhooks.types import (
     TestWebhookPayload,
     VulnerabilityFoundPayload,
 )
-from app.services.webhooks.validation import build_pinned_transport
-
-
-def _normalize_event_name(event_type: str) -> str:
-    """Canonicalize a webhook event name to its dot-notation form."""
-    return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
+from app.services.webhooks.validation import build_pinned_transport, effective_webhook_type, validate_webhook_url
 
 
 def _event_match_set(event_type: str) -> list[str]:
-    """Return both the canonical and alias forms so either stored subscription name matches."""
-    canonical = _normalize_event_name(event_type)
-    names = [canonical]
-    for alias, target in WEBHOOK_EVENT_ALIASES.items():
-        if target == canonical and alias not in names:
-            names.append(alias)
-    if event_type not in names:
-        names.append(event_type)
-    return names
+    """The canonical event plus its snake_case aliases, which subscriptions written before
+    validation canonicalised event names may still store."""
+    return [event_type, *(alias for alias, target in WEBHOOK_EVENT_ALIASES.items() if target == event_type)]
 
 
 logger = logging.getLogger(__name__)
@@ -244,39 +234,24 @@ class WebhookService:
 
     def _format_payload(
         self,
-        webhook: Webhook,
+        webhook_type: WebhookType,
         event_type: str,
         raw_payload: Mapping[str, Any],
     ) -> Mapping[str, Any]:
-        # A generic-typed webhook pointing at a Teams URL must be formatted as Teams, else Power Automate rejects the raw JSON.
-        effective_type = webhook.webhook_type
-        if effective_type != "teams":
-            from app.services.webhooks.validation import detect_webhook_type
-
-            if detect_webhook_type(webhook.url) == "teams":
-                logger.warning(
-                    "Webhook %s is stored as %s but URL matches a Teams workflow; "
-                    "formatting as Teams. Set webhook_type=teams to silence this warning.",
-                    webhook.id,
-                    effective_type,
-                )
-                effective_type = "teams"
-
-        if effective_type != "teams":
+        if webhook_type != "teams":
             return raw_payload
 
-        normalized = _normalize_event_name(event_type)
         project_name = raw_payload.get("project", {}).get("name", "Unknown Project")
         scan_url = raw_payload.get("scan", {}).get("url")
 
-        if normalized == WEBHOOK_EVENT_SCAN_COMPLETED:
+        if event_type == WEBHOOK_EVENT_SCAN_COMPLETED:
             return TeamsFormatter.build_scan_completed_card(
                 project_name=project_name,
                 _scan_id=raw_payload.get("scan", {}).get("id", ""),
                 findings=raw_payload.get("findings", {"total": 0, "stats": {}}),
                 scan_url=scan_url,
             )
-        if normalized == WEBHOOK_EVENT_VULNERABILITY_FOUND:
+        if event_type == WEBHOOK_EVENT_VULNERABILITY_FOUND:
             return TeamsFormatter.build_vulnerability_found_card(
                 project_name=project_name,
                 _scan_id=raw_payload.get("scan", {}).get("id", ""),
@@ -285,18 +260,16 @@ class WebhookService:
                 ),
                 scan_url=scan_url,
             )
-        if normalized == WEBHOOK_EVENT_ANALYSIS_FAILED:
+        if event_type == WEBHOOK_EVENT_ANALYSIS_FAILED:
             return TeamsFormatter.build_analysis_failed_card(
                 project_name=project_name,
                 error=str(raw_payload.get("error", "Unknown error")),
                 scan_url=scan_url,
             )
-        if normalized in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
-            return self._build_policy_changed_card(normalized, raw_payload)
-        if event_type == "test":  # "test" has no alias; event_type == normalized here
-            return TeamsFormatter.build_test_card()
+        if event_type in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
+            return self._build_policy_changed_card(event_type, raw_payload)
         return TeamsFormatter.build_generic_card(
-            subject=normalized.replace(".", " ").title(),
+            subject=event_type.replace(".", " ").title(),
             message=f"Event for project **{project_name}**",
             url=scan_url,
         )
@@ -326,6 +299,8 @@ class WebhookService:
         self, client_name: str, url: str, content: str, headers: Mapping[str, str]
     ) -> tuple[int, str]:
         """POST under one overall deadline; returns the status and, for a non-2xx answer, a capped body prefix."""
+        # A stored URL predates today's rules, which WebhookCreate/WebhookUpdate enforce only inbound.
+        validate_webhook_url(url)
         async with asyncio.timeout(self.timeout):
             transport = await build_pinned_transport(url)
             async with (
@@ -352,11 +327,9 @@ class WebhookService:
         event_type: str,
     ) -> bool:
         """Send a single webhook with retries. Retries are in-memory — delivery is lost if the pod crashes mid-retry."""
-        formatted_payload = self._format_payload(webhook, event_type, payload)
-        json_payload = json.dumps(formatted_payload)
-        # Teams: sign the raw event payload so relays can verify X-Webhook-Signature.
-        signing_payload = json.dumps(payload) if webhook.webhook_type == "teams" else json_payload
-        headers = self._build_headers(webhook, event_type, signing_payload)
+        webhook_type = effective_webhook_type(webhook.webhook_type, webhook.url)
+        json_payload = json.dumps(self._format_payload(webhook_type, event_type, payload))
+        headers = self._build_headers(webhook, event_type, json_payload)
 
         retry_count = 0
         last_error: str | None = None
@@ -466,9 +439,7 @@ class WebhookService:
             )
 
             try:
-                # Primary read: the event may fire right after the project was inserted.
-                projects_primary = db.projects.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-                project_doc = await projects_primary.find_one({"_id": project_id}, {"team_ids": 1})
+                project_doc = await db.projects.find_one({"_id": project_id}, {"team_ids": 1})
                 owners = (project_doc or {}).get("team_ids") or []
                 if owners:
                     webhooks.extend(
@@ -477,9 +448,7 @@ class WebhookService:
             except Exception as e:
                 logger.exception("Failed to look up team webhooks for project %s: %s", project_id, e)
 
-        webhooks.extend(
-            await self._fetch_webhooks_by_query(db, {**base_conditions, "project_id": None, "team_id": None}, "global")
-        )
+        webhooks.extend(await self._fetch_webhooks_by_query(db, {**base_conditions, **GLOBAL_WEBHOOK_SCOPE}, "global"))
 
         return webhooks
 
@@ -651,16 +620,10 @@ class WebhookService:
             },
         }
 
-        # Bypass _format_payload for Teams: test_payload's event would produce a scan card, not the test card.
-        formatted_test_payload: Mapping[str, Any]
-        if webhook.webhook_type == "teams":
-            formatted_test_payload = TeamsFormatter.build_test_card()
-        else:
-            formatted_test_payload = self._format_payload(webhook, event_type, test_payload)
-        json_payload = json.dumps(formatted_test_payload)
-        # Teams: sign the raw event payload so relays can verify X-Webhook-Signature.
-        signing_payload = json.dumps(test_payload) if webhook.webhook_type == "teams" else json_payload
-        headers = self._build_headers(webhook, event_type, signing_payload, is_test=True)
+        # Teams gets the test card: formatting test_payload's event would produce a scan card.
+        teams = effective_webhook_type(webhook.webhook_type, webhook.url) == "teams"
+        json_payload = json.dumps(TeamsFormatter.build_test_card() if teams else test_payload)
+        headers = self._build_headers(webhook, event_type, json_payload, is_test=True)
 
         start_time = time.monotonic()
 

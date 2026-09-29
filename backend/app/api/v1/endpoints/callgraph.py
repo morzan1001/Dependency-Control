@@ -2,24 +2,25 @@
 
 import asyncio
 import logging
-import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
 
-from app.api.deps import CallgraphWriteDep, CurrentUserDep, DatabaseDep
+from app.api.deps import CurrentUserDep, DatabaseDep, ProjectWriteDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.callgraph import (
     callgraph_entry_count,
-    check_callgraph_access,
     detect_format,
     parse_generic_format,
     parse_madge_format,
 )
+from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
-from app.core.constants import CALLGRAPH_MAX_ENTRIES
+from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR, SCAN_ACTIVE_STATUSES, SCANS_TIP_SORT
 from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
-from app.repositories import CallgraphRepository
+from app.repositories.callgraphs import CallgraphRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.callgraph import (
     CallgraphResponse,
     CallgraphUploadRequest,
@@ -27,7 +28,9 @@ from app.schemas.callgraph import (
     DeleteCallgraphResponse,
     ModuleUsageResponse,
 )
+from app.services.component_identity import canonical_callgraph_language
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
+from app.services.scan_manager import deterministic_scan_id
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -54,23 +57,37 @@ def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
     return detected
 
 
+def _canonical_language(language: str) -> str:
+    try:
+        return canonical_callgraph_language(language)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 def _resolve_language(request_language: str | None, format_type: str) -> str:
-    """Resolve the callgraph language; only madge implies one."""
+    """Resolve the callgraph language in its canonical spelling; only madge implies one."""
     language = request_language or _FORMAT_LANGUAGE_MAP.get(format_type)
     if not language:
         raise HTTPException(
             status_code=400,
             detail=f"'language' is required for '{format_type}' callgraph payloads",
         )
-    return language
+    return _canonical_language(language)
 
 
-def _resolve_scan_id(project_id: str, pipeline_id: int | None, commit_hash: str | None) -> str | None:
-    """The scan the CI run produced, derived from the authorized project so it cannot name another's."""
-    if not pipeline_id:
-        return None
-    scan_id_seed = f"{project_id}-{pipeline_id}-{commit_hash}" if commit_hash else f"{project_id}-{pipeline_id}"
-    return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
+async def _resolve_scan_id(
+    db: Any, project_id: str, pipeline_id: int | None, commit_hash: str | None
+) -> tuple[str | None, bool]:
+    """``(scan_id, exists)`` of the CI run's scan in the authorized project; its newest scan when the derived id has none."""
+    derived = deterministic_scan_id(project_id, pipeline_id, commit_hash)
+    if derived is None:
+        return None, False
+    scan_repo = ScanRepository(db)
+    scan = await scan_repo.get_minimal_by_id(derived)
+    if scan and scan.project_id == project_id:
+        return derived, True
+    newest = await scan_repo.find_one({"project_id": project_id, "pipeline_id": pipeline_id}, sort=SCANS_TIP_SORT)
+    return (newest["_id"], True) if newest else (derived, False)
 
 
 def _build_upsert_filter(project_id: str, language: str, scan_id: str | None) -> tuple[dict[str, Any], str]:
@@ -100,7 +117,7 @@ async def upload_callgraph(
     project_id: str,
     request: CallgraphUploadRequest,
     db: DatabaseDep,
-    _: CallgraphWriteDep,
+    _: ProjectWriteDep,
 ) -> CallgraphUploadResponse:
     """Upload call graph data (madge or generic format) for reachability analysis."""
     callgraph_repo = CallgraphRepository(db)
@@ -126,11 +143,13 @@ async def upload_callgraph(
         logger.exception("Failed to parse callgraph: %s", e)
         raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}") from e
 
-    scan_id = _resolve_scan_id(project_id, request.pipeline_id, request.commit_hash)
+    scan_id, scan_exists = await _resolve_scan_id(db, project_id, request.pipeline_id, request.commit_hash)
     if not scan_id:
-        warnings.append("No pipeline_id provided - callgraph may not match scans correctly")
-    else:
-        logger.debug(f"Generated deterministic scan_id {scan_id} from pipeline_id {request.pipeline_id}")
+        warnings.append(
+            "No pipeline_id: the callgraph is stored project-level and is not used for reachability verdicts"
+        )
+    elif not scan_exists:
+        warnings.append(f"No scan of pipeline {request.pipeline_id} exists yet; its analysis applies this callgraph")
 
     callgraph = Callgraph(
         project_id=project_id,
@@ -167,21 +186,34 @@ async def upload_callgraph(
         f"{len(analyzed_modules)} analyzed modules"
     )
 
-    if scan_id:
-        try:
-            reachability_result = await run_pending_reachability_for_scan(
-                scan_id=scan_id,
-                project_id=project_id,
-                db=db,
-            )
-            if reachability_result["findings_enriched"] > 0:
-                logger.info(
-                    f"Processed pending reachability for scan {scan_id}: "
-                    f"enriched {reachability_result['findings_enriched']} findings"
+    if scan_exists:
+        scan_repo = ScanRepository(db)
+        # Rescans created before this upload read the callgraph through the build they re-analyse.
+        pending_rescans = await scan_repo.distinct(
+            "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
+        )
+        for target_scan_id in [scan_id, *pending_rescans]:
+            # A queued or running analysis is about to replace the findings, so it applies the callgraph once final.
+            if await scan_repo.update_raw(
+                target_scan_id,
+                {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
+                guard={"status": {"$in": SCAN_ACTIVE_STATUSES}},
+            ):
+                continue
+            try:
+                reachability_result = await run_pending_reachability_for_scan(
+                    scan_id=target_scan_id,
+                    project_id=project_id,
+                    db=db,
                 )
-        except Exception as e:
-            logger.warning(f"Failed to run pending reachability analysis: {e}")
-            warnings.append(f"Reachability analysis deferred: {e!s}")
+                if reachability_result["findings_enriched"] > 0:
+                    logger.info(
+                        f"Processed pending reachability for scan {target_scan_id}: "
+                        f"enriched {reachability_result['findings_enriched']} findings"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to run pending reachability analysis: {e}")
+                warnings.append(f"Reachability analysis deferred: {e!s}")
 
     return CallgraphUploadResponse(
         success=True,
@@ -203,12 +235,12 @@ async def get_callgraph(
     language: str | None = None,
 ) -> CallgraphResponse:
     """Get the current callgraph for a project, optionally filtered by language."""
-    await check_callgraph_access(project_id, current_user, db)
+    await check_project_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
     query: dict[str, Any] = {"project_id": project_id}
     if language:
-        query["language"] = language
+        query["language"] = _canonical_language(language)
     callgraph = await callgraph_repo.find_one(query)
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found for this project")
@@ -225,12 +257,12 @@ async def get_module_usage(
     language: str | None = None,
 ) -> ModuleUsageResponse:
     """Get external module usage (import counts and locations) from the callgraph, optionally filtered by language."""
-    await check_callgraph_access(project_id, current_user, db)
+    await check_project_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
     query: dict[str, Any] = {"project_id": project_id}
     if language:
-        query["language"] = language
+        query["language"] = _canonical_language(language)
     callgraph = await callgraph_repo.find_one(query)
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found")
@@ -257,7 +289,7 @@ async def delete_callgraph(
     current_user: CurrentUserDep,
 ) -> DeleteCallgraphResponse:
     """Delete the callgraph for a project."""
-    await check_callgraph_access(project_id, current_user, db, require_write=True)
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
 
     callgraph_repo = CallgraphRepository(db)
     deleted_count = await callgraph_repo.delete_by_project(project_id)

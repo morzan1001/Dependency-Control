@@ -1,31 +1,34 @@
 import html
 import logging
 import re
+from collections import defaultdict
 from datetime import datetime
 from typing import Annotated, Any
 
 import markdown
 from fastapi import BackgroundTasks, Depends, HTTPException, Query
-from packaging.version import parse as parse_version
+from pymongo.errors import ExecutionTimeout
 
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.projects import project_admin_ids
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from app.core.config import settings
+from app.core.constants import NOTIFICATION_EVENT_ANALYSIS_COMPLETED, NOTIFICATION_EVENT_VULNERABILITY_FOUND
 from app.core.permissions import Permissions
+from app.core.purl import package_identity, pep503_normalize
 from app.models.broadcast import Broadcast
 from app.models.project import Project
 from app.models.user import User
-from app.repositories import (
-    BroadcastRepository,
-    DependencyRepository,
-    ProjectRepository,
-    ScanRepository,
-    TeamRepository,
-    UserRepository,
-)
+from app.repositories.broadcasts import BroadcastRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.schemas.notification import (
+    ECOSYSTEM_STORED_TYPES,
+    AdvisoryPackage,
     BroadcastHistoryItem,
     BroadcastRequest,
     BroadcastResult,
@@ -34,12 +37,16 @@ from app.schemas.notification import (
 from app.services.notifications.mattermost_formatter import build_advisory_props as mm_advisory_props
 from app.services.notifications.service import notification_service
 from app.services.notifications.slack_formatter import build_advisory_blocks
+from app.services.component_identity import artifact_segment
 from app.services.notifications.templates import get_announcement_template
+from app.services.releases import resolve_scan_ids
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 _PACKAGE_SUGGESTION_LIMIT = 20
+# Keystrokes outpace a slow typeahead; past this the query has to narrow instead.
+_PACKAGE_SUGGESTION_TIME_LIMIT_MS = 2000
 
 
 @router.get("/history", responses=RESP_AUTH)
@@ -80,7 +87,6 @@ async def get_broadcast_history(
             created_by=creators_map.get(h.created_by, h.created_by),
             recipient_count=h.recipient_count,
             project_count=h.project_count,
-            unique_user_count=h.recipient_count,
             teams=[teams_map.get(tid, tid) for tid in h.teams] if h.teams else None,
         )
         for h in history
@@ -95,23 +101,27 @@ async def suggest_packages(
     ],
     q: Annotated[str, Query(min_length=2, description="Search query for package name")],
 ) -> PackageSuggestions:
-    """Suggest package names for advisories based on existing dependencies.
+    """Suggest package names for advisories from the head scans an advisory reaches.
 
     The field takes free text, so a short list costs nothing but a hint; one row past the
     limit is read so the answer can say the query still has to narrow.
     """
-    dep_repo = DependencyRepository(db)
-
+    head_scan_ids = list((await resolve_scan_ids(db, None)).values())
     probe = _PACKAGE_SUGGESTION_LIMIT + 1
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"name": {"$regex": re.escape(q), "$options": "i"}}},
+        # Substring matching finds scoped and path-named packages; the scan_id bound keeps it on head rows.
+        {"$match": {"scan_id": {"$in": head_scan_ids}, "name": {"$regex": re.escape(q), "$options": "i"}}},
         {"$group": {"_id": "$name"}},
         {"$sort": {"_id": 1}},
         {"$limit": probe},
         {"$project": {"_id": 0, "name": "$_id"}},
     ]
 
-    results = await dep_repo.aggregate(pipeline, limit=probe)
+    try:
+        cursor = DependencyRepository(db).collection.aggregate(pipeline, maxTimeMS=_PACKAGE_SUGGESTION_TIME_LIMIT_MS)
+        results = await cursor.to_list(probe)
+    except ExecutionTimeout:
+        return PackageSuggestions(names=[], more=True)
     return PackageSuggestions(
         names=[r["name"] for r in results[:_PACKAGE_SUGGESTION_LIMIT]],
         more=len(results) > _PACKAGE_SUGGESTION_LIMIT,
@@ -135,7 +145,7 @@ def _queue_announcement(
     background_tasks.add_task(
         notification_service.notify_users,
         users,
-        "analysis_completed",
+        NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
         subject,
         message,
         db=db,
@@ -195,81 +205,47 @@ async def _handle_teams_broadcast(
     return len(users), 0
 
 
-async def _build_advisory_scan_map(
-    project_repo: "ProjectRepository",
-    db: Any,
-) -> dict[str, Project]:
-    """Build scan_id -> Project map for advisory broadcasts, handling deleted branches."""
-    projects: list[Project] = [
-        p async for p in project_repo.iterate({"latest_scan_id": {"$exists": True}}) if p and p.latest_scan_id
-    ]
-    scan_ids = await ScanRepository(db).get_latest_active_scan_ids(projects)
-    proj_by_id = {p.id: p for p in projects}
-    return {scan_id: proj_by_id[project_id] for project_id, scan_id in scan_ids.items() if project_id in proj_by_id}
+def _segment_key(name: str) -> str:
+    """Lookup key a rule and a dependency share: the last name segment, blind to case and separators."""
+    return pep503_normalize(re.split(r"[/:]", name)[-1])
 
 
-def _match_package_rule(dep: Any, payload_packages: list) -> Any:
-    """Find the first package rule matching the dependency name/type."""
-    for pkg_rule in payload_packages:
-        if pkg_rule.name != dep.name:
-            continue
-        if pkg_rule.type and dep.type != pkg_rule.type:
-            continue
-        return pkg_rule
-    return None
+def _rule_matches(rule: AdvisoryPackage, dep_type: str, dep_path: str) -> bool:
+    """Whether a dependency with package identity ``(dep_type, dep_path)`` is the package ``rule`` names."""
+    if rule.type and dep_type != rule.type and dep_type not in ECOSYSTEM_STORED_TYPES.get(rule.type, ()):
+        return False
+    rule_name = rule.name.strip().replace(":", "/")
+    # The rule's name is read under the dependency's own ecosystem rules, as its identity was.
+    _, rule_path = package_identity(f"pkg:{dep_type}/{rule_name}", rule_name, dep_type, None)
+    qualified = artifact_segment(rule_path) != rule_path
+    return (dep_path if qualified else artifact_segment(dep_path)).lower() == rule_path.lower()
 
 
-def _is_dep_affected(dep_version: str, matching_rule: Any) -> bool:
-    """Decide whether a dependency version is affected by the rule."""
-    if not matching_rule.version:
-        return True
-    try:
-        target_ver = parse_version(matching_rule.version)
-        dep_ver = parse_version(dep_version)
-        return dep_ver <= target_ver
-    except Exception:
-        return True
+async def _find_affected_projects(db: Any, rules: list[AdvisoryPackage]) -> dict[str, dict[str, bool]]:
+    """project_id -> "name (version)" of each matched head-scan dependency -> covered (False: not comparable)."""
+    project_by_scan = {scan_id: project_id for project_id, scan_id in (await resolve_scan_ids(db, None)).items()}
+    if not project_by_scan:
+        return {}
 
+    rules_by_segment: dict[str, list[AdvisoryPackage]] = defaultdict(list)
+    for rule in rules:
+        rules_by_segment[_segment_key(rule.name.strip())].append(rule)
+    # A case- and separator-blind prefilter; the package identity decides below.
+    names = "|".join("[-_.]+".join(map(re.escape, key.split("-"))) for key in rules_by_segment)
+    query = {"scan_id": {"$in": list(project_by_scan)}, "name": {"$regex": f"(^|[/:])({names})$", "$options": "i"}}
 
-def _record_affected_project(
-    p_data: Project,
-    dep_name: str,
-    dep_version: str,
-    affected_projects_map: dict[str, Project],
-    project_findings: dict[str, list[str]],
-) -> None:
-    """Track an affected project and the dependency finding string."""
-    project_id = str(p_data.id)
-    if project_id not in affected_projects_map:
-        affected_projects_map[project_id] = p_data
-    if project_id not in project_findings:
-        project_findings[project_id] = []
-
-    finding_str = f"{dep_name} ({dep_version})"
-    if finding_str not in project_findings[project_id]:
-        project_findings[project_id].append(finding_str)
-
-
-def _find_affected_projects(
-    dep: Any,
-    payload_packages: list,
-    scan_map: dict[str, Project],
-    affected_projects_map: dict[str, Project],
-    project_findings: dict[str, list[str]],
-) -> None:
-    """Check if a dependency is affected by any advisory package rule."""
-    matching_rule = _match_package_rule(dep, payload_packages)
-    if not matching_rule:
-        return
-
-    if not _is_dep_affected(dep.version, matching_rule):
-        return
-
-    p_data = scan_map.get(dep.scan_id)
-    if not p_data:
-        return
-
-    _record_affected_project(p_data, dep.name, dep.version, affected_projects_map, project_findings)
+    affected: dict[str, dict[str, bool]] = {}
+    projection = {"_id": 0, "scan_id": 1, "name": 1, "version": 1, "type": 1, "purl": 1, "group": 1}
+    async for dep in DependencyRepository(db).iterate_raw(query, projection):
+        dep_type, dep_path = package_identity(dep.get("purl"), dep["name"], dep.get("type"), dep.get("group"))
+        candidates = rules_by_segment.get(_segment_key(dep_path), [])
+        version = dep.get("version") or ""
+        verdicts = {r.covers(version) for r in candidates if _rule_matches(r, dep_type, dep_path)}
+        if verdicts - {False}:
+            findings = affected.setdefault(project_by_scan[dep["scan_id"]], {})
+            entry = f"{dep['name']} ({version})"
+            findings[entry] = findings.get(entry, False) or True in verdicts
+    return affected
 
 
 def _build_advisory_html(
@@ -314,32 +290,29 @@ def _build_advisory_html(
     return final_html, findings_text_block
 
 
-def _collect_admin_ids(affected_projects_map: dict[str, Project]) -> set[str]:
-    """Collect unique admin member IDs across all affected projects."""
-    admin_ids: set[str] = set()
-    for project in affected_projects_map.values():
-        for member in project.members:
-            if member.role == "admin":
-                admin_ids.add(member.user_id)
-    return admin_ids
-
-
 def _group_projects_by_admin(
-    affected_projects_map: dict[str, Project],
-    project_findings: dict[str, list[str]],
+    projects: list[Project],
+    admins_by_project: dict[str, set[str]],
+    affected: dict[str, dict[str, bool]],
     users_dict: dict[str, Any],
 ) -> dict[str, dict]:
     """Group affected projects under each admin user that should be notified."""
     user_notification_map: dict[str, dict] = {}
-    for pid, project in affected_projects_map.items():
-        for member in project.members:
-            if member.role != "admin" or member.user_id not in users_dict:
+    for project in projects:
+        for uid in sorted(admins_by_project[project.id]):
+            if uid not in users_dict:
                 continue
-            uid = member.user_id
             if uid not in user_notification_map:
                 user_notification_map[uid] = {"user": users_dict[uid], "projects": []}
             user_notification_map[uid]["projects"].append(
-                {"id": pid, "name": project.name, "findings": project_findings.get(pid, [])},
+                {
+                    "id": str(project.id),
+                    "name": project.name,
+                    "findings": [
+                        entry if covered else f"{entry}: version could not be compared"
+                        for entry, covered in affected[str(project.id)].items()
+                    ],
+                },
             )
     return user_notification_map
 
@@ -375,7 +348,7 @@ def _queue_advisory_for_user(
     background_tasks.add_task(
         notification_service.notify_users,
         [data["user"]],
-        "vulnerability_found",
+        NOTIFICATION_EVENT_VULNERABILITY_FOUND,
         advisory_subject,
         context_message,
         db=db,
@@ -387,8 +360,8 @@ def _queue_advisory_for_user(
 
 
 async def _notify_advisory_admins(
-    affected_projects_map: dict[str, Project],
-    project_findings: dict[str, list[str]],
+    projects: list[Project],
+    affected: dict[str, dict[str, bool]],
     user_repo: UserRepository,
     payload: "BroadcastRequest",
     background_tasks: BackgroundTasks,
@@ -398,12 +371,13 @@ async def _notify_advisory_admins(
     forced_channels: Any,
 ) -> int:
     """Group affected projects by admin members and queue advisory notifications. Returns unique user count."""
-    all_admin_ids = _collect_admin_ids(affected_projects_map)
+    admins_by_project = await project_admin_ids(projects, TeamRepository(db))
+    all_admin_ids = set().union(*admins_by_project.values())
 
     admin_users = await user_repo.find_many({"_id": {"$in": list(all_admin_ids)}, "is_active": True}, limit=2000)
     users_dict = {str(u.id): u for u in admin_users}
 
-    user_notification_map = _group_projects_by_admin(affected_projects_map, project_findings, users_dict)
+    user_notification_map = _group_projects_by_admin(projects, admins_by_project, affected, users_dict)
 
     if not payload.dry_run:
         for data in user_notification_map.values():
@@ -433,22 +407,15 @@ async def broadcast_message(
     user_repo = UserRepository(db)
     team_repo = TeamRepository(db)
     project_repo = ProjectRepository(db)
-    dep_repo = DependencyRepository(db)
     broadcast_repo = BroadcastRepository(db)
 
     project_count = 0
     unique_user_count = 0
+    uncomparable: list[str] = []
 
     frontend_url = settings.FRONTEND_BASE_URL.rstrip("/")
 
     forced_channels = payload.channels if payload.channels else None
-
-    valid_target_types: list[str] = ["global", "teams", "advisory"]
-    if payload.target_type not in valid_target_types:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid target_type. Must be one of: {', '.join(valid_target_types)}",
-        )
 
     # Escape raw HTML before Markdown to prevent XSS via embedded tags.
     safe_message = html.escape(payload.message)
@@ -481,46 +448,26 @@ async def broadcast_message(
         if not payload.packages:
             raise HTTPException(status_code=400, detail="At least one package required for advisory")
 
-        scan_map = await _build_advisory_scan_map(project_repo, db)
-        if not scan_map:
-            return BroadcastResult(recipient_count=0)
-
-        affected_projects_map: dict[str, Project] = {}
-        project_findings: dict[str, list[str]] = {}
-
-        package_names = [pkg.name for pkg in payload.packages]
-        match_query: dict[str, Any] = {
-            "scan_id": {"$in": list(scan_map.keys())},
-            "name": {"$in": package_names},
-        }
-        unique_types = {pkg.type for pkg in payload.packages if pkg.type}
-        if len(unique_types) == 1:
-            match_query["type"] = next(iter(unique_types))
-
-        dep_count = 0
-        async for dep in dep_repo.iterate(match_query):
-            dep_count += 1
-            _find_affected_projects(dep, payload.packages, scan_map, affected_projects_map, project_findings)
-
-        logger.info(f"Advisory broadcast: Processed {dep_count} dependencies matching {len(package_names)} packages")
-
-        project_count = len(affected_projects_map)
-
-        unique_user_count = await _notify_advisory_admins(
-            affected_projects_map,
-            project_findings,
-            user_repo,
-            payload,
-            background_tasks,
-            message_html_content,
-            frontend_url,
-            db,
-            forced_channels,
-        )
+        affected = await _find_affected_projects(db, payload.packages)
+        project_count = sum(any(findings.values()) for findings in affected.values())
+        uncomparable = sorted({entry for f in affected.values() for entry, covered in f.items() if not covered})
+        if affected:
+            projects = await project_repo.find_many({"_id": {"$in": list(affected)}}, limit=len(affected))
+            unique_user_count = await _notify_advisory_admins(
+                projects,
+                affected,
+                user_repo,
+                payload,
+                background_tasks,
+                message_html_content,
+                frontend_url,
+                db,
+                forced_channels,
+            )
 
     if not payload.dry_run:
         history_entry = Broadcast(
-            type=payload.type,
+            type="advisory" if payload.target_type == "advisory" else "general",
             target_type=payload.target_type,
             subject=payload.subject,
             message=payload.message,
@@ -536,5 +483,5 @@ async def broadcast_message(
     return BroadcastResult(
         recipient_count=unique_user_count,
         project_count=project_count,
-        unique_user_count=unique_user_count,
+        uncomparable_versions=uncomparable,
     )

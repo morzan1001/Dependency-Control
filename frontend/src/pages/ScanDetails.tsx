@@ -17,12 +17,12 @@ import { CodeBlock } from '@/components/ui/code-block'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
 import { isPostProcessorResult } from '@/lib/post-processors'
-import { SCAN_STATUS_COMPLETED_WITH_ERRORS } from '@/lib/scan-status'
+import { SCAN_STATUS_COMPLETED_WITH_ERRORS, isScanInProgress } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { logger } from '@/lib/logger'
-import { formatDateTime, shortCommitHash } from '@/lib/utils'
+import { formatDateTime, getErrorMessage, shortCommitHash } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -251,13 +251,13 @@ export default function ScanDetails() {
                             description: "A new scan has been started.",
                           })
                      },
-                     onError: () => {
-                          toast.error("Error", {
-                            description: "Failed to trigger re-scan.",
+                     onError: (error) => {
+                          toast.error("Re-scan not started", {
+                            description: getErrorMessage(error),
                           })
                      }
                 })} 
-                disabled={triggerRescanMutation.isPending || !scan.sbom_refs || scan.sbom_refs.length === 0}
+                disabled={triggerRescanMutation.isPending || isScanInProgress(scan.status) || !scan.sbom_refs || scan.sbom_refs.length === 0}
             >
                 <RefreshCw className={`mr-2 h-4 w-4 ${triggerRescanMutation.isPending ? 'animate-spin' : ''}`} />
                 Trigger Re-scan

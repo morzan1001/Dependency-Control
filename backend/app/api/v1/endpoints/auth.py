@@ -39,6 +39,7 @@ from app.core import security
 from app.core.cache import cache_service
 from app.core.config import settings
 from app.core.constants import (
+    AUTH_PROVIDER_LOCAL,
     OIDC_HTTP_TIMEOUT_SECONDS,
     OIDC_STATE_TTL_SECONDS,
     TOTP_VALID_WINDOW,
@@ -52,8 +53,8 @@ from app.core.metrics import (
     auth_signups_total,
 )
 from app.models.system import SystemSettings
-from app.models.user import User
-from app.repositories import UserRepository
+from app.models.user import User, is_local_account
+from app.repositories.users import UserRepository
 from app.schemas.auth import (
     EmailVerifyResponse,
     ForgotPasswordResponse,
@@ -62,7 +63,7 @@ from app.schemas.auth import (
     VerificationEmailResponse,
 )
 from app.schemas.token import Token
-from app.schemas.user import User as UserSchema
+from app.schemas.user import UserResponse
 from app.schemas.user import UserPasswordReset, UserSignup
 
 logger = logging.getLogger(__name__)
@@ -128,9 +129,7 @@ def _enforce_2fa_setup_scope(user: dict, system_config: SystemSettings) -> list 
     if user.get("totp_enabled", False):
         return None
 
-    auth_provider = user.get("auth_provider")
-    is_local = not auth_provider or auth_provider == "local"
-    if system_config.enforce_2fa and is_local:
+    if system_config.enforce_2fa and is_local_account(user.get("auth_provider")):
         return ["auth:setup_2fa"]
 
     return None
@@ -185,11 +184,10 @@ async def login_access_token(
     system_config = await deps.get_system_settings(db)
 
     # Skip email-verification gate for OIDC users; trust the provider.
-    auth_provider = user.get("auth_provider", "local")
     if (
         system_config.enforce_email_verification
         and not user.get("is_verified", False)
-        and (not auth_provider or auth_provider == "local")
+        and is_local_account(user.get("auth_provider"))
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -264,7 +262,7 @@ async def refresh_token(
     }
 
 
-@router.post("/signup", response_model=UserSchema, summary="Register a new user", responses=RESP_400_403)
+@router.post("/signup", response_model=UserResponse, summary="Register a new user", responses=RESP_400_403)
 async def create_user(
     background_tasks: BackgroundTasks,
     user_in: UserSignup,
@@ -280,20 +278,6 @@ async def create_user(
             detail="Signup is currently disabled.",
         )
 
-    user_repo = UserRepository(db)
-
-    if await user_repo.exists_by_username(user_in.username):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The user with this username already exists in the system.",
-        )
-
-    if await user_repo.exists_by_email(user_in.email):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The user with this email already exists in the system.",
-        )
-
     new_user = User(
         email=user_in.email,
         username=user_in.username,
@@ -304,9 +288,9 @@ async def create_user(
         permissions=[],
         is_active=True,
         is_verified=False,
-        auth_provider="local",
+        auth_provider=AUTH_PROVIDER_LOCAL,
     )
-    await user_repo.create(new_user)
+    await UserRepository(db).create(new_user)
 
     await send_verification_email(background_tasks, new_user.email, system_settings=system_config)
 
@@ -323,7 +307,8 @@ async def logout(
     db: DatabaseDep,
 ) -> LogoutResponse:
     """Logout the current user by blacklisting the token JTI and bumping last_logout_at."""
-    from app.repositories import TokenBlacklistRepository, UserRepository
+    from app.repositories.token_blacklist import TokenBlacklistRepository
+    from app.repositories.users import UserRepository
 
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
@@ -367,8 +352,7 @@ async def request_verification_email(
             detail="Email already verified",
         )
 
-    # Gate on the DB SMTP config the provider actually uses, not the env var.
-    if not system_config.smtp_host:
+    if not system_config.email_configured:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=_MSG_EMAIL_NOT_CONFIGURED,
@@ -433,9 +417,6 @@ async def confirm_email_change(token: Annotated[str, Body(embed=True)], db: Data
     if not user or user.get("pending_email") != new_email:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="This email change is no longer pending")
 
-    if await user_repo.exists_by_email(new_email):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email already registered")
-
     await user_repo.update(user_id, {"email": new_email, "pending_email": None, "is_verified": True})
 
     return EmailVerifyResponse(message="Your email address has been changed")
@@ -457,8 +438,7 @@ async def resend_verification_email_public(
         message="If an account with this email exists, a verification email has been sent."
     )
 
-    # Gate on the DB SMTP config the provider actually reads.
-    if not system_config.smtp_host:
+    if not system_config.email_configured:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=_MSG_EMAIL_NOT_CONFIGURED,
@@ -622,7 +602,8 @@ async def _oidc_fetch_user_info(
 
 async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: dict, email: str) -> str:
     """Generate a unique username for a new OIDC user."""
-    base_username = str(user_info.get("preferred_username", email.split("@")[0]))
+    preferred = str(user_info.get("preferred_username") or "").strip()
+    base_username = preferred if preferred and "@" not in preferred else email.split("@")[0]
     username = base_username
     suffix = 0
     while await user_repo.exists_by_username(username):
@@ -635,7 +616,7 @@ async def _generate_unique_oidc_username(user_repo: UserRepository, user_info: d
 
 
 async def _create_oidc_user(
-    db: Any, user_repo: UserRepository, user_info: dict, email: str, system_config: SystemSettings
+    user_repo: UserRepository, user_info: dict, email: str, system_config: SystemSettings
 ) -> dict:
     """Create a new OIDC user, return the persisted user dict."""
     username = await _generate_unique_oidc_username(user_repo, user_info, email)
@@ -649,22 +630,12 @@ async def _create_oidc_user(
     )
 
     await user_repo.create(new_user)
-    from pymongo import ReadPreference
-
-    users_primary = db.users.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    user = await users_primary.find_one({"_id": new_user.id})
-    if not user:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to create user",
-        )
-    return dict(user)
+    return new_user.model_dump(by_alias=True)
 
 
 def _validate_existing_oidc_user(user: dict, email: str) -> None:
     """Verify an existing user can use OIDC and is active."""
-    existing_auth_provider = user.get("auth_provider", "local")
-    if existing_auth_provider == "local" or existing_auth_provider is None:
+    if is_local_account(user.get("auth_provider")):
         if auth_oidc_logins_total:
             auth_oidc_logins_total.labels(status="local_user_blocked").inc()
         logger.warning(f"OIDC login attempt blocked for local user: {email}")
@@ -749,7 +720,7 @@ async def login_oidc_callback(
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
     if not user:
-        user = await _create_oidc_user(db, user_repo, user_info, email, system_config)
+        user = await _create_oidc_user(user_repo, user_info, email, system_config)
     else:
         _validate_existing_oidc_user(user, email)
 
@@ -795,9 +766,8 @@ async def forgot_password(
         message="If an account with this email exists, a password reset email has been sent."
     )
 
-    # Gate on the DB SMTP config the provider actually reads.
     system_config = await deps.get_system_settings(db)
-    if not system_config.smtp_host:
+    if not system_config.email_configured:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=_MSG_EMAIL_NOT_CONFIGURED,
@@ -806,12 +776,7 @@ async def forgot_password(
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
 
-    # Skip OIDC users without a local password.
-    if (
-        user
-        and user.get("is_active", True)
-        and (user.get("auth_provider", "local") == "local" or user.get("hashed_password"))
-    ):
+    if user and user.get("is_active", True) and is_local_account(user.get("auth_provider")):
         await send_password_reset_email(
             background_tasks,
             user["email"],
@@ -871,12 +836,10 @@ async def reset_password(request: Request, reset_in: UserPasswordReset, db: Data
             detail=_MSG_USER_INACTIVE,
         )
 
-    auth_provider = user.get("auth_provider", "local")
-    has_password = user.get("hashed_password") is not None
-    if auth_provider != "local" and not has_password:
+    if not is_local_account(user.get("auth_provider")):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Password reset not available for {auth_provider} accounts. Please use your identity provider.",
+            detail=f"Password reset not available for {user['auth_provider']} accounts. Please use your identity provider.",
         )
 
     hashed_password = security.get_password_hash(reset_in.new_password)

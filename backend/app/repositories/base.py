@@ -6,10 +6,36 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pydantic import BaseModel
+from pymongo.errors import BulkWriteError
 
-from app.core.metrics import track_db_operation
 
 logger = logging.getLogger(__name__)
+
+UpdateOps = dict[str, Any] | list[dict[str, Any]]
+
+
+async def find_window(
+    collection: AsyncIOMotorCollection, query: dict[str, Any], limit: int, **find_kwargs: Any
+) -> tuple[list[dict[str, Any]], int]:
+    """The first ``limit`` matches and how many match in total.
+
+    The count costs a round trip only once the read saturates, the only time the two can differ;
+    a caller compares them to tell a truncated result from one that exactly fills the limit.
+    """
+    if limit <= 0:
+        return [], await collection.count_documents(query)
+    rows: list[dict[str, Any]] = await collection.find(query, limit=limit, **find_kwargs).to_list(length=limit)
+    if len(rows) < limit:
+        return rows, len(rows)
+    return rows, await collection.count_documents(query)
+
+
+def and_filters(*filters: dict[str, Any]) -> dict[str, Any]:
+    """Every non-empty filter under ``$and``, as a key-by-key merge would let one ``$or`` or ``_id`` replace another."""
+    present = [f for f in filters if f]
+    if len(present) > 1:
+        return {"$and": present}
+    return dict(present[0]) if present else {}
 
 
 class BaseRepository[T: BaseModel]:
@@ -31,17 +57,14 @@ class BaseRepository[T: BaseModel]:
         return [self.model_class(**doc) for doc in docs]
 
     async def get_by_id(self, id: str) -> T | None:
-        with track_db_operation(self.collection_name, "find_one"):
-            data = await self.collection.find_one({"_id": id})
+        data = await self.collection.find_one({"_id": id})
         return self._to_model(data)
 
     async def get_raw_by_id(self, id: str) -> dict[str, Any] | None:
-        with track_db_operation(self.collection_name, "find_one"):
-            return await self.collection.find_one({"_id": id})
+        return await self.collection.find_one({"_id": id})
 
     async def find_one(self, query: dict[str, Any]) -> T | None:
-        with track_db_operation(self.collection_name, "find_one"):
-            data = await self.collection.find_one(query)
+        data = await self.collection.find_one(query)
         return self._to_model(data)
 
     async def find_one_raw(
@@ -49,8 +72,7 @@ class BaseRepository[T: BaseModel]:
         query: dict[str, Any],
         projection: dict[str, int] | None = None,
     ) -> dict[str, Any] | None:
-        with track_db_operation(self.collection_name, "find_one"):
-            return await self.collection.find_one(query, projection)
+        return await self.collection.find_one(query, projection)
 
     async def find_many(
         self,
@@ -60,15 +82,7 @@ class BaseRepository[T: BaseModel]:
         sort_by: str | None = None,
         sort_order: int = 1,
     ) -> list[T]:
-        # pymongo .limit(0) means unbounded; floor to 1 to avoid loading the whole collection.
-        safe_limit = max(limit, 1)
-        with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find(query)
-            if sort_by:
-                cursor = cursor.sort(sort_by, sort_order)
-            cursor = cursor.skip(skip).limit(safe_limit)
-            docs = await cursor.to_list(safe_limit)
-        return self._to_model_list(docs)
+        return self._to_model_list(await self.find_many_raw(query, skip, limit, sort_by, sort_order))
 
     async def find_many_raw(
         self,
@@ -79,80 +93,76 @@ class BaseRepository[T: BaseModel]:
         sort_order: int = 1,
         projection: dict[str, int] | None = None,
     ) -> list[dict[str, Any]]:
-        with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find(query, projection)
-            if sort_by:
-                cursor = cursor.sort(sort_by, sort_order)
-            cursor = cursor.skip(skip).limit(limit)
-            return await cursor.to_list(limit)
+        if limit <= 0:
+            return []
+        cursor = self.collection.find(query, projection)
+        if sort_by:
+            # Mongo leaves the order among equal keys open per query, so skip/limit pages would overlap.
+            cursor = cursor.sort([(sort_by, sort_order)] if sort_by == "_id" else [(sort_by, sort_order), ("_id", 1)])
+        cursor = cursor.skip(skip).limit(limit)
+        return await cursor.to_list(limit)
 
     async def count(self, query: dict[str, Any] | None = None) -> int:
-        with track_db_operation(self.collection_name, "count"):
-            return await self.collection.count_documents(query or {})
+        return await self.collection.count_documents(query or {})
 
     async def exists(self, query: dict[str, Any]) -> bool:
-        with track_db_operation(self.collection_name, "find_one"):
-            return await self.collection.find_one(query, {"_id": 1}) is not None
+        return await self.collection.find_one(query, {"_id": 1}) is not None
 
     async def create(self, model: T) -> T:
-        with track_db_operation(self.collection_name, "insert_one"):
-            await self.collection.insert_one(model.model_dump(by_alias=True))
+        await self.collection.insert_one(model.model_dump(by_alias=True))
         return model
 
     async def create_raw(self, data: dict[str, Any]) -> None:
-        with track_db_operation(self.collection_name, "insert_one"):
-            await self.collection.insert_one(data)
+        await self.collection.insert_one(data)
 
     async def create_many_raw(self, docs: list[dict[str, Any]]) -> int:
         """ordered=False so a duplicate-key error doesn't abort the batch."""
         if not docs:
             return 0
-        with track_db_operation(self.collection_name, "insert_many"):
-            try:
-                result = await self.collection.insert_many(docs, ordered=False)
-                return len(result.inserted_ids)
-            except Exception as e:
-                # BulkWriteError can still report partial success.
-                if hasattr(e, "details") and "writeErrors" in e.details:
-                    write_errors = e.details["writeErrors"]
-                    inserted_count: int = e.details.get("nInserted", 0)
-                    logger.warning(
-                        "Bulk insert into %s dropped %d of %d docs (first error: %s)",
-                        self.collection_name,
-                        len(write_errors),
-                        len(docs),
-                        (write_errors[0].get("errmsg", "") or "")[:200] if write_errors else "",
-                    )
-                    return inserted_count
+        try:
+            result = await self.collection.insert_many(docs, ordered=False)
+            return len(result.inserted_ids)
+        except BulkWriteError as e:
+            if e.details.get("writeConcernErrors"):
                 raise
+            write_errors = e.details["writeErrors"]
+            logger.warning(
+                "Bulk insert into %s dropped %d of %d docs (first error: %s)",
+                self.collection_name,
+                len(write_errors),
+                len(docs),
+                (write_errors[0].get("errmsg", "") or "")[:200] if write_errors else "",
+            )
+            inserted_count: int = e.details.get("nInserted", 0)
+            return inserted_count
 
     async def update(self, id: str, update_data: dict[str, Any]) -> T | None:
         if update_data:
-            with track_db_operation(self.collection_name, "update_one"):
-                await self.collection.update_one({"_id": id}, {"$set": update_data})
+            await self.collection.update_one({"_id": id}, {"$set": update_data})
         return await self.get_by_id(id)
 
-    async def update_raw(self, id: str, update_ops: dict[str, Any]) -> None:
-        with track_db_operation(self.collection_name, "update_one"):
-            await self.collection.update_one({"_id": id}, update_ops)
+    async def update_raw(self, id: str, update_ops: UpdateOps, guard: dict[str, Any] | None = None) -> bool:
+        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
+
+        ``guard`` joins the write's own filter so a condition established beforehand cannot go
+        stale in between. False when it no longer held.
+        """
+        result = await self.collection.update_one({"_id": id, **(guard or {})}, update_ops)
+        return bool(result.matched_count)
 
     async def update_many(self, query: dict[str, Any], update_data: dict[str, Any]) -> int:
-        with track_db_operation(self.collection_name, "update_many"):
-            result = await self.collection.update_many(query, {"$set": update_data})
+        result = await self.collection.update_many(query, {"$set": update_data})
         return result.modified_count
 
     async def upsert(self, query: dict[str, Any], data: dict[str, Any]) -> None:
-        with track_db_operation(self.collection_name, "update_one"):
-            await self.collection.update_one(query, {"$set": data}, upsert=True)
+        await self.collection.update_one(query, {"$set": data}, upsert=True)
 
     async def delete(self, id: str) -> bool:
-        with track_db_operation(self.collection_name, "delete_one"):
-            result = await self.collection.delete_one({"_id": id})
+        result = await self.collection.delete_one({"_id": id})
         return result.deleted_count > 0
 
     async def delete_many(self, query: dict[str, Any]) -> int:
-        with track_db_operation(self.collection_name, "delete_many"):
-            result = await self.collection.delete_many(query)
+        result = await self.collection.delete_many(query)
         return result.deleted_count
 
     async def aggregate(
@@ -162,22 +172,25 @@ class BaseRepository[T: BaseModel]:
         allow_disk_use: bool = False,
     ) -> list[dict[str, Any]]:
         """allow_disk_use lets mongod spill large $group/$sort sets to disk past the 100MB limit."""
-        with track_db_operation(self.collection_name, "aggregate"):
-            cursor = (
-                self.collection.aggregate(pipeline, allowDiskUse=True)
-                if allow_disk_use
-                else self.collection.aggregate(pipeline)
-            )
-            return await cursor.to_list(limit)
+        cursor = (
+            self.collection.aggregate(pipeline, allowDiskUse=True)
+            if allow_disk_use
+            else self.collection.aggregate(pipeline)
+        )
+        return await cursor.to_list(limit)
 
-    async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T | None, None]:
+    async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T, None]:
         async for doc in self.collection.find(query or {}):
-            yield self._to_model(doc)
+            yield self.model_class(**doc)
 
     async def iterate_raw(
         self,
         query: dict[str, Any] | None = None,
         projection: dict[str, int] | None = None,
+        sort: list[tuple[str, int]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        async for doc in self.collection.find(query or {}, projection):
+        cursor = self.collection.find(query or {}, projection)
+        if sort:
+            cursor = cursor.sort(sort)
+        async for doc in cursor:
             yield doc

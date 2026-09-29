@@ -1,11 +1,23 @@
 """Repository for user database operations."""
 
 import re
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
-from app.core.metrics import track_db_operation
+from pymongo.errors import DuplicateKeyError
+
 from app.models.user import User
 from app.repositories.base import BaseRepository
+
+_TAKEN = {"email": "Email already registered", "username": "Username already taken"}
+
+
+class IdentityTakenError(Exception):
+    """Another account holds this email or username; the API answers 400 with the message."""
+
+    def __init__(self, field: str) -> None:
+        super().__init__(_TAKEN[field])
 
 
 def _email_query(email: str) -> dict[str, Any]:
@@ -13,9 +25,33 @@ def _email_query(email: str) -> dict[str, Any]:
     return {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
 
 
+@contextmanager
+def _unique_index_as_identity_taken() -> Iterator[None]:
+    try:
+        yield
+    except DuplicateKeyError as exc:
+        field = next(iter((exc.details or {}).get("keyPattern") or {}), None)
+        if field not in _TAKEN:
+            raise
+        raise IdentityTakenError(field) from exc
+
+
 class UserRepository(BaseRepository[User]):
     collection_name = "users"
     model_class = User
+
+    async def create(self, model: User) -> User:
+        # The unique index compares exactly, so only this check sees a case variant of a stored address.
+        if await self.exists_by_email(model.email):
+            raise IdentityTakenError("email")
+        with _unique_index_as_identity_taken():
+            return await super().create(model)
+
+    async def update(self, id: str, update_data: dict[str, Any]) -> User | None:
+        if "email" in update_data and await self.exists({"_id": {"$ne": id}, **_email_query(update_data["email"])}):
+            raise IdentityTakenError("email")
+        with _unique_index_as_identity_taken():
+            return await super().update(id, update_data)
 
     async def get_raw_by_username(self, username: str) -> dict[str, Any] | None:
         return await self.find_one_raw({"username": username})
@@ -28,9 +64,8 @@ class UserRepository(BaseRepository[User]):
         return await self.find_one_raw({**_email_query(email), "is_verified": True})
 
     async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
-        with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find({"_id": {"$in": user_ids}})
-            return await cursor.to_list(None)
+        cursor = self.collection.find({"_id": {"$in": user_ids}})
+        return await cursor.to_list(None)
 
     async def exists_by_username(self, username: str) -> bool:
         return await self.exists({"username": username})

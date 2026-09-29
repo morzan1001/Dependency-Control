@@ -125,7 +125,7 @@ export function EPSSKEVResults({ data }: Readonly<{ data: EPSSKEVSummary }>) {
                 <ShieldAlert className="h-6 w-6 text-severity-critical" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">In CISA KEV</p>
+                <p className="text-sm text-muted-foreground">KEV CVEs at scan time</p>
                 <p className="text-2xl font-bold">{data.kev_matches}</p>
                 {data.kev_ransomware > 0 && (
                   <p className="text-xs text-severity-critical flex items-center gap-1">

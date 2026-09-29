@@ -161,3 +161,42 @@ async def test_only_vulnerability_records_are_handed_to_the_service(monkeypatch)
     assert response.epss_kev_summary["total_vulnerabilities"] == 1
     # The secret finding is still returned; it is only kept out of the enrichment batch.
     assert len(response.findings) == 2
+
+
+@pytest.mark.asyncio
+async def test_the_kev_card_names_the_bundled_cve_the_enrichment_marks(monkeypatch):
+    from app.schemas.enrichment import VulnerabilityEnrichment
+    from app.schemas.recommendation import RecommendationType
+    from app.services.enrichment.service import apply_enrichments
+
+    first, second = "CVE-2023-0001", "CVE-2023-0002"
+    live = {
+        first: VulnerabilityEnrichment(cve=first, risk_score=20.0),
+        second: VulnerabilityEnrichment(cve=second, risk_score=40.0, is_kev=True),
+    }
+
+    class _Bundled:
+        name = "osv"
+
+        async def analyze(self, sbom, settings=None, parsed_components=None):
+            advisory = {"id": "ALAS2-2023-2001", "aliases": [first, second], "severity": "HIGH", "summary": "s"}
+            return {
+                "osv_vulnerabilities": [
+                    {"component": _VULNERABLE_COMPONENT, "version": "2.31.0", "vulnerabilities": [advisory]}
+                ]
+            }
+
+    class _KevService(_SpyService):
+        async def enrich_findings(self, findings):
+            for finding in findings:
+                apply_enrichments(finding["details"], live)
+            return live
+
+    serve_analyzer(monkeypatch, "osv", _Bundled())
+    monkeypatch.setattr(_SERVICE_ATTRIBUTE, _KevService)
+
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    [kev_card] = [r for r in response.recommendations if r["type"] == RecommendationType.KNOWN_EXPLOIT]
+    assert kev_card["action"]["cves"] == [second]

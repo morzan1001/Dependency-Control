@@ -25,8 +25,7 @@ _BAD_REQUEST = 400
 _FORBIDDEN = 403
 _NOT_FOUND = 404
 _MSG_CREDENTIALS = "Could not validate credentials"
-# Stored datetimes come back naive and .timestamp() reads them in the process timezone, so the
-# logout lies far enough ahead to stay ahead of any offset.
+# The logout lies a whole day after the token was issued, so no clock offset can reorder them.
 _LOGOUT_AFTER_ISSUE = timedelta(days=1)
 
 
@@ -476,3 +475,19 @@ class TestRequestVerificationSmtpGate:
         assert result.message == "Verification email sent"
         background_tasks.add_task.assert_called_once()
         assert background_tasks.add_task.call_args.kwargs["system_settings"] is system_config
+
+
+class TestForgotPasswordLocalAccountsOnly:
+    def test_an_sso_account_with_a_password_gets_no_reset_mail(self):
+        send_mock = AsyncMock()
+        sso_user = {
+            "email": "user@test.com",
+            "username": "user",
+            "is_active": True,
+            "auth_provider": "gitlab",
+            "hashed_password": "x",
+        }
+
+        _run_forgot_password(user=sso_user, send_mock=send_mock)
+
+        send_mock.assert_not_awaited()

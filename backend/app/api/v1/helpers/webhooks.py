@@ -9,7 +9,7 @@ from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_ROLE_ADMIN, TEAM_ROLE_ME
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.models.webhook import Webhook
-from app.repositories import WebhookRepository
+from app.repositories.webhooks import WebhookRepository
 
 
 async def get_webhook_or_404(

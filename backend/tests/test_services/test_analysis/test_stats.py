@@ -4,22 +4,26 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.core.constants import REACHABILITY_LEVEL_IMPORT, REACHABILITY_LEVEL_SYMBOL
-from app.core.risk_scoring import CONFIRMED_REACHABLE_RISK_MODIFIER, UNREACHABLE_RISK_MODIFIER
 from app.models.stats import Stats
+from app.schemas.enrichment import EPSSData, KEVEntry
 from app.services.analysis.stats import (
     _HIGH_RISK_SAMPLE_CAP,
     _format_datetime,
     _numeric,
-    _reach_modifier,
     build_epss_kev_summary,
     build_reachability_summary,
     calculate_comprehensive_stats,
     compute_stats,
 )
+from app.services.enrichment.service import _build_enrichment, apply_enrichments
 from tests.mocks.fake_mongo import FakeDatabase
 
 _HIGH_RISK_POPULATION = _HIGH_RISK_SAMPLE_CAP + 5
+
+
+def _epss(cve, score):
+    return EPSSData(cve=cve, epss_score=score, percentile=0.9, date="2024-01-01")
+
 
 # ---------------------------------------------------------------------------
 # _format_datetime
@@ -61,22 +65,27 @@ def _make_finding(
     exploit_maturity="unknown",
     risk_score=None,
 ):
-    details = {"exploit_maturity": exploit_maturity}
+    """A single-advisory finding as enrichment leaves it: the advisory and the roll-up carry the same values."""
+    enrichment: dict = {}
     if epss_score is not None:
-        details["epss_score"] = epss_score
+        enrichment["epss_score"] = epss_score
     if in_kev:
-        details["in_kev"] = True
+        enrichment["in_kev"] = True
     if kev_due_date is not None:
-        details["kev_due_date"] = kev_due_date
+        enrichment["kev_due_date"] = kev_due_date
     if kev_ransomware_use:
-        details["kev_ransomware_use"] = True
+        enrichment["kev_ransomware_use"] = True
     if risk_score is not None:
-        details["risk_score"] = risk_score
+        enrichment["risk_score"] = risk_score
     return {
-        "finding_id": finding_id,
+        "finding_id": f"{component}:{version}",
         "component": component,
         "version": version,
-        "details": details,
+        "details": {
+            "exploit_maturity": exploit_maturity,
+            **enrichment,
+            "vulnerabilities": [{"id": finding_id, **enrichment}],
+        },
     }
 
 
@@ -331,7 +340,8 @@ class TestKevRowsCarryRealCveIds:
             ]
         )
         result = build_epss_kev_summary([finding])
-        assert [d["cve"] for d in result["kev_details"]] == ["CVE-2025-66614"]
+        # The resolved CVE, as canonical_cve names it for the hotspot and impact pages.
+        assert [d["cve"] for d in result["kev_details"]] == ["CVE-2026-24880"]
         assert result["kev_details"][0]["due_date"] == "2026-08-07"
 
     def test_one_row_per_known_exploited_cve(self):
@@ -352,17 +362,9 @@ class TestKevRowsCarryRealCveIds:
         result = build_epss_kev_summary([finding])
         assert result["kev_details"][0]["cve"] == "GHSA-9f52-rjqv-25qv"
 
-    def test_kev_flag_only_on_the_document_falls_back_to_its_alias(self):
-        finding = _aggregated_vuln_finding(
-            [{"id": "GHSA-other", "severity": "HIGH"}],
-            aliases=["CVE-2025-77777"],
-        )
-        result = build_epss_kev_summary([finding])
-        assert result["kev_details"][0]["cve"] == "CVE-2025-77777"
-
     def test_high_risk_row_uses_the_cve_too(self):
         finding = _aggregated_vuln_finding(
-            [{"id": "CVE-2025-66614", "severity": "CRITICAL"}],
+            [{"id": "CVE-2025-66614", "severity": "CRITICAL", "risk_score": 91.0}],
             in_kev=False,
             risk_score=91.0,
         )
@@ -370,22 +372,52 @@ class TestKevRowsCarryRealCveIds:
         assert result["high_risk_cves"][0]["cve"] == "CVE-2025-66614"
 
 
-class TestBuildEpssKevSummaryFindingId:
-    def test_finding_id_preferred_over_id(self):
-        finding = _make_finding(finding_id="CVE-PREFERRED", risk_score=80.0)
-        finding["id"] = "CVE-FALLBACK"
-        result = build_epss_kev_summary([finding])
-        assert result["high_risk_cves"][0]["cve"] == "CVE-PREFERRED"
-
-    def test_id_used_as_fallback(self):
+class TestVulnerabilityIdsNeverShowTheFindingId:
+    def test_a_reachability_row_without_advisories_names_no_cve(self):
         finding = {
-            "id": "CVE-FALLBACK",
-            "component": "pkg",
-            "version": "1.0",
-            "details": {"risk_score": 80.0, "exploit_maturity": "unknown"},
+            "finding_id": "lodash:4.17.20",
+            "component": "lodash",
+            "details": {"reachability": {"is_reachable": True, "analysis_level": "symbol"}},
         }
-        result = build_epss_kev_summary([finding])
-        assert result["high_risk_cves"][0]["cve"] == "CVE-FALLBACK"
+        summary = build_reachability_summary([finding], [], 1)
+        assert summary["reachable_vulnerabilities"][0]["cve"] == ""
+
+
+class TestHighRiskRowsNameTheirOwnCve:
+    def test_each_row_carries_its_own_cves_kev_epss_and_score(self):
+        """log4j-core@2.14.1: the record's KEV flag and EPSS belong to CVE-2021-44228, not its first CVE."""
+        finding = {
+            "component": "log4j-core",
+            "version": "2.14.1",
+            "details": {
+                "vulnerabilities": [
+                    {"id": "CVE-2021-44832", "severity": "MEDIUM", "cvss_score": 6.6},
+                    {"id": "CVE-2021-44228", "severity": "CRITICAL", "cvss_score": 10.0},
+                ]
+            },
+        }
+        kev = KEVEntry(
+            cve="CVE-2021-44228",
+            vendor_project="Apache",
+            product="Log4j2",
+            vulnerability_name="Log4Shell",
+            date_added="2021-12-10",
+            short_description="RCE",
+            required_action="patch",
+            due_date="2021-12-24",
+        )
+        apply_enrichments(
+            finding["details"],
+            {
+                "CVE-2021-44832": _build_enrichment("CVE-2021-44832", None, _epss("CVE-2021-44832", 0.02)),
+                "CVE-2021-44228": _build_enrichment("CVE-2021-44228", kev, _epss("CVE-2021-44228", 0.97)),
+            },
+        )
+        rows = build_epss_kev_summary([finding])["high_risk_cves"]
+        assert [(r["cve"], r["in_kev"], r["epss_score"], r["exploit_maturity"]) for r in rows] == [
+            ("CVE-2021-44228", True, 0.97, "active")
+        ]
+        assert rows[0]["risk_score"] == 84.8
 
 
 # ---------------------------------------------------------------------------
@@ -418,11 +450,11 @@ def _make_reachable_finding(
     if reachable_functions is not None:
         reachability_data["matched_symbols"] = reachable_functions
     return {
-        "finding_id": finding_id,
+        "finding_id": f"{component}:{version}",
         "component": component,
         "version": version,
         "severity": severity,
-        "details": {"reachability": reachability_data},
+        "details": {"vulnerabilities": [{"id": finding_id}], "reachability": reachability_data},
     }
 
 
@@ -703,7 +735,7 @@ async def _seed(findings):
 
 async def _risk_score(findings):
     db = await _seed(findings)
-    stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+    stats = (await calculate_comprehensive_stats(db, _W5_SCAN)).stats
     return stats.risk_score
 
 
@@ -801,29 +833,6 @@ class TestNumeric:
 
     def test_missing_value_is_none(self):
         assert _numeric(None) is None
-
-
-# ---------------------------------------------------------------------------
-# _reach_modifier
-# ---------------------------------------------------------------------------
-
-
-class TestReachModifier:
-    def test_unreachable_applies_unreachable_modifier(self):
-        assert _reach_modifier(False, "any_level") == UNREACHABLE_RISK_MODIFIER
-        assert _reach_modifier(False, None) == UNREACHABLE_RISK_MODIFIER
-
-    def test_confirmed_reachable_applies_confirmed_modifier(self):
-        assert _reach_modifier(True, REACHABILITY_LEVEL_SYMBOL) == CONFIRMED_REACHABLE_RISK_MODIFIER
-
-    def test_likely_reachable_defaults_to_one(self):
-        assert _reach_modifier(True, REACHABILITY_LEVEL_IMPORT) == 1.0
-
-    def test_untiered_reachable_defaults_to_one(self):
-        assert _reach_modifier(True, None) == 1.0
-
-    def test_unanalyzed_defaults_to_one(self):
-        assert _reach_modifier(None, REACHABILITY_LEVEL_SYMBOL) == 1.0
 
 
 # ---------------------------------------------------------------------------

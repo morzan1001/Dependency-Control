@@ -9,8 +9,8 @@ bare dependency name onto a qualified finding component.
 import asyncio
 
 from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
-from app.api.v1.helpers.analytics import build_findings_severity_map
-from app.services.aggregation.components import component_match_query
+from app.api.v1.helpers.analytics import severity_counts_from_details
+from app.services.component_identity import build_component_index, component_match_query
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -21,6 +21,15 @@ def _graph(dependencies, findings_map):
 
 def _finding(component, severity="HIGH"):
     return {"component": component, "severity": severity}
+
+
+def build_findings_map(findings):
+    """The tree overlay's map: one CVE per finding, counted under its component."""
+    by_component = {}
+    for index, finding in enumerate(findings):
+        advisory = {"id": f"CVE-2026-{index:04d}", "severity": finding["severity"]}
+        by_component.setdefault(finding["component"], []).append({"vulnerabilities": [advisory]})
+    return build_component_index({c: severity_counts_from_details(d) for c, d in by_component.items()})
 
 
 def _dep(name, version="2.20.2", purl=None):
@@ -36,9 +45,7 @@ def _dep(name, version="2.20.2", purl=None):
 
 class TestBareDependencyNameResolvesQualifiedFinding:
     def test_maven_artifact_id_finds_group_qualified_component(self):
-        findings_map = build_findings_severity_map(
-            [_finding("com.fasterxml.jackson.core:jackson-databind", "CRITICAL")]
-        )
+        findings_map = build_findings_map([_finding("com.fasterxml.jackson.core:jackson-databind", "CRITICAL")])
 
         graph = _graph([_dep("jackson-databind")], findings_map)
 
@@ -48,7 +55,7 @@ class TestBareDependencyNameResolvesQualifiedFinding:
         assert node.findings_severity.critical == 1
 
     def test_exact_component_still_wins_over_the_artifact_alias(self):
-        findings_map = build_findings_severity_map(
+        findings_map = build_findings_map(
             [
                 _finding("@angular-devkit/core", "HIGH"),
                 _finding("@angular/core", "CRITICAL"),
@@ -68,7 +75,7 @@ class TestBareDependencyNameResolvesQualifiedFinding:
 
     def test_ambiguous_bare_name_gets_no_overlay(self):
         """Three packages end in 'core'; a bare 'core' dependency must not inherit one of them."""
-        findings_map = build_findings_severity_map([_finding("@angular/core"), _finding("@messageformat/core")])
+        findings_map = build_findings_map([_finding("@angular/core"), _finding("@messageformat/core")])
 
         graph = _graph([_dep("core", "21.1.5", purl="pkg:npm/%40angular/core@21.1.5")], findings_map)
 
@@ -111,14 +118,14 @@ class TestAliasLookupIsCaseInsensitive:
     """
 
     def test_mixed_case_maven_artifact_resolves_its_qualified_finding(self):
-        findings_map = build_findings_severity_map([_finding("xerces:xercesImpl", "HIGH")])
+        findings_map = build_findings_map([_finding("xerces:xercesImpl", "HIGH")])
 
         graph = _graph([_dep("xercesImpl", "2.12.2", purl="pkg:maven/xerces/xercesImpl@2.12.2")], findings_map)
 
         assert graph.nodes[0].findings_count == 1
 
     def test_vuln_count_map_resolves_a_mixed_case_dependency_name(self):
-        from app.services.aggregation.components import build_component_index, lookup_component
+        from app.services.component_identity import build_component_index, lookup_component
 
         counts = build_component_index({"com.zaxxer:HikariCP": 4})
 

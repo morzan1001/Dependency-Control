@@ -45,6 +45,25 @@ class FindingType(str, Enum):
     OTHER = "other"
 
 
+CRYPTO_FINDING_TYPES = frozenset(t.value for t in FindingType if t.value.startswith("crypto_"))
+# Findings a scanner places at a source location; their waivers bind by match signature and follow line drift.
+LOCATION_FINDING_TYPES = frozenset(
+    {FindingType.SAST, FindingType.IAC, FindingType.SECRET, FindingType.CRYPTO_KEY_MANAGEMENT}
+)
+
+# Types whose component is a package name; every other type anchors on a file path or asset.
+PACKAGE_FINDING_TYPES = frozenset(
+    {
+        FindingType.VULNERABILITY,
+        FindingType.OUTDATED,
+        FindingType.LICENSE,
+        FindingType.EOL,
+        FindingType.QUALITY,
+        FindingType.MALWARE,
+    }
+)
+
+
 class Finding(BaseModel):
     id: str = Field(..., description="Unique identifier for the finding")
     type: FindingType = Field(..., description="Type of finding")

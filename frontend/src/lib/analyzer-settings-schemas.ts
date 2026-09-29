@@ -96,44 +96,14 @@ export const ANALYZER_SETTINGS_SCHEMAS: Record<string, AnalyzerSettingsSchema> =
   deps_dev: {
     title: 'OpenSSF Scorecard Settings',
     description:
-      'Configure the OpenSSF Scorecard thresholds. Lower scores indicate higher supply-chain risk. ' +
-      'Adjust the thresholds to match your risk tolerance.',
+      'Configure the OpenSSF Scorecard threshold. Lower scores indicate higher supply-chain risk. ' +
+      'Adjust the threshold to match your risk tolerance.',
     fields: [
       {
         key: 'scorecard_threshold',
         type: 'number',
         label: 'Flag Threshold',
         description: 'Packages with a Scorecard score below this value will be flagged. Range: 0–10.',
-        default: 5.0,
-        min: 0,
-        max: 10,
-        step: 0.5,
-      },
-      {
-        key: 'scorecard_high_threshold',
-        type: 'number',
-        label: 'HIGH Severity Below',
-        description: 'Scores below this value get HIGH severity. Default: 2.0',
-        default: 2.0,
-        min: 0,
-        max: 10,
-        step: 0.5,
-      },
-      {
-        key: 'scorecard_medium_threshold',
-        type: 'number',
-        label: 'MEDIUM Severity Below',
-        description: 'Scores below this value (but above HIGH) get MEDIUM. Default: 4.0',
-        default: 4.0,
-        min: 0,
-        max: 10,
-        step: 0.5,
-      },
-      {
-        key: 'scorecard_low_threshold',
-        type: 'number',
-        label: 'LOW Severity Below',
-        description: 'Scores below this value (but above MEDIUM) get LOW. Default: 5.0',
         default: 5.0,
         min: 0,
         max: 10,

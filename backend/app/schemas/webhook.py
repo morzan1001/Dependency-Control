@@ -1,11 +1,10 @@
 """Webhook API schemas for request/response validation."""
 
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from app.core.constants import WEBHOOK_EVENT_SCAN_COMPLETED
+from app.core.constants import WEBHOOK_EVENT_SCAN_COMPLETED, WebhookType
 from app.services.webhooks.validation import (
     validate_webhook_event_type,
     validate_webhook_events,
@@ -22,7 +21,7 @@ class WebhookCreate(BaseModel):
     events: list[str]
     secret: str | None = None
     headers: dict[str, str] | None = None
-    webhook_type: Literal["generic", "teams"] | None = None
+    webhook_type: WebhookType | None = None
 
     @field_validator("events")
     @classmethod
@@ -45,7 +44,7 @@ class WebhookUpdate(BaseModel):
     is_active: bool | None = None
     secret: str | None = None
     headers: dict[str, str] | None = None
-    webhook_type: Literal["generic", "teams"] | None = None
+    webhook_type: WebhookType | None = None
 
     @field_validator("events")
     @classmethod
@@ -73,7 +72,7 @@ class WebhookResponse(BaseModel):
     created_at: datetime
     last_triggered_at: datetime | None = None
     last_failure_at: datetime | None = None
-    webhook_type: Literal["generic", "teams"]
+    webhook_type: WebhookType
 
     model_config = ConfigDict(from_attributes=True)
 

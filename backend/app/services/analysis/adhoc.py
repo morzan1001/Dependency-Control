@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import re
 from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Any
@@ -37,29 +36,43 @@ from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
 from app.schemas.bearer import BearerFinding
+from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.kics import KicsQuery
 from app.schemas.opengrep import OpenGrepFinding
 from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator
+from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories, post_processor_factories
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
-from app.services.analyzers.crypto.base import CryptoRuleAnalyzer, crypto_findings_for_assets
+from app.services.analyzers.crypto.base import crypto_findings_for_assets
+from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import VulnerabilityEnrichmentService
 from app.services.reachability_enrichment import (
+    ComponentLanguages,
     _prepare_callgraph,
     _PreparedCallgraph,
     component_language_map,
     enrich_findings_from_callgraphs,
 )
 from app.services.recommendations import recommendation_engine
-from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, parse_sbom
-from app.services.stats import _resolve_finding_id_query
+from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, merge_duplicate_dependencies, parse_sbom
+from app.services.waivers.matching import (
+    MatchFinding,
+    apply_waivers_to_findings,
+    bind_legacy_signatures,
+    record_matches,
+    roll_up_advisories,
+    route_waiver,
+    waive_advisories,
+    waiver_criteria,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -157,21 +170,6 @@ _CRYPTO_ANALYZER_NO_EQUIVALENT: dict[str, str] = {
 }
 
 
-# The finding types the registered rule-driven analyzers own. A seeded rule outside them belongs
-# to an analyzer with its own grading logic: the certificate-lifecycle rule constrains nothing,
-# so the matcher alone would fire it on every asset in the CBOM.
-def _rule_driven_finding_types() -> frozenset[str]:
-    types: set[str] = set()
-    for factory in analyzer_factories.values():
-        analyzer = factory()
-        if isinstance(analyzer, CryptoRuleAnalyzer):
-            types.update(finding_type.value for finding_type in analyzer.finding_types)
-    return frozenset(types)
-
-
-_RULE_DRIVEN_FINDING_TYPES: frozenset[str] = _rule_driven_finding_types()
-
-
 def _hosts(*urls: str) -> str:
     """The distinct hosts behind the given endpoints, read off the constants the analyzers use
     so a note can never name somewhere the code no longer calls."""
@@ -222,27 +220,6 @@ _POSTED_CALLGRAPH_ID = "posted"
 
 _WAIVERS_GLOBAL = "global"
 _WAIVERS_NONE = "none"
-_SCOPE_FINDING = "finding"
-# A rule-scope waiver spans every file, so the component it was taken from is not a criterion.
-_SCOPE_RULE = "rule"
-# The waiver UI stores this in place of a field the user left unset.
-_UNCONSTRAINED_WAIVER_VALUE = "Unknown"
-
-_WAIVER_FINDING_ID = "finding_id"
-_WAIVER_PACKAGE_NAME = "package_name"
-_WAIVER_PACKAGE_VERSION = "package_version"
-_WAIVER_FINDING_TYPE = "finding_type"
-
-# Waiver field -> record field, mirroring the query the scan-backed path builds.
-_WAIVER_FIELD_MAP: tuple[tuple[str, str], ...] = (
-    (_WAIVER_FINDING_ID, "finding_id"),
-    (_WAIVER_PACKAGE_NAME, "component"),
-    (_WAIVER_PACKAGE_VERSION, "version"),
-    (_WAIVER_FINDING_TYPE, "type"),
-)
-# A vulnerability waiver narrows documents but never by type: the advisory it names only
-# ever lives in a vulnerability document, whatever ``finding_type`` the waiver carries.
-_VULNERABILITY_SCOPE_FIELDS = tuple(pair for pair in _WAIVER_FIELD_MAP if pair[0] != _WAIVER_FINDING_TYPE)
 
 
 class AdhocInputTooLarge(Exception):
@@ -622,7 +599,7 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
     parsed_inputs: list[_ParsedInput] = []
     for index, sbom in enumerate(request.sboms):
         position = index + 1
-        label = f"sbom#{position}"
+        label = _SBOM_POSITION.format(position=position)
         try:
             parsed = parse_sbom(sbom)
         except Exception as exc:
@@ -687,7 +664,8 @@ def _aggregate_crypto_rules(
         report.skipped[_CRYPTO_RULES] = _NO_CRYPTO_ASSETS
         return
 
-    rules = [rule for rule in load_seed_rules() if rule.enabled and rule.finding_type in _RULE_DRIVEN_FINDING_TYPES]
+    # A seeded lifecycle or cipher rule constrains no subject, so the matcher alone would fire it on every asset.
+    rules = [rule for rule in load_seed_rules() if rule.enabled and rule.finding_type in RULE_DRIVEN_FINDING_TYPES]
     for parsed_input in parsed_inputs:
         assets = [
             CryptoAsset(project_id=_ADHOC_SCOPE, scan_id=_ADHOC_SCOPE, **asset.model_dump())
@@ -703,22 +681,27 @@ def _aggregate_crypto_rules(
     _record_ran(report, _CRYPTO_RULES)
 
 
-async def _enrich_vulnerabilities(records: list[dict[str, Any]], report: AnalyzerReport) -> dict[str, Any]:
-    """Add EPSS/KEV to the vulnerability records through a service private to this request.
+async def _enrich_vulnerabilities(
+    records: list[dict[str, Any]], report: AnalyzerReport
+) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
+    """Add EPSS/KEV to the vulnerability records through a service private to this request;
+    returns the EPSS/KEV summary and the per-CVE enrichment.
 
     The module singleton carries a mutable GitHub token shared with background scans.
     """
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     service = VulnerabilityEnrichmentService()
+    threat_intel: dict[str, VulnerabilityEnrichment] = {}
     try:
-        await service.enrich_findings(vulnerabilities)
+        threat_intel = await service.enrich_findings(vulnerabilities)
         _record_ran(report, _ENRICHMENT)
     except Exception as exc:
         logger.warning("adhoc: EPSS/KEV enrichment failed: %s", exc)
         _record_errored(report, _ENRICHMENT, str(exc))
     finally:
         await service.close()
-    return dict(build_epss_kev_summary(vulnerabilities))
+    refresh_vulnerability_info(records)
+    return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
 
 def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], _PreparedCallgraph]:
@@ -731,21 +714,21 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     if resolved_format == "unknown":
         raise ValueError(_UNDETECTABLE_FORMAT)
 
-    language = payload.get("language") or (_MADGE_LANGUAGE if resolved_format == _MADGE_FORMAT else None)
-    if not language:
+    raw_language = payload.get("language") or (_MADGE_LANGUAGE if resolved_format == _MADGE_FORMAT else None)
+    if not raw_language:
         raise ValueError(_LANGUAGE_REQUIRED.format(callgraph_format=resolved_format))
+    language = canonical_callgraph_language(str(raw_language))
 
     parser = {_MADGE_FORMAT: parse_madge_format, "generic": parse_generic_format}.get(resolved_format)
     if parser is None:
         raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
 
-    imports, _calls, module_usage, analyzed_modules = parser(data, str(language))
-    # The model derives ``import_map`` from ``module_usage``, which is what the enrichment reads.
+    imports, _calls, module_usage, analyzed_modules = parser(data, language)
     minimal = CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,
         module_usage={key: usage.model_dump() for key, usage in module_usage.items()},
         analyzed_modules=analyzed_modules,
-        language=str(language),
+        language=language,
     )
     as_dict = {
         "language": minimal.language,
@@ -760,7 +743,7 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
 def _run_reachability(
     records: list[dict[str, Any]],
     callgraph_payload: dict[str, Any] | None,
-    languages: dict[str, frozenset[str]],
+    languages: ComponentLanguages,
     report: AnalyzerReport,
 ) -> dict[str, Any] | None:
     if callgraph_payload is None:
@@ -782,85 +765,26 @@ def _run_reachability(
     return dict(build_reachability_summary(vulnerabilities, [callgraph_dict], enriched))
 
 
-def _scoped_finding_id(finding_id: str, scope: str, package_name: str) -> str | re.Pattern[str]:
-    """The finding ids a waiver reaches, as the same resolver the scan-backed query is built from."""
-    resolved = _resolve_finding_id_query(finding_id, scope, package_name)
-    return re.compile(resolved["$regex"]) if isinstance(resolved, dict) else resolved
-
-
-def _waiver_criteria(waiver: Waiver, fields: tuple[tuple[str, str], ...]) -> dict[str, Any]:
-    """The record fields a waiver actually constrains, keyed as they appear on a record."""
-    scope = waiver.scope or _SCOPE_FINDING
-    criteria: dict[str, Any] = {}
-    for waiver_field, record_field in fields:
-        if waiver_field == _WAIVER_PACKAGE_NAME and scope == _SCOPE_RULE:
-            continue
-        value = getattr(waiver, waiver_field, None)
-        if not value or value == _UNCONSTRAINED_WAIVER_VALUE:
-            continue
-        if waiver_field == _WAIVER_FINDING_ID:
-            criteria[record_field] = _scoped_finding_id(str(value), scope, waiver.package_name or "")
-        else:
-            criteria[record_field] = value
-    return criteria
-
-
-def _matches(record: dict[str, Any], criteria: dict[str, Any]) -> bool:
-    for field, expected in criteria.items():
-        value = record.get(field)
-        if isinstance(expected, re.Pattern):
-            if not isinstance(value, str) or not expected.search(value):
-                return False
-        elif value != expected:
-            return False
-    return True
-
-
-def _waive_matching_advisories(record: dict[str, Any], waiver: Waiver) -> None:
-    """Waive the matching nested advisories, then roll the document level up from them."""
-    entries = (record.get("details") or {}).get("vulnerabilities") or []
-    hit = False
-    for entry in entries:
-        known_as = {entry.get("id"), entry.get("resolved_cve")} | set(entry.get("aliases") or [])
-        if waiver.vulnerability_id in known_as:
-            entry["waived"] = True
-            entry["waiver_reason"] = waiver.reason
-            hit = True
-    if not hit:
-        return
-    # A fully waived document keeps the severity of its entries, so dropping the waiver
-    # restores it; a partly waived one drops to the highest entry still live.
-    live = [entry for entry in entries if not entry.get("waived")] or entries
-    severity = max((entry.get("severity") for entry in live), key=get_severity_value)
-    if severity:
-        record["severity"] = severity
-    if all(entry.get("waived") for entry in entries):
-        record["waived"] = True
-        record["waiver_reason"] = waiver.reason
-
-
 def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
-    scope = _waiver_criteria(waiver, _VULNERABILITY_SCOPE_FIELDS)
+    scope = waiver_criteria(waiver)
     for record in records:
-        if record.get("type") == _VULNERABILITY and _matches(record, scope):
-            _waive_matching_advisories(record, waiver)
+        if record.get("type") == _VULNERABILITY and record_matches(record, scope) and waive_advisories(record, waiver):
+            roll_up_advisories(record)
 
 
 def _apply_field_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
-    criteria = _waiver_criteria(waiver, _WAIVER_FIELD_MAP)
+    criteria = waiver_criteria(waiver)
     # A waiver that constrains nothing would blanket every finding the caller posted.
     if not criteria:
         return
     for record in records:
-        if _matches(record, criteria):
+        if record_matches(record, criteria):
             record["waived"] = True
             record["waiver_reason"] = waiver.reason
 
 
 def _apply_signature_waivers(records: list[dict[str, Any]], waivers: list[Waiver]) -> None:
     """Bind location waivers to the findings they were taken from, re-anchoring across line drift."""
-    from app.services.waivers.matching import MatchFinding, apply_waivers_to_findings
-
     # Keyed by position: a record's own id is not guaranteed unique across posted inputs.
     by_key = {str(index): record for index, record in enumerate(records)}
     located = [
@@ -883,13 +807,14 @@ def _apply_signature_waivers(records: list[dict[str, Any]], waivers: list[Waiver
 
 def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[Waiver]) -> int:
     """Apply global waivers to in-memory records; returns how many records end up waived."""
+    signed = {record["finding_id"]: MatchSignature(**record["match"]) for record in records if record.get("match")}
+    bind_legacy_signatures(waivers, signed)
     signature_waivers: list[Waiver] = []
     for waiver in waivers:
-        # A widened scope keeps its query semantics: re-anchoring one signature would narrow it
-        # back to the single location the waiver was taken from.
-        if waiver.match is not None and (waiver.scope or _SCOPE_FINDING) == _SCOPE_FINDING:
+        route = route_waiver(waiver)
+        if route == "signature":
             signature_waivers.append(waiver)
-        elif waiver.vulnerability_id:
+        elif route == "vulnerability":
             _apply_vulnerability_waiver(records, waiver)
         else:
             _apply_field_waiver(records, waiver)
@@ -916,8 +841,6 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
-    # Defaults, not the stored document: the settings dependency exposes an ``auto_init`` query
-    # parameter that writes a ``system_settings`` document.
     license_policy = request.license_policy.model_dump() if request.license_policy else None
     settings_for = _build_settings_resolver(SystemSettings(), license_policy, None)
 
@@ -947,16 +870,18 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     # Before enrichment, so waivers, stats and recommendations all describe the returned set.
     records, truncated = _cap_findings(records)
 
-    epss_kev_summary = await _enrich_vulnerabilities(records, report)
+    epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, report)
 
-    components = [component for pi in parsed_inputs for component in pi.components]
+    # One row per package across every posted SBOM, the invariant a stored scan's inventory holds.
+    merged, _ = merge_duplicate_dependencies([dep for pi in parsed_inputs for dep in pi.parsed.dependencies])
+    components = [dep.to_dict() for dep in merged]
     languages = component_language_map(components)
     reachability_summary = await asyncio.to_thread(_run_reachability, records, request.callgraph, languages, report)
 
     waived_count = 0
     waivers_applied = _WAIVERS_NONE
     if request.apply_global_waivers:
-        from app.repositories import WaiverRepository
+        from app.repositories.waivers import WaiverRepository
 
         waived_count = apply_global_waivers_in_memory(records, await WaiverRepository(db).find_active_global())
         waivers_applied = _WAIVERS_GLOBAL
@@ -968,6 +893,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         findings=[record for record in records if not record.get("waived")],
         dependencies=components,
         source_target=source_target,
+        threat_intel=threat_intel,
     )
 
     # A stage that errored still reached upstream, so attempted is the condition, not success.

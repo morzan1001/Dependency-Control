@@ -1,8 +1,10 @@
 """Static tool metadata: TOOL_DEFINITIONS, TOOL_PERMISSIONS, get_tool_definitions()."""
 
-from typing import Any
+from typing import Any, get_args
 
+from app.core.constants import ScopeName
 from app.core.permissions import Permissions
+from app.schemas.analytics import GroupBy, Metric
 
 _DESC_PROJECT_ID = "The project ID"
 _DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."
@@ -172,7 +174,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_vulnerability_details",
-            "description": "Get details about a specific vulnerability/finding: CVE info, EPSS score, references, affected component.",
+            "description": (
+                "Get details about a specific vulnerability/finding and its affected component. advisories lists "
+                "the finding's worst advisories first, each with its own severity, CVSS, EPSS, KEV status and fix; "
+                "advisories_total says how many it has."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -309,7 +315,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_teams",
-            "description": "List all teams the user belongs to.",
+            "description": "List the teams the user can read.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -351,14 +357,20 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "get_waiver_status",
             "description": (
                 "Check whether a finding is currently SUPPRESSED by a waiver in the latest scan. "
-                "Returns waived:false with waiver_present:true and suppressing:false when an active "
-                "waiver exists but the finding is not in the latest scan (fixed/moved/renamed or the "
-                "waiver is dormant)."
+                "Returns one entry per matching finding (a finding id such as a license id can cover "
+                "several components) with the advisories a per-CVE waiver suppresses; waived is true "
+                "only when it is waived on every one of them (for an advisory ID: that advisory). "
+                "Returns waived:false with waiver_present:true "
+                "and suppressing:false when an active waiver exists but the finding is not in the latest "
+                "scan (fixed/moved/renamed or the waiver is dormant)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "finding_id": {"type": "string", "description": "The finding ID"},
+                    "finding_id": {
+                        "type": "string",
+                        "description": "The finding ID, or a CVE/advisory ID to check its per-advisory waivers",
+                    },
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
                 "required": ["finding_id", "project_id"],
@@ -449,8 +461,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_auto_fixable_findings",
             "description": (
-                "Return CRITICAL/HIGH findings that already have a known fix_version — "
+                "Return CRITICAL/HIGH findings whose every live CRITICAL/HIGH advisory has a fix — "
                 "the 'low-hanging fruit' a team can resolve with a simple dependency bump. "
+                "still_open names the lower-severity advisories the bump leaves open. "
                 "Use when the user asks 'what quick wins do I have?', 'what can I fix "
                 "easily?' or 'which updates are available?'."
             ),
@@ -537,8 +550,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_kev_findings",
             "description": (
-                "Return findings whose CVE is being ACTIVELY EXPLOITED in the wild "
-                "(threat-intel exploit_maturity = 'active' or 'weaponized'). These "
+                "Return findings with an unwaived advisory in CISA KEV, i.e. ACTIVELY "
+                "EXPLOITED in the wild; each row's cve names that advisory. These "
                 "should always be prioritised over a CVSS-based order. Use when the "
                 "user asks 'what is actively exploited?', 'which findings are in KEV?' "
                 "or 'show me the stuff with real-world exploits'."
@@ -583,8 +596,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "get_findings_by_cve",
             "description": (
                 "Find every finding that refers to a specific CVE across the user's "
-                "projects. Use when the user mentions a concrete CVE ID. Matches exact "
-                "CVE in the nested vulnerabilities list, not free-text."
+                "projects. Use when the user mentions a concrete CVE ID. Matches the exact "
+                "id under any of an advisory's identifiers (id, aliases, resolved CVE), not free-text."
             ),
             "parameters": {
                 "type": "object",
@@ -601,9 +614,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "get_cve_details",
             "description": (
                 "Return enriched information about a CVE ID: description, CVSS score, "
-                "EPSS, exploit_maturity, fix versions, external references. Derived "
-                "from the most informative occurrence across the user's projects. Use "
-                "when the user asks 'tell me about CVE-X' or 'is CVE-X exploitable?'."
+                "EPSS, KEV status, exploit_maturity, fix version, external references. Read "
+                "from one occurrence in the user's projects; its fixed_version applies to "
+                "affected_component only, so use get_findings_by_cve for every affected "
+                "component. Use when the user asks 'tell me about CVE-X' or 'is CVE-X exploitable?'."
             ),
             "parameters": {
                 "type": "object",
@@ -903,10 +917,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "group_by": {
-                        "type": "string",
-                        "enum": ["name", "primitive", "asset_type", "weakness_tag", "severity"],
-                    },
+                    "group_by": {"type": "string", "enum": list(get_args(GroupBy))},
                     "limit": {"type": "integer", "default": 20, "maximum": 100},
                 },
                 "required": ["project_id"],
@@ -925,19 +936,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "metric": {
-                        "type": "string",
-                        "enum": [
-                            "total_crypto_findings",
-                            "quantum_vulnerable_findings",
-                            "weak_algo_findings",
-                            "weak_key_findings",
-                            "cert_expiring_soon",
-                            "cert_expired",
-                            "unique_algorithms",
-                            "unique_cipher_suites",
-                        ],
-                    },
+                    "metric": {"type": "string", "enum": list(get_args(Metric))},
                     "days": {"type": "integer", "default": 30, "minimum": 1, "maximum": 365},
                 },
                 "required": ["project_id"],
@@ -1052,7 +1051,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scope": {"type": "string", "enum": ["project", "team", "global", "user"]},
+                    "scope": {"type": "string", "enum": list(get_args(ScopeName))},
                     "scope_id": {"type": "string"},
                     "framework": {
                         "type": "string",
@@ -1073,14 +1072,32 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 ]
 
 
+_TEAM_READ = [Permissions.TEAM_READ, Permissions.TEAM_READ_ALL]
+_WAIVER_READ = [Permissions.WAIVER_READ, Permissions.WAIVER_READ_ALL]
+_ARCHIVE_READ = [Permissions.ARCHIVE_READ, Permissions.ARCHIVE_READ_ALL]
+# The same any-of pair require_analytics_permission checks on the matching REST route.
+_ANALYTICS_SEARCH = [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_SEARCH]
+
 TOOL_PERMISSIONS: dict[str, list[str]] = {
-    # A tool not named here is project-scoped: build_user_project_query is what demands a
-    # project-read permission of the caller and narrows the answer to the projects they hold.
-    "list_global_waivers": [Permissions.WAIVER_READ_ALL],
+    # Any-of, checked before the handler runs; the handler still applies the per-resource rule.
+    "search_findings": _ANALYTICS_SEARCH,
+    "get_findings_by_cve": _ANALYTICS_SEARCH,
+    "get_cve_details": _ANALYTICS_SEARCH,
+    "find_component_usage": _ANALYTICS_SEARCH,
+    "generate_remediation_plan": [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_RECOMMENDATIONS],
+    "get_analytics_summary": [Permissions.ANALYTICS_READ, Permissions.ANALYTICS_SUMMARY],
+    "list_teams": _TEAM_READ,
+    "get_team_details": _TEAM_READ,
+    "get_team_projects": _TEAM_READ,
+    "get_team_risk_overview": _TEAM_READ,
+    "list_project_waivers": _WAIVER_READ,
+    "list_global_waivers": _WAIVER_READ,
+    "get_waiver_status": _WAIVER_READ,
+    "get_expiring_waivers": _WAIVER_READ,
     "get_system_settings": [Permissions.SYSTEM_MANAGE],
     "get_system_health": [Permissions.SYSTEM_MANAGE],
-    "list_archives": [Permissions.ARCHIVE_READ],
-    "get_archive_details": [Permissions.ARCHIVE_READ],
+    "list_archives": _ARCHIVE_READ,
+    "get_archive_details": _ARCHIVE_READ,
 }
 
 

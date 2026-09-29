@@ -1,4 +1,4 @@
-"""Legacy-path waivers must record what they matched, like the signature path does.
+"""Query and advisory waivers must record what they matched, like signature waivers do.
 
 Without an outcome an operator cannot tell that a waiver suppresses nothing any more —
 prod has 81 waivers on this path with ``last_match_count: None``. Fixtures use the real
@@ -12,7 +12,7 @@ import pytest
 from app.models.waiver import Waiver
 from app.repositories.findings import FindingRepository
 from app.repositories.waivers import WaiverRepository
-from app.services.stats import _apply_waivers
+from app.services.waivers.apply import restamp_waivers
 from tests.mocks.fake_mongo import FakeDatabase
 
 SCAN_ID = "scan-k21"
@@ -48,13 +48,14 @@ def _apply(db, waivers):
     repo = WaiverRepository(db)
     for waiver in waivers:
         asyncio.run(repo.create(waiver))
-    asyncio.run(_apply_waivers(FindingRepository(db), SCAN_ID, waivers, repo))
+    asyncio.run(restamp_waivers(FindingRepository(db), repo, SCAN_ID, waivers))
     return {w.id: asyncio.run(db.waivers.find_one({"_id": w.id})) for w in waivers}
 
 
 class TestLegacyWaiverRecordsItsOutcome:
     def test_matching_waiver_records_the_count_and_scan(self, db):
         waiver = Waiver(
+            project_id="p",
             reason="approved",
             created_by="u",
             finding_type="quality",
@@ -70,6 +71,7 @@ class TestLegacyWaiverRecordsItsOutcome:
 
     def test_orphaned_waiver_records_zero_instead_of_staying_unknown(self, db):
         waiver = Waiver(
+            project_id="p",
             reason="approved",
             created_by="u",
             finding_type="quality",
@@ -85,6 +87,7 @@ class TestLegacyWaiverRecordsItsOutcome:
     def test_unscoped_license_waiver_reports_how_many_components_it_suppresses(self, db, caplog):
         """finding_id is not unique per scan for license findings; the breadth must be visible."""
         waiver = Waiver(
+            project_id="p",
             reason="approved",
             created_by="u",
             finding_type="license",
@@ -114,6 +117,7 @@ class TestLegacyWaiverRecordsItsOutcome:
             )
         )
         waiver = Waiver(
+            project_id="p",
             reason="approved",
             created_by="u",
             finding_type="vulnerability",
@@ -136,6 +140,7 @@ class TestOverlappingWaiversBothReportTheirCoverage:
 
     def test_second_overlapping_waiver_is_not_reported_as_matching_nothing(self, db):
         first = Waiver(
+            project_id="p",
             reason="approved",
             created_by="u",
             finding_type="license",
@@ -143,6 +148,7 @@ class TestOverlappingWaiversBothReportTheirCoverage:
             package_name="spring-core",
         )
         second = Waiver(
+            project_id="p",
             reason="approved",
             created_by="u",
             finding_type="license",

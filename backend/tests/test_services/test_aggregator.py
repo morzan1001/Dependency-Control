@@ -5,7 +5,7 @@ import pytest
 from app.core.constants import MAX_CROSS_LINK_GROUP_SIZE
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
-from app.services.aggregation.components import (
+from app.services.component_identity import (
     extract_artifact_name,
     normalize_component,
 )
@@ -14,7 +14,8 @@ from app.services.aggregation.merging import (
     merge_vulnerability_into_list,
 )
 from app.services.aggregation.versions import (
-    calculate_aggregated_fixed_version,
+    aggregate_fixed_version,
+    newest_first,
     normalize_version,
     parse_version_key,
 )
@@ -24,30 +25,25 @@ _CROWDED_FILE = "app/handlers.py"
 
 
 class TestParseVersionKey:
-    """Tests for parse_version_key."""
+    @pytest.mark.parametrize("spelling", ["v1.2.3", "V1.2.3", "1.2.3"])
+    def test_a_v_prefix_does_not_change_the_key(self, spelling):
+        assert parse_version_key(spelling) == parse_version_key("1.2.3")
 
-    def setup_method(self):
-        self.agg = ResultAggregator()
+    def test_an_empty_version_has_an_empty_key(self):
+        assert parse_version_key("") == ()
 
     @pytest.mark.parametrize(
-        ("version", "expected"),
+        ("spelling", "same"),
         [
-            pytest.param("1.2.3", ((0, 1), (0, 2), (0, 3)), id="simple-semver"),
-            pytest.param("v1.2.3", ((0, 1), (0, 2), (0, 3)), id="v-prefix-stripped"),
-            pytest.param("V1.2.3", ((0, 1), (0, 2), (0, 3)), id="uppercase-v-prefix"),
-            pytest.param("1.2.3-beta", ((0, 1), (0, 2), (0, 3), (1, "beta")), id="prerelease-label"),
-            # "rc1" splits into "rc" + "1" for safe comparison
-            pytest.param("1.2.3-rc1", ((0, 1), (0, 2), (0, 3), (1, "rc"), (0, 1)), id="prerelease-with-number"),
-            pytest.param("", (), id="empty-string"),
-            pytest.param("42", ((0, 42),), id="single-number"),
+            pytest.param("5.2.20.RELEASE", "5.2.20", id="maven-release-qualifier"),
+            pytest.param("4.1.100.Final", "4.1.100", id="maven-final-qualifier"),
+            pytest.param("4.1.0", "4.1", id="trailing-zero"),
+            pytest.param("1:2.30-1", "2.30-1", id="epoch"),
+            pytest.param("2", "2.0.0", id="bare-major"),
         ],
     )
-    def test_version_parses_to_expected_key(self, version, expected):
-        assert parse_version_key(version) == expected
-
-    def test_numeric_parts_have_int_values(self):
-        result = parse_version_key("10.20.30")
-        assert all(flag == 0 and isinstance(val, int) for flag, val in result)
+    def test_spellings_of_one_release_share_a_key(self, spelling, same):
+        assert parse_version_key(spelling) == parse_version_key(same)
 
     @pytest.mark.parametrize(
         ("lower", "higher"),
@@ -55,23 +51,48 @@ class TestParseVersionKey:
             pytest.param("1.2.3", "1.2.4", id="patch-bump"),
             pytest.param("1.9.9", "2.0.0", id="major-bump"),
             pytest.param("0.6.0+incompatible", "0.7.0", id="go-incompatible-suffix"),
+            pytest.param("1.0.0-alpha", "1.0.0", id="prerelease-below-release"),
+            pytest.param("3.0.0a1", "3.0.0", id="pep440-prerelease-below-release"),
+            pytest.param("5.0.0-beta.2", "5.0.0-rc.1", id="rc-above-beta"),
+            pytest.param("1.0.0-rc1", "1.0.0-rc2", id="prerelease-number"),
+            pytest.param("1.0.0-rc", "1.0.0.1", id="longer-release-above-prerelease"),
+            pytest.param("1.0.0", "1.0.0.1", id="longer-release-above-release"),
+            pytest.param("1.0.0-SNAPSHOT", "1.0.0", id="maven-snapshot-below-release"),
+            pytest.param("1.0.0-M1", "1.0.0", id="maven-milestone-below-release"),
+            pytest.param("5.0.0.CR1", "5.0.0", id="maven-candidate-release-below-release"),
+            pytest.param("1.0.dev1", "1.0a1", id="pep440-dev-below-alpha"),
+            pytest.param("1.0", "1.0.post1", id="pep440-post-release-above-release"),
+            pytest.param("1.0.post1", "1.0.1", id="post-release-below-next-number"),
+            pytest.param("2.36-9", "2.36-9+deb12u4", id="debian-security-update-above-its-base"),
+            pytest.param("3.4-1", "3.4-1+b6", id="debian-binnmu-above-its-base"),
+            pytest.param("3.4-1+b6", "3.4-2", id="debian-binnmu-below-the-next-revision"),
+            pytest.param("1.1.1", "1.1.1n", id="openssl-letter-release-above-base"),
+            pytest.param("1.1.1", "1.1.1a", id="openssl-letter-a-is-no-alpha"),
+            pytest.param("1.1.1n", "1.1.2", id="openssl-letter-release-below-next-patch"),
+            pytest.param("0.6.0", "0.6.0+incompatible", id="go-incompatible-above-bare"),
         ],
     )
     def test_higher_version_compares_as_greater(self, lower, higher):
         assert parse_version_key(higher) > parse_version_key(lower)
 
-    @pytest.mark.parametrize(
-        ("left", "right"),
-        [
-            pytest.param("3.0.0a1", "3.0.0", id="alphanumeric-vs-release"),
-            pytest.param("1.2.3", "1.2.3rc1", id="release-vs-prerelease"),
-        ],
-    )
-    def test_mixed_version_shapes_compare_without_raising(self, left, right):
-        """A TypeError, not an unexpected ordering, is what these guard against."""
-        parsed_left = parse_version_key(left)
-        parsed_right = parse_version_key(right)
-        assert (parsed_left > parsed_right) or (parsed_left <= parsed_right)
+
+class TestNewestFirst:
+    def test_prereleases_rank_by_tag_below_their_release(self):
+        assert newest_first({"5.0.0-beta.2", "5.0.0", "5.0.0-rc.1", "4.9.0"}) == [
+            "5.0.0",
+            "5.0.0-rc.1",
+            "5.0.0-beta.2",
+            "4.9.0",
+        ]
+
+    def test_a_post_release_ranks_above_its_release(self):
+        assert newest_first(["1.0", "1.0.post1"]) == ["1.0.post1", "1.0"]
+
+    def test_a_debian_binnmu_ranks_between_its_base_and_the_next_revision(self):
+        assert newest_first(["3.4-1", "3.4-1+b6", "3.4-2"]) == ["3.4-2", "3.4-1+b6", "3.4-1"]
+
+    def test_spellings_of_one_version_order_the_same_whatever_the_input_order(self):
+        assert newest_first(["v1.0.0", "1.0.0"]) == newest_first(["1.0.0", "v1.0.0"])
 
 
 class TestNormalizeVersion:
@@ -130,7 +151,8 @@ class TestExtractArtifactName:
             pytest.param("lodash", "lodash", id="plain-name"),
             pytest.param("org.postgresql:postgresql", "postgresql", id="maven-group-artifact"),
             pytest.param("com.google.guava:guava", "guava", id="maven-only-last-segment-after-colon"),
-            pytest.param("@angular/core", "core", id="npm-scoped"),
+            pytest.param("@angular/core", "@angular/core", id="npm-scope-is-part-of-the-name"),
+            pytest.param("vendor/lib/core.js", "core.js", id="path-keeps-its-basename"),
             pytest.param("Lodash", "lodash", id="case-insensitive"),
             pytest.param("  lodash  ", "lodash", id="whitespace-stripped"),
             pytest.param("", "unknown", id="empty-returns-unknown"),
@@ -141,12 +163,11 @@ class TestExtractArtifactName:
         assert extract_artifact_name(component) == expected
 
 
-class TestCalculateAggregatedFixedVersion:
-    """Tests for _calculate_aggregated_fixed_version."""
+def _entries(*fixes):
+    return [{"fixed_version": fix} for fix in fixes]
 
-    def setup_method(self):
-        self.agg = ResultAggregator()
 
+class TestAggregateFixedVersion:
     @pytest.mark.parametrize(
         ("fixes", "expected"),
         [
@@ -155,33 +176,56 @@ class TestCalculateAggregatedFixedVersion:
         ],
     )
     def test_one_major_line_answers_with_one_version(self, fixes, expected):
-        assert calculate_aggregated_fixed_version(fixes) == expected
+        assert aggregate_fixed_version(_entries(*fixes), None) == expected
 
     @pytest.mark.parametrize(
-        ("fixes", "first", "second"),
+        ("fixes", "expected"),
         [
             # Per major line the highest fix wins: max(1.2.5, 1.2.6) and max(2.0.1, 2.0.3).
-            pytest.param(["1.2.5, 2.0.1", "1.2.6, 2.0.3"], "1.2.6", "2.0.3", id="two-vulns-two-majors"),
-            pytest.param(["1.5.0, 2.1.0"], "1.5.0", "2.1.0", id="one-vuln-two-majors"),
+            pytest.param(["1.2.5, 2.0.1", "1.2.6, 2.0.3"], "1.2.6, 2.0.3", id="two-vulns-two-majors"),
+            pytest.param(["1.5.0, 2.1.0"], "1.5.0, 2.1.0", id="one-vuln-two-majors"),
         ],
     )
-    def test_every_major_line_that_covers_all_vulns_is_returned(self, fixes, first, second):
-        result = calculate_aggregated_fixed_version(fixes)
-        assert first in result
-        assert second in result
+    def test_every_major_line_that_covers_all_vulns_is_returned(self, fixes, expected):
+        assert aggregate_fixed_version(_entries(*fixes), None) == expected
 
-    def test_empty_list_returns_none(self):
-        assert calculate_aggregated_fixed_version([]) is None
+    def test_no_entries_returns_none(self):
+        assert aggregate_fixed_version([], None) is None
+
+    @pytest.mark.parametrize(
+        ("fixes", "expected"),
+        [
+            pytest.param(["2.0.0-rc1, 2.0.0"], "2.0.0", id="release-beside-its-rc"),
+            pytest.param(["1.2.3rc1, 1.2.4"], "1.2.4", id="release-over-a-lower-rc"),
+            pytest.param(["3.0.0a1"], "3.0.0a1", id="prerelease-when-no-release-fixes"),
+            pytest.param(["1.0.0-M1, 1.0.1"], "1.0.1", id="release-over-a-milestone"),
+            pytest.param(["5.2.20.RELEASE, 5.3.18"], "5.2.20.RELEASE", id="maven-qualifier-is-a-release"),
+            pytest.param(["2.36-9", "2.36-9+deb12u4"], "2.36-9+deb12u4", id="debian-security-update-fixes-both"),
+        ],
+    )
+    def test_a_release_fix_is_preferred_over_a_prerelease(self, fixes, expected):
+        assert aggregate_fixed_version(_entries(*fixes), None) == expected
 
     def test_major_must_cover_all_vulns(self):
-        """If a major version only covers some vulns, it should be excluded."""
-        # Vuln 1: fixed in 1.x and 2.x
-        # Vuln 2: fixed only in 2.x
-        # -> Only major 2 covers both
-        result = calculate_aggregated_fixed_version(["1.5.0, 2.0.1", "2.0.3"])
-        assert "2.0.3" in result
-        # Major 1 should not be in result since it doesn't cover vuln 2
-        assert "1.5.0" not in result
+        assert aggregate_fixed_version(_entries("1.5.0, 2.0.1", "2.0.3"), None) == "2.0.3"
+
+    def test_an_advisory_without_a_fix_leaves_the_record_unfixed(self):
+        entries = [{"id": "CVE-A", "fixed_version": None}, {"id": "CVE-B", "fixed_version": "3.0.11-1~deb12u2"}]
+        assert aggregate_fixed_version(entries, "3.0.9-1") is None
+
+    @pytest.mark.parametrize(
+        ("installed", "fixes", "expected"),
+        [
+            pytest.param("2.13.0", ["2.12.7.1, 2.13.4.2"], "2.13.4.2", id="jackson-backport-below-install"),
+            pytest.param("2.14.1", ["2.15.0, 2.12.2, 2.3.1", "2.16.0, 2.12.2, 2.3.1"], "2.16.0", id="log4j-two-cves"),
+            pytest.param("9.9.9", ["1.2.3"], "1.2.3", id="no-candidate-above-install-keeps-the-list"),
+        ],
+    )
+    def test_fixes_below_the_installed_release_are_not_upgrade_targets(self, installed, fixes, expected):
+        assert aggregate_fixed_version(_entries(*fixes), installed) == expected
+
+    def test_mixed_numeric_and_named_majors_sort_numerically(self):
+        assert aggregate_fixed_version(_entries("9.1.0, 10.2.0, r5"), None) == "9.1.0, 10.2.0, r5"
 
     @pytest.mark.parametrize(
         "fixes",
@@ -192,7 +236,7 @@ class TestCalculateAggregatedFixedVersion:
         ],
     )
     def test_unusual_version_shapes_still_answer_a_fix(self, fixes):
-        assert calculate_aggregated_fixed_version(fixes) is not None
+        assert aggregate_fixed_version(_entries(*fixes), None) is not None
 
 
 class TestMergeVulnerabilityIntoList:
@@ -287,9 +331,18 @@ class TestMergeVulnerabilityIntoList:
     @pytest.mark.parametrize(
         ("target_fixed", "entry_fixed", "expected"),
         [
-            pytest.param("1.2.3", "1.2.4", "1.2.3, 1.2.4", id="unions-both-entries"),
+            pytest.param("1.2.3", "1.2.4", "1.2.4", id="one-release-line-keeps-the-higher-claim"),
+            pytest.param("1.2.6", "1.2.5", "1.2.6", id="higher-claim-wins-in-either-order"),
+            pytest.param("1.2.5, 2.0.1", "1.2.6", "1.2.6, 2.0.1", id="distinct-lines-are-kept"),
             pytest.param("2.21.4, 2.18.8", "2.21.4, 2.2.0", "2.2.0, 2.18.8, 2.21.4", id="deduplicated-and-ordered"),
             pytest.param(None, "1.2.3", "1.2.3", id="added-when-target-has-none"),
+            pytest.param("4.17.21, 4.17.12", "4.17.21, 4.17.12", "4.17.12, 4.17.21", id="identical-lists-are-kept"),
+            pytest.param("4.17.12", "4.17.21, 4.17.12", "4.17.12, 4.17.21", id="agreeing-lowest-keeps-both"),
+            pytest.param("1.2.5", "1.2.3.4, 1.2.5", "1.2.5", id="below-the-higher-lowest-is-dropped"),
+            pytest.param("2.0.0", "2.0.1", "2.0.1", id="zero-patch-shares-its-release-line"),
+            pytest.param("1.2.5, 3.0.0", "3.0.2", "1.2.5, 3.0.2", id="zero-patch-beside-another-line"),
+            pytest.param("3.0.0-rc1", "3.0.1", "3.0.1", id="zero-patch-prerelease-shares-its-release-line"),
+            pytest.param("2", "2.0.1", "2.0.1", id="bare-major-shares-its-release-line"),
         ],
     )
     def test_fixed_versions_of_both_entries_are_merged(self, target_fixed, entry_fixed, expected):
@@ -304,14 +357,12 @@ def _grype_ghsa_entry():
         "id": "GHSA-3pjw-73gf-8qr5",
         "severity": "HIGH",
         "description": "jackson-databind vulnerable to deep wrapper array nesting",
-        "description_source": "grype",
         "fixed_version": "2.21.4",
         "cvss_score": 7.7,
         "cvss_vector": None,
         "references": [],
         "aliases": [],
         "scanners": ["grype"],
-        "source": "sbom.json",
         "details": {},
     }
 
@@ -321,14 +372,12 @@ def _trivy_cve_entry():
         "id": "CVE-2026-59888",
         "severity": "HIGH",
         "description": "jackson-databind: DoS via deeply nested wrapper arrays",
-        "description_source": "trivy",
         "fixed_version": "2.18.8, 2.21.4",
         "cvss_score": 7.5,
         "cvss_vector": None,
         "references": [],
         "aliases": [],
         "scanners": ["trivy"],
-        "source": "sbom.json",
         "details": {},
     }
 
@@ -338,14 +387,12 @@ def _osv_ghsa_entry_with_cve_alias():
         "id": "GHSA-3pjw-73gf-8qr5",
         "severity": "HIGH",
         "description": "Deeply nested wrapper array nesting in jackson-databind",
-        "description_source": "osv",
         "fixed_version": "2.21.4",
         "cvss_score": None,
         "cvss_vector": None,
         "references": [],
         "aliases": ["CVE-2026-59888"],
         "scanners": ["osv"],
-        "source": "sbom.json",
         "details": {},
     }
 
@@ -477,12 +524,62 @@ class TestAddVulnerabilityFinding:
         agg = next(iter(self.agg.findings.values()))
         assert "sbom.json" in agg.found_in
 
-    def test_fixed_version_calculated(self):
+    def test_fixed_version_covers_every_advisory(self):
         self.agg.add_finding(self._make_vuln("CVE-1", "pkg", "1.0", fixed_version="1.2.3"))
         self.agg.add_finding(self._make_vuln("CVE-2", "pkg", "1.0", fixed_version="1.2.5"))
-        agg = next(iter(self.agg.findings.values()))
-        # Should calculate aggregated fix covering both vulns
-        assert agg.details.get("fixed_version") is not None
+        [finding] = self.agg.get_findings()
+        assert finding.details["fixed_version"] == "1.2.5"
+
+    def test_single_and_multi_scanner_aggregates_agree_on_the_fixed_version(self):
+        single = ResultAggregator()
+        single.add_finding(self._make_vuln("CVE-1", "lodash", "4.17.0", fixed_version="4.17.21, 4.17.12"))
+        double = ResultAggregator()
+        double.add_finding(self._make_vuln("CVE-1", "lodash", "4.17.0", fixed_version="4.17.21, 4.17.12"))
+        double.add_finding(self._make_vuln("CVE-1", "lodash", "4.17.0", fixed_version="4.17.12"))
+
+        [only] = single.get_findings()
+        [merged] = double.get_findings()
+        assert only.details["fixed_version"] == merged.details["fixed_version"] == "4.17.12"
+
+    @pytest.mark.parametrize(
+        ("component", "installed", "fixes", "expected"),
+        [
+            pytest.param("lodash", "4.17.15", "4.17.21, 4.17.12", "4.17.21", id="backport-below-installed"),
+            pytest.param("foo", "1.2.4", "1.2.3.4, 1.2.5", "1.2.5", id="four-part-backport-below-installed"),
+        ],
+    )
+    def test_reporting_a_cve_twice_keeps_the_upgrade_above_the_installed_version(
+        self, component, installed, fixes, expected
+    ):
+        single = ResultAggregator()
+        single.add_finding(self._make_vuln("CVE-1", component, installed, fixed_version=fixes), source="a.json")
+        double = ResultAggregator()
+        for sbom in ("a.json", "b.json"):
+            double.add_finding(self._make_vuln("CVE-1", component, installed, fixed_version=fixes), source=sbom)
+
+        [only] = single.get_findings()
+        [merged] = double.get_findings()
+        assert only.details["fixed_version"] == merged.details["fixed_version"] == expected
+
+    def test_a_cve_without_a_fix_leaves_the_component_without_one(self):
+        self.agg.add_finding(self._make_vuln("CVE-A", "libssl3", "3.0.9-1", severity="CRITICAL"))
+        self.agg.add_finding(self._make_vuln("CVE-B", "libssl3", "3.0.9-1", "LOW", fixed_version="3.0.11-1~deb12u2"))
+        [finding] = self.agg.get_findings()
+        assert finding.severity == "CRITICAL"
+        assert finding.details["fixed_version"] is None
+
+    def test_fixed_version_is_derived_once_per_final_finding(self, monkeypatch):
+        from app.services.aggregation import aggregator as aggregator_module
+
+        calls = []
+        real = aggregator_module.aggregate_fixed_version
+        monkeypatch.setattr(
+            aggregator_module, "aggregate_fixed_version", lambda *args: calls.append(args) or real(*args)
+        )
+        for n in range(5):
+            self.agg.add_finding(self._make_vuln(f"CVE-{n}", "linux-libc-dev", "6.1.0", fixed_version=f"6.1.{n + 1}"))
+        self.agg.get_findings()
+        assert len(calls) == 1
 
 
 class TestAddQualityFinding:
@@ -860,3 +957,57 @@ class TestAggregateDispatch:
         f = next(iter(self.agg.findings.values()))
         assert f.type == "system_warning"
         assert "trivy" in f.description
+
+
+class TestStoredEntryShape:
+    """Each advisory entry stores a field once, at the level its readers use."""
+
+    def test_lifted_scanner_fields_are_not_copied_into_the_entry_details(self):
+        agg = ResultAggregator()
+        agg.add_finding(
+            Finding(
+                id="CVE-2024-1",
+                type=FindingType.VULNERABILITY,
+                severity="HIGH",
+                component="foo",
+                version="1.2.0",
+                description="d",
+                scanners=["trivy"],
+                details={
+                    "fixed_version": "1.2.6",
+                    "cvss_score": 7.5,
+                    "cvss_vector": "T",
+                    "references": ["https://a"],
+                    "ecosystem_specific": {"imports": []},
+                    "published_date": "2024-01-01",
+                },
+            ),
+            source="sbom-a.json",
+        )
+        [finding] = agg.get_findings()
+        [entry] = finding.details["vulnerabilities"]
+
+        assert entry["fixed_version"] == "1.2.6"
+        assert entry["cvss_score"] == 7.5
+        assert entry["details"] == {"published_date": "2024-01-01"}
+        assert "description_source" not in entry
+        assert "source" not in entry
+
+    def test_quality_entries_leave_the_sbom_to_found_in(self):
+        agg = ResultAggregator()
+        for sbom in ("sbom-a.json", "sbom-b.json"):
+            agg.add_finding(
+                Finding(
+                    id="MAINT-lodash",
+                    type=FindingType.QUALITY,
+                    severity=Severity.MEDIUM,
+                    component="lodash",
+                    version="4.17.0",
+                    description="unmaintained",
+                    scanners=["maintainer_risk"],
+                ),
+                source=sbom,
+            )
+        [finding] = agg.get_findings()
+        assert finding.found_in == ["sbom-a.json", "sbom-b.json"]
+        assert "source" not in finding.details["quality_issues"][0]

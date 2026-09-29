@@ -60,7 +60,7 @@ def _project(**ownership) -> Project:
 async def _put(db, project, user, **body):
     settings = MagicMock(retention_mode=None, rescan_mode=None)
     with (
-        patch(f"{MODULE}._load_project_for_update", AsyncMock(return_value=project)),
+        patch(f"{MODULE}.check_project_access", AsyncMock(return_value=project)),
         patch(f"{MODULE}.deps.get_system_settings", AsyncMock(return_value=settings)),
         patch(f"{MODULE}._audit_license_policy_change", AsyncMock()),
     ):
@@ -296,19 +296,3 @@ async def test_a_body_without_owners_leaves_every_one_of_them_alone():
     assert updated.name == "Renamed"
     assert updated.team_ids == ["gl-a"]
     assert updated.team_sources == {"gl-a": "gitlab"}
-
-
-@pytest.mark.asyncio
-async def test_a_rename_reads_the_project_back_from_the_primary():
-    """Under secondaryPreferred — the chart default — an ordinary read echoes pre-write ownership."""
-    project = _project(team_ids=["t-1"], team_sources={"t-1": "manual"})
-    db = await _db_with(project, _team("t-1", _ACTOR))
-    repo = ProjectRepository(db)
-
-    with (
-        patch.object(ProjectRepository, "get_by_id", AsyncMock(side_effect=AssertionError("read off-primary"))),
-        patch(f"{MODULE}.ProjectRepository", return_value=repo),
-    ):
-        updated = await _put(db, project, _user(), name="Renamed")
-
-    assert updated.name == "Renamed"

@@ -4,8 +4,8 @@ The rule these assert is stated once, in ``app/repositories/scans.py``: head is 
 readable analysis of the tip commit of the project's head branch. Two steps — the newest build
 picks the commit, its rescan lineage picks the analysis — so a rescan reaches head with its
 enrichment without moving head onto the commit it re-analysed. ``latest_scan_id`` is that answer
-cached, trusted only while it names a readable scan on the head branch, and it goes through the
-lineage step like any other candidate.
+cached, trusted only while it names a readable scan that may head the project, and it goes through
+the lineage step like any other candidate.
 """
 
 import asyncio
@@ -20,11 +20,11 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 _HEAD = "head"
-# One read validates every pointer in the scope; one more walks the lineage of every tip it
-# picked. Both are per scope, never per project.
+# One read validates every pointer in the scope. A tip is already in hand when its lineage is
+# walked, so only a tip carrying a rescan link costs one more read, again per scope.
 _POINTER_READS = 1
-_LINEAGE_READS = 1
-_NO_AGGREGATION = 0
+_NO_READS = 0
+_SBOM_REFS = [{"type": "gridfs_reference", "gridfs_id": "g1"}]
 
 
 def _project(project_id: str, **overrides) -> dict:
@@ -41,6 +41,7 @@ def _scan(scan_id: str, project_id: str, branch: str, hours_old: int, **override
         "branch": branch,
         "status": "completed",
         "created_at": _NOW - timedelta(hours=hours_old),
+        "sbom_refs": _SBOM_REFS,
     }
     doc.update(overrides)
     return doc
@@ -64,11 +65,16 @@ class _CountingScans:
     def __init__(self, collection):
         self._collection = collection
         self.finds = 0
+        self.seeks = 0
         self.aggregates = 0
 
     def find(self, *args, **kwargs):
         self.finds += 1
         return self._collection.find(*args, **kwargs)
+
+    async def find_one(self, *args, **kwargs):
+        self.seeks += 1
+        return await self._collection.find_one(*args, **kwargs)
 
     def aggregate(self, *args, **kwargs):
         self.aggregates += 1
@@ -145,20 +151,6 @@ class TestGetLatestActiveScan:
         assert single is not None and single.id == "rescan"
         assert bulk == {"p1": single.id}
 
-    def test_deleted_branches_argument_overrides_the_projects_own_set(self):
-        """Housekeeping passes the freshly-computed set before it is persisted."""
-
-        async def run():
-            db = await _seeded([_scan("on-fresh", "p1", "fresh-a", 0), _scan("on-stale", "p1", "stale", 1)])
-            return await ScanRepository(db).get_latest_active_scan(
-                _project("p1", deleted_branches=["stale"]),
-                deleted_branches=["fresh-a"],
-            )
-
-        scan = asyncio.run(run())
-
-        assert scan is not None and scan.id == "on-stale"
-
     def test_accepts_a_project_model_like_object(self):
         async def run():
             db = await _seeded([_scan("on-live", "proj-42", "main", 0), _scan("on-gone", "proj-42", "gone", 1)])
@@ -195,7 +187,7 @@ class TestGetLatestActiveScanIds:
 
         assert result == {"p1": "scan-latest"}
         # A usable pointer answers the whole scope without re-deriving the tip.
-        assert (reads.finds, reads.aggregates) == (_POINTER_READS + _LINEAGE_READS, _NO_AGGREGATION)
+        assert (reads.finds, reads.seeks, reads.aggregates) == (_POINTER_READS, _NO_READS, _NO_READS)
 
     def test_keeps_the_pointer_when_the_deleted_branch_is_not_its_own(self):
         """deleted_branches is the steady state of any VCS-integrated project, and an unrelated
@@ -212,9 +204,9 @@ class TestGetLatestActiveScanIds:
 
         assert result == {"p2": "tip"}
         # The pointer is still the cached answer here, so nothing has to be re-derived.
-        assert reads.aggregates == _NO_AGGREGATION
+        assert reads.seeks == _NO_READS
 
-    def test_aggregates_when_the_pointer_is_on_a_deleted_branch(self):
+    def test_re_derives_with_one_index_seek_when_the_pointer_is_on_a_deleted_branch(self):
         result, reads = asyncio.run(
             _resolve(
                 [_scan("scan-on-dead-branch", "p2", "dead", 1), _scan("scan-active", "p2", "main", 5)],
@@ -223,7 +215,7 @@ class TestGetLatestActiveScanIds:
         )
 
         assert result == {"p2": "scan-active"}
-        assert reads.aggregates == 1
+        assert (reads.seeks, reads.aggregates) == (1, _NO_READS)
 
     def test_resolves_projects_without_latest_scan_id_by_query(self):
         result, _ = asyncio.run(
@@ -239,16 +231,17 @@ class TestGetLatestActiveScanIds:
 
         assert result == {}
 
-    def test_collapses_multiple_pointer_less_projects_into_one_query(self):
+    def test_a_pointer_less_project_costs_one_index_seek_rather_than_a_sort_of_its_history(self):
+        history = [_scan(f"old-{index}", "p5", "main", index + 2) for index in range(20)]
         result, reads = asyncio.run(
             _resolve(
-                [_scan("scan-a", "p5", "main", 1), _scan("scan-b", "p6", "main", 1)],
+                [_scan("scan-a", "p5", "main", 1), *history, _scan("scan-b", "p6", "main", 1)],
                 [_project("p5"), _project("p6")],
             )
         )
 
         assert result == {"p5": "scan-a", "p6": "scan-b"}
-        assert reads.aggregates == 1
+        assert (reads.seeks, reads.aggregates) == (2, _NO_READS)
 
     def test_resolves_pointer_less_project_with_deleted_branches_separately(self):
         result, _ = asyncio.run(
@@ -291,7 +284,7 @@ class TestGetLatestActiveScanIds:
         )
 
         assert result == {"pa": "live-a", "pb": "live-b"}
-        assert (reads.finds, reads.aggregates) == (_POINTER_READS + _LINEAGE_READS, _NO_AGGREGATION)
+        assert (reads.finds, reads.aggregates) == (_POINTER_READS, _NO_READS)
 
     def test_skips_the_pointer_read_when_no_project_carries_a_pointer(self):
         result, reads = asyncio.run(
@@ -299,13 +292,13 @@ class TestGetLatestActiveScanIds:
         )
 
         assert result == {"p9": "found-by-query"}
-        assert reads.finds == _LINEAGE_READS
+        assert reads.finds == _NO_READS
 
     def test_skips_projects_with_falsy_id(self):
         result, reads = asyncio.run(_resolve([], [_project("")]))
 
         assert result == {}
-        assert (reads.finds, reads.aggregates) == (0, _NO_AGGREGATION)
+        assert (reads.finds, reads.seeks, reads.aggregates) == (_NO_READS, _NO_READS, _NO_READS)
 
     def test_mixed_projects(self):
         result, _ = asyncio.run(
@@ -323,6 +316,21 @@ class TestGetLatestActiveScanIds:
         )
 
         assert result == {"p_clean": "clean-scan", "p_deleted": "active-scan"}
+
+    def test_a_pointer_is_read_once_on_its_way_through_the_lineage(self):
+        """The pointer read already carries the chain fields, so the walk starts at the rescan link."""
+        result, reads = asyncio.run(
+            _resolve(
+                [
+                    _scan("build", "p1", "main", 5),
+                    _scan("rescan", "p1", "main", 0, is_rescan=True, original_scan_id="build"),
+                ],
+                [_project("p1", default_branch="main", latest_scan_id="build")],
+            )
+        )
+
+        assert result == {"p1": "rescan"}
+        assert reads.finds == _POINTER_READS + 1
 
 
 class TestHeadIsTheDefaultBranch:
@@ -414,6 +422,53 @@ class TestHeadIsTheDefaultBranch:
 
         assert result == {"p1": "develop-tip"}
 
+    def test_without_a_default_branch_a_tag_build_ranks_behind_every_branch_build(self):
+        """A tag pipeline writes its tag into branch, so it names no branch to be the tip of."""
+        result, _ = asyncio.run(
+            _resolve(
+                [_scan("main-build", "p1", "main", 6), _scan("tag-build", "p1", "v2.0.0", 0, commit_tag="v2.0.0")],
+                [_project("p1")],
+            )
+        )
+
+        assert result == {"p1": "main-build"}
+
+    def test_without_a_default_branch_a_pointer_to_a_tag_build_is_re_derived(self):
+        result, _ = asyncio.run(
+            _resolve(
+                [_scan("main-build", "p1", "main", 6), _scan("tag-build", "p1", "v2.0.0", 0, commit_tag="v2.0.0")],
+                [_project("p1", latest_scan_id="tag-build")],
+            )
+        )
+
+        assert result == {"p1": "main-build"}
+
+    @pytest.mark.parametrize("default_branch", [None, "main"])
+    def test_a_newer_scan_without_an_sbom_does_not_take_head_from_the_build_that_has_one(self, default_branch):
+        """Such a scan carries no dependencies, so heading with it would blank the project's vulnerabilities."""
+        result, _ = asyncio.run(
+            _resolve(
+                [_scan("sbom-build", "p1", "main", 6), _scan("sast-only", "p1", "main", 0, sbom_refs=[])],
+                [_project("p1", default_branch=default_branch)],
+            )
+        )
+
+        assert result == {"p1": "sbom-build"}
+
+    def test_a_project_whose_ci_only_builds_tags_is_headed_by_its_newest_tag_build(self):
+        result, _ = asyncio.run(
+            _resolve(
+                [
+                    _scan("v1", "p1", "v1.0.0", 30, commit_tag="v1.0.0"),
+                    _scan("v2", "p1", "v2.0.0", 6, commit_tag="v2.0.0"),
+                    _scan("v1-rescan", "p1", "v1.0.0", 0, commit_tag="v1.0.0", is_rescan=True, original_scan_id="v1"),
+                ],
+                [_project("p1")],
+            )
+        )
+
+        assert result == {"p1": "v2"}
+
 
 class TestGetPrecedingScan:
     """The build a scan succeeded, which is what "what changed since the last build" compares against."""
@@ -485,6 +540,35 @@ class TestGetPrecedingScan:
 
         assert result == "flag-absent"
 
+    def test_a_rescan_of_the_tip_is_preceded_by_the_build_before_the_tip(self):
+        """A rescan re-analyses its build's commit, so comparing it with that build diffs a commit
+        against itself."""
+        result = asyncio.run(
+            self._preceding_id(
+                [
+                    _scan("tip", "p1", "main", 5),
+                    _scan("before-tip", "p1", "main", 10),
+                    _scan(_HEAD, "p1", "main", 0, is_rescan=True, original_scan_id="tip"),
+                ]
+            )
+        )
+
+        assert result == "before-tip"
+
+    def test_a_rescan_of_an_old_release_is_preceded_by_the_build_before_that_release(self):
+        result = asyncio.run(
+            self._preceding_id(
+                [
+                    _scan("newer-build", "p1", "main", 24),
+                    _scan("release", "p1", "main", 100),
+                    _scan("before-release", "p1", "main", 200),
+                    _scan(_HEAD, "p1", "main", 0, is_rescan=True, original_scan_id="release"),
+                ]
+            )
+        )
+
+        assert result == "before-release"
+
     def test_the_first_build_on_a_branch_has_no_predecessor(self):
         result = asyncio.run(self._preceding_id([_scan(_HEAD, "p1", "main", 0)]))
 
@@ -514,6 +598,18 @@ def _vulnerability(finding_id: str, scan_id: str, severity: str) -> dict:
     }
 
 
+def _waiver_on(finding_id: str) -> dict:
+    return {
+        "_id": f"w-{finding_id}",
+        "project_id": "p1",
+        "finding_id": finding_id,
+        "scope": "finding",
+        "finding_type": "vulnerability",
+        "reason": "accepted",
+        "created_by": "tester",
+    }
+
+
 class TestStatsRecalculationReadsHead:
     @pytest.mark.asyncio
     async def test_a_pointer_on_a_feature_branch_does_not_decide_the_projects_stats(self):
@@ -530,49 +626,130 @@ class TestStatsRecalculationReadsHead:
 
         assert stats is not None
         assert (stats.critical, stats.low) == (1, 0)
-
-
-class TestHousekeepingDelegation:
-    """housekeeping._resolve_latest_scan_after_branch_deletion keeps its update-dict shape while
-    the replacement it writes into the pointer is head."""
+        project = await db.projects.find_one({"_id": "p1"})
+        assert (project["latest_scan_id"], project["stats"]["critical"]) == ("main-tip", 1)
 
     @pytest.mark.asyncio
-    async def test_updates_to_the_branch_tip_rather_than_the_newest_rescan(self):
-        from app.core import housekeeping
+    async def test_a_build_finalized_while_the_recalc_waited_for_the_lock_is_the_head_it_stamps(self, monkeypatch):
+        from app.repositories.distributed_locks import DistributedLocksRepository
+        from app.services.stats import recalculate_project_stats
 
         db = FakeDatabase()
-        await db.scans.insert_one(_scan("scan-old", "p1", "feature", 10))
-        await db.scans.insert_one(_scan("main-tip", "p1", "main", 5, stats=Stats().model_dump()))
-        await db.scans.insert_one(_scan("rescan", "p1", "main", 0, is_rescan=True, original_scan_id="main-tip"))
-        project_data = {"_id": "p1", "latest_scan_id": "scan-old", "default_branch": "main"}
+        await db.projects.insert_one(_project("p1", name="proj", default_branch="main", latest_scan_id="b1"))
+        await db.scans.insert_one(_scan("b1", "p1", "main", 5))
+        await db.findings.insert_one(_vulnerability("f-old", "b1", "HIGH"))
+        acquire = DistributedLocksRepository.acquire_lock
 
-        updates = await housekeeping._resolve_latest_scan_after_branch_deletion(project_data, ["feature"], db, "proj")
+        async def _b2_finalizes_while_another_recalc_holds_the_lock(self, *args):
+            monkeypatch.setattr(DistributedLocksRepository, "acquire_lock", acquire)
+            await db.scans.insert_one(_scan("b2", "p1", "main", 0))
+            await db.findings.insert_one(_vulnerability("f-new", "b2", "CRITICAL"))
+            await db.projects.update_one({"_id": "p1"}, {"$set": {"latest_scan_id": "b2"}})
+            return False
 
-        assert updates["latest_scan_id"] == "main-tip"
-        assert updates["last_scan_at"] is not None
-        # stats round-trips back to the stored (model_dump) shape.
-        assert updates["stats"] == Stats().model_dump()
+        monkeypatch.setattr(
+            DistributedLocksRepository, "acquire_lock", _b2_finalizes_while_another_recalc_holds_the_lock
+        )
+        monkeypatch.setattr("app.services.stats._LOCK_RETRY_BASE_DELAY", 0)
+
+        stats = await recalculate_project_stats("p1", db)
+
+        assert (stats.critical, stats.high) == (1, 0)
+        project = await db.projects.find_one({"_id": "p1"})
+        assert (project["latest_scan_id"], project["stats"]["critical"], project["stats"]["high"]) == ("b2", 1, 0)
 
     @pytest.mark.asyncio
-    async def test_clears_when_no_active_scan(self):
-        from app.core import housekeeping
+    async def test_a_build_finalized_during_the_restamp_gets_the_waivers_too(self, monkeypatch):
+        """The engine re-stamps a new head only while a waiver is active, so a deleted one's flags would stay."""
+        from app.services import stats as stats_service
 
         db = FakeDatabase()
-        await db.scans.insert_one(_scan("scan-old", "p1", "feature", 10))
-        project_data = {"_id": "p1", "latest_scan_id": "scan-old", "default_branch": "main"}
+        await db.projects.insert_one(_project("p1", name="proj", default_branch="main", latest_scan_id="b1"))
+        await db.scans.insert_one(_scan("b1", "p1", "main", 5))
+        await db.waivers.insert_one(_waiver_on("CVE-W"))
+        restamp = stats_service._restamp_scan
 
-        updates = await housekeeping._resolve_latest_scan_after_branch_deletion(project_data, ["feature"], db, "proj")
+        async def _b2_finalizes_meanwhile(scan_id, *args):
+            monkeypatch.setattr(stats_service, "_restamp_scan", restamp)
+            await db.scans.insert_one(_scan("b2", "p1", "main", 0))
+            await db.findings.insert_one(_vulnerability("CVE-W", "b2", "CRITICAL"))
+            return await restamp(scan_id, *args)
 
-        assert updates == {"latest_scan_id": None, "stats": None}
+        monkeypatch.setattr(stats_service, "_restamp_scan", _b2_finalizes_meanwhile)
+
+        stats = await stats_service.recalculate_project_stats("p1", db)
+
+        assert (await db.findings.find_one({"_id": "b2:CVE-W"}))["waived"] is True
+        assert stats is not None and stats.critical == 0
+        project = await db.projects.find_one({"_id": "p1"})
+        assert (project["latest_scan_id"], project["stats"]["critical"]) == ("b2", 0)
+
+
+class TestSyncProjectHead:
+    """The one writer of ``latest_scan_id`` and ``project.stats``: head derived afresh, written over the pointer read."""
+
+    @staticmethod
+    async def _synced(db: FakeDatabase, project: dict) -> tuple[str | None, dict]:
+        await db.projects.insert_one(project)
+        written = await ScanRepository(db).sync_project_head(project["_id"])
+        return written, await db.projects.find_one({"_id": project["_id"]})
 
     @pytest.mark.asyncio
-    async def test_noop_when_current_scan_not_on_deleted_branch(self):
-        from app.core import housekeeping
+    async def test_caches_the_derived_head_rather_than_the_pointer_it_replaces(self):
+        db = await _seeded(
+            [_scan("scan-old", "p1", "main", 10), _scan("main-tip", "p1", "main", 5, stats=Stats().model_dump())]
+        )
 
-        db = FakeDatabase()
-        await db.scans.insert_one(_scan("scan-old", "p1", "main", 10))
-        project_data = {"_id": "p1", "latest_scan_id": "scan-old", "default_branch": "main"}
+        written, project = await self._synced(db, _project("p1", latest_scan_id="scan-old", default_branch="main"))
 
-        updates = await housekeeping._resolve_latest_scan_after_branch_deletion(project_data, ["feature"], db, "proj")
+        assert written == "main-tip"
+        assert (project["latest_scan_id"], project["stats"]) == ("main-tip", Stats().model_dump())
 
-        assert updates == {}
+    @pytest.mark.asyncio
+    async def test_a_newer_scan_without_an_sbom_is_not_the_head_it_caches(self):
+        db = await _seeded(
+            [
+                _scan("sbom-build", "p1", "main", 5, stats={"critical": 9}),
+                _scan("sast-only", "p1", "main", 1, sbom_refs=[], stats={"critical": 0}),
+            ]
+        )
+
+        written, project = await self._synced(db, _project("p1", latest_scan_id="sast-only"))
+
+        assert written == "sbom-build"
+        assert project["stats"] == {"critical": 9}
+
+    @pytest.mark.asyncio
+    async def test_clears_both_fields_when_nothing_usable_is_left(self):
+        db = await _seeded([_scan("on-gone", "p1", "gone", 1, stats={"critical": 3})])
+
+        written, project = await self._synced(
+            db, _project("p1", latest_scan_id="on-gone", deleted_branches=["gone"], stats={"critical": 3})
+        )
+
+        assert written is None
+        assert (project["latest_scan_id"], project["stats"]) == (None, None)
+
+    @pytest.mark.asyncio
+    async def test_a_pointer_moved_since_it_was_read_is_derived_again(self, monkeypatch):
+        """A writer that moved the pointer meanwhile saw newer scans, so an older derivation must not land."""
+        db = await _seeded([_scan("b1", "p1", "main", 2), _scan("b2", "p1", "main", 0)])
+        await db.projects.insert_one(_project("p1", latest_scan_id="b0", default_branch="main"))
+        derive = ScanRepository._head_scan_ids
+
+        async def _b2_finalizes_meanwhile(self, scopes):
+            monkeypatch.setattr(ScanRepository, "_head_scan_ids", derive)
+            await db.projects.update_one({"_id": "p1"}, {"$set": {"latest_scan_id": "b2"}})
+            return {"p1": "b1"}
+
+        monkeypatch.setattr(ScanRepository, "_head_scan_ids", _b2_finalizes_meanwhile)
+
+        assert await ScanRepository(db).sync_project_head("p1") == "b2"
+        assert (await db.projects.find_one({"_id": "p1"}))["latest_scan_id"] == "b2"
+
+    @pytest.mark.asyncio
+    async def test_a_project_that_is_gone_is_left_alone(self):
+        db = await _seeded([_scan("main-tip", "p1", "main", 5)])
+
+        assert await ScanRepository(db).sync_project_head("p1") is None
+        assert await db.projects.find_one({"_id": "p1"}) is None

@@ -4,7 +4,6 @@ import logging
 import re
 import uuid
 import zipfile
-from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Response, status
@@ -15,7 +14,6 @@ from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
-    admin_survival_guard,
     aggregate_stats_by_category,
     apply_system_settings_enforcement,
     build_pagination_response,
@@ -24,7 +22,9 @@ from app.api.v1.helpers import (
     generate_project_api_key,
     get_category_type_filter,
     get_sort_field,
+    get_user_project_ids,
     is_write_superuser,
+    last_admin_guard,
     load_from_gridfs,
     may_read_projects,
     parse_sort_direction,
@@ -33,48 +33,58 @@ from app.api.v1.helpers import (
     team_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
-from app.api.v1.helpers.projects import max_project_role
+from app.api.v1.helpers.projects import (
+    direct_member_role,
+    effective_project_role,
+    max_project_role,
+    reject_unknown_analyzers,
+    team_grant_role,
+)
+from app.api.v1.helpers.sorting import SortOrderQuery
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
     RESP_AUTH_400_404_409,
-    RESP_AUTH_400_404_500,
+    RESP_AUTH_400_404_409_500,
     RESP_AUTH_404,
     RESP_AUTH_404_500,
+    RESP_502,
 )
 from app.core.constants import (
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
+    PROJECT_ROLE_EDITOR,
     PROJECT_ROLE_VIEWER,
-    SCAN_USABLE_STATUSES,
-    TEAM_ROLE_ADMIN,
+    SCAN_ACTIVE_STATUSES,
+    SEVERITY_ORDER,
     TEAM_SOURCE_MANUAL,
+    ProjectRole,
 )
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
-from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
+from app.core.trufflehog import resolve_secret_detectors
 from app.core.worker import worker_manager
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.release import Release
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.repositories import (
-    AnalysisResultRepository,
-    CallgraphRepository,
-    FindingRepository,
-    GitHubInstanceRepository,
-    InvitationRepository,
-    ProjectRepository,
-    ReleaseRepository,
-    ScanRepository,
-    TeamRepository,
-    UserRepository,
-    WaiverRepository,
-)
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.base import and_filters
+from app.repositories.callgraphs import CallgraphRepository
+from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.github_instances import GitHubInstanceRepository
+from app.repositories.invitations import InvitationRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.releases import ReleaseRepository
+from app.repositories.scans import BRANCH_SCAN_FILTER, ScanRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
+from app.repositories.waivers import WaiverRepository
+from app.repositories.webhooks import WebhookRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.projects import (
-    literal_set_stage,
     ownership_fields,
     set_owners_pipeline,
 )
@@ -98,13 +108,13 @@ from app.schemas.project import (
     ScanReleaseRef,
     ScanWithReleases,
 )
-from app.services.aggregation.components import component_match_expr
-from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
-from app.services.branches import resolve_default_branch
+from app.services.branch_sync import sync_project_branches
+from app.services.component_identity import component_match_expr
 from app.services.gitlab import GitLabService
+from app.services.gridfs_maintenance import gridfs_ref_id
 from app.services.inventory.csv_stream import csv_response, export_filename
-from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
-from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
+from app.services.inventory.findings_export import FINDINGS_COLUMNS, ExportedScan, iter_findings_rows
+from app.services.rescan import create_rescan
 from app.services.scan_cascade import delete_scans_and_related_data
 
 router = CustomAPIRouter()
@@ -244,12 +254,13 @@ async def create_project(
     settings: Annotated[SystemSettings, Depends(deps.get_system_settings)],
 ) -> ProjectApiKeyResponse:
     """Create a new project and return the initial API Key, which is only returned once."""
+    reject_unknown_analyzers(project_in.active_analyzers)
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
     if settings.project_limit_per_user > 0 and not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
         current_count = await project_repo.count(
-            {"members": {"$elemMatch": {"user_id": str(current_user.id), "role": "admin"}}}
+            {"members": {"$elemMatch": {"user_id": str(current_user.id), "role": PROJECT_ROLE_ADMIN}}}
         )
         if current_count >= settings.project_limit_per_user:
             raise HTTPException(
@@ -258,9 +269,7 @@ async def create_project(
             )
 
     if project_in.team_id:
-        is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
-        if not is_member:
-            raise HTTPException(status_code=403, detail="You are not a member of the specified team")
+        await _assert_may_grant_teams({project_in.team_id}, current_user, team_repo)
 
     project_id = str(uuid.uuid4())
     api_key, api_key_hash = generate_project_api_key(project_id)
@@ -280,7 +289,7 @@ async def create_project(
         active_analyzers=project_in.active_analyzers,
         analyzer_settings=project_in.analyzer_settings,
         **retention,
-        members=[ProjectMember(user_id=str(current_user.id), role="admin")],
+        members=[ProjectMember(user_id=str(current_user.id), role=PROJECT_ROLE_ADMIN)],
     )
 
     # api_key_hash is excluded from the model dump by default; add it back manually.
@@ -306,12 +315,11 @@ async def rotate_api_key(
     """Invalidate the old API Key and generate a new one. Requires 'admin' role."""
     project_repo = ProjectRepository(db)
 
-    # project:update holders pass via the write-superuser branch.
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
     api_key, api_key_hash = generate_project_api_key(project_id)
 
-    await project_repo.update(project_id, {"api_key_hash": api_key_hash})
+    await project_repo.update_raw(project_id, {"$set": {"api_key_hash": api_key_hash}})
 
     return ProjectApiKeyResponse(project_id=project_id, api_key=api_key)
 
@@ -325,7 +333,7 @@ async def read_projects(
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     sort_by: str = "created_at",
-    sort_order: str = "desc",
+    sort_order: SortOrderQuery = "desc",
 ) -> dict[str, Any]:
     """Retrieve projects; superusers see all, everyone else those they are a member of or that a team of theirs owns."""
     project_repo = ProjectRepository(db)
@@ -340,14 +348,7 @@ async def read_projects(
     if team_id:
         search_query["team_ids"] = team_id
 
-    permission_query = await build_user_project_query(current_user, team_repo)
-
-    if search_query and permission_query:
-        final_query = {"$and": [search_query, permission_query]}
-    elif permission_query:
-        final_query = permission_query
-    else:
-        final_query = search_query
+    final_query = and_filters(search_query, await build_user_project_query(current_user, team_repo))
 
     direction = parse_sort_direction(sort_order)
     sort_field = get_sort_field("projects", sort_by)
@@ -384,20 +385,13 @@ async def read_all_scans(
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     skip: Annotated[int, Query(ge=0)] = 0,
     sort_by: str = "created_at",
-    sort_order: str = "desc",
+    sort_order: SortOrderQuery = "desc",
 ) -> list[dict[str, Any]]:
     """Retrieve scans for all projects the user has access to, with pagination and sorting."""
-    project_repo = ProjectRepository(db)
-    team_repo = TeamRepository(db)
-    scan_repo = ScanRepository(db)
-
     if not may_read_projects(current_user):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    permission_query = await build_user_project_query(current_user, team_repo)
-    projects = ensure_whole_scope(await project_repo.find_many_minimal(permission_query, limit=scope_probe_limit()))
-    project_ids = [str(p.id) for p in projects]
-
+    project_ids = await get_user_project_ids(current_user, db)
     if not project_ids:
         return []
 
@@ -405,8 +399,9 @@ async def read_all_scans(
     sort_field = get_sort_field("scans", sort_by)
 
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"project_id": {"$in": project_ids}}},
-        {"$sort": {sort_field: direction}},
+        # A rescan carries an old pipeline number under today's date, so it would read as a fresh run.
+        {"$match": {"project_id": {"$in": project_ids}, "is_rescan": {"$ne": True}}},
+        {"$sort": dict(_scan_page_sort(sort_field, direction))},
         {"$skip": skip},
         {"$limit": limit},
         {
@@ -422,7 +417,7 @@ async def read_all_scans(
         {"$project": {"project_info": 0, "sboms": 0, "findings_summary": 0}},
     ]
 
-    return await scan_repo.aggregate(pipeline, limit)
+    return await ScanRepository(db).aggregate(pipeline, limit)
 
 
 # Every owning team's member ids as one flat list. A field path across two array levels answers
@@ -442,37 +437,32 @@ _OWNING_TEAM_MEMBER_IDS = {
 
 
 def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
-    """Add the members the owning teams bring in, each at the strongest role any of them grants and
-    named with every owner it comes from.
-
-    Strongest and not first: ``team_ids`` is in whatever order the last writer left it and the join
-    answers in the teams collection's, so a first-wins merge would hand a user who is an admin of
-    one owner and a plain member of another a different role from one request to the next. Someone
-    already named in the project's own members keeps that entry — it is theirs to be removed from.
-    """
-    existing_ids = {m["user_id"] for m in data["members"]}
-    roles: dict[str, str | None] = {}
+    """Add the owning teams' members, named with each owner, and set every row's ``effective_role``; direct rows win."""
+    team_roles: dict[str, ProjectRole | None] = {}
     owners: dict[str, set[str]] = {}
 
-    # Teams by id and their names sorted below, so the same owners answer the same rows in the same
-    # order and spell the same string however the join ordered them.
+    # Sorted, so the answer does not depend on the order the join returned the teams in.
     for team in sorted(data.get("team_data") or [], key=lambda team: str(team.get("_id"))):
         for tm in team.get("members", []):
             uid = tm["user_id"]
-            if uid in existing_ids:
-                continue
-            role = PROJECT_ROLE_ADMIN if tm.get("role") == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
-            roles[uid] = max_project_role(roles.get(uid), role)
+            team_roles[uid] = max_project_role(team_roles.get(uid), team_grant_role(tm.get("role")))
             owners.setdefault(uid, set()).add(str(team.get("name")))
 
+    for member in data["members"]:
+        direct_role = member.get("role", PROJECT_ROLE_VIEWER)
+        member["effective_role"] = max_project_role(direct_role, team_roles.pop(member["user_id"], None))
+
+    overrides = data.get("notification_overrides") or {}
     data["members"].extend(
         {
             "user_id": uid,
-            "role": roles[uid],
+            "role": role,
+            "effective_role": role,
             "username": t_users.get(uid),
-            "inherited_from": "Team: " + ", ".join(sorted(names)),
+            "inherited_from": "Team: " + ", ".join(sorted(owners[uid])),
+            "notification_preferences": overrides.get(uid) or {},
         }
-        for uid, names in owners.items()
+        for uid, role in team_roles.items()
     )
 
 
@@ -483,6 +473,7 @@ async def read_project(
     db: DatabaseDep,
 ) -> Project:
     """Get a specific project by ID."""
+    await check_project_access(project_id, current_user, db)
     project_repo = ProjectRepository(db)
 
     # Single aggregation to avoid N+1 team/user lookups. The owning teams stay an array: an array
@@ -539,69 +530,27 @@ async def read_project(
     data.pop("project_users", None)
     data.pop("team_users", None)
 
-    project = Project(**data)
+    return Project(**data)
 
-    # Inline access check against the already-loaded data.
-    if not has_permission(current_user.permissions, Permissions.PROJECT_READ_ALL):
-        is_member = any(m.user_id == str(current_user.id) for m in project.members)
 
-        if not is_member:
-            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
-
-        if Permissions.PROJECT_READ not in current_user.permissions:
-            raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
-
+async def _reload_project(project_repo: ProjectRepository, project_id: str) -> Project:
+    """The stored project a write endpoint answers with."""
+    project = await project_repo.get_by_id(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
     return project
 
 
-async def _load_project_for_update(
-    project_id: str,
-    current_user: User,
-    db: Any,
-) -> Project:
-    """Load the project for an update and verify the caller can edit it."""
-    return await check_project_access(project_id, current_user, db, required_role="admin")
-
-
-async def _assert_may_hand_to_teams(
-    project: Project,
-    chosen: set[str],
-    current_user: User,
-    team_repo: TeamRepository,
-) -> None:
-    """Block an owner set the caller may not hand the project to, before anything is written.
-
-    Only the owners being gained are checked. One the project already holds was granted by an
-    earlier write, and re-checking it would stop an admin of one owner from editing the rest.
-
-    An id nothing resolves to is refused with 404 ahead of the membership check: it grants nobody
-    anything and no sync would ever reap it.
-    """
-    if len(chosen) > MAX_PROJECT_TEAMS:
-        raise HTTPException(status_code=400, detail=f"A project may be owned by at most {MAX_PROJECT_TEAMS} teams")
-    for team_id in sorted(chosen - set(project.team_ids)):
-        if not await team_repo.get_by_id(team_id):
+async def _assert_may_grant_teams(gained: set[str], current_user: User, team_repo: TeamRepository) -> None:
+    """404 for a team that does not exist (whoever asks); 403 unless the caller is a member or a write superuser."""
+    teams = await team_repo.members_by_team(sorted(gained))
+    for team_id in sorted(gained):
+        if team_id not in teams:
             raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
-        if is_write_superuser(current_user):
-            continue
-        if not await team_repo.is_member(team_id, str(current_user.id)):
+        if not is_write_superuser(current_user) and all(
+            m.get("user_id") != str(current_user.id) for m in teams[team_id]
+        ):
             raise HTTPException(status_code=403, detail="You are not a member of the target team")
-
-
-async def _admin_survival_guard_for(
-    project: Project,
-    chosen: set[str],
-    current_user: User,
-    team_repo: TeamRepository,
-) -> dict[str, Any]:
-    """The guard for making ``chosen`` the project's whole owner set.
-
-    A write superuser may leave a project only they can administer, because they are the ones who
-    can undo it.
-    """
-    if is_write_superuser(current_user):
-        return {}
-    return await admin_survival_guard(project, chosen, team_repo)
 
 
 _GITLAB_BINDING_KEYS = ("gitlab_instance_id", "gitlab_project_id")
@@ -727,18 +676,22 @@ async def update_project(
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
-    project = await _load_project_for_update(project_id, current_user, db)
+    project = await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
+    reject_unknown_analyzers(update_data.get("active_analyzers"))
     # The picker sends every owner it showed, a sync's included, so the write keeps each retained
     # owner's provenance rather than claiming the lot as hand-assigned.
     ownership_stages: list[dict] = []
     guard: dict[str, Any] = {}
     if "team_ids" in update_data:
         chosen = set(update_data.pop("team_ids") or [])
-        await _assert_may_hand_to_teams(project, chosen, current_user, team_repo)
+        if len(chosen) > MAX_PROJECT_TEAMS:
+            raise HTTPException(status_code=400, detail=f"A project may be owned by at most {MAX_PROJECT_TEAMS} teams")
+        # Re-checking owners already held would stop an admin of one owner from editing the rest.
+        await _assert_may_grant_teams(chosen - set(project.team_ids), current_user, team_repo)
         ownership_stages = set_owners_pipeline(sorted(chosen))
-        guard = await _admin_survival_guard_for(project, chosen, current_user, team_repo)
+        guard = await last_admin_guard(project, current_user, team_repo, surviving_owners=chosen)
     await _vet_gitlab_binding(project, update_data, current_user, db)
     await _assert_gitlab_mr_token_present(project, update_data, db)
     await _assert_github_pr_token_present(project, update_data, db)
@@ -753,9 +706,8 @@ async def update_project(
     # Capture the pre-update license policy so we can audit transitions.
     old_license_policy = _resolve_license_policy(project)
 
-    stages = ([literal_set_stage(update_data)] if update_data else []) + ownership_stages
     try:
-        written = not stages or await project_repo.update_raw(project_id, stages, guard)
+        written = await project_repo.update_fields_and_owners(project_id, update_data, ownership_stages, guard)
     except DuplicateKeyError as exc:
         # The GitLab binding is the only unique key an update body can write.
         bound_id = update_data.get("gitlab_project_id", project.gitlab_project_id)
@@ -766,10 +718,10 @@ async def update_project(
     if not written and guard:
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_OWNER)
 
-    updated_project = await project_repo.get_by_id_strong(project_id)
-    if not updated_project:
-        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-
+    updated_project = await _reload_project(project_repo, project_id)
+    if updated_project.default_branch != project.default_branch:
+        await ScanRepository(db).sync_project_head(project_id)
+        updated_project = await _reload_project(project_repo, project_id)
     await _audit_license_policy_change(db, project_id, old_license_policy, updated_project, current_user)
     return updated_project
 
@@ -799,56 +751,39 @@ async def read_project_branches(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> list[BranchInfo]:
-    """Get all unique branches for a project with their active/deleted status."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
-
+    """Every branch the project's scans name, with its active/deleted status; the default is the
+    branch head resolves to, so the view opens on what the project tile reports."""
+    project = await check_project_access(project_id, current_user, db)
     scan_repo = ScanRepository(db)
-    project_repo = ProjectRepository(db)
 
-    branches = await scan_repo.distinct("branch", {"project_id": project_id})
-    project = await project_repo.get_by_id(project_id)
-    deleted_set = set(project.deleted_branches) if project else set()
-
-    pipeline: list[dict[str, Any]] = [
-        {"$match": {"project_id": project_id}},
-        {
-            MONGO_GROUP: {
-                "_id": "$branch",
-                "last_scan_at": {"$max": "$created_at"},
-                # Ranked on separately: a branch whose newest scans all failed renders nothing.
-                "last_usable_at": {
-                    "$max": {"$cond": [{"$in": ["$status", list(SCAN_USABLE_STATUSES)]}, "$created_at", None]}
-                },
-            }
-        },
-    ]
-    last_scans: dict[str, Any] = {}
-    last_usable: dict[str, Any] = {}
-    async for doc in db.scans.aggregate(pipeline):
-        last_scans[doc["_id"]] = doc["last_scan_at"]
-        last_usable[doc["_id"]] = doc.get("last_usable_at")
-
-    default_branch = resolve_default_branch(
-        project.default_branch if project else None,
-        [b for b in branches if b not in deleted_set],
-        last_usable,
+    rows = await scan_repo.aggregate(
+        [
+            {"$match": {"project_id": project_id, **BRANCH_SCAN_FILTER}},
+            {MONGO_GROUP: {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
+        ]
     )
+    last_scans = {row["_id"]: row["last_scan_at"] for row in rows if isinstance(row["_id"], str) and row["_id"]}
+    deleted = set(project.deleted_branches or [])
+    active = [branch for branch in sorted(last_scans) if branch not in deleted]
+
+    head = await scan_repo.get_latest_active_scan(project)
+    default_branch = head.branch if head and head.branch in active else next(iter(active), None)
 
     return [
         BranchInfo(
-            name=b,
-            is_active=b not in deleted_set,
-            last_scan_at=last_scans.get(b),
-            is_default=b == default_branch,
+            name=branch,
+            is_active=branch not in deleted,
+            last_scan_at=last_scans[branch],
+            is_default=branch == default_branch,
         )
-        for b in sorted(branches)
+        for branch in sorted(last_scans)
     ]
 
 
 @router.post(
     "/{project_id}/sync-branches",
     summary="Sync branch status from VCS",
-    responses=RESP_AUTH_400_404,
+    responses={**RESP_AUTH_400_404, **RESP_502},
 )
 async def sync_project_branches_endpoint(
     project_id: str,
@@ -856,23 +791,34 @@ async def sync_project_branches_endpoint(
     db: DatabaseDep,
 ) -> list[BranchInfo]:
     """Trigger branch status sync against the VCS provider for a project."""
-    await check_project_access(project_id, current_user, db, required_role="editor")
-
-    project_repo = ProjectRepository(db)
-    project = await project_repo.get_by_id(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-
-    if not project.gitlab_instance_id and not project.github_instance_id:
+    project = await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
+    linked_gitlab = project.gitlab_instance_id and project.gitlab_project_id
+    if not linked_gitlab and not (project.github_instance_id and project.github_repository_path):
         raise HTTPException(status_code=400, detail="Project has no VCS connection configured")
 
-    from app.core.housekeeping import sync_project_branches
-
-    project_data = await project_repo.get_raw_by_id(project_id)
-    if project_data:
-        await sync_project_branches(project_data, db)
+    if not await sync_project_branches(project.model_dump(by_alias=True), db):
+        raise HTTPException(status_code=502, detail="The VCS could not be reached or listed no branches")
 
     return await read_project_branches(project_id, current_user, db)
+
+
+async def _with_releases(db: Any, docs: list[dict[str, Any]]) -> list[ScanWithReleases]:
+    """The scans, each carrying the environments it was released to."""
+    by_scan = await ReleaseRepository(db).group_by_scan([doc["_id"] for doc in docs])
+    return [ScanWithReleases(**{**doc, "releases": _release_refs(by_scan.get(doc["_id"], []))}) for doc in docs]
+
+
+def _scan_page_sort(field: str, direction: int) -> list[tuple[str, int]]:
+    """Break ties so pages neither repeat nor skip scans, on keys an existing index already serves."""
+    if field == "created_at":
+        return [("created_at", direction)]
+    if field == "status":
+        # SCANS_TIP_INDEX_KEY walks (status, created_at desc, _id asc) in either direction.
+        return [("status", direction), ("created_at", -direction), ("_id", direction)]
+    if field == "branch":
+        return [("branch", direction), ("created_at", -direction)]
+    # Nothing indexes these, so the sort is blocking anyway and the extra keys cost nothing.
+    return [(field, direction), ("created_at", -1), ("_id", 1)]
 
 
 @router.get("/{project_id}/scans", summary="List project scans", responses=RESP_AUTH_404)
@@ -887,21 +833,18 @@ async def read_project_scans(
     exclude_rescans: bool = False,
     is_release: bool | None = None,
     sort_by: str = "created_at",
-    sort_order: str = "desc",
+    sort_order: SortOrderQuery = "desc",
 ) -> list[ScanWithReleases]:
     """Get scans for a project, each carrying the environments it was released to."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
 
     scan_repo = ScanRepository(db)
-    project_repo = ProjectRepository(db)
 
     query: dict[str, Any] = {"project_id": project_id}
     if branch:
         query["branch"] = branch
-    elif exclude_deleted_branches:
-        project = await project_repo.get_by_id(project_id)
-        if project and project.deleted_branches:
-            query["branch"] = {"$nin": project.deleted_branches}
+    elif exclude_deleted_branches and project.deleted_branches:
+        query["branch"] = {"$nin": project.deleted_branches}
 
     if exclude_rescans:
         query["is_rescan"] = {"$ne": True}
@@ -910,22 +853,14 @@ async def read_project_scans(
         # Tri-state: scans predating the mark carry no field and are not releases.
         query["is_release"] = True if is_release else {"$ne": True}
 
-    direction = parse_sort_direction(sort_order)
-    sort_field = get_sort_field("project_scans", sort_by)
-
     scan_docs = await scan_repo.find_many_raw(
         query,
-        sort=[(sort_field, direction)],
+        sort=_scan_page_sort(get_sort_field("project_scans", sort_by), parse_sort_direction(sort_order)),
         skip=skip,
         limit=limit,
     )
 
-    releases_by_scan = await ReleaseRepository(db).group_by_scan([doc["_id"] for doc in scan_docs])
-
-    return [
-        ScanWithReleases(**{**doc, "releases": _release_refs(releases_by_scan.get(doc["_id"], []))})
-        for doc in scan_docs
-    ]
+    return await _with_releases(db, scan_docs)
 
 
 @router.get("/{project_id}/scans/branch-tips", summary="Branch tips and scan counts", responses=RESP_AUTH_404)
@@ -934,50 +869,24 @@ async def read_project_branch_tips(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ProjectBranchTips:
-    """Every branch's representative scan and scan count, plus the newest release-flagged scan.
+    """Every branch's representative scan and scan count.
 
-    A page of the scan list answers neither: a branch whose newest scan fell off the page
-    disappears from it, and a release marked before the page begins reads as no release.
+    A page of the scan list cannot answer this: a branch whose newest scan fell off the page
+    disappears from it.
     """
-    await check_project_access(project_id, current_user, db, required_role="viewer")
-
-    project_repo = ProjectRepository(db)
-    project = await project_repo.get_by_id(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-
-    deleted = list(project.deleted_branches or [])
-    scan_repo = ScanRepository(db)
-    tips = await scan_repo.branch_tips(project_id, deleted)
-
-    flagged_query: dict[str, Any] = {
-        "project_id": project_id,
-        "is_release": True,
-        "status": {"$in": SCAN_USABLE_STATUSES},
-    }
-    if deleted:
-        flagged_query["branch"] = {"$nin": deleted}
-    flagged_doc = await scan_repo.find_one(flagged_query, sort=[("created_at", -1), ("_id", 1)])
-
-    flagged: ScanWithReleases | None = None
-    if flagged_doc:
-        releases_by_scan = await ReleaseRepository(db).group_by_scan([flagged_doc["_id"]])
-        flagged = ScanWithReleases(
-            **{**flagged_doc, "releases": _release_refs(releases_by_scan.get(flagged_doc["_id"], []))}
-        )
-
+    project = await check_project_access(project_id, current_user, db)
+    tips = await ScanRepository(db).branch_tips(project_id, list(project.deleted_branches or []))
     return ProjectBranchTips(
         branches=[
             BranchTip(branch=branch, scan_count=count, tip=Scan(**tip) if tip else None) for branch, count, tip in tips
-        ],
-        flagged_release_scan=flagged,
+        ]
     )
 
 
 @router.post(
     "/{project_id}/scans/{scan_id}/rescan",
     summary="Trigger a manual re-scan",
-    responses=RESP_AUTH_400_404_500,
+    responses=RESP_AUTH_400_404_409_500,
 )
 async def trigger_rescan(
     project_id: str,
@@ -986,65 +895,26 @@ async def trigger_rescan(
     db: DatabaseDep,
 ) -> Scan:
     """Manually trigger a re-scan: a new scan entry with the same SBOMs, re-analysed."""
-    await check_project_access(project_id, current_user, db, required_role="editor")
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
 
-    scan_repo = ScanRepository(db)
-
-    scan = await scan_repo.find_one({"_id": scan_id, "project_id": project_id})
+    scan = await ScanRepository(db).find_one({"_id": scan_id, "project_id": project_id})
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     if not scan.get("sbom_refs"):
         raise HTTPException(status_code=400, detail="Cannot re-scan: No SBOMs found in the source scan.")
 
-    # Trace back to the original scan so lineage stays intact.
-    original_scan_id = scan.get("original_scan_id") or scan_id
+    # Scanner results may still be arriving, and a rescan would copy the SBOM set as it stands.
+    if scan.get("status") in SCAN_ACTIVE_STATUSES:
+        raise HTTPException(status_code=409, detail="Cannot re-scan: the scan is still being analysed.")
 
-    new_scan = Scan(
-        project_id=project_id,
-        branch=scan.get("branch", "unknown"),
-        commit_hash=scan.get("commit_hash"),
-        pipeline_id=None,  # Don't collide with ingest
-        pipeline_iid=scan.get("pipeline_iid"),
-        project_url=scan.get("project_url"),
-        pipeline_url=scan.get("pipeline_url"),
-        job_id=scan.get("job_id"),
-        job_started_at=scan.get("job_started_at"),
-        project_name=scan.get("project_name"),
-        commit_message=scan.get("commit_message"),
-        commit_tag=scan.get("commit_tag"),
-        sbom_refs=scan.get("sbom_refs", []),
-        # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
-        scan_type=scan.get("scan_type"),
-        status="pending",
-        created_at=datetime.now(timezone.utc),
-        is_rescan=True,
-        original_scan_id=original_scan_id,
-    )
-
-    await scan_repo.create(new_scan)
-
-    # Update original scan to point to this new pending rescan
-    await scan_repo.update_raw(
-        original_scan_id,
-        {
-            "$set": {
-                "latest_rescan_id": new_scan.id,
-                "latest_run": {
-                    "scan_id": new_scan.id,
-                    "status": "pending",
-                    "created_at": datetime.now(timezone.utc),
-                },
-            }
-        },
-    )
-
-    if worker_manager:
-        await worker_manager.add_job(new_scan.id)
-    else:
+    if not worker_manager:
         raise HTTPException(status_code=500, detail="Worker manager not available")
 
-    return new_scan
+    rescan = await create_rescan(db, scan, worker_manager)
+    if rescan is None:
+        raise HTTPException(status_code=409, detail="A re-scan of this scan is already under way.")
+    return rescan
 
 
 @router.get(
@@ -1063,7 +933,7 @@ async def read_scan_history(
     Housekeeping re-scans a branch tip every ``global_rescan_interval`` hours, so a
     long-lived scan outgrows one page; ``total`` is counted over the lineage.
     """
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
 
     scan_repo = ScanRepository(db)
 
@@ -1097,50 +967,32 @@ async def update_notification_settings(
 ) -> Project:
     """Update notification preferences for the current user in this project."""
     project = await check_project_access(project_id, current_user, db)
-
-    is_admin = any(m.user_id == str(current_user.id) and m.role == "admin" for m in project.members)
-    has_update_perm = has_permission(current_user.permissions, Permissions.PROJECT_UPDATE)
-
-    update_data: dict[str, Any] = {}
-
-    if settings.enforce_notification_settings is not None and (is_admin or has_update_perm):
-        update_data["enforce_notification_settings"] = settings.enforce_notification_settings
-
     project_repo = ProjectRepository(db)
+    user_id = str(current_user.id)
 
-    member_fields = {"notification_preferences": settings.notification_preferences}
-    is_member = any(member.user_id == str(current_user.id) for member in project.members)
+    role = await effective_project_role(project, current_user, TeamRepository(db))
+    may_enforce = role == PROJECT_ROLE_ADMIN or is_write_superuser(current_user)
 
-    if is_admin:
-        # Persist enforcement changes and the admin's own per-project preferences.
-        if update_data:
-            await project_repo.update(project_id, update_data)
-        await project_repo.update_member(project_id, str(current_user.id), member_fields)
-    else:
-        if project.enforce_notification_settings and not has_update_perm:
-            raise HTTPException(
-                status_code=403,
-                detail="Notification settings are enforced by the project admin",
-            )
+    if settings.enforce_notification_settings is not None and may_enforce:
+        await project_repo.update_raw(
+            project_id, {"$set": {"enforce_notification_settings": settings.enforce_notification_settings}}
+        )
+    elif project.enforce_notification_settings and not may_enforce:
+        raise HTTPException(status_code=403, detail="Notification settings are enforced by the project admin")
 
-        if is_member:
-            if update_data:
-                await project_repo.update(project_id, update_data)
-            await project_repo.update_member(project_id, str(current_user.id), member_fields)
-        elif has_update_perm:
-            # A superuser who is not a member can still update enforcement, not preferences.
-            if update_data:
-                await project_repo.update(project_id, update_data)
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="You must be a member or admin to set notification preferences",
-            )
+    if direct_member_role(project, user_id) is not None:
+        await project_repo.update_member(
+            project_id, user_id, {"notification_preferences": settings.notification_preferences}
+        )
+    elif role is not None:
+        # Beside the members, so no member entry outlives the team membership that granted access.
+        await project_repo.update_raw(
+            project_id, {"$set": {f"notification_overrides.{user_id}": settings.notification_preferences}}
+        )
+    elif not may_enforce:
+        raise HTTPException(status_code=400, detail="You must be a member or admin to set notification preferences")
 
-    updated_project = await project_repo.get_by_id(project_id)
-    if updated_project:
-        return updated_project
-    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    return await _reload_project(project_repo, project_id)
 
 
 @router.post(
@@ -1156,7 +1008,7 @@ async def invite_user(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Add the existing user that verified this email (404 if none did; use system invitations for new users)."""
-    project = await check_project_access(project_id, current_user, db, required_role="admin")
+    project = await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
     user_repo = UserRepository(db)
     project_repo = ProjectRepository(db)
@@ -1198,18 +1050,8 @@ async def read_analysis_results(
     db: DatabaseDep,
 ) -> list[AnalysisResult]:
     """Get the results of all analyzers for a specific scan."""
-    scan_repo = ScanRepository(db)
-    analysis_repo = AnalysisResultRepository(db)
-
-    scan = await scan_repo.get_minimal_by_id(scan_id)
-    if not scan:
-        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-
-    if not scan.project_id:
-        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-    await check_project_access(scan.project_id, current_user, db)
-
-    return await analysis_repo.find_by_scan(scan_id)
+    await _require_scan_access(scan_id, current_user, db)
+    return await AnalysisResultRepository(db).find_by_scan(scan_id, limit=1000)
 
 
 @router.get("/scans/{scan_id}", summary="Get scan details", responses=RESP_AUTH_404)
@@ -1220,17 +1062,8 @@ async def read_scan(
 ) -> ScanWithReleases:
     """Get details of a specific scan and the environments it runs in; SBOMs are excluded
     (fetch them via /scans/{scan_id}/sboms)."""
-    scan_repo = ScanRepository(db)
-
-    scan_data = await scan_repo.get_by_id(scan_id)
-    if not scan_data:
-        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-
-    await check_project_access(scan_data.project_id, current_user, db)
-
-    releases_by_scan = await ReleaseRepository(db).group_by_scan([scan_id])
-
-    return ScanWithReleases(**scan_data.model_dump(), releases=_release_refs(releases_by_scan.get(scan_id, [])))
+    scan = await _load_scan_with_access(scan_id, current_user, db)
+    return (await _with_releases(db, [scan.model_dump(by_alias=True)]))[0]
 
 
 @router.get(
@@ -1244,15 +1077,7 @@ async def read_scan_sboms(
     db: DatabaseDep,
 ) -> list[dict[str, Any]]:
     """Get raw SBOM data for a scan, resolved from GridFS on demand."""
-    scan_repo = ScanRepository(db)
-
-    scan_data = await scan_repo.get_by_id(scan_id)
-    if not scan_data:
-        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-
-    await check_project_access(scan_data.project_id, current_user, db)
-
-    sbom_refs = scan_data.sbom_refs or []
+    sbom_refs = (await _load_scan_with_access(scan_id, current_user, db)).sbom_refs or []
 
     if not sbom_refs:
         raise HTTPException(status_code=404, detail="No SBOM data available for this scan")
@@ -1362,11 +1187,9 @@ def _scan_findings_add_fields_stage() -> dict[str, Any]:
             "severity_rank": {
                 "$switch": {
                     "branches": [
-                        {"case": {"$eq": ["$severity", "CRITICAL"]}, "then": 5},
-                        {"case": {"$eq": ["$severity", "HIGH"]}, "then": 4},
-                        {"case": {"$eq": ["$severity", "MEDIUM"]}, "then": 3},
-                        {"case": {"$eq": ["$severity", "LOW"]}, "then": 2},
-                        {"case": {"$eq": ["$severity", "INFO"]}, "then": 1},
+                        {"case": {"$eq": ["$severity", severity]}, "then": rank}
+                        for severity, rank in SEVERITY_ORDER.items()
+                        if rank
                     ],
                     "default": 0,
                 }
@@ -1400,23 +1223,19 @@ _SCAN_FINDINGS_SORT_FIELDS: dict[str, str] = {
 }
 
 
-def _scan_findings_sort_stage(sort_by: str, sort_order: str) -> dict[str, Any]:
+def _scan_findings_sort_stage(sort_by: str, sort_dir: int) -> dict[str, Any]:
     """Compose the $sort stage, always ending with the unique _id tiebreaker so skip/limit pagination is stable (finding_id is not unique within a scan)."""
-    sort_dir = -1 if sort_order == "desc" else 1
     field = _SCAN_FINDINGS_SORT_FIELDS.get(sort_by, "severity")
     if field == "severity":
         return {"$sort": {"severity_rank": sort_dir, "component": 1, "_id": 1}}
-    sort_spec: dict[str, Any] = {field: sort_dir}
-    if field != "_id":
-        sort_spec["_id"] = 1
-    return {"$sort": sort_spec}
+    return {"$sort": {field: sort_dir, "_id": 1}}
 
 
 def _build_scan_findings_pipeline(
     query: dict[str, Any],
     *,
     sort_by: str,
-    sort_order: str,
+    sort_dir: int,
     skip: int,
     limit: int,
     direct_only: bool = False,
@@ -1433,7 +1252,7 @@ def _build_scan_findings_pipeline(
     stages += [
         # Keep _id through the $sort as the unique tiebreaker; it's dropped from output in the $facet below.
         {"$project": {"dependency_info": 0}},
-        _scan_findings_sort_stage(sort_by, sort_order),
+        _scan_findings_sort_stage(sort_by, sort_dir),
         {
             "$facet": {
                 "metadata": [{"$count": "total"}],
@@ -1443,25 +1262,6 @@ def _build_scan_findings_pipeline(
         },
     ]
     return stages
-
-
-def _resolve_secret_detectors(rows: list[dict[str, Any]]) -> None:
-    """Show trufflehog detector names instead of the stored DetectorType ordinals.
-
-    Resolved for display only: the ordinal is baked into ``finding_id`` and into every
-    secret waiver's ``match.rule_key``, so rewriting it in place would un-suppress them.
-    """
-    for row in rows:
-        details = row.get("details")
-        if not isinstance(details, dict):
-            continue
-        raw = details.get("detector")
-        name = resolve_detector_name(raw)
-        if name is None:
-            continue
-        details["detector"] = name
-        if row.get("description") == f"{SECRET_DESCRIPTION_PREFIX}{raw}":
-            row["description"] = f"{SECRET_DESCRIPTION_PREFIX}{name}"
 
 
 def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
@@ -1475,17 +1275,21 @@ def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
     return data, total
 
 
-async def _resolve_scan_for_findings(
-    scan_id: str,
-    current_user: User,
-    db: Any,
-) -> None:
-    """Look up the scan and verify the caller can access its project."""
-    scan_repo = ScanRepository(db)
-    scan = await scan_repo.get_minimal_by_id(scan_id)
+async def _require_scan_access(scan_id: str, current_user: User, db: Any) -> None:
+    """404 for an unknown scan, else the caller must be able to read its project."""
+    scan = await ScanRepository(db).get_minimal_by_id(scan_id)
     if not scan or not scan.project_id:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
     await check_project_access(scan.project_id, current_user, db)
+
+
+async def _load_scan_with_access(scan_id: str, current_user: User, db: Any) -> Scan:
+    """The whole scan, once the caller is shown to read its project."""
+    scan = await ScanRepository(db).get_by_id(scan_id)
+    if not scan:
+        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
+    await check_project_access(scan.project_id, current_user, db)
+    return scan
 
 
 @router.get(
@@ -1502,7 +1306,7 @@ async def read_scan_findings(
     # Cap at 500 (higher than the 100 used elsewhere) for deep-link and per-component drilldowns.
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     sort_by: str = "severity",  # severity, type, component
-    sort_order: str = "desc",  # asc, desc
+    sort_order: SortOrderQuery = "desc",
     type: str | None = None,
     category: str | None = None,  # security, secret, sast, compliance, quality
     severity: str | None = None,
@@ -1514,7 +1318,7 @@ async def read_scan_findings(
     hide_historical_secrets: bool | None = None,  # Hide secrets no longer in the current git tree
 ) -> dict[str, Any]:
     """Get paginated findings for a scan."""
-    await _resolve_scan_for_findings(scan_id, current_user, db)
+    await _require_scan_access(scan_id, current_user, db)
 
     query = _build_scan_findings_match(
         scan_id,
@@ -1530,7 +1334,7 @@ async def read_scan_findings(
     pipeline = _build_scan_findings_pipeline(
         query,
         sort_by=sort_by,
-        sort_order=sort_order,
+        sort_dir=parse_sort_direction(sort_order),
         skip=skip,
         limit=limit,
         direct_only=bool(direct_only),
@@ -1539,7 +1343,7 @@ async def read_scan_findings(
     finding_repo = FindingRepository(db)
     result = await finding_repo.aggregate(pipeline)
     data, total = _unpack_scan_findings_facet(result)
-    _resolve_secret_detectors(data)
+    resolve_secret_detectors(data)
 
     return build_pagination_response(data, total, skip, limit)
 
@@ -1551,15 +1355,8 @@ async def get_scan_stats(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Get finding statistics by category for a scan."""
-    scan_repo = ScanRepository(db)
+    await _require_scan_access(scan_id, current_user, db)
     finding_repo = FindingRepository(db)
-
-    scan = await scan_repo.get_minimal_by_id(scan_id)
-    if not scan:
-        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-    if not scan.project_id:
-        raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
-    await check_project_access(scan.project_id, current_user, db)
 
     pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": scan_id}},
@@ -1571,49 +1368,9 @@ async def get_scan_stats(
     return aggregate_stats_by_category(results)
 
 
-def _project_member_role(project: Project, user_id: str) -> str:
-    """Return ``user_id``'s role within ``project.members`` or raise 404."""
-    for member in project.members:
-        if member.user_id == user_id:
-            return member.role
-    raise HTTPException(status_code=404, detail="User is not a member of this project")
-
-
-async def _count_team_admins(project: Project, db: Any) -> int:
-    """The admins every team owning the project supplies between them.
-
-    Every owner grants its admins the project, so one owner short of an admin says nothing about
-    whether the project has one; only all of them together do.
-    """
-    team_repo = TeamRepository(db)
-    admins = 0
-    for team_id in project.team_ids:
-        team = await team_repo.get_raw_by_id(team_id)
-        if not team:
-            continue
-        admins += sum(1 for m in team.get("members", []) if m.get("role") == TEAM_ROLE_ADMIN)
-    return admins
-
-
-async def _needs_a_surviving_direct_admin(project: Project, member_role: str, db: Any) -> bool:
-    """Whether the write about to run is the one that could take the project's last admin.
-
-    The owning teams can supply one, and that half cannot be guarded in the same statement, so the
-    conditional write is asked for only when the direct members are the project's only admins.
-    """
-    if member_role != PROJECT_ROLE_ADMIN:
-        return False
-    return await _count_team_admins(project, db) == 0
-
-
-def _build_member_update_fields(member_in: ProjectMemberUpdate) -> dict[str, Any]:
-    """Compose the member fields an in-place member update writes."""
-    update_fields: dict[str, Any] = {}
-    if member_in.role:
-        update_fields["role"] = member_in.role
-    if member_in.notification_preferences:
-        update_fields["notification_preferences"] = member_in.notification_preferences
-    return update_fields
+def _ensure_direct_member(project: Project, user_id: str) -> None:
+    if direct_member_role(project, user_id) is None:
+        raise HTTPException(status_code=404, detail="User is not a member of this project")
 
 
 @router.put(
@@ -1629,23 +1386,15 @@ async def update_project_member(
     db: DatabaseDep,
 ) -> Project:
     """Update the role of a project member. Requires 'admin' role."""
-    project = await check_project_access(project_id, current_user, db, required_role="admin")
+    project = await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
+    _ensure_direct_member(project, user_id)
 
-    current_role = _project_member_role(project, user_id)
-    is_demotion = bool(member_in.role) and member_in.role != PROJECT_ROLE_ADMIN
-    require_another_admin = is_demotion and await _needs_a_surviving_direct_admin(project, current_role, db)
-
-    update_fields = _build_member_update_fields(member_in)
+    leaving = user_id if member_in.role != PROJECT_ROLE_ADMIN else None
+    guard = await last_admin_guard(project, current_user, TeamRepository(db), leaving_member=leaving)
     project_repo = ProjectRepository(db)
-    if update_fields and not await project_repo.update_member(
-        project_id, user_id, update_fields, require_another_admin=require_another_admin
-    ):
+    if not await project_repo.update_member(project_id, user_id, {"role": member_in.role}, guard):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_DEMOTE)
-
-    updated_project = await project_repo.get_by_id(project_id)
-    if not updated_project:
-        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-    return updated_project
+    return await _reload_project(project_repo, project_id)
 
 
 @router.delete(
@@ -1660,19 +1409,14 @@ async def remove_project_member(
     db: DatabaseDep,
 ) -> Project:
     """Remove a user from the project. Requires 'admin' role."""
-    project = await check_project_access(project_id, current_user, db, required_role="admin")
+    project = await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
+    _ensure_direct_member(project, user_id)
 
-    member_role = _project_member_role(project, user_id)
-    require_another_admin = await _needs_a_surviving_direct_admin(project, member_role, db)
-
+    guard = await last_admin_guard(project, current_user, TeamRepository(db), leaving_member=user_id)
     project_repo = ProjectRepository(db)
-    if not await project_repo.remove_member(project_id, user_id, require_another_admin=require_another_admin):
+    if not await project_repo.remove_member(project_id, user_id, guard):
         raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_REMOVE)
-
-    updated_project = await project_repo.get_by_id(project_id)
-    if updated_project:
-        return updated_project
-    raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    return await _reload_project(project_repo, project_id)
 
 
 @router.get(
@@ -1685,9 +1429,14 @@ async def export_project_csv(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> StreamingResponse:
-    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
 
-    scans = await latest_completed_scans_by_branch(db, project)
+    tips = await ScanRepository(db).branch_tips(project_id, list(project.deleted_branches or []))
+    scans = [
+        ExportedScan(tip["_id"], branch, tip.get("created_at"), tip.get("commit_hash"))
+        for branch, _, tip in tips
+        if tip
+    ]
     if not scans:
         raise HTTPException(status_code=404, detail="No completed scans found on any active branch")
 
@@ -1704,7 +1453,7 @@ async def export_project_sbom(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Response:
-    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db)
 
     scan = await ScanRepository(db).get_latest_active_scan(project)
 
@@ -1716,9 +1465,10 @@ async def export_project_sbom(
 
     sbom_contents: list[Any] = []
     for ref in scan.sbom_refs:
-        if ref.get("storage") != "gridfs" or not ref.get("file_id"):
+        gridfs_id = gridfs_ref_id(ref)
+        if not gridfs_id:
             raise HTTPException(status_code=500, detail="Invalid SBOM reference (not GridFS)")
-        sbom_content = await load_from_gridfs(db, ref["file_id"])
+        sbom_content = await load_from_gridfs(db, gridfs_id)
         if not sbom_content:
             raise HTTPException(status_code=404, detail="SBOM file not found in GridFS")
         sbom_contents.append(sbom_content)
@@ -1748,8 +1498,10 @@ async def delete_project(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> None:
-    """Delete a project and all associated data (scans, results). Requires 'admin' role."""
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    """Delete a project and all associated data (scans, results). Requires 'admin' role or project:delete."""
+    await check_project_access(
+        project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN, global_permission=Permissions.PROJECT_DELETE
+    )
 
     project_repo = ProjectRepository(db)
     scan_repo = ScanRepository(db)
@@ -1759,11 +1511,13 @@ async def delete_project(
     release_repo = ReleaseRepository(db)
 
     # Streamed rather than read whole; the shared cascade owns which collections a scan takes with it.
-    scan_ids = [scan["_id"] async for scan in scan_repo.iterate({"project_id": project_id}, {"_id": 1})]
+    scan_ids = [scan["_id"] async for scan in scan_repo.iterate_raw({"project_id": project_id}, {"_id": 1})]
     await delete_scans_and_related_data(db, scan_ids)
 
     await waiver_repo.delete_many({"project_id": project_id})
     await release_repo.delete_many({"project_id": project_id})
     await invitation_repo.delete_project_invitations_by_project(project_id)
     await callgraph_repo.delete_by_project(project_id)
+    await WebhookRepository(db).delete_many({"project_id": project_id})
+    await CryptoPolicyRepository(db).delete_project_policy(project_id)
     await project_repo.delete(project_id)

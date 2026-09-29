@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import ClassVar
 
 import pytest
-from pydantic import ValidationError
 
 
 class TestModelIdAlias:
@@ -130,32 +129,13 @@ class TestDatetimeSerialization:
         datetime.fromisoformat(data["created_at"])
 
 
-class TestFrozenConfig:
-    """ScanContext with frozen=True should be immutable."""
-
-    def test_scan_context_is_immutable(self):
-        from app.schemas.ingest import ScanContext
-
-        ctx = ScanContext(scan_id="s1", is_new=True, pipeline_url="https://example.com")
-        with pytest.raises(ValidationError):
-            ctx.scan_id = "s2"
-
-    def test_scan_context_values_accessible(self):
-        from app.schemas.ingest import ScanContext
-
-        ctx = ScanContext(scan_id="s1", is_new=False)
-        assert ctx.scan_id == "s1"
-        assert ctx.is_new is False
-        assert ctx.pipeline_url is None
-
-
 class TestFromAttributes:
     """Response schemas with from_attributes=True can parse ORM-like objects."""
 
     def test_user_schema_from_dict(self):
-        from app.schemas.user import User as UserSchema
+        from app.schemas.user import UserResponse
 
-        user = UserSchema(
+        user = UserResponse(
             _id="user-1",
             username="test",
             email="test@example.com",
@@ -234,16 +214,6 @@ class TestFromAttributes:
 
 class TestProjectionSchemas:
     """Projection schemas used for MongoDB performance queries."""
-
-    def test_project_minimal_from_mongo(self):
-        from app.schemas.projections import ProjectMinimal
-
-        p = ProjectMinimal(_id="p-1", name="Test Project")
-        assert p.id == "p-1"
-        assert p.name == "Test Project"
-
-        dumped = p.model_dump(by_alias=True)
-        assert dumped["_id"] == "p-1"
 
     def test_project_with_scan_id(self):
         from app.schemas.projections import ProjectWithScanId

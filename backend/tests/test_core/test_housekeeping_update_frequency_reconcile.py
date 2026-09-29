@@ -89,6 +89,7 @@ class TestLoopWiring:
             "get_database",
             "run_housekeeping",
             "sync_branch_status",
+            "run_waiver_recalc",
         ):
             monkeypatch.setattr(housekeeping, name, _noop)
 

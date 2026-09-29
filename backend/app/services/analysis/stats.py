@@ -2,34 +2,32 @@
 
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, NamedTuple, cast
 
-from pymongo import ASCENDING, ReadPreference
+from pymongo import ASCENDING
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
-    EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
-    EPSS_HIGH_THRESHOLD,
-    EPSS_MEDIUM_THRESHOLD,
-    EPSS_VERY_HIGH_THRESHOLD,
     HIGH_RISK_SCORE_THRESHOLD,
-    REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
-    REACHABILITY_LEVEL_IMPORT,
-    REACHABILITY_LEVEL_SYMBOL,
     sort_by_severity,
 )
+from app.core.cve import canonical_cve, display_vulnerability_id
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import (
-    CONFIRMED_REACHABLE_RISK_MODIFIER,
+    ACTIVELY_EXPLOITED_MATURITY,
     RISK_SEVERITY_WEIGHTS,
-    UNREACHABLE_RISK_MODIFIER,
+    calculate_exploit_maturity,
+    is_actionable_secret,
     is_actionable_vulnerability,
     is_deprioritized_secret,
     is_deprioritized_vulnerability,
+    reachability_display_tier,
+    reachability_risk_modifier,
     saturating_risk_score,
     severity_exposure,
 )
+from app.models.finding import FindingType, Severity
 from app.models.stats import (
     PrioritizedCounts,
     ReachabilityStats,
@@ -37,23 +35,23 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
-from app.services.aggregation.components import lookup_component
+from app.services.component_identity import lookup_component
 from app.services.analysis.types import (
     CallgraphInfo,
     Database,
     EPSSKEVSummary,
     EPSSScoreCounts,
     ExploitMaturityCounts,
-    HighRiskCVE,
     KEVDetail,
     ReachabilityLevelCounts,
     ReachabilitySummary,
     VulnerabilityInfo,
 )
+from app.services.recommendation.common import live_advisories
 from app.services.reachability_enrichment import (
+    ComponentLanguages,
     build_component_language_map,
     is_high_confidence_reachable,
-    reachability_display_tier,
 )
 
 
@@ -68,99 +66,58 @@ def _format_datetime(value: Any | None) -> str | None:
     return str(value)
 
 
-def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> float | None:
-    """Process EPSS data for a single finding. Returns the epss_score if present and numeric."""
+def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> None:
     epss_score = _numeric(details.get("epss_score"))
     if epss_score is None:
-        return None
+        return
     summary["epss_enriched"] += 1
     epss_scores.append(epss_score)
     summary["epss_scores"][bucket_epss(epss_score)] += 1
-    return epss_score
-
-
-def vulnerability_entry_cve(entry: dict[str, Any]) -> str | None:
-    """CVE id of one ``details.vulnerabilities`` entry, or None when it carries no CVE."""
-    for candidate in (entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])):
-        if isinstance(candidate, str) and candidate.startswith("CVE-"):
-            return candidate
-    return None
-
-
-def finding_vulnerability_id(finding: dict[str, Any]) -> str:
-    """An identifier a user can look up: a CVE where one exists, else a scanner id.
-
-    ``finding_id`` is ``component:version`` on aggregated vulnerability documents, so it must
-    never reach a field labelled "CVE".
-    """
-    entries = [e for e in (finding.get("details") or {}).get("vulnerabilities") or [] if isinstance(e, dict)]
-    for entry in entries:
-        cve = vulnerability_entry_cve(entry)
-        if cve:
-            return cve
-    for alias in finding.get("aliases") or []:
-        if isinstance(alias, str) and alias.startswith("CVE-"):
-            return alias
-    for entry in entries:
-        if entry.get("id"):
-            return str(entry["id"])
-    return str(finding.get("finding_id") or finding.get("id") or "")
 
 
 def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summary: EPSSKEVSummary) -> None:
     """Emit one row per known-exploited CVE of a finding."""
-    if not details.get("in_kev"):
-        return
     component = finding.get("component", "")
     rows: list[KEVDetail] = [
         {
-            "cve": vulnerability_entry_cve(entry) or str(entry.get("id") or ""),
+            "cve": canonical_cve(entry_details) or "",
             "component": component,
-            "due_date": entry.get("kev_due_date"),
-            "ransomware": bool(entry.get("kev_ransomware_use")),
+            "due_date": entry_details.get("kev_due_date"),
+            "ransomware": entry_details.get(DETAILS_KEY_KEV_RANSOMWARE) is True,
         }
-        for entry in (details.get("vulnerabilities") or [])
-        if isinstance(entry, dict) and entry.get("in_kev")
+        for entry_details in details.get("vulnerabilities") or []
+        if entry_details.get(DETAILS_KEY_IN_KEV) is True
     ]
-    if not rows:
-        # The KEV CVE can come from the finding's own aliases, which match no nested entry.
-        rows = [
-            {
-                "cve": finding_vulnerability_id(finding),
-                "component": component,
-                "due_date": details.get("kev_due_date"),
-                "ransomware": bool(details.get("kev_ransomware_use")),
-            }
-        ]
     summary["kev_matches"] += len(rows)
     summary["kev_details"].extend(rows)
     summary["kev_ransomware"] += sum(1 for row in rows if row["ransomware"])
 
 
 def _process_finding_risk(
-    finding: dict[str, Any],
-    details: dict[str, Any],
-    epss_score: float | None,
-    maturity: str,
-    risk_scores: list[float],
-    summary: EPSSKEVSummary,
+    finding: dict[str, Any], details: dict[str, Any], risk_scores: list[float], summary: EPSSKEVSummary
 ) -> None:
-    """Process risk score data for a single finding."""
+    """Collect the finding's risk score and one high-risk row per advisory scored above the threshold."""
     risk_score = details.get("risk_score")
-    if risk_score is None:
-        return
-    risk_scores.append(float(risk_score))
-    if risk_score > HIGH_RISK_SCORE_THRESHOLD:
-        high_risk_cve: HighRiskCVE = {
-            "cve": finding_vulnerability_id(finding),
-            "component": finding.get("component", ""),
-            "version": finding.get("version") or "",
-            "risk_score": round(risk_score, 1),
-            "epss_score": round(epss_score, 4) if epss_score is not None else None,
-            "in_kev": details.get("in_kev", False),
-            "exploit_maturity": maturity,
-        }
-        summary["high_risk_cves"].append(high_risk_cve)
+    if risk_score is not None:
+        risk_scores.append(float(risk_score))
+    for entry_details in details.get("vulnerabilities") or []:
+        entry_risk = entry_details.get("risk_score")
+        if entry_risk is None or entry_risk <= HIGH_RISK_SCORE_THRESHOLD:
+            continue
+        epss = _numeric(entry_details.get("epss_score"))
+        in_kev = entry_details.get(DETAILS_KEY_IN_KEV) is True
+        ransomware = entry_details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
+        summary["high_risk_cves"].append(
+            {
+                "cve": canonical_cve(entry_details) or "",
+                "component": finding.get("component", ""),
+                "version": finding.get("version") or "",
+                "risk_score": round(entry_risk, 1),
+                "epss_score": round(epss, 4) if epss is not None else None,
+                "in_kev": in_kev,
+                "exploit_maturity": calculate_exploit_maturity(in_kev, ransomware, epss),
+            }
+        )
 
 
 # The high-risk list is a UI sample of the highest scores; high_risk_total carries the real count.
@@ -203,16 +160,15 @@ def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
     for finding in findings:
         details = finding.get("details", {})
 
-        epss_score = _process_finding_epss(details, summary, epss_scores)
+        _process_finding_epss(details, summary, epss_scores)
         _process_finding_kev(finding, details, summary)
 
-        # Exploit maturity
         maturity: str = details.get("exploit_maturity", "unknown")
         exploit_maturity = cast(dict[str, int], summary["exploit_maturity"])
         if maturity in exploit_maturity:
             exploit_maturity[maturity] += 1
 
-        _process_finding_risk(finding, details, epss_score, maturity, risk_scores, summary)
+        _process_finding_risk(finding, details, risk_scores, summary)
 
     if epss_scores:
         summary["avg_epss_score"] = round(sum(epss_scores) / len(epss_scores), 4)
@@ -277,13 +233,13 @@ def build_reachability_summary(
         tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
 
         vuln_info: VulnerabilityInfo = {
-            "cve": finding_vulnerability_id(finding),
+            "cve": display_vulnerability_id(finding.get("details")) or "",
             "component": finding.get("component", ""),
             "version": finding.get("version") or "",
             "severity": finding.get("severity", "unknown"),
             "reachability_level": tier,
             "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
-            "is_high_confidence": is_high_confidence_reachable(reachability_data),
+            "is_high_confidence": is_high_confidence_reachable(reachable, reachability_data.get("confidence_score")),
         }
 
         reachability_counts = cast(dict[str, int], summary["reachability_levels"])
@@ -309,9 +265,8 @@ def build_reachability_summary(
 
 
 # Severities with a dedicated bucket; anything else is counted as unknown so buckets always sum to total.
-_BUCKETED_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")
-
-_UNKNOWN_SEVERITY = "UNKNOWN"
+_UNKNOWN_SEVERITY: str = Severity.UNKNOWN.value
+_BUCKETED_SEVERITIES: tuple[str, ...] = tuple(s.value for s in Severity if s is not Severity.UNKNOWN)
 
 
 def _numeric(raw: Any) -> float | None:
@@ -321,20 +276,18 @@ def _numeric(raw: Any) -> float | None:
     return float(raw)
 
 
-def _reach_modifier(reachable: Any, level: Any) -> float:
-    """Per-finding weight multiplier. Unreachable is tested first, so it wins over confirmed-reachable."""
-    if reachable is False:
-        return UNREACHABLE_RISK_MODIFIER
-    if reachable is True and level == REACHABILITY_LEVEL_SYMBOL:
-        return CONFIRMED_REACHABLE_RISK_MODIFIER
-    return 1.0
+def _live_threat_intel(details: Mapping[str, Any]) -> tuple[float | None, bool, bool]:
+    """The finding's EPSS, KEV and ransomware marks, taken off its unwaived advisories."""
+    live = live_advisories(details)
+    epss = max((score for entry in live if (score := _numeric(entry.get("epss_score"))) is not None), default=None)
+    in_kev = any(entry.get(DETAILS_KEY_IN_KEV) is True for entry in live)
+    return epss, in_kev, any(entry.get(DETAILS_KEY_KEV_RANSOMWARE) is True for entry in live)
 
 
 class StatsAccumulator:
     """Scan statistics, folded over a stream of findings."""
 
-    # Contract: these finding fields are available to downstream counter groups.
-    # As each group is added, it registers the paths it will read.
+    # Projection of the stats cursor: add() must read no field outside this set.
     REQUIRED_PATHS: ClassVar[frozenset[str]] = frozenset(
         {
             "waived",
@@ -343,18 +296,20 @@ class StatsAccumulator:
             "reachable",
             "reachability_level",
             "component",
-            "details.epss_score",
-            f"details.{DETAILS_KEY_IN_KEV}",
-            f"details.{DETAILS_KEY_KEV_RANSOMWARE}",
+            "details.vulnerabilities.waived",
+            "details.vulnerabilities.epss_score",
+            f"details.vulnerabilities.{DETAILS_KEY_IN_KEV}",
+            f"details.vulnerabilities.{DETAILS_KEY_KEV_RANSOMWARE}",
             "details.verified",
             "details.in_current_tree",
             "details.reachability.confidence_score",
         }
     )
 
-    def __init__(self, component_languages: Mapping[str, frozenset[str]]) -> None:
+    def __init__(self, component_languages: ComponentLanguages) -> None:
         self._component_languages = component_languages
         self._counted = 0
+        self.waived_count = 0
         self._severity: dict[str, int] = dict.fromkeys((*_BUCKETED_SEVERITIES, _UNKNOWN_SEVERITY), 0)
         self._adjusted_exposure = 0.0
         self._vuln_severity: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
@@ -393,6 +348,10 @@ class StatsAccumulator:
 
     def add(self, finding: Mapping[str, Any]) -> None:
         if finding.get("waived") is True:
+            self.waived_count += 1
+            return
+        # A scanner error is missing coverage, recorded in failed_analyzers, not a security finding.
+        if finding.get("type") == FindingType.SYSTEM_WARNING:
             return
         self._counted += 1
 
@@ -404,20 +363,19 @@ class StatsAccumulator:
         details: Mapping[str, Any] = raw_details if isinstance(raw_details, Mapping) else {}
         reachable = finding.get("reachable")
         level = finding.get("reachability_level")
-        epss = _numeric(details.get("epss_score"))
-        in_kev = details.get(DETAILS_KEY_IN_KEV) is True
+        epss, in_kev, kev_ransomware = _live_threat_intel(details)
 
         # Weights are keyed on bucket, not on raw severity: a new RISK_SEVERITY_WEIGHTS key that is
         # not also in _BUCKETED_SEVERITIES collapses to UNKNOWN and silently contributes 0.
-        self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * _reach_modifier(reachable, level)
+        self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * reachability_risk_modifier(reachable, level)
 
         finding_type = finding.get("type")
         if finding_type == "vulnerability":
             self._add_vulnerability(bucket, epss, in_kev, reachable, finding.get("component"))
+            self._add_reachability(bucket, reachable, level, details)
         elif finding_type == "secret":
             self._add_secret(details)
-        self._add_threat_intel(details, epss, in_kev)
-        self._add_reachability(bucket, reachable, level, details)
+        self._add_threat_intel(epss, in_kev, kev_ransomware)
 
     def _add_vulnerability(self, bucket: str, epss: float | None, in_kev: bool, reachable: Any, component: Any) -> None:
         self._vuln_total += 1
@@ -446,13 +404,12 @@ class StatsAccumulator:
             self._secret_historical += 1
         elif in_current_tree is None:
             self._secret_unknown_tree += 1
-        if verified is True and in_current_tree is True:
+        if is_actionable_secret(verified):
             self._secret_actionable += 1
         if is_deprioritized_secret(verified, in_current_tree):
             self._secret_deprioritized += 1
 
-    def _add_threat_intel(self, details: Mapping[str, Any], epss: float | None, in_kev: bool) -> None:
-        kev_ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
+    def _add_threat_intel(self, epss: float | None, in_kev: bool, kev_ransomware: bool) -> None:
         if in_kev:
             self._kev += 1
         if kev_ransomware:
@@ -461,14 +418,12 @@ class StatsAccumulator:
             self._epss_sum += epss
             self._epss_n += 1
             self._epss_max = epss if self._epss_max is None else max(self._epss_max, epss)
-            if epss >= EPSS_HIGH_THRESHOLD:
-                self._high_epss += 1
-            elif epss >= EPSS_MEDIUM_THRESHOLD:
-                self._medium_epss += 1
-        if kev_ransomware or (in_kev and epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD):
-            self._weaponized += 1
-        if in_kev or (epss is not None and epss >= EPSS_ACTIVE_EXPLOITATION_THRESHOLD):
-            self._active_exploitation += 1
+            tier = bucket_epss(epss)
+            self._high_epss += tier == "high"
+            self._medium_epss += tier == "medium"
+        maturity = calculate_exploit_maturity(in_kev, kev_ransomware, epss)
+        self._weaponized += maturity == "weaponized"
+        self._active_exploitation += maturity in ACTIVELY_EXPLOITED_MATURITY
 
     def _add_reachability(self, bucket: str, reachable: Any, level: Any, details: Mapping[str, Any]) -> None:
         if reachable is not None:
@@ -480,17 +435,16 @@ class StatsAccumulator:
 
     def _add_reachable(self, bucket: str, level: Any, details: Mapping[str, Any]) -> None:
         self._reachable += 1
-        if level == REACHABILITY_LEVEL_SYMBOL:
-            self._confirmed += 1
-        elif level == REACHABILITY_LEVEL_IMPORT:
-            self._likely += 1
+        tier = reachability_display_tier(True, level)
+        self._confirmed += tier == "confirmed"
+        self._likely += tier == "likely"
         if bucket == "CRITICAL":
             self._reachable_critical += 1
         elif bucket == "HIGH":
             self._reachable_high += 1
         raw_reach = details.get("reachability")
-        confidence = _numeric(raw_reach.get("confidence_score")) if isinstance(raw_reach, Mapping) else None
-        if confidence is not None and confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD:
+        confidence = raw_reach.get("confidence_score") if isinstance(raw_reach, Mapping) else None
+        if is_high_confidence_reachable(True, confidence):
             self._reachable_hc += 1
             if bucket == "CRITICAL":
                 self._reachable_critical_hc += 1
@@ -554,8 +508,6 @@ class StatsAccumulator:
                 confirmed_reachable_count=self._confirmed,
                 likely_reachable_count=self._likely,
                 unreachable_count=self._unreachable,
-                # vuln_total is type-gated; _analyzed is ungated. Non-vulnerabilities carrying
-                # reachable drive this negative.
                 unknown_count=self._vuln_total - self._analyzed,
                 reachable_critical=self._reachable_critical,
                 reachable_high=self._reachable_high,
@@ -568,7 +520,7 @@ class StatsAccumulator:
 
 def compute_stats(
     findings: Iterable[Mapping[str, Any]],
-    component_languages: Mapping[str, frozenset[str]],
+    component_languages: ComponentLanguages,
 ) -> Stats:
     acc = StatsAccumulator(component_languages)
     for finding in findings:
@@ -584,24 +536,27 @@ def _stats_projection() -> dict[str, int]:
     return projection
 
 
-# Tautological today; it fires the moment someone hand-edits the projection, which is the one
-# failure class a differential test cannot see — a typo zeroes a counter on both sides.
-assert _stats_projection().keys() >= StatsAccumulator.REQUIRED_PATHS, "stats projection drops a required path"
-
 # scan_id + type is the only index pair immutable after insert; severity and waived are rewritten by
-# _rollup_vulnerability_waivers and _apply_waivers, so hinting either opens a skip window mid-cursor.
+# the waiver restamp, so hinting either opens a skip window mid-cursor.
 _STATS_CURSOR_HINT = [("scan_id", ASCENDING), ("type", ASCENDING)]
 
 
-async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
-    """Comprehensive statistics for a scan, folded from a single projected cursor."""
-    acc = StatsAccumulator(await build_component_language_map(db, scan_id))
-    # PRIMARY: with secondaryPreferred the read can miss findings written milliseconds earlier.
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    cursor = findings_primary.find({"scan_id": scan_id}, _stats_projection(), hint=_STATS_CURSOR_HINT)
+class ScanTally(NamedTuple):
+    stats: Stats
+    ignored_count: int
+
+
+async def calculate_comprehensive_stats(
+    db: Database, scan_id: str, component_languages: ComponentLanguages | None = None
+) -> ScanTally:
+    """A scan's statistics and waived count from one cursor; pass ``component_languages`` when the run built it."""
+    if component_languages is None:
+        component_languages = await build_component_language_map(db, scan_id)
+    acc = StatsAccumulator(component_languages)
+    cursor = db.findings.find({"scan_id": scan_id}, _stats_projection(), hint=_STATS_CURSOR_HINT)
     try:
         async for doc in cursor:
             acc.add(doc)
     finally:
         await cursor.close()
-    return acc.result()
+    return ScanTally(acc.result(), acc.waived_count)

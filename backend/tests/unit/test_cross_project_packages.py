@@ -15,8 +15,17 @@ _ROWS_PER_SCAN = 150
 _LATE_PACKAGE = "late-package"
 
 
-def _dep(_id, scan_id, project_id, name, version):
-    return {"_id": _id, "scan_id": scan_id, "project_id": project_id, "name": name, "version": version}
+def _dep(_id, scan_id, project_id, name, version, purl=None, group=None, component_type=None):
+    return {
+        "_id": _id,
+        "scan_id": scan_id,
+        "project_id": project_id,
+        "name": name,
+        "version": version,
+        "purl": purl,
+        "group": group,
+        "type": component_type,
+    }
 
 
 def _run(col: FakeCollection, scan_ids: list[str]):
@@ -78,6 +87,52 @@ def test_names_are_grouped_case_insensitively_as_the_recommendation_reports_them
     assert rows[0]["project_count"] == _MIN_PROJECTS
 
 
+def test_artifacts_sharing_a_bare_name_across_groups_are_different_packages():
+    col = FakeCollection()
+    docs = [
+        _dep("d1", "s1", "p1", "annotations", "24.0.1", "pkg:maven/org.jetbrains/annotations@24.0.1", "org.jetbrains"),
+        _dep(
+            "d2",
+            "s2",
+            "p2",
+            "annotations",
+            "2.20.0",
+            "pkg:maven/software.amazon.awssdk/annotations@2.20.0",
+            "software.amazon.awssdk",
+        ),
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert _run(col, ["s1", "s2"]) == []
+
+
+def test_one_purl_counts_as_one_package_whether_or_not_the_sbom_filled_group():
+    col = FakeCollection()
+    docs = [
+        _dep("d1", "s1", "p1", "annotations", "23.0.0", "pkg:maven/org.jetbrains/annotations@23.0.0", "org.jetbrains"),
+        _dep("d2", "s2", "p2", "annotations", "24.0.1", "pkg:maven/org.jetbrains/annotations@24.0.1"),
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    [row] = _run(col, ["s1", "s2"])
+
+    assert row["name"] == "org.jetbrains/annotations"
+    assert sorted(row["versions"]) == ["23.0.0", "24.0.1"]
+
+
+def test_npm_scopes_split_packages_and_both_scope_spellings_join():
+    col = FakeCollection()
+    docs = [
+        _dep("d1", "s1", "p1", "core", "16.2.0", "pkg:npm/%40angular/core@16.2.0", "@angular"),
+        _dep("d2", "s2", "p2", "@angular/core", "17.0.0", "pkg:npm/@angular/core@17.0.0"),
+        _dep("d3", "s1", "p1", "core", "7.23.0", "pkg:npm/%40babel/core@7.23.0", "@babel"),
+        _dep("d4", "s2", "p2", "@babel/core", "7.23.0", "pkg:npm/@babel/core@7.23.0"),
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert [(r["name"], r["version_count"]) for r in _run(col, ["s1", "s2"])] == [("@angular/core", 2)]
+
+
 _ACCESSIBLE_PROJECTS = 25
 _COMPARISON_LIMIT = 20
 
@@ -110,3 +165,14 @@ async def test_the_payload_says_how_many_projects_the_comparison_reached(db):
     assert data["total_projects"] == _ACCESSIBLE_PROJECTS
     assert data["projects_compared"] == _COMPARISON_LIMIT
     assert len(data["projects"]) == _COMPARISON_LIMIT
+
+
+def test_purl_less_components_of_different_types_sharing_a_name_are_different_packages():
+    col = FakeCollection()
+    docs = [
+        _dep("d1", "s1", "p1", "busybox", "1.36.1", component_type="application"),
+        _dep("d2", "s2", "p2", "busybox", "1.35.0", component_type="operating-system"),
+    ]
+    col._docs = {d["_id"]: d for d in docs}
+
+    assert _run(col, ["s1", "s2"]) == []

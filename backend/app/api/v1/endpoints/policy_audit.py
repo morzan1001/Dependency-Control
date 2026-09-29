@@ -1,13 +1,15 @@
 """Policy audit endpoints (list/detail/revert/prune); system scope is admin-only, project scope is member-read/admin-write."""
 
 import logging
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import BeforeValidator, ValidationError
 
-from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.deps import SystemManagerDep, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import (
@@ -19,13 +21,14 @@ from app.api.v1.helpers.responses import (
     RESP_403_404,
     RESP_404,
 )
+from app.core import ensure_utc
 from app.core.config import settings
-from app.core.constants import MAX_POLICY_AUDIT_PAGE
+from app.core.constants import MAX_POLICY_AUDIT_PAGE, PROJECT_ROLE_ADMIN
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
-from app.schemas.crypto_policy import CryptoRule
+from app.schemas.crypto_policy import CryptoPolicyPutRequest
 from app.schemas.policy_audit import PolicyAuditAction, PolicyRevertRequest
 from app.services.audit.history import record_policy_change
 
@@ -33,15 +36,22 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter(tags=["policy-audit"])
 
+# An unencoded '+HH:MM' offset arrives with its '+' decoded to a space.
+_SPACE_DECODED_OFFSET = re.compile(r"(:\d\d(?:\.\d+)?) (\d\d:?\d\d)$")
+PruneCutoff = Annotated[
+    datetime,
+    BeforeValidator(lambda v: _SPACE_DECODED_OFFSET.sub(r"\1+\2", v) if isinstance(v, str) else v),
+    Query(description="Delete entries older than this ISO-8601 datetime"),
+]
+
 
 @router.get("/crypto-policies/system/audit", responses=RESP_403)
 async def list_system_audit(
-    current_user: CurrentUserDep,
+    current_user: SystemManagerDep,
     db: DatabaseDep,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
-    _require_admin(current_user)
     entries = await PolicyAuditRepository(db).list(
         policy_scope="system",
         skip=skip,
@@ -53,10 +63,9 @@ async def list_system_audit(
 @router.get("/crypto-policies/system/audit/{version}", responses=RESP_403_404)
 async def get_system_audit_entry(
     version: int,
-    current_user: CurrentUserDep,
+    current_user: SystemManagerDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    _require_admin(current_user)
     entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope="system",
         project_id=None,
@@ -75,11 +84,10 @@ async def get_system_audit_entry(
     },
 )
 async def revert_system_policy(
-    current_user: CurrentUserDep,
+    current_user: SystemManagerDep,
     db: DatabaseDep,
     body: PolicyRevertRequest,
 ) -> dict[str, Any]:
-    _require_admin(current_user)
     target_version = body.target_version
     comment = body.comment
     await _revert_policy(
@@ -98,17 +106,15 @@ async def revert_system_policy(
 
 @router.delete("/crypto-policies/system/audit", responses=RESP_400_403)
 async def prune_system_audit(
-    current_user: CurrentUserDep,
+    current_user: SystemManagerDep,
     db: DatabaseDep,
-    before: str = Query(..., description="Delete entries older than this ISO date"),
+    before: PruneCutoff,
 ) -> dict[str, Any]:
-    _require_admin(current_user)
-    cutoff = _parse_datetime(before)
-    _enforce_min_prune_cutoff(cutoff)
+    _enforce_min_prune_cutoff(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
         policy_scope="system",
         project_id=None,
-        cutoff=cutoff,
+        cutoff=before,
     )
     return {"deleted": deleted}
 
@@ -121,7 +127,7 @@ async def list_project_audit(
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     entries = await PolicyAuditRepository(db).list(
         policy_scope="project",
         project_id=project_id,
@@ -138,7 +144,7 @@ async def get_project_audit_entry(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> dict[str, Any]:
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope="project",
         project_id=project_id,
@@ -156,8 +162,7 @@ async def revert_project_policy(
     db: DatabaseDep,
     body: PolicyRevertRequest,
 ) -> dict[str, Any]:
-    # 'owner' is not a project role; PROJECT_ROLES = viewer|editor|admin.
-    await check_project_access(project_id, current_user, db, required_role="admin")
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
     target_version = body.target_version
     comment = body.comment
     await _revert_policy(
@@ -177,15 +182,14 @@ async def prune_project_audit(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    before: str = Query(...),
+    before: PruneCutoff,
 ) -> dict[str, Any]:
-    await check_project_access(project_id, current_user, db, required_role="admin")
-    cutoff = _parse_datetime(before)
-    _enforce_min_prune_cutoff(cutoff)
+    await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
+    _enforce_min_prune_cutoff(before)
     deleted = await PolicyAuditRepository(db).delete_older_than(
         policy_scope="project",
         project_id=project_id,
-        cutoff=cutoff,
+        cutoff=before,
     )
     return {"deleted": deleted}
 
@@ -199,7 +203,7 @@ async def list_project_license_audit(
     limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
     """List license-policy audit entries for a project (viewer+ role)."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     entries = await PolicyAuditRepository(db).list(
         policy_scope="project",
         project_id=project_id,
@@ -218,7 +222,7 @@ async def get_project_license_audit_entry(
     db: DatabaseDep,
 ) -> dict[str, Any]:
     """Fetch a single license-policy audit entry by version."""
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    await check_project_access(project_id, current_user, db)
     entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope="project",
         project_id=project_id,
@@ -233,13 +237,6 @@ async def get_project_license_audit_entry(
 # revert/prune for license-policy audit omitted: overwriting license settings would need a non-trivial merge with peer analyzer settings.
 
 
-def _parse_datetime(value: str) -> datetime:
-    """Parse an ISO-8601 datetime string, tolerating space-encoded '+' from URLs."""
-    # A raw-URL '+00:00' arrives with the '+' as a space; restore it before parsing.
-    value = value.replace(" ", "+")
-    return datetime.fromisoformat(value)
-
-
 def _min_prune_days() -> int:
     return settings.POLICY_AUDIT_MIN_PRUNE_DAYS
 
@@ -247,22 +244,12 @@ def _min_prune_days() -> int:
 def _enforce_min_prune_cutoff(cutoff: datetime) -> None:
     """Reject prune requests whose cutoff is too recent, preserving forensic history."""
     days = _min_prune_days()
-    # Normalise a possibly-naive client timestamp to UTC.
-    now = datetime.now(timezone.utc)
-    if cutoff.tzinfo is None:
-        cutoff = cutoff.replace(tzinfo=timezone.utc)
-    min_age_boundary = now - timedelta(days=days)
-    if cutoff > min_age_boundary:
+    min_age_boundary = datetime.now(timezone.utc) - timedelta(days=days)
+    if ensure_utc(cutoff) > min_age_boundary:
         raise HTTPException(
             status_code=400,
             detail=(f"before must be at least {days} days in the past to preserve forensic history"),
         )
-
-
-def _require_admin(user: User) -> None:
-    perms: frozenset[str] = getattr(user, "permissions", frozenset()) or frozenset()
-    if "system:manage" not in perms:
-        raise HTTPException(status_code=403, detail="system:manage permission required")
 
 
 async def _revert_policy(
@@ -282,8 +269,13 @@ async def _revert_policy(
     if target_entry is None:
         raise HTTPException(status_code=404, detail=f"Version {target_version} not found")
 
-    snapshot = target_entry.snapshot
-    rules = [CryptoRule.model_validate(r) for r in snapshot.get("rules", [])]
+    try:
+        rules = CryptoPolicyPutRequest(rules=target_entry.snapshot.get("rules", [])).rules
+    except ValidationError as exc:
+        reasons = "; ".join(error["msg"].removeprefix("Value error, ") for error in exc.errors())
+        raise HTTPException(
+            status_code=422, detail=f"Version {target_version} holds rules a write would refuse: {reasons}"
+        ) from exc
 
     policy_repo = CryptoPolicyRepository(db)
     current: CryptoPolicy | None

@@ -1,31 +1,261 @@
 from collections import defaultdict
+from dataclasses import dataclass, field
+from functools import cached_property
 from typing import Any
 
-from app.core.constants import (
-    DETAILS_KEY_IN_KEV,
-    EPSS_HIGH_THRESHOLD,
-    SCORECARD_LOW_THRESHOLD,
-    get_severity_weight,
-)
+from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
+from app.models.finding import PACKAGE_FINDING_TYPES
 from app.schemas.recommendation import (
-    PackageHotspot,
     Priority,
     Recommendation,
     RecommendationType,
+    VulnerabilityInfo,
 )
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.aggregation.versions import newest_first, normalize_version
+from app.services.component_identity import (
+    build_component_index,
+    cluster_by_package_identity,
+    lookup_component,
+    normalize_component,
+)
+from app.services.recommendation.graph import build_dependency_edges
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
+    VulnStats,
+    dependency_label,
+    live_cves,
     get_attr,
+    name_some,
     sample_components,
+    scorecard_score,
+    summarize_vulns,
     take_top,
+    vuln_info,
+    vuln_priority,
 )
 
 # Hotspots and toxic packages are one recommendation each, so these bound the advice feed
 # rather than a list inside one card; each emitted card carries the rank it was cut at.
 CRITICAL_HOTSPOTS_SHOWN = 10
 TOXIC_DEPENDENCIES_SHOWN = 5
+# Parents named per transitive dependency on the attack-surface card before "and N more".
+_PARENTS_NAMED = 3
+
+# Scorecard and license findings land on every installed copy; these single one out.
+_COPY_FINDING_TYPES = frozenset({"vulnerability", "malware", "eol"})
+
+
+@dataclass
+class _PackageRisks:
+    """Every fact the hotspot and toxic cards read about one package, from one pass over its findings."""
+
+    name: str
+    finding_versions: set[str] = field(default_factory=set)
+    flagged_versions: set[str] = field(default_factory=set)
+    vulns: list[VulnerabilityInfo] = field(default_factory=list)
+    has_malware: bool = False
+    is_eol: bool = False
+    low_scorecard: float | None = None
+    # (severity, license) of the first CRITICAL or HIGH license finding.
+    license_issue: tuple[str, str] | None = None
+
+    @cached_property
+    def stats(self) -> VulnStats:
+        return summarize_vulns(self.vulns)
+
+    @cached_property
+    def risk_score(self) -> float:
+        # Unenriched advisories (GHSA-only, GO-, RUSTSEC-) fall back on the same 0..100 scale.
+        return sum(
+            v.risk_score or SEVERITY_CALCULATED_RISK_SCORES.get((v.severity or "").upper(), 0.0) for v in self.vulns
+        )
+
+    @property
+    def versions(self) -> list[str]:
+        return newest_first(self.flagged_versions or self.finding_versions)
+
+    @property
+    def labels(self) -> list[str]:
+        return [f"{self.name}@{version}" for version in self.versions or ["unknown"]]
+
+
+def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
+    finding_type = get_attr(finding, "type")
+    details = get_attr(finding, "details", {})
+    details = details if isinstance(details, dict) else {}
+    if finding_type == "vulnerability":
+        # The vulnerability carries the most qualified spelling of the package.
+        if not pkg.vulns:
+            pkg.name = get_attr(finding, "component")
+        pkg.vulns.append(vuln_info(finding))
+    elif finding_type == "malware":
+        pkg.has_malware = True
+    elif finding_type == "eol":
+        pkg.is_eol = True
+    elif finding_type == "quality":
+        score = scorecard_score(details)
+        if pkg.low_scorecard is None and score is not None and score < SCORECARD_POOR_QUALITY_THRESHOLD:
+            pkg.low_scorecard = score
+    elif finding_type == "license":
+        severity = get_attr(finding, "severity")
+        if pkg.license_issue is None and severity in ("CRITICAL", "HIGH"):
+            pkg.license_issue = (severity, details.get("license", "unknown"))
+
+
+def _roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
+    package_findings = [
+        f for f in findings if get_attr(f, "component") and get_attr(f, "type") in PACKAGE_FINDING_TYPES
+    ]
+    # Scorecard, license and EOL findings carry the SBOM name, a Maven vulnerability group:artifact.
+    representative = cluster_by_package_identity(get_attr(f, "component") for f in package_findings)
+    packages: dict[str, _PackageRisks] = {}
+    for f in package_findings:
+        component = get_attr(f, "component")
+        pkg = packages.setdefault(representative[normalize_component(component)], _PackageRisks(name=component))
+        if version := get_attr(f, "version"):
+            pkg.finding_versions.add(version)
+            if get_attr(f, "type") in _COPY_FINDING_TYPES:
+                pkg.flagged_versions.add(version)
+        _record(pkg, f)
+    return list(packages.values())
+
+
+def detect_package_risks(findings: list[ModelOrDict]) -> list[Recommendation]:
+    """Critical-hotspot and toxic-dependency cards, both read off one roll-up per package."""
+    hotspots: list[tuple[_PackageRisks, list[str]]] = []
+    toxic: list[tuple[_PackageRisks, list[dict[str, str]], int]] = []
+    for pkg in _roll_up_packages(findings):
+        is_hotspot, reasons = _hotspot_reasons(pkg)
+        if is_hotspot:
+            hotspots.append((pkg, reasons))
+        factors, score = _toxic_risk_factors(pkg)
+        if len(factors) >= 2:
+            toxic.append((pkg, factors, score))
+
+    hotspots.sort(key=lambda h: (h[0].has_malware, h[0].stats.kev, h[0].stats.high_epss, h[0].risk_score), reverse=True)
+    toxic.sort(key=lambda t: t[2], reverse=True)
+    return [
+        *(
+            _hotspot_recommendation(pkg, reasons, rank, population)
+            for rank, (pkg, reasons), population in take_top(hotspots, CRITICAL_HOTSPOTS_SHOWN)
+        ),
+        *(
+            _toxic_recommendation(pkg, factors, score, rank, population)
+            for rank, (pkg, factors, score), population in take_top(toxic, TOXIC_DEPENDENCIES_SHOWN)
+        ),
+    ]
+
+
+def _hotspot_reasons(pkg: _PackageRisks) -> tuple[bool, list[str]]:
+    """Whether a package is a hotspot, and every reason the card names."""
+    stats = pkg.stats
+    is_hotspot = False
+    reasons: list[str] = []
+
+    if pkg.has_malware:
+        is_hotspot = True
+        reasons.append("Malware detected")
+    if stats.kev > 0:
+        is_hotspot = True
+        reasons.append(f"{stats.kev} CVE(s) in CISA KEV")
+    if stats.high_epss > 0 and stats.reachable > 0:
+        is_hotspot = True
+        reasons.append(f"{stats.high_epss} high-EPSS CVE(s), {stats.reachable} reachable")
+
+    critical, high = stats.severity["CRITICAL"], stats.severity["HIGH"]
+    if stats.total >= 3 and critical + high >= 1:
+        is_hotspot = True
+        reasons.append(f"{stats.total} vulnerabilities ({critical} critical, {high} high)")
+
+    if pkg.low_scorecard is not None:
+        reasons.append(f"Low OpenSSF Scorecard: {pkg.low_scorecard}/10")
+    if pkg.is_eol:
+        reasons.append("End-of-Life dependency")
+
+    return is_hotspot, reasons
+
+
+def _hotspot_steps(pkg: _PackageRisks) -> list[str]:
+    """Specific remediation steps for a hotspot."""
+    if pkg.has_malware:
+        return [
+            "URGENT: This package contains known malware",
+            "1. Immediately remove this package from your project",
+            "2. Check if any malicious code was executed during installation",
+            "3. Audit your systems for signs of compromise",
+            "4. Find a legitimate alternative package",
+        ]
+    if pkg.stats.kev > 0:
+        return [
+            "URGENT: This vulnerability is being actively exploited in the wild",
+            "1. Update to a fixed version immediately if available",
+            "2. If no fix exists, implement compensating controls",
+            "3. Monitor for signs of exploitation in your environment",
+            "4. Consider WAF rules or network segmentation as temporary mitigation",
+        ]
+    if pkg.stats.fixed_versions:
+        return [
+            f"1. Update {pkg.name} to version {pkg.stats.best_fix} or later",
+            "2. Run tests to ensure compatibility",
+            "3. Deploy the updated dependency",
+            "4. Verify the vulnerabilities are resolved in your next scan",
+        ]
+    return [
+        "1. Evaluate if this package is essential to your application",
+        "2. Search for alternative packages with better security posture",
+        "3. If no alternatives exist, implement compensating controls",
+        "4. Monitor for security updates from the package maintainer",
+        "5. Consider contributing a fix if the package is open source",
+    ]
+
+
+def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, ranked_out_of: int) -> Recommendation:
+    stats = pkg.stats
+    priority = Priority.CRITICAL if pkg.has_malware or vuln_priority(stats) == Priority.CRITICAL else Priority.HIGH
+    summary = (
+        "is a critical security hotspot that requires immediate attention"
+        if priority == Priority.CRITICAL
+        else "is a security hotspot that should be addressed soon"
+    )
+    desc_parts = [f"**{', '.join(pkg.labels)}** {summary}.", *reasons]
+    if stats.fixed_versions:
+        desc_parts.append(f"Available fix: Update to {stats.best_fix}")
+    components_shown, components_total = sample_components(pkg.labels)
+
+    return Recommendation(
+        type=RecommendationType.CRITICAL_HOTSPOT,
+        priority=priority,
+        title=f"Critical Hotspot: {pkg.name}",
+        description=" | ".join(desc_parts),
+        impact={
+            "critical": stats.severity["CRITICAL"],
+            "high": stats.severity["HIGH"],
+            "medium": 0,
+            "low": 0,
+            "total": stats.total,
+            "kev_count": stats.kev,
+            "high_epss_count": stats.high_epss,
+            "reachable_count": stats.reachable,
+            "risk_score": pkg.risk_score,
+        },
+        affected_components=components_shown,
+        affected_components_total=components_total,
+        action={
+            "type": "fix_hotspot",
+            "package": pkg.name,
+            "current_versions": pkg.versions,
+            "fixed_versions": stats.fixed_versions,
+            "target_version": stats.best_fix,
+            "reasons": reasons,
+            "is_malware": pkg.has_malware,
+            "is_kev": stats.kev > 0,
+            "steps": _hotspot_steps(pkg),
+        },
+        effort="low" if stats.fixed_versions else "high",
+        rank=rank,
+        ranked_out_of=ranked_out_of,
+    )
 
 
 def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
@@ -37,399 +267,78 @@ def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
     return "MEDIUM"
 
 
-def get_hotspot_remediation_steps(hotspot: PackageHotspot) -> list[str]:
-    """Generate specific remediation steps for a hotspot."""
-    steps = []
-
-    if hotspot.has_malware:
-        steps.extend(
-            [
-                "URGENT: This package contains known malware",
-                "1. Immediately remove this package from your project",
-                "2. Check if any malicious code was executed during installation",
-                "3. Audit your systems for signs of compromise",
-                "4. Find a legitimate alternative package",
-            ]
+def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
+    """A package's independent risk factors and the score ranking toxic packages."""
+    factors: list[dict[str, str]] = []
+    score = 0
+    if pkg.has_malware:
+        factors.append({"type": "malware", "severity": "CRITICAL", "description": "Known malware package"})
+        score += 100
+    if pkg.is_eol:
+        factors.append({"type": "eol", "severity": "HIGH", "description": "End-of-Life - no security updates"})
+        score += 40
+    if pkg.low_scorecard is not None:
+        factors.append(
+            {"type": "low_scorecard", "severity": "HIGH", "description": f"OpenSSF Scorecard: {pkg.low_scorecard}/10"}
         )
-    elif hotspot.kev_count > 0:
-        steps.extend(
-            [
-                "URGENT: This vulnerability is being actively exploited in the wild",
-                "1. Update to a fixed version immediately if available",
-                "2. If no fix exists, implement compensating controls",
-                "3. Monitor for signs of exploitation in your environment",
-                "4. Consider WAF rules or network segmentation as temporary mitigation",
-            ]
+        score += 30
+    if pkg.license_issue is not None:
+        severity, license_name = pkg.license_issue
+        factors.append(
+            {
+                "type": "license_issue",
+                "severity": severity,
+                "description": f"License compliance issue: {license_name}",
+            }
         )
-    elif hotspot.fixed_versions:
-        steps.extend(
-            [
-                f"1. Update {hotspot.package} to version {hotspot.fixed_versions[0]} or later",
-                "2. Run tests to ensure compatibility",
-                "3. Deploy the updated dependency",
-                "4. Verify the vulnerabilities are resolved in your next scan",
-            ]
+        score += 20
+
+    stats = pkg.stats
+    if stats.total:
+        critical, high = stats.severity["CRITICAL"], stats.severity["HIGH"]
+        factors.append(
+            {
+                "type": "vulnerabilities",
+                "severity": _vuln_risk_severity(critical, high, stats.kev),
+                "description": f"{stats.total} vulnerabilities ({critical} critical, {high} high, {stats.kev} KEV)",
+            }
         )
-    else:
-        steps.extend(
-            [
-                "1. Evaluate if this package is essential to your application",
-                "2. Search for alternative packages with better security posture",
-                "3. If no alternatives exist, implement compensating controls",
-                "4. Monitor for security updates from the package maintainer",
-                "5. Consider contributing a fix if the package is open source",
-            ]
-        )
-
-    return steps
+        score += critical * 50 + high * 20 + stats.total * 5 + stats.kev * 100
+    return factors, score
 
 
-def _new_hotspot_bucket() -> dict[str, Any]:
-    """Build an empty per-package aggregation bucket for hotspot detection."""
-    return {
-        "vulnerabilities": [],
-        "quality_issues": [],
-        "license_issues": [],
-        "malware": [],
-        "eol": [],
-        "secrets": [],
-        "critical_count": 0,
-        "high_count": 0,
-        "kev_count": 0,
-        "high_epss_count": 0,
-        "reachable_count": 0,
-        "total_risk_score": 0.0,
-    }
-
-
-def _record_vulnerability(pkg_data: dict[str, Any], f: ModelOrDict, severity: str, details: Any) -> None:
-    """Update a package aggregation bucket with a vulnerability finding."""
-    pkg_data["vulnerabilities"].append(f)
-    if severity == "CRITICAL":
-        pkg_data["critical_count"] += 1
-    elif severity == "HIGH":
-        pkg_data["high_count"] += 1
-
-    details_dict = details if isinstance(details, dict) else {}
-    if details_dict.get(DETAILS_KEY_IN_KEV):
-        pkg_data["kev_count"] += 1
-    epss = details_dict.get("epss_score")
-    if epss is not None and epss >= EPSS_HIGH_THRESHOLD:
-        pkg_data["high_epss_count"] += 1
-    if get_attr(f, "reachable") is True:
-        pkg_data["reachable_count"] += 1
-    risk_score = details_dict.get("risk_score", 0)
-    pkg_data["total_risk_score"] += risk_score or get_severity_weight(severity)
-
-
-_FINDING_TYPE_BUCKETS = {
-    "quality": "quality_issues",
-    "license": "license_issues",
-    "malware": "malware",
-    "eol": "eol",
-}
-
-
-def _aggregate_findings_by_package(findings: list[ModelOrDict]) -> dict[str, dict[str, Any]]:
-    """Aggregate findings grouped by package component."""
-    package_findings: dict[str, dict[str, Any]] = defaultdict(_new_hotspot_bucket)
-
-    for f in findings:
-        component = get_attr(f, "component", "")
-        if not component:
-            continue
-
-        finding_type = get_attr(f, "type", "other")
-        severity = get_attr(f, "severity", "UNKNOWN")
-        details = get_attr(f, "details", {})
-        pkg_data = package_findings[component]
-
-        if finding_type == "vulnerability":
-            _record_vulnerability(pkg_data, f, severity, details)
-            continue
-
-        bucket = _FINDING_TYPE_BUCKETS.get(finding_type)
-        if bucket:
-            pkg_data[bucket].append(f)
-
-    return package_findings
-
-
-def _collect_hotspot_reasons(pkg_data: dict[str, Any]) -> tuple[bool, list[str]]:
-    """Determine if a package is a hotspot and gather its reasons."""
-    is_hotspot = False
-    reasons: list[str] = []
-
-    if pkg_data["malware"]:
-        is_hotspot = True
-        reasons.append("Malware detected")
-    if pkg_data["kev_count"] > 0:
-        is_hotspot = True
-        reasons.append(f"{pkg_data['kev_count']} CVE(s) in CISA KEV")
-    if pkg_data["high_epss_count"] > 0 and pkg_data["reachable_count"] > 0:
-        is_hotspot = True
-        reasons.append(f"{pkg_data['high_epss_count']} high-EPSS CVE(s), {pkg_data['reachable_count']} reachable")
-
-    vuln_count = len(pkg_data["vulnerabilities"])
-    critical_high = pkg_data["critical_count"] + pkg_data["high_count"]
-    if vuln_count >= 3 and critical_high >= 1:
-        is_hotspot = True
-        reasons.append(
-            f"{vuln_count} vulnerabilities ({pkg_data['critical_count']} critical, {pkg_data['high_count']} high)"
-        )
-
-    for qi in pkg_data["quality_issues"]:
-        qi_details = get_attr(qi, "details", {})
-        score = qi_details.get("overall_score", 10) if isinstance(qi_details, dict) else 10
-        if score is None:
-            score = 10
-        if score < SCORECARD_LOW_THRESHOLD:
-            reasons.append(f"Low OpenSSF Scorecard: {score}/10")
-            break
-
-    if pkg_data["eol"]:
-        reasons.append("End-of-Life dependency")
-
-    return is_hotspot, reasons
-
-
-def _build_hotspot(pkg_name: str, pkg_data: dict[str, Any], reasons: list[str]) -> PackageHotspot:
-    """Build a PackageHotspot record from aggregated per-package data."""
-    version = "unknown"
-    if pkg_data["vulnerabilities"]:
-        version = get_attr(pkg_data["vulnerabilities"][0], "version", "unknown")
-
-    fixed_versions = []
-    for v in pkg_data["vulnerabilities"]:
-        v_details = get_attr(v, "details", {})
-        if isinstance(v_details, dict) and v_details.get("fixed_version"):
-            fixed_versions.append(v_details.get("fixed_version"))
-
-    return PackageHotspot(
-        package=pkg_name,
-        version=version,
-        vuln_count=len(pkg_data["vulnerabilities"]),
-        critical_count=pkg_data["critical_count"],
-        high_count=pkg_data["high_count"],
-        kev_count=pkg_data["kev_count"],
-        high_epss_count=pkg_data["high_epss_count"],
-        reachable_count=pkg_data["reachable_count"],
-        risk_score=pkg_data["total_risk_score"],
-        reasons=reasons,
-        fixed_versions=list(set(fixed_versions)),
-        has_malware=bool(pkg_data["malware"]),
-        is_eol=bool(pkg_data["eol"]),
-    )
-
-
-def _build_hotspot_recommendation(hotspot: PackageHotspot, rank: int, ranked_out_of: int) -> Recommendation:
-    """Build a recommendation from an identified hotspot."""
-    priority = (
-        Priority.CRITICAL
-        if (hotspot.has_malware or hotspot.kev_count > 0 or hotspot.critical_count > 0)
-        else Priority.HIGH
-    )
-
-    desc_parts = [
-        (f"**{hotspot.package}@{hotspot.version}** is a critical security hotspot that requires immediate attention.")
-    ]
-    desc_parts.extend(hotspot.reasons)
-    if hotspot.fixed_versions:
-        desc_parts.append(f"Available fix: Update to {hotspot.fixed_versions[0]}")
-
-    return Recommendation(
-        type=RecommendationType.CRITICAL_HOTSPOT,
-        priority=priority,
-        title=f"Critical Hotspot: {hotspot.package}",
-        description=" | ".join(desc_parts),
-        impact={
-            "critical": hotspot.critical_count,
-            "high": hotspot.high_count,
-            "medium": 0,
-            "low": 0,
-            "total": hotspot.vuln_count,
-            "kev_count": hotspot.kev_count,
-            "high_epss_count": hotspot.high_epss_count,
-            "reachable_count": hotspot.reachable_count,
-            "risk_score": hotspot.risk_score,
-        },
-        affected_components=[f"{hotspot.package}@{hotspot.version}"],
-        action={
-            "type": "fix_hotspot",
-            "package": hotspot.package,
-            "current_version": hotspot.version,
-            "fixed_versions": hotspot.fixed_versions,
-            "reasons": hotspot.reasons,
-            "is_malware": hotspot.has_malware,
-            "is_kev": hotspot.kev_count > 0,
-            "steps": get_hotspot_remediation_steps(hotspot),
-        },
-        effort="low" if hotspot.fixed_versions else "high",
-        rank=rank,
-        ranked_out_of=ranked_out_of,
-    )
-
-
-def detect_critical_hotspots(
-    findings: list[ModelOrDict],
-    _dependencies: list[ModelOrDict],
-) -> list[Recommendation]:
-    """Detect critical hotspots - packages that accumulate multiple severe issues."""
-    if not findings:
-        return []
-
-    package_findings = _aggregate_findings_by_package(findings)
-
-    hotspots: list[PackageHotspot] = []
-    for pkg_name, pkg_data in package_findings.items():
-        is_hotspot, reasons = _collect_hotspot_reasons(pkg_data)
-        if is_hotspot:
-            hotspots.append(_build_hotspot(pkg_name, pkg_data, reasons))
-
-    # Order: malware, then KEV count, then high-EPSS, then risk_score.
-    hotspots.sort(
-        key=lambda h: (h.has_malware, h.kev_count, h.high_epss_count, h.risk_score),
-        reverse=True,
-    )
-
-    return [
-        _build_hotspot_recommendation(hotspot, rank, population)
-        for rank, hotspot, population in take_top(hotspots, CRITICAL_HOTSPOTS_SHOWN)
-    ]
-
-
-def _record_quality_risk(pkg: dict[str, Any], details: Any) -> None:
-    """Record a low-scorecard risk factor if applicable."""
-    score = details.get("overall_score", 10) if isinstance(details, dict) else 10
-    if score is None:
-        score = 10
-    if score >= SCORECARD_LOW_THRESHOLD:
-        return
-    if "low_scorecard" in [r["type"] for r in pkg["risk_factors"]]:
-        return
-    pkg["risk_factors"].append(
-        {"type": "low_scorecard", "severity": "HIGH", "description": f"OpenSSF Scorecard: {score}/10"}
-    )
-    pkg["total_score"] += 30
-
-
-def _record_eol_risk(pkg: dict[str, Any]) -> None:
-    """Record EOL risk factor if not already present."""
-    if "eol" in [r["type"] for r in pkg["risk_factors"]]:
-        return
-    pkg["risk_factors"].append({"type": "eol", "severity": "HIGH", "description": "End-of-Life - no security updates"})
-    pkg["total_score"] += 40
-
-
-def _record_license_risk(pkg: dict[str, Any], severity: str, details: Any) -> None:
-    """Record a license risk factor if severity warrants it."""
-    if severity not in ("CRITICAL", "HIGH"):
-        return
-    if "license_issue" in [r["type"] for r in pkg["risk_factors"]]:
-        return
-    license_name = details.get("license", "unknown") if isinstance(details, dict) else "unknown"
-    pkg["risk_factors"].append(
-        {
-            "type": "license_issue",
-            "severity": severity,
-            "description": f"License compliance issue: {license_name}",
-        }
-    )
-    pkg["total_score"] += 20
-
-
-def _record_malware_risk(pkg: dict[str, Any]) -> None:
-    """Record a malware risk factor."""
-    pkg["risk_factors"].append({"type": "malware", "severity": "CRITICAL", "description": "Known malware package"})
-    pkg["total_score"] += 100
-
-
-def _aggregate_package_risks(findings: list[ModelOrDict]) -> dict[str, dict[str, Any]]:
-    """Aggregate risk factors per package from findings."""
-    package_risks: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"risk_factors": [], "total_score": 0, "vulns": [], "version": "unknown"}
-    )
-
-    for f in findings:
-        component = get_attr(f, "component", "")
-        if not component:
-            continue
-
-        pkg = package_risks[component]
-        finding_type = get_attr(f, "type", "")
-        details = get_attr(f, "details", {})
-
-        if finding_type == "vulnerability":
-            pkg["vulns"].append(f)
-            if len(pkg["vulns"]) == 1:
-                pkg["version"] = get_attr(f, "version", "unknown")
-        elif finding_type == "quality":
-            _record_quality_risk(pkg, details)
-        elif finding_type == "eol":
-            _record_eol_risk(pkg)
-        elif finding_type == "license":
-            _record_license_risk(pkg, get_attr(f, "severity", "LOW"), details)
-        elif finding_type == "malware":
-            _record_malware_risk(pkg)
-
-    return package_risks
-
-
-def _append_vuln_risk_factor(pkg: dict[str, Any]) -> None:
-    """Append a summarized vulnerability risk factor and score."""
-    vuln_count = len(pkg["vulns"])
-    if vuln_count == 0:
-        return
-
-    critical = sum(1 for v in pkg["vulns"] if get_attr(v, "severity") == "CRITICAL")
-    high = sum(1 for v in pkg["vulns"] if get_attr(v, "severity") == "HIGH")
-    kev = sum(
-        1
-        for v in pkg["vulns"]
-        if isinstance(get_attr(v, "details", {}), dict) and get_attr(v, "details", {}).get(DETAILS_KEY_IN_KEV)
-    )
-
-    pkg["risk_factors"].append(
-        {
-            "type": "vulnerabilities",
-            "severity": _vuln_risk_severity(critical, high, kev),
-            "description": f"{vuln_count} vulnerabilities ({critical} critical, {high} high, {kev} KEV)",
-        }
-    )
-    pkg["total_score"] += critical * 50 + high * 20 + vuln_count * 5 + kev * 100
-
-
-def _build_toxic_recommendation(component: str, pkg: dict[str, Any], rank: int, ranked_out_of: int) -> Recommendation:
-    """Build a toxic-dependency recommendation."""
-    risk_descriptions = [r["description"] for r in pkg["risk_factors"]]
-    version = pkg["version"]
-
+def _toxic_recommendation(
+    pkg: _PackageRisks, factors: list[dict[str, str]], score: int, rank: int, ranked_out_of: int
+) -> Recommendation:
+    stats = pkg.stats
+    components_shown, components_total = sample_components(pkg.labels)
     return Recommendation(
         type=RecommendationType.TOXIC_DEPENDENCY,
         priority=Priority.HIGH,
-        title=f"Toxic Dependency: {component}",
+        title=f"Toxic Dependency: {pkg.name}",
         description=(
             f"This package has multiple independent risk factors: "
-            f"{' | '.join(risk_descriptions)}. "
+            f"{' | '.join(factor['description'] for factor in factors)}. "
             f"Consider replacing it with a safer alternative."
         ),
         impact={
-            "critical": sum(1 for v in pkg["vulns"] if get_attr(v, "severity") == "CRITICAL"),
-            "high": sum(1 for v in pkg["vulns"] if get_attr(v, "severity") == "HIGH"),
-            "medium": sum(1 for v in pkg["vulns"] if get_attr(v, "severity") == "MEDIUM"),
+            "critical": stats.severity["CRITICAL"],
+            "high": stats.severity["HIGH"],
+            "medium": stats.severity["MEDIUM"],
             "low": 0,
-            "total": len(pkg["vulns"]),
-            "risk_factor_count": len(pkg["risk_factors"]),
-            "toxic_score": pkg["total_score"],
+            "total": stats.total,
+            "risk_factor_count": len(factors),
+            "toxic_score": score,
         },
-        affected_components=[f"{component}@{version}"],
+        affected_components=components_shown,
+        affected_components_total=components_total,
         action={
             "type": "replace_toxic_dependency",
-            "package": component,
-            "version": version,
-            "risk_factors": pkg["risk_factors"],
+            "package": pkg.name,
+            "versions": pkg.versions,
+            "risk_factors": factors,
             "steps": [
-                f"1. Evaluate if {component} is essential to your application",
+                f"1. Evaluate if {pkg.name} is essential to your application",
                 "2. Search for alternative packages with better security posture",
                 "3. Check npm/pypi/crates.io for actively maintained alternatives",
                 "4. If essential, implement additional security controls",
@@ -442,28 +351,6 @@ def _build_toxic_recommendation(component: str, pkg: dict[str, Any], rank: int, 
     )
 
 
-def detect_toxic_dependencies(
-    findings: list[ModelOrDict],
-    dependencies: list[ModelOrDict],
-) -> list[Recommendation]:
-    """Detect "toxic" dependencies - packages with 2+ independent risk factors."""
-    if not findings:
-        return []
-
-    package_risks = _aggregate_package_risks(findings)
-
-    for pkg in package_risks.values():
-        _append_vuln_risk_factor(pkg)
-
-    toxic_packages = [(c, p) for c, p in package_risks.items() if len(p["risk_factors"]) >= 2]
-    toxic_packages.sort(key=lambda x: x[1]["total_score"], reverse=True)
-
-    return [
-        _build_toxic_recommendation(component, pkg, rank, population)
-        for rank, (component, pkg), population in take_top(toxic_packages, TOXIC_DEPENDENCIES_SHOWN)
-    ]
-
-
 def analyze_attack_surface(
     dependencies: list[ModelOrDict],
     findings: list[ModelOrDict],
@@ -474,35 +361,46 @@ def analyze_attack_surface(
 
     recommendations = []
 
-    counts: dict[str, int] = defaultdict(int)
+    # Advisories per installed copy: another version of the package carries its own.
+    counts_by_version: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
-            counts[get_attr(f, "component", "")] += 1
-    # Findings carry the qualified component while the inventory keeps the bare name.
-    vuln_count_by_pkg = build_component_index(dict(counts))
-
-    transitive_with_vulns = []
-    for dep in dependencies:
-        pkg_name = get_attr(dep, "name", "")
-        is_direct = get_attr(dep, "direct", False)
-        vuln_count = lookup_component(vuln_count_by_pkg, pkg_name) or 0
-
-        if not is_direct and vuln_count >= 2:
-            transitive_with_vulns.append(
-                {
-                    "name": pkg_name,
-                    "version": get_attr(dep, "version", "unknown"),
-                    "vuln_count": vuln_count,
-                    "parent": get_attr(dep, "introduced_by", get_attr(dep, "parent", "unknown")),
-                }
+            counts_by_version[normalize_version(get_attr(f, "version"))][get_attr(f, "component", "")] += (
+                len(live_cves([get_attr(f, "details")])) or 1
             )
+    # Findings carry the qualified component while the inventory keeps the bare name.
+    index_by_version = {version: build_component_index(counts) for version, counts in counts_by_version.items()}
+    edges = build_dependency_edges(dependencies)
+    by_label: dict[str, dict[str, Any]] = {}
+    for key, dep in edges.dep_by_key.items():
+        version = get_attr(dep, "version") or ""
+        vuln_count = (
+            lookup_component(index_by_version.get(normalize_version(version), {}), get_attr(dep, "name", "")) or 0
+        )
+        if key not in edges.direct_keys and vuln_count >= 2:
+            by_label.setdefault(
+                dependency_label(dep),
+                {
+                    "name": get_attr(dep, "name", ""),
+                    "version": version,
+                    "vuln_count": vuln_count,
+                    # A parent ref naming no inventory entry is shown as stored.
+                    "parents": [
+                        dependency_label(edges.dep_by_key[ref]) if ref in edges.dep_by_key else ref
+                        for ref in edges.parents_by_key[key]
+                    ],
+                },
+            )
+    transitive_with_vulns = list(by_label.values())
 
     if transitive_with_vulns:
         transitive_with_vulns.sort(key=lambda x: x["vuln_count"], reverse=True)
 
         total_vulns = sum(t["vuln_count"] for t in transitive_with_vulns)
         transitive_shown, transitive_total = sample_components(
-            f"{t['name']}@{t['version']} (via {t['parent']})" for t in transitive_with_vulns
+            f"{t['name']}@{t['version']}"
+            + (f" (via {name_some(t['parents'], _PARENTS_NAMED)})" if t["parents"] else "")
+            for t in transitive_with_vulns
         )
 
         recommendations.append(

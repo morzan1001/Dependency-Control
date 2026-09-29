@@ -4,16 +4,16 @@ name, primitive, asset_type, weakness_tag, or severity.
 
 import hashlib
 from datetime import datetime, timezone
-from typing import Any, Literal
+from typing import Any, get_args
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.schemas.analytics import HotspotEntry, HotspotResponse
+from app.schemas.analytics import GroupBy, HotspotEntry, HotspotResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
 
-GroupBy = Literal["name", "primitive", "asset_type", "weakness_tag", "severity"]
-_SUPPORTED_GROUPINGS = {"name", "primitive", "asset_type", "weakness_tag", "severity"}
+# The chat tool passes an unchecked string, so this is its only validation.
+_SUPPORTED_GROUPINGS = frozenset(get_args(GroupBy))
 
 # $push of every occurrence_locations array can exceed MongoDB's 16MB group-doc limit on a hot
 # group, so the accumulator reads the arrays of this many assets and no more.
@@ -86,7 +86,7 @@ class CryptoHotspotService:
             return [override]
         from app.services.releases import resolve_scan_ids
 
-        return list((await resolve_scan_ids(self.db, resolved.project_ids)).values())
+        return list((await resolve_scan_ids(self.db, resolved.project_ids, projects=resolved.projects)).values())
 
     async def _aggregate(
         self,

@@ -2,14 +2,14 @@ from collections import defaultdict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
-from app.core.constants import FINDING_DELTA_THRESHOLD, RECURRING_ISSUE_THRESHOLD
+from app.core.constants import FINDING_DELTA_THRESHOLD, RECURRING_ISSUE_THRESHOLD, get_severity_value
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
 )
 from app.services.analytics.findings_delta import finding_identity_key
-from app.services.enrichment import canonical_cves
+from app.core.cve import canonical_cves
 from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
 
 # What finding_identity_key reads; the scan-scoped ``_id`` stays out, it never matches across a pair.
@@ -160,7 +160,7 @@ def analyze_recurring_issues(
     recurring.sort(
         key=lambda entry: (
             len(entry[1].scans),
-            {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(entry[1].severity or "", 0),
+            get_severity_value(entry[1].severity),
             entry[0],
         ),
         reverse=True,

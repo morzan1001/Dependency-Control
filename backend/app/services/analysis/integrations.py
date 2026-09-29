@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 from app.models.project import Project, Scan
 from app.models.stats import Stats
-from app.services.github import GitHubService
+from app.services.github import GitHubService, split_repo_path
 from app.services.gitlab import GitLabService
 
 logger = logging.getLogger(__name__)
@@ -75,22 +75,12 @@ async def decorate_gitlab_mr(
     try:
         from app.repositories.gitlab_instances import GitLabInstanceRepository
 
-        instance_repo = GitLabInstanceRepository(db)
-        gitlab_instance = await instance_repo.get_by_id(project.gitlab_instance_id)
-
+        gitlab_instance = await GitLabInstanceRepository(db).get_usable(project.gitlab_instance_id)
         if not gitlab_instance:
-            logger.warning(f"GitLab instance {project.gitlab_instance_id} not found for project {project.id}")
-            return
-
-        if not gitlab_instance.is_active:
             logger.info(
-                f"GitLab instance '{gitlab_instance.name}' is inactive, skipping MR decoration for project {project.id}"
-            )
-            return
-
-        if not gitlab_instance.access_token:
-            logger.info(
-                f"GitLab instance '{gitlab_instance.name}' has no access token, skipping MR decoration for project {project.id}"
+                "GitLab instance %s is missing, inactive or has no token; skipping MR decoration for project %s",
+                project.gitlab_instance_id,
+                project.id,
             )
             return
 
@@ -195,8 +185,8 @@ async def decorate_github_pr(
     """Post a comment to the GitHub Pull Request with scan results."""
     if not project.github_pr_comments_enabled:
         return
-    owner, _, repo = (project.github_repository_path or "").partition("/")
-    if not project.github_instance_id or not owner or not repo:
+    repo_path = split_repo_path(project.github_repository_path)
+    if not project.github_instance_id or not repo_path:
         logger.warning(f"Project {project.id} has PR comments enabled but missing GitHub instance/repository path")
         return
     if not scan_doc.commit_hash:
@@ -205,26 +195,16 @@ async def decorate_github_pr(
     try:
         from app.repositories.github_instances import GitHubInstanceRepository
 
-        instance_repo = GitHubInstanceRepository(db)
-        github_instance = await instance_repo.get_by_id(project.github_instance_id)
-
+        github_instance = await GitHubInstanceRepository(db).get_usable(project.github_instance_id)
         if not github_instance:
-            logger.warning(f"GitHub instance {project.github_instance_id} not found for project {project.id}")
-            return
-
-        if not github_instance.is_active:
             logger.info(
-                f"GitHub instance '{github_instance.name}' is inactive, skipping PR decoration for project {project.id}"
+                "GitHub instance %s is missing, inactive or has no token; skipping PR decoration for project %s",
+                project.github_instance_id,
+                project.id,
             )
             return
 
-        if not github_instance.access_token:
-            logger.info(
-                f"GitHub instance '{github_instance.name}' has no access token, "
-                f"skipping PR decoration for project {project.id}"
-            )
-            return
-
+        owner, repo = repo_path
         github_service = GitHubService(github_instance)
 
         prs = await github_service.get_pull_requests_for_commit(owner, repo, scan_doc.commit_hash)

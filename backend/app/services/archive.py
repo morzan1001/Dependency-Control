@@ -3,9 +3,7 @@
 import asyncio
 import json
 import logging
-import os
 import time
-import uuid
 import zlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import datetime, timezone
@@ -43,7 +41,7 @@ from app.core.s3 import (
 )
 from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
-from app.repositories.distributed_locks import DistributedLocksRepository
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
 from app.schemas.archive import ArchiveRestoreResponse
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.archive_bundle import (
@@ -53,6 +51,7 @@ from app.services.archive_bundle import (
     read_bundle_frames,
     rewrite_bundle_frames,
 )
+from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs
 from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_rollup import record_scan_update_delta
 
@@ -71,22 +70,6 @@ _RESTORABLE_COLLECTIONS = frozenset({*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FR
 class _ArchiveSourceReadError(Exception):
     """A source document could not be read intact; raised to abort the S3 upload so
     housekeeping (which only deletes successfully-archived scans) can't lose data."""
-
-
-def _holder_id(prefix: str) -> str:
-    # Unique per call, so a holder can tell its own lock apart from one a second call on the same pod took over.
-    return f"{prefix}-{os.getenv('HOSTNAME', 'unknown')}-{uuid.uuid4().hex}"
-
-
-def _extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
-    """Extract GridFS IDs from a list of SBOM references."""
-    ids: list[str] = []
-    for ref in sbom_refs:
-        if isinstance(ref, dict) and ref.get("type") == "gridfs_reference":
-            gid = ref.get("gridfs_id")
-            if gid:
-                ids.append(str(gid))
-    return ids
 
 
 def _hash_plaintext_secrets(collection: str, doc: dict[str, Any]) -> None:
@@ -117,7 +100,7 @@ async def _stream_collection(collection: Any, scan_id: str) -> AsyncIterator[dic
 
 async def _stream_gridfs_sboms(db: Any, scan_doc: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
     """Yield one frame per GridFS SBOM (gridfs_id, filename, data)."""
-    gridfs_ids = _extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", []))
+    gridfs_ids = extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", []))
     if not gridfs_ids:
         return
     fs = AsyncIOMotorGridFSBucket(db)
@@ -367,7 +350,7 @@ async def archive_scan(
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"archive:{scan_id}"
-    holder = _holder_id("archive")
+    holder = new_lock_holder()
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):
         logger.info(
@@ -891,7 +874,7 @@ async def restore_scan(
     repo = ArchiveMetadataRepository(db)
     lock_repo = DistributedLocksRepository(db)
     lock_name = ARCHIVE_RESTORE_LOCK_TEMPLATE.format(scan_id=scan_id)
-    holder = _holder_id("restore")
+    holder = new_lock_holder()
     renew_lock = partial(lock_repo.renew_lock, lock_name, holder, _ARCHIVE_LOCK_TTL_SECONDS)
 
     if not await lock_repo.acquire_lock(lock_name, holder, ttl_seconds=_ARCHIVE_LOCK_TTL_SECONDS):

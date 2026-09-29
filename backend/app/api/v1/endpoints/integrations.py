@@ -40,7 +40,7 @@ async def slack_callback(
     except SlackOAuthError as e:
         raise HTTPException(
             status_code=400,
-            detail=f"Slack OAuth failed: {e.message}",
+            detail=f"Slack OAuth failed: {e}",
         ) from e
 
     update_data = extract_slack_tokens(oauth_response)

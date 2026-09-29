@@ -4,6 +4,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
+from app.core.constants import ExploitMaturity
+
 
 class EPSSData(BaseModel):
     """EPSS (Exploit Prediction Scoring System) data for a CVE."""
@@ -64,8 +66,8 @@ class VulnerabilityEnrichment(BaseModel):
     kev_required_action: str | None = None
     kev_ransomware_use: bool = False
 
-    exploit_maturity: str = "unknown"  # unknown, poc, active, weaponized
-    risk_score: float | None = None  # 0-100
+    exploit_maturity: ExploitMaturity = "unknown"
+    risk_score: float  # 0-100
 
 
 class ExtractedSymbols(BaseModel):

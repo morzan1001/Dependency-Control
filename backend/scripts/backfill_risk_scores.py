@@ -24,10 +24,10 @@ import sys
 from collections import Counter
 from typing import Any
 
-from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import ValidationError
 
 from app.core.config import settings
+from app.db.mongodb import create_client
 from app.models.stats import Stats
 from app.services.analysis.stats import calculate_comprehensive_stats
 
@@ -124,7 +124,7 @@ async def backfill_scans(db: Any, batch_size: int, sleep_ms: int, limit: int, ex
             scan_id = doc["_id"]
             try:
                 stored = doc.get("stats") or {}
-                computed = await calculate_comprehensive_stats(db, scan_id)
+                computed = (await calculate_comprehensive_stats(db, scan_id)).stats
 
                 counters["processed"] += 1
                 if _bucket_total(computed.model_dump()) == 0 and _bucket_total(stored) > 0:
@@ -204,7 +204,7 @@ async def mirror_projects(db: Any, new_scores: dict[str, tuple[float, float]], e
 
 
 async def run(args: argparse.Namespace) -> int:
-    client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
+    client = create_client(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
         total = await db.scans.count_documents({"stats": {"$exists": True}}, maxTimeMS=120_000)

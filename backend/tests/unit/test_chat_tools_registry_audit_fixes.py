@@ -162,8 +162,7 @@ class TestComplianceReportsVisibility:
             await ChatToolRegistry()._dispatch("list_compliance_reports", {}, plain_user, db)
 
         repo_instance.list.assert_awaited_once()
-        extra_filter = repo_instance.list.await_args.kwargs["extra_filter"]
-        branches = extra_filter["$or"]
+        branches = repo_instance.list.await_args.kwargs["visibility"]["$or"]
 
         assert {"scope": "user", "requested_by": "u-1"} in branches
         assert {"scope": "project", "scope_id": {"$in": ["p-1"]}} in branches

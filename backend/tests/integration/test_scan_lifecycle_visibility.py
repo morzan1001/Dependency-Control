@@ -1,10 +1,12 @@
 """Partially-failed scans must surface the loss: status completed_with_errors, error text, failed_analyzers."""
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS, SCAN_STATUS_FAILED
 from app.models.project import Project, Scan
 from app.repositories.findings import FindingRepository
 from app.services.analysis import engine
@@ -12,6 +14,7 @@ from app.services.analysis.engine import run_analysis
 from tests.helpers.analyzers import serve_analyzer
 
 _PROJECT_ID = "test-project-id"
+_WORKER = "pod-a/worker-0"
 
 # 24-hex-char GridFS ObjectIds, as stored in prod sbom_refs.
 _FILE_ID_A = "69d5332257c8763c8d8c82d7"
@@ -71,12 +74,19 @@ def _fake_gridfs(sboms_by_file_id: dict[str, dict]) -> MagicMock:
 @pytest.fixture
 def _gridfs_patched(monkeypatch):
     fs = _fake_gridfs({_FILE_ID_A: _SBOM_A, _FILE_ID_B: _SBOM_B})
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     return fs
 
 
 async def _seed_scan(db, sbom_refs: list[dict], scan_type: str | None = None) -> str:
-    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=sbom_refs, status="processing", scan_type=scan_type)
+    scan = Scan(
+        project_id=_PROJECT_ID,
+        branch="main",
+        sbom_refs=sbom_refs,
+        status="processing",
+        scan_type=scan_type,
+        worker_id=_WORKER,
+    )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     return scan.id
 
@@ -141,7 +151,10 @@ async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _gridfs_
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["boom"], db) is True
+    assert (
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["boom"], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "completed_with_errors"
@@ -160,7 +173,10 @@ async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _gridfs
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype"], db) is True
+    assert (
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype"], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "completed_with_errors"
@@ -182,7 +198,10 @@ async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors
         }
     )
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db) is True
+    assert (
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "completed_with_errors"
@@ -208,7 +227,10 @@ async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, m
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype", "epss_kev"], db) is True
+    assert (
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype", "epss_kev"], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED
+    )
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["enrichment_failures"] == ["epss_kev"]
@@ -223,7 +245,10 @@ async def test_a_clean_scan_records_no_enrichment_failures(db, _gridfs_patched, 
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype", "epss_kev"], db) is True
+    assert (
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype", "epss_kev"], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED
+    )
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["enrichment_failures"] is None
@@ -235,7 +260,10 @@ async def test_w12_scan_with_errors_still_becomes_project_latest(db, _gridfs_pat
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["boom"], db) is True
+    assert (
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["boom"], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
 
     project = await db.projects.find_one({"_id": _PROJECT_ID})
     assert project["latest_scan_id"] == scan_id
@@ -247,7 +275,10 @@ async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, 
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["osv"], db) is True
+    assert (
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["osv"], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "completed_with_errors"
@@ -264,12 +295,12 @@ async def test_k9_partial_gridfs_failure_marks_scan_completed_with_errors(db, _g
             raise OSError("transient gridfs outage")
         return await fs.open_download_stream(file_id)
 
-    monkeypatch.setattr("app.services.analysis.engine.open_gridfs_download_with_retry", _fail_second_file)
+    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_second_file)
     await _seed_project(db)
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan_id = await _seed_scan(db, refs)
 
-    assert await run_analysis(scan_id, refs, [], db) is True
+    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "completed_with_errors"
@@ -281,11 +312,11 @@ async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _gridfs_patched
     async def _fail_all(fs, file_id, **_kwargs):
         raise OSError("gridfs outage")
 
-    monkeypatch.setattr("app.services.analysis.engine.open_gridfs_download_with_retry", _fail_all)
+    monkeypatch.setattr("app.services.gridfs_maintenance.open_gridfs_download_with_retry", _fail_all)
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db) is True
+    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_FAILED
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "failed"
@@ -302,7 +333,10 @@ async def test_k8_partial_findings_persistence_is_surfaced(db, _gridfs_patched, 
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["stub"], db) is True
+    assert (
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["stub"], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "completed_with_errors"
@@ -313,11 +347,20 @@ async def test_k8_partial_findings_persistence_is_surfaced(db, _gridfs_patched, 
 @pytest.mark.asyncio
 async def test_k10_sast_only_scan_does_not_replace_project_latest(db, monkeypatch):
     fs = _fake_gridfs({})
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     await _seed_project(db, latest_scan_id="previous-sbom-scan")
+    previous = Scan(
+        id="previous-sbom-scan",
+        project_id=_PROJECT_ID,
+        branch="main",
+        status="completed",
+        sbom_refs=[_gridfs_ref(_FILE_ID_A)],
+        created_at=datetime.now(timezone.utc) - timedelta(hours=1),
+    )
+    await db.scans.insert_one(previous.model_dump(by_alias=True))
     scan_id = await _seed_scan(db, sbom_refs=[])
 
-    assert await run_analysis(scan_id, [], [], db) is True
+    assert await run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["status"] == "completed"
@@ -330,11 +373,11 @@ async def test_k10_sast_only_scan_does_not_replace_project_latest(db, monkeypatc
 @pytest.mark.asyncio
 async def test_k10_sast_only_scan_becomes_latest_when_project_has_none(db, monkeypatch):
     fs = _fake_gridfs({})
-    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+    monkeypatch.setattr("app.services.analysis.engine.AsyncIOMotorGridFSBucket", lambda _db: fs)
     await _seed_project(db, latest_scan_id=None)
     scan_id = await _seed_scan(db, sbom_refs=[])
 
-    assert await run_analysis(scan_id, [], [], db) is True
+    assert await run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     project = await db.projects.find_one({"_id": _PROJECT_ID})
     assert project["latest_scan_id"] == scan_id, "SAST-only projects must still get a latest scan"

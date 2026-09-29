@@ -10,8 +10,11 @@ from unittest.mock import patch
 import pytest
 
 import app.services.update_frequency as update_frequency_module
+from app.core.purl import parse_purl
 from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
-from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import (
     BranchWindowActivity,
     ScanOutdatedSetRepository,
@@ -344,7 +347,7 @@ class FakeScanRepo:
     async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
         # Run the real pipeline through the fake Mongo engine rather than
         # reimplementing it: a pipeline that would not answer in Mongo must not
-        # answer here either, down to the naive UTC datetimes it stores.
+        # answer here either, down to the UTC datetimes it stores.
         db = FakeDatabase()
         for scan in self._scans:
             await db.scans.insert_one(dict(scan))
@@ -354,14 +357,9 @@ class FakeScanRepo:
 class FakeDepRepo:
     def __init__(self, deps_by_scan: dict[str, list[dict[str, Any]]]):
         self._deps_by_scan = deps_by_scan
-        self.calls: list[str] = []  # tracks every find_all query for assertions
+        self.calls: list[str] = []
 
-    async def find_all(
-        self,
-        query: dict[str, Any],
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        scan_id = query.get("scan_id")
+    async def find_raw_by_scan(self, scan_id: str, projection: dict[str, int]) -> list[dict[str, Any]]:
         self.calls.append(scan_id)
         return [_apply_projection(d, projection) for d in self._deps_by_scan.get(scan_id, [])]
 
@@ -737,24 +735,6 @@ class TestBranchScopedScanSelection:
         assert m.scan_count == 2
 
     @pytest.mark.asyncio
-    async def test_naive_created_at_is_coerced_to_utc(self):
-        # Motor returns naive UTC datetimes; the tz-aware window cutoff and the
-        # downstream date math must both survive that.
-        naive = (datetime.now(tz=timezone.utc) - timedelta(days=40)).replace(tzinfo=None)
-        scans = [
-            {**_make_scan("s1", 0), "created_at": naive},
-            {**_make_scan("s2", 30), "created_at": naive + timedelta(days=30)},
-        ]
-        deps = {
-            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
-            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
-        }
-        m = await self._compute(scans, deps, window_days=60)
-        assert m.scan_count == 2
-        assert m.first_scan_date.endswith("+00:00")
-        assert m.last_scan_date.endswith("+00:00")
-
-    @pytest.mark.asyncio
     async def test_a_textual_created_at_drops_the_scan(self):
         # Archive restore inserts bundle JSON verbatim and JSON has no date type, so a
         # restored scan can carry created_at as text. A range query brackets to its
@@ -853,6 +833,24 @@ class TestIdentityKeying:
         m = await self._compute(deps)
         assert m.total_updates == 1
         assert m.recent_updates[0].update_type == "minor"
+
+    @pytest.mark.parametrize(
+        ("before", "after", "updates"),
+        [
+            ("pkg:pypi/PyYAML@6.0", "pkg:pypi/pyyaml@6.0.1", 1),
+            ("pkg:pypi/zope.interface@5.0", "pkg:pypi/zope-interface@5.1", 1),
+            ("pkg:NPM/x@1.0.0", "pkg:npm/x@1.0.1", 1),
+            ("pkg:maven/g1/core@1.0", "pkg:maven/g2/core@1.1", 0),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_a_respelled_package_is_a_version_bump(self, before, after, updates):
+        def dep(scan_id: str, purl: str) -> dict[str, Any]:
+            return self._raw_dep(scan_id, parse_purl(purl).name, parse_purl(purl).version, purl)
+
+        m = await self._compute({"s1": [dep("s1", before)], "s2": [dep("s2", after)]})
+
+        assert m.total_updates == updates
 
     @pytest.mark.asyncio
     async def test_deps_without_purl_key_by_name_and_type(self):
@@ -1697,6 +1695,39 @@ class TestStreamingOrchestrator:
         # Observations re-keyed to the deps.dev name -> adoption latency resolves (15d).
         assert m.adoption_latency_days_median == 15.0
 
+    @pytest.mark.asyncio
+    async def test_an_ecosystem_deps_dev_does_not_serve_is_never_requested(self):
+        def _composer_dep(scan_id: str, version: str) -> dict[str, Any]:
+            return {
+                "scan_id": scan_id,
+                "name": "framework",
+                "version": version,
+                "type": "library",
+                "purl": f"pkg:composer/laravel/framework@{version}",
+            }
+
+        class FakeFetcher:
+            def __init__(self):
+                self.calls: list[Sequence[tuple[str, str]]] = []
+
+            async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
+                self.calls.append(list(packages))
+                return {}
+
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_composer_dep("s1", "10.0.0")], "s2": [_composer_dep("s2", "10.1.0")]}
+        fetcher = FakeFetcher()
+        await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            release_fetcher=fetcher,
+        )
+
+        assert fetcher.calls == []
+
     def test_comparison_semaphore_reusable_across_event_loops(self):
         # The concurrency semaphore must be created per call so it binds to the
         # loop running the gather; a module-global one binds to the first loop and
@@ -1711,9 +1742,9 @@ class TestStreamingOrchestrator:
                 return await super().find_many_raw(*args, **kwargs)
 
         class _SuspendingDepRepo(FakeDepRepo):
-            async def find_all(self, *args, **kwargs):
+            async def find_raw_by_scan(self, *args, **kwargs):
                 await asyncio.sleep(0)
-                return await super().find_all(*args, **kwargs)
+                return await super().find_raw_by_scan(*args, **kwargs)
 
         projects = [{"_id": f"proj-{i}", "name": f"Project {i}"} for i in range(n_projects)]
         all_scans: list[dict[str, Any]] = []

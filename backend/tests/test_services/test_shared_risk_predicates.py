@@ -2,10 +2,15 @@
 
 import pytest
 
+from app.core.constants import REACHABILITY_LEVEL_IMPORT, REACHABILITY_LEVEL_SYMBOL
 from app.core.risk_scoring import (
+    CONFIRMED_REACHABLE_RISK_MODIFIER,
+    UNREACHABLE_RISK_MODIFIER,
+    is_actionable_secret,
     is_actionable_vulnerability,
     is_deprioritized_secret,
     is_deprioritized_vulnerability,
+    reachability_risk_modifier,
 )
 from app.models.finding import Severity
 from app.schemas.recommendation import VulnerabilityInfo
@@ -15,7 +20,7 @@ from app.services.enrichment.scoring import calculate_secret_severity
 def _vuln(**kwargs) -> VulnerabilityInfo:
     base = {
         "finding_id": "test-id",
-        "cve_id": "CVE-2024-0001",
+        "advisories": [],
         "severity": "HIGH",
         "package_name": "pkg",
         "current_version": "1.0.0",
@@ -72,6 +77,28 @@ class TestSecret:
 
     def test_unknown_tree_is_not_deprioritized(self):
         assert is_deprioritized_secret(False, None) is False
+
+    @pytest.mark.parametrize(("verified", "expected"), [(True, True), (False, False), (None, False)])
+    def test_only_a_verified_secret_is_actionable(self, verified, expected):
+        assert is_actionable_secret(verified) is expected
+
+
+class TestReachabilityRiskModifier:
+    def test_unreachable_applies_unreachable_modifier(self):
+        assert reachability_risk_modifier(False, REACHABILITY_LEVEL_SYMBOL) == UNREACHABLE_RISK_MODIFIER
+        assert reachability_risk_modifier(False, None) == UNREACHABLE_RISK_MODIFIER
+
+    def test_confirmed_reachable_applies_confirmed_modifier(self):
+        assert reachability_risk_modifier(True, REACHABILITY_LEVEL_SYMBOL) == CONFIRMED_REACHABLE_RISK_MODIFIER
+
+    def test_likely_reachable_defaults_to_one(self):
+        assert reachability_risk_modifier(True, REACHABILITY_LEVEL_IMPORT) == 1.0
+
+    def test_untiered_reachable_defaults_to_one(self):
+        assert reachability_risk_modifier(True, None) == 1.0
+
+    def test_unanalyzed_defaults_to_one(self):
+        assert reachability_risk_modifier(None, REACHABILITY_LEVEL_SYMBOL) == 1.0
 
 
 class TestConsumersDelegate:

@@ -13,7 +13,8 @@ from app.core.constants import (
 from app.core.permissions import Permissions, has_permission
 from app.models.team import Team
 from app.models.user import User
-from app.repositories import TeamRepository, UserRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.schemas.team import TeamRef, TeamResponse
 
 _MSG_TEAM_NOT_FOUND = "Team not found"
@@ -103,6 +104,15 @@ def team_refs(team_ids: Iterable[str], names: Mapping[str, str]) -> list[TeamRef
     return sorted(refs, key=lambda ref: (ref.name, ref.id))
 
 
+def visible_teams_filter(user: User) -> dict[str, Any] | None:
+    """The team filter a listing applies for ``user``: every team, their own, or None when they read none."""
+    if has_permission(user.permissions, Permissions.TEAM_READ_ALL):
+        return {}
+    if has_permission(user.permissions, Permissions.TEAM_READ):
+        return {"members.user_id": str(user.id)}
+    return None
+
+
 async def check_team_access(
     team_id: str,
     user: User,
@@ -172,11 +182,13 @@ async def get_team_with_access(
     user: User,
     db: AsyncIOMotorDatabase,
     required_role: str = TEAM_ROLE_ADMIN,
+    *,
+    global_permission: str = Permissions.TEAM_UPDATE,
 ) -> Team:
-    """Get a team via global 'team:update' permission or, failing that, role-based access."""
+    """Get a team via ``global_permission`` or, failing that, role-based access; 404 either way when missing."""
     team_repo = TeamRepository(db)
 
-    if has_permission(user.permissions, "team:update"):
+    if has_permission(user.permissions, global_permission):
         team = await team_repo.get_by_id(team_id)
         if not team:
             raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)

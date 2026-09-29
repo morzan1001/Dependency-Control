@@ -13,34 +13,31 @@ from app.api.v1.helpers.analytics import (
     get_user_project_ids,
     require_analytics_permission,
 )
+from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
-    DETAILS_KEY_IN_KEV,
-    DETAILS_KEY_KEV_RANSOMWARE,
     SCAN_DEPENDENCY_READ_LIMIT,
 )
 from app.core.permissions import Permissions
 from app.models.finding_record import FindingRecord
-from app.models.project import Scan
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-    ProjectRepository,
-    ScanRepository,
-)
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.analytics import (
     RecommendationResponse,
     RecommendationsResponse,
 )
+from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
-from app.services.enrichment import canonical_cves, get_cve_enrichment
+from app.services.enrichment import get_cve_enrichment
+from app.services.enrichment.service import apply_enrichments
 from app.services.recommendation import trends
-from app.services.recommendation.common import get_attr
+from app.services.recommendation.common import live_cves, get_attr
 from app.services.recommendations import recommendation_engine
 
-from ._shared import _MSG_ACCESS_DENIED
+from ._shared import SCAN_NOT_IN_PROJECT, resolve_project_scan_id
 
 logger = logging.getLogger(__name__)
 
@@ -76,42 +73,26 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
     RecommendationType.UPGRADE_PROTOCOL: (None, "crypto_issues"),
     RecommendationType.PQC_MIGRATION: (None, "crypto_issues"),
     RecommendationType.ROTATE_CERTIFICATE: (None, "crypto_issues"),
-    RecommendationType.REPLACE_WEAK_CIPHER_SUITE: (None, "crypto_issues"),
 }
 
 
-async def _apply_live_threat_intel(findings: list[Any]) -> None:
-    """Populate each vulnerability finding's details with current KEV/EPSS from the live threat-intel
-    source. Ingest rarely writes KEV to findings (in_kev is set on ~0.2%), so the recommendation
-    engine — which reads is_kev/epss/kev_ransomware off details — otherwise almost never raises the
-    KEV/exploit recommendations. Uses the canonical CVEs of each finding's advisory list, and writes
-    the finding-level worst case (any-KEV, max-EPSS) so the existing engine picks it up unchanged."""
+async def _apply_live_threat_intel(findings: list[Any]) -> dict[str, VulnerabilityEnrichment]:
+    """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan; returns the per-CVE enrichment."""
     vuln_findings = [f for f in findings if get_attr(f, "type") == "vulnerability"]
-    all_cves = list({c for f in vuln_findings for c in canonical_cves([get_attr(f, "details", {})])})
+    all_cves = list({c for f in vuln_findings for c in live_cves([get_attr(f, "details")])})
     if not all_cves:
-        return
+        return {}
     try:
         enrichments = await get_cve_enrichment(all_cves)
     except Exception as e:
         logger.warning("Recommendations: live CVE enrichment failed, using stored data: %s", e)
-        return
+        return {}
 
     for f in vuln_findings:
         details = get_attr(f, "details", {})
-        if not isinstance(details, dict):
-            continue
-        infos = [enrichments[c] for c in canonical_cves([details]) if c in enrichments]
-        if not infos:
-            continue
-        if any(e.is_kev for e in infos):
-            details[DETAILS_KEY_IN_KEV] = True
-        if any(e.kev_ransomware_use for e in infos):
-            details[DETAILS_KEY_KEV_RANSOMWARE] = True
-        epss_vals = [e.epss_score for e in infos if e.epss_score is not None]
-        if epss_vals:
-            max_epss = max(epss_vals)
-            if details.get("epss_score") is None or max_epss > details["epss_score"]:
-                details["epss_score"] = max_epss
+        if isinstance(details, dict):
+            apply_enrichments(details, enrichments)
+    return enrichments
 
 
 @router.get("/projects/{project_id}/recommendations", responses=RESP_AUTH_404)
@@ -124,21 +105,15 @@ async def get_project_recommendations(
     """Generate remediation recommendations for a project's findings."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
-    project_repo = ProjectRepository(db)
+    project = await check_project_access(project_id, current_user, db)
+    scan_id = await resolve_project_scan_id(db, project, scan_id)
+    if not scan_id:
+        raise HTTPException(status_code=404, detail=SCAN_NOT_IN_PROJECT)
+
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
     dep_repo = DependencyRepository(db)
-
-    project = await project_repo.get_raw_by_id(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
     user_project_ids = await get_user_project_ids(current_user, db)
-    if project_id not in user_project_ids:
-        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
-
-    scan = await _resolve_scan(scan_repo, project, project_id, scan_id)
-    scan_id = scan.id
 
     # Cache per scan + caller scope so users with different project access never
     # share an entry; cross-project signal isn't in the key and may be TTL-stale.
@@ -148,8 +123,8 @@ async def get_project_recommendations(
     if cached:
         return RecommendationsResponse(**cached)
 
-    findings = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
-    await _apply_live_threat_intel(findings)
+    findings, findings_total = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
+    threat_intel = await _apply_live_threat_intel(findings)
 
     dependencies, dependencies_total = await dep_repo.find_by_scan(
         project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
@@ -159,7 +134,7 @@ async def get_project_recommendations(
     previous_scan_findings = None
     previous_scan = await scan_repo.get_preceding_scan(scan_id)
     if previous_scan:
-        previous_scan_findings = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
+        previous_scan_findings, _ = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
 
     recent_scan_ids = [
         recent.id
@@ -181,14 +156,16 @@ async def get_project_recommendations(
         cve_recurrence=cve_recurrence,
         recurrence_window_scans=len(recent_scan_ids),
         cross_project_data=cross_project_data,
+        threat_intel=threat_intel,
     )
 
     finding_counts = _finding_counts(findings)
     response = RecommendationsResponse(
         project_id=project_id,
-        project_name=project.get("name", "Unknown"),
+        project_name=project.name,
         scan_id=scan_id,
         total_findings=len(findings),
+        findings_total=findings_total,
         total_vulnerabilities=finding_counts["vulnerabilities"],
         recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
         summary=_summarize(recommendations, finding_counts),
@@ -198,21 +175,6 @@ async def get_project_recommendations(
     # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
     await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)
     return response
-
-
-async def _resolve_scan(
-    scan_repo: ScanRepository, project: dict[str, Any], project_id: str, scan_id: str | None
-) -> Scan:
-    if scan_id:
-        scan = await scan_repo.get_by_id(scan_id)
-        if scan and scan.project_id != project_id:
-            scan = None
-    else:
-        scan = await scan_repo.get_latest_active_scan(project)
-
-    if not scan:
-        raise HTTPException(status_code=404, detail="No scan found for this project")
-    return scan
 
 
 def _finding_counts(findings: list[FindingRecord]) -> dict[str, int]:

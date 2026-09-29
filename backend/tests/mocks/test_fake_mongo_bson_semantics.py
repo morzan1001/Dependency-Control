@@ -35,7 +35,7 @@ async def test_max_over_mixed_types_answers_with_the_date():
         [{"$group": {"_id": "$branch", "newest": {"$max": "$created_at"}, "oldest": {"$min": "$created_at"}}}]
     ).to_list(None)
 
-    assert rows[0]["newest"] == _LATE.replace(tzinfo=None)
+    assert rows[0]["newest"] == _LATE
     assert rows[0]["oldest"] == "2026-03-01T00:00:00Z"
 
 
@@ -281,7 +281,7 @@ async def test_a_stored_datetime_loses_its_sub_millisecond_digits():
 
     stored = {doc["_id"]: doc["created_at"] for doc in await db.scans.find({}).to_list(None)}
 
-    assert stored["s1"] == _SUB_MILLISECOND.replace(tzinfo=None, microsecond=_TRUNCATED_MICROSECONDS)
+    assert stored["s1"] == _SUB_MILLISECOND.replace(microsecond=_TRUNCATED_MICROSECONDS)
     assert stored["s1"] == stored["s2"]
 
 
@@ -330,3 +330,20 @@ async def test_a_sort_direction_the_server_rejects_is_rejected_here_too():
 
     with pytest.raises(OperationFailure):
         await db.scans.aggregate([{"$sort": {"created_at": _INVALID_SORT_DIRECTION}}]).to_list(None)
+
+
+@pytest.mark.asyncio
+async def test_max_update_keeps_the_later_date_and_an_upsert_inserts_it():
+    from pymongo import UpdateOne
+
+    db = FakeDatabase()
+    await db.dependencies.insert_one({"_id": "d1", "created_at": _LATE})
+
+    await db.dependencies.bulk_write(
+        [
+            UpdateOne({"_id": "d1"}, {"$max": {"created_at": _EARLY}}),
+            UpdateOne({"_id": "d2"}, {"$setOnInsert": {"_id": "d2"}, "$max": {"created_at": _EARLY}}, upsert=True),
+        ]
+    )
+
+    assert [(d["_id"], d["created_at"]) async for d in db.dependencies.find({})] == [("d1", _LATE), ("d2", _EARLY)]

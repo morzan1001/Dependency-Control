@@ -43,6 +43,7 @@ def test_extracts_top_level_license_fields_and_deps_dev_subdoc():
         "license_risks": ["some risk"],
         "license_obligations": ["attribution"],
         "deps_dev": {"stars": 100, "forks": 10},
+        "enrichment_sources": ["deps_dev", "license_compliance"],
         "description": "Lodash modular utilities.",
         "homepage": "https://lodash.com/",
         "repository_url": "https://github.com/lodash/lodash",
@@ -58,3 +59,13 @@ def test_extracts_top_level_license_fields_and_deps_dev_subdoc():
     assert result["description"] == "Lodash modular utilities."
     assert result["homepage"] == "https://lodash.com/"
     assert result["repository_url"] == "https://github.com/lodash/lodash"
+
+
+def test_reports_the_sources_the_enrichment_doc_records():
+    repo = AsyncMock()
+    # deps.dev answered with a license list only, so no deps_dev block was stored.
+    repo.get_by_purl.return_value = {"purl": "pkg:npm/tiny@1.0.0", "enrichment_sources": ["deps_dev"]}
+
+    result = asyncio.run(_get_enrichment_info(repo, "pkg:npm/tiny@1.0.0"))
+
+    assert result["enrichment_sources"] == ["deps_dev"]

@@ -12,6 +12,7 @@ from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.base import find_window
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
     EvaluationCoverage,
@@ -75,9 +76,6 @@ class ComplianceReportEngine:
                 filename,
                 mime,
             )
-            framework_label = (
-                str(report.framework.value) if hasattr(report.framework, "value") else str(report.framework)
-            )
             await repo.update_status(
                 report.id,
                 status=ReportStatus.COMPLETED,
@@ -92,14 +90,11 @@ class ComplianceReportEngine:
                 completed_at=datetime.now(timezone.utc),
                 expires_at=datetime.now(timezone.utc) + timedelta(days=settings.COMPLIANCE_REPORT_RETENTION_DAYS),
             )
-            compliance_reports_total.labels(framework=framework_label, status="success").inc()
+            compliance_reports_total.labels(framework=report.framework, status="success").inc()
             logger.info("Compliance report %s completed (%s bytes)", report.id, len(artifact_bytes))
         except Exception as exc:
             logger.exception("Compliance report %s failed: %s", report.id, exc)
-            framework_label = (
-                str(report.framework.value) if hasattr(report.framework, "value") else str(report.framework)
-            )
-            compliance_reports_total.labels(framework=framework_label, status="error").inc()
+            compliance_reports_total.labels(framework=report.framework, status="error").inc()
             await repo.update_status(
                 report.id,
                 status=ReportStatus.FAILED,
@@ -155,7 +150,7 @@ class ComplianceReportEngine:
         """(project_id, scan_id) pairs so callers avoid re-querying each scan's project."""
         from app.services.releases import resolve_scan_ids
 
-        return list((await resolve_scan_ids(db, resolved.project_ids)).items())
+        return list((await resolve_scan_ids(db, resolved.project_ids, projects=resolved.projects)).items())
 
     async def _collect_crypto_assets(
         self,
@@ -211,11 +206,9 @@ class ComplianceReportEngine:
             "aliases": 0,
             "related_findings": 0,
         }
-        cursor = db.findings.find(query, projection).limit(_FINDINGS_LIMIT)
-        results = [doc async for doc in cursor]
-        if len(results) < _FINDINGS_LIMIT:
-            return results, len(results)
-        in_scope: int = await db.findings.count_documents(query)
+        results, in_scope = await find_window(db.findings, query, _FINDINGS_LIMIT, projection=projection)
+        if in_scope == len(results):
+            return results, in_scope
         logger.warning(
             "Compliance evaluation hit findings cap (%d of %d) for scope %s; "
             "report may understate exposure — consider narrowing the scope",

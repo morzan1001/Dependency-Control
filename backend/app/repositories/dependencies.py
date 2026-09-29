@@ -1,9 +1,13 @@
 """Repository for dependencies."""
 
+from datetime import datetime
 from typing import Any
 
+from pymongo import UpdateOne
+
+from app.core.purl import package_identity_expr
 from app.models.dependency import Dependency
-from app.repositories.base import BaseRepository
+from app.repositories.base import BaseRepository, find_window
 
 
 class DependencyRepository(BaseRepository[Dependency]):
@@ -14,25 +18,35 @@ class DependencyRepository(BaseRepository[Dependency]):
         return await self.find_one({"name": name})
 
     async def find_by_scan(self, project_id: str, scan_id: str, limit: int) -> tuple[list[Dependency], int]:
-        """The scan's dependencies up to ``limit``, and how many it holds. The count costs a
-        round trip only once the read has saturated, and a caller that reports the pair can tell
-        a small scan from a windowed one."""
-        rows = await self.find_many({"project_id": project_id, "scan_id": scan_id}, limit=limit)
-        if len(rows) < limit:
-            return rows, len(rows)
-        return rows, await self.count_by_scan(project_id, scan_id)
+        """The scan's dependencies up to ``limit``, and how many it holds."""
+        rows, total = await find_window(self.collection, {"project_id": project_id, "scan_id": scan_id}, limit)
+        return self._to_model_list(rows), total
 
-    async def find_all(
-        self,
-        query: dict[str, Any] | None = None,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Returns raw dicts unbounded; use iterate() for large result sets."""
-        cursor = self.collection.find(query or {}, projection)
-        return await cursor.to_list(None)
+    async def find_raw_by_scan(self, scan_id: str, projection: dict[str, int]) -> list[dict[str, Any]]:
+        """Every dependency of one scan, unbounded: a scan's inventory is read whole to be folded."""
+        return await self.collection.find({"scan_id": scan_id}, projection).to_list(None)
 
-    async def delete_by_scan(self, scan_id: str) -> int:
-        return await self.delete_many({"scan_id": scan_id})
+    async def upsert_many(self, dependencies: list[Dependency]) -> None:
+        """Write each dependency over its scan's (name, version, purl) row; the row keeps its newest created_at."""
+        await self.collection.bulk_write(
+            [
+                UpdateOne(
+                    {"scan_id": d.scan_id, "name": d.name, "version": d.version, "purl": d.purl},
+                    {
+                        "$set": d.model_dump(by_alias=True, exclude={"id", "created_at"}),
+                        "$max": {"created_at": d.created_at},
+                        "$setOnInsert": {"_id": d.id},
+                    },
+                    upsert=True,
+                )
+                for d in dependencies
+            ],
+            ordered=False,
+        )
+
+    async def delete_older_writes(self, scan_id: str, written_at: datetime) -> None:
+        """Delete the scan's rows no write since ``written_at`` has touched, undated rows included."""
+        await self.delete_many({"scan_id": scan_id, "$nor": [{"created_at": {"$gte": written_at}}]})
 
     async def count_by_scan(self, project_id: str, scan_id: str) -> int:
         return await self.count({"project_id": project_id, "scan_id": scan_id})
@@ -40,7 +54,7 @@ class DependencyRepository(BaseRepository[Dependency]):
     async def get_unique_packages(self, scan_ids: list[str]) -> int:
         pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
-            {"$group": {"_id": "$name"}},
+            {"$group": {"_id": package_identity_expr()}},
             {"$count": "count"},
         ]
         result = await self.aggregate(pipeline)

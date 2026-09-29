@@ -1,11 +1,12 @@
 from datetime import datetime
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import TEAM_ROLE_MEMBER, TeamRole
 from app.models.team import TeamBinding
 from app.models.types import PyObjectId
+from app.schemas._not_null import reject_null
 
 
 class TeamMemberSchema(BaseModel):
@@ -14,6 +15,8 @@ class TeamMemberSchema(BaseModel):
     # Deliberately not TeamRole: read_team serves from an aggregate that bypasses the storage
     # model, so this is the last view that can still render a team holding a pre-existing bad role.
     role: str
+    # "manual", or the "<provider>:<instance id>" of the sync that owns the entry.
+    source: str | None = None
 
 
 class TeamRef(BaseModel):
@@ -36,6 +39,8 @@ class TeamCreate(TeamBase):
 class TeamUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+
+    _not_null = field_validator("name")(reject_null)
 
 
 class TeamGitHubBindingRequest(BaseModel):

@@ -1,20 +1,22 @@
 from datetime import datetime
 from typing import Annotated, Any
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
 
 from app.core.constants import (
     DEFAULT_ACTIVE_ANALYZERS,
+    DEFAULT_RETENTION_DAYS,
+    MAX_RETENTION_DAYS,
     PROJECT_ROLE_VIEWER,
-    PROJECT_ROLES,
     RETENTION_ACTION_DELETE,
+    ProjectRole,
     RetentionAction,
 )
 from app.core.notification_prefs import NotificationPreferences
 from app.models.finding import FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
 from app.models.project import Project, Scan
-from app.schemas.datetimes import UtcDatetime
+from app.schemas._not_null import reject_null
 from app.schemas.team import TeamRef
 
 
@@ -100,17 +102,20 @@ class ProjectListEnriched(BaseModel):
     pages: int
 
 
+ProjectName = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=200)]
+
+
 class ProjectCreate(BaseModel):
-    name: str = Field(
-        ..., min_length=1, max_length=200, description="The name of the project", examples=["My Awesome App"]
-    )
+    name: ProjectName = Field(..., description="The name of the project", examples=["My Awesome App"])
     team_id: str | None = Field(None, description="ID of the team this project belongs to")
     active_analyzers: list[str] = Field(
         default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS),
         description="List of analyzers to run on this project",
         examples=[["end_of_life", "os_malware", "trivy"]],
     )
-    retention_days: int | None = Field(90, description="Number of days to keep scan history", ge=1)
+    retention_days: int | None = Field(
+        DEFAULT_RETENTION_DAYS, description="Number of days to keep scan history", ge=1, le=MAX_RETENTION_DAYS
+    )
     retention_action: RetentionAction | None = Field(
         RETENTION_ACTION_DELETE,
         description="Action when retention period expires: delete, archive, or none",
@@ -121,12 +126,14 @@ class ProjectCreate(BaseModel):
 
 
 class ProjectUpdate(BaseModel):
-    name: str | None = Field(None, description="New name for the project")
+    name: ProjectName | None = Field(None, description="New name for the project")
     team_ids: list[str] | None = Field(
         None, description="Every team that is to own this project; the whole set, empty gives up ownership"
     )
     active_analyzers: list[str] | None = Field(None, description="Updated list of active analyzers")
-    retention_days: int | None = Field(None, description="Number of days to keep scan history", ge=1)
+    retention_days: int | None = Field(
+        None, description="Number of days to keep scan history", ge=1, le=MAX_RETENTION_DAYS
+    )
     retention_action: RetentionAction | None = Field(
         None,
         description="Action when retention period expires: delete, archive, or none",
@@ -153,6 +160,16 @@ class ProjectUpdate(BaseModel):
         None, description="Per-analyzer configuration overrides keyed by analyzer ID"
     )
 
+    _not_null = field_validator(
+        "name",
+        "active_analyzers",
+        "retention_days",
+        "retention_action",
+        "gitlab_mr_comments_enabled",
+        "github_pr_comments_enabled",
+        "enforce_notification_settings",
+    )(reject_null)
+
 
 class ProjectMemberInvite(BaseModel):
     email: str = Field(
@@ -160,36 +177,11 @@ class ProjectMemberInvite(BaseModel):
         description="Email address of the user to invite",
         examples=["colleague@example.com"],
     )
-    role: str = Field(
-        PROJECT_ROLE_VIEWER,
-        description=f"Role to assign ({', '.join(PROJECT_ROLES)})",
-        examples=[PROJECT_ROLE_VIEWER],
-    )
-
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, v: str) -> str:
-        if v not in PROJECT_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
-        return v
+    role: ProjectRole = Field(PROJECT_ROLE_VIEWER, description="Role to assign", examples=[PROJECT_ROLE_VIEWER])
 
 
 class ProjectMemberUpdate(BaseModel):
-    role: str | None = Field(
-        None,
-        description=f"New role to assign ({', '.join(PROJECT_ROLES)})",
-        examples=[PROJECT_ROLE_VIEWER],
-    )
-    notification_preferences: NotificationPreferences = Field(
-        None, description="Notification preferences for the member"
-    )
-
-    @field_validator("role")
-    @classmethod
-    def validate_role(cls, v: str | None) -> str | None:
-        if v and v not in PROJECT_ROLES:
-            raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
-        return v
+    role: ProjectRole = Field(..., description="New role to assign", examples=[PROJECT_ROLE_VIEWER])
 
 
 class ProjectNotificationSettings(BaseModel):
@@ -204,7 +196,7 @@ class ProjectNotificationSettings(BaseModel):
         ],
     )
     enforce_notification_settings: bool | None = Field(
-        None, description="Enforce these settings for all members (Owner only)"
+        None, description="Enforce these settings for all members (project admins only)"
     )
 
 
@@ -233,7 +225,7 @@ class ScanReleaseRef(BaseModel):
 
     environment: str = Field(..., description="Environment slug the scan was released to")
     version: str | None = Field(None, description="Release name recorded when the scan was marked")
-    released_at: UtcDatetime = Field(..., description="When the scan started running in that environment")
+    released_at: datetime = Field(..., description="When the scan started running in that environment")
 
 
 class ScanWithReleases(Scan):
@@ -268,8 +260,8 @@ class BranchTip(BaseModel):
     )
     tip: Scan | None = Field(
         None,
-        description="Newest usable scan of the branch, a rescan only where nothing built is left; "
-        "None while the branch has produced no usable scan",
+        description="Freshest analysis of the branch's newest usable build, or its newest usable rescan "
+        "where no usable build is left; None while the branch has produced no usable scan",
     )
 
 
@@ -277,10 +269,6 @@ class ProjectBranchTips(BaseModel):
     """Every branch of a project, so no branch-level verdict is drawn from a page of scans."""
 
     branches: list[BranchTip] = Field(..., description="Alphabetical by branch name")
-    flagged_release_scan: ScanWithReleases | None = Field(
-        None,
-        description="Newest usable scan carrying the release flag, whatever its age; None when the project has none",
-    )
 
 
 class DashboardStats(BaseModel):

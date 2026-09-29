@@ -1,379 +1,68 @@
 import asyncio
 import logging
-import os
-import re
-from collections import Counter
-from typing import TYPE_CHECKING, Any
+from collections.abc import Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pydantic import ValidationError
 
+from app.core.constants import WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
+from app.models.project import Project
 from app.models.stats import Stats
 from app.models.waiver import Waiver
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
+from app.repositories.findings import FindingRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
+from app.repositories.waivers import WaiverRepository
 from app.services.analysis.stats import calculate_comprehensive_stats
-
-if TYPE_CHECKING:
-    from app.services.waivers.matching import MatchFinding, WaiverApplication
+from app.services.reachability_enrichment import ComponentLanguages
+from app.services.releases import released_scan_ids
+from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
+from app.services.waivers.matching import waiver_reach_filter
 
 logger = logging.getLogger(__name__)
 
-# Lock-acquisition retry policy for recalculate_project_stats. Recalc is triggered
-# fire-and-forget from waiver CRUD endpoints, so a dropped run (None return) leaves
-# stats stale until an unrelated event re-triggers it. Bounded exponential backoff
-# lets a contending run wait for the current holder to finish and then recompute
-# against the fully-committed waiver set. Total worst-case wait ~= 0.2*(2^5-1) = 6.2s.
+# A run that outlived its job lock is waited for (at most ~6.2s) rather than dropped.
 _LOCK_MAX_RETRIES = 5
 _LOCK_RETRY_BASE_DELAY = 0.2
+_LOCK_TTL_SECONDS = 300
+# A build finalized during a pass heads next and may carry the waiver set it read before this change.
+_HEAD_PASSES = 3
 
-# Waiver field mapping: waiver field -> finding query field
-_WAIVER_FIELD_MAP = {
-    "finding_id": "finding_id",
-    "package_name": "component",
-    "package_version": "version",
-    "finding_type": "type",
-}
-
-
-def _strip_line_number(finding_id: str) -> str | None:
-    """Strip the trailing ``-<line_number>`` from a SAST finding ID, so file-scope matching covers
-    every line of the same rule + file.
-    """
-    parts = finding_id.rsplit("-", 1)
-    if len(parts) == 2 and parts[1].isdigit():
-        return parts[0]
-    return None
-
-
-def _extract_rule_prefix(finding_id: str, component: str) -> str | None:
-    """Extract ``{SCANNER}-{rule_id}`` from a SAST/IAC ``{SCANNER}-{rule_id}-{file_path}-{line}``
-    ID, given ``component = {file_path}``, so rule-scope waivers match the rule across all files.
-    """
-    file_prefix = _strip_line_number(finding_id)
-    if not file_prefix:
-        return None
-    suffix = f"-{component}"
-    if file_prefix.endswith(suffix):
-        return file_prefix[: -len(suffix)]
-    return None
-
-
-def _resolve_finding_id_query(
-    finding_id: str,
-    scope: str,
-    component: str,
-) -> str | dict[str, str]:
-    """Resolve the MongoDB query value for ``finding_id`` based on waiver scope."""
-    if scope == "file":
-        prefix = _strip_line_number(finding_id)
-        if prefix:
-            return {"$regex": f"^{re.escape(prefix)}-\\d+$"}
-    elif scope == "rule":
-        rule_prefix = _extract_rule_prefix(finding_id, component)
-        if rule_prefix:
-            return {"$regex": f"^{re.escape(rule_prefix)}-"}
-    return finding_id
-
-
-def _build_waiver_query(waiver: Waiver) -> dict[str, str | dict[str, str]]:
-    """Build a finding query dict from a waiver's matching fields."""
-    scope = waiver.scope or "finding"
-    query: dict[str, str | dict[str, str]] = {}
-
-    waiver_values = {
-        "finding_id": waiver.finding_id,
-        "package_name": waiver.package_name,
-        "package_version": waiver.package_version,
-        "finding_type": waiver.finding_type,
-    }
-
-    for waiver_field, query_field in _WAIVER_FIELD_MAP.items():
-        value = waiver_values.get(waiver_field)
-        if not value or value == "Unknown":
-            continue
-
-        # Rule-scope waivers must NOT filter by component (match all files)
-        if waiver_field == "package_name" and scope == "rule":
-            continue
-
-        if waiver_field == "finding_id" and scope in ("file", "rule"):
-            query[query_field] = _resolve_finding_id_query(
-                value,
-                scope,
-                waiver.package_name or "",
-            )
-        else:
-            query[query_field] = value
-
-    return query
-
-
-async def _record_match_outcome(waiver_repo: Any, waiver: Waiver, scan_id: str, count: int) -> None:
-    """Persist what a waiver suppressed so an orphaned waiver is visible in the UI."""
-    if waiver_repo is None:
-        return
-    if waiver.last_eval_scan_id != scan_id or waiver.last_match_count != count:
-        await waiver_repo.update(waiver.id, {"last_eval_scan_id": scan_id, "last_match_count": count})
-
-
-async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: list[Waiver], waiver_repo: Any = None) -> None:
-    """Apply all waivers for a scan; ``waiver_repo`` records each waiver's match count.
-
-    Only the caller that owns the authoritative pass supplies ``waiver_repo`` — the engine's
-    initial persistence routes location waivers through here too and its counts would be
-    superseded by the signature pass in the recalculation that follows.
-    """
-    for waiver in waivers:
-        if waiver.vulnerability_id:
-            matched = await finding_repo.apply_vulnerability_waiver(
-                scan_id=scan_id,
-                vulnerability_id=waiver.vulnerability_id,
-                waived=True,
-                waiver_reason=waiver.reason,
-                scope=_build_waiver_query(waiver),
-            )
-            await _record_match_outcome(waiver_repo, waiver, scan_id, matched)
-            continue
-
-        query = _build_waiver_query(waiver)
-
-        # A waiver with no concrete matching criteria produces an empty query. Passing
-        # {} to apply_finding_waiver would match (and waive) EVERY finding in the scan,
-        # silently suppressing all security findings. Skip and log instead. Legitimate
-        # waivers always carry at least one of finding_id/package_name/package_version/
-        # finding_type (or a vulnerability_id, handled above).
-        if not query:
-            logger.warning(
-                "Skipping waiver %s: no matching criteria (empty query) — refusing to waive every finding in scan %s",
-                getattr(waiver, "id", "?"),
-                scan_id,
-            )
-            continue
-
-        matched = await finding_repo.apply_finding_waiver(
-            scan_id=scan_id,
-            query=query,
-            waived=True,
-            waiver_reason=waiver.reason,
-        )
-        # finding_id is not unique per scan for license/eol findings, so an unscoped waiver
-        # can blanket dozens of unrelated components.
-        if matched > 1 and not waiver.package_name:
-            logger.warning(
-                "Waiver %s (%s, finding_id=%s) has no package scope and suppresses %d findings in scan %s",
-                waiver.id,
-                waiver.finding_type,
-                waiver.finding_id,
-                matched,
-                scan_id,
-            )
-        await _record_match_outcome(waiver_repo, waiver, scan_id, matched)
-
-
-def _is_signature_waiver(waiver: Any) -> bool:
-    """True if a waiver should be applied via the signature orchestrator rather than the legacy
-    finding_id query. File/rule scope keep their broad semantics on the legacy _build_waiver_query
-    path; within finding scope a location-typed waiver without a signature qualifies so the
-    back-fill can give it one, and untyped non-location ones stay legacy so they are never
-    silently dropped."""
-    from app.repositories.findings import FindingRepository
-
-    if getattr(waiver, "scope", "finding") != "finding":
-        return False
-    if getattr(waiver, "match", None) is not None:
-        return True
-    return waiver.finding_type in FindingRepository._LOCATION_TYPES
-
-
-def _safe_match_signature(raw: dict, context: str) -> Any | None:
-    """Build a MatchSignature from a stored dict, returning None (and logging) if malformed.
-
-    Skipping a malformed sub-document keeps the recalc reset+reapply from aborting and
-    leaving findings transiently un-waived.
-    """
-    from pydantic import ValidationError
-
-    from app.models.match_signature import MatchSignature
-
-    try:
-        return MatchSignature(**raw)
-    except ValidationError:
-        logger.warning("Skipping malformed match signature (%s)", context)
-        return None
-
-
-async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id: str, waivers: list) -> None:
-    """Apply non-vulnerability waivers to a scan's location-based findings via signature matching.
-
-    Persists re-anchored waiver signatures and marks lapsed findings. Vulnerability-id waivers
-    are handled separately by the caller via apply_vulnerability_waiver.
-    """
-    from app.services.waivers.matching import apply_waivers_to_findings
-
-    docs = await finding_repo.find_location_findings(scan_id)
-    await _backfill_legacy_waiver_signatures(waiver_repo, waivers, docs)
-    findings, recomputed = _signed_match_findings(docs)
-    enriched = _hydrate_waiver_signatures(waivers)
-
-    app = apply_waivers_to_findings(findings, enriched)
-
-    logger.info(
-        "waiver signature apply: scan=%s waivers=%d waived=%d reanchored=%d lapsed=%d dormant=%d recomputed_sig=%d",
-        scan_id,
-        len(enriched),
-        len(app.waived),
-        len(app.reanchored),
-        len(app.lapsed),
-        len(app.dormant),
-        recomputed,
-    )
-    if app.dormant:
-        _log_dormant_waivers(scan_id, app.dormant, findings, enriched)
-
-    await _persist_signature_application(finding_repo, waiver_repo, scan_id, app, enriched)
-
-
-async def _backfill_legacy_waiver_signatures(waiver_repo: Any, waivers: list, docs: list[dict]) -> None:
-    """Legacy waivers without a stored signature inherit the one of the finding they name by exact finding_id."""
-    docs_by_legacy_id = {d.get("finding_id") or d["_id"]: d for d in docs}
-    for w in waivers:
-        if getattr(w, "match", None) is not None:
-            continue
-        legacy_doc = docs_by_legacy_id.get(getattr(w, "finding_id", None))
-        if legacy_doc and legacy_doc.get("match"):
-            sig = _safe_match_signature(legacy_doc["match"], f"back-fill waiver {getattr(w, 'id', '?')}")
-            if sig is not None:
-                w.match = sig
-                await waiver_repo.update(w.id, {"match": legacy_doc["match"]})
-
-
-def _signed_match_findings(docs: list[dict]) -> tuple[list["MatchFinding"], int]:
-    """MatchFindings for the scan's docs, plus how many signatures were self-healed."""
-    from app.services.waivers.matching import MatchFinding
-    from app.services.waivers.signature import compute_match_signature_from_doc
-
-    findings = []
-    recomputed = 0
-    for d in docs:
-        stored = d.get("match")
-        if stored:
-            sig = _safe_match_signature(stored, f"finding {d['_id']}")
-            if sig is None:
-                continue  # malformed stored signature — skip rather than abort the batch
-        else:
-            # Self-heal: a missing stored signature would otherwise silently drop this finding
-            # from the matchable set and orphan any waiver in its (rule_key,file_key) group.
-            sig = compute_match_signature_from_doc(d)
-            if sig is not None:
-                recomputed += 1
-        findings.append(MatchFinding(id=d["_id"], sig=sig))
-    return findings, recomputed
-
-
-def _hydrate_waiver_signatures(waivers: list) -> list:
-    """Hydrate dict .match values into MatchSignatures and drop malformed ones; Waiver models pass through."""
-    enriched = []
-    for w in waivers:
-        m = getattr(w, "match", None)
-        if isinstance(m, dict):
-            sig = _safe_match_signature(m, f"waiver {getattr(w, 'id', '?')}")
-            if sig is None:
-                continue  # malformed stored waiver signature — skip; others still applied
-            w.match = sig
-        enriched.append(w)
-    return enriched
-
-
-def _log_dormant_waivers(scan_id: str, dormant: dict[str, str], findings: list["MatchFinding"], enriched: list) -> None:
-    group_sizes: dict[str, int] = {}
-    for f in findings:
-        if f.sig is not None:
-            # \x00 delimiter: rule_key/file_key are scanner IDs and file paths; neither contains NUL (so no key collision).
-            key = f"{f.sig.rule_key}\x00{f.sig.file_key}"
-            group_sizes[key] = group_sizes.get(key, 0) + 1
-    match_by_waiver = {w.id: getattr(w, "match", None) for w in enriched}
-    for wid, dormant_reason in dormant.items():
-        m = match_by_waiver.get(wid)
-        rk = getattr(m, "rule_key", None)
-        fk = getattr(m, "file_key", None)
-        logger.warning(
-            "waiver dormant: waiver=%s scan=%s reason=%s rule_key=%s file_key=%s last_line=%s group_findings=%d",
-            wid,
-            scan_id,
-            dormant_reason,
-            rk,
-            fk,
-            getattr(m, "last_line", None),
-            group_sizes.get(f"{rk}\x00{fk}", 0),
-        )
-
-
-async def _persist_signature_application(
-    finding_repo: Any, waiver_repo: Any, scan_id: str, app: "WaiverApplication", enriched: list
-) -> None:
-    # Record per-waiver outcome so orphaned waivers (suppressing 0 findings in the latest scan)
-    # are visible in the UI. Covers dormant AND match=None waivers (both yield count 0).
-    match_counts = Counter(app.waived.values())  # waiver_id -> #findings waived
-    # getattr defaults guard pre-schema waiver docs; enriched items are Waiver instances.
-    for w in enriched:
-        count = match_counts.get(w.id, 0)
-        if getattr(w, "last_eval_scan_id", None) != scan_id or getattr(w, "last_match_count", None) != count:
-            await waiver_repo.update(w.id, {"last_eval_scan_id": scan_id, "last_match_count": count})
-
-    # Group waive writes by reason for fewer queries.
-    reason_by_waiver = {w.id: getattr(w, "reason", None) for w in enriched}
-    by_reason: dict[str | None, list[str]] = {}
-    for fid, wid in app.waived.items():
-        by_reason.setdefault(reason_by_waiver.get(wid), []).append(fid)
-    for reason, fids in by_reason.items():
-        await finding_repo.set_waived(scan_id, fids, reason)
-
-    if app.lapsed:
-        await finding_repo.set_lapsed(scan_id, app.lapsed)
-
-    # Persist re-anchored signatures + walked last_line (only when changed).
-    for wid, new_sig in app.reanchored.items():
-        await waiver_repo.update(wid, {"match": new_sig.model_dump()})
+# The queue collection also holds the expiry sweep's watermark.
+_RECALC_LOCK = "waiver_recalc"
+_EXPIRY_SWEEP = "expiry_sweep"
+_QUEUED = {"waiver": {"$exists": True}}
 
 
 async def _restamp_scan(
     scan_id: str,
     db: AsyncIOMotorDatabase,
     waivers: list[Waiver],
-    finding_repo: Any,
-    waiver_repo: Any,
+    fingerprint: str,
+    finding_repo: FindingRepository,
+    waiver_repo: WaiverRepository | None,
 ) -> Stats:
-    """Re-apply the current waiver set to one scan and rewrite its stats from the result."""
-    # 1. Reset waivers AND lapsed flags for this scan, nested vulnerability entries included
-    await finding_repo.update_many(
-        {"scan_id": scan_id},
-        {"waived": False, "waiver_reason": None, "waiver_lapsed": False, "lapsed_waiver_id": None},
-    )
-    await finding_repo.reset_nested_vulnerability_waivers(scan_id)
-
-    # 2. Apply vulnerability-id waivers, then signature-match the rest
-    vuln_waivers = [w for w in waivers if w.vulnerability_id]
-    non_vuln = [w for w in waivers if not w.vulnerability_id]
-    legacy = [w for w in non_vuln if not _is_signature_waiver(w)]
-    loc_waivers = [w for w in non_vuln if _is_signature_waiver(w)]
-    await _apply_waivers(finding_repo, scan_id, vuln_waivers + legacy, waiver_repo)
-    await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
-
-    # 3. Recompute the authoritative full Stats; it reads from PRIMARY so it sees the waiver
-    #    writes above.
-    stats = await calculate_comprehensive_stats(db, scan_id)
-
-    # 4. Calculate ignored count (read from PRIMARY after waiver writes)
-    from pymongo import ReadPreference
-
-    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
-
-    from app.repositories import ScanRepository
-
+    """Restamp one scan and rewrite its stats; ``waiver_repo`` also records each waiver's outcome."""
+    await restamp_waivers(finding_repo, waiver_repo, scan_id, waivers)
+    tally = await calculate_comprehensive_stats(db, scan_id)
     await ScanRepository(db).update_raw(
         scan_id,
-        {"$set": {"stats": stats.model_dump(), "ignored_count": ignored_count}},
+        {
+            "$set": {
+                "stats": tally.stats.model_dump(),
+                "ignored_count": tally.ignored_count,
+                "waiver_fingerprint": fingerprint,
+            }
+        },
     )
-    return stats
+    return tally.stats
+
+
+def _copy(waivers: list[Waiver]) -> list[Waiver]:
+    return [w.model_copy(deep=True) for w in waivers]
 
 
 async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> list[str]:
@@ -384,9 +73,6 @@ async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> l
     through flags frozen at analysis time and can report zero criticals against a build that has
     one. The scan's own age is disclosed rather than corrected; its waiver flags are corrected.
     """
-    from app.repositories import ScanRepository
-    from app.services.releases import released_scan_ids
-
     marked = set((await released_scan_ids(db, project_id)).values())
     if not marked:
         return []
@@ -394,22 +80,33 @@ async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> l
     return sorted({analysis.scan_id for analysis in resolved.values()})
 
 
-async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Stats | None:
-    """Recalculate a project's stats from its head scan and active waivers, and re-stamp the same
-    waiver set onto the scans release mode reports.
+async def _branch_tip_ids(scan_repo: ScanRepository, project: Project) -> list[str]:
+    since = datetime.now(timezone.utc) - timedelta(days=WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS)
+    tips = await scan_repo.branch_tips(project.id, project.deleted_branches, since)
+    return [tip["_id"] for _branch, _count, tip in tips if tip]
 
-    Resets ALL waivers for those scans and re-applies them under a distributed lock to
-    prevent races when pods modify waivers concurrently. Returns None if project not found.
-    """
-    from app.repositories import (
-        DistributedLocksRepository,
-        FindingRepository,
-        ProjectRepository,
-        ScanRepository,
-        WaiverRepository,
-    )
 
+async def _acquire_with_backoff(lock_repo: DistributedLocksRepository, lock_name: str, holder_id: str) -> bool:
+    for attempt in range(_LOCK_MAX_RETRIES + 1):
+        if await lock_repo.acquire_lock(lock_name, holder_id, _LOCK_TTL_SECONDS):
+            return True
+        if attempt < _LOCK_MAX_RETRIES:
+            delay = _LOCK_RETRY_BASE_DELAY * (2**attempt)
+            logger.debug(
+                f"Lock contention on {lock_name}; retrying in {delay:.2f}s (attempt {attempt + 1}/{_LOCK_MAX_RETRIES})."
+            )
+            await asyncio.sleep(delay)
+    logger.warning(f"Could not acquire {lock_name} after {_LOCK_MAX_RETRIES} retries; stats may be stale")
+    return False
+
+
+async def recalculate_project_stats(
+    project_id: str, db: AsyncIOMotorDatabase, reach: dict[str, Any] | None = None, restamp: Sequence[str] = ()
+) -> Stats | None:
+    """Restamp head, recent branch tips, released scans and ``restamp`` where ``reach`` can touch them, and re-cache
+    head; returns head's new stats when this run restamped a settled head, else None."""
     project_repo = ProjectRepository(db)
+    scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
     waiver_repo = WaiverRepository(db)
     lock_repo = DistributedLocksRepository(db)
@@ -418,71 +115,140 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     if not project:
         return None
 
-    scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
-    released_ids = [rid for rid in await _released_analysis_ids(db, project_id) if rid != scan_id]
-    if not scan_id and not released_ids:
+    scan_id = await scan_repo.get_latest_active_scan_id(project)
+    others = {*await _released_analysis_ids(db, project_id), *await _branch_tip_ids(scan_repo, project), *restamp}
+    other_ids = sorted(others - {scan_id})
+    scan_ids = [*([scan_id] if scan_id else []), *other_ids]
+    if not scan_ids or (reach is not None and not await finding_repo.any_in_scans(scan_ids, reach)):
         return None
 
-    # Acquire distributed lock to prevent race conditions
     lock_name = f"stats_recalc:{project_id}"
-    holder_id = f"pod-{os.getenv('HOSTNAME', 'unknown')}-{os.getpid()}"
-
-    # Retry with bounded exponential backoff instead of dropping the recalc on the
-    # first contention. Two concurrent waiver changes must both end up reflected: the
-    # loser of the lock waits for the holder to release, then recomputes against the
-    # now-committed waiver set (avoids stale stats / stale ignored_count).
-    lock_acquired = False
-    for attempt in range(_LOCK_MAX_RETRIES + 1):
-        lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, 300)
-        if lock_acquired:
-            break
-        if attempt < _LOCK_MAX_RETRIES:
-            delay = _LOCK_RETRY_BASE_DELAY * (2**attempt)
-            logger.debug(
-                f"Lock contention for stats recalculation of project {project_id}; "
-                f"retrying in {delay:.2f}s (attempt {attempt + 1}/{_LOCK_MAX_RETRIES})."
-            )
-            await asyncio.sleep(delay)
-    if not lock_acquired:
-        logger.warning(
-            f"Could not acquire lock for stats recalculation of project {project_id} "
-            f"after {_LOCK_MAX_RETRIES} retries. Another process is holding it; "
-            f"stats may be stale until the next recalculation."
-        )
+    holder_id = new_lock_holder()
+    if not await _acquire_with_backoff(lock_repo, lock_name, holder_id):
         return None
 
     try:
-        logger.info(
-            f"Recalculating stats for project {project_id} (head {scan_id}, released {released_ids}) "
-            f"with lock {lock_name}"
+        waivers = await waiver_repo.find_active_for_project(project_id)
+        fingerprint = waiver_fingerprint(waivers)
+        stamped = await scan_repo.find_many_raw(
+            {"_id": {"$in": scan_ids}, "waiver_fingerprint": fingerprint}, projection={"_id": 1}
         )
-
-        waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
-        # Head last: every pass writes each waiver's last_eval_scan_id and re-anchored signature,
-        # and those describe head.
-        for released_id in released_ids:
-            await _restamp_scan(released_id, db, waivers, finding_repo, waiver_repo)
-        if not scan_id:
-            return None
-
-        stats = await _restamp_scan(scan_id, db, waivers, finding_repo, waiver_repo)
-        await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
-
-        logger.info(f"Stats updated for project {project_id}: {stats.model_dump()}")
+        current = {doc["_id"] for doc in stamped}
+        # Head also records each project waiver's outcome there, which a pass on another scan does not.
+        head_current = scan_id in current and all(w.last_eval_scan_id == scan_id for w in waivers if w.project_id)
+        stale = [sid for sid in other_ids if sid not in current]
+        logger.info(
+            f"Recalculating project {project_id} with lock {lock_name}: head {scan_id} "
+            f"{'current' if head_current else 'stale'}, {len(stale)} of {len(other_ids)} other scans stale"
+        )
+        stats = None
+        head = None if head_current else scan_id
+        # Each pass binds unsigned waivers to its scan in memory, so each takes its own copy.
+        for _ in range(_HEAD_PASSES):
+            if not head:
+                break
+            stats = await _restamp_scan(head, db, _copy(waivers), fingerprint, finding_repo, waiver_repo)
+            synced = await scan_repo.sync_project_head(project_id)
+            if synced == head:
+                break
+            head, stats = synced, None
+        for other_id in stale:
+            if not await lock_repo.renew_lock(lock_name, holder_id, _LOCK_TTL_SECONDS):
+                logger.warning(f"Lost lock {lock_name} partway; the recalculation holding it now stamps the rest")
+                break
+            await _restamp_scan(other_id, db, _copy(waivers), fingerprint, finding_repo, None)
         return stats
 
     finally:
-        if lock_acquired:
-            await lock_repo.release_lock(lock_name, holder_id)
-            logger.debug(f"Released lock {lock_name} for project {project_id}")
+        await lock_repo.release_lock(lock_name, holder_id)
+        logger.debug(f"Released lock {lock_name} for project {project_id}")
 
 
-async def recalculate_all_projects(db: AsyncIOMotorDatabase) -> int:
-    """Recalculate stats for ALL projects; returns the number processed. Resource intensive."""
-    logger.info("Starting global stats recalculation")
-    count = 0
-    async for project in db.projects.find({}, {"_id": 1}):
-        await recalculate_project_stats(project["_id"], db)
-        count += 1
-    logger.info(f"Global stats recalculation completed: {count} projects processed")
-    return count
+async def refresh_scan_stats(
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, component_languages: ComponentLanguages | None = None
+) -> None:
+    """Recompute one scan's stats under the project's stats lock and re-cache the project's head."""
+    lock_repo = DistributedLocksRepository(db)
+    lock_name = f"stats_recalc:{project_id}"
+    holder_id = new_lock_holder()
+    if not await _acquire_with_backoff(lock_repo, lock_name, holder_id):
+        return
+    try:
+        scan_repo = ScanRepository(db)
+        tally = await calculate_comprehensive_stats(db, scan_id, component_languages)
+        await scan_repo.update_raw(scan_id, {"$set": {"stats": tally.stats.model_dump()}})
+        await scan_repo.sync_project_head(project_id)
+    finally:
+        await lock_repo.release_lock(lock_name, holder_id)
+
+
+async def request_waiver_recalc(db: AsyncIOMotorDatabase, waiver: Waiver, restamp: Sequence[str] = ()) -> None:
+    """Queue a created, changed or deleted waiver for run_waiver_recalc, with the scans ``restamp`` names."""
+    await db.waiver_recalc.insert_one({"waiver": waiver.model_dump(by_alias=True), "restamp": list(restamp)})
+
+
+async def run_waiver_recalc(db: AsyncIOMotorDatabase) -> None:
+    """Recalculate what queued waiver changes and new expiries reach; a change stays queued until its pass is done."""
+    lock_repo = DistributedLocksRepository(db)
+    holder_id = new_lock_holder()
+    while await lock_repo.acquire_lock(_RECALC_LOCK, holder_id, _LOCK_TTL_SECONDS):
+        try:
+            await _queue_expired_waivers(db)
+            while queued := await db.waiver_recalc.find(_QUEUED).to_list(None):
+                if not await _recalculate_changed(db, queued, lock_repo, holder_id):
+                    return
+                await db.waiver_recalc.delete_many({"_id": {"$in": [doc["_id"] for doc in queued]}})
+        finally:
+            await lock_repo.release_lock(_RECALC_LOCK, holder_id)
+        # A change queued as this run finished found the lock still taken and was left to it.
+        if await db.waiver_recalc.find_one(_QUEUED, {"_id": 1}) is None:
+            return
+
+
+async def _queue_expired_waivers(db: AsyncIOMotorDatabase) -> None:
+    """Queue the waivers that expired since the last sweep: an expiry changes the active set as a delete does."""
+    now = datetime.now(timezone.utc)
+    sweep = await db.waiver_recalc.find_one({"_id": _EXPIRY_SWEEP})
+    window: dict[str, Any] = {"$lte": now}
+    if sweep:
+        window["$gt"] = sweep["swept_until"]
+    if expired := await db.waivers.find({"expiration_date": window}).to_list(None):
+        await db.waiver_recalc.insert_many([{"waiver": doc} for doc in expired])
+    await db.waiver_recalc.update_one({"_id": _EXPIRY_SWEEP}, {"$set": {"swept_until": now}}, upsert=True)
+
+
+async def _recalculate_changed(
+    db: AsyncIOMotorDatabase, queued: list[dict[str, Any]], lock_repo: DistributedLocksRepository, holder_id: str
+) -> bool:
+    """Recalculate every project the queued waivers can reach, each on its own; False once the run lost its lock."""
+    changed = []
+    restamps: dict[str, list[str]] = {}
+    for doc in queued:
+        try:
+            waiver = Waiver(**doc["waiver"])
+        except ValidationError:
+            logger.warning("Dropping queued waiver change %s: its waiver does not load", doc["_id"])
+            continue
+        changed.append(waiver)
+        if waiver.project_id:
+            restamps.setdefault(waiver.project_id, []).extend(doc.get("restamp", []))
+    reaches = [r for w in changed if not w.project_id and (r := waiver_reach_filter(w)) is not None]
+    targets: dict[str, dict[str, Any] | None] = {}
+    if reaches:
+        reach = reaches[0] if len(reaches) == 1 else {"$or": reaches}
+        # Read up front: a cursor held open across the whole run times out on the server partway.
+        targets = {project["_id"]: reach async for project in db.projects.find({}, {"_id": 1})}
+    # A project waiver changes its project's active set, whatever the project's findings hold.
+    targets |= {w.project_id: None for w in changed if w.project_id}
+    failed = 0
+    for project_id, project_reach in targets.items():
+        if not await lock_repo.renew_lock(_RECALC_LOCK, holder_id, _LOCK_TTL_SECONDS):
+            logger.warning("Waiver recalculation lost its lock; the run holding it now resumes the queued changes")
+            return False
+        try:
+            await recalculate_project_stats(project_id, db, project_reach, restamp=restamps.get(project_id, ()))
+        except Exception:
+            failed += 1
+            logger.exception("Waiver recalculation failed for project %s", project_id)
+    logger.info("Waiver recalculation: %d changes, %d projects, %d failed", len(changed), len(targets), failed)
+    return True

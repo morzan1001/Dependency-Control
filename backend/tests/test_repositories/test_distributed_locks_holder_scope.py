@@ -11,9 +11,6 @@ class _InMemoryLockCollection:
     def __init__(self):
         self.docs = {}  # _id -> document
 
-    def with_options(self, **_kwargs):
-        return self
-
     def _matches(self, doc, query):
         for key, cond in query.items():
             if key == "$or":
@@ -103,3 +100,18 @@ class TestHolderScopedRelease:
             assert acquired_by_b is True
 
         asyncio.run(scenario())
+
+
+def test_every_acquisition_gets_its_own_holder_carrying_the_process():
+    """Several uvicorn processes share one pod HOSTNAME; a holder built from it alone lets one
+    process release the lock another took over after the TTL."""
+    import os
+
+    from app.core.constants import INSTANCE_ID
+    from app.repositories.distributed_locks import new_lock_holder
+
+    first, second = new_lock_holder(), new_lock_holder()
+
+    assert first != second
+    assert f"{os.getenv('HOSTNAME', 'unknown')}:{os.getpid()}" == INSTANCE_ID
+    assert first.startswith(f"{INSTANCE_ID}:") and second.startswith(f"{INSTANCE_ID}:")

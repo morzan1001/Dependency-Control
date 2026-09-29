@@ -1,19 +1,21 @@
 """Tests for findings helper functions."""
 
 from app.api.v1.helpers.findings import (
+    TYPE_CATEGORY_MAP,
     aggregate_stats_by_category,
     get_category_for_type,
     get_category_type_filter,
 )
+from app.models.finding import CRYPTO_FINDING_TYPES, FindingType
 
 
 class TestGetCategoryTypeFilter:
     def test_security(self):
         result = get_category_type_filter("security")
-        assert result == {"$in": ["vulnerability", "malware", "typosquatting"]}
+        assert result == {"$in": ["vulnerability", "malware"]}
 
     def test_secret(self):
-        assert get_category_type_filter("secret") == "secret"
+        assert get_category_type_filter("secret") == {"$in": ["secret"]}
 
     def test_sast(self):
         result = get_category_type_filter("sast")
@@ -27,8 +29,15 @@ class TestGetCategoryTypeFilter:
         result = get_category_type_filter("quality")
         assert result == {"$in": ["outdated", "quality"]}
 
+    def test_other_selects_the_crypto_and_leftover_types(self):
+        assert get_category_type_filter("other") == {"$in": [*sorted(CRYPTO_FINDING_TYPES), "system_warning", "other"]}
+
     def test_unknown_returns_none(self):
         assert get_category_type_filter("nonexistent") is None
+
+
+def test_every_finding_type_has_a_category():
+    assert sorted({t.value for t in FindingType} - TYPE_CATEGORY_MAP.keys()) == []
 
 
 class TestGetCategoryForType:
@@ -37,9 +46,6 @@ class TestGetCategoryForType:
 
     def test_malware(self):
         assert get_category_for_type("malware") == "security"
-
-    def test_typosquatting(self):
-        assert get_category_for_type("typosquatting") == "security"
 
     def test_secret(self):
         assert get_category_for_type("secret") == "secret"
@@ -84,10 +90,9 @@ class TestAggregateStatsByCategory:
         type_counts = [
             {"_id": "vulnerability", "count": 10},
             {"_id": "malware", "count": 2},
-            {"_id": "typosquatting", "count": 1},
         ]
         result = aggregate_stats_by_category(type_counts)
-        assert result["security"] == 13
+        assert result["security"] == 12
 
     def test_sast_and_iac_combined(self):
         type_counts = [

@@ -3,6 +3,11 @@
 from typing import Any
 
 
+def page_meta(total: int, skip: int, limit: int) -> dict[str, Any]:
+    """An empty list is page 1 of 1, so no consumer needs its own fallback."""
+    return {"total": total, "page": skip // limit + 1, "size": limit, "pages": max(1, -(-total // limit))}
+
+
 def build_pagination_response(
     items: list[Any],
     total: int,
@@ -10,10 +15,4 @@ def build_pagination_response(
     limit: int,
 ) -> dict[str, Any]:
     """Build a standardized pagination response (items, total, page, size, pages)."""
-    return {
-        "items": items,
-        "total": total,
-        "page": (skip // limit) + 1 if limit > 0 else 1,
-        "size": limit,
-        "pages": (total + limit - 1) // limit if limit > 0 else 0,
-    }
+    return {"items": items, **page_meta(total, skip, limit)}

@@ -7,15 +7,18 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_400_403_404
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, RELEASE_ENVIRONMENT_PATTERN
+from app.repositories.scans import ScanRepository
 from app.schemas.scan_delta import ScanDeltaResponse
 from app.services.analytics.scan_delta import (
     InvalidDeltaQuery,
     compute_scan_delta_dispatch,
 )
-from app.services.analytics.scopes import ScopeResolver
-from app.services.releases import latest_release_scan, released_scan_ids, resolve_scan_ids
+from app.services.releases import released_scan_ids, resolve_scan_ids
+
+from ._shared import SCAN_NOT_IN_PROJECT
 
 router = CustomAPIRouter()
 
@@ -41,9 +44,8 @@ async def _resolve_delta_ref(db: AsyncIOMotorDatabase, project_id: str, ref: _De
     The release side resolves through the rescan chain, so a delta compares the freshest analysis
     of the deployed artefact rather than what was known on the day it shipped.
     """
-    if ref == _REF_RELEASE:
-        return await latest_release_scan(db, project_id, environment)
-    return (await resolve_scan_ids(db, [project_id])).get(project_id)
+    release_environment = environment if ref == _REF_RELEASE else None
+    return (await resolve_scan_ids(db, [project_id], release_environment=release_environment)).get(project_id)
 
 
 async def _unresolved_ref_detail(db: AsyncIOMotorDatabase, project_id: str, ref: _DeltaRef, environment: str) -> str:
@@ -98,10 +100,7 @@ async def get_scan_delta(
     severity: str | None = Query(None, description="csv: critical,high,medium,low"),
     finding_type: str | None = Query(None, description="csv finding types"),
 ) -> ScanDeltaResponse:
-    await ScopeResolver(db, current_user).resolve(
-        scope="project",
-        scope_id=project_id,
-    )
+    await check_project_access(project_id, current_user, db)
 
     if release_environment is not None and _REF_RELEASE not in (from_ref, to_ref):
         raise HTTPException(
@@ -113,14 +112,8 @@ async def get_scan_delta(
     from_scan = await _resolve_side(db, project_id, _SIDE_FROM, from_scan_id, from_ref, resolve_in)
     to_scan = await _resolve_side(db, project_id, _SIDE_TO, to_scan_id, to_ref, resolve_in)
 
-    # Both scans must belong to project_id; runs after auth to avoid leaking
-    # scan existence to non-members.
-    if from_scan != to_scan:
-        found = await db["scans"].count_documents(
-            {"_id": {"$in": [from_scan, to_scan]}, "project_id": project_id},
-        )
-        if found != 2:
-            raise HTTPException(status_code=400, detail="scan not in project")
+    if not await ScanRepository(db).belongs_to_project({from_scan, to_scan}, project_id):
+        raise HTTPException(status_code=404, detail=SCAN_NOT_IN_PROJECT)
 
     try:
         return await compute_scan_delta_dispatch(

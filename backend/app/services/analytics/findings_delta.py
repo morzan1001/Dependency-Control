@@ -1,7 +1,5 @@
 """Findings-delta: match findings across two scans by a type-specific semantic key
 (CVE id, secret finding_id, SAST rule id, ...) into the unified envelope.
-
-Stored `severity` is UPPERCASE; the envelope and `_SEVERITY_RANK` keys are lowercase.
 """
 
 from __future__ import annotations
@@ -12,29 +10,22 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import get_severity_value
+from app.core.cve import display_vulnerability_id
+from app.repositories.base import find_window
 from app.schemas.scan_delta import (
     DeltaCategory,
     FindingDeltaItem,
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.aggregation.components import extract_artifact_name
+from app.services.component_identity import extract_artifact_name
 from app.services.analytics._delta_pagination import MAX_FETCH, delta_truncation, paginate
 from app.services.analytics._delta_reachability import side_reachability
 
 # Served by the {scan_id, component, version} index, so a capped side is cut at the same point in
 # the identity space on both sides instead of at two arbitrary points in natural order.
 _SIDE_SORT: list[tuple[str, int]] = [("component", 1), ("version", 1)]
-
-_SEVERITY_RANK = {
-    "critical": 0,
-    "high": 1,
-    "medium": 2,
-    "low": 3,
-    "negligible": 4,
-    "info": 5,
-    "unknown": 6,
-}
 
 
 def _first_id(details: dict[str, Any], *keys: str) -> str:
@@ -60,15 +51,8 @@ def _sast_identifier(details: dict[str, Any]) -> str:
 
 
 def _malware_identifier(details: dict[str, Any]) -> str:
-    """Typosquat findings carry ``imitated_package``; os_malware findings carry
-    ``info``/``reference``."""
-    imitated = details.get("imitated_package")
-    if imitated:
-        return str(imitated)
-    info = details.get("info")
-    if isinstance(info, dict) and info.get("id"):
-        return str(info["id"])
-    return _first_id(details, "reference")
+    """A typosquat's ``imitated_package``, else ``osv_id`` (either merged feed keeps it), else ``reference``."""
+    return _first_id(details, "imitated_package", "osv_id", "reference")
 
 
 def _vulnerability_identifier(finding: dict[str, Any], include_waived: bool) -> str:
@@ -160,7 +144,7 @@ FINDING_IDENTITY_PROJECTION: dict[str, int] = {
     "details.line": 1,
     "details.license": 1,
     "details.imitated_package": 1,
-    "details.info.id": 1,
+    "details.osv_id": 1,
     "details.reference": 1,
     "details.eol_date": 1,
     "details.fixed_version": 1,
@@ -171,6 +155,8 @@ _FETCH_PROJECTION: dict[str, int] = {
     **FINDING_IDENTITY_PROJECTION,
     "severity": 1,
     "scan_created_at": 1,
+    "details.vulnerabilities.resolved_cve": 1,
+    "details.vulnerabilities.aliases": 1,
 }
 
 
@@ -197,17 +183,10 @@ async def _fetch_scan_findings(
     finding_type: Iterable[str] | None,
     severity: Iterable[str] | None,
 ) -> tuple[list[dict], int]:
-    """The side's live findings and how many it holds. The count costs a round trip only once the
-    fetch has saturated, which is the only case in which the two numbers differ."""
     # Waived risk is excluded from every other metric in the product; the delta answers what is
     # delivered, so it has to agree. Documents predating the flag carry no key and are not waived.
     query = _side_query(project_id, scan_id, finding_type, severity) | {"waived": {"$ne": True}}
-    cursor = db["findings"].find(query, projection=_FETCH_PROJECTION).sort(_SIDE_SORT).limit(MAX_FETCH)
-    docs = [doc async for doc in cursor]
-    if len(docs) < MAX_FETCH:
-        return docs, len(docs)
-    total: int = await db["findings"].count_documents(query)
-    return docs, total
+    return await find_window(db["findings"], query, MAX_FETCH, projection=_FETCH_PROJECTION, sort=_SIDE_SORT)
 
 
 def _waiver_touched_query(
@@ -257,19 +236,11 @@ async def _fetch_waiver_touched(
 
 
 def _doc_severity(doc: dict) -> str:
-    return (doc.get("severity") or "unknown").lower()
+    return doc.get("severity") or "UNKNOWN"
 
 
 def _doc_type(doc: dict) -> str:
     return doc.get("type") or ""
-
-
-def _item_cve_id(details: dict[str, Any]) -> str | None:
-    """Best display CVE id: the first ``details.vulnerabilities[].id``."""
-    for entry in details.get("vulnerabilities") or []:
-        if isinstance(entry, dict) and entry.get("id"):
-            return str(entry["id"])
-    return None
 
 
 def _to_item(doc: dict, change: str) -> FindingDeltaItem:
@@ -282,7 +253,7 @@ def _to_item(doc: dict, change: str) -> FindingDeltaItem:
         severity=_doc_severity(doc),
         title=doc.get("description") or "",
         component=doc.get("component"),
-        cve_id=_item_cve_id(details),
+        cve_id=display_vulnerability_id(details),
         file_path=(found_in[0] if found_in else None),
         first_seen=doc.get("scan_created_at"),
     )
@@ -363,7 +334,7 @@ async def compute_findings_delta(
     items.sort(
         key=lambda i: (
             i.change != "added",
-            _SEVERITY_RANK.get(i.severity, 99),
+            -get_severity_value(i.severity),
             i.title,
             i.finding_id,
         )

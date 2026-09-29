@@ -22,6 +22,7 @@ from app.models.user import User
 from app.repositories.releases import ReleaseRepository
 from app.services.analytics.cache import reset_analytics_cache_for_tests
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.helpers.analytics_scope import projections
 
 _DEPENDENCIES = "app.api.v1.endpoints.analytics.dependencies"
 _RISK = "app.api.v1.endpoints.analytics.risk"
@@ -146,8 +147,8 @@ async def test_the_drill_down_finds_what_release_mode_hotspots_ranked():
     await _seed(db)
 
     with (
-        patch(f"{_RISK}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
-        patch(f"{_DEPENDENCIES}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_RISK}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
+        patch(f"{_DEPENDENCIES}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
     ):
         hotspots = await get_vulnerability_hotspots(
             current_user=_user(),
@@ -185,7 +186,7 @@ async def test_the_drill_down_still_reports_the_branch_tip_when_no_environment_i
     db = FakeDatabase()
     await _seed(db)
 
-    with patch(f"{_DEPENDENCIES}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)):
+    with patch(f"{_DEPENDENCIES}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))):
         findings = await get_component_findings(
             current_user=_user(), db=db, component=_RELEASED_COMPONENT, version=_HEAD_VERSION
         )
@@ -201,7 +202,7 @@ async def test_the_drill_down_still_reports_the_branch_tip_when_no_environment_i
 @pytest.mark.asyncio
 async def test_component_findings_forwards_the_environment():
     with (
-        patch(f"{_DEPENDENCIES}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_DEPENDENCIES}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(
             f"{_DEPENDENCIES}.get_projects_with_scans",
             new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS)),
@@ -222,8 +223,10 @@ async def test_component_findings_forwards_the_environment():
 @pytest.mark.asyncio
 async def test_dependency_metadata_forwards_the_environment():
     with (
-        patch(f"{_DEPENDENCIES}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
-        patch(f"{_DEPENDENCIES}.get_latest_scan_ids", new=AsyncMock(return_value=_NO_SCANS)) as scan_ids,
+        patch(f"{_DEPENDENCIES}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
+        patch(
+            f"{_DEPENDENCIES}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS))
+        ) as scan_ids,
     ):
         result = await get_dependency_metadata_endpoint(
             current_user=_user(),
@@ -241,12 +244,11 @@ async def test_dependency_metadata_forwards_the_environment():
 @pytest.mark.asyncio
 async def test_the_drill_down_defaults_to_the_branch_tip():
     with (
-        patch(f"{_DEPENDENCIES}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
+        patch(f"{_DEPENDENCIES}.get_user_projects", new=AsyncMock(return_value=projections(_PROJECT_IDS))),
         patch(
             f"{_DEPENDENCIES}.get_projects_with_scans",
             new=AsyncMock(return_value=(_NO_NAMES, _NO_SCANS)),
         ) as resolve,
-        patch(f"{_DEPENDENCIES}.get_latest_scan_ids", new=AsyncMock(return_value=_NO_SCANS)) as scan_ids,
     ):
         await get_component_findings(
             current_user=_user(), db=FakeDatabase(), component=_RELEASED_COMPONENT, version=None
@@ -255,5 +257,4 @@ async def test_the_drill_down_defaults_to_the_branch_tip():
             current_user=_user(), db=FakeDatabase(), component=_RELEASED_COMPONENT, version=None, type=None
         )
 
-    assert resolve.await_args.kwargs["release_environment"] is None
-    assert scan_ids.await_args.kwargs["release_environment"] is None
+    assert [call.kwargs["release_environment"] for call in resolve.await_args_list] == [None, None]

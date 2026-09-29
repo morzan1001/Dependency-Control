@@ -7,8 +7,6 @@ from urllib.parse import quote, urlparse
 
 from app.core.constants import (
     APP_PACKAGE_TYPES,
-    LICENSE_URL_PATTERNS,
-    OS_PACKAGE_TYPES,
     SOURCE_TYPE_APPLICATION,
     SOURCE_TYPE_DIRECTORY,
     SOURCE_TYPE_FILE,
@@ -17,7 +15,8 @@ from app.core.constants import (
     SPDX_ORGANIZATION_PREFIX,
 )
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
-from app.services.analyzers.purl_utils import get_purl_type, parse_purl
+from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type, parse_purl
+from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
 from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
@@ -67,10 +66,12 @@ def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[
 
 
 def _parent_refs(parent_ids: list[str], parsed_by_id: dict[str, ParsedDependency]) -> list[str]:
-    """The parsed parents' purl/name@version refs, deduplicated in first-seen order."""
+    """The parsed parents' node keys, deduplicated in first-seen order; ids of skipped components drop out."""
     parents = (parsed_by_id.get(parent_id) for parent_id in parent_ids)
     return list(
-        dict.fromkeys(parent.purl or f"{parent.name}@{parent.version}" for parent in parents if parent is not None)
+        dict.fromkeys(
+            dependency_node_key(parent.purl, parent.name, parent.version) for parent in parents if parent is not None
+        )
     )
 
 
@@ -83,20 +84,6 @@ def is_url(value: str) -> bool:
         return result.scheme in ("http", "https") and bool(result.netloc)
     except Exception:
         return False
-
-
-def extract_license_from_url(url: str) -> str | None:
-    """Try to extract a license SPDX ID from a license URL."""
-    if not url:
-        return None
-
-    url_lower = url.lower()
-
-    for pattern, spdx_id in LICENSE_URL_PATTERNS.items():
-        if re.search(pattern, url_lower):
-            return spdx_id
-
-    return None
 
 
 class SBOMParser:
@@ -382,6 +369,8 @@ class SBOMParser:
         main_component = metadata.get("component") if isinstance(metadata.get("component"), dict) else {}
         main_refs = {ref for ref in (main_component.get("bom-ref"), main_component.get("purl")) if ref}
 
+        parsed_by_ref: dict[str, ParsedDependency] = {}
+        parsed_here: list[ParsedDependency] = []
         for comp in components:
             comp_type = comp.get("type")
             if comp_type == "cryptographic-asset":
@@ -415,8 +404,15 @@ class SBOMParser:
                 continue
             if parsed:
                 result.dependencies.append(parsed)
+                parsed_here.append(parsed)
+                if ref := comp.get("bom-ref") or parsed.purl:
+                    parsed_by_ref[ref] = parsed
             else:
                 self._count_skipped(result, "unidentifiable")
+
+        # Graph refs are bom-refs; tree readers match node keys, so translate once all are parsed.
+        for parsed in parsed_here:
+            parsed.parent_components = _parent_refs(parsed.parent_components, parsed_by_ref)
 
     def _extract_cyclonedx_source(self, metadata: dict[str, Any]) -> tuple[str | None, str | None]:
         """Extract source information from CycloneDX metadata."""
@@ -466,13 +462,10 @@ class SBOMParser:
         global_source_type: str | None,
     ) -> str | None:
         """Determine a component's likely source: image, application, file, or None."""
-        purl_type = get_purl_type(purl)
-        effective_type = (purl_type or pkg_type or "").lower()
-
-        if effective_type in OS_PACKAGE_TYPES and (layer_digest or global_source_type == SOURCE_TYPE_IMAGE):
+        if is_os_package_type(purl, pkg_type) and (layer_digest or global_source_type == SOURCE_TYPE_IMAGE):
             return SOURCE_TYPE_IMAGE
 
-        if effective_type in APP_PACKAGE_TYPES:
+        if (get_purl_type(purl) or pkg_type or "").lower() in APP_PACKAGE_TYPES:
             return SOURCE_TYPE_APPLICATION
 
         if layer_digest:
@@ -656,6 +649,9 @@ class SBOMParser:
 
         if not name:
             return None
+        # Every other producer names a scoped npm package "@scope/name"; the bare name is another package.
+        if isinstance(group, str) and group.startswith("@") and get_purl_type(purl) == "npm":
+            name = f"{group}/{name}"
 
         layer_digest, found_by, locations, properties, prop_cpes = self._extract_cyclonedx_properties(comp)
 
@@ -770,7 +766,7 @@ class SBOMParser:
         if "license" in lic:
             inner = lic["license"]
             if isinstance(inner, dict):
-                name_or_id = inner.get("id") or inner.get("name", "")
+                name_or_id = inner.get("id") or inner.get("name") or inner.get("url", "")
                 name, new_url = self._classify_license_value(name_or_id, license_url, inner.get("url"))
                 if name:
                     license_names.append(name)
@@ -956,8 +952,7 @@ class SBOMParser:
             else:
                 self._count_skipped(result, "unidentifiable")
 
-        # Second pass: parent ids only resolve once every artifact is parsed, and
-        # they must be stored as purl/name@version so tree nodes can match them.
+        # Parent ids resolve to node keys only once every artifact is parsed.
         for artifact_id, parsed in parsed_by_id.items():
             parsed.parent_components = _parent_refs(parents_by_id.get(artifact_id, []), parsed_by_id)
 
@@ -1120,7 +1115,8 @@ class SBOMParser:
         self, lic: dict[str, Any], license_names: list[str], license_url: str | None
     ) -> str | None:
         """Handle a single syft license-dict entry; returns possibly updated url."""
-        value = lic.get("value") or lic.get("spdxExpression") or lic.get("type", "")
+        # Syft fills spdxExpression only when it resolved the value to an SPDX id.
+        value = lic.get("spdxExpression") or lic.get("value") or lic.get("type", "")
         if value:
             name, new_url = self._classify_license_value(value, license_url)
             if name:
@@ -1268,9 +1264,8 @@ class SBOMParser:
             else:
                 self._count_skipped(result, "unidentifiable")
 
-        # SPDXRef parents only resolve after all packages parsed; store them as
-        # purl/name@version so tree nodes can match them. Refs to the skipped
-        # root drop out here, leaving direct dependencies parentless as expected.
+        # SPDXRef parents resolve to node keys only once every package is parsed; refs to the
+        # skipped root drop out, leaving direct dependencies parentless as expected.
         for pkg_spdx_id, parsed in parsed_by_id.items():
             parsed.parent_components = _parent_refs(reverse_deps_graph.get(pkg_spdx_id, []), parsed_by_id)
 

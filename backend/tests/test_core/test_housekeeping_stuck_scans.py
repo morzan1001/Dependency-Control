@@ -43,7 +43,7 @@ async def test_a_scan_inside_the_timeout_is_left_alone(monkeypatch):
     scan, worker_manager = await _run_recovery(monkeypatch, _processing_scan(_WELL_INSIDE_TIMEOUT))
 
     assert scan["status"] == "processing"
-    assert scan.get("retry_count") is None
+    assert scan.get("stuck_retry_count") is None
     worker_manager.add_job.assert_not_awaited()
 
 
@@ -52,7 +52,7 @@ async def test_a_scan_past_the_timeout_is_reset_and_requeued(monkeypatch):
     scan, worker_manager = await _run_recovery(monkeypatch, _processing_scan(_WELL_PAST_TIMEOUT))
 
     assert scan["status"] == "pending"
-    assert scan["retry_count"] == 1
+    assert scan["stuck_retry_count"] == 1
     worker_manager.add_job.assert_awaited_once_with("scan-1")
 
 
@@ -60,7 +60,7 @@ async def test_a_scan_past_the_timeout_is_reset_and_requeued(monkeypatch):
 async def test_a_scan_out_of_retries_fails_instead_of_requeueing(monkeypatch):
     scan, worker_manager = await _run_recovery(
         monkeypatch,
-        _processing_scan(_WELL_PAST_TIMEOUT, retry_count=HOUSEKEEPING_MAX_SCAN_RETRIES),
+        _processing_scan(_WELL_PAST_TIMEOUT, stuck_retry_count=HOUSEKEEPING_MAX_SCAN_RETRIES),
     )
 
     assert scan["status"] == "failed"

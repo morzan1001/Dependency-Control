@@ -61,13 +61,13 @@ class TestWebhookModel:
         )
         assert webhook.headers == {"X-Custom": "value"}
 
-    def test_empty_events_rejected(self):
-        with pytest.raises((ValidationError, ValueError)):
-            Webhook(url="https://example.com/hook", events=[])
+    def test_a_request_without_events_is_rejected(self):
+        with pytest.raises(ValidationError):
+            WebhookCreate(url="https://example.com/hook", events=[])
 
-    def test_invalid_event_rejected(self):
-        with pytest.raises((ValidationError, ValueError)):
-            Webhook(url="https://example.com/hook", events=["nonexistent.event.xyz"])
+    def test_a_request_naming_an_unknown_event_is_rejected(self):
+        with pytest.raises(ValidationError):
+            WebhookCreate(url="https://example.com/hook", events=["nonexistent.event.xyz"])
 
     def test_localhost_url_accepted(self):
         webhook = Webhook(

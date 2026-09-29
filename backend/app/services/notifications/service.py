@@ -3,6 +3,8 @@ import logging
 import os
 from typing import Any
 
+from app.core import abatched
+from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_ROLE_ADMIN, NotificationEvent
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
@@ -30,7 +32,7 @@ class NotificationService:
         self,
         user: User,
         prefs: dict[str, list[str]],
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         system_settings: SystemSettings | None = None,
@@ -88,7 +90,7 @@ class NotificationService:
     async def notify_users(
         self,
         users: list[User],
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         db: Any = None,
@@ -105,7 +107,9 @@ class NotificationService:
 
         tasks = []
         for user in users:
-            prefs = {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
+            prefs: dict[str, list[str]] = (
+                {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
+            )
 
             tasks.append(
                 self._send_based_on_prefs(
@@ -132,7 +136,7 @@ class NotificationService:
         db: Any,
         *,
         permission: str | list[str],
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         forced_channels: list[str] | None = None,
@@ -145,7 +149,8 @@ class NotificationService:
         if not perms:
             return
 
-        async def flush(batch: list[User]) -> None:
+        users = (User(**doc) async for doc in db.users.find({"permissions": {"$in": perms}, "is_active": True}))
+        async for batch in abatched(users, _FAN_OUT_BATCH_SIZE):
             await self.notify_users(
                 batch,
                 event_type=event_type,
@@ -158,19 +163,10 @@ class NotificationService:
                 mattermost_props=mattermost_props,
             )
 
-        pending: list[User] = []
-        async for user_doc in db.users.find({"permissions": {"$in": perms}, "is_active": True}):
-            pending.append(User(**user_doc))
-            if len(pending) >= _FAN_OUT_BATCH_SIZE:
-                await flush(pending)
-                pending = []
-        if pending:
-            await flush(pending)
-
     async def notify_project_members(
         self,
         project: Project,
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         db: Any,
@@ -185,23 +181,18 @@ class NotificationService:
 
         # user_id -> project-specific prefs (or None if no override)
         targets: dict[str, dict[str, list[str]] | None] = {}
+        for member in project.members:
+            if targets.get(member.user_id) is None:
+                targets[member.user_id] = member.notification_preferences or None
 
-        if project.members:
-            for member in project.members:
-                m_prefs = member.notification_preferences if member.notification_preferences else None
-
-                if member.user_id in targets and targets[member.user_id] is not None:
-                    continue
-
-                targets[member.user_id] = m_prefs
-
+        team_admins: list[str] = []
         if project.team_ids:
-            async for team_data in db.teams.find({"_id": {"$in": project.team_ids}}):
+            async for team_data in db.teams.find({"_id": {"$in": project.team_ids}}).sort("_id", 1):
                 for tm in team_data.get("members", []):
                     uid = tm["user_id"]
-                    if uid not in targets:
-                        # implicit team members have no project-specific override
-                        targets[uid] = None
+                    targets.setdefault(uid, project.notification_overrides.get(uid) or None)
+                    if tm.get("role") == TEAM_ROLE_ADMIN:
+                        team_admins.append(uid)
 
         user_ids = list(targets.keys())
         if not user_ids:
@@ -212,17 +203,14 @@ class NotificationService:
         users_map = {str(u["_id"]): User(**u) for u in users_list}
 
         enforced_prefs = None
-        if project.enforce_notification_settings and project.members:
-            admin_member = next(
-                (
-                    m
-                    for m in project.members
-                    if m.role == "admin" and m.notification_preferences and m.user_id in users_map
-                ),
-                None,
-            )
-            if admin_member:
-                enforced_prefs = admin_member.notification_preferences
+        if project.enforce_notification_settings:
+            # Direct admins before team-granted ones, the order the project page lists them in.
+            candidates = [
+                (m.user_id, m.notification_preferences)
+                for m in project.members
+                if m.role == PROJECT_ROLE_ADMIN or m.user_id in team_admins
+            ] + [(uid, project.notification_overrides.get(uid)) for uid in team_admins]
+            enforced_prefs = next((prefs for uid, prefs in candidates if prefs and uid in users_map), None)
 
         tasks = []
         for user_id, specific_prefs in targets.items():
@@ -271,7 +259,7 @@ notification_service = NotificationService()
 async def safe_notify_project_event(
     db: Any,
     project_id: str | None,
-    event_type: str,
+    event_type: NotificationEvent,
     subject: str,
     message: str,
     *,

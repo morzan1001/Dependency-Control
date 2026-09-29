@@ -40,12 +40,8 @@ export function CreateProjectDialog({
   const [teamId, setTeamId] = useState<string | undefined>(undefined);
   const [retentionDays, setRetentionDays] = useState(90);
   const [retentionAction, setRetentionAction] = useState<string>("delete");
-  const [analyzers, setAnalyzers] = useState<string[]>([
-    "trivy",
-    "osv",
-    "license_compliance",
-    "end_of_life",
-  ]);
+  // null until the user picks: the selection follows the backend default until then.
+  const [pickedAnalyzers, setPickedAnalyzers] = useState<string[] | null>(null);
   const [createdProjectData, setCreatedProjectData] = useState<{
     project_id: string;
     api_key: string;
@@ -57,6 +53,7 @@ export function CreateProjectDialog({
   const { data: appConfig } = useAppConfig({ enabled: open });
 
   const createProjectMutation = useCreateProject();
+  const analyzers = pickedAnalyzers ?? appConfig?.default_project_analyzers ?? [];
 
   const handleCreateProject = (e: React.FormEvent) => {
     e.preventDefault();
@@ -64,7 +61,7 @@ export function CreateProjectDialog({
       {
         name,
         team_id: teamId === "none" ? undefined : teamId,
-        active_analyzers: analyzers,
+        active_analyzers: pickedAnalyzers ?? undefined,
         retention_days: appConfig?.retention_mode === 'global' ? undefined : retentionDays,
         retention_action: appConfig?.retention_mode === 'global' ? undefined : retentionAction as 'delete' | 'archive' | 'none',
       },
@@ -90,7 +87,7 @@ export function CreateProjectDialog({
       setTeamId(undefined);
       setRetentionDays(90);
       setRetentionAction("delete");
-      setAnalyzers(["trivy", "osv", "license_compliance", "end_of_life"]);
+      setPickedAnalyzers(null);
       setHasCopied(false);
     }, 300);
   };
@@ -103,9 +100,7 @@ export function CreateProjectDialog({
   };
 
   const toggleAnalyzer = (id: string) => {
-    setAnalyzers((prev) =>
-      prev.includes(id) ? prev.filter((a) => a !== id) : [...prev, id]
-    );
+    setPickedAnalyzers(analyzers.includes(id) ? analyzers.filter((a) => a !== id) : [...analyzers, id]);
   };
 
   return (
@@ -218,6 +213,7 @@ export function CreateProjectDialog({
                             id="retention"
                             type="number"
                             min="1"
+                            max="36500"
                             value={retentionDays}
                             onChange={(e) => setRetentionDays(Number.parseInt(e.target.value) || 90)}
                             required

@@ -3,8 +3,8 @@ from app.models.types import MongoDocument
 
 
 class Broadcast(MongoDocument, CreatedAtModel):
-    type: str  # 'general' or 'advisory'
-    target_type: str  # 'global', 'teams', 'advisory'
+    type: str
+    target_type: str
     subject: str
     message: str
     created_by: str  # user_id

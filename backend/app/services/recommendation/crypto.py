@@ -2,25 +2,10 @@
 
 from collections import defaultdict
 
+from app.core.constants import get_severity_value
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import ModelOrDict, get_attr, sampled
-
-CRYPTO_FINDING_TYPES = {
-    "crypto_weak_algorithm",
-    "crypto_weak_key",
-    "crypto_quantum_vulnerable",
-    "crypto_weak_protocol",
-    "crypto_protocol_cipher",
-    "crypto_certificate_lifecycle",
-    "crypto_cert_expired",
-    "crypto_cert_expiring_soon",
-    "crypto_cert_not_yet_valid",
-    "crypto_cert_weak_signature",
-    "crypto_cert_weak_key",
-    "crypto_cert_self_signed",
-    "crypto_cert_validity_too_long",
-    "crypto_key_management",
-}
 
 # Findings quoted verbatim in the action block; `sampled` pairs the sample with its population.
 _EVIDENCE_SAMPLED = 3
@@ -44,8 +29,6 @@ _TYPE_TO_RECTYPE: dict[str, RecommendationType] = {
     "crypto_weak_key": RecommendationType.INCREASE_KEY_SIZE,
     "crypto_quantum_vulnerable": RecommendationType.PQC_MIGRATION,
     "crypto_weak_protocol": RecommendationType.UPGRADE_PROTOCOL,
-    "crypto_protocol_cipher": RecommendationType.REPLACE_WEAK_CIPHER_SUITE,
-    "crypto_certificate_lifecycle": RecommendationType.ROTATE_CERTIFICATE,
     "crypto_cert_expired": RecommendationType.ROTATE_CERTIFICATE,
     "crypto_cert_expiring_soon": RecommendationType.ROTATE_CERTIFICATE,
     "crypto_cert_not_yet_valid": RecommendationType.ROTATE_CERTIFICATE,
@@ -69,8 +52,6 @@ _TYPE_TO_EFFORT: dict[str, str] = {
     "crypto_weak_key": Effort.MEDIUM,
     "crypto_quantum_vulnerable": Effort.HIGH,
     "crypto_weak_protocol": Effort.LOW,
-    "crypto_protocol_cipher": Effort.LOW,
-    "crypto_certificate_lifecycle": Effort.LOW,
     "crypto_cert_expired": Effort.LOW,
     "crypto_cert_expiring_soon": Effort.LOW,
     "crypto_cert_not_yet_valid": Effort.LOW,
@@ -118,7 +99,7 @@ def _build_recommendation(
         return None
 
     severities = [str(get_attr(f, "severity", "UNKNOWN")) for f in findings]
-    top_severity = _highest_severity(severities)
+    top_severity = max(severities, key=get_severity_value)
     priority = _SEVERITY_TO_PRIORITY.get(top_severity, Priority.MEDIUM)
     effort = _TYPE_TO_EFFORT.get(finding_type, Effort.MEDIUM)
 
@@ -186,7 +167,7 @@ def _title_and_description(finding_type: str, asset_name: str, findings: list[Mo
                 f"per-asset transition target (ML-KEM / ML-DSA / SLH-DSA per use-case)."
             ),
         )
-    if finding_type in ("crypto_weak_protocol", "crypto_protocol_cipher"):
+    if finding_type == "crypto_weak_protocol":
         return (
             f"Upgrade protocol/cipher: {asset_name}",
             (
@@ -201,11 +182,6 @@ def _title_and_description(finding_type: str, asset_name: str, findings: list[Mo
                 f"Certificate {asset_name} has lifecycle/integrity issues ({count} finding{plural}). "
                 f"Rotate the certificate or correct the issuance parameters."
             ),
-        )
-    if finding_type == "crypto_certificate_lifecycle":
-        return (
-            f"Rotate certificate: {asset_name}",
-            f"{asset_name} hit a certificate lifecycle threshold in {count} finding{plural}.",
         )
     if finding_type == "crypto_key_management":
         return (
@@ -235,7 +211,7 @@ def _suggested_replacement(finding_type: str, asset_name: str, findings: list[Mo
                         return f"≥3072-bit (currently {bits})"
                     return f"increase from {bits} bits per policy"
         return None
-    if finding_type == "crypto_weak_protocol" or finding_type == "crypto_protocol_cipher":
+    if finding_type == "crypto_weak_protocol":
         upper = asset_name.upper()
         if "TLS" in upper:
             return "TLS 1.2 (preferably TLS 1.3) with AEAD cipher suites"
@@ -245,14 +221,6 @@ def _suggested_replacement(finding_type: str, asset_name: str, findings: list[Mo
     if finding_type == "crypto_quantum_vulnerable":
         return "Per /api/v1/analytics/crypto/pqc-migration plan output"
     return None
-
-
-def _highest_severity(severities: list[str]) -> str:
-    order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
-    for s in order:
-        if s in severities:
-            return s
-    return "UNKNOWN"
 
 
 def _bom_ref(finding: ModelOrDict) -> str | None:

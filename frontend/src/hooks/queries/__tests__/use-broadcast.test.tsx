@@ -29,7 +29,6 @@ function wrapper({ children }: { children: ReactNode }) {
 }
 
 const dryRunAdvisory: BroadcastRequest = {
-  type: "advisory",
   target_type: "advisory",
   subject: "Dry Run",
   message: "Dry Run",

@@ -126,12 +126,13 @@ def test_identity_key_malware_typosquat_uses_imitated_package():
     assert finding_identity_key(f) == ("malware", "axios2", "axios")
 
 
-def test_identity_key_malware_os_malware_uses_info_id():
+def test_identity_key_malware_prefers_the_osv_id_over_the_owning_feed_s_reference():
     f = {
         "type": "malware",
         "component": "evil-pkg",
         "details": {
-            "info": {"id": "MAL-2023-1234", "description": "bad"},
+            "osv_id": "MAL-2023-1234",
+            "info": {"description": "bad"},
             "threats": ["trojan"],
             "reference": "https://example.com/mal",
             "source": "opensourcemalware",
@@ -232,13 +233,36 @@ async def test_findings_delta_added_and_removed(db):
     assert resp.totals.added == 1
     assert resp.totals.removed == 1
     assert resp.totals.unchanged == 1
-    assert resp.totals.by_severity["medium"] == 1
+    assert resp.totals.by_severity["MEDIUM"] == 1
     assert resp.totals.by_type["vulnerability"] == 1
     added = [i for i in resp.items if i.change == "added"]
     removed = [i for i in resp.items if i.change == "removed"]
     assert len(added) == 1 and added[0].cve_id == "CVE-NEW"
     assert added[0].first_seen is not None
     assert len(removed) == 1 and removed[0].finding_type == "secret"
+
+
+@pytest.mark.asyncio
+async def test_an_advisory_is_named_by_its_cve_as_on_the_scan_page(db):
+    """A GHSA with a CVE alias, or a CVE behind a GHSA-only advisory, is shown under the CVE."""
+    aliased = _agg_vuln_doc("fb1", "sb", "lodash", "4.17.20", [])
+    aliased["details"]["vulnerabilities"] = [{"id": "GHSA-35jh-r3h4-6jhm", "aliases": ["CVE-2021-23337"]}]
+    later = _agg_vuln_doc("fb2", "sb", "minimist", "1.2.0", ["GHSA-vh95-rmgr-6w4m", "CVE-2020-7598"])
+    await db["findings"].insert_many([aliased, later])
+
+    resp = await compute_findings_delta(
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=None,
+        finding_type=None,
+    )
+
+    assert sorted(i.cve_id for i in resp.items) == ["CVE-2020-7598", "CVE-2021-23337"]
 
 
 @pytest.mark.asyncio
@@ -261,8 +285,8 @@ async def test_breakdowns_decompose_full_totals_under_change_filter(db):
     assert resp.totals.removed == 1
     # breakdowns reconcile with added + removed (= 2), not just the displayed 'added'
     assert sum(resp.totals.by_severity.values()) == resp.totals.added + resp.totals.removed
-    assert resp.totals.by_severity.get("medium") == 1  # added CVE-NEW
-    assert resp.totals.by_severity.get("high") == 1  # removed secret
+    assert resp.totals.by_severity.get("MEDIUM") == 1  # added CVE-NEW
+    assert resp.totals.by_severity.get("HIGH") == 1  # removed secret
     assert resp.totals.by_type.get("vulnerability") == 1
     assert resp.totals.by_type.get("secret") == 1
     # the paginated items remain scoped to the change filter
@@ -289,7 +313,7 @@ async def test_findings_delta_severity_filter(db):
         finding_type=None,
     )
     assert resp.totals.added == 1
-    assert resp.items[0].severity == "critical"
+    assert resp.items[0].severity == "CRITICAL"
 
 
 @pytest.mark.asyncio
@@ -547,7 +571,7 @@ async def test_fetch_uses_projection(db, monkeypatch):
         "details.fixed_version",
         "details.sast_findings.id",
         "details.imitated_package",
-        "details.info.id",
+        "details.osv_id",
         "details.reference",
         "details.license",
     ):

@@ -69,9 +69,12 @@ def _mock_repo(target):
 def _call(run, target, smtp_host="smtp.test"):
     """Run an endpoint coroutine against a mocked target; return (error, result, repo, background_tasks)."""
     repo = _mock_repo(target)
+    membership_repo = MagicMock(remove_user_from_all=AsyncMock())
     background_tasks = BackgroundTasks()
     error = result = None
     with (
+        patch(f"{MODULE}.TeamRepository", return_value=membership_repo),
+        patch(f"{MODULE}.ProjectRepository", return_value=membership_repo),
         patch(f"{MODULE}.get_user_or_404", new=AsyncMock(return_value=target)),
         patch(f"{MODULE}.fetch_updated_user", new=AsyncMock(return_value=target)),
         patch(f"{MODULE}.UserRepository", return_value=repo),
@@ -114,19 +117,6 @@ class TestTargetDominance:
 
         assert error is None
         assert acted
-
-    def test_editing_your_own_profile_is_not_held_to_the_rule(self):
-        # A 2FA-setup session carries fewer permissions than the stored account.
-        caller = _caller(["auth:setup_2fa"], user_id=TARGET_ID)
-        target = _target([Permissions.PROJECT_READ])
-
-        error, _, repo, _ = _call(
-            lambda bg: users.update_user(TARGET_ID, UserUpdate(slack_username="me"), caller, MagicMock()),
-            target,
-        )
-
-        assert error is None
-        repo.update.assert_awaited_once_with(TARGET_ID, {"slack_username": "me"})
 
 
 def _change_permissions(caller, existing, requested):

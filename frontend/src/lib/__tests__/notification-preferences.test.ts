@@ -52,3 +52,26 @@ describe("enforcedPreferences", () => {
     expect(enforcedPreferences(p)).toBeUndefined();
   });
 });
+
+describe("enforcedPreferences with owning teams", () => {
+  it("takes a team admin's preferences when no direct admin set any", () => {
+    const p = project([
+      { user_id: "u1", role: "viewer", effective_role: "viewer", notification_preferences: MEMBER_PREFS },
+      {
+        user_id: "u2",
+        role: "admin",
+        effective_role: "admin",
+        inherited_from: "Team: Ops",
+        notification_preferences: ADMIN_PREFS,
+      },
+    ]);
+
+    expect(enforcedPreferences(p)).toEqual(ADMIN_PREFS);
+  });
+
+  it("counts a direct viewer whom an owning team makes admin", () => {
+    const p = project([{ user_id: "u1", role: "viewer", effective_role: "admin", notification_preferences: ADMIN_PREFS }]);
+
+    expect(enforcedPreferences(p)).toEqual(ADMIN_PREFS);
+  });
+});

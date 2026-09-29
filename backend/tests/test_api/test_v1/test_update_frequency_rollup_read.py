@@ -19,7 +19,10 @@ from app.api.v1.endpoints.analytics.update_frequency import (
     _resolve_window,
     _rollup_project_metrics,
 )
-from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
+from app.models.project import Project
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.update_frequency import WINDOW_HARD_LIMIT, BranchWindowActivity
 from app.schemas.analytics import UpdateFrequencyComparison, UpdateFrequencyMetrics
 from app.services.update_frequency import compute_update_frequency
@@ -128,7 +131,7 @@ async def _live(
 
 
 async def _rollup(db: FakeDatabase, project: dict[str, Any] | None = None) -> UpdateFrequencyMetrics | None:
-    return await _rollup_project_metrics(db, project or _project(), WINDOW_DAYS)
+    return await _rollup_project_metrics(db, Project(**(project or _project())), WINDOW_DAYS)
 
 
 # Fields both paths must agree on. dominant_ecosystem is excluded on purpose:

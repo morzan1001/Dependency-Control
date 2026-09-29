@@ -1,119 +1,136 @@
-from typing import Any
+from collections import deque
+from dataclasses import dataclass
 
-from app.core.constants import SIMILAR_PACKAGE_GROUPS
+from app.core.constants import DEEP_CHAIN_MEDIUM_IMPACT_DEPTH, MAX_DEPENDENCY_DEPTH, SIMILAR_PACKAGE_GROUPS
+from app.core.purl import dependency_node_key, package_identity
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
+from app.services.recommendation.common import ModelOrDict, dependency_label, get_attr, sample_components
 
-# Chains detailed in the action, and parents previewed per chain; each is paired with the
-# population it was taken from.
+# Chains detailed in the action; paired with the population it was taken from.
 _DEEPEST_CHAINS_SAMPLED = 5
-_PARENTS_SAMPLED = 3
+
+
+@dataclass(frozen=True)
+class DependencyEdges:
+    """A dependency list as a graph over node keys; documents sharing a key are one node."""
+
+    # First document per key, in first-seen order.
+    dep_by_key: dict[str, ModelOrDict]
+    parents_by_key: dict[str, list[str]]
+    children_by_parent: dict[str, list[str]]
+    direct_keys: set[str]
+
+
+def build_dependency_edges(dependencies: list[ModelOrDict]) -> DependencyEdges:
+    """Merge every document's parents per node key; a node is direct when any of its documents is."""
+    dep_by_key: dict[str, ModelOrDict] = {}
+    parents_by_key: dict[str, dict[str, None]] = {}
+    direct_keys: set[str] = set()
+    for dep in dependencies:
+        key = dependency_node_key(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "version"))
+        dep_by_key.setdefault(key, dep)
+        parents_by_key.setdefault(key, {}).update(dict.fromkeys(get_attr(dep, "parent_components") or []))
+        if get_attr(dep, "direct", False):
+            direct_keys.add(key)
+
+    children_by_parent: dict[str, dict[str, None]] = {}
+    for key, parents in parents_by_key.items():
+        for parent in parents:
+            children_by_parent.setdefault(parent, {})[key] = None
+    return DependencyEdges(
+        dep_by_key=dep_by_key,
+        parents_by_key={key: list(parents) for key, parents in parents_by_key.items()},
+        children_by_parent={parent: list(children) for parent, children in children_by_parent.items()},
+        direct_keys=direct_keys,
+    )
 
 
 def analyze_deep_dependency_chains(
-    dependencies: list[ModelOrDict], max_dependency_depth: int = 8
+    dependencies: list[ModelOrDict], max_dependency_depth: int = MAX_DEPENDENCY_DEPTH
 ) -> list[Recommendation]:
-    """Identify dependencies with very deep transitive chains, and detect cycles."""
-    if not dependencies:
-        return []
-
+    """Report dependency cycles, and dependencies nested deeper than ``max_dependency_depth``."""
+    edges = build_dependency_edges(dependencies)
     recommendations = []
-    in_cycle = _find_cycle_members(dependencies, _children_by_parent(dependencies))
-    depth_map = _resolve_depths(dependencies, in_cycle)
 
-    if in_cycle:
-        recommendations.append(_circular_dependency_recommendation(dependencies, in_cycle))
+    members = _cycle_members(edges)
+    if members:
+        recommendations.append(_circular_dependency_recommendation(members, edges))
 
-    deep_deps = _deep_dependencies(dependencies, depth_map, max_dependency_depth)
-    if deep_deps:
-        recommendations.append(_deep_chain_recommendation(deep_deps, max_dependency_depth))
+    depths, via = _shortest_depths(edges)
+    deep = sorted(
+        ((key, depth) for key, depth in depths.items() if depth > max_dependency_depth), key=lambda kd: -kd[1]
+    )
+    if deep:
+        recommendations.append(_deep_chain_recommendation(deep, via, edges, max_dependency_depth))
 
     return recommendations
 
 
-def _dep_key(dep: ModelOrDict) -> str:
-    return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+def _cycle_members(edges: DependencyEdges) -> set[str]:
+    """Nodes of every strongly connected component larger than one node, plus self-parents (Kosaraju)."""
+    finished: list[str] = []
+    seen: set[str] = set()
+    for start in edges.dep_by_key:
+        if start in seen:
+            continue
+        seen.add(start)
+        stack = [(start, iter(edges.children_by_parent.get(start, [])))]
+        while stack:
+            node, children = stack[-1]
+            child = next(children, None)
+            if child is None:
+                finished.append(node)
+                stack.pop()
+            elif child not in seen:
+                seen.add(child)
+                stack.append((child, iter(edges.children_by_parent.get(child, []))))
+
+    members: set[str] = set()
+    assigned: set[str] = set()
+    for start in reversed(finished):
+        if start in assigned:
+            continue
+        assigned.add(start)
+        component, pending = [start], [start]
+        while pending:
+            # A parent that is not itself a dependency has no parents, so it closes no cycle.
+            for parent in edges.parents_by_key[pending.pop()]:
+                if parent in edges.dep_by_key and parent not in assigned:
+                    assigned.add(parent)
+                    component.append(parent)
+                    pending.append(parent)
+        if len(component) > 1 or start in edges.parents_by_key[start]:
+            members.update(component)
+    return members
 
 
-def _children_by_parent(dependencies: list[ModelOrDict]) -> dict[str, list[str]]:
-    children_map: dict[str, list[str]] = {}
-    for dep in dependencies:
-        key = _dep_key(dep)
-        for parent in get_attr(dep, "parent_components", []):
-            children_map.setdefault(parent, []).append(key)
-    return children_map
+def _shortest_depths(edges: DependencyEdges) -> tuple[dict[str, int], dict[str, str]]:
+    """Each reachable node's shortest depth (a direct dependency is 1) and the parent that chain runs through."""
+    depths = {key: 1 for key in edges.dep_by_key if key in edges.direct_keys}
+    via: dict[str, str] = {}
+    queue = deque(depths)
+    while queue:
+        node = queue.popleft()
+        for child in edges.children_by_parent.get(node, []):
+            if child not in depths:
+                depths[child] = depths[node] + 1
+                via[child] = node
+                queue.append(child)
+    return depths, via
 
 
-def _find_cycle_members(dependencies: list[ModelOrDict], children_map: dict[str, list[str]]) -> set[str]:
-    in_cycle: set[str] = set()
-    # DFS coloring: 0=unseen, 1=on stack, 2=done.
-    color: dict[str, int] = {}
-
-    def visit(node: str, path: list[str], on_path: set[str]) -> None:
-        if node in on_path:
-            # Only nodes from the first occurrence of node onward are in the cycle.
-            start = path.index(node)
-            in_cycle.update(path[start:])
-            return
-        if color.get(node, 0) == 2:
-            return
-
-        color[node] = 1
-        path.append(node)
-        on_path.add(node)
-
-        for child in children_map.get(node, []):
-            visit(child, path, on_path)
-
-        path.pop()
-        on_path.discard(node)
-        color[node] = 2
-
-    for dep in dependencies:
-        key = _dep_key(dep)
-        if get_attr(dep, "direct", False) and color.get(key, 0) == 0:
-            visit(key, [], set())
-    return in_cycle
-
-
-def _resolve_depths(dependencies: list[ModelOrDict], in_cycle: set[str]) -> dict[str, int]:
-    depth_map = {_dep_key(dep): 1 for dep in dependencies if get_attr(dep, "direct", False)}
-
-    # Skip nodes in cycles to avoid infinite loops.
-    for _ in range(10):
-        changed = False
-        for dep in dependencies:
-            key = _dep_key(dep)
-            if key in depth_map or key in in_cycle:
-                continue
-
-            parents = get_attr(dep, "parent_components", [])
-            parent_depths = [depth_map[parent] for parent in parents if parent in depth_map and parent not in in_cycle]
-
-            if parent_depths:
-                depth_map[key] = max(parent_depths) + 1
-                changed = True
-
-        if not changed:
-            break
-    return depth_map
-
-
-def _circular_dependency_recommendation(dependencies: list[ModelOrDict], in_cycle: set[str]) -> Recommendation:
-    cycle_packages = [
-        {"name": get_attr(dep, "name"), "version": get_attr(dep, "version")}
-        for dep in dependencies
-        if _dep_key(dep) in in_cycle
-    ]
-    cycle_shown, cycle_total = sample_components(f"{p['name']}@{p['version']}" for p in cycle_packages)
+def _circular_dependency_recommendation(members: set[str], edges: DependencyEdges) -> Recommendation:
+    cycle_shown, cycle_total = sample_components(
+        dependency_label(dep) for key, dep in edges.dep_by_key.items() if key in members
+    )
     return Recommendation(
         type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
         priority=Priority.MEDIUM,
-        title=f"Circular dependencies detected ({len(cycle_packages)} packages)",
+        title=f"Circular dependencies detected ({cycle_total} packages)",
         description=(
             "Circular dependencies were detected in your dependency graph. "
             "This can cause issues with builds, updates, and increases complexity."
@@ -121,9 +138,9 @@ def _circular_dependency_recommendation(dependencies: list[ModelOrDict], in_cycl
         impact={
             "critical": 0,
             "high": 0,
-            "medium": len(cycle_packages),
+            "medium": cycle_total,
             "low": 0,
-            "total": len(cycle_packages),
+            "total": cycle_total,
         },
         affected_components=cycle_shown,
         affected_components_total=cycle_total,
@@ -139,43 +156,36 @@ def _circular_dependency_recommendation(dependencies: list[ModelOrDict], in_cycl
     )
 
 
-def _deep_dependencies(
-    dependencies: list[ModelOrDict], depth_map: dict[str, int], max_dependency_depth: int
-) -> list[dict[str, Any]]:
-    deep_deps = []
-    for dep in dependencies:
-        depth = depth_map.get(_dep_key(dep), 0)
-        if depth > max_dependency_depth:
-            deep_deps.append(
-                {
-                    "name": get_attr(dep, "name"),
-                    "version": get_attr(dep, "version"),
-                    "depth": depth,
-                    "parents": get_attr(dep, "parent_components", []) or [],
-                }
-            )
-    deep_deps.sort(key=lambda x: x["depth"], reverse=True)
-    return deep_deps
+def _chain_preview(key: str, via: dict[str, str], edges: DependencyEdges) -> str:
+    """The shortest chain from a direct dependency down to ``key``."""
+    path = [key]
+    while path[-1] in via:
+        path.append(via[path[-1]])
+    return " → ".join(dependency_label(edges.dep_by_key[node]) for node in reversed(path))
 
 
-def _deep_chain_recommendation(deep_deps: list[dict[str, Any]], max_dependency_depth: int) -> Recommendation:
-    deep_shown, deep_total = sample_components(f"{d['name']}@{d['version']} (depth: {d['depth']})" for d in deep_deps)
+def _deep_chain_recommendation(
+    deep: list[tuple[str, int]], via: dict[str, str], edges: DependencyEdges, max_dependency_depth: int
+) -> Recommendation:
+    deep_shown, deep_total = sample_components(
+        f"{dependency_label(edges.dep_by_key[key])} (depth: {depth})" for key, depth in deep
+    )
+    medium = sum(1 for _, depth in deep if depth >= DEEP_CHAIN_MEDIUM_IMPACT_DEPTH)
     return Recommendation(
         type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
         priority=Priority.LOW,
-        title=f"Deep dependency chains detected (max depth: {deep_deps[0]['depth']})",
+        title=f"Deep dependency chains detected (max depth: {deep[0][1]})",
         description=(
-            f"{len(deep_deps)} dependencies are nested more than "
-            f"{max_dependency_depth} levels deep. Deep chains increase "
-            "supply chain attack surface and make dependency updates "
-            "more complex."
+            f"{len(deep)} dependencies are nested more than {max_dependency_depth} levels deep, "
+            "even along their shortest chain from a direct dependency. Deep chains increase "
+            "supply chain attack surface and make dependency updates more complex."
         ),
         impact={
             "critical": 0,
             "high": 0,
-            "medium": len([d for d in deep_deps if d["depth"] > 7]),
-            "low": len([d for d in deep_deps if d["depth"] <= 7]),
-            "total": len(deep_deps),
+            "medium": medium,
+            "low": len(deep) - medium,
+            "total": len(deep),
         },
         affected_components=deep_shown,
         affected_components_total=deep_total,
@@ -188,14 +198,13 @@ def _deep_chain_recommendation(deep_deps: list[dict[str, Any]], max_dependency_d
             ],
             "deepest_chains": [
                 {
-                    "package": d["name"],
-                    "depth": d["depth"],
-                    "chain_preview": " → ".join(d["parents"][:_PARENTS_SAMPLED]),
-                    "parents_total": len(d["parents"]),
+                    "package": get_attr(edges.dep_by_key[key], "name"),
+                    "depth": depth,
+                    "chain_preview": _chain_preview(key, via, edges),
                 }
-                for d in deep_deps[:_DEEPEST_CHAINS_SAMPLED]
+                for key, depth in deep[:_DEEPEST_CHAINS_SAMPLED]
             ],
-            "deepest_chains_total": len(deep_deps),
+            "deepest_chains_total": len(deep),
         },
         effort="high",
     )
@@ -210,7 +219,10 @@ def analyze_duplicate_packages(
 
     recommendations = []
 
-    dep_names = {str(get_attr(dep, "name", "")).lower() for dep in dependencies}
+    dep_names = {
+        package_identity(get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"), get_attr(dep, "group"))[1]
+        for dep in dependencies
+    }
 
     duplicates_found = []
     for group in SIMILAR_PACKAGE_GROUPS:

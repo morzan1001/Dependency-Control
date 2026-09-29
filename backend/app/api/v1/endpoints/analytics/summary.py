@@ -9,19 +9,18 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
     ReleaseEnvironmentQuery,
     get_latest_scan_ids,
-    get_projects_with_scans,
-    get_user_project_ids,
+    get_user_projects,
     require_analytics_permission,
     require_any_analytics_permission,
     scope_resolution_counts,
+    vuln_details_by,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.permissions import Permissions
-from app.repositories import (
-    DependencyRepository,
-    FindingRepository,
-    ScanRepository,
-)
+from app.core.purl import package_identity_expr
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.analytics import (
     AnalyticsScope,
     AnalyticsSummary,
@@ -29,8 +28,14 @@ from app.schemas.analytics import (
     DependencyUsage,
     SeverityBreakdown,
 )
-from app.services.aggregation.components import lookup_component
-from app.services.recommendation.common import parse_version_tuple
+from app.services.component_identity import (
+    artifact_name_expr,
+    build_component_index,
+    extract_artifact_name,
+    lookup_component,
+)
+from app.services.aggregation.versions import newest_first
+from app.services.recommendation.common import live_cves
 
 router = CustomAPIRouter()
 
@@ -52,13 +57,14 @@ async def get_analytics_scope(
     """
     require_any_analytics_permission(current_user)
 
-    project_ids = await get_user_project_ids(current_user, db)
+    projects = await get_user_projects(current_user, db)
 
-    if not project_ids:
+    if not projects:
         return AnalyticsScope(release_environments=[], resolved_projects=0, projects_without_release=0)
 
+    project_ids = [p.id for p in projects]
     environments: list[str] = sorted(await db.releases.distinct("environment", {"project_id": {"$in": project_ids}}))
-    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
+    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     resolved_projects, projects_without_release = scope_resolution_counts(project_ids, scan_ids)
 
     return AnalyticsScope(
@@ -78,20 +84,9 @@ async def get_analytics_summary(
     """Get analytics summary across all accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SUMMARY)
 
-    project_ids = await get_user_project_ids(current_user, db)
-
-    if not project_ids:
-        return AnalyticsSummary(
-            total_dependencies=0,
-            total_vulnerabilities=0,
-            unique_packages=0,
-            dependency_types=[],
-            severity_distribution=SeverityBreakdown(),
-            resolved_projects=0,
-            projects_without_release=0,
-        )
-
-    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
+    projects = await get_user_projects(current_user, db)
+    project_ids = [p.id for p in projects]
+    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     resolved_projects, projects_without_release = scope_resolution_counts(project_ids, scan_ids)
 
     if not scan_ids:
@@ -126,25 +121,12 @@ async def get_analytics_summary(
 
     severity_counts = await finding_repo.get_severity_distribution(scan_ids)
 
-    total_vulns = sum(severity_counts.values())
-    named = {sev: severity_counts.get(sev, 0) for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")}
-    severity_dist = SeverityBreakdown(
-        critical=named["CRITICAL"],
-        high=named["HIGH"],
-        medium=named["MEDIUM"],
-        low=named["LOW"],
-        negligible=named["NEGLIGIBLE"],
-        info=named["INFO"],
-        # Catch-all so the breakdown always sums to total_vulns, even for unmapped severities.
-        unknown=total_vulns - sum(named.values()),
-    )
-
     return AnalyticsSummary(
         total_dependencies=total_deps,
-        total_vulnerabilities=total_vulns,
+        total_vulnerabilities=sum(severity_counts.values()),
         unique_packages=unique_packages,
         dependency_types=dependency_types,
-        severity_distribution=severity_dist,
+        severity_distribution=SeverityBreakdown.from_counts(severity_counts),
         resolved_projects=resolved_projects,
         projects_without_release=projects_without_release,
     )
@@ -161,13 +143,9 @@ async def get_top_dependencies(
     """Get most frequently used dependencies across all accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_DEPENDENCIES)
 
-    project_ids = await get_user_project_ids(current_user, db)
-
-    if not project_ids:
-        return []
-
-    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
-
+    projects = await get_user_projects(current_user, db)
+    project_ids = [p.id for p in projects]
+    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
 
@@ -179,8 +157,10 @@ async def get_top_dependencies(
         {"$match": match_stage},
         {
             "$group": {
-                "_id": "$name",
-                "type": {"$first": "$type"},
+                "_id": package_identity_expr(),
+                "name": {"$min": "$name"},
+                "type": {"$min": "$type"},
+                "group": {"$max": "$group"},
                 "versions": {"$addToSet": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
                 "total_occurrences": {"$sum": 1},
@@ -188,8 +168,9 @@ async def get_top_dependencies(
         },
         {
             "$project": {
-                "name": "$_id",
+                "name": 1,
                 "type": 1,
+                "group": 1,
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
                 "project_count": {"$size": "$project_ids"},
@@ -205,7 +186,20 @@ async def get_top_dependencies(
 
     results = await dep_repo.aggregate(pipeline)
 
-    vuln_count_map = await finding_repo.get_vuln_counts_by_components(scan_ids, project_ids)
+    # Every same-artifact spelling is read, so build_component_index sees the ambiguity it guards against.
+    listed_artifacts = sorted({extract_artifact_name(dep["name"]) for dep in results})
+    details_by_component = await vuln_details_by(
+        finding_repo,
+        "component",
+        {
+            "scan_id": {"$in": scan_ids},
+            "project_id": {"$in": project_ids},
+            "$expr": {"$in": [artifact_name_expr("$component"), listed_artifacts]},
+        },
+    )
+    vuln_count_map = build_component_index(
+        {component: len(live_cves(details)) for component, details in details_by_component.items()}
+    )
 
     enriched = []
     for dep in results:
@@ -214,8 +208,9 @@ async def get_top_dependencies(
             DependencyUsage(
                 name=dep["name"],
                 type=dep.get("type", "unknown"),
+                group=dep.get("group"),
                 # $addToSet has no order, so rank before sampling.
-                versions=sorted(dep["versions"], key=parse_version_tuple, reverse=True)[:_VERSION_SAMPLE],
+                versions=newest_first(dep["versions"])[:_VERSION_SAMPLE],
                 version_count=dep["version_count"],
                 project_count=dep["project_count"],
                 total_occurrences=dep["total_occurrences"],
@@ -236,13 +231,8 @@ async def get_dependency_types(
     """Get list of all dependency types used across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
-    project_ids = await get_user_project_ids(current_user, db)
-
-    if not project_ids:
-        return []
-
-    _, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
-
+    projects = await get_user_projects(current_user, db)
+    scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
 

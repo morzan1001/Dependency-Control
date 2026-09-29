@@ -8,6 +8,7 @@ import { CryptoPolicyEditor } from "@/components/crypto/CryptoPolicyEditor";
 import { PolicyAuditTimeline } from "@/components/audit/PolicyAuditTimeline";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CryptoRule } from "@/types/cryptoPolicy";
+import { getErrorMessage } from "@/lib/utils";
 
 interface Props {
   readonly projectId: string;
@@ -28,7 +29,7 @@ export function CryptoPolicyOverridePage({ projectId, canEdit }: Props) {
       qc.invalidateQueries({ queryKey: ["crypto-policy-effective", projectId] });
       qc.invalidateQueries({ queryKey: ["crypto-policy-override", projectId] });
     },
-    onError: (e: Error) => toast.error(`Save failed: ${e.message}`),
+    onError: (e: unknown) => toast.error(`Save failed: ${getErrorMessage(e)}`),
   });
 
   const reset = useMutation({

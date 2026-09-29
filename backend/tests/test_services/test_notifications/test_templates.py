@@ -104,7 +104,7 @@ class TestGetVulnerabilityFoundTemplate:
             "project_name": "TestProject",
             "project_name_scanned": "my-app",
             "vulnerabilities": [{"id": "CVE-2024-001", "severity": "HIGH"}],
-            "critical_count": 1,
+            "priority_count": 1,
         }
         defaults.update(overrides)
         return get_vulnerability_found_template(**defaults)
@@ -118,16 +118,33 @@ class TestGetVulnerabilityFoundTemplate:
         result = self._render(project_name_scanned="vuln-target")
         assert "vuln-target" in result
 
+    def test_the_high_epss_banner_and_badge_use_the_one_threshold(self):
+        result = self._render(
+            vulnerabilities=[{"id": "CVE-2024-001", "severity": "MEDIUM", "epss_score": 0.1}],
+            has_high_epss=True,
+            high_epss_count=1,
+        )
+        assert "has EPSS &gt;= 10%" in result
+        assert "EPSS: 10.0%" in result
+
     def test_a_table_shorter_than_the_alert_says_how_much_shorter(self):
         listed = 10
         found = 431
 
         result = self._render(
             vulnerabilities=[{"id": f"CVE-2024-{index:04d}", "severity": "HIGH"} for index in range(listed)],
-            critical_count=found,
+            priority_count=found,
         )
 
-        assert f"{listed} of {found} critical/high" in result
+        assert f"{listed} of {found} Priority (Critical/High/KEV/High EPSS)" in result
+
+    def test_only_a_vulnerability_in_the_high_epss_bucket_carries_the_epss_badge(self):
+        from app.core.constants import EPSS_HIGH_THRESHOLD
+
+        high = self._render(vulnerabilities=[{"id": "CVE-1", "severity": "HIGH", "epss_score": EPSS_HIGH_THRESHOLD}])
+        below = self._render(vulnerabilities=[{"id": "CVE-2", "severity": "HIGH", "epss_score": 0.0999}])
+
+        assert ("EPSS: 10.0%" in high, "EPSS:" in below) == (True, False)
 
 
 class TestGetAnalysisCompletedTemplate:
@@ -264,7 +281,7 @@ class TestTemplateEscaping:
             project_name="TestProject",
             project_name_scanned=_HTML_INJECTION,
             vulnerabilities=[{"id": "CVE-2024-001", "severity": "HIGH"}],
-            critical_count=1,
+            priority_count=1,
         )
 
         assert _HTML_INJECTION not in result
@@ -276,7 +293,7 @@ class TestTemplateEscaping:
             project_name="TestProject",
             project_name_scanned="my-app",
             vulnerabilities=[{"id": _HTML_INJECTION, "severity": "HIGH"}],
-            critical_count=1,
+            priority_count=1,
         )
 
         assert _HTML_INJECTION not in result

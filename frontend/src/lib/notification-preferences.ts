@@ -10,12 +10,12 @@ export function memberPreferences(project: Project, userId: string): Record<stri
 }
 
 /**
- * What the notification service enforces: the first admin member that has any preferences set.
- * Mirrors NotificationService._resolve_recipients, which picks the same member.
+ * What the notification service enforces: the first admin, direct or through an owning team, that
+ * has any preferences set. Mirrors NotificationService.notify_project_members.
  */
 export function enforcedPreferences(project: Project): Record<string, string[]> | undefined {
   return nonEmpty(
-    project.members?.find(m => m.role === 'admin' && nonEmpty(m.notification_preferences))
+    project.members?.find(m => (m.effective_role ?? m.role) === 'admin' && nonEmpty(m.notification_preferences))
       ?.notification_preferences,
   )
 }

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.models.finding import Finding, FindingType
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.models.finding import PACKAGE_FINDING_TYPES, Finding
+from app.services.component_identity import build_component_index, lookup_component
 
 
 def _index_by_artifact(scorecard_cache: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -28,7 +28,7 @@ def enrich_with_scorecard(findings: list[Finding], scorecard_cache: dict[str, di
     by_artifact = _index_by_artifact(scorecard_cache)
 
     for finding in findings:
-        if finding.type == FindingType.QUALITY and finding.id.startswith("SCORECARD-"):
+        if finding.type not in PACKAGE_FINDING_TYPES:
             continue
 
         component_key = f"{finding.component}@{finding.version}" if finding.version else finding.component
@@ -51,14 +51,3 @@ def enrich_with_scorecard(findings: list[Finding], scorecard_cache: dict[str, di
                 "maintenance_risk": "Maintained" in scorecard_data.get("critical_issues", []),
                 "has_vulnerabilities_issue": "Vulnerabilities" in scorecard_data.get("critical_issues", []),
             }
-
-            if finding.type == FindingType.VULNERABILITY:
-                score = scorecard_data.get("overall_score", 10)
-                critical = scorecard_data.get("critical_issues", [])
-
-                if score < 4.0 or "Maintained" in critical:
-                    finding.details["maintenance_warning"] = True
-                    finding.details["maintenance_warning_text"] = (
-                        f"This package has a low OpenSSF Scorecard score ({score:.1f}/10) "
-                        "which may indicate maintenance or security concerns."
-                    )

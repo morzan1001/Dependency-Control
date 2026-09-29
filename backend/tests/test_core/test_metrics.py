@@ -200,9 +200,6 @@ class TestMetricsEndpoint:
 
 
 class TestDeadCodeRemoved:
-    def test_track_db_operation_present(self) -> None:
-        assert hasattr(metrics, "track_db_operation")
-
     def test_track_cache_operation_removed(self) -> None:
         assert not hasattr(metrics, "track_cache_operation")
 

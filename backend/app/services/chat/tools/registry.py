@@ -10,38 +10,55 @@ from typing import Any, ClassVar
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
-from app.api.v1.helpers.projects import build_user_project_query
-from app.api.v1.helpers.teams import resolve_team_names, team_refs
-from app.api.v1.helpers.webhooks import check_webhook_list_permission
+from app.api.v1.helpers.projects import authorize_waiver_read, build_user_project_query
+from app.api.v1.helpers.teams import check_team_access, resolve_team_names, team_refs, visible_teams_filter
+from app.api.v1.helpers.webhooks import (
+    check_team_webhook_list_permission,
+    check_webhook_list_permission,
+    check_webhook_permission,
+)
 from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CRYPTO_ASSET_PAGE,
     MAX_CRYPTO_HOTSPOT_PAGE,
     MAX_POLICY_AUDIT_PAGE,
     MAX_PQC_PLAN_ITEMS,
+    SEVERITY_ORDER,
+    get_severity_value,
 )
+from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cve
+from app.core.epss import bucket_epss
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
+from app.core.risk_scoring import calculate_exploit_maturity, reachability_display_tier
 from app.models.finding import FindingType, Severity
 from app.models.project import Project
 from app.models.user import User
+from app.models.waiver import is_waiver_active
+from app.models.webhook import Webhook
+from app.repositories.base import and_filters
+from app.repositories.findings import FindingRepository
+from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
+from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
-from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
+from app.services.aggregation.versions import split_fixed_versions
+from app.services.component_identity import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
-from app.services.analytics.scopes import ScopeTooLargeError, ensure_whole_scope, scope_probe_limit
-from app.services.analyzers.purl_utils import canonical_purl
-from app.services.reachability_enrichment import reachability_display_tier
+from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
+from app.core.purl import canonical_purl
+from app.services.compliance.visibility import report_visibility_filter
+from app.services.recommendation.common import live_advisories, max_advisory_cvss
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
-    _SEVERITY_RANK,
-    KEV_EQUIVALENT_MATURITY,
     MAX_DAY_WINDOW,
     MAX_FINDING_ROWS,
     MAX_PLAN_STEPS,
@@ -52,14 +69,16 @@ from ._helpers import (
     _compare_versions,
     _ensure_list,
     _inject_urls,
+    _number,
     _serialize_doc,
     _serialize_finding_for_llm,
     _truncate_if_too_large,
-    _waiver_is_active,
+    advisory_view,
     begin_limit_ledger,
     bounded_read,
     bounded_read_note,
     clamped_limit_note,
+    ranked_advisories,
     staleness_identities,
 )
 from .crypto_tools import (
@@ -82,13 +101,12 @@ logger = logging.getLogger(__name__)
 _ERR_PROJECT_NOT_FOUND = "Project not found or access denied"
 _ERR_SCAN_NOT_FOUND_IN_PROJECT = "Scan not found in this project"
 _ERR_FINDING_NOT_FOUND = "Finding not found"
-_ERR_TEAM_NOT_FOUND = "Team not found"
+_ERR_TEAM_NOT_FOUND = "Team not found or access denied"
 _ERR_ACCESS_DENIED = "Access denied"
 _ERR_WEBHOOK_NOT_FOUND = "Webhook not found or access denied"
+_ERR_ARCHIVE_NOT_FOUND = "Archive not found or access denied"
 _ERR_NO_SCAN_DATA = "No scan data available"
 _ERR_NEED_TWO_SCANS = "Need at least two builds on the head branch to compare"
-_FIELD_VULN_ID = "details.vulnerabilities.id"
-_FIELD_EPSS_SCORE = "details.epss_score"
 
 
 def _rendered_fields(model: type[BaseModel], *, withheld: frozenset[str] = frozenset()) -> list[str]:
@@ -114,7 +132,7 @@ _FINDING_RANK_FETCH_CAP = 1000
 
 # Highest severity first; the trailing clause catches values outside the known set so no finding
 # is unreachable to the walk.
-_SEVERITY_TIERS: tuple[str, ...] = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO", "UNKNOWN")
+_SEVERITY_TIERS: tuple[str, ...] = tuple(s.value for s in Severity)
 
 _RANKING_SAMPLED = (
     "State this caveat in your answer: the {tier} tier holds {total} findings and only "
@@ -129,6 +147,7 @@ _TOP_RISKY = 3
 # Read ceilings for the tools that answer from a whole collection rather than from a ranked page.
 # Every answer built on one of these carries the population it was cut from.
 _DEPENDENCY_TREE_READ = 200
+_TEAM_LIST_READ = 100
 _TEAM_PROJECT_READ = 50
 _WAIVER_READ = 100
 _WEBHOOK_READ = 20
@@ -137,12 +156,12 @@ _TREND_SCAN_READ = 500
 _REMEDIATION_FINDING_READ = 500
 _COMPONENT_USAGE_READ = 100
 _CVE_OCCURRENCE_READ = 25
+_WAIVER_STATE_READ = 50
 _EXPIRING_WAIVER_READ = 25
 _TEAM_RISK_PROJECT_READ = 500
 
 # A breakdown groups over a closed enum, so its read bound is the size of that enum: any smaller
 # number returns some of the buckets under a key that reads as all of them.
-_SEVERITY_BUCKETS = len(Severity)
 _FINDING_TYPE_BUCKETS = len(FindingType)
 
 # A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
@@ -160,11 +179,6 @@ _CALLGRAPH_SUMMARY_PROJECTION = {
 }
 
 
-def _scan_lookup_error(requested_scan_id: str | None) -> str:
-    """A named scan the project does not have is a bad argument; an absent one means nothing built yet."""
-    return _ERR_SCAN_NOT_FOUND_IN_PROJECT if requested_scan_id else _ERR_NO_SCAN_DATA
-
-
 def _stat(stats: dict[str, Any] | None, severity: str) -> int:
     """A severity count off a scan's stats block; a scan carrying none counts as zero."""
     try:
@@ -178,13 +192,6 @@ def _row_project_id(row: dict[str, Any]) -> str:
     return str(row.get("project_id") or "")
 
 
-def _finding_detail_number(finding: dict[str, Any], field: str) -> float:
-    """Return a numeric `details.<field>` for tiebreak sorting; missing/non-numeric -> -1.0."""
-    details = finding.get("details") or {}
-    value = details.get(field)
-    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
-
-
 # How a dependency's directness was established. `direct` alone cannot express it: an
 # inferred-direct package is direct, but ranks below a declared one when ordering fixes.
 _DIRECT_CONFIDENCE_RANK = {"declared": 0, "inferred": 1, "transitive": 2}
@@ -196,13 +203,41 @@ def _direct_confidence(dep: dict[str, Any]) -> str:
     return "inferred" if dep.get("direct_inferred") else "declared"
 
 
+# A head finding's waiver state, with each advisory's own flag and the ids that name it.
+_WAIVER_STATE_PROJECTION = {
+    "component": 1,
+    "version": 1,
+    "waived": 1,
+    "waiver_reason": 1,
+    "waiver_lapsed": 1,
+    "lapsed_waiver_id": 1,
+    **{f"details.vulnerabilities.{field}": 1 for field in ("id", "aliases", "resolved_cve", "waived", "waiver_reason")},
+}
+
+
+def _waiver_state(finding: dict[str, Any], vulnerability_id: str) -> dict[str, Any]:
+    """One head finding's waiver state; asked about by an advisory id, `waived` is that advisory's on this component."""
+    waived_advisories = [v for v in (finding.get("details") or {}).get("vulnerabilities") or [] if v.get("waived")]
+    return {
+        "component": finding.get("component"),
+        "version": finding.get("version"),
+        "waived": bool(finding.get("waived")) or any(vulnerability_id in advisory_ids(v) for v in waived_advisories),
+        "waiver_reason": finding.get("waiver_reason"),
+        "lapsed": bool(finding.get("waiver_lapsed")),
+        "lapsed_waiver_id": finding.get("lapsed_waiver_id"),
+        "waived_advisories": [
+            {"id": canonical_cve(v), "waiver_reason": v.get("waiver_reason")} for v in waived_advisories
+        ],
+    }
+
+
 def _rank_findings(findings: list[dict[str, Any]]) -> None:
-    """Sort findings in place by severity rank desc, then details.epss_score and details.cvss_score desc."""
+    """Sort findings in place by severity rank desc, then details.epss_score and the highest advisory CVSS desc."""
     findings.sort(
         key=lambda f: (
-            _SEVERITY_RANK.get((f.get("severity") or "").upper(), 0),
-            _finding_detail_number(f, "epss_score"),
-            _finding_detail_number(f, "cvss_score"),
+            get_severity_value(f.get("severity")),
+            _number((f.get("details") or {}).get("epss_score")),
+            _number(max_advisory_cvss(f.get("details") or {})),
         ),
         reverse=True,
     )
@@ -256,6 +291,18 @@ async def _ranked_findings(
     return out, note
 
 
+class _ToolRefusal(Exception):
+    """The answer a handler stops with; `_dispatch` returns it as the tool's error."""
+
+
+async def _gated[T](check: Awaitable[T], refusal: str) -> T:
+    """REST's access check, its HTTP refusal turned into the tool's own answer."""
+    try:
+        return await check
+    except HTTPException:
+        raise _ToolRefusal(refusal) from None
+
+
 @dataclass(frozen=True, slots=True)
 class _ToolContext:
     """Resolved once in `_dispatch` so no handler re-derives the caller's visibility query."""
@@ -263,7 +310,6 @@ class _ToolContext:
     args: dict[str, Any]
     user: User
     db: AsyncIOMotorDatabase
-    team_repo: TeamRepository
     user_project_query: dict[str, Any]
 
 
@@ -291,43 +337,47 @@ class ChatToolRegistry:
         user: User,
         db: AsyncIOMotorDatabase,
     ) -> dict[str, Any]:
+        if tool_name not in self._HANDLERS:
+            logger.warning("chat tool not found: %s", tool_name)
+            # A model-invented name as a label would open a new series per hallucination.
+            chat_tool_calls_total.labels(tool_name="unknown", status="unknown").inc()
+            return {"error": f"Unknown tool: {tool_name}"}
         required = TOOL_PERMISSIONS.get(tool_name)
         if required and not has_permission(user.permissions, required):
+            chat_tool_calls_total.labels(tool_name=tool_name, status="denied").inc()
             return {"error": f"You don't have permission to use {tool_name}"}
+
+        start = time.perf_counter()
+        status = "error"
         try:
             args = checked_arguments(tool_name, arguments)
-        except ToolArgumentError as e:
-            return {"error": str(e)}
-
-        start = time.time()
-        begin_limit_ledger()
-        try:
+            begin_limit_ledger()
             result = await self._dispatch(tool_name, args, user, db)
-            duration = time.time() - start
-            chat_tool_calls_total.labels(tool_name=tool_name, status="success").inc()
-            chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
-            if isinstance(result, dict):
-                _inject_urls(result)
-                note = clamped_limit_note()
-                if note:
-                    result["_limit_clamped"] = True
-                    result["_limit_clamp_note"] = note
-                saturated = bounded_read_note()
-                if saturated:
-                    result["_bounded_read"] = True
-                    result["_bounded_read_note"] = saturated
+            _inject_urls(result)
+            note = clamped_limit_note()
+            if note:
+                result["_limit_clamped"] = True
+                result["_limit_clamp_note"] = note
+            saturated = bounded_read_note()
+            if saturated:
+                result["_bounded_read"] = True
+                result["_bounded_read_note"] = saturated
             # Cap JSON size so a large dump can't blow the LLM's context budget.
-            return _truncate_if_too_large(result) if isinstance(result, dict) else result
-        except ScopeTooLargeError as e:
-            chat_tool_duration_seconds.labels(tool_name=tool_name).observe(time.time() - start)
-            chat_tool_calls_total.labels(tool_name=tool_name, status="refused").inc()
+            answer = _truncate_if_too_large(result)
+            status = "rejected" if "error" in result else "success"
+            return answer
+        except ToolArgumentError as e:
+            status = "rejected"
+            return {"error": str(e)}
+        except (ScopeTooLargeError, ScopeResolutionError) as e:
+            status = "refused"
             return {"error": str(e)}
         except Exception as e:
-            duration = time.time() - start
-            chat_tool_calls_total.labels(tool_name=tool_name, status="error").inc()
-            chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
             logger.exception(f"Tool {tool_name} failed: {e}")
             return {"error": f"Tool execution failed: {e!s}"}
+        finally:
+            chat_tool_calls_total.labels(tool_name=tool_name, status=status).inc()
+            chat_tool_duration_seconds.labels(tool_name=tool_name).observe(time.perf_counter() - start)
 
     async def _dispatch(
         self,
@@ -336,24 +386,18 @@ class ChatToolRegistry:
         user: User,
         db: AsyncIOMotorDatabase,
     ) -> dict[str, Any]:
-        team_repo = TeamRepository(db)
         ctx = _ToolContext(
-            args=args,
-            user=user,
-            db=db,
-            team_repo=team_repo,
-            user_project_query=await build_user_project_query(user, team_repo),
+            args=args, user=user, db=db, user_project_query=await build_user_project_query(user, TeamRepository(db))
         )
-        handler = self._HANDLERS.get(tool_name)
-        if handler is None:
-            return {"error": f"Unknown tool: {tool_name}"}
-        return await handler(self, ctx)
+        try:
+            return await self._HANDLERS[tool_name](self, ctx)
+        except _ToolRefusal as refusal:
+            return {"error": str(refusal)}
 
     async def _tool_list_projects(self, ctx: _ToolContext) -> dict[str, Any]:
-        query = {**ctx.user_project_query}
         search = ctx.args.get("search")
-        if search:
-            query["name"] = {"$regex": re.escape(search), "$options": "i"}
+        name_filter = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
+        query = and_filters(ctx.user_project_query, name_filter)
         limit = _clamp_limit(ctx.args.get("limit"), 15, maximum=MAX_SUMMARY_ROWS)
         cursor = ctx.db["projects"].find(query, sort=[("last_scan_at", -1)], limit=limit)
         projects = await cursor.to_list(length=limit)
@@ -366,21 +410,15 @@ class ChatToolRegistry:
         return {"projects": rows, "count": len(rows)}
 
     async def _tool_get_project_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return {"project": _serialize_doc(project, _PROJECT_FIELDS)}
 
     async def _tool_get_project_members(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return {"members": project.get("members", [])}
 
     async def _tool_get_project_settings(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return {
             "settings": _serialize_doc(
                 project,
@@ -396,9 +434,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_scan_history(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
         # Newest-first across every branch and status, so the first row is a queued run on a
         # branch nobody ships as often as it is the build the project stands on.
@@ -423,24 +459,14 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_scan_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         scan = await ctx.db["scans"].find_one({"_id": scan_id, "project_id": project["_id"]})
         return {"scan": {**_serialize_doc(scan), "is_head": build["is_head"]}}
 
     async def _tool_get_scan_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         query = {"scan_id": scan_id, "project_id": project["_id"]}
         if ctx.args.get("severity"):
             query["severity"] = ctx.args["severity"].upper()
@@ -456,9 +482,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_project_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"findings": [], "count": 0, "message": "No scans found for this project"}
@@ -477,43 +501,24 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_vulnerability_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         finding = await ctx.db["findings"].find_one({"_id": ctx.args["finding_id"], "project_id": project["_id"]})
         if not finding:
             return {"error": _ERR_FINDING_NOT_FOUND}
         slim = _serialize_finding_for_llm(finding)
         slim["project_name"] = project.get("name", "")
-        details = finding.get("details") or {}
-        vulns = (details.get("vulnerabilities") or [])[:5]
-        if vulns:
-            slim["vulnerabilities"] = [
-                {
-                    "id": v.get("id"),
-                    "severity": v.get("severity"),
-                    "cvss_score": v.get("cvss_score"),
-                    "fixed_version": v.get("fixed_version"),
-                    "epss_score": v.get("epss_score"),
-                    "description": _clip_value(v.get("description") or ""),
-                    "references": (v.get("references") or [])[:3],
-                }
-                for v in vulns
-            ]
+        advisories = ranked_advisories(finding.get("details"))
+        if advisories:
+            slim["advisories"] = [advisory_view(v, references=3) for v in advisories[:5]]
+            slim["advisories_total"] = len(advisories)
         return {"finding": slim}
 
     async def _tool_search_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         search_query = ctx.args["query"]
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
-        escaped_search_query = re.escape(search_query)
+        pattern = {"$regex": re.escape(search_query), "$options": "i"}
         query = {
-            "project_id": {"$in": project_ids},
-            "$or": [
-                {"finding_id": {"$regex": escaped_search_query, "$options": "i"}},
-                {"description": {"$regex": escaped_search_query, "$options": "i"}},
-                {"component": {"$regex": escaped_search_query, "$options": "i"}},
-                {_FIELD_VULN_ID: {"$regex": escaped_search_query, "$options": "i"}},
-            ],
+            **await self._in_scope(ctx),
+            "$or": [{"finding_id": pattern}, {"description": pattern}, {"component": pattern}, advisory_match(pattern)],
         }
         if ctx.args.get("severity"):
             query["severity"] = ctx.args["severity"].upper()
@@ -522,7 +527,7 @@ class ChatToolRegistry:
         limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
         cursor = ctx.db["findings"].find(query, limit=limit)
         findings = await cursor.to_list(length=limit)
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in findings}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in findings)
         out = []
         for f in findings:
             slim = _serialize_finding_for_llm(f)
@@ -531,59 +536,47 @@ class ChatToolRegistry:
         return {"findings": out, "count": len(out)}
 
     async def _tool_get_findings_by_severity(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"breakdown": {}}
-        pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": head_scan_id}},
-            {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
-        ]
-        results = await ctx.db["findings"].aggregate(pipeline).to_list(length=_SEVERITY_BUCKETS)
-        return {"breakdown": {r["_id"]: r["count"] for r in results}}
+        breakdown = await FindingRepository(ctx.db).get_severity_distribution([head_scan_id], finding_type=None)
+        return {"breakdown": breakdown}
 
     async def _tool_get_findings_by_type(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"breakdown": {}}
         pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": head_scan_id}},
+            {"$match": {"scan_id": head_scan_id, "waived": {"$ne": True}}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
         ]
         results = await ctx.db["findings"].aggregate(pipeline).to_list(length=_FINDING_TYPE_BUCKETS)
         return {"breakdown": {r["_id"]: r["count"] for r in results}}
 
     async def _tool_get_analytics_summary(self, ctx: _ToolContext) -> dict[str, Any]:
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
-        if not project_ids:
+        head, names = await self._heads_in_scope(ctx)
+        if not names:
             return {"total_projects": 0, "total_findings": 0, "severity_breakdown": {}}
-        head = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
         stats_by_project = await self._head_scan_stats(ctx.db, head)
-        sev_pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": {"$in": list(head.values())}}},
-            {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
-        ]
-        sev_results = await ctx.db["findings"].aggregate(sev_pipeline).to_list(length=_SEVERITY_BUCKETS)
+        severity_counts = await FindingRepository(ctx.db).get_severity_distribution(
+            list(head.values()), finding_type=None
+        )
         ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:_TOP_RISKY]
-        project_names_map = await self._project_names(ctx.db, ranked)
         top3 = [
             {
                 "project_id": pid,
-                "project_name": project_names_map.get(pid, ""),
+                "project_name": names.get(pid, ""),
                 "critical": _stat(stats_by_project.get(pid), "critical"),
                 "high": _stat(stats_by_project.get(pid), "high"),
             }
             for pid in ranked
         ]
         return {
-            "total_projects": len(project_ids),
-            "severity_breakdown": {r["_id"]: r["count"] for r in sev_results},
-            "total_findings": sum(r["count"] for r in sev_results),
+            "total_projects": len(names),
+            "severity_breakdown": severity_counts,
+            "total_findings": sum(severity_counts.values()),
             "top_risky_projects": top3,
             "hint": (
                 "If the user asked 'where should I start' or 'what is worst', "
@@ -593,14 +586,13 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_risk_trends(self, ctx: _ToolContext) -> dict[str, Any]:
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
         days = ctx.args.get("days", 30)
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        match_query: dict[str, Any] = {"project_id": {"$in": project_ids}, "created_at": {"$gte": cutoff}}
         if ctx.args.get("project_id"):
-            if ctx.args["project_id"] not in project_ids:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
-            match_query["project_id"] = ctx.args["project_id"]
+            scope = {"project_id": (await self._require_project(ctx))["_id"]}
+        else:
+            scope = await self._in_scope(ctx)
+        match_query: dict[str, Any] = {**scope, "created_at": {"$gte": cutoff}}
         scans, scans_total = await bounded_read(
             ctx.db["scans"],
             match_query,
@@ -615,9 +607,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_dependency_tree(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"dependencies": []}
@@ -634,10 +624,9 @@ class ChatToolRegistry:
 
     async def _tool_get_hotspots(self, ctx: _ToolContext) -> dict[str, Any]:
         limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
-        head = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
+        head, names = await self._heads_in_scope(ctx)
         stats_by_project = await self._head_scan_stats(ctx.db, head)
         ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:limit]
-        names = await self._project_names(ctx.db, ranked)
         hotspots = [
             {
                 "project_id": pid,
@@ -660,17 +649,24 @@ class ChatToolRegistry:
         return {"dependency": _serialize_doc(dep)}
 
     async def _tool_list_teams(self, ctx: _ToolContext) -> dict[str, Any]:
-        teams = await ctx.team_repo.find_by_member(str(ctx.user.id))
-        return {"teams": [{"id": t.id, "name": t.name, "description": t.description} for t in teams]}
+        visible = visible_teams_filter(ctx.user)
+        if visible is None:
+            return {"error": _ERR_ACCESS_DENIED}
+        teams, teams_total = await bounded_read(
+            ctx.db["teams"],
+            visible,
+            subject="teams",
+            limit=_TEAM_LIST_READ,
+            sort=[("name", 1)],
+            projection={"name": 1, "description": 1},
+        )
+        return {
+            "teams": [{"id": t["_id"], "name": t.get("name"), "description": t.get("description")} for t in teams],
+            "teams_total": teams_total,
+        }
 
     async def _tool_get_team_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await ctx.team_repo.get_by_id(ctx.args["team_id"])
-        if not team:
-            return {"error": _ERR_TEAM_NOT_FOUND}
-        if not await ctx.team_repo.is_member(team.id, str(ctx.user.id)) and not has_permission(
-            ctx.user.permissions, Permissions.TEAM_READ_ALL
-        ):
-            return {"error": _ERR_ACCESS_DENIED}
+        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         return {
             "team": {
                 "id": team.id,
@@ -681,14 +677,8 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_team_projects(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await ctx.team_repo.get_by_id(ctx.args["team_id"])
-        if not team:
-            return {"error": _ERR_TEAM_NOT_FOUND}
-        if not await ctx.team_repo.is_member(team.id, str(ctx.user.id)) and not has_permission(
-            ctx.user.permissions, Permissions.TEAM_READ_ALL
-        ):
-            return {"error": _ERR_ACCESS_DENIED}
-        query = {**ctx.user_project_query, "team_ids": team.id}
+        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
+        query = and_filters(ctx.user_project_query, {"team_ids": team.id})
         projects, projects_total = await bounded_read(
             ctx.db["projects"], query, subject="team projects", limit=_TEAM_PROJECT_READ
         )
@@ -698,52 +688,68 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_waiver_status(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
+        wanted = ctx.args["finding_id"]
+        vulnerability_id = advisory_id(wanted) or ""
         head_scan_id = await self._head_scan_id(project, ctx.db)
-        finding = None
+        findings: list[dict[str, Any]] = []
+        findings_total = 0
         if head_scan_id:
-            finding = await ctx.db["findings"].find_one(
-                {"scan_id": head_scan_id, "finding_id": ctx.args["finding_id"]},
-                {"waived": 1, "waiver_reason": 1, "waiver_lapsed": 1, "lapsed_waiver_id": 1},
+            findings, findings_total = await bounded_read(
+                ctx.db["findings"],
+                {"scan_id": head_scan_id, "$or": [{"finding_id": wanted}, advisory_match(vulnerability_id)]},
+                subject=f"findings named {wanted}",
+                limit=_WAIVER_STATE_READ,
+                projection=_WAIVER_STATE_PROJECTION,
             )
-        if finding is not None:
-            resp: dict[str, Any] = {"waived": bool(finding.get("waived"))}
-            if finding.get("waiver_reason"):
-                resp["waiver_reason"] = finding["waiver_reason"]
-            if finding.get("waiver_lapsed"):
-                resp["lapsed"] = True
-                resp["lapsed_waiver_id"] = finding.get("lapsed_waiver_id")
-            return resp
+        if findings:
+            states = [_waiver_state(f, vulnerability_id) for f in findings]
+            waived_count = sum(state["waived"] for state in states)
+            return {
+                "waived": waived_count == findings_total,
+                "waived_count": waived_count,
+                "findings": states,
+                "findings_total": findings_total,
+                "hint": (
+                    "An advisory under waived_advisories is suppressed even where its finding is not waived; "
+                    "that finding's severity counts only its live advisories."
+                ),
+            }
         # No finding doc for this id in the latest scan: an existing waiver row
         # suppresses nothing, so report it as present-but-not-suppressing.
         now = datetime.now(timezone.utc)
-        waiver = await ctx.db["waivers"].find_one(
-            {"finding_id": ctx.args["finding_id"], "project_id": project["_id"]}
-        ) or await ctx.db["waivers"].find_one({"finding_id": ctx.args["finding_id"], "project_id": None})
+        named = {"$or": [{"finding_id": wanted}, {"vulnerability_id": vulnerability_id}]}
+        waivers = ctx.db["waivers"]
+        waiver = await waivers.find_one({**named, "project_id": project["_id"]}) or await waivers.find_one(
+            {**named, "project_id": None}
+        )
         if not waiver:
             return {"waived": False}
-        if _waiver_is_active(waiver, now):
+        active = is_waiver_active(waiver.get("expiration_date"), now)
+        serialized = {**_serialize_doc(waiver), "is_active": active}
+        if active:
             return {
                 "waived": False,
                 "waiver_present": True,
                 "suppressing": False,
                 "reason": "no matching finding in the latest scan — finding fixed/moved or waiver dormant",
-                "waiver": _serialize_doc(waiver),
+                "waiver": serialized,
             }
-        return {"waived": False, "expired_waiver": _serialize_doc(waiver)}
+        return {"waived": False, "expired_waiver": serialized}
 
     async def _tool_list_project_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
+        project = await ctx.db["projects"].find_one({"_id": ctx.args.get("project_id")}, {"_id": 1})
         if not project:
             return {"error": _ERR_PROJECT_NOT_FOUND}
+        await _gated(authorize_waiver_read(project["_id"], ctx.user, ctx.db), _ERR_PROJECT_NOT_FOUND)
         now = datetime.now(timezone.utc)
         waivers, waivers_total = await bounded_read(
             ctx.db["waivers"], {"project_id": project["_id"]}, subject="waivers", limit=_WAIVER_READ
         )
         return {
-            "waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers],
+            "waivers": [
+                {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
+            ],
             "waivers_total": waivers_total,
         }
 
@@ -753,46 +759,24 @@ class ChatToolRegistry:
             ctx.db["waivers"], {"project_id": None}, subject="global waivers", limit=_WAIVER_READ
         )
         return {
-            "waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers],
+            "waivers": [
+                {**_serialize_doc(w), "is_active": is_waiver_active(w.get("expiration_date"), now)} for w in waivers
+            ],
             "waivers_total": waivers_total,
         }
 
     async def _tool_get_top_priority_findings(self, ctx: _ToolContext) -> dict[str, Any]:
         limit = _clamp_limit(ctx.args.get("limit"), 5, maximum=MAX_FINDING_ROWS)
-        match: dict[str, Any] = {}
-        if ctx.args.get("project_id"):
-            proj = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-            if not proj:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
-            head_scan_id = await self._head_scan_id(proj, ctx.db)
-            if not head_scan_id:
-                return {"findings": [], "message": "No scan data available for this project"}
-            match["scan_id"] = head_scan_id
-            match["project_id"] = proj["_id"]
-        else:
-            # Each project's head, to look at current state rather than history.
-            project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
-            if not project_ids:
-                return {"findings": [], "message": "No accessible projects"}
-            head = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
-            if not head:
-                return {"findings": [], "message": "No scans found"}
-            match["scan_id"] = {"$in": list(head.values())}
-        match.setdefault("severity", {"$in": ["CRITICAL", "HIGH"]})
-        findings, ranking_note = await _ranked_findings(ctx.db, match, limit)
-
-        project_ids_hit = list({f.get("project_id") for f in findings if f.get("project_id")})
-        project_names: dict[str, str] = {}
-        if project_ids_hit:
-            async for p in ctx.db["projects"].find({"_id": {"$in": project_ids_hit}}, {"name": 1}):
-                project_names[p["_id"]] = p.get("name", "")
-
+        head, names = await self._heads_in_scope(ctx)
+        if not head:
+            return {"findings": [], "message": _ERR_NO_SCAN_DATA}
+        findings, ranking_note = await _ranked_findings(
+            ctx.db, {"scan_id": {"$in": list(head.values())}, "severity": {"$in": ["CRITICAL", "HIGH"]}}, limit
+        )
         trimmed = []
         for f in findings:
             slim = _serialize_finding_for_llm(f)
-            pid = _row_project_id(f)
-            if pid and pid in project_names:
-                slim["project_name"] = project_names[pid]
+            slim["project_name"] = names.get(_row_project_id(f), "")
             trimmed.append(slim)
         return {
             "findings": trimmed,
@@ -806,9 +790,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_generate_remediation_plan(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
             return {"plan": [], "message": _ERR_NO_SCAN_DATA}
@@ -866,11 +848,14 @@ class ChatToolRegistry:
             )
             g["findings"].append(f)
             details = f.get("details") or {}
-            entries = details.get("vulnerabilities") or []
-            for fv in (details.get("fixed_version"), *(v.get("fixed_version") for v in entries)):
-                if isinstance(fv, str) and fv:
-                    # Writers emit comma-joined fix lists ("1.2.6, 2.0.1"); compare single versions.
-                    g["fix_candidates"].extend(part for part in (c.strip() for c in fv.split(",")) if part)
+            # The finding-level fixed_version also folds in the fixes of waived advisories.
+            fixes = (
+                [v.get("fixed_version") for v in live_advisories(details)]
+                if details.get("vulnerabilities")
+                else [details.get("fixed_version")]
+            )
+            for fv in fixes:
+                g["fix_candidates"].extend(split_fixed_versions(fv))
 
         steps: list[dict[str, Any]] = []
         for key, g in groups.items():
@@ -887,22 +872,17 @@ class ChatToolRegistry:
             resolved: list[dict[str, Any]] = []
             for f in g["findings"]:
                 # Non-vulnerability findings carry no CVE list; label with the finding id.
-                entries = (f.get("details") or {}).get("vulnerabilities") or [{}]
+                entries = live_advisories(f.get("details")) or [{}]
                 resolved.extend(
                     {
                         "finding_id": f.get("finding_id"),
-                        "cve_id": v.get("resolved_cve") or v.get("id") or f.get("finding_id"),
+                        "cve_id": canonical_cve(v) or f.get("finding_id"),
                         "severity": v.get("severity") or f.get("severity"),
                     }
                     for v in entries
                 )
-            max_sev = max(
-                (_SEVERITY_RANK.get(f.get("severity") or "", 0) for f in g["findings"]),
-                default=0,
-            )
-            max_sev_label = next(
-                (k for k, v in _SEVERITY_RANK.items() if v == max_sev),
-                "UNKNOWN",
+            max_sev_label = (
+                max((f.get("severity") for f in g["findings"]), key=get_severity_value, default=None) or "UNKNOWN"
             )
             critical_count = sum(1 for r in resolved if r["severity"] == "CRITICAL")
 
@@ -970,7 +950,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_auto_fixable_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        latest = await self._latest_scan_ids_for_user(ctx.user_project_query, ctx.args.get("project_id"), ctx.db)
+        latest, names = await self._heads_in_scope(ctx)
         if not latest:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
@@ -979,28 +959,45 @@ class ChatToolRegistry:
             {
                 "scan_id": {"$in": list(latest.values())},
                 "severity": {"$in": ["CRITICAL", "HIGH"]},
-                "details.fixed_version": {"$exists": True, "$ne": None},
                 "waived": {"$ne": True},
+                # The live_fixed_version rule: a live advisory names a fix and no live CRITICAL/HIGH one lacks one.
+                "details.vulnerabilities": {
+                    "$elemMatch": {"fixed_version": {"$nin": [None, ""]}, "waived": {"$ne": True}}
+                },
+                "$nor": [
+                    {
+                        "details.vulnerabilities": {
+                            "$elemMatch": {
+                                "severity": {"$in": ["CRITICAL", "HIGH"]},
+                                "fixed_version": {"$in": [None, ""]},
+                                "waived": {"$ne": True},
+                            }
+                        }
+                    }
+                ],
             },
             limit,
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in rows}))
         out = []
         for f in rows:
             slim = _serialize_finding_for_llm(f)
             slim["project_name"] = names.get(_row_project_id(f), "")
+            slim["still_open"] = [
+                canonical_cve(v) for v in live_advisories(f.get("details")) if not v.get("fixed_version")
+            ]
             out.append(slim)
         return {
             "findings": out,
             "count": len(out),
-            "hint": "These already have a fix_version — recommend the upgrade directly.",
+            "hint": (
+                "Upgrading to fixed_version fixes every CRITICAL/HIGH advisory of these findings. Advisories "
+                "under still_open have no fix yet and stay after the upgrade: call that a partial fix."
+            ),
             **({"ranking_note": ranking_note} if ranking_note else {}),
         }
 
     async def _tool_suggest_waiver_for_finding(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         finding = await ctx.db["findings"].find_one(
             {"finding_id": ctx.args["finding_id"], "project_id": project["_id"]}
         )
@@ -1013,18 +1010,19 @@ class ChatToolRegistry:
         fix = details.get("fixed_version")
 
         reasons = []
-        if maturity in KEV_EQUIVALENT_MATURITY:
+        if details.get(DETAILS_KEY_IN_KEV):
             return {
                 "suggested_reason": (
-                    "NOT RECOMMENDED TO WAIVE. This vulnerability has exploit_maturity="
-                    f"'{maturity}' — it is actively exploited in the wild. Patch rather than waive."
+                    "NOT RECOMMENDED TO WAIVE. This vulnerability is listed in CISA KEV — it is "
+                    "actively exploited in the wild. Patch rather than waive."
                 ),
                 "suggested_expiry_days": 0,
                 "recommend_waive": False,
             }
         if fix:
             reasons.append(f"a fix is available (upgrade to {fix})")
-        if isinstance(epss, (int, float)) and epss < 0.01:
+        low_epss = isinstance(epss, (int, float)) and bucket_epss(epss) == "low"
+        if low_epss:
             reasons.append(f"real-world exploit likelihood is low (EPSS={epss:.4f})")
         if sev in ("LOW", "NEGLIGIBLE", "INFO"):
             reasons.append(f"severity is {sev}")
@@ -1033,7 +1031,7 @@ class ChatToolRegistry:
             if reasons
             else "Accepted risk: insert justification here. No strong automatic signal found."
         )
-        expiry_days = 180 if (fix or (isinstance(epss, (int, float)) and epss < 0.01)) else 90
+        expiry_days = 180 if (fix or low_epss) else 90
         return {
             "suggested_reason": suggested_reason,
             "suggested_expiry_days": expiry_days,
@@ -1051,9 +1049,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_compare_scans(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         scan_a_id = ctx.args.get("scan_id_a")
         scan_b_id = ctx.args.get("scan_id_b")
         if not scan_a_id or not scan_b_id:
@@ -1083,7 +1079,7 @@ class ChatToolRegistry:
         return findings_response.model_dump(mode="json")
 
     async def _tool_get_kev_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        latest = await self._latest_scan_ids_for_user(ctx.user_project_query, ctx.args.get("project_id"), ctx.db)
+        latest, names = await self._heads_in_scope(ctx)
         if not latest:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
@@ -1091,12 +1087,11 @@ class ChatToolRegistry:
             ctx.db,
             {
                 "scan_id": {"$in": list(latest.values())},
-                "details.exploit_maturity": {"$in": list(KEV_EQUIVALENT_MATURITY)},
+                "details.vulnerabilities": {"$elemMatch": {DETAILS_KEY_IN_KEV: True, "waived": {"$ne": True}}},
                 "waived": {"$ne": True},
             },
             limit,
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in rows}))
         out = []
         for f in rows:
             slim = _serialize_finding_for_llm(f)
@@ -1105,15 +1100,17 @@ class ChatToolRegistry:
         return {
             "findings": out,
             "count": len(out),
-            "hint": ("All of these have real-world exploits. Prioritise above plain CVSS-only critical findings."),
+            "hint": (
+                "Each has an unwaived advisory in CISA KEV, named as cve: it has real-world exploits. "
+                "Prioritise above plain CVSS-only critical findings."
+            ),
             **({"ranking_note": ranking_note} if ranking_note else {}),
         }
 
     async def _tool_find_component_usage(self, ctx: _ToolContext) -> dict[str, Any]:
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
-        if not project_ids:
+        latest, names = await self._heads_in_scope(ctx)
+        if not names:
             return {"matches": [], "message": "No accessible projects"}
-        latest = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
         latest_scan_ids = list(latest.values())
         # The caller may quote a finding's group-qualified component; the inventory
         # stores the bare artifact name, so search on that too.
@@ -1140,7 +1137,6 @@ class ChatToolRegistry:
                 "license": 1,
             },
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(r) for r in rows}))
         matches = [
             {
                 "project_id": r.get("project_id"),
@@ -1157,20 +1153,19 @@ class ChatToolRegistry:
         return {"matches": matches, "count": len(matches), "matches_total": rows_total}
 
     async def _tool_get_findings_by_cve(self, ctx: _ToolContext) -> dict[str, Any]:
-        cve = ctx.args["cve_id"].strip().upper()
-        latest = await self._latest_scan_ids_for_user(ctx.user_project_query, None, ctx.db)
+        cve = advisory_id(ctx.args["cve_id"]) or ""
+        latest, names = await self._heads_in_scope(ctx)
         if not latest:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         rows, rows_total = await bounded_read(
             ctx.db["findings"],
             {
                 "scan_id": {"$in": list(latest.values())},
-                _FIELD_VULN_ID: cve,
+                **advisory_match(cve),
             },
             subject=f"findings naming {cve}",
             limit=_CVE_OCCURRENCE_READ,
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in rows}))
         by_project: dict[str, dict[str, Any]] = {}
         for f in rows:
             pid = _row_project_id(f)
@@ -1182,7 +1177,7 @@ class ChatToolRegistry:
                     "findings": [],
                 },
             )
-            slot["findings"].append(_serialize_finding_for_llm(f))
+            slot["findings"].append(_serialize_finding_for_llm(f, cve=cve))
         return {
             "cve_id": cve,
             "affected_projects": list(by_project.values()),
@@ -1194,35 +1189,19 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_cve_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        cve = ctx.args["cve_id"].strip().upper()
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
-        if not project_ids:
-            return {"error": "No accessible projects to source CVE data from"}
-        finding = await ctx.db["findings"].find_one(
-            {
-                "project_id": {"$in": project_ids},
-                _FIELD_VULN_ID: cve,
-            }
-        )
+        cve = advisory_id(ctx.args["cve_id"]) or ""
+        finding = await ctx.db["findings"].find_one({**await self._in_scope(ctx), **advisory_match(cve)})
         if not finding:
             return {"error": f"{cve} not found in any of your projects' scan data"}
-        details = finding.get("details") or {}
-        vulns = details.get("vulnerabilities") or []
-        vuln = next((v for v in vulns if (v.get("id") or "").upper() == cve), None) or {}
+        advisory = next(v for v in finding["details"]["vulnerabilities"] if cve in advisory_ids(v))
+        in_kev = bool(advisory.get(DETAILS_KEY_IN_KEV))
         return {
             "cve_id": cve,
-            "severity": vuln.get("severity") or finding.get("severity"),
-            "cvss_score": vuln.get("cvss_score") or details.get("cvss_score"),
-            "cvss_vector": vuln.get("cvss_vector"),
-            "epss_score": vuln.get("epss_score") or details.get("epss_score"),
-            "epss_percentile": details.get("epss_percentile"),
-            "exploit_maturity": details.get("exploit_maturity"),
-            "actively_exploited": details.get("exploit_maturity") in KEV_EQUIVALENT_MATURITY,
-            "description": _clip_value(vuln.get("description") or ""),
-            "fixed_version": vuln.get("fixed_version") or details.get("fixed_version"),
-            "references": (vuln.get("references") or [])[:5],
+            **advisory_view(advisory, references=5),
+            "exploit_maturity": calculate_exploit_maturity(
+                in_kev, bool(advisory.get(DETAILS_KEY_KEV_RANSOMWARE)), advisory.get("epss_score")
+            ),
             "affected_component": f"{finding.get('component', '')}@{finding.get('version', '')}",
-            "source_scanners": vuln.get("scanners"),
         }
 
     async def _tool_get_stale_findings(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1236,9 +1215,9 @@ class ChatToolRegistry:
         allowed_sev = [
             s
             for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
-            if _SEVERITY_RANK.get(s, 0) >= _SEVERITY_RANK.get(sev_min, 3)
+            if get_severity_value(s) >= SEVERITY_ORDER.get(sev_min, SEVERITY_ORDER["HIGH"])
         ]
-        latest = await self._latest_scan_ids_for_user(ctx.user_project_query, ctx.args.get("project_id"), ctx.db)
+        latest, names = await self._heads_in_scope(ctx)
         if not latest:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         cutoff = _dt.now(_tz.utc) - _td(days=days)
@@ -1259,7 +1238,6 @@ class ChatToolRegistry:
             limit,
             keep=lambda f: any((_row_project_id(f), identity) in old_keys for identity in staleness_identities(f)),
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in stale}))
         out = []
         for f in stale:
             slim = _serialize_finding_for_llm(f)
@@ -1277,7 +1255,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_license_violations(self, ctx: _ToolContext) -> dict[str, Any]:
-        latest = await self._latest_scan_ids_for_user(ctx.user_project_query, ctx.args.get("project_id"), ctx.db)
+        latest, names = await self._heads_in_scope(ctx)
         if not latest:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
@@ -1286,7 +1264,6 @@ class ChatToolRegistry:
             {"scan_id": {"$in": list(latest.values())}, "type": "license"},
             limit,
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(f) for f in rows}))
         out = []
         for f in rows:
             slim = _serialize_finding_for_llm(f)
@@ -1304,23 +1281,20 @@ class ChatToolRegistry:
         from datetime import timezone as _tz
 
         days = _clamp_limit(ctx.args.get("days"), 30, maximum=MAX_DAY_WINDOW)
-        project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
         now = _dt.now(_tz.utc)
         cutoff = now + _td(days=days)
+        query: dict[str, Any] = {"expiration_date": {"$gte": now, "$lte": cutoff}}
+        scope = await self._in_scope(ctx)
+        if scope:
+            query["$or"] = [scope, {"project_id": None}]
         rows, rows_total = await bounded_read(
             ctx.db["waivers"],
-            {
-                "$or": [
-                    {"project_id": {"$in": project_ids}},
-                    {"project_id": None},
-                ],
-                "expiration_date": {"$gte": now, "$lte": cutoff},
-            },
+            query,
             subject="waivers expiring in the window",
             limit=_EXPIRING_WAIVER_READ,
             sort=[("expiration_date", 1)],
         )
-        names = await self._project_names(ctx.db, list({_row_project_id(r) for r in rows}))
+        names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(r) for r in rows)
         out = []
         for w in rows:
             expires = w.get("expiration_date")
@@ -1338,16 +1312,10 @@ class ChatToolRegistry:
         return {"waivers": out, "count": len(out), "waivers_total": rows_total, "window_days": days}
 
     async def _tool_get_team_risk_overview(self, ctx: _ToolContext) -> dict[str, Any]:
-        team = await ctx.team_repo.get_by_id(ctx.args["team_id"])
-        if not team:
-            return {"error": _ERR_TEAM_NOT_FOUND}
-        if not await ctx.team_repo.is_member(team.id, str(ctx.user.id)) and not has_permission(
-            ctx.user.permissions, Permissions.TEAM_READ_ALL
-        ):
-            return {"error": _ERR_ACCESS_DENIED}
+        team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         projects, projects_total = await bounded_read(
             ctx.db["projects"],
-            {"team_ids": team.id},
+            and_filters(ctx.user_project_query, {"team_ids": team.id}),
             subject="team projects",
             limit=_TEAM_RISK_PROJECT_READ,
             projection={"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1},
@@ -1370,7 +1338,7 @@ class ChatToolRegistry:
         top3 = [{"project_id": pid, "project_name": name, "critical": c, "high": h} for c, h, pid, name in risky[:3]]
         return {
             "team_id": team.id,
-            "team_name": getattr(team, "name", ""),
+            "team_name": team.name,
             # Totals are summed over the projects read; project_count is the team's whole
             # holding, so the two disagree exactly when the read saturated.
             "projects_summed": len(projects),
@@ -1394,8 +1362,7 @@ class ChatToolRegistry:
                 {"last_scan_at": {"$exists": False}},
             ],
         }
-        if ctx.user_project_query:
-            query = {"$and": [query, ctx.user_project_query]}
+        query = and_filters(query, ctx.user_project_query)
         cursor = ctx.db["projects"].find(query, {"_id": 1, "name": 1, "last_scan_at": 1}, limit=limit)
         rows = await cursor.to_list(length=limit)
         out = []
@@ -1412,9 +1379,7 @@ class ChatToolRegistry:
         return {"projects": out, "count": len(out), "threshold_days": days}
 
     async def _tool_get_callgraph(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args.get("project_id", ""), ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         # The newest graph the project has, not head's: uploading one is a separate opt-in
         # CI step, so scoping to head would blank the tool out for most projects. The
         # response carries scan_id and created_at so the answer can say which build it is.
@@ -1426,9 +1391,7 @@ class ChatToolRegistry:
         return {"callgraph": _serialize_doc(doc) if doc else None}
 
     async def _tool_check_reachability(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args.get("project_id", ""), ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         finding = await ctx.db["findings"].find_one({"_id": ctx.args["finding_id"], "project_id": project["_id"]})
         if not finding:
             return {"error": _ERR_FINDING_NOT_FOUND}
@@ -1444,15 +1407,15 @@ class ChatToolRegistry:
         }
 
     async def _tool_list_archives(self, ctx: _ToolContext) -> dict[str, Any]:
+        read_all = has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL)
         query = {}
-        if ctx.args.get("project_id"):
-            project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
-            query["project_id"] = project["_id"]
-        elif not has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL):
-            project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
-            query["project_id"] = {"$in": project_ids}
+        if ctx.args.get("project_id") and read_all:
+            query["project_id"] = ctx.args["project_id"]
+        elif ctx.args.get("project_id"):
+            query["project_id"] = (await self._require_project(ctx))["_id"]
+        elif not read_all:
+            # Id-listed even for project:read_all: an archive outlives the project it came from.
+            query["project_id"] = {"$in": await self._get_authorized_project_ids(ctx)}
         limit = _clamp_limit(ctx.args.get("limit"), 20, maximum=MAX_SUMMARY_ROWS)
         cursor = ctx.db["archive_metadata"].find(query, sort=[("archived_at", -1)], limit=limit)
         archives = await cursor.to_list(length=limit)
@@ -1461,43 +1424,53 @@ class ChatToolRegistry:
     async def _tool_get_archive_details(self, ctx: _ToolContext) -> dict[str, Any]:
         archive = await ctx.db["archive_metadata"].find_one({"_id": ctx.args["archive_id"]})
         if not archive:
-            return {"error": "Archive not found or access denied"}
+            return {"error": _ERR_ARCHIVE_NOT_FOUND}
         if not has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL):
-            project = await self._get_authorized_project(archive.get("project_id", ""), ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": "Archive not found or access denied"}
+            await self._require_project(ctx, archive.get("project_id") or "", refusal=_ERR_ARCHIVE_NOT_FOUND)
         return {"archive": _serialize_doc(archive)}
 
-    async def _may_read_webhooks(self, project_id: str, ctx: _ToolContext) -> bool:
-        """In the handler because TOOL_PERMISSIONS is any-of and would refuse the project admins REST admits."""
-        try:
-            await check_webhook_list_permission(project_id, ctx.user, ctx.db)
-        except HTTPException:
-            return False
-        return True
-
     async def _tool_list_project_webhooks(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project or not await self._may_read_webhooks(project["_id"], ctx):
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
+        await _gated(check_webhook_list_permission(project["_id"], ctx.user, ctx.db), _ERR_PROJECT_NOT_FOUND)
+        # Every hook that fires for the project's events: its own, its owning teams', the global ones.
+        scopes: list[dict[str, Any]] = [{"project_id": project["_id"]}]
+        for team_id in project.get("team_ids") or []:
+            try:
+                await check_team_webhook_list_permission(team_id, ctx.user, ctx.db)
+            except HTTPException:
+                continue
+            scopes.append({"team_id": team_id})
+        if has_permission(ctx.user.permissions, Permissions.SYSTEM_MANAGE):
+            scopes.append({"project_id": None, "team_id": None})
         webhooks, webhooks_total = await bounded_read(
-            ctx.db["webhooks"], {"project_id": project["_id"]}, subject="webhooks", limit=_WEBHOOK_READ
+            ctx.db["webhooks"], {"$or": scopes}, subject="webhooks", limit=_WEBHOOK_READ
         )
         return {
-            "webhooks": [_serialize_doc(w, _WEBHOOK_FIELDS) for w in webhooks],
+            "webhooks": [
+                {
+                    **_serialize_doc(w, _WEBHOOK_FIELDS),
+                    "scope": "project" if w.get("project_id") else "team" if w.get("team_id") else "global",
+                }
+                for w in webhooks
+            ],
             "webhooks_total": webhooks_total,
         }
 
     async def _tool_get_webhook_deliveries(self, ctx: _ToolContext) -> dict[str, Any]:
-        webhook = await ctx.db["webhooks"].find_one({"_id": ctx.args["webhook_id"]})
-        if not webhook:
+        doc = await ctx.db["webhooks"].find_one({"_id": ctx.args.get("webhook_id")})
+        try:
+            webhook = Webhook.model_validate(doc)
+        except ValidationError:
+            # Absent, or a stored hook the model rejects, which never fires; the error would quote its secret.
             return {"error": _ERR_WEBHOOK_NOT_FOUND}
-        project = await self._get_authorized_project(webhook.get("project_id", ""), ctx.user_project_query, ctx.db)
-        if not project or not await self._may_read_webhooks(project["_id"], ctx):
-            return {"error": _ERR_WEBHOOK_NOT_FOUND}
+        if webhook.project_id:
+            await self._require_project(ctx, webhook.project_id, refusal=_ERR_WEBHOOK_NOT_FOUND)
+        await _gated(
+            check_webhook_permission(webhook, ctx.user, ctx.db, Permissions.WEBHOOK_READ), _ERR_WEBHOOK_NOT_FOUND
+        )
         deliveries, deliveries_total = await bounded_read(
             ctx.db["webhook_deliveries"],
-            {"webhook_id": webhook["_id"]},
+            {"webhook_id": webhook.id},
             subject="webhook deliveries",
             limit=_WEBHOOK_DELIVERY_READ,
             sort=[("timestamp", -1)],
@@ -1508,8 +1481,8 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_system_settings(self, ctx: _ToolContext) -> dict[str, Any]:
-        doc = await ctx.db["system_settings"].find_one({"_id": "current"})
-        return {"settings": SystemSettingsResponse.model_validate(doc).model_dump(mode="json") if doc else {}}
+        stored = await SystemSettingsRepository(ctx.db).get()
+        return {"settings": SystemSettingsResponse.model_validate(stored).model_dump(mode="json")}
 
     async def _tool_get_system_health(self, ctx: _ToolContext) -> dict[str, Any]:
         from app.core.cache import cache_service
@@ -1518,13 +1491,8 @@ class ChatToolRegistry:
         return {"database": "connected", "cache": cache_health}
 
     async def _tool_list_crypto_assets(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         assets = await list_crypto_assets(
             ctx.db,
             project_id=project["_id"],
@@ -1538,44 +1506,28 @@ class ChatToolRegistry:
         return {**assets, "scan": build}
 
     async def _tool_get_crypto_asset_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         result = await get_crypto_asset_details(ctx.db, project_id=project["_id"], asset_id=ctx.args["asset_id"])
         return result if result is not None else {"error": "Crypto asset not found"}
 
     async def _tool_get_crypto_summary(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         summary = await get_crypto_summary(ctx.db, project_id=project["_id"], scan_id=scan_id)
         return {**summary, "scan": build}
 
     async def _tool_get_project_crypto_policy(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return await get_project_crypto_policy(ctx.db, project_id=project["_id"])
 
     async def _tool_suggest_crypto_policy_override(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
-        answer_scan = await self._scan_under_answer(project, ctx.args.get("scan_id"), ctx.db)
-        if not answer_scan:
-            return {"error": _scan_lookup_error(ctx.args.get("scan_id"))}
-        scan_id, build = answer_scan
+        project = await self._require_project(ctx)
+        scan_id, build = await self._scan_under_answer(ctx, project)
         advice = await suggest_crypto_policy_override(ctx.db, project_id=project["_id"], scan_id=scan_id)
         return {**advice, "scan": build}
 
     async def _tool_get_crypto_hotspots(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return await get_crypto_hotspots(
             ctx.db,
             project_id=project["_id"],
@@ -1584,9 +1536,7 @@ class ChatToolRegistry:
         )
 
     async def _tool_get_crypto_trends(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return await get_crypto_trends(
             ctx.db,
             project_id=project["_id"],
@@ -1595,9 +1545,7 @@ class ChatToolRegistry:
         )
 
     async def _tool_get_scan_delta(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         scan_a = await ctx.db["scans"].find_one({"_id": ctx.args["from_scan_id"], "project_id": project["_id"]})
         scan_b = await ctx.db["scans"].find_one({"_id": ctx.args["to_scan_id"], "project_id": project["_id"]})
         if not scan_a or not scan_b:
@@ -1614,12 +1562,9 @@ class ChatToolRegistry:
         return crypto_response.model_dump(mode="json")
 
     async def _tool_generate_pqc_migration_plan(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._get_authorized_project(ctx.args["project_id"], ctx.user_project_query, ctx.db)
-        if not project:
-            return {"error": _ERR_PROJECT_NOT_FOUND}
+        project = await self._require_project(ctx)
         return await generate_pqc_migration_plan(
             ctx.db,
-            user=ctx.user,
             project_id=project["_id"],
             limit=_clamp_limit(ctx.args.get("limit"), 500, MAX_PQC_PLAN_ITEMS),
         )
@@ -1627,34 +1572,16 @@ class ChatToolRegistry:
     async def _tool_list_compliance_reports(self, ctx: _ToolContext) -> dict[str, Any]:
         project_id = ctx.args.get("project_id")
         if project_id:
-            project = await self._get_authorized_project(project_id, ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
-            return await list_compliance_reports(
-                ctx.db,
-                project_id=project["_id"],
-                framework=ctx.args.get("framework"),
-                limit=_clamp_limit(ctx.args.get("limit"), 10, MAX_COMPLIANCE_REPORT_PAGE),
-            )
-        # No project_id: restrict to the caller's visibility, else the repo
-        # query is unfiltered and leaks every scope's reports org-wide.
-        from app.services.chat import tools as _pkg
-
-        authorized_project_ids = await self._get_authorized_project_ids(ctx.user_project_query, ctx.db)
-        visibility = await self._compliance_visibility_filter(ctx.user, authorized_project_ids, ctx.team_repo)
-        framework = ctx.args.get("framework")
-        fw: Any | None = None
-        if framework:
-            try:
-                fw = _pkg.ReportFramework(framework)
-            except ValueError:
-                fw = None
-        reports = await _pkg.ComplianceReportRepository(ctx.db).list(
-            framework=fw,
+            project = await self._require_project(ctx)
+            visibility: dict[str, Any] = {"scope": "project", "scope_id": project["_id"]}
+        else:
+            visibility = await report_visibility_filter(ctx.db, ctx.user)
+        return await list_compliance_reports(
+            ctx.db,
+            visibility=visibility,
+            framework=ctx.args.get("framework"),
             limit=_clamp_limit(ctx.args.get("limit"), 10, MAX_COMPLIANCE_REPORT_PAGE),
-            extra_filter=visibility,
         )
-        return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 
     async def _tool_list_policy_audit_entries(self, ctx: _ToolContext) -> dict[str, Any]:
         project_id = ctx.args.get("project_id")
@@ -1663,10 +1590,7 @@ class ChatToolRegistry:
             if not has_permission(ctx.user.permissions, Permissions.SYSTEM_MANAGE):
                 return {"error": _ERR_ACCESS_DENIED}
         elif project_id:
-            project = await self._get_authorized_project(project_id, ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
-            project_id = project["_id"]
+            project_id = (await self._require_project(ctx))["_id"]
         return await list_policy_audit_entries(
             ctx.db,
             policy_scope=ctx.args["policy_scope"],
@@ -1678,10 +1602,7 @@ class ChatToolRegistry:
         scope = ctx.args["scope"]
         scope_id = ctx.args.get("scope_id")
         if scope == "project" and scope_id:
-            project = await self._get_authorized_project(scope_id, ctx.user_project_query, ctx.db)
-            if not project:
-                return {"error": _ERR_PROJECT_NOT_FOUND}
-            scope_id = project["_id"]
+            scope_id = (await self._require_project(ctx, scope_id))["_id"]
         return await get_framework_evaluation_summary(
             ctx.db,
             user=ctx.user,
@@ -1750,76 +1671,44 @@ class ChatToolRegistry:
         "get_framework_evaluation_summary": _tool_get_framework_evaluation_summary,
     }
 
-    async def _get_authorized_project(
-        self, project_id: str, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
-    ) -> dict[str, Any] | None:
-        """Fetch a project only if the user has access.
-
-        `user_project_query` MUST come from build_user_project_query (returns {}
-        only for PROJECT_READ_ALL users). $and, not .update(), avoids a silent
-        authorization bypass if that query ever carried an `_id` key.
-        """
-        if not user_project_query:
-            return await db["projects"].find_one({"_id": project_id})
-        return await db["projects"].find_one({"$and": [{"_id": project_id}, user_project_query]})
-
-    async def _compliance_visibility_filter(
-        self,
-        user: User,
-        authorized_project_ids: list[str],
-        team_repo: TeamRepository,
+    async def _require_project(
+        self, ctx: _ToolContext, project_id: str | None = None, *, refusal: str = _ERR_PROJECT_NOT_FOUND
     ) -> dict[str, Any]:
-        """Build the ``$or`` visibility filter for compliance reports, mirroring compliance_reports._build_visibility_filter."""
-        perms = getattr(user, "permissions", []) or []
-        is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
-        user_id = str(user.id)
+        """The project (the `project_id` argument unless one is named) if the caller's visibility query admits it."""
+        wanted = ctx.args.get("project_id") if project_id is None else project_id
+        project: dict[str, Any] | None = await ctx.db["projects"].find_one(
+            and_filters({"_id": wanted}, ctx.user_project_query)
+        )
+        if not project:
+            raise _ToolRefusal(refusal)
+        return project
 
-        branches: list[dict[str, Any]] = []
-        user_branch: dict[str, Any] = {"scope": "user"}
-        if not is_super:
-            user_branch["requested_by"] = user_id
-        branches.append(user_branch)
+    async def _get_authorized_project_ids(self, ctx: _ToolContext) -> list[str]:
+        return [p.id for p in await read_scope_projects(ctx.db, ctx.user_project_query)]
 
-        if authorized_project_ids:
-            branches.append({"scope": "project", "scope_id": {"$in": authorized_project_ids}})
-
-        user_teams = await team_repo.find_by_member(user_id)
-        team_ids = [str(t.id) for t in user_teams]
-        if team_ids:
-            branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
-
-        if is_super or has_permission(perms, Permissions.ANALYTICS_GLOBAL):
-            branches.append({"scope": "global"})
-
-        return {"$or": branches}
-
-    async def _get_authorized_project_ids(
-        self, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
-    ) -> list[str]:
-        """Every accessible project id, on the ceiling analytics answers the same question under.
-        A cut here changes which projects an answer covers without changing how the answer reads."""
-        cursor = db["projects"].find(user_project_query, {"_id": 1}, limit=scope_probe_limit())
-        projects = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
-        return [p["_id"] for p in projects]
+    async def _in_scope(self, ctx: _ToolContext) -> dict[str, Any]:
+        """A `project_id` filter to the caller's projects; none for a caller who reads them all."""
+        return {"project_id": {"$in": await self._get_authorized_project_ids(ctx)}} if ctx.user_project_query else {}
 
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
         """The scan representing the head of a project the caller already read and authorised."""
-        project_id: str = project["_id"]
-        return (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
+        return await ScanRepository(db).get_latest_active_scan_id(project)
 
-    async def _scan_under_answer(
-        self, project: dict[str, Any], requested_scan_id: str | None, db: AsyncIOMotorDatabase
-    ) -> tuple[str, dict[str, Any]] | None:
+    async def _scan_under_answer(self, ctx: _ToolContext, project: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """The build a scan-scoped tool answers about, with the block that names it. No scan_id means
         head; a caller that names one gets it, labelled against head, because a relayed answer carries
         no chart beside it against which a reader could notice the wrong build."""
-        head_scan_id = await self._head_scan_id(project, db)
-        wanted = requested_scan_id or head_scan_id
-        if not wanted:
-            return None
-        doc = await db["scans"].find_one({"_id": wanted, "project_id": project["_id"]}, _BUILD_PROJECTION)
+        requested = ctx.args.get("scan_id")
+        head_scan_id = await self._head_scan_id(project, ctx.db)
+        wanted = requested or head_scan_id
+        doc = (
+            await ctx.db["scans"].find_one({"_id": wanted, "project_id": project["_id"]}, _BUILD_PROJECTION)
+            if wanted
+            else None
+        )
         if not doc:
-            return None
+            # A named scan the project does not have is a bad argument; an absent one means nothing built yet.
+            raise _ToolRefusal(_ERR_SCAN_NOT_FOUND_IN_PROJECT if requested else _ERR_NO_SCAN_DATA)
         scan_id: str = doc["_id"]
         return scan_id, {
             "scan_id": scan_id,
@@ -1841,35 +1730,14 @@ class ChatToolRegistry:
                 stats[project_id] = scan.get("stats") or {}
         return stats
 
-    async def _latest_scan_ids_for_user(
-        self,
-        user_project_query: dict[str, Any],
-        restrict_to_project_id: str | None,
-        db: AsyncIOMotorDatabase,
-    ) -> dict[str, str]:
-        """Return {project_id: head scan id} for authorised projects, validated against
-        `restrict_to_project_id` when provided (returns {} on access denial)."""
+    async def _heads_in_scope(self, ctx: _ToolContext) -> tuple[dict[str, str], dict[str, str]]:
+        """Head scan ids and names by project id, for the `project_id` argument or the whole scope in one read."""
         from app.services.releases import resolve_scan_ids
 
-        if restrict_to_project_id:
-            project = await self._get_authorized_project(restrict_to_project_id, user_project_query, db)
-            if not project:
-                return {}
-            scan_id = await self._head_scan_id(project, db)
-            return {project["_id"]: scan_id} if scan_id else {}
-
-        project_ids = await self._get_authorized_project_ids(user_project_query, db)
-        if not project_ids:
-            return {}
-
-        return await resolve_scan_ids(db, project_ids)
-
-    @staticmethod
-    async def _project_names(db: AsyncIOMotorDatabase, project_ids: list[str]) -> dict[str, str]:
-        cleaned = [pid for pid in project_ids if pid]
-        if not cleaned:
-            return {}
-        names: dict[str, str] = {}
-        async for p in db["projects"].find({"_id": {"$in": cleaned}}, {"name": 1}):
-            names[p["_id"]] = p.get("name", "")
-        return names
+        if ctx.args.get("project_id"):
+            project = await self._require_project(ctx)
+            scan_id = await self._head_scan_id(project, ctx.db)
+            return ({project["_id"]: scan_id} if scan_id else {}), {project["_id"]: project.get("name", "")}
+        projects = await read_scope_projects(ctx.db, ctx.user_project_query)
+        heads = await resolve_scan_ids(ctx.db, [p.id for p in projects], projects=projects)
+        return heads, {p.id: p.name for p in projects}

@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import ReadPreference
 
 from app.models.invitation import SystemInvitation
 
@@ -14,21 +13,14 @@ class InvitationRepository:
         self.db = db
         self.project_invitations = db.invitations
         self.system_invitations = db.system_invitations
-        # Strong reads on token/email lookups: fresh links work immediately, used ones stop immediately.
-        self._system_primary = self.system_invitations.with_options(
-            read_preference=ReadPreference.PRIMARY,  # type: ignore[arg-type]
-        )
 
     async def delete_project_invitations_by_project(self, project_id: str) -> int:
         result = await self.project_invitations.delete_many({"project_id": project_id})
         return result.deleted_count
 
     # System Invitations
-    async def get_system_invitation(self, invitation_id: str) -> dict[str, Any] | None:
-        return await self.system_invitations.find_one({"_id": invitation_id})
-
     async def get_system_invitation_by_token(self, token: str) -> dict[str, Any] | None:
-        return await self._system_primary.find_one(
+        return await self.system_invitations.find_one(
             {
                 "token": token,
                 "is_used": False,
@@ -37,7 +29,7 @@ class InvitationRepository:
         )
 
     async def get_system_invitation_by_email(self, email: str) -> dict[str, Any] | None:
-        return await self._system_primary.find_one(
+        return await self.system_invitations.find_one(
             {
                 "email": email,
                 "is_used": False,

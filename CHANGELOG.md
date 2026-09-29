@@ -4,13 +4,18 @@ These notes cover the upgrade to 1.9.41. Run the steps in this order. Run mongos
 
 Before the rollout, resolve each gate before the first new pod starts:
 
-1. Build the findings index.
+1. Build the new indexes.
 2. Check partial restores made by a pre-release 1.9.41 build.
 3. Resolve email addresses that differ only in case, then add the case-insensitive unique index.
 4. Check what each team-syncing GitLab token can see, and decide per instance.
 5. Check SMTP in the database settings.
 6. Set the base URL of GitHub Enterprise Server instances that have none.
-7. Review synced team members and active accounts that are not verified (a review, not a gate).
+7. Fix an empty or `local` OIDC provider name, and accounts with an empty provider.
+8. Clean stored values that the stricter write schemas refuse.
+9. Prepare stored waivers for the new matching rules, and set the expiry-sweep watermark.
+10. Review synced team members and active accounts that are not verified (a review, not a gate).
+11. Review accounts that hold only one of `project:update` and `project:delete` (a review).
+12. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 11 re-creates the listed waivers from it).
 
 Deploy blocker, also before the rollout: fill the allowlists of the github.com and gitlab.com instances, or switch their auto-create off.
 
@@ -26,15 +31,23 @@ After the rollout, once the last pod on the previous image has terminated:
 6. Rotate GitHub Enterprise tokens that reached github.com.
 7. Review GitLab bindings set through the old unchecked path.
 8. Review the retention of projects created in the dialog.
+9. Restamp every project under the new waiver rules. Mandatory on every installation.
+10. Clean up callgraph languages.
+11. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
+12. Remove memberships of deleted users and leftovers of deleted projects.
+13. Watch the primary's load, and remove the Helm values the chart does not read.
 
-Once 1.9.41 is confirmed stable, drop the old findings index. Four optional checks look for abuse of the fixed gaps from before the upgrade. The behaviour changes that users and operators will notice are listed at the end.
+Once 1.9.41 is confirmed stable, drop the old indexes. Four optional checks look for abuse of the fixed gaps from before the upgrade, and optional repairs clean up data older code left behind. The behaviour changes that users and operators will notice are listed at the end.
 
-## Before the rollout (gate): build the findings index
+## Before the rollout (gate): build the new indexes
 
-The `(project_id, component, type)` findings index grows into a covering index for the first-detection lookup. Startup's `create_index` would build it in-line on the large findings collection and block pod start until the build finishes. Build it in-pod with mongosh before rolling out the new image, with the exact key, so startup finds it and does nothing. The old image does not read it, so building it early is harmless.
+The `(project_id, component, type)` findings index grows into a covering index for the first-detection lookup, and `(scan_id, severity)` grows into the key the CSV export streams from. The per-scan enrichment copy gets a `(scan_id, purl)` dependencies index, and the branch-tip lookup a scans index. Startup's `create_index` would build each in-line on a large collection and block pod start until the build finishes. Build them in-pod with mongosh before rolling out the new image, with the exact keys, so startup finds them and does nothing. The old image does not read them, so building them early is harmless.
 
 ```js
 db.findings.createIndex({ project_id: 1, component: 1, type: 1, finding_id: 1, version: 1, first_seen_at: 1, scan_created_at: 1 })
+db.findings.createIndex({ scan_id: 1, severity: 1, type: 1, finding_id: 1 })
+db.dependencies.createIndex({ scan_id: 1, purl: 1 })
+db.scans.createIndex({ project_id: 1, branch: 1, is_rescan: 1, created_at: -1, _id: 1 })
 ```
 
 ## Before the rollout (gate): check partial restores made by a pre-release 1.9.41 build
@@ -207,6 +220,167 @@ db.github_instances.updateOne({ _id: "<id>" }, { $set: { github_url: "https://<g
 
 Running the find again returns nothing once every instance is set.
 
+## Before the rollout (gate): fix an empty or `local` OIDC provider name
+
+The settings form could store an empty provider name, and the first OIDC login copies that name into `users.auth_provider`. After the rollout, every save of the system settings answers 422 while the stored name is blank or `local`, ignoring case and surrounding spaces, and an account with `auth_provider: ""` counts as local: its SSO login is refused, and without a password it cannot sign in at all. Check the settings:
+
+```js
+db.system_settings.find({_id: "current", $expr: {$in: [{$toLower: {$trim: {input: {$ifNull: ["$oidc_provider_name", "GitLab"]}}}}, ["", "local"]]}}, {oidc_enabled: 1, oidc_provider_name: 1})
+```
+
+An empty result means the name is fine. Otherwise store the label of the SSO button (the default is "GitLab"):
+
+```js
+db.system_settings.updateOne({_id: "current"}, {$set: {oidc_provider_name: "<the SSO provider's label>"}})
+```
+
+Then give the passwordless accounts with an empty provider the stored name. An absent field means the default "GitLab":
+
+```js
+const provider = (db.system_settings.findOne({_id: "current"}) || {}).oidc_provider_name ?? "GitLab";
+if (/^\s*(local)?\s*$/i.test(provider)) throw new Error("fix oidc_provider_name first");
+db.users.find({auth_provider: ""}, {email: 1, hashed_password: 1, created_at: 1});
+db.users.updateMany({auth_provider: "", hashed_password: {$in: [null, ""]}}, {$set: {auth_provider: provider}});
+```
+
+Accounts with `""` and a password keep password login. Set `auth_provider` by `_id` only for one known to sign in through SSO. If the settings check returned exactly `local`, the OIDC accounts created while it was set carry `auth_provider: "local"` and were refused SSO before too. List them with `db.users.find({auth_provider: "local", hashed_password: {$in: [null, ""]}}, {email: 1, created_at: 1})` and convert confirmed SSO users by `_id` only. Running the find with `auth_provider: ""` again then lists only accounts with a password.
+
+## Before the rollout (gate): clean stored values that the stricter write schemas refuse
+
+The write schemas now refuse unknown analyzers, out-of-range numbers, unknown modes, padded audiences and explicit nulls. The settings and project pages resend every stored value on save, so one refused stored value makes that page answer 422 until it is cleaned. The cleaned values are valid for the old image too, so run this before the rollout. Each find below returns nothing on a clean installation.
+
+Analyzer names outside the selectable set. Crypto analyzers are left out on purpose: CBOM presence decides them, so a stored crypto name has no effect.
+
+```js
+const ok = ["trivy","grype","osv","deps_dev","epss_kev","reachability","end_of_life","license_compliance","os_malware","typosquatting","hash_verification","maintainer_risk","outdated_packages","opengrep","kics","bearer","trufflehog"];
+db.projects.find({active_analyzers: {$elemMatch: {$nin: ok}}}, {name: 1, active_analyzers: 1});
+db.system_settings.find({_id: "current", default_active_analyzers: {$elemMatch: {$nin: ok}}}, {default_active_analyzers: 1});
+// after reviewing the hits:
+db.projects.updateMany({active_analyzers: {$elemMatch: {$nin: ok}}}, {$pull: {active_analyzers: {$nin: ok}}});
+db.system_settings.updateOne({_id: "current"}, {$pull: {default_active_analyzers: {$nin: ok}}});
+```
+
+Project fields stored as explicit null, which the model cannot read. For every field other than `name`, `$unset` it so the default applies; give a null name a real one per project:
+
+```js
+const nullable = ["name","active_analyzers","retention_days","retention_action","gitlab_mr_comments_enabled","github_pr_comments_enabled","enforce_notification_settings"];
+db.projects.find({$or: nullable.map(f => ({[f]: {$type: "null"}}))}, {name: 1});
+nullable.slice(1).forEach(f => printjson(db.projects.updateMany({[f]: {$type: "null"}}, {$unset: {[f]: ""}})));
+```
+
+Project names that are blank or longer than 200 characters. Rename them by hand:
+
+```js
+db.projects.find({$expr: {$or: [{$gt: [{$strLenCP: {$ifNull: ["$name", ""]}}, 200]}, {$eq: [{$trim: {input: {$ifNull: ["$name", ""]}}}, ""]}]}}, {name: 1});
+```
+
+Retention beyond 36500 days, which also crashes housekeeping's cutoff on the old image, a negative global retention, which already means keep forever, and settings modes other than `project` and `global`:
+
+```js
+db.projects.updateMany({retention_days: {$gt: 36500}}, {$set: {retention_days: 36500}});
+db.system_settings.updateOne({_id: "current", global_retention_days: {$gt: 36500}}, {$set: {global_retention_days: 36500}});
+db.system_settings.updateOne({_id: "current", global_retention_days: {$lt: 0}}, {$set: {global_retention_days: 0}});
+db.system_settings.find({_id: "current", $or: ["retention_mode","rescan_mode","crypto_policy_mode"].map(f => ({[f]: {$exists: true, $nin: ["project","global"]}}))});
+```
+
+Chat limits outside the range the settings page offers (tool rounds 1 to 50, rate limits at least 1). The stored settings are now the only source for these limits; the environment variables `CHAT_MAX_TOOL_ROUNDS`, `CHAT_RATE_LIMIT_PER_MINUTE` and `CHAT_RATE_LIMIT_PER_HOUR` are ignored:
+
+```js
+db.system_settings.find({_id: "current", $or: [{chat_max_tool_rounds: {$lt: 1}}, {chat_max_tool_rounds: {$gt: 50}}, {chat_rate_limit_per_minute: {$lt: 1}}, {chat_rate_limit_per_hour: {$lt: 1}}]}, {chat_max_tool_rounds: 1, chat_rate_limit_per_minute: 1, chat_rate_limit_per_hour: 1});
+```
+
+Fix a mode or chat hit with `$set` on the settings document.
+
+OIDC audiences with leading or trailing whitespace. CI tokens already fail the exact audience match for these instances, and new writes are trimmed:
+
+```js
+for (const c of ["github_instances", "gitlab_instances"]) {
+  printjson(db[c].find({oidc_audience: /^\s|\s$/}, {name: 1, oidc_audience: 1}).toArray());
+  db[c].updateMany({oidc_audience: /^\s|\s$/}, [{$set: {oidc_audience: {$trim: {input: "$oidc_audience"}}}}]);
+}
+```
+
+Accounts with an empty username, which every account form now requires, and legacy usernames equal to another account's email. Login resolves the username first, so such a name shadows the other account's email login. Give each hit a new username with `$set`:
+
+```js
+db.users.find({username: ""}, {email: 1});
+db.users.aggregate([{$match: {username: /@/}}, {$lookup: {from: "users", let: {n: {$toLower: "$username"}, self: "$_id"}, pipeline: [{$match: {$expr: {$and: [{$eq: [{$toLower: "$email"}, "$$n"]}, {$ne: ["$_id", "$$self"]}]}}}], as: "shadowed"}}, {$match: {shadowed: {$ne: []}}}, {$project: {username: 1, email: 1, "shadowed._id": 1, "shadowed.email": 1}}]);
+```
+
+Crypto policies a write would now refuse. They still run as before, but the editor cannot save them and a revert to such a version answers 422. In a backend pod:
+
+```bash
+python - <<'PY'
+from pymongo import MongoClient
+from pydantic import ValidationError
+from app.core.config import settings
+from app.schemas.crypto_policy import CryptoPolicyPutRequest
+db = MongoClient(settings.MONGODB_URL)[settings.DATABASE_NAME]
+for doc in db.crypto_policies.find({}, {"rules": 1}):
+    try:
+        CryptoPolicyPutRequest(rules=doc.get("rules", []))
+    except ValidationError as exc:
+        print(doc["_id"], [e["msg"] for e in exc.errors()])
+PY
+```
+
+Fix each printed policy in the editor: add a subject matcher, correct the finding type, order the expiry ladder or rename duplicate rule ids. No output means every policy saves.
+
+## Before the rollout (gate): prepare stored waivers for the new matching rules
+
+File and rule scope waivers now match by `rule_id`, and a stored placeholder or null field changes what a waiver matches after the rollout. Run these steps in this order, right before the rollout. Each find returns nothing on a clean installation.
+
+Clear stored "Unknown" placeholders. After the rollout, a stored "Unknown" would require `component == "Unknown"` and the waiver would match nothing:
+
+```js
+["finding_id", "package_name", "package_version"].forEach(f =>
+  printjson(db.waivers.updateMany({[f]: "Unknown"}, {$set: {[f]: null}})))
+```
+
+Waivers with an explicit null status or reason fail to load, and an expired one is dropped from the recalculation queue. Match the BSON null type: a missing field loads with its default.
+
+```js
+db.waivers.find({$or: [{status: {$type: "null"}}, {reason: {$type: "null"}}]}, {_id: 1, project_id: 1})
+db.waivers.updateMany({status: {$type: "null"}}, {$set: {status: "accepted_risk"}})
+```
+
+Set each null reason by hand after checking with the waiver's owner.
+
+Rule scope waivers whose `rule_id` was derived as "AGG" from a merged SAST id waived every merged SAST finding of the project and now match nothing. Review them, set the intended rule where it is known, and turn the rest into finding scope so each covers only its exact finding. Unsetting `rule_id` alone is not enough: the next step would fill it from the merged finding's first SAST entry and widen the waiver to every finding of that rule in the project:
+
+```js
+db.waivers.find({scope: "rule", rule_id: "AGG"}, {finding_id: 1, project_id: 1, reason: 1})
+// optional, per waiver: db.waivers.updateOne({_id: <id>}, {$set: {rule_id: "<details.sast_findings[].id>"}})
+db.waivers.updateMany({scope: "rule", rule_id: "AGG"}, {$set: {scope: "finding"}, $unset: {rule_id: ""}})
+```
+
+Give stored file and rule scope waivers their rule. One the script cannot resolve is printed and keeps covering only its exact finding:
+
+```js
+db.waivers.find({scope: {$in: ["file", "rule"]}, rule_id: null, finding_id: {$ne: null}}).forEach(w => {
+  const f = w.project_id ? db.findings.findOne({project_id: w.project_id, finding_id: w.finding_id}, {details: 1}) : null;
+  const d = (f && f.details) || {};
+  const rule = ((d.sast_findings || [])[0] || {}).id || d.rule_id || d.detector;
+  if (rule) db.waivers.updateOne({_id: w._id}, {$set: {rule_id: rule}});
+  else print(`review ${w._id}: ${w.scope} ${w.finding_id} project=${w.project_id}`);
+})
+db.waivers.find({scope: "file", package_name: null}, {finding_id: 1, rule_id: 1, project_id: 1})  // review only
+```
+
+The last find lists file scope waivers without a file. They keep working, but creating one like them now answers 422.
+
+Drop the stored `is_active`. Responses compute it now, and the stored value is frozen at write time:
+
+```js
+db.waivers.updateMany({is_active: {$exists: true}}, {$unset: {is_active: ""}})
+```
+
+Last, set the expiry-sweep watermark. Without it, the first recalculation on the new image queues every waiver that ever expired, and the mandatory restamp after the rollout covers those projects anyway. The old image does not read the collection:
+
+```js
+db.waiver_recalc.updateOne({_id: "expiry_sweep"}, {$set: {swept_until: new Date()}}, {upsert: true})
+```
+
 ## Before the rollout (review): synced members and accounts that are not verified
 
 Identity matching now uses verified accounts only. These read-only reviews show who is affected; they do not block the rollout.
@@ -231,6 +405,38 @@ Active unverified accounts are no longer found by team member add, project invit
 ```js
 db.users.find({is_active: {$ne: false}, is_verified: {$ne: true}}, {username: 1, email: 1, auth_provider: 1})
 ```
+
+## Before the rollout (review): accounts that hold only one of `project:update` and `project:delete`
+
+`project:update` now edits any project and `project:delete` deletes any project; neither grants the other's actions. An account meant to do both needs both grants. This lists the accounts that hold exactly one:
+
+```js
+db.users.find({$or: [{$and: [{permissions: "project:delete"}, {permissions: {$ne: "project:update"}}]}, {$and: [{permissions: "project:update"}, {permissions: {$ne: "project:delete"}}]}]}, {username: 1, permissions: 1})
+```
+
+Add the missing grant where the account needs it. An empty result means nobody loses an action.
+
+## Before the rollout (review): waivers that name scoped npm packages by their bare name
+
+CycloneDX npm components with a scope are now named like their purl, `@angular/core` instead of `core`. A waiver on `core`, `core:16.2.0` or `OUTDATED-core` stops matching after the rollout, and its findings re-open and can alert again. The listing reads the dependency rows that still carry the bare name, so run it before the rename step after the rollout. In a backend pod:
+
+```bash
+python - <<'PY'
+import re
+from pymongo import MongoClient
+from app.core.config import settings
+db = MongoClient(settings.MONGODB_URL)[settings.DATABASE_NAME]
+npm = {"purl": {"$regex": "^pkg:npm/"}}
+bare = {"group": {"$regex": "^@"}, "name": {"$type": "string", "$not": {"$regex": "^@"}}}
+names = db.dependencies.distinct("name", {**npm, **bare})
+token = re.compile(rf"(^|[-:/])({'|'.join(map(re.escape, names))})([-:@]|$)") if names else None
+for w in db.waivers.find({"$or": [{"package_name": {"$ne": None}}, {"finding_id": {"$ne": None}}]}):
+    if token and (w.get("package_name") in names or token.search(w.get("finding_id") or "")):
+        print(w["_id"], w.get("project_id"), w.get("package_name"), w.get("finding_id"))
+PY
+```
+
+It matches bare names as tokens inside finding ids, so review the list before acting on it. Keep it: each listed waiver is re-created under the scoped name after the rename. No output means no waiver is affected.
 
 ## Deploy blocker: fill the allowlists of the github.com and gitlab.com instances
 
@@ -638,12 +844,131 @@ db.projects.find(
 ).sort({ created_at: -1 })
 ```
 
-## Once 1.9.41 is confirmed stable: drop the old findings index
+## After the rollout (mandatory): restamp every project under the new waiver rules
 
-The new findings index starts with the old `(project_id, component, type)` key, so the old index only costs writes now. Drop it only once a rollback is no longer expected: 1.9.40 recreates it at startup, in-line on the large findings collection, and pods do not start until that build finishes.
+Scans keep the waived flags stamped under the old matching rules until the project's next waiver change or analysis: a global rule waiver with a type waived its whole type, and a merged-SAST file waiver covered every rule in the file. Projects in release mode would keep hiding those findings. Run this once every pod runs the new image, because an old pod still stamps by the old rules.
+
+First drop the per-project bookkeeping and the pinned signature from global waivers, and the waiver fingerprint of scans the new image stamped with those signatures during the rollout. This queues nothing by itself:
+
+```js
+db.waivers.updateMany({project_id: null}, {$unset: {match: "", last_eval_scan_id: "", last_match_count: ""}})
+db.scans.updateMany({waiver_fingerprint: {$exists: true}}, {$unset: {waiver_fingerprint: ""}})
+```
+
+Then queue one project-scoped entry per project. Each loads as a project waiver, so its project is recalculated unconditionally, and because no scan carries a waiver fingerprint yet, head, the branch tips built in the last 30 days and the released scans are all restamped:
+
+```js
+db.projects.find({}, {_id: 1}).forEach(p => db.waiver_recalc.insertOne({waiver: {_id: "restamp-" + p._id, project_id: p._id, reason: "post-deploy restamp", created_by: "operator"}}))
+```
+
+The next waiver request or housekeeping tick (every 5 minutes) works the queue off, one project at a time, in one pod. Follow it with `db.waiver_recalc.countDocuments({waiver: {$exists: true}})`; the restamp is done at 0. Older branch tips and other non-head scans keep their flags until they are analysed again.
+
+## After the rollout: clean up callgraph languages
+
+Callgraph languages are now stored in canonical form, and an upload of any language outside python, go, javascript, typescript, java, kotlin, scala and groovy answers 400. A Go callgraph stored as `golang` or with padding was keyed by host (`github.com`) and cannot be repaired, so it is deleted; the pipeline's next upload replaces it. Every other alias or case variant is renamed, unless a canonical twin for the same project, scan and language exists, in which case the variant is deleted. Unsupported languages are deleted. Run this once every pod runs the new image. Save it as `cleanup.js`, copy it to the MongoDB pod, dry-run it with `mongosh --quiet <db> cleanup.js`, then run `mongosh --quiet <db> --eval 'var execute = true' cleanup.js`:
+
+```js
+const EXECUTE = typeof execute !== "undefined" && execute;
+const alias = {golang: "go", js: "javascript", node: "javascript", nodejs: "javascript", ts: "typescript", py: "python"};
+const supported = ["python", "go", "javascript", "typescript", "java", "kotlin", "scala", "groovy"];
+db.callgraphs.find({language: {$nin: supported}}, {project_id: 1, scan_id: 1, language: 1}).toArray().forEach(d => {
+  const lower = String(d.language).trim().toLowerCase();
+  const lang = alias[lower] || lower;
+  const collapsedGo = lang === "go" && String(d.language).toLowerCase() !== "go";
+  const twin = db.callgraphs.findOne({_id: {$ne: d._id}, project_id: d.project_id, scan_id: d.scan_id ?? null, language: lang});
+  const drop = !supported.includes(lang) || collapsedGo || twin !== null;
+  print(d._id, JSON.stringify(d.language), drop ? "delete" : `rename -> ${lang}`);
+  if (EXECUTE) {
+    if (drop) db.callgraphs.deleteOne({_id: d._id});
+    else db.callgraphs.updateOne({_id: d._id}, {$set: {language: lang}});
+  }
+});
+```
+
+The dry run prints one line per callgraph it would touch; no output means every stored language is canonical. When two variants of one project and scan map to the same language, such as `JS` and `js`, the dry run prints a rename for both, but the real run renames the first and deletes the other as its twin. A Python callgraph keeps first-segment keys until its next upload, and dotted distributions read "unknown" until then.
+
+## After the rollout: rename scoped npm dependency rows
+
+New ingests name a scoped CycloneDX npm component `@angular/core`. Stored rows still say `core` with group `@angular`, so they no longer join the findings of new scans. Run this once every pod runs the new image, because the old parser writes bare names. After this step a rollback makes new ingests bare again while the renamed rows stay scoped, so roll back before it if at all. A bare row whose scoped twin already exists is left alone. In a backend pod, dry-run first, then run again with `EXECUTE=1`:
+
+```bash
+env EXECUTE=0 python - <<'PY'
+import os
+from pymongo import MongoClient
+from app.core.config import settings
+EXECUTE = os.environ.get("EXECUTE") == "1"
+db = MongoClient(settings.MONGODB_URL)[settings.DATABASE_NAME]
+npm = {"purl": {"$regex": "^pkg:npm/"}}
+bare = {"group": {"$regex": "^@"}, "name": {"$type": "string", "$not": {"$regex": "^@"}}}
+starts_with_at = {"$eq": [{"$substrCP": ["$name", 0, 1]}, "@"]}
+scoped_name = {"$cond": [starts_with_at, "$name", {"$concat": ["$group", "/", "$name"]}]}
+clashes = [
+    row["_id"]
+    for key in db.dependencies.aggregate([
+        {"$match": {**npm, "$or": [bare, {"name": {"$regex": "^@"}}]}},
+        {"$group": {"_id": {"s": "$scan_id", "n": scoped_name, "v": "$version", "p": "$purl"},
+                    "rows": {"$push": {"_id": "$_id", "name": "$name"}}}},
+        {"$match": {"rows.1": {"$exists": True}}},
+    ], allowDiskUse=True)
+    for row in key["rows"] if not row["name"].startswith("@")
+]
+affected_scans = db.dependencies.distinct("scan_id", {**npm, **bare})
+heads = list(db.projects.find({"latest_scan_id": {"$in": affected_scans}}, {"latest_scan_id": 1}))
+lineage = affected_scans + db.scans.distinct("original_scan_id", {"_id": {"$in": affected_scans}})
+pinned = list(db.releases.find({"scan_id": {"$in": lineage}}, {"project_id": 1, "scan_id": 1, "environment": 1}))
+print("bare scoped npm rows:", db.dependencies.count_documents({**npm, **bare}))
+print("left as they are (scoped twin exists):", len(clashes))
+print("scans:", len(affected_scans), "of which project heads:", len(heads), "release rows:", len(pinned))
+for project in heads:
+    print("  head", project["_id"], project["latest_scan_id"])
+for release in pinned:
+    print("  release", release["project_id"], release["scan_id"], release.get("environment"))
+if EXECUTE:
+    result = db.dependencies.update_many(
+        {**npm, **bare, "_id": {"$nin": clashes}},
+        [{"$set": {"name": {"$concat": ["$group", "/", "$name"]}}}])
+    print("renamed:", result.modified_count)
+PY
+```
+
+`bare scoped npm rows: 0` means there is nothing to rename and nothing to rescan. Otherwise rescan every head and release row the script printed. Their findings came from analyzers fed by the old names, and the rescan also drops the rows left alone. Release views follow the rescan chain, so rescanning the pinned scan is enough, and only the newest release row per environment needs it. With an editor token, per printed pair:
+
+```bash
+curl -X POST -H "Authorization: Bearer <token>" https://<host>/api/v1/projects/<project_id>/scans/<scan_id>/rescan
+```
+
+Then re-create each waiver from the review before the rollout under the scoped package name or finding id.
+
+## After the rollout: remove memberships of deleted users and leftovers of deleted projects
+
+Deleting a user now removes them from every team and project, and deleting a project also deletes its webhooks and its project crypto policy. Deletions made before the upgrade left those behind. Count first, then write:
+
+```js
+const live = db.users.distinct("_id");
+const ghost = {members: {$elemMatch: {user_id: {$nin: live}}}};
+db.teams.countDocuments(ghost); db.projects.countDocuments(ghost);
+db.teams.updateMany(ghost, {$pull: {members: {user_id: {$nin: live}}}, $set: {updated_at: new Date()}});
+db.projects.updateMany(ghost, {$pull: {members: {user_id: {$nin: live}}}});
+const pids = db.projects.distinct("_id");
+db.webhooks.countDocuments({project_id: {$nin: [null, ...pids]}}); db.crypto_policies.countDocuments({scope: "project", project_id: {$nin: pids}});
+db.webhooks.deleteMany({project_id: {$nin: [null, ...pids]}});
+db.crypto_policies.deleteMany({scope: "project", project_id: {$nin: pids}});
+```
+
+Zero counts mean there is nothing to remove. Afterwards, check for teams and projects left without an admin before telling anyone.
+
+## After the rollout: watch the primary's load, and remove unused Helm values
+
+Every MongoDB read now goes to the primary; a `readPreference` in the URI is overridden. Watch the primary's CPU and connection count on the replica set after the rollout, and during the first restamp, whose reads all go there. The chart no longer reads `backend.env.mongodbReadPreference`, and no template ever read `chat.rateLimitPerMinute` or `chat.rateLimitPerHour`; remove all three from the deployment values. Leaving them is harmless but misleading. The updated Grafana dashboard `chat-ai-assistant.json` ships with the chart and shows the new `dc_chat_tool_calls_total` statuses on its "Tool Error Rate" panel.
+
+## Once 1.9.41 is confirmed stable: drop the old indexes
+
+The new findings indexes start with the old `(project_id, component, type)` and `(scan_id, severity)` keys, and nothing reads the webhook deliveries' `(success, webhook_id)` index, so the old indexes only cost writes now. Drop them only once a rollback is no longer expected: 1.9.40 recreates them at startup, in-line on the large findings collection, and pods do not start until that build finishes.
 
 ```js
 db.findings.dropIndex("project_id_1_component_1_type_1")
+db.findings.dropIndex("scan_id_1_severity_-1")
+db.webhook_deliveries.dropIndex("success_1_webhook_id_1")
 ```
 
 ## Optional after the rollout: look for abuse from before the fix
@@ -695,6 +1020,132 @@ db.chat_messages.aggregate([
 ])
 ```
 
+## Optional after the rollout: repair and reclaim stored data
+
+None of these is needed for correctness. Each one fixes or trims data that older code wrote, and the next analysis of a project rewrites most of it for that project's latest scan. Run the bulk writes off-peak.
+
+A root's `latest_rescan_id` now names its last delivered rescan. A root that points at a failed or pending rescan heals at its next delivered rescan. To repoint it now, dry-run first by replacing `updateOne` with `print(root._id, best && best._id)`:
+
+```js
+const usable = ["completed", "completed_with_errors"];
+db.scans.find({ latest_rescan_id: { $ne: null } }, { latest_rescan_id: 1 }).forEach(root => {
+  const pointed = db.scans.findOne({ _id: root.latest_rescan_id }, { status: 1 });
+  if (pointed && usable.includes(pointed.status)) return;
+  const best = db.scans.find({ original_scan_id: root._id, is_rescan: true, status: { $in: usable } }, { _id: 1 })
+    .sort({ created_at: -1, _id: 1 }).limit(1).toArray()[0];
+  db.scans.updateOne({ _id: root._id },
+    best ? { $set: { latest_rescan_id: best._id } } : { $unset: { latest_rescan_id: "" } });
+});
+```
+
+A rescan that stuck recovery failed before the upgrade still shows "rescan in progress", because its root's `latest_run` says pending. A scheduled target heals at its next rescan; a manually rescanned scan does not. The count takes one collection scan, and no result means there is nothing to repair:
+
+```js
+db.scans.aggregate([
+  { $match: { "latest_run.status": "pending" } },
+  { $lookup: { from: "scans", localField: "latest_run.scan_id", foreignField: "_id", as: "run" } },
+  { $match: { "run.status": "failed" } },
+  { $count: "roots" },
+])
+db.scans.find({ "latest_run.status": "pending" }, { "latest_run.scan_id": 1 }).forEach((root) => {
+  const run = db.scans.findOne({ _id: root.latest_run.scan_id, status: "failed" }, { completed_at: 1 });
+  if (!run) return;
+  const failed = { scan_id: run._id, status: "failed" };
+  if (run.completed_at) failed.completed_at = run.completed_at;
+  db.scans.updateOne(
+    { _id: root._id, "latest_run.scan_id": run._id, "latest_run.status": "pending" },
+    { $set: { latest_run: failed } },
+  );
+});
+```
+
+Rescans stuck with `reachability_pending` get their reachability with this, in a backend pod. The next periodic rescan also fixes the head.
+
+```bash
+python - <<'PY'
+import asyncio
+from app.db.mongodb import connect_to_mongo, get_database
+from app.services.reachability_enrichment import run_pending_reachability_for_scan
+async def main():
+    await connect_to_mongo()
+    db = await get_database()
+    async for s in db.scans.find({"is_rescan": True, "reachability_pending": True}, {"_id": 1, "project_id": 1}):
+        print(s["_id"], await run_pending_reachability_for_scan(s["_id"], s["project_id"], db))
+asyncio.run(main())
+PY
+```
+
+Webhooks subscribed under the snake_case event names still receive their events. To store the canonical names, run the following; afterwards `db.webhooks.countDocuments({events: {$in: ["scan_completed", "vulnerability_found", "analysis_failed"]}})` must be 0:
+
+```js
+db.webhooks.updateMany(
+  { events: { $in: ["scan_completed", "vulnerability_found", "analysis_failed"] } },
+  [{ $set: { events: { $setUnion: [{ $map: { input: "$events", as: "e", in: { $switch: {
+      branches: [
+        { case: { $eq: ["$$e", "scan_completed"] }, then: "scan.completed" },
+        { case: { $eq: ["$$e", "vulnerability_found"] }, then: "vulnerability.found" },
+        { case: { $eq: ["$$e", "analysis_failed"] }, then: "analysis.failed" }
+      ], default: "$$e" } } } }] } } }]
+)
+```
+
+Older secret findings read "Secret detected: <number>". This gives them the detector name, in a backend pod. It changes only descriptions, never `finding_id` or `details.detector`, which waivers match on.
+
+```bash
+python - <<'PY'
+import asyncio
+from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX as P, DETECTOR_TYPE_NAMES as N
+from app.db.mongodb import connect_to_mongo, get_database
+async def main():
+    await connect_to_mongo()
+    db = await get_database()
+    for d in await db.findings.distinct("description", {"type": "secret"}):
+        raw = d[len(P):] if d.startswith(P) else ""
+        if raw.isdigit() and int(raw) in N:
+            r = await db.findings.update_many({"type": "secret", "description": d}, {"$set": {"description": P + N[int(raw)]}})
+            print(d, "->", N[int(raw)], r.modified_count)
+asyncio.run(main())
+PY
+```
+
+A stored `dependency_enrichments.enrichment_sources` holds only the last writer's list until its purl is enriched again. This derives the union now:
+
+```js
+db.dependency_enrichments.updateMany({deps_dev: {$exists: true}}, {$addToSet: {enrichment_sources: "deps_dev"}})
+db.dependency_enrichments.updateMany({$or: [{license_category: {$exists: true}}, {license_risks: {$exists: true}}, {license_obligations: {$exists: true}}]}, {$addToSet: {enrichment_sources: "license_compliance"}})
+```
+
+On findings enriched before the upgrade, this sets the KEV due date to the earliest nested one, and copies the date added and required action onto a record's single KEV advisory. Records with several KEV advisories get theirs on re-analysis.
+
+```js
+db.findings.updateMany({type: "vulnerability", "details.in_kev": true, "details.vulnerabilities.kev_due_date": {$type: "string"}}, [{$set: {"details.kev_due_date": {$min: {$map: {input: {$filter: {input: "$details.vulnerabilities", cond: {$eq: [{$type: "$$this.kev_due_date"}, "string"]}}}, in: "$$this.kev_due_date"}}}}}])
+db.findings.find({type: "vulnerability", "details.in_kev": true,
+    "details.vulnerabilities": {$elemMatch: {in_kev: true, kev_date_added: {$exists: false}}}}).forEach(d => {
+  if (d.details.vulnerabilities.filter(v => v.in_kev).length !== 1) return;
+  db.findings.updateOne({_id: d._id, "details.vulnerabilities.in_kev": true}, {$set: {
+    "details.vulnerabilities.$.kev_date_added": d.details.kev_date_added,
+    "details.vulnerabilities.$.kev_required_action": d.details.kev_required_action}});
+});
+```
+
+These reclaim the bytes of fields that are no longer written. After the SAST line, each row of the multi-scanner SAST view shows the merged finding's description, as it does for new scans. First check the Metabase cards for `details.vulnerabilities.source`, `details.vulnerabilities.description_source` and `details.github_advisory_url`, which are no longer written.
+
+```js
+db.findings.updateMany({type: "vulnerability", "details.vulnerabilities.0": {$exists: true}}, {$unset: {"details.github_advisory_url": "", "details.vulnerabilities.$[].description_source": "", "details.vulnerabilities.$[].source": "", "details.vulnerabilities.$[].details.fixed_version": "", "details.vulnerabilities.$[].details.cvss_score": "", "details.vulnerabilities.$[].details.cvss_vector": "", "details.vulnerabilities.$[].details.references": ""}})
+db.findings.updateMany({type: "quality", "details.quality_issues.0": {$exists: true}}, {$unset: {"details.quality_issues.$[].source": ""}})
+db.findings.updateMany({type: "sast", "details.sast_findings.0": {$exists: true}}, {$unset: {"details.cwe_ids": "", "details.owasp": "", "details.category_groups": "", "details.sast_findings.$[].title": "", "details.sast_findings.$[].description": ""}})
+db.analysis_results.updateMany({analyzer_name: "trivy"}, {$unset: {"result.trivy_vulnerabilities": ""}})
+db.analysis_results.updateMany({analyzer_name: "grype"}, {$unset: {"result.grype_vulnerabilities": ""}})
+db.scan_update_deltas.updateMany({total_updates: {$exists: true}}, {$unset: {total_updates: ""}})
+db.projects.updateMany({}, {$unset: {"analyzer_settings.deps_dev.scorecard_high_threshold": "", "analyzer_settings.deps_dev.scorecard_medium_threshold": "", "analyzer_settings.deps_dev.scorecard_low_threshold": ""}})
+```
+
+A sync no longer re-stamps an owner that carries a bare provider value (`gitlab` or `github`), so only the owner picker removes it. This count should be 0:
+
+```js
+db.projects.countDocuments({$expr: {$gt: [{$size: {$filter: {input: {$objectToArray: {$ifNull: ["$team_sources", {}]}}, cond: {$in: ["$$this.v", ["gitlab", "github"]]}}}}, 0]}})
+```
+
 ## Behaviour changes
 
 ### Sign-in, sessions and accounts
@@ -709,6 +1160,14 @@ db.chat_messages.aggregate([
 - An OIDC login whose `email_verified` claim is false in any case or padding, or `"0"` or `0`, is refused with 400 "The identity provider has not verified this email address". An absent claim still logs in.
 - Admin password reset (`POST /users/{id}/reset-password`) never returns a link. It sends the mail and answers `{"message": "Password reset email sent"}`, or 501 "Email server not configured" without SMTP in the database settings. The user dialog no longer shows a manual link.
 - User management (`PUT /users/{id}` on another user, `POST /users/{id}/migrate`, `/reset-password`, `/2fa/disable`, `DELETE /users/{id}`) answers 403 "Cannot manage a user who holds permissions you don't hold" when the target holds a permission the caller lacks, unless the caller holds `system:manage`. A permission edit can no longer revoke a permission the caller lacks, and no longer fails because the target keeps one.
+- An account stored with `auth_provider: ""` counts as local on every path. It signs in only with a password, and OIDC login answers 400 "This account uses local authentication". `PUT /system/settings` answers 422 for an empty or `local` `oidc_provider_name`, so while such a name is stored, every settings save fails. See the OIDC provider gate above.
+- An SSO account that also has a password can no longer reset it by email; migrate it to local first.
+- `POST /users` answers 422 for `auth_provider`, unknown fields, `is_active: null` or a missing password. `PUT /users/{id}` needs `user:update` and answers 422 for a `password` field or a null `is_active` or `permissions`; self-service uses `PATCH /users/me`.
+- A taken identity answers 400 "Email already registered" or "Username already taken" on every path, concurrent writes included, which used to get 500.
+- Usernames that are empty, blank or contain "@" answer 422 on signup, admin create, admin update and invitation accept, and usernames are stored trimmed. A new SSO account whose `preferred_username` is empty or an email address is named after its mailbox, with a numeric suffix if taken.
+- `POST /invitations/system` answers 422 for a malformed email and stores it lowercased. A system invitation is revoked with `DELETE /invitations/system/{id}` under `user:create`; `DELETE /users/{id}` answers 404 "User not found" for invitation ids.
+- Deleting a user removes them from every team and project.
+- `GET /users/` answers 422 for a `limit` outside 1-100 or a `skip` below 0.
 
 ### Teams, projects and permissions
 
@@ -719,6 +1178,15 @@ db.chat_messages.aggregate([
 - Team member add and project invite by email find only accounts with a verified email, in any case, and otherwise answer 404 "No user has verified this email address". Accounts created by an admin, or by a signup whose link was never clicked, are not verified.
 - GitLab binding changes need an admin. Setting or changing `gitlab_instance_id` or `gitlab_project_id` through `PUT /api/v1/projects/{id}` needs `system:manage`, `project:update` or `project:delete`; project admins get 403. Clearing both stays open to project admins, and resending the stored values is unaffected. A half binding answers 400, an unknown instance 404, and a GitLab project bound to another project 409 instead of 500. When the instance answers, the stored path is GitLab's `path_with_namespace`.
 - Project settings show other users a bound project's GitLab link read-only, with a "Remove GitLab link" action. Choosing "None" as the GitLab instance clears the project id and path too.
+- `project:update` and `project:delete` are separate grants. `project:update` no longer deletes projects. `project:delete` no longer edits projects, rotates keys, manages members, writes callgraphs or webhooks, binds GitLab or grants teams. See the review of accounts holding only one of them above.
+- Team reads, chat team tools and the analytics team scope included, need `team:read` or `team:read_all`, and they include only projects the caller can read. Chat team tools answer "Team not found or access denied" to both.
+- Team-scope analytics (crypto hotspots, locations and trends, PQC plan, compliance reports) serve non-members holding `project:read_all`, `analytics:global` or `system:manage` with all of the team's projects. Members without a project read, and `team:read_all` holders who are not members, get 403. Only those three permissions see every team's compliance reports. A report outside the caller's scope, including another user's personal report, answers 404, ahead of the 409 and 410 status checks. A database error during a scope check answers 500.
+- `DELETE /teams/{unknown}` answers 404. Demoting the last team admin answers 400. Editing or removing a member that a live GitLab or GitHub sync owns answers 409 naming the binding. A hand-added member whom the group also holds keeps their manual entry and role across syncs.
+- A provider sync no longer takes over an owner that the project holds by hand, through another instance or with a bare provider value. The owner picker removes such owners.
+- Write superusers may create a project for any team; an unknown team answers 404. `GET /projects/{id}` returns `notification_overrides`, and each member carries `effective_role`. `PUT /projects/{id}/members/{user_id}` requires `role` and takes nothing else, and an empty role answers 422. Write superusers may remove or demote the last direct project admin. Team-granted members can save project notification preferences, and team admins can enforce them.
+- Deleting a project also deletes its webhooks and its project crypto policy.
+- `POST` and `PUT /projects` answer 422 for a name that is blank or over 200 characters, `retention_days` above 36500 or an unknown analyzer. `PUT` also answers 422 for an explicit null on the name, analyzers, retention, comment toggles or `enforce_notification_settings`. Names are stored trimmed. `PUT /teams/{id}` with a null name answers 422. A project created in the UI without touching the analyzers gets the server defaults.
+- The 403 on callgraph routes reads "Not enough permissions" instead of "Access denied", and archive and chat 403s name the missing permission. With chat disabled, a caller who lacks the chat permission gets that 403.
 
 ### CI integrations
 
@@ -738,23 +1206,123 @@ db.chat_messages.aggregate([
 - Download decryption follows the bundle: a plaintext bundle downloads after encryption was switched on, and an encrypted bundle fails once the key is removed. A bundle that fails its digest check, is truncated or has an unknown header version aborts the download mid-stream.
 - New bundles never contain TruffleHog `Raw`. A TruffleHog row that fails validation fails the archive of its scan, and the scan's data stays in MongoDB.
 
+### Waivers
+
+- File and rule waivers match by `rule_id`: across scanners, across merged SAST findings of that rule, and across a secret detector's files. A global rule waiver with a type waives only its rule, and one without a type now applies. A partial CVE waiver no longer lifts a whole-finding waiver on the same component, whatever the order the waivers were created in.
+- A finding-scope location waiver without a finding id, such as the global dialog's "match broadly", now waives every finding it describes in stored scans. A waiver whose named finding has no signature falls back to its criteria instead of matching nothing. Expect more findings to show as waived after the restamp.
+- `POST /waivers` answers 422 in these cases:
+  - a file or rule waiver whose rule cannot be named (global ones must pass `rule_id`)
+  - a file waiver without `package_name`
+  - a finding type other than SAST, IaC, secret and crypto key management
+  - a `LIC-` or `EOL-` finding id without `finding_type`
+  - a waiver with no criteria
+
+  `PATCH /waivers/{id}` answers 422 for an explicit null status or reason. The messages for an invalid status or scope come from the type, for example "Input should be 'accepted_risk' or 'false_positive'".
+- `POST /waivers` takes an optional `scan_id`, which the finding modal sends, so a finding seen only on a feature or MR branch can be waived. A scan of another project answers 404 "Scan not found in this project".
+- A waiver change is queued in `waiver_recalc` and survives a restart. One run at a time works the queue off, started by the request and by housekeeping every 5 minutes. An expiry restamps its project, or every project a global waiver reaches, within one housekeeping interval. Head and released scans are always restamped, and branch tips only when they were built in the last 30 days. A reason-only PATCH restamps too. Scans carry a new `waiver_fingerprint`, so an unchanged waiver set restamps nothing.
+- Waiver responses carry the computed `is_active`, and list items no longer carry `match`. `waiver:read_all` opens and filters any project's waivers; `waiver:read` opens global waivers and `global_only=true`. The chat waiver tools need one of the two.
+- The lapsed badge shows only for a candidate within 50 lines of the waiver's last line. Otherwise the waiver shows as orphaned ("Matches nothing"), and so do duplicates and waivers without criteria. Global waivers no longer show a badge taken from one project. Feature-branch and MR scans follow line drift at ingest.
+
+### Scans, branches and retention
+
+- Head, project stats, branch tips, the default in `/branches`, the CSV and inventory scan per branch, and the rescan target follow one rule. A scan with SBOMs outranks every scan without them. A late older build, a feature build or a tag build does not move head. `/projects/{id}/branches` and `/scans/branch-tips` do not list tags, and branch tips no longer return `flagged_release_scan`. The CSV export of a tag-only project answers 404.
+- A manual rescan answers 409 while the scan is pending or processing, or while a rescan of its lineage runs, and it resets the scheduler's clock. Scheduled rescans show as pending (`latest_run`) in the scan list. `latest_rescan_id` names the last delivered rescan. "Recent Activity" no longer lists rescans.
+- The daily retention pass keeps each build's newest 7 usable rescans, plus pinned ones. It deletes the rest, or archives them for `archive` projects. At the defaults (90 days, every 24 h) the first pass removes about 83 rescans per rescan target. `archive` projects upload each one first, so their first pass takes longer. Retention never deletes a project's head build.
+- `POST /projects/{id}/sync-branches` answers 400 when the VCS link lacks coordinates, and 502 when the VCS cannot be reached or lists no branches. Branch sync and MR/PR decoration skip an inactive VCS instance.
+- Every failed scan carries `completed_at`. Stuck recovery has its own budget of 3 (`stuck_retry_count`). A scheduler pass creates rescans only while the local queue is shorter than the worker count. With `rescan_mode=global`, housekeeping ignores projects' own rescan settings.
+- Scans carry a new `sbom_generation`. Re-ingesting an SBOM while its scan is analysed reschedules the analysis on the new SBOM, and dependency rows keep their `_id`. Marking a commit as a release binds to its newest build that did not fail.
+- When an SBOM of a payload fails to parse, the stored inventory stays as it was. The scan ends `completed_with_errors` with "N of M SBOMs failed to parse; dependency inventory left unchanged", and a rescan ends `failed`. A re-analysis whose SBOM cannot be loaded keeps the previous findings. The failure text for an unusable SBOM reads "SBOM could not be loaded or parsed for analysis".
+- `analysis_completed`, `scan_completed` and the security alert fire once for each distinct content of a scan. `project.last_scan_at` is stamped by SBOM, CBOM and findings posts; analyses and rescans leave it alone.
+
 ### Analysis and uploads
 
 - Callgraph uploads ignore a `scan_id` in the request body. The scan is always derived from the project in the path together with `pipeline_id` and the commit. Clients that still send `scan_id` keep working, and the field is dropped.
 - New ad-hoc and callgraph size limits answer 413 before any parsing. Ad-hoc `/api/v1/analyze` refuses more than 50 000 callgraph entries and more than 250 000 SBOM dependency-graph entries, and SPDX `externalRefs` now count against the 20 000 component-evidence budget.
 - A callgraph upload's 200 000-entry limit now also counts symbols, madge dependencies and analyzed modules, and an oversized upload with a bad format gets 413 instead of 400. A `callee_function` that is a JSON object or array fails the parse (400 on upload).
 - OSV malicious-package (MAL-) matches now produce a CRITICAL malware finding; they used to be dropped. Expect new malware findings, and the notifications they trigger, on the next scan of affected projects; a rescan surfaces them sooner. OSV findings now carry `published` and `modified`.
+- Callgraph uploads answer 400 for a language outside python, go, javascript, typescript, java, kotlin, scala and groovy, which used to be stored and never matched; aliases such as `golang` or `ts` are mapped. GET filters accept any spelling of a supported language. An upload without a commit attaches to the pipeline's analysed scan.
+- CycloneDX npm components with a scope group are stored as `@scope/name`, and dependency trees of syft, cyclonedx-npm and cyclonedx-py SBOMs nest.
+- OSV now queries Debian and Alpine packages, so container scans get more findings. It no longer queries components without a version, and it reports a component it cannot take as not scanned. deps.dev is no longer asked about composer, pub, hex, cran, cocoapods and swift packages.
+- The version order changed:
+  - a Debian binNMU ranks above its base
+  - prereleases rank below their release
+  - post-release suffixes such as `.post1` rank above their bare release, and `.Final`, `.GA` and `.RELEASE` equal it
+  - an epoch and trailing zeros past the minor drop out: `1:2.30-1` equals `2.30-1`, and `4.1.0` equals `4.1`
+  - letter suffixes and Debian revisions compare numerically
+
+  `details.fixed_version` is empty as soon as one advisory has no fix, and ignores fixes below the installed version.
+- Licence resolution recognises many more URLs and names. Expect fewer "License could not be determined" findings, and new copyleft findings for GPL and LGPL declared by URL. EOL now covers Alpine, Tomcat, Apache httpd, Vue, Docker Engine, CouchDB, Maven, Packer and Spring or Rails through NVD CPEs; java and openjdk are no longer looked up.
+- Trivy and Grype results no longer contain `trivy_vulnerabilities` or `grype_vulnerabilities`. New vulnerability, quality and SAST findings no longer store duplicate copies of their fields, and `details.github_advisory_url` is no longer written.
+- New secret findings name their detector ("Secret detected: AWS"), and Bearer findings no longer show a "Fingerprint".
+- Scan stats count differently. This covers `scan.stats`, `project.stats`, the `scan_completed` webhook and the ingest response:
+  - weaponized counts only KEV findings with ransomware use, and active exploitation only KEV findings
+  - scanner errors no longer count
+  - every verified secret counts as actionable, also one no longer in the scanned tree or whose tree state is unknown
+  - a waived advisory no longer counts as KEV, EPSS or actionable, and a KEV or EPSS value counts only when an unwaived advisory of the finding carries it, so recomputed stats of scans enriched before 1.9.41 can show lower KEV and EPSS counts until those scans are analysed again
+- "Fix available" is claimed only when every live CRITICAL and HIGH advisory names a fix. An unenriched NEGLIGIBLE advisory scores 0, below LOW.
+- Rollback hazard: SBOM references written by 1.9.41 carry only `type`, `gridfs_id` and `filename`, and the SBOM export of 1.9.40 answers 500 for those scans.
+
+### Analytics, recommendations and search
+
+- Recommendation actions changed:
+  - `current_versions` and `versions` lists replace `current_version` and `version`
+  - `transitive_deps[].parents` replaces `parent`
+  - `parents_total` is gone
+  - `action.target_version` is new, and `action.is_direct` may be `null`
+  - update cards are per installed version
+  - the license drift key is `restrictive_drift`
+
+  The recommendations endpoint returns `findings_total`. The dev-in-production card covers npm packages only, `@vitest/*` included.
+- Directory, rootfs and file scans no longer get an "Update Base Image" card for their deb, rpm or apk packages. Those vulnerabilities move to the direct and transitive update cards. SBOMs that name no source keep the image card.
+- Impact and Hotspots count NEGLIGIBLE, INFO and UNKNOWN CVEs, and UNKNOWN weighs 4.0, so `finding_count` equals `cve_count` and rankings shift. Hotspot `risk_score` of unenriched findings is on the 0-100 scale, where an unrated CVE counts 20. INFO now ranks above UNKNOWN everywhere, the findings-table sort included. Dependency tree, top dependencies and the dependency modal count distinct unwaived CVEs instead of finding documents.
+- Analytics group packages by purl identity. Same-named packages of different groups or ecosystems no longer merge, and spellings such as PyYAML and pyyaml join.
+- Go module paths are split per the purl spec, without a doubled host. Update-frequency deltas stored before 1.9.41 keep the doubled Go names, and SPDX Go dependencies keep `group: "github.com"`, until they are recomputed or their SBOM is re-ingested.
+- Findings-delta severity keys are uppercase, as stored. Scan delta answers 404 for an unknown project and 404 "No scan found for this project" for a scan of another project. An empty `?scan_id=` on the dependency tree and on recommendations answers the same 404 instead of falling back to head.
+- Analytics search reports `page: 1` for an empty result. Vulnerability search filters CVE rows, not documents, and each CVE row shows only its own KEV, EPSS and fix.
+- The inventory licence tile counts `unknown`, and a component without an ecosystem counts as `unknown`. The three scorecard "severity below" settings are gone.
+- Chat and MCP finding tools answer per advisory. `get_vulnerability_details` returns `advisories`, and `get_cve_details` returns `in_kev` and `scanners`.
 
 ### Webhooks, notifications and chat
 
 - Webhook response bodies are capped and bound by a deadline. A delivery attempt or `POST /webhooks/{id}/test` fails as a timeout when the attempt as a whole takes longer than `WEBHOOK_TIMEOUT_SECONDS` (default 30 s). On 2xx the body is not read; on other statuses at most 64 KiB is read, decoded as UTF-8. Requests send `Accept-Encoding: identity`. The test's `response_time_ms` and the webhook duration histogram measure time to response headers.
 - Deactivated users get no project notifications on any channel, whether they are direct or team members. Enforced notification settings come from the first active admin member with preferences.
 - Chat and MCP tool arguments are type-checked. A wrong JSON type answers `{"error": "Argument '<name>' must be of type <type>"}` (`isError: true` over MCP), arguments that are not a JSON object answer "Tool arguments must be a JSON object", and undeclared keys are dropped.
-- Chat and MCP tool results follow the REST response schemas. `get_system_settings` returns `*_configured` booleans instead of secrets, `get_project_details` no longer returns `api_key_hash`, and `list_project_webhooks` no longer returns `secret`, `headers` or the delivery counters. Members without `webhook:read` who are not project admins are refused the webhook tools, as in REST, and `get_webhook_deliveries` answers "Webhook not found or access denied" to every refusal.
+- Chat and MCP tool results follow the REST response schemas. `get_system_settings` returns `*_configured` booleans instead of secrets, `get_project_details` no longer returns `api_key_hash`, and `list_project_webhooks` no longer returns `secret`, `headers` or the delivery counters. It also returns the webhooks of owning teams whose webhooks the caller may list, and for `system:manage` the global ones, each with a `scope` field. Members without `webhook:read` who are not project admins are refused the webhook tools, as in REST, and `get_webhook_deliveries` answers "Webhook not found or access denied" to every refusal.
+- Webhook create, update and test store the canonical event names `scan.completed`, `vulnerability.found` and `analysis.failed`; the snake_case names are still accepted and matched. A webhook stored under older URL rules is listed, readable and deletable again. When its URL breaks today's rules, its delivery and test answer "Blocked target: ...".
+- Deliveries to a Teams URL stored as a generic webhook get the Teams card, and every delivery is signed over the body actually sent.
+- The email channel is offered whenever `smtp_host` and `emails_from_email` are set, an unauthenticated relay included.
+- Chat and MCP finding search, CVE and component tools need `analytics:read` or `analytics:search`. The remediation plan needs `analytics:read` or `analytics:recommendations`, and the analytics summary `analytics:read` or `analytics:summary`. Users with only `project:read` lose them. `archive:read_all` alone opens the archive tools. A project the caller cannot see answers "Project not found or access denied".
+- MR/PR decorations and scan notifications report the stats of the analysed pipeline, where they used to report head's. Advisory broadcasts also reach the admins of owning teams.
+- `analysis_failed`, as a webhook and as a member notification, fires on every failure path: the engine's verdict, the worker's retry ceiling, a worker exception and the stuck-scan give-up. It fires once, from the pod whose write landed. A project-lookup error in the worker now fails the scan and sends it; the scan used to stay `processing` until the stale-scan check.
+
+### API and database
+
+- Every MongoDB read goes to the primary, and a `readPreference` in the URI is overridden. API datetimes end in `Z`, so displayed times move to the correct instant for users outside UTC.
+- `sort_order` answers 422 for anything but `asc` and `desc`. Paged lists break ties on `_id`, and an empty list reports `pages: 1`. The GitLab and GitHub instance lists answer 422 for a `page` below 1 or a `size` outside 1-100.
+- `GET /system/settings` no longer writes a defaults document, and `?auto_init=` is gone. `PUT /system/settings` answers 422 for:
+  - a null instance name or sender address
+  - a retention mode other than `project` or `global`
+  - global retention outside 0-36500
+  - an unknown default analyzer
+  - `chat_max_tool_rounds` outside 1-50, or a chat rate limit below 1
+
+  The environment variables `CHAT_MAX_TOOL_ROUNDS`, `CHAT_RATE_LIMIT_PER_MINUTE` and `CHAT_RATE_LIMIT_PER_HOUR` are ignored.
+- Instance updates answer 422 for a null required field or a null `oidc_audience`, and audiences are stored trimmed.
+- Broadcasts ignore the request's `type`. They answer 422 for an unknown `target_type`, an advisory package type that is not a purl type, or an advisory max version that is a wildcard or has no numeric release. Responses no longer carry `unique_user_count`, and advisory broadcasts gain `uncomparable_versions`, the matched packages whose version cannot be compared with the max version; a project matched only through them is not counted. The package typeahead `GET /notifications/packages/suggest` lists only names in head scans, and after 2 s it answers no names with `more: true`.
+- Crypto policy updates and reverts answer 422 for:
+  - unknown rules, or rules no analyzer evaluates
+  - an inverted expiry ladder
+  - duplicate or empty rule ids
+  - more than 200 rules, or a list over 50 entries
+- Ad-hoc `analyzers.skipped_inputs` keys read `SBOM #N` instead of `sbom#N`.
 
 ### Monitoring
 
 - The `endpoint` label of `http_requests_total`, `http_request_duration_seconds`, `http_request_size_bytes` and `http_response_size_bytes` now carries the matched route template, for example `/api/v1/projects/{project_id}`, instead of the raw path with ids masked as `{id}`. Unmatched requests share the label `<unmatched>`, and `http_requests_in_progress` is labelled by `method` only. Dashboards and alerts that filter on raw paths need updating. The bundled Grafana dashboard only groups by `endpoint` and needs no change.
+- `db_operations_total` and `db_operation_duration_seconds` count every driver command, labelled by command name (`find`, `insert`, `update`, `findAndModify`) instead of `find_one` or `insert_one`. `db_errors_total` is labelled by the MongoDB `codeName`, and a failed heartbeat counts. The bundled dashboards group by collection and keep working.
+- `dc_chat_tool_calls_total` gains the statuses `unknown`, `denied`, `rejected` and `refused`, and a call that raises after its handler answered counts as `error`. Alerts on `status="error"` no longer see permission, argument or answer errors.
+- `analysis_waivers_applied_total` counts the waivers that matched, labelled `type` as `query`, `vulnerability` or `signature`.
+- `worker_jobs_processed_total` counts an engine failure as `failed` and skips rescheduled or claim-lost runs. Reschedules caused by a re-ingest count in `analysis_race_conditions_total`.
 
 
 
