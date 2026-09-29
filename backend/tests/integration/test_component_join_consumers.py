@@ -451,3 +451,15 @@ async def test_top_dependencies_name_the_group_of_each_same_named_package(client
     rows = await _analytics(client, "dependencies/top", seeded)
 
     assert sorted(row["group"] for row in rows if row["name"] == "core") == ["com.google.zxing", "org.eclipse.jdt"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_top_dependencies_name_a_package_the_same_whatever_the_row_order(client, db, seeded):
+    django = {"version": "4.2.0", "group": None, "type": "pypi", "purl": "pkg:pypi/django@4.2.0"}
+    await db.dependencies.insert_one({**_dependency("dj-lower", name="django"), **django})
+    await db.dependencies.insert_one({**_dependency("dj-upper", name="Django"), **django})
+
+    rows = await _analytics(client, "dependencies/top", seeded)
+
+    assert [row["name"] for row in rows if row["name"].lower() == "django"] == ["Django"]

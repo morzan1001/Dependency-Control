@@ -188,8 +188,8 @@ async def get_top_dependencies(
         {
             "$group": {
                 "_id": package_identity_expr(),
-                "name": {"$first": "$name"},
-                "type": {"$first": "$type"},
+                "name": {"$min": "$name"},
+                "type": {"$min": "$type"},
                 "group": {"$max": "$group"},
                 "versions": {"$addToSet": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
