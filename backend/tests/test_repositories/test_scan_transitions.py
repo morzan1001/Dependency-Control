@@ -2,6 +2,7 @@
 scan changes nothing instead of overwriting the run that replaced it."""
 
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -74,7 +75,7 @@ async def test_a_completed_scan_is_not_failed_afterwards():
 async def test_a_requeue_releases_the_worker_and_counts_the_attempt():
     db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, retry_count=1)
 
-    assert await ScanRepository(db).requeue(_SCAN) is True
+    assert await ScanRepository(db).requeue(_SCAN, _WORKER_A) is True
 
     stored = await _stored(db)
     assert (stored["status"], stored["worker_id"], stored["retry_count"]) == (SCAN_STATUS_PENDING, None, 2)
@@ -82,10 +83,32 @@ async def test_a_requeue_releases_the_worker_and_counts_the_attempt():
 
 @pytest.mark.asyncio
 async def test_a_requeue_leaves_a_finished_scan_alone():
-    db = await _seeded(status=SCAN_STATUS_COMPLETED)
+    db = await _seeded(status=SCAN_STATUS_COMPLETED, worker_id=_WORKER_A)
 
-    assert await ScanRepository(db).requeue(_SCAN) is False
+    assert await ScanRepository(db).requeue(_SCAN, _WORKER_A) is False
     assert (await _stored(db))["status"] == SCAN_STATUS_COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_a_writer_that_lost_the_claim_cannot_requeue_the_run_that_replaced_it():
+    db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_B, retry_count=1)
+
+    assert await ScanRepository(db).requeue(_SCAN, _WORKER_A) is False
+    stored = await _stored(db)
+    assert (stored["status"], stored["worker_id"], stored["retry_count"]) == (SCAN_STATUS_PROCESSING, _WORKER_B, 1)
+
+
+@pytest.mark.asyncio
+async def test_renewing_a_claim_moves_its_lease_only_for_the_holder():
+    stale = datetime(2025, 1, 1, tzinfo=timezone.utc)
+    db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, analysis_started_at=stale)
+    repo = ScanRepository(db)
+
+    assert await repo.renew_claim(_SCAN, _WORKER_B) is False
+    assert (await _stored(db))["analysis_started_at"] == stale
+
+    assert await repo.renew_claim(_SCAN, _WORKER_A) is True
+    assert (await _stored(db))["analysis_started_at"] > stale
 
 
 @pytest.mark.asyncio
@@ -105,8 +128,8 @@ def test_the_retry_ceiling_does_not_fail_or_announce_a_scan_another_worker_holds
     manager = AnalysisWorkerManager(num_workers=1)
     manager.queue = asyncio.Queue()
 
-    with patch.object(manager, "_notify_analysis_failed", AsyncMock()) as notify:
-        asyncio.run(manager._handle_failed_analysis({"_id": _SCAN, "retry_count": 4}, _SCAN, db))
+    with patch("app.core.worker.notify_analysis_failed", AsyncMock()) as notify:
+        asyncio.run(manager._handle_rescheduled({"_id": _SCAN, "retry_count": 4}, _SCAN, db))
 
     notify.assert_not_awaited()
     assert asyncio.run(_stored(db))["status"] == SCAN_STATUS_PROCESSING
@@ -123,3 +146,18 @@ async def test_stuck_scan_recovery_requeues_and_releases_the_worker():
     stored = await _stored(db)
     assert (stored["status"], stored["worker_id"], stored["retry_count"]) == (SCAN_STATUS_PENDING, None, 1)
     worker.add_job.assert_awaited_once_with(_SCAN)
+
+
+@pytest.mark.asyncio
+async def test_giving_up_on_a_stuck_scan_announces_the_failure():
+    db = await _seeded(status=SCAN_STATUS_PROCESSING, worker_id=_WORKER_A, analysis_started_at=None, retry_count=99)
+
+    with (
+        patch("app.core.housekeeping.get_database", AsyncMock(return_value=db)),
+        patch("app.core.housekeeping.notify_analysis_failed", AsyncMock()) as notify,
+    ):
+        await recover_stuck_scans(AsyncMock())
+        await recover_stuck_scans(AsyncMock())
+
+    assert (await _stored(db))["status"] == SCAN_STATUS_FAILED
+    notify.assert_awaited_once_with(db, _SCAN, "p1", "Analysis timed out or worker crashed multiple times.")

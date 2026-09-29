@@ -4,6 +4,7 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.worker import AnalysisWorkerManager
+from app.services.analysis.notifications import notify_analysis_failed
 
 
 def _build_manager() -> AnalysisWorkerManager:
@@ -21,7 +22,7 @@ def _build_db_with_scans(update_one: AsyncMock, project: dict | None = None) -> 
     return db
 
 
-class TestHandleFailedAnalysis:
+class TestHandleRescheduled:
     def test_under_limit_requeues_without_writing_retry_count(self):
         mgr = _build_manager()
         mgr._active_scans = {"scan-1"}
@@ -29,7 +30,7 @@ class TestHandleFailedAnalysis:
         db = _build_db_with_scans(update_one)
         scan = {"_id": "scan-1", "retry_count": 1}
 
-        terminal = asyncio.run(mgr._handle_failed_analysis(scan, "scan-1", db))
+        terminal = asyncio.run(mgr._handle_rescheduled(scan, "scan-1", db))
 
         assert terminal is False
         assert mgr.queue.qsize() == 1
@@ -45,7 +46,7 @@ class TestHandleFailedAnalysis:
         # retry_count=4 in snapshot + 1 (engine inc) = 5, hits ceiling.
         scan = {"_id": "scan-1", "retry_count": 4}
 
-        terminal = asyncio.run(mgr._handle_failed_analysis(scan, "scan-1", db))
+        terminal = asyncio.run(mgr._handle_rescheduled(scan, "scan-1", db))
 
         assert terminal is True
         assert mgr.queue.qsize() == 0
@@ -55,42 +56,56 @@ class TestHandleFailedAnalysis:
         assert args[0] == {"_id": "scan-1", "status": "pending"}
         assert args[1]["$set"]["status"] == "failed"
 
-    def test_at_limit_emits_analysis_failed_webhook_and_notification(self):
+    def test_at_limit_announces_the_failure(self):
         mgr = _build_manager()
         mgr._active_scans = {"scan-1"}
-        update_one = AsyncMock()
-        project = {"_id": "proj-1", "name": "My Project"}
-        db = _build_db_with_scans(update_one, project=project)
+        db = _build_db_with_scans(AsyncMock())
         scan = {"_id": "scan-1", "project_id": "proj-1", "retry_count": 4}
 
-        with (
-            patch("app.core.worker.webhook_service.trigger_analysis_failed", new=AsyncMock()) as trigger,
-            patch("app.core.worker.safe_notify_project_event", new=AsyncMock()) as notify,
-        ):
-            terminal = asyncio.run(mgr._handle_failed_analysis(scan, "scan-1", db))
+        with patch("app.core.worker.notify_analysis_failed", new=AsyncMock()) as notify:
+            terminal = asyncio.run(mgr._handle_rescheduled(scan, "scan-1", db))
 
         assert terminal is True
-        trigger.assert_awaited_once()
-        _, tkw = trigger.await_args
-        assert tkw["scan_id"] == "scan-1"
-        assert tkw["project_id"] == "proj-1"
-        assert tkw["project_name"] == "My Project"
-        assert "retry attempts" in tkw["error_message"]
         notify.assert_awaited_once()
-        _, nkw = notify.await_args
-        assert nkw["event_type"] == "analysis_failed"
+        _, scan_id, project_id, error = notify.await_args.args
+        assert (scan_id, project_id) == ("scan-1", "proj-1")
+        assert "retry attempts" in error
 
-    def test_notify_analysis_failed_swallows_errors_and_skips_missing_project(self):
-        mgr = _build_manager()
-        db = _build_db_with_scans(AsyncMock(), project=None)
-        scan = {"_id": "scan-1", "project_id": "proj-1"}
+
+class TestNotifyAnalysisFailed:
+    def test_sends_the_webhook_and_the_member_notification(self):
+        db = _build_db_with_scans(AsyncMock(), project={"_id": "proj-1", "name": "My Project"})
 
         with (
-            patch("app.core.worker.webhook_service.trigger_analysis_failed", new=AsyncMock()) as trigger,
-            patch("app.core.worker.safe_notify_project_event", new=AsyncMock()) as notify,
+            patch(
+                "app.services.analysis.notifications.webhook_service.trigger_analysis_failed", AsyncMock()
+            ) as trigger,
+            patch("app.services.analysis.notifications.safe_notify_project_event", AsyncMock()) as notify,
         ):
-            # Missing project -> no webhook/notification, no raise.
-            asyncio.run(mgr._notify_analysis_failed(db, scan, "boom"))
+            asyncio.run(notify_analysis_failed(db, "scan-1", "proj-1", "boom"))
+
+        _, tkw = trigger.await_args
+        assert (tkw["scan_id"], tkw["project_id"], tkw["project_name"], tkw["error_message"]) == (
+            "scan-1",
+            "proj-1",
+            "My Project",
+            "boom",
+        )
+        assert notify.await_args.kwargs["event_type"] == "analysis_failed"
+
+    def test_swallows_errors_and_skips_a_missing_project(self):
+        db = _build_db_with_scans(AsyncMock(), project=None)
+
+        with (
+            patch(
+                "app.services.analysis.notifications.webhook_service.trigger_analysis_failed", AsyncMock()
+            ) as trigger,
+            patch("app.services.analysis.notifications.safe_notify_project_event", AsyncMock()) as notify,
+        ):
+            asyncio.run(notify_analysis_failed(db, "scan-1", "proj-1", "boom"))
 
         trigger.assert_not_awaited()
         notify.assert_not_awaited()
+
+        db.projects.find_one = AsyncMock(side_effect=RuntimeError("primary stepped down"))
+        asyncio.run(notify_analysis_failed(db, "scan-1", "proj-1", "boom"))

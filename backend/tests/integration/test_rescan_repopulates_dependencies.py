@@ -5,11 +5,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.models.dependency import Dependency
 from app.models.project import Scan
 from app.services.analysis.engine import run_analysis
 
 _PROJECT_ID = "test-project-id"
+_WORKER = "pod-a/worker-0"
 _ORIGINAL_SCAN_ID = "0d90b4bd-1291-5949-8e0d-8d0d76a59e01"
 
 # 24-hex-char GridFS ObjectIds, as stored in prod sbom_refs.
@@ -73,6 +75,7 @@ async def _seed_rescan(db, sbom_refs: list[dict]) -> str:
         branch="main",
         sbom_refs=sbom_refs,
         status="processing",
+        worker_id=_WORKER,
         is_rescan=True,
         original_scan_id=_ORIGINAL_SCAN_ID,
     )
@@ -102,9 +105,9 @@ async def test_rescan_repopulates_dependencies_for_new_scan_id(db, _gridfs_patch
     scan_id = await _seed_rescan(db, [_gridfs_ref(_FILE_ID_A)])
     await _seed_stored_dependency(db, _ORIGINAL_SCAN_ID, "requests", "2.31.0", "pkg:pypi/requests@2.31.0")
 
-    completed = await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db)
+    completed = await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER)
 
-    assert completed is True
+    assert completed == SCAN_STATUS_COMPLETED
     docs = await _dependency_docs(db, scan_id)
     assert len(docs) == 3, f"rescan must store one dependency doc per parsed component, got {len(docs)}"
     assert {(d["name"], d["version"], d["purl"]) for d in docs} == {
@@ -121,9 +124,9 @@ async def test_rescan_repopulates_dependencies_for_new_scan_id(db, _gridfs_patch
 async def test_rerunning_the_same_rescan_does_not_duplicate_dependencies(db, _gridfs_patched):
     scan_id = await _seed_rescan(db, [_gridfs_ref(_FILE_ID_A)])
 
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db) is True
+    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing"}})
-    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db) is True
+    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan_id)
     assert len(docs) == 3, f"a retried run must replace, not append, got {len(docs)}"
@@ -134,7 +137,7 @@ async def test_multi_sbom_run_deletes_once_and_keeps_all_sboms_dependencies(db, 
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan_id = await _seed_rescan(db, refs)
 
-    assert await run_analysis(scan_id, refs, [], db) is True
+    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan_id)
     names = {d["name"] for d in docs}
@@ -155,7 +158,7 @@ async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _gridfs_
     monkeypatch.setattr("app.services.analysis.engine.open_gridfs_download_with_retry", _fail_second_file)
 
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
-    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing")
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing", worker_id=_WORKER)
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     ingest_stored = [
         ("requests", "2.31.0", "pkg:pypi/requests@2.31.0"),
@@ -166,7 +169,7 @@ async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _gridfs_
     for name, version, purl in ingest_stored:
         await _seed_stored_dependency(db, scan.id, name, version, purl)
 
-    assert await run_analysis(scan.id, refs, [], db) is True
+    assert await run_analysis(scan.id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     docs = await _dependency_docs(db, scan.id)
     assert {(d["name"], d["version"]) for d in docs} == {(n, v) for n, v, _ in ingest_stored}, (
@@ -177,7 +180,13 @@ async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _gridfs_
 @pytest.mark.asyncio
 async def test_ingest_prestored_dependencies_are_not_double_stored(db, _gridfs_patched):
     """On the normal ingest path the deps already exist for the scan_id; the run must stay at N docs."""
-    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref(_FILE_ID_A)], status="processing")
+    scan = Scan(
+        project_id=_PROJECT_ID,
+        branch="main",
+        sbom_refs=[_gridfs_ref(_FILE_ID_A)],
+        status="processing",
+        worker_id=_WORKER,
+    )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     for name, version, purl in [
         ("requests", "2.31.0", "pkg:pypi/requests@2.31.0"),
@@ -186,7 +195,7 @@ async def test_ingest_prestored_dependencies_are_not_double_stored(db, _gridfs_p
     ]:
         await _seed_stored_dependency(db, scan.id, name, version, purl)
 
-    assert await run_analysis(scan.id, [_gridfs_ref(_FILE_ID_A)], [], db) is True
+    assert await run_analysis(scan.id, [_gridfs_ref(_FILE_ID_A)], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan.id)
     assert len(docs) == 3, f"ingest-stored deps must not be stored a second time, got {len(docs)}"
@@ -238,7 +247,7 @@ async def test_cross_sbom_duplicate_is_merged_by_the_analysis_run(db, monkeypatc
     refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
     scan_id = await _seed_rescan(db, refs)
 
-    assert await run_analysis(scan_id, refs, [], db) is True
+    assert await run_analysis(scan_id, refs, [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     docs = await _dependency_docs(db, scan_id)
     assert len(docs) == 1

@@ -40,6 +40,7 @@ from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.scans import BRANCH_SCAN_FILTER, HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
+from app.services.analysis.notifications import notify_analysis_failed
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
@@ -586,12 +587,15 @@ async def recover_stuck_scans(
                 logger.warning(
                     f"Scan {scan_id} stuck in processing. Resetting to pending (Retry {retry_count + 1}/{max_retries})."
                 )
-                if await scan_repo.requeue(scan_id) and worker_manager:
+                if await scan_repo.requeue(scan_id, scan.get("worker_id")) and worker_manager:
                     await worker_manager.add_job(str(scan_id))
 
             else:
                 logger.error(f"Scan {scan_id} failed after {max_retries} retries.")
-                await scan_repo.mark_failed(scan_id, "Analysis timed out or worker crashed multiple times.")
+                error = "Analysis timed out or worker crashed multiple times."
+                # Every pod runs this loop; only the one whose write lands announces the failure.
+                if await scan_repo.mark_failed(scan_id, error, worker_id=scan.get("worker_id")):
+                    await notify_analysis_failed(db, scan_id, scan.get("project_id"), error)
 
     except Exception as e:
         logger.exception("Stuck scan recovery failed: %s", e)

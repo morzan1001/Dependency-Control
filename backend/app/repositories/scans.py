@@ -210,16 +210,24 @@ class ScanRepository:
         result = await self.collection.update_one(query, {"$set": {"status": SCAN_STATUS_FAILED, "error": error}})
         return bool(result.modified_count)
 
-    async def requeue(self, scan_id: str) -> bool:
-        """Send a processing scan back to pending for another attempt, releasing its worker."""
+    async def requeue(self, scan_id: str, worker_id: str | None) -> bool:
+        """Send a processing scan still held by ``worker_id`` back to pending for another attempt."""
         result = await self.collection.update_one(
-            {"_id": scan_id, "status": SCAN_STATUS_PROCESSING},
+            {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id},
             {
                 "$set": {"status": SCAN_STATUS_PENDING, "worker_id": None, "analysis_started_at": None},
                 "$inc": {"retry_count": 1},
             },
         )
         return bool(result.modified_count)
+
+    async def renew_claim(self, scan_id: str, worker_id: str) -> bool:
+        """Move the stuck-scan lease forward; False once the scan is no longer this worker's."""
+        result = await self.collection.update_one(
+            {"_id": scan_id, "status": SCAN_STATUS_PROCESSING, "worker_id": worker_id},
+            {"$set": {"analysis_started_at": datetime.now(timezone.utc)}},
+        )
+        return bool(result.matched_count)
 
     async def reopen_finished(self, scan_id: str) -> bool:
         """Send a finished scan back to pending because new input arrived for it."""

@@ -7,10 +7,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
-from app.core.constants import (
-    NOTIFICATION_EVENT_ANALYSIS_FAILED,
-    SCAN_STATUS_PENDING,
-)
+from app.core.constants import SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
     worker_active_count,
@@ -21,13 +18,25 @@ from app.core.metrics import (
 from app.db.mongodb import get_database
 from app.repositories.scans import ScanRepository
 from app.services.analysis import run_analysis
-from app.services.notifications.service import safe_notify_project_event
-from app.services.webhooks import webhook_service
+from app.services.analysis.notifications import notify_analysis_failed
 
 logger = logging.getLogger(__name__)
 
 # Default graceful shutdown timeout (should be less than K8s terminationGracePeriodSeconds)
 DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25
+
+# Far below HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS, so a live run is never taken for a stuck one.
+_CLAIM_RENEW_SECONDS = 60
+
+
+async def _keep_claim(scan_repo: ScanRepository, scan_id: str, worker_id: str) -> None:
+    while True:
+        await asyncio.sleep(_CLAIM_RENEW_SECONDS)
+        try:
+            if not await scan_repo.renew_claim(scan_id, worker_id):
+                return
+        except Exception:
+            logger.exception("Could not renew the claim on scan %s", scan_id)
 
 
 class AnalysisWorkerManager:
@@ -190,37 +199,7 @@ class AnalysisWorkerManager:
 
         return True
 
-    async def _notify_analysis_failed(self, db: AsyncIOMotorDatabase, scan: dict[str, Any], error: str) -> None:
-        """Fire the analysis_failed webhook + project notification for a failed scan.
-
-        Any error here is logged and swallowed so it never masks the original failure.
-        """
-        scan_id = str(scan.get("_id"))
-        try:
-            project = await db.projects.find_one({"_id": scan.get("project_id")})
-            if not project:
-                return
-            project_id_str = str(project["_id"])
-            project_name = project.get("name", "Unknown")
-            await webhook_service.trigger_analysis_failed(
-                db=db,
-                scan_id=scan_id,
-                project_id=project_id_str,
-                project_name=project_name,
-                error_message=error,
-            )
-            await safe_notify_project_event(
-                db,
-                project_id=project_id_str,
-                event_type=NOTIFICATION_EVENT_ANALYSIS_FAILED,
-                subject=f"Scan failed: {project_name}",
-                message=f"Scan {scan_id} for project {project_name} failed: {error}",
-                context="worker.analysis_failed",
-            )
-        except Exception as webhook_err:
-            logger.exception("Failed to trigger analysis_failed webhook: %s", webhook_err)
-
-    async def _handle_failed_analysis(self, scan: dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase) -> bool:
+    async def _handle_rescheduled(self, scan: dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase) -> bool:
         """Apply the retry ceiling. Engine owns status and retry_count writes."""
         max_retries = 5
         retry_count = scan.get("retry_count", 0) + 1
@@ -233,7 +212,7 @@ class AnalysisWorkerManager:
             error_message = f"Analysis failed after {retry_count} retry attempts due to race conditions."
             # The engine sent it back to pending, so a scan another worker has claimed since is left alone.
             if await ScanRepository(db).mark_failed(scan_id, error_message, status=SCAN_STATUS_PENDING):
-                await self._notify_analysis_failed(db, scan, error_message)
+                await notify_analysis_failed(db, scan_id, scan.get("project_id"), error_message)
             return True
 
         logger.info(
@@ -297,37 +276,33 @@ class AnalysisWorkerManager:
                     self.queue.task_done()
                     continue
 
+                claim_keeper = asyncio.create_task(_keep_claim(scan_repo, scan_id, worker_id))
                 try:
-                    sbom_refs = scan.get("sbom_refs", [])
-
-                    success = await run_analysis(
+                    outcome = await run_analysis(
                         scan_id=scan_id,
-                        sboms=sbom_refs,
+                        sboms=scan.get("sbom_refs", []),
                         active_analyzers=project.get("active_analyzers", []),
                         db=db,
+                        worker_id=worker_id,
                         sbom_generation=scan.get("sbom_generation"),
                     )
-
-                    if not success:
-                        await self._handle_failed_analysis(scan, scan_id, db)
-                        self.queue.task_done()
-                        continue
-
-                    # run_analysis updates status to 'completed' on success.
-                    if worker_jobs_processed_total:
-                        worker_jobs_processed_total.labels(status="success").inc()
-                    if worker_job_duration_seconds:
-                        job_duration = time.time() - job_start_time
-                        worker_job_duration_seconds.observe(job_duration)
+                    if outcome == SCAN_STATUS_PENDING:
+                        await self._handle_rescheduled(scan, scan_id, db)
+                    elif outcome is not None:
+                        if worker_jobs_processed_total:
+                            job_status = "failed" if outcome == SCAN_STATUS_FAILED else "success"
+                            worker_jobs_processed_total.labels(status=job_status).inc()
+                        if worker_job_duration_seconds:
+                            worker_job_duration_seconds.observe(time.time() - job_start_time)
 
                 except Exception as e:
                     logger.exception("Error processing scan %s: %s", scan_id, e)
-                    failed = await scan_repo.mark_failed(scan_id, str(e), worker_id=worker_id)
-                    if worker_jobs_processed_total:
-                        worker_jobs_processed_total.labels(status="failed").inc()
-
-                    if failed:
-                        await self._notify_analysis_failed(db, scan, str(e))
+                    if await scan_repo.mark_failed(scan_id, str(e), worker_id=worker_id):
+                        if worker_jobs_processed_total:
+                            worker_jobs_processed_total.labels(status="failed").inc()
+                        await notify_analysis_failed(db, scan_id, scan.get("project_id"), str(e))
+                finally:
+                    claim_keeper.cancel()
 
                 self._untrack_scan(scan_id)
                 self.queue.task_done()

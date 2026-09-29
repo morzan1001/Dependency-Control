@@ -19,6 +19,8 @@ from app.core.constants import (
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
+    SCAN_STATUS_PENDING,
+    SCAN_STATUS_PROCESSING,
     ScanStatus,
     SCAN_USABLE_STATUSES,
 )
@@ -58,7 +60,7 @@ from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySumma
 from app.schemas.sbom import ParsedDependency
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.integrations import decorate_github_pr, decorate_gitlab_mr
-from app.services.analysis.notifications import send_scan_notifications
+from app.services.analysis.notifications import notify_analysis_failed, send_scan_notifications
 from app.services.analysis.registry import (
     CRYPTO_ANALYZERS,
     VULNERABILITY_ANALYZERS,
@@ -636,31 +638,6 @@ def _track_waiver_metrics(active_waivers: list[Waiver]) -> None:
         analysis_waivers_applied_total.labels(type=waiver_type).inc(count)
 
 
-async def _check_race_condition(
-    scan_id: str, external_load_start: datetime, sbom_generation: int | None, scan_repo: ScanRepository
-) -> bool:
-    """Check if new results or a replaced SBOM arrived during processing. Returns True if race detected."""
-    race_check = await scan_repo.get_by_id(scan_id)
-    if race_check is None:
-        return False
-    last_result_at = race_check.last_result_at
-    late_result = last_result_at is not None and last_result_at >= external_load_start
-    if late_result or race_check.sbom_generation != sbom_generation:
-        logger.warning(
-            f"Race condition detected for scan {scan_id}. "
-            f"New results arrived at {last_result_at} (Analysis load start: {external_load_start}), "
-            f"SBOM generation {race_check.sbom_generation} (run started on {sbom_generation}). "
-            f"Rescheduling scan."
-        )
-        if analysis_race_conditions_total:
-            analysis_race_conditions_total.inc()
-
-        await scan_repo.requeue(scan_id)
-        return True
-
-    return False
-
-
 async def _load_project_settings_overrides(
     project_id: str | None, project_repo: ProjectRepository
 ) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]] | None]:
@@ -874,18 +851,20 @@ async def _finalize_scan_and_project(
     latest_run_summary: dict,
     scan_repo: ScanRepository,
     project_repo: ProjectRepository,
+    *,
+    worker_id: str,
+    external_load_start: datetime,
     status: ScanStatus = SCAN_STATUS_COMPLETED,
     error: str | None = None,
-    external_load_start: datetime | None = None,
     findings_summary: list[dict[str, Any]] | None = None,
     failed_analyzers: list[str] | None = None,
     enrichment_failures: list[str] | None = None,
     sbom_generation: int | None = None,
-) -> bool:
+) -> ScanStatus | None:
     """Persist the final scan status, ignored count, and (on success) project stats.
 
-    Returns True when the scan was finalised, False when a late scanner result or a replaced
-    SBOM arrived during processing (the scan is rescheduled instead).
+    Returns ``status`` once written, PENDING when new input arrived during the run (rescheduled),
+    and None when the claim moved to another run, which then owns the scan.
     """
     set_fields: dict[str, Any] = {
         "status": status,
@@ -908,21 +887,27 @@ async def _finalize_scan_and_project(
         # This analysis post-dates every rescan of the build, which may still hold a replaced SBOM.
         unset_fields["latest_rescan_id"] = ""
 
-    # Atomic guard: a replaced SBOM, or a scanner result that arrived after loading began, would
-    # otherwise be finalized over and never analysed.
-    guard: dict[str, Any] = {"_id": scan_id, "sbom_generation": sbom_generation}
-    if status in SCAN_USABLE_STATUSES and external_load_start is not None:
-        guard["$or"] = [
+    # A replaced SBOM, or a scanner result that arrived after loading began, would otherwise be
+    # finalized over and never analysed.
+    guard: dict[str, Any] = {
+        "_id": scan_id,
+        "status": SCAN_STATUS_PROCESSING,
+        "worker_id": worker_id,
+        "sbom_generation": sbom_generation,
+        "$or": [
             {"last_result_at": {"$exists": False}},
             {"last_result_at": None},
             {"last_result_at": {"$lt": external_load_start}},
-        ]
+        ],
+    }
     if await scan_repo.collection.find_one_and_update(guard, {"$set": set_fields, "$unset": unset_fields}) is None:
-        logger.warning("Scan %s: new input arrived during finalize; rescheduling instead of finalizing.", scan_id)
+        if not await scan_repo.requeue(scan_id, worker_id):
+            logger.warning("Scan %s: the claim moved to another run; leaving the scan to it.", scan_id)
+            return None
+        logger.warning("Scan %s: new input arrived during analysis; rescheduled instead of finalizing.", scan_id)
         if analysis_race_conditions_total:
             analysis_race_conditions_total.inc()
-        await scan_repo.requeue(scan_id)
-        return False
+        return SCAN_STATUS_PENDING
 
     if scan_doc.is_rescan and scan_doc.original_scan_id:
         # latest_run reports every run, while the lineage moves only onto an analysis head may report.
@@ -939,7 +924,7 @@ async def _finalize_scan_and_project(
         if project_doc:
             head = await scan_repo.head_fields(project_doc)
             await project_repo.update_raw(project_id, {"$set": {**head, "last_scan_at": datetime.now(timezone.utc)}})
-    return True
+    return status
 
 
 async def _filter_out_waived_findings(aggregated_findings: list[Any], scan_id: str, db: Database) -> list[Any]:
@@ -1043,13 +1028,42 @@ def _final_scan_status(
 
 
 async def _notification_stats(project_id: str | None, stats: Stats, db: Database) -> Stats:
-    if project_id and await _project_has_active_waivers(project_id, db):
-        from app.services.stats import recalculate_project_stats
+    try:
+        if project_id and await _project_has_active_waivers(project_id, db):
+            from app.services.stats import recalculate_project_stats
 
-        recalced = await recalculate_project_stats(project_id, db)
-        if recalced is not None:
-            return recalced
+            recalced = await recalculate_project_stats(project_id, db)
+            if recalced is not None:
+                return recalced
+    except Exception:
+        logger.exception("Scan stats of project %s were not recalculated; notifying with the analysed ones", project_id)
     return stats
+
+
+async def _announce_outcome(
+    status: ScanStatus,
+    error: str | None,
+    project_id: str | None,
+    scan_id: str,
+    scan_doc: Scan,
+    stats: Stats,
+    aggregated_findings: list[Any],
+    results_summary: list[str],
+    db: Database,
+) -> None:
+    """Best effort: the scan is already final, so a failure here is logged and never changes it."""
+    try:
+        if status == SCAN_STATUS_FAILED:
+            await notify_analysis_failed(db, scan_id, project_id, error or status)
+            return
+        # Waivers are re-anchored first so the notifications report post-re-anchor stats.
+        notify_stats = await _notification_stats(project_id, stats, db)
+        notify_findings = await _filter_out_waived_findings(aggregated_findings, scan_id, db)
+        await _send_integrations_and_notifications(
+            project_id, scan_id, scan_doc, notify_stats, notify_findings, results_summary, db
+        )
+    except Exception:
+        logger.exception("Scan %s: announcing the finished analysis failed", scan_id)
 
 
 async def run_analysis(
@@ -1057,9 +1071,12 @@ async def run_analysis(
     sboms: list[dict[str, Any]],
     active_analyzers: list[str],
     db: Database,
+    *,
+    worker_id: str,
     sbom_generation: int | None = None,
-) -> bool:
-    """Orchestrate analysis for an SBOM scan; returns False if rescheduled due to a race condition.
+) -> ScanStatus | None:
+    """Analyse a scan claimed by ``worker_id``; returns what ``_finalize_scan_and_project`` returns,
+    or None when the scan is gone or the claim was lost before the results were written.
 
     ``sboms`` and ``sbom_generation`` come from the same claimed scan document.
     """
@@ -1077,7 +1094,7 @@ async def run_analysis(
     scan_doc = await scan_repo.get_by_id(scan_id)
     if not scan_doc:
         logger.error(f"Scan {scan_id} not found")
-        return False
+        return None
 
     project_id: str | None = scan_doc.project_id
     scan_type: str | None = getattr(scan_doc, "scan_type", None)
@@ -1143,6 +1160,10 @@ async def run_analysis(
         resolved_sboms[index] = None
         results_summary.extend(sbom_results)
 
+    if not await scan_repo.renew_claim(scan_id, worker_id):
+        logger.warning("Scan %s: the claim moved to another run; stopping before writing results.", scan_id)
+        return None
+
     if deps_to_store is not None and deps_to_store.parsed and project_id:
         stored = await store_scan_dependencies(deps_to_store.items, project_id, scan_id, DependencyRepository(db))
         del deps_to_store
@@ -1183,6 +1204,10 @@ async def run_analysis(
         results_summary,
     )
 
+    if not await scan_repo.renew_claim(scan_id, worker_id):
+        logger.warning("Scan %s: the claim moved to another run; stopping before writing results.", scan_id)
+        return None
+
     persisted_findings_count, ignored_count, active_waivers = await _persist_findings_and_waivers(
         findings_to_insert, scan_id, project_id, finding_repo, db
     )
@@ -1217,13 +1242,10 @@ async def run_analysis(
         "completed_at": datetime.now(timezone.utc),
     }
 
-    if await _check_race_condition(scan_id, external_load_start, sbom_generation, scan_repo):
-        return False
-
     if analysis_aggregation_duration_seconds:
         analysis_aggregation_duration_seconds.observe(time.time() - aggregation_start_time)
 
-    finalized = await _finalize_scan_and_project(
+    outcome = await _finalize_scan_and_project(
         scan_id,
         scan_doc,
         project_id,
@@ -1233,29 +1255,23 @@ async def run_analysis(
         latest_run_summary,
         scan_repo,
         project_repo,
+        worker_id=worker_id,
+        external_load_start=external_load_start,
         status=final_status,
         error=final_error,
-        external_load_start=external_load_start,
         findings_summary=_build_findings_summary(vulnerability_findings),
         failed_analyzers=failed_analyzers,
         enrichment_failures=_enrichment_failure_names(results_summary),
         sbom_generation=sbom_generation,
     )
-    if not finalized:
-        # Rescheduled after new input raced completion; skip notifying on stale results.
+    if outcome != final_status:
         del aggregated_findings
         _release_memory_to_os()
-        return False
+        return outcome
 
-    # Re-apply/re-anchor waivers before notifying so webhooks report post-re-anchor stats;
-    # skipped when the project has no active waivers.
-    if not sbom_load_failed:
-        notify_stats = await _notification_stats(project_id, stats, db)
-        notify_findings = await _filter_out_waived_findings(aggregated_findings, scan_id, db)
-        await _send_integrations_and_notifications(
-            project_id, scan_id, scan_doc, notify_stats, notify_findings, results_summary, db
-        )
-
+    await _announce_outcome(
+        final_status, final_error, project_id, scan_id, scan_doc, stats, aggregated_findings, results_summary, db
+    )
     del aggregated_findings
 
     # Runs on the released findings: the rollup holds two dependency maps of its own.
@@ -1263,4 +1279,4 @@ async def run_analysis(
 
     _release_memory_to_os()
 
-    return True
+    return outcome

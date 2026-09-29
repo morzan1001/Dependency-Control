@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project, Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
@@ -17,6 +18,7 @@ from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analysis.engine import run_analysis
 
 _PROJECT_ID = "cbom-rescan-project"
+_WORKER = "pod-a/worker-0"
 _FILE_ID = "69d5332257c8763c8d8c82d7"
 _ASSET_LIMIT = 100
 _NO_ANALYZERS: list[str] = []
@@ -69,6 +71,7 @@ async def _seed_lineage(db) -> tuple[str, str]:
         branch="main",
         sbom_refs=[_gridfs_ref()],
         status="processing",
+        worker_id=_WORKER,
         is_rescan=True,
         original_scan_id=original.id,
     )
@@ -94,7 +97,7 @@ async def _seed_lineage(db) -> tuple[str, str]:
 
 async def _rescan_and_list(db) -> list[str]:
     original_id, rescan_id = await _seed_lineage(db)
-    assert await run_analysis(rescan_id, [_gridfs_ref()], _NO_ANALYZERS, db) is True
+    assert await run_analysis(rescan_id, [_gridfs_ref()], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     repo = CryptoAssetRepository(db)
     assert await repo.count_by_scan(_PROJECT_ID, original_id) == len(_INGESTED_ASSETS)

@@ -133,6 +133,7 @@ class Scan(MongoDocument, CreatedAtModel):
     status: str = SCAN_STATUS_PENDING
     retry_count: int = 0
     worker_id: str | None = None
+    # The claim's lease: the holding worker renews it, and housekeeping reclaims a scan once it lapses.
     analysis_started_at: datetime | None = None
     error: str | None = None
     # Analyzers that crashed or returned partial coverage in the last run.

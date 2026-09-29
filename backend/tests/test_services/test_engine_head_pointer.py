@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
 from app.models.stats import Stats
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
@@ -23,6 +23,7 @@ _TAG = "v1.2.3"
 _NOW = datetime(2026, 9, 1, tzinfo=timezone.utc)
 _HOUR = timedelta(hours=1)
 _SBOM_REFS = [{"type": "gridfs_reference", "gridfs_id": "g1"}]
+_WORKER = "pod-a/worker-0"
 
 
 @pytest.fixture
@@ -58,9 +59,9 @@ async def _rescan(db, scan_id, root_id, created_at, status=SCAN_STATUS_COMPLETED
     )
 
 
-async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0, sbom_generation=None):
+async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0, sbom_generation=None, holder=_WORKER):
     scan_repo = ScanRepository(db)
-    await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing"}})
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing", "worker_id": holder}})
     return await _finalize_scan_and_project(
         scan_id,
         await scan_repo.get_by_id(scan_id),
@@ -73,6 +74,8 @@ async def _finalize(db, scan_id, status=SCAN_STATUS_COMPLETED, critical=0, sbom_
         ProjectRepository(db),
         status=status,
         sbom_generation=sbom_generation,
+        worker_id=_WORKER,
+        external_load_start=datetime.now(timezone.utc),
     )
 
 
@@ -311,8 +314,34 @@ async def test_a_run_whose_sbom_was_replaced_meanwhile_is_rescheduled_not_finali
     await _scan(db, "b0", _NOW - _HOUR)
     await _scan(db, "b1", _NOW, sbom_generation=2)
 
-    finalized = await _finalize(db, "b1", status=status, sbom_generation=1)
+    assert await _finalize(db, "b1", status=status, sbom_generation=1) == SCAN_STATUS_PENDING
 
-    assert finalized is False
     assert (await db.scans.find_one({"_id": "b1"}))["status"] == "pending"
+    assert await _pointer(db) == "b0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED])
+async def test_a_run_a_scanner_result_overtook_is_rescheduled_not_finalized(db, status):
+    await _project(db, "b0")
+    await _scan(db, "b0", _NOW - _HOUR)
+    await _scan(db, "b1", _NOW, last_result_at=datetime.now(timezone.utc) + timedelta(minutes=1))
+
+    assert await _finalize(db, "b1", status=status) == SCAN_STATUS_PENDING
+
+    assert (await db.scans.find_one({"_id": "b1"}))["status"] == "pending"
+    assert await _pointer(db) == "b0"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", [SCAN_STATUS_COMPLETED, SCAN_STATUS_FAILED])
+async def test_a_run_whose_claim_moved_to_another_worker_leaves_the_scan_to_it(db, status):
+    await _project(db, "b0")
+    await _scan(db, "b0", _NOW - _HOUR)
+    await _scan(db, "b1", _NOW)
+
+    assert await _finalize(db, "b1", status=status, holder="pod-b/worker-0") is None
+
+    stored = await db.scans.find_one({"_id": "b1"})
+    assert (stored["status"], stored["worker_id"]) == ("processing", "pod-b/worker-0")
     assert await _pointer(db) == "b0"

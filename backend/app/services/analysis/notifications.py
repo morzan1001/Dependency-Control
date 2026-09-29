@@ -1,4 +1,4 @@
-"""Notification handling and webhook triggers for completed scans."""
+"""Notification handling and webhook triggers for completed and failed scans."""
 
 import logging
 from typing import Any
@@ -8,6 +8,7 @@ from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
     NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
+    NOTIFICATION_EVENT_ANALYSIS_FAILED,
     NOTIFICATION_EVENT_VULNERABILITY_FOUND,
     get_severity_value,
 )
@@ -27,6 +28,7 @@ from app.services.notifications.slack_formatter import (
     build_analysis_completed_blocks,
     build_vulnerability_found_blocks,
 )
+from app.services.notifications.service import safe_notify_project_event
 from app.services.notifications.templates import (
     get_analysis_completed_template,
     get_vulnerability_found_template,
@@ -305,3 +307,29 @@ async def send_scan_notifications(
 
     except Exception as e:
         logger.exception("Failed to process vulnerability notifications: %s", e)
+
+
+async def notify_analysis_failed(db: Database, scan_id: str, project_id: str | None, error: str) -> None:
+    """Send the analysis_failed webhook and member notification; errors are logged, never raised."""
+    try:
+        project = await db.projects.find_one({"_id": project_id})
+        if not project:
+            return
+        project_name = project.get("name", "Unknown")
+        await webhook_service.trigger_analysis_failed(
+            db=db,
+            scan_id=scan_id,
+            project_id=str(project["_id"]),
+            project_name=project_name,
+            error_message=error,
+        )
+        await safe_notify_project_event(
+            db,
+            project_id=str(project["_id"]),
+            event_type=NOTIFICATION_EVENT_ANALYSIS_FAILED,
+            subject=f"Scan failed: {project_name}",
+            message=f"Scan {scan_id} for project {project_name} failed: {error}",
+            context="analysis.analysis_failed",
+        )
+    except Exception:
+        logger.exception("Failed to announce the failure of scan %s", scan_id)

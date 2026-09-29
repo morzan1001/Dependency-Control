@@ -1,7 +1,6 @@
-"""Engine resilience: waived-finding filtering, post-processor result exclusion, and finalize TOCTOU rescheduling."""
+"""Engine resilience: waived-finding filtering and post-processor result exclusion."""
 
 import asyncio
-from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,7 +10,6 @@ from app.services.analysis.engine import (
     _carry_over_external_results,
     _cleanup_analyzer_names,
     _filter_out_waived_findings,
-    _finalize_scan_and_project,
 )
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 
@@ -127,70 +125,3 @@ class TestCarryOverExcludesPostProcessors:
         nin = captured["exclude_names"]
         assert "epss_kev" in nin
         assert "reachability" in nin
-
-
-class TestFinalizeTOCTOU:
-    def _stats(self):
-        return SimpleNamespace(model_dump=lambda: {"x": 1})
-
-    def test_late_result_reschedules_instead_of_completing(self):
-        # find_one_and_update None -> last_result_at guard failed (result arrived after external load began)
-        collection = SimpleNamespace(find_one_and_update=AsyncMock(return_value=None))
-        requeue = AsyncMock(return_value=True)
-        scan_repo = SimpleNamespace(collection=collection, requeue=requeue)
-        project_update = AsyncMock()
-        project_repo = SimpleNamespace(update_raw=project_update, get_by_id=AsyncMock())
-        scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None, created_at=None)
-
-        finalized = asyncio.run(
-            _finalize_scan_and_project(
-                "scan-1",
-                scan_doc,
-                "proj-1",
-                5,
-                0,
-                self._stats(),
-                {"status": "completed"},
-                scan_repo,
-                project_repo,
-                external_load_start=datetime.now(timezone.utc),
-            )
-        )
-
-        assert finalized is False
-        requeue.assert_awaited_once_with("scan-1")
-        # untouched project would otherwise publish stale/incomplete stats
-        project_update.assert_not_awaited()
-
-    def test_clean_completion_commits(self):
-        collection = SimpleNamespace(find_one_and_update=AsyncMock(return_value={"_id": "scan-1"}))
-        scan_repo = SimpleNamespace(
-            collection=collection,
-            update_raw=AsyncMock(),
-            head_fields=AsyncMock(return_value={"latest_scan_id": "scan-1", "stats": {"x": 1}}),
-        )
-        project_update = AsyncMock()
-        project_repo = SimpleNamespace(
-            update_raw=project_update,
-            get_by_id=AsyncMock(return_value=SimpleNamespace(latest_scan_id=None)),
-        )
-        scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None, created_at=None)
-
-        finalized = asyncio.run(
-            _finalize_scan_and_project(
-                "scan-1",
-                scan_doc,
-                "proj-1",
-                5,
-                0,
-                self._stats(),
-                {"status": "completed"},
-                scan_repo,
-                project_repo,
-                external_load_start=datetime.now(timezone.utc),
-            )
-        )
-
-        assert finalized is True
-        collection.find_one_and_update.assert_awaited_once()
-        project_update.assert_awaited_once()
