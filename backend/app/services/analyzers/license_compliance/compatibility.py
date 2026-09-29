@@ -11,50 +11,41 @@ from .constants import (
     LICENSE_DATABASE,
     LICENSE_INCOMPATIBILITIES,
 )
-from .normalizer import (
-    extract_licenses,
-    has_spdx_expression,
-    normalize_license,
-    parse_spdx_expression,
-)
+from .normalizer import parse_license_expression
 
 
 def partition_or_groups(or_groups: list[list[str]]) -> tuple[list[list[str]], list[str]]:
-    """Split OR-alternatives into the readable ones and the unrecognised identifiers that made the rest unreadable."""
+    """Split OR-alternatives into readable ones, as database ids, and the unknown ids that made the rest unreadable."""
     readable: list[list[str]] = []
     unreadable: list[str] = []
     for group in or_groups:
+        # A WITH exception only grants more, so the licence it modifies decides the verdict.
+        ids = list(dict.fromkeys(member.partition(" WITH ")[0] for member in group))
         # AND binds every member, so one unrecognised member leaves the whole alternative unreadable.
-        missing = [lic for lic in (normalize_license(member) for member in group) if lic not in LICENSE_DATABASE]
+        missing = [lic for lic in ids if lic not in LICENSE_DATABASE]
         if missing:
             unreadable.extend(lic for lic in missing if lic not in unreadable)
         else:
-            readable.append(group)
+            readable.append(ids)
     return readable, unreadable
 
 
 def least_restrictive_group(or_groups: list[list[str]]) -> list[str]:
     """Pick the lowest-restrictiveness readable OR-alternative, ranked by its most-restrictive AND-member."""
     readable, _ = partition_or_groups(or_groups)
-    best_rank: int | None = None
-    best_group: list[str] = []
-    for group in readable:
-        worst_rank = max(
-            CATEGORY_RESTRICTIVENESS[LICENSE_DATABASE[normalize_license(lic_id)].category] for lic_id in group
-        )
-        if best_rank is None or worst_rank < best_rank:
-            best_rank = worst_rank
-            best_group = group
-    return best_group
+    return min(
+        readable,
+        key=lambda group: max(CATEGORY_RESTRICTIVENESS[LICENSE_DATABASE[lic].category] for lic in group),
+        default=[],
+    )
 
 
 def _resolve_component_license_ids(comp: dict[str, Any]) -> list[str]:
     """Return the license IDs that apply, resolving OR-expressions to the least-restrictive alternative."""
-    spdx_expr = has_spdx_expression(comp)
-    if spdx_expr:
-        or_groups = parse_spdx_expression(spdx_expr)
-        return least_restrictive_group(or_groups)
-    return [lic_id for lic_id, _ in extract_licenses(comp)]
+    groups = parse_license_expression(comp.get("license") or "")
+    if len(groups) > 1:
+        return least_restrictive_group(groups)
+    return [member.partition(" WITH ")[0] for group in groups for member in group]
 
 
 def check_pair_conflict(a: dict[str, Any], b: dict[str, Any], seen: set) -> dict[str, Any] | None:
@@ -112,18 +103,17 @@ def collect_component_licenses(
         comp_scope = (comp.get("scope") or "").lower()
         if ignore_dev and comp_scope in ("dev", "development", "test", "optional"):
             continue
-        for lic_id in _resolve_component_license_ids(comp):
-            normalized = normalize_license(lic_id)
-            if normalized in LICENSE_DATABASE:
-                result.append(
-                    {
-                        "component": comp.get("name", "unknown"),
-                        "version": comp.get("version", "unknown"),
-                        "license": normalized,
-                        "purl": comp.get("purl", ""),
-                        "component_id": idx,
-                    }
-                )
+        result.extend(
+            {
+                "component": comp.get("name", "unknown"),
+                "version": comp.get("version", "unknown"),
+                "license": lic_id,
+                "purl": comp.get("purl", ""),
+                "component_id": idx,
+            }
+            for lic_id in _resolve_component_license_ids(comp)
+            if lic_id in LICENSE_DATABASE
+        )
     return result
 
 

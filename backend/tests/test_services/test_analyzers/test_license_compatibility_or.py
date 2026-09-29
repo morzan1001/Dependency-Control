@@ -10,7 +10,7 @@ def _make_component(name, version, license_id, scope="runtime"):
     return {
         "name": name,
         "version": version,
-        "licenses": [{"license": {"id": license_id}}],
+        "license": license_id,
         "scope": scope,
         "purl": f"pkg:pypi/{name}@{version}",
     }
@@ -20,7 +20,7 @@ def _make_expr_component(name, version, expression, scope="runtime"):
     return {
         "name": name,
         "version": version,
-        "licenses": [{"expression": expression}],
+        "license": expression,
         "scope": scope,
         "purl": f"pkg:maven/{name}@{version}",
     }

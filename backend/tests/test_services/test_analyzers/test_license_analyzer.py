@@ -1,6 +1,5 @@
 """Tests for the LicenseAnalyzer - license compliance analysis."""
 
-import time
 from typing import Any, ClassVar
 
 import pytest
@@ -24,11 +23,13 @@ from app.services.analyzers.license_compliance.evaluator import (
     is_acceptable_under_policy,
     should_include_finding,
 )
-from app.services.analyzers.license_compliance.normalizer import (
-    extract_licenses,
-    normalize_license,
-    parse_spdx_expression,
-)
+from app.services.analyzers.license_compliance.normalizer import normalize_license
+from app.services.sbom_parser import parse_sbom
+
+
+def _parsed_cyclonedx(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": components}
+    return [dep.model_dump() for dep in parse_sbom(sbom).dependencies]
 
 
 class TestNormalizeLicense:
@@ -59,95 +60,12 @@ class TestNormalizeLicense:
             pytest.param("", "", id="empty-string"),
             pytest.param(';link="https://example.com"', "", id="metadata-only"),
             pytest.param("SomeCustomLicense-1.0", "SomeCustomLicense-1.0", id="unknown-passthrough"),
+            pytest.param("GPL-2.0+", "GPL-2.0-or-later", id="plus-means-or-later"),
+            pytest.param("LGPL-2.1-only+", "LGPL-2.1-or-later", id="plus-on-an-only-id"),
         ],
     )
     def test_normalizes_to_the_canonical_spdx_id(self, raw, expected):
         assert normalize_license(raw) == expected
-
-
-class TestExtractLicenses:
-    def setup_method(self):
-        self.analyzer = LicenseAnalyzer()
-
-    @pytest.mark.parametrize(
-        ("component", "expected"),
-        [
-            pytest.param(
-                {"licenses": [{"license": {"id": "MIT", "url": "https://spdx.org/licenses/MIT"}}]},
-                ("MIT", "https://spdx.org/licenses/MIT"),
-                id="cyclonedx-license-id",
-            ),
-            pytest.param(
-                {"license": "MIT", "license_url": "https://example.com/MIT"},
-                ("MIT", "https://example.com/MIT"),
-                id="direct-license-field",
-            ),
-        ],
-    )
-    def test_a_lone_licence_is_extracted_with_its_url(self, component, expected):
-        result = extract_licenses(component)
-        assert len(result) == 1
-        assert result[0] == expected
-
-    def test_cyclonedx_license_name_fallback(self):
-        component = {"licenses": [{"license": {"name": "Apache-2.0"}}]}
-        result = extract_licenses(component)
-        assert len(result) == 1
-        assert result[0][0] == "Apache-2.0"
-
-    def test_cyclonedx_multiple_licenses(self):
-        component = {
-            "licenses": [
-                {"license": {"id": "MIT"}},
-                {"license": {"id": "Apache-2.0"}},
-            ]
-        }
-        result = extract_licenses(component)
-        assert len(result) == 2
-
-    @pytest.mark.parametrize(
-        ("component", "expected_ids"),
-        [
-            pytest.param(
-                {"licenses": [{"expression": "MIT OR Apache-2.0"}]}, ("MIT", "Apache-2.0"), id="expression-or"
-            ),
-            pytest.param(
-                {"licenses": [{"expression": "MIT AND BSD-3-Clause"}]}, ("MIT", "BSD-3-Clause"), id="expression-and"
-            ),
-            pytest.param(
-                {"licenses": [{"expression": "(MIT OR Apache-2.0)"}]},
-                ("MIT", "Apache-2.0"),
-                id="expression-parenthesised",
-            ),
-            pytest.param({"license": "MIT, Apache-2.0"}, ("MIT", "Apache-2.0"), id="direct-comma-separated"),
-            pytest.param({"license": "MIT OR Apache-2.0"}, ("MIT", "Apache-2.0"), id="direct-expression"),
-            pytest.param(
-                {"licenses": [{"license": {"id": "MIT"}}], "license": "Apache-2.0"},
-                ("MIT", "Apache-2.0"),
-                id="cyclonedx-and-direct-combined",
-            ),
-        ],
-    )
-    def test_every_licence_the_component_names_is_extracted(self, component, expected_ids):
-        ids = [r[0] for r in extract_licenses(component)]
-        for expected in expected_ids:
-            assert expected in ids
-
-    @pytest.mark.parametrize(
-        "component",
-        [
-            pytest.param({"licenses": [{"license": {"id": "NOASSERTION"}}]}, id="cyclonedx-noassertion"),
-            pytest.param({"licenses": [{"license": {"id": "UNKNOWN"}}]}, id="cyclonedx-unknown"),
-            pytest.param({"licenses": [{"expression": "NOASSERTION"}]}, id="expression-noassertion"),
-            pytest.param({"license": "NOASSERTION"}, id="direct-noassertion"),
-            pytest.param({"licenses": []}, id="empty-licenses-list"),
-            pytest.param({"name": "some-package"}, id="no-licenses-key"),
-            pytest.param({"license": None}, id="direct-license-none"),
-            pytest.param({"license": "   "}, id="direct-license-blank"),
-        ],
-    )
-    def test_a_component_naming_no_licence_extracts_nothing(self, component):
-        assert extract_licenses(component) == []
 
 
 class TestEvaluateLicense:
@@ -422,50 +340,6 @@ class TestSpdxExpressionEvaluation:
         self.analyzer = LicenseAnalyzer()
 
     @pytest.mark.parametrize(
-        ("expression", "expected"),
-        [
-            pytest.param("MIT OR Apache-2.0", [["MIT"], ["Apache-2.0"]], id="or"),
-            pytest.param("GPL-2.0 AND Classpath", [["GPL-2.0", "Classpath"]], id="and"),
-            # WITH clauses are stripped: they modify but don't add licenses.
-            pytest.param("GPL-2.0 WITH Classpath-exception-2.0", [["GPL-2.0"]], id="with-exception"),
-            pytest.param("MIT", [["MIT"]], id="single-license"),
-        ],
-    )
-    def test_the_expression_parses_into_its_alternatives(self, expression, expected):
-        assert parse_spdx_expression(expression) == expected
-
-    def test_parse_mixed_or_and(self):
-        result = parse_spdx_expression("MIT OR GPL-2.0 AND Classpath")
-        assert len(result) == 2
-        assert ["MIT"] in result
-
-    def test_long_whitespace_run_between_tokens_still_splits(self):
-        """Whitespace is not a separator budget: an operator stays an operator however far it sits."""
-        expr = "MIT" + " " * 5000 + "OR" + " " * 5000 + "Apache-2.0"
-        assert parse_spdx_expression(expr) == [["MIT"], ["Apache-2.0"]]
-
-    def test_whitespace_run_parses_without_superlinear_backtracking(self):
-        """A run of spaces matching no operator must cost linear time, not quadratic.
-
-        Every SPDX pattern starts with a repeated whitespace class, so without pruning the
-        doomed start positions one 50 KB component licence burns ~10 s of CPU on a stage no
-        deadline can interrupt.
-        """
-        expr = "MIT" + " " * 50_000 + "Apache-2.0"
-        started = time.perf_counter()
-        result = parse_spdx_expression(expr)
-        assert time.perf_counter() - started < 1.0
-        assert result == [["MIT" + " " * 50_000 + "Apache-2.0"]]
-
-    def test_expression_scan_without_superlinear_backtracking(self):
-        """The same pruning has to hold for the AND|OR|WITH scan extract_licenses runs."""
-        component = {"licenses": [{"expression": "MIT" + " " * 50_000 + "Apache-2.0"}]}
-        started = time.perf_counter()
-        licenses = extract_licenses(component)
-        assert time.perf_counter() - started < 1.0
-        assert licenses == [("MIT" + " " * 50_000 + "Apache-2.0", None)]
-
-    @pytest.mark.parametrize(
         "or_groups",
         [
             # MIT is permissive -> no issue, the least restrictive alternative.
@@ -572,7 +446,7 @@ class TestLicenseCompatibility:
         return {
             "name": name,
             "version": version,
-            "licenses": [{"license": {"id": license_id}}],
+            "license": license_id,
             "scope": scope,
             "purl": f"pkg:pypi/{name}@{version}",
         }
@@ -767,7 +641,7 @@ class TestUndeterminableLicense:
 
     @staticmethod
     async def _run(components):
-        return await LicenseAnalyzer().analyze({"components": components})
+        return await LicenseAnalyzer().analyze({}, parsed_components=_parsed_cyclonedx(components))
 
     @staticmethod
     def _unknown_issues(result):
@@ -796,7 +670,7 @@ class TestUndeterminableLicense:
     async def test_transitive_component_still_emits_the_finding(self):
         component = {**self.UNDETERMINABLE_SHAPES[0], "direct": False}
         result = await LicenseAnalyzer().analyze(
-            {"components": [component]},
+            {},
             settings={"ignore_transitive": False},
             parsed_components=[{"name": component["name"], "version": "1.0.0", "direct": False}],
         )
@@ -872,7 +746,7 @@ class TestUnreadableOrAlternative:
             "purl": "pkg:pypi/dual-licensed@1.0.0",
             "licenses": [{"expression": expression}],
         }
-        return await LicenseAnalyzer().analyze({"components": [component]}, settings or {})
+        return await LicenseAnalyzer().analyze({}, settings or {}, parsed_components=_parsed_cyclonedx([component]))
 
     @staticmethod
     def _by_category(result, category):
@@ -932,12 +806,14 @@ class TestUnreadableOrAlternative:
     async def test_a_shadowed_alternative_still_reaches_the_conflict_check(self):
         components = [
             {
+                "type": "library",
                 "name": "dual-licensed",
                 "version": "1.0.0",
                 "purl": "pkg:pypi/dual-licensed@1.0.0",
                 "licenses": [{"expression": _UNREADABLE_OR_COPYLEFT}],
             },
             {
+                "type": "library",
                 "name": "cddl-lib",
                 "version": "1.0.0",
                 "purl": "pkg:pypi/cddl-lib@1.0.0",
@@ -945,7 +821,7 @@ class TestUnreadableOrAlternative:
             },
         ]
 
-        result = await LicenseAnalyzer().analyze({"components": components})
+        result = await LicenseAnalyzer().analyze({}, parsed_components=_parsed_cyclonedx(components))
 
         conflicts = self._by_category(result, _INCOMPATIBILITY_CATEGORY)
         assert len(conflicts) == _ONE_FINDING
@@ -979,6 +855,10 @@ class TestPartitionOrGroups:
         readable, unreadable = partition_or_groups([[_UNREADABLE_ALTERNATIVE], [_UNREADABLE_ALTERNATIVE]])
         assert readable == []
         assert len(unreadable) == _ONE_FINDING
+
+    def test_the_readable_alternatives_come_back_as_database_ids(self):
+        readable, _ = partition_or_groups([["GPL-2.0-only WITH Classpath-exception-2.0", "GPL-2.0-only"]])
+        assert readable == [["GPL-2.0-only"]]
 
     def test_all_readable_leaves_nothing_unreadable(self):
         readable, unreadable = partition_or_groups([[_PERMISSIVE_ID], [_STRONG_COPYLEFT_ID]])

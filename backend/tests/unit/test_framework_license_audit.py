@@ -128,14 +128,18 @@ async def test_analyzer_output_reaches_the_identified_control():
     from app.services.aggregation import ResultAggregator
     from app.services.analyzers.license_compliance import LicenseAnalyzer
     from app.services.normalizers.license import normalize_license
+    from app.services.sbom_parser import parse_sbom
 
     sbom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
         "components": [
             {"type": "library", "name": "mit-lib", "version": "1.0.0", "licenses": [{"license": {"id": "MIT"}}]},
             {"type": "library", "name": "undeclared-lib", "version": "2.0.0"},
-        ]
+        ],
     }
-    result = await LicenseAnalyzer().analyze(sbom)
+    components = [dep.model_dump() for dep in parse_sbom(sbom).dependencies]
+    result = await LicenseAnalyzer().analyze(sbom, parsed_components=components)
     assert result["summary"]["unknown"] == 1
 
     aggregator = ResultAggregator()

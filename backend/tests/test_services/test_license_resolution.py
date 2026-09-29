@@ -9,10 +9,9 @@ from app.core.constants import LICENSE_URL_PATTERNS
 from app.services.analyzers.license_compliance import LICENSE_DATABASE, LicenseAnalyzer
 from app.services.analyzers.license_compliance import normalizer
 from app.services.analyzers.license_compliance.normalizer import (
-    composite_license_expression,
     extract_license_from_url,
-    extract_licenses,
     normalize_license,
+    parse_license_expression,
     split_license_list,
     tokenize_license_string,
 )
@@ -82,11 +81,8 @@ def test_a_verbose_licence_name_resolves_to_its_spdx_id(name, expected):
 
 
 def test_a_licence_title_with_a_comma_stays_one_licence():
-    component = {"license": "Apache License, Version 2.0, MIT"}
-
-    assert extract_licenses(component) == [("Apache License, Version 2.0", None), ("MIT", None)]
+    assert parse_license_expression("Apache License, Version 2.0, MIT") == [["Apache-2.0", "MIT"]]
     assert tokenize_license_string("Apache License, Version 2.0") == ["Apache-2.0"]
-    assert composite_license_expression({"license": "Apache License, Version 2.0"}) is None
 
 
 def test_splitting_a_long_licence_list_normalizes_each_part_a_bounded_number_of_times(monkeypatch):
@@ -106,11 +102,8 @@ def test_splitting_a_long_licence_list_normalizes_each_part_a_bounded_number_of_
 
 
 def test_syft_prefers_the_spdx_expression_it_resolved_over_the_raw_value():
-    names: list[str] = []
-    SBOMParser()._handle_syft_license_dict(
-        {"value": "GPL-2.0+", "spdxExpression": "GPL-2.0-or-later", "type": "declared"}, names, None
-    )
-    assert names == ["GPL-2.0-or-later"]
+    entry = {"value": "GPL-2.0+", "spdxExpression": "GPL-2.0-or-later", "type": "declared"}
+    assert SBOMParser()._handle_syft_license_dict(entry) == ("GPL-2.0-or-later", None)
 
 
 def _analyze(licenses: list[dict[str, Any]]) -> dict[str, Any]:

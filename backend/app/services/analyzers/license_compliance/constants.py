@@ -1,11 +1,8 @@
-"""Constants and regex helpers for the license-compliance analyzer."""
+"""Constants for the license-compliance analyzer."""
 
 from __future__ import annotations
 
-import functools
-import re
-
-from app.core.constants import LICENSE_ALIASES, SEVERITY_ORDER
+from app.core.constants import SEVERITY_ORDER
 from app.models.finding import Severity
 from app.models.license import LicenseCategory, LicenseInfo
 
@@ -19,15 +16,6 @@ NETWORK_USE_TRIGGERS_DISCLOSURE = "Network use triggers source disclosure"
 # Stands in for the licence of a component the SBOM does not let us determine.
 UNDETERMINED_LICENSE_ID = "UNKNOWN"
 UNDETERMINED_LICENSE_MESSAGE = "License could not be determined from the SBOM"
-
-# Each pattern opens with a repeated whitespace class, so without the lookbehind the engine
-# retries from every position inside a run and backtracks the whole of it each time, which is
-# quadratic in the run length on SBOM-supplied text. A match can only ever begin where a run
-# begins - greedy `\s+` from there spans everything a later start could reach - so refusing the
-# interior positions prunes only doomed ones and leaves the matches themselves unchanged.
-SPDX_EXPR_SPLIT = re.compile(r"(?<!\s)\s+(?:AND|OR|WITH)\s+")
-SPDX_OR_SPLIT = re.compile(r"(?<!\s)\s+OR\s+")
-SPDX_AND_SPLIT = re.compile(r"(?<!\s)\s+AND\s+")
 
 # SPDX identifiers shared across the incompatibility table.
 SPDX_GPL_2_0 = "GPL-2.0"
@@ -590,10 +578,3 @@ CATEGORY_STAT_KEY: dict[LicenseCategory, str] = {
     LicenseCategory.NETWORK_COPYLEFT: "network_copyleft",
     LicenseCategory.PROPRIETARY: "proprietary",
 }
-
-
-@functools.cache
-def get_lowercase_mappings() -> tuple[dict[str, str], dict[str, str]]:
-    """Return cached (db_lower, alias_lower) lookup tables; alias_lower also holds each licence's full name."""
-    names = {info.name.lower(): spdx_id for spdx_id, info in LICENSE_DATABASE.items()}
-    return {k.lower(): k for k in LICENSE_DATABASE}, names | {k.lower(): v for k, v in LICENSE_ALIASES.items()}

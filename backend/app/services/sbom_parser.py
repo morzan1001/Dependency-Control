@@ -2,6 +2,7 @@
 
 import logging
 import re
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import quote, urlparse
 
@@ -13,10 +14,12 @@ from app.core.constants import (
     SOURCE_TYPE_FILE_SYSTEM,
     SOURCE_TYPE_IMAGE,
     SPDX_ORGANIZATION_PREFIX,
+    UNKNOWN_LICENSE_PATTERNS,
 )
 from app.schemas.sbom import UNKNOWN_VERSION, ParsedDependency, ParsedSBOM, SBOMFormat, has_known_version
 from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type, parse_purl
-from app.services.analyzers.license_compliance.normalizer import extract_license_from_url
+from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
+from app.services.analyzers.license_compliance.normalizer import extract_license_from_url, normalize_license
 from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
@@ -26,6 +29,21 @@ logger = logging.getLogger(__name__)
 MAX_COMPONENT_NESTING_DEPTH = 100
 
 _MERGED_LIST_FIELDS = ("locations", "parent_components", "cpes")
+
+_SPDX_OPERATORS = frozenset({"AND", "OR", "WITH"})
+# Maven's POM model and npm's legacy licenses array list licences a consumer may choose between.
+_LICENSE_CHOICE_PURL_TYPES = frozenset({"maven", "npm"})
+_SPDX_LICENSE_REF = re.compile(r"LicenseRef-[A-Za-z0-9.\-]+")
+
+
+def _join_licenses(entries: list[str], purl: str | None) -> str:
+    """One SPDX expression for a component's licence entries, each kept whole."""
+    unique = list(dict.fromkeys(entries))
+    if len(unique) < 2:
+        return "".join(unique)
+    parsed = parse_purl(purl or "")
+    operator = " OR " if parsed and parsed.type in _LICENSE_CHOICE_PURL_TYPES else " AND "
+    return operator.join(f"({entry})" if _SPDX_OPERATORS.intersection(entry.split()) else entry for entry in unique)
 
 
 def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[list[ParsedDependency], int]:
@@ -689,7 +707,9 @@ class SBOMParser:
         if reverse_deps_graph and check_ref in reverse_deps_graph:
             parent_components = reverse_deps_graph[check_ref]
 
-        license_str, license_url = self._extract_cyclonedx_licenses_full(comp.get("licenses") or [])
+        license_str, license_url = self._extract_licenses_full(
+            comp.get("licenses") or [], self._handle_cyclonedx_license_dict, purl
+        )
 
         hashes: dict[str, str] = {}
         raw_hashes = comp.get("hashes")
@@ -746,65 +766,46 @@ class SBOMParser:
         )
 
     @staticmethod
-    def _classify_license_value(
-        value: str, current_url: str | None, fallback_url: str | None = None
-    ) -> tuple[str | None, str | None]:
-        """Classify a license value, returning (name_or_extracted, new_url_or_None)."""
+    def _classify_license_value(value: str, fallback_url: str | None = None) -> tuple[str | None, str | None]:
+        """The licence name, or the id its URL names, and the licence URL the entry carries."""
         if is_url(value):
-            new_url = current_url or value
-            extracted = extract_license_from_url(value)
-            return extracted, new_url
-        if not current_url and fallback_url:
-            return value, fallback_url
-        return value, None
+            return extract_license_from_url(value), value
+        return value, fallback_url
 
-    def _handle_cyclonedx_license_dict(
-        self, lic: dict[str, Any], license_names: list[str], license_url: str | None
-    ) -> str | None:
-        """Handle a single CycloneDX license-dict entry; returns possibly updated url."""
-        # Could be license object or expression
-        if "license" in lic:
-            inner = lic["license"]
-            if isinstance(inner, dict):
-                name_or_id = inner.get("id") or inner.get("name") or inner.get("url", "")
-                name, new_url = self._classify_license_value(name_or_id, license_url, inner.get("url"))
-                if name:
-                    license_names.append(name)
-                if new_url and not license_url:
-                    license_url = new_url
-            return license_url
-
-        for key in ("expression", "id", "name"):
-            if key in lic:
-                value = lic[key]
-                fallback = lic.get("url") if key in ("id", "name") else None
-                name, new_url = self._classify_license_value(value, license_url, fallback)
-                if name:
-                    license_names.append(name)
-                if new_url and not license_url:
-                    license_url = new_url
-                return license_url
-        return license_url
-
-    def _extract_cyclonedx_licenses_full(self, licenses: list[Any]) -> tuple[str, str | None]:
-        """Extract license string and URL from CycloneDX license array."""
-        if not licenses:
-            return "", None
-
-        license_names: list[str] = []
+    def _extract_licenses_full(
+        self,
+        licenses: list[Any],
+        handle_dict: Callable[[dict[str, Any]], tuple[str | None, str | None]],
+        purl: str | None,
+    ) -> tuple[str, str | None]:
+        """A component's licence expression and first licence URL from its CycloneDX or Syft licence entries."""
+        names: list[str] = []
         license_url: str | None = None
-
         for lic in licenses:
             if isinstance(lic, dict):
-                license_url = self._handle_cyclonedx_license_dict(lic, license_names, license_url)
+                name, url = handle_dict(lic)
             elif isinstance(lic, str):
-                name, new_url = self._classify_license_value(lic, license_url)
-                if name:
-                    license_names.append(name)
-                if new_url and not license_url:
-                    license_url = new_url
+                name, url = self._classify_license_value(lic)
+            else:
+                continue
+            if name:
+                names.append(name)
+            license_url = license_url or url
+        return _join_licenses(names, purl), license_url
 
-        return ", ".join(filter(None, license_names)), license_url
+    def _handle_cyclonedx_license_dict(self, lic: dict[str, Any]) -> tuple[str | None, str | None]:
+        """Classify one CycloneDX licence choice: a license object or an SPDX expression."""
+        if "license" in lic:
+            inner = lic["license"]
+            if not isinstance(inner, dict):
+                return None, None
+            return self._classify_license_value(
+                inner.get("id") or inner.get("name") or inner.get("url", ""), inner.get("url")
+            )
+        for key in ("expression", "id", "name"):
+            if key in lic:
+                return self._classify_license_value(lic[key], lic.get("url") if key != "expression" else None)
+        return None, None
 
     _SYFT_KNOWN_SOURCE_TYPES = (
         SOURCE_TYPE_IMAGE,
@@ -1030,7 +1031,9 @@ class SBOMParser:
             purl = self._construct_purl(pkg_type, name, version)
             logger.debug(f"Constructed PURL for Syft artifact {name}@{version}: {purl}")
 
-        license_str, license_url = self._extract_syft_licenses_full(artifact.get("licenses") or [])
+        license_str, license_url = self._extract_licenses_full(
+            artifact.get("licenses") or [], self._handle_syft_license_dict, purl
+        )
         locations, layer_digest = self._extract_syft_locations(artifact.get("locations") or [])
         # Syft JSON schema < 16.0 emits `cpes` as a list of plain strings; newer
         # releases use a list of dicts ({"cpe": "..."}). Handle both so a legacy
@@ -1111,52 +1114,12 @@ class SBOMParser:
             return str(url_val) if url_val else None
         return None
 
-    def _handle_syft_license_dict(
-        self, lic: dict[str, Any], license_names: list[str], license_url: str | None
-    ) -> str | None:
-        """Handle a single syft license-dict entry; returns possibly updated url."""
+    def _handle_syft_license_dict(self, lic: dict[str, Any]) -> tuple[str | None, str | None]:
+        """Classify one syft licence entry; one syft knows only by URL resolves through the URL."""
+        dedicated_url = self._syft_license_dict_url(lic)
         # Syft fills spdxExpression only when it resolved the value to an SPDX id.
-        value = lic.get("spdxExpression") or lic.get("value") or lic.get("type", "")
-        if value:
-            name, new_url = self._classify_license_value(value, license_url)
-            if name:
-                license_names.append(name)
-            if new_url and not license_url:
-                license_url = new_url
-
-        if not license_url:
-            dedicated_url = self._syft_license_dict_url(lic)
-            if dedicated_url:
-                license_url = dedicated_url
-        return license_url
-
-    def _extract_syft_licenses_full(self, licenses: list[Any]) -> tuple[str, str | None]:
-        """Extract license string and URL from Syft license array."""
-        if not licenses:
-            return "", None
-
-        license_names: list[str] = []
-        license_url: str | None = None
-
-        for lic in licenses:
-            if isinstance(lic, dict):
-                license_url = self._handle_syft_license_dict(lic, license_names, license_url)
-            elif isinstance(lic, str):
-                name, new_url = self._classify_license_value(lic, license_url)
-                if name:
-                    license_names.append(name)
-                if new_url and not license_url:
-                    license_url = new_url
-
-        # Deduplicate while preserving order
-        seen: set = set()
-        unique: list[str] = []
-        for lic in license_names:
-            if lic not in seen:
-                seen.add(lic)
-                unique.append(lic)
-
-        return ", ".join(unique), license_url
+        value = lic.get("spdxExpression") or lic.get("value") or dedicated_url or ""
+        return self._classify_license_value(value, dedicated_url)
 
     def _build_spdx_dependency_graph(
         self, relationships: list[dict[str, Any]], doc_spdx_id: str
@@ -1232,6 +1195,7 @@ class SBOMParser:
 
         packages = sbom.get("packages") or []
         inferred = not bool(relationships)
+        license_refs = self._spdx_license_refs(sbom)
         self._count_skipped(result, "file", len(sbom.get("files") or []))
 
         root_pkg = next((p for p in packages if isinstance(p, dict) and p.get("SPDXID") in app_root_ids), None)
@@ -1252,7 +1216,9 @@ class SBOMParser:
             is_direct = inferred or pkg_spdx_id in direct_package_ids
 
             try:
-                parsed = self._parse_spdx_package(pkg, is_direct, inferred, result.source_type, result.source_target)
+                parsed = self._parse_spdx_package(
+                    pkg, license_refs, is_direct, inferred, result.source_type, result.source_target
+                )
             except Exception:
                 logger.warning("Skipping malformed SPDX package %r", pkg.get("name"), exc_info=True)
                 self._count_skipped(result, "parse-error")
@@ -1301,23 +1267,35 @@ class SBOMParser:
                 return pkg_type
         return "generic"
 
-    _SPDX_LICENSE_PLACEHOLDERS = ("NOASSERTION", "NONE", "")
+    @staticmethod
+    def _spdx_license_refs(sbom: dict[str, Any]) -> dict[str, str]:
+        """The document's LicenseRef ids whose extracted licence names a known licence, mapped to its SPDX id."""
+        refs: dict[str, str] = {}
+        for info in sbom.get("hasExtractedLicensingInfos") or []:
+            if not isinstance(info, dict) or not isinstance(info.get("licenseId"), str):
+                continue
+            # Trivy names the licence in `name` with a sentence in extractedText; syft puts the name in extractedText.
+            for candidate in (info.get("name"), info.get("extractedText")):
+                spdx_id = normalize_license(candidate) if isinstance(candidate, str) else ""
+                if spdx_id in LICENSE_DATABASE:
+                    refs[info["licenseId"]] = spdx_id
+                    break
+        return refs
 
-    @classmethod
-    def _resolve_spdx_license(cls, pkg: dict[str, Any]) -> tuple[str, str | None]:
+    @staticmethod
+    def _resolve_spdx_license(pkg: dict[str, Any], license_refs: dict[str, str]) -> tuple[str, str | None]:
         """Extract (license_str, license_url) from SPDX licenseConcluded/Declared."""
-        license_concluded = pkg.get("licenseConcluded", "")
-        license_declared = pkg.get("licenseDeclared", "")
-        license_str = license_concluded if license_concluded not in cls._SPDX_LICENSE_PLACEHOLDERS else license_declared
-        if not license_str or license_str in cls._SPDX_LICENSE_PLACEHOLDERS:
-            license_str = ""
-
-        license_url: str | None = None
+        license_str = next(
+            (
+                value
+                for value in (pkg.get("licenseConcluded"), pkg.get("licenseDeclared"))
+                if value and value.upper() not in UNKNOWN_LICENSE_PATTERNS
+            ),
+            "",
+        )
         if is_url(license_str):
-            license_url = license_str
-            extracted = extract_license_from_url(license_str)
-            license_str = extracted if extracted else ""
-        return license_str, license_url
+            return extract_license_from_url(license_str) or "", license_str
+        return _SPDX_LICENSE_REF.sub(lambda ref: license_refs.get(ref.group(), ref.group()), license_str), None
 
     @staticmethod
     def _resolve_spdx_originator(
@@ -1370,6 +1348,7 @@ class SBOMParser:
     def _parse_spdx_package(
         self,
         pkg: dict[str, Any],
+        license_refs: dict[str, str],
         is_direct: bool = False,
         direct_inferred: bool = False,
         global_source_type: str | None = None,
@@ -1393,7 +1372,7 @@ class SBOMParser:
             purl = self._construct_purl(inferred_type, name, version)
             logger.debug(f"Constructed PURL for SPDX package {name}@{version}: {purl}")
 
-        license_str, license_url = self._resolve_spdx_license(pkg)
+        license_str, license_url = self._resolve_spdx_license(pkg, license_refs)
         pkg_type = get_purl_type(purl) or "unknown"
         hashes = self._extract_spdx_hashes(pkg)
 

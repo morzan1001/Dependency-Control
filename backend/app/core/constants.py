@@ -72,7 +72,7 @@ LICENSE_URL_PATTERNS: dict[str, str] = {
     r"apache\.org/licenses/license-1\.1": SPDX_APACHE_1_1,
     # opensource.org serves both /licenses/<id> and /license/<id>.
     r"opensource\.org/licenses?/apache-2\.0": SPDX_APACHE_2_0,
-    r"opensource\.org/licenses?/mit": SPDX_MIT,
+    r"opensource\.org/licenses?/mit(?!-0)": SPDX_MIT,
     r"mit-license\.org": SPDX_MIT,
     r"opensource\.org/licenses?/bsd-3-clause": SPDX_BSD_3_CLAUSE,
     r"opensource\.org/licenses?/bsd-2-clause": SPDX_BSD_2_CLAUSE,
@@ -165,18 +165,8 @@ LICENSE_ALIASES: dict[str, str] = {
     "PSF": "Python-2.0",
 }
 
-# Patterns indicating unknown/missing license
-UNKNOWN_LICENSE_PATTERNS = {
-    "NOASSERTION",
-    "UNKNOWN",
-    "NONE",
-    "N/A",
-    "NOT FOUND",
-    "UNLICENSED",
-    "SEE LICENSE",
-    "CUSTOM",
-    "PROPRIETARY",
-}
+# Placeholders meaning the SBOM carries no licence data.
+UNKNOWN_LICENSE_PATTERNS = {"NOASSERTION", "UNKNOWN", "NONE", "N/A", "NOT FOUND"}
 
 # Project roles, weakest first: the order is the hierarchy.
 ProjectRole = Literal["viewer", "editor", "admin"]

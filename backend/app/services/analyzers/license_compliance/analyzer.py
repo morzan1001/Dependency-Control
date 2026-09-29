@@ -109,13 +109,15 @@ class LicenseAnalyzer(Analyzer):
         comp_version = component.get("version", "unknown")
         comp_purl = component.get("purl", "")
 
-        spdx_expr = normalizer.has_spdx_expression(component)
-        if spdx_expr:
+        declared = component.get("license") or ""
+        or_groups = normalizer.parse_license_expression(declared)
+        if len(or_groups) > 1:
             self._analyze_or_expression(
                 comp_name,
                 comp_version,
                 comp_purl,
-                spdx_expr,
+                declared,
+                or_groups,
                 stats,
                 issues,
                 component_licenses,
@@ -124,20 +126,20 @@ class LicenseAnalyzer(Analyzer):
             )
             return
 
-        licenses = normalizer.extract_licenses(component)
-        if not licenses:
+        members = or_groups[0] if or_groups else []
+        if not members:
             stats["unknown"] += 1
             issues.append(evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, []))
             return
 
-        # AND/WITH/comma composites reach this path member-by-member; keep the raw
-        # expression on each issue so the declared license survives enrichment.
-        raw_expression = normalizer.composite_license_expression(component)
+        # Keep the declared composite on each issue so the full license survives enrichment.
+        raw_expression = declared if len(members) > 1 or " WITH " in members[0] else None
+        lic_url = component.get("license_url")
 
         unrecognized: list[str] = []
-        for lic_id, lic_url in licenses:
-            normalized = normalizer.normalize_license(lic_id)
-            if normalized not in LICENSE_DATABASE and len(licenses) == 1:
+        for member in members:
+            normalized = member.partition(" WITH ")[0]
+            if normalized not in LICENSE_DATABASE and len(members) == 1:
                 # A lone licence's URL is its own; with several, the one stored URL may belong to another.
                 normalized = normalizer.extract_license_from_url(lic_url) or normalized
             license_info = LICENSE_DATABASE.get(normalized)
@@ -205,6 +207,7 @@ class LicenseAnalyzer(Analyzer):
         comp_version: str,
         comp_purl: str,
         spdx_expr: str,
+        or_groups: list[list[str]],
         stats: dict[str, int],
         issues: list[dict[str, Any]],
         component_licenses: list[dict[str, Any]],
@@ -213,7 +216,6 @@ class LicenseAnalyzer(Analyzer):
         policy: LicensePolicy,
     ) -> None:
         """Resolve an OR-expression to the alternative a consumer would take, or report it undeterminable."""
-        or_groups = normalizer.parse_spdx_expression(spdx_expr)
         readable_groups, unreadable = compatibility.partition_or_groups(or_groups)
         selected, issue = self._select_or_alternative(comp_name, comp_version, comp_purl, readable_groups, policy)
 
@@ -221,20 +223,19 @@ class LicenseAnalyzer(Analyzer):
             # No alternative is both readable and acceptable, so the expression settles nothing:
             # an acceptable licence may sit behind the identifier we do not recognise.
             stats["unknown"] += 1
-            rejected = [normalizer.normalize_license(lic_id) for group in readable_groups for lic_id in group]
+            rejected = list(dict.fromkeys(lic_id for group in readable_groups for lic_id in group))
             issues.append(
                 evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, unreadable, rejected)
             )
             return
 
         for lic_id in selected:
-            normalized = normalizer.normalize_license(lic_id)
-            info = LICENSE_DATABASE[normalized]
+            info = LICENSE_DATABASE[lic_id]
             stat_key = CATEGORY_STAT_KEY.get(info.category)
             if stat_key:
                 stats[stat_key] += 1
             component_licenses.append(
-                self._classification_entry(comp_name, comp_version, comp_purl, normalized, info, spdx_expr)
+                self._classification_entry(comp_name, comp_version, comp_purl, lic_id, info, spdx_expr)
             )
 
         if issue:
@@ -261,7 +262,7 @@ class LicenseAnalyzer(Analyzer):
                 issue = evaluator.evaluate_license(
                     component=comp_name,
                     version=comp_version,
-                    license_info=LICENSE_DATABASE[normalizer.normalize_license(lic_id)],
+                    license_info=LICENSE_DATABASE[lic_id],
                     lic_url=None,
                     purl=comp_purl,
                     policy=policy,
