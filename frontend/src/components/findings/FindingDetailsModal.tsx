@@ -474,9 +474,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                     {(vuln.cvss_vector || finding.details?.cvss_vector) && <span className="font-mono text-muted-foreground">{vuln.cvss_vector || finding.details?.cvss_vector}</span>}
                                                                 </div>
                                                             )}
-                                                            {(vuln.epss_score !== undefined || finding.details?.epss_score !== undefined) && (() => {
-                                                                const epssScore = vuln.epss_score ?? finding.details?.epss_score ?? 0
-                                                                const epssPercentile = vuln.epss_percentile ?? finding.details?.epss_percentile
+                                                            {vuln.epss_score != null && (() => {
+                                                                const epssScore = vuln.epss_score ?? 0
+                                                                const epssPercentile = vuln.epss_percentile
                                                                 const epssDate = vuln.epss_date ?? finding.details?.epss_date
                                                                 let epssColorClass = ''
                                                                 if (epssScore >= 0.1) epssColorClass = 'text-severity-critical'
@@ -495,13 +495,13 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 </div>
                                                                 )
                                                             })()}
-                                                            {(vuln.in_kev || finding.details?.in_kev) && (() => {
-                                                                const kevDateAdded = vuln.kev_date_added ?? finding.details?.kev_date_added
+                                                            {vuln.in_kev && (() => {
+                                                                const kevDateAdded = vuln.kev_date_added
                                                                 return (
                                                                 <div className="flex items-center gap-1 px-2 py-0.5 bg-red-500/10 text-red-600 rounded-md flex-wrap">
                                                                     <AlertTriangle className="h-3 w-3" />
                                                                     <span className="font-medium">Known Exploited</span>
-                                                                    {(vuln.kev_ransomware_use || finding.details?.kev_ransomware_use) && (
+                                                                    {vuln.kev_ransomware_use && (
                                                                         <Badge variant="destructive" className="text-[10px] py-0 h-4">Ransomware</Badge>
                                                                     )}
                                                                     {kevDateAdded && (
@@ -540,10 +540,10 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                             {(vuln.reachability?.message ?? finding.details?.reachability?.message) && (
                                                                 <ReachabilityEvidence reachability={(vuln.reachability ?? finding.details?.reachability)!} />
                                                             )}
-                                                            {(vuln.kev_required_action || finding.details?.kev_required_action) && (
+                                                            {vuln.kev_required_action && (
                                                                 <div className="flex items-center gap-2 w-full">
                                                                     <span className="font-medium text-muted-foreground">Required Action:</span>
-                                                                    <span className="text-destructive">{vuln.kev_required_action || finding.details?.kev_required_action}</span>
+                                                                    <span className="text-destructive">{vuln.kev_required_action}</span>
                                                                 </div>
                                                             )}
                                                             {(vuln.exploit_maturity || finding.details?.exploit_maturity) && (
