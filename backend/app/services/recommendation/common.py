@@ -18,7 +18,7 @@ from app.core.constants import (
 from app.core.epss import bucket_epss
 from app.schemas.recommendation import Priority, Recommendation, VulnerabilityInfo
 from app.services.aggregation.versions import parse_version_key
-from app.services.enrichment import canonical_cves
+from app.core.cve import canonical_cves
 
 ModelOrDict = BaseModel | dict[str, Any]
 

@@ -19,6 +19,7 @@ from app.core.constants import (
     REACHABILITY_LEVEL_SYMBOL,
     sort_by_severity,
 )
+from app.core.cve import canonical_cve, entry_cves
 from app.core.epss import bucket_epss
 from app.core.risk_scoring import (
     CONFIRMED_REACHABLE_RISK_MODIFIER,
@@ -80,14 +81,6 @@ def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss
     return epss_score
 
 
-def vulnerability_entry_cve(entry: dict[str, Any]) -> str | None:
-    """CVE id of one ``details.vulnerabilities`` entry, or None when it carries no CVE."""
-    for candidate in (entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])):
-        if isinstance(candidate, str) and candidate.startswith("CVE-"):
-            return candidate
-    return None
-
-
 def finding_vulnerability_id(finding: dict[str, Any]) -> str:
     """An identifier a user can look up: a CVE where one exists, else a scanner id.
 
@@ -96,9 +89,8 @@ def finding_vulnerability_id(finding: dict[str, Any]) -> str:
     """
     entries = [e for e in (finding.get("details") or {}).get("vulnerabilities") or [] if isinstance(e, dict)]
     for entry in entries:
-        cve = vulnerability_entry_cve(entry)
-        if cve:
-            return cve
+        if cves := entry_cves(entry):
+            return cves[0]
     for alias in finding.get("aliases") or []:
         if isinstance(alias, str) and alias.startswith("CVE-"):
             return alias
@@ -115,7 +107,7 @@ def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summa
     component = finding.get("component", "")
     rows: list[KEVDetail] = [
         {
-            "cve": vulnerability_entry_cve(entry) or str(entry.get("id") or ""),
+            "cve": canonical_cve(entry) or "",
             "component": component,
             "due_date": entry.get("kev_due_date"),
             "ransomware": bool(entry.get("kev_ransomware_use")),

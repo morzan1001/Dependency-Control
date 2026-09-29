@@ -9,7 +9,7 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.analytics.findings_delta import finding_identity_key
-from app.services.enrichment import canonical_cves
+from app.core.cve import canonical_cves
 from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
 
 # What finding_identity_key reads; the scan-scoped ``_id`` stays out, it never matches across a pair.

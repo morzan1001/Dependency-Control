@@ -12,6 +12,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.cve import canonical_cves
 from app.schemas.scan_delta import (
     DeltaCategory,
     FindingDeltaItem,
@@ -258,14 +259,6 @@ def _doc_type(doc: dict) -> str:
     return doc.get("type") or ""
 
 
-def _item_cve_id(details: dict[str, Any]) -> str | None:
-    """Best display CVE id: the first ``details.vulnerabilities[].id``."""
-    for entry in details.get("vulnerabilities") or []:
-        if isinstance(entry, dict) and entry.get("id"):
-            return str(entry["id"])
-    return None
-
-
 def _to_item(doc: dict, change: str) -> FindingDeltaItem:
     details = doc.get("details") or {}
     found_in = doc.get("found_in") or []
@@ -276,7 +269,7 @@ def _to_item(doc: dict, change: str) -> FindingDeltaItem:
         severity=_doc_severity(doc),
         title=doc.get("description") or "",
         component=doc.get("component"),
-        cve_id=_item_cve_id(details),
+        cve_id=next(iter(canonical_cves([details])), None),
         file_path=(found_in[0] if found_in else None),
         first_seen=doc.get("scan_created_at"),
     )

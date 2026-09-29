@@ -35,7 +35,8 @@ from app.schemas.analytics import (
     RecommendationsResponse,
 )
 from app.schemas.recommendation import Recommendation, RecommendationType
-from app.services.enrichment import canonical_cves, get_cve_enrichment
+from app.core.cve import canonical_cves
+from app.services.enrichment import get_cve_enrichment
 from app.services.recommendation import trends
 from app.services.recommendation.common import get_attr
 from app.services.recommendations import recommendation_engine

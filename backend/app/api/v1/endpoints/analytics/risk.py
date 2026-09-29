@@ -42,7 +42,8 @@ from app.services.component_identity import (
     lookup_component,
 )
 from app.services.analytics.cache import get_analytics_cache
-from app.services.enrichment import canonical_cve, canonical_cves, get_cve_enrichment
+from app.core.cve import canonical_cves, counted_cves
+from app.services.enrichment import get_cve_enrichment
 from app.services.recommendation.common import newest_first
 
 logger = logging.getLogger(__name__)
@@ -80,14 +81,12 @@ def _worst_severity_by_cve(details_list: list[Any]) -> dict[str, str]:
         for vuln in details.get("vulnerabilities") or []:
             if not isinstance(vuln, dict):
                 continue
-            cve = canonical_cve(vuln)
-            if not cve:
-                continue
             sev = str(vuln.get("severity") or "").lower()
             if sev not in _SEVERITY_RANK:
                 continue
-            if cve not in worst or _SEVERITY_RANK[sev] > _SEVERITY_RANK[worst[cve]]:
-                worst[cve] = sev
+            for cve in counted_cves(vuln):
+                if cve not in worst or _SEVERITY_RANK[sev] > _SEVERITY_RANK[worst[cve]]:
+                    worst[cve] = sev
     return worst
 
 

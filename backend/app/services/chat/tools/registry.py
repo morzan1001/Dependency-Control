@@ -22,6 +22,7 @@ from app.core.constants import (
     MAX_POLICY_AUDIT_PAGE,
     MAX_PQC_PLAN_ITEMS,
 )
+from app.core.cve import canonical_cve
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.finding import FindingType, Severity
@@ -891,7 +892,7 @@ class ChatToolRegistry:
                 resolved.extend(
                     {
                         "finding_id": f.get("finding_id"),
-                        "cve_id": v.get("resolved_cve") or v.get("id") or f.get("finding_id"),
+                        "cve_id": canonical_cve(v) or f.get("finding_id"),
                         "severity": v.get("severity") or f.get("severity"),
                     }
                     for v in entries

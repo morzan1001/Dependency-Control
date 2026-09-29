@@ -15,6 +15,7 @@ from app.api.v1.helpers.analytics import (
     scope_resolution_counts,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.core.cve import canonical_cve
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
 from app.core.permissions import Permissions
 from app.repositories import (
@@ -308,7 +309,7 @@ def _build_nested_vuln_result(
 ) -> VulnerabilitySearchResult:
     project_id = finding.project_id or ""
     return VulnerabilitySearchResult(
-        vulnerability_id=(vuln.get("id") or vuln.get("resolved_cve") or finding.finding_id),
+        vulnerability_id=canonical_cve(vuln) or finding.finding_id,
         aliases=_nested_vuln_aliases(vuln, finding),
         severity=(vuln.get("severity") or finding.severity or "UNKNOWN"),
         cvss_score=vuln.get("cvss_score"),

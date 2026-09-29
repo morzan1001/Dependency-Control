@@ -394,7 +394,7 @@ class TestDistinctSeverityCounts:
         return [{"fixed_version": None, "vulnerabilities": list(vulns)}]
 
     def test_canonical_cve_prefers_cve_over_ghsa(self):
-        from app.services.enrichment import canonical_cve as _canonical_cve
+        from app.core.cve import canonical_cve as _canonical_cve
 
         assert _canonical_cve({"id": "GHSA-x", "resolved_cve": "CVE-1"}) == "CVE-1"
         assert _canonical_cve({"id": "GHSA-x", "aliases": ["CVE-2"]}) == "CVE-2"
@@ -411,6 +411,14 @@ class TestDistinctSeverityCounts:
         )
         counts = _severity_counts_from_details(details)
         assert counts == {"critical": 1, "high": 0, "medium": 0, "low": 0}
+
+    def test_a_multi_cve_advisory_credits_its_severity_to_each_cve(self):
+        from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
+
+        details = self._details(
+            {"id": "CVE-1", "aliases": ["ALAS-1", "CVE-2", "CVE-3"], "severity": "HIGH"},
+        )
+        assert _severity_counts_from_details(details) == {"critical": 0, "high": 3, "medium": 0, "low": 0}
 
     def test_multi_severity_cve_counts_once_at_worst(self):
         from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
@@ -429,7 +437,7 @@ class TestDistinctSeverityCounts:
 
     def test_counts_reconcile_with_total_and_ignore_unranked(self):
         from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
-        from app.services.enrichment import canonical_cves as _canonical_cves
+        from app.core.cve import canonical_cves as _canonical_cves
 
         details = self._details(
             {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},

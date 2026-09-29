@@ -6,6 +6,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from app.core.constants import get_severity_value
+from app.core.cve import entry_cves
 from app.services.normalizers.utils import FindingIdPrefix
 from app.models.finding import Finding, FindingType
 from app.schemas.finding import VulnerabilityEntry
@@ -70,6 +71,15 @@ def _entry_ids(entry: Mapping[str, Any]) -> set[str]:
     """All ids under which this entry is known: id, aliases, and any resolved CVE."""
     candidates = [entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])]
     return {c for c in candidates if c}
+
+
+def _same_advisory(a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
+    """Shared ids make one advisory, but entries led by different CVEs must name the same CVEs:
+    a distro advisory bundling several CVEs lists the others as aliases."""
+    if _entry_ids(a).isdisjoint(_entry_ids(b)):
+        return False
+    cves_a, cves_b = entry_cves(a), entry_cves(b)
+    return not cves_a or not cves_b or cves_a[0] == cves_b[0] or set(cves_a) == set(cves_b)
 
 
 def _canonical_id(a: str, b: str) -> str:
@@ -201,24 +211,20 @@ def dedupe_vulnerability_entries(entries: list[Any]) -> None:
         changed = False
         i = 0
         while i < len(entries):
-            ids_i = _entry_ids(entries[i])
             j = i + 1
             while j < len(entries):
-                if ids_i.isdisjoint(_entry_ids(entries[j])):
+                if not _same_advisory(entries[i], entries[j]):
                     j += 1
                     continue
                 _absorb_entry(entries[i], entries.pop(j))
-                ids_i = _entry_ids(entries[i])
                 changed = True
             i += 1
 
 
 def merge_vulnerability_into_list(target_list: list[Any], source_entry: VulnerabilityEntry) -> None:
     """Merge a source vuln entry into target list, deduplicating by ID and aliases."""
-    s_ids = _entry_ids(source_entry)
-
     for tv in target_list:
-        if s_ids.isdisjoint(_entry_ids(tv)):
+        if not _same_advisory(tv, source_entry):
             continue
 
         _absorb_entry(tv, source_entry)

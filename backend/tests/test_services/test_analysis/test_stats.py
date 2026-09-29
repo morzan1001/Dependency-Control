@@ -331,7 +331,8 @@ class TestKevRowsCarryRealCveIds:
             ]
         )
         result = build_epss_kev_summary([finding])
-        assert [d["cve"] for d in result["kev_details"]] == ["CVE-2025-66614"]
+        # The resolved CVE, as canonical_cve names it for the hotspot and impact pages.
+        assert [d["cve"] for d in result["kev_details"]] == ["CVE-2026-24880"]
         assert result["kev_details"][0]["due_date"] == "2026-08-07"
 
     def test_one_row_per_known_exploited_cve(self):

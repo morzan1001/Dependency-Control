@@ -44,3 +44,8 @@ def test_a_record_counts_as_fixable_when_one_of_its_advisories_has_a_fix():
     details = {"vulnerabilities": [{"id": "CVE-A"}, {"id": "CVE-B", "fixed_version": "2.0"}]}
     assert set(_rows(details, has_fix=True)) == {"CVE-A", "CVE-B"}
     assert _rows(details, has_fix=False) == {}
+
+
+def test_a_ghsa_row_is_labelled_with_its_resolved_cve():
+    rows = _rows({"vulnerabilities": [{"id": "GHSA-9f52-rjqv-25qv", "resolved_cve": "CVE-2026-41852"}]}, query="ghsa")
+    assert list(rows) == ["CVE-2026-41852"]
