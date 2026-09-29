@@ -20,9 +20,12 @@ from app.api.v1.helpers.analytics import (
     get_projects_with_scans,
     get_user_project_ids,
     historical_first_seen,
+    live_cves,
     process_cve_enrichments,
     require_analytics_permission,
     select_impact_candidates,
+    severity_counts_from_details,
+    SLIM_DETAILS_EXPR,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
@@ -42,7 +45,6 @@ from app.services.component_identity import (
     lookup_component,
 )
 from app.services.analytics.cache import get_analytics_cache
-from app.core.cve import canonical_cves, counted_cves
 from app.services.enrichment import get_cve_enrichment
 from app.services.recommendation.common import newest_first
 
@@ -61,61 +63,12 @@ def _scope_digest(project_ids: list[str], scan_ids: list[str]) -> str:
     return h.hexdigest()[:16]
 
 
-_SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
-_SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
-
 # Samples named on a card; each is returned beside the population it was drawn from, so a reader
 # acting on the list knows whether it is the whole of what the row found.
 _AFFECTED_PROJECTS_SHOWN = 5
 _HOTSPOT_PROJECTS_SHOWN = 10
 _FIX_VERSIONS_SHOWN = 3
 _CVES_SHOWN = 5
-
-
-def _worst_severity_by_cve(details_list: list[Any]) -> dict[str, str]:
-    """Map each distinct canonical vulnerability to its worst ranked severity across the group."""
-    worst: dict[str, str] = {}
-    for details in details_list:
-        if not isinstance(details, dict):
-            continue
-        for vuln in details.get("vulnerabilities") or []:
-            if not isinstance(vuln, dict):
-                continue
-            sev = str(vuln.get("severity") or "").lower()
-            if sev not in _SEVERITY_RANK:
-                continue
-            for cve in counted_cves(vuln):
-                if cve not in worst or _SEVERITY_RANK[sev] > _SEVERITY_RANK[worst[cve]]:
-                    worst[cve] = sev
-    return worst
-
-
-def _severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
-    """Distinct vulnerabilities per worst severity. Buckets are disjoint (one CVE, one bucket) and
-    sum to the distinct total, so the breakdown reconciles with the vuln count and the score."""
-    counts = dict.fromkeys(_SEVERITY_BUCKETS, 0)
-    for sev in _worst_severity_by_cve(details_list).values():
-        counts[sev] += 1
-    return counts
-
-
-# Slim details before $group so the group never accumulates the raw analyzer payload: keep the
-# per-advisory id/alias/severity (for distinct-CVE counts, severity, and enrichment) and fix versions.
-_SLIM_DETAILS_EXPR: dict[str, Any] = {
-    "vulnerabilities": {
-        "$map": {
-            "input": {"$ifNull": ["$details.vulnerabilities", []]},
-            "as": "v",
-            "in": {
-                "id": "$$v.id",
-                "resolved_cve": "$$v.resolved_cve",
-                "aliases": "$$v.aliases",
-                "severity": "$$v.severity",
-                "fixed_version": "$$v.fixed_version",
-            },
-        }
-    },
-}
 
 
 @router.get("/impact", responses=RESP_AUTH)
@@ -154,7 +107,7 @@ async def get_impact_analysis(
                 "severity": 1,
                 "finding_id": 1,
                 "scan_created_at": 1,
-                "details": _SLIM_DETAILS_EXPR,
+                "details": SLIM_DETAILS_EXPR,
             }
         },
         {
@@ -184,13 +137,13 @@ async def get_impact_analysis(
 
     # Severity/vuln counts come from the advisory lists (finding_id is only component:version).
     for r in results:
-        r["_severity_counts"] = _severity_counts_from_details(r.get("details_list", []))
+        r["_severity_counts"] = severity_counts_from_details(r.get("details_list", []))
 
     # Rank/limit happen in Python on fix_impact_score; enrich only the groups that can still reach
     # the top `limit` by boosted score.
     candidates = select_impact_candidates(results, limit)
 
-    all_cves = list({cve for r in candidates for cve in canonical_cves(r.get("details_list", []))})
+    all_cves = list({cve for r in candidates for cve in live_cves(r.get("details_list", []))})
 
     enrichments = {}
     if all_cves:
@@ -208,7 +161,7 @@ async def get_impact_analysis(
         fix_versions = extract_fix_versions(r.get("details_list", []), r.get("version"))
         has_fix = len(fix_versions) > 0
 
-        enrichment_data = process_cve_enrichments(canonical_cves(r.get("details_list", [])), enrichments)
+        enrichment_data = process_cve_enrichments(live_cves(r.get("details_list", [])), enrichments)
 
         first_seen = first_seen_map.get((r["component"], r.get("version") or "unknown"), r.get("first_seen"))
         days_known = calculate_days_known(first_seen)
@@ -287,7 +240,7 @@ def _build_hotspot(
     project_ids: list[str],
 ) -> VulnerabilityHotspot:
     details_list = r.get("details_list", [])
-    severity_counts = _severity_counts_from_details(details_list)
+    severity_counts = severity_counts_from_details(details_list)
     fix_versions = extract_fix_versions(details_list, r["_id"].get("version"))
     has_fix = len(fix_versions) > 0
     component = r["_id"]["component"]
@@ -298,7 +251,7 @@ def _build_hotspot(
     first_seen_str = _format_first_seen(r.get("first_seen"))
     days_known = calculate_days_known(r.get("first_seen"))
 
-    cves = canonical_cves(details_list)
+    cves = live_cves(details_list)
     top_cves = cves[:_CVES_SHOWN]
 
     enrichment_data = process_cve_enrichments(cves, enrichments)
@@ -384,7 +337,7 @@ async def get_vulnerability_hotspots(
                 "version": 1,
                 "project_id": 1,
                 "scan_created_at": 1,
-                "details": _SLIM_DETAILS_EXPR,
+                "details": SLIM_DETAILS_EXPR,
             }
         },
         {
@@ -406,7 +359,7 @@ async def get_vulnerability_hotspots(
 
     results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
 
-    all_cves = list({cve for r in results for cve in canonical_cves(r.get("details_list", []))})
+    all_cves = list({cve for r in results for cve in live_cves(r.get("details_list", []))})
 
     enrichments = {}
     if all_cves:

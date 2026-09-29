@@ -8,11 +8,13 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
     ReleaseEnvironmentQuery,
-    build_findings_severity_map,
     get_latest_scan_ids,
     get_projects_with_scans,
     get_user_project_ids,
+    live_cves,
     require_analytics_permission,
+    severity_counts_from_details,
+    vuln_details_by_component,
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
@@ -34,6 +36,7 @@ from app.schemas.analytics import (
 from app.core.purl import package_identity, package_identity_expr
 from app.services.component_identity import (
     artifact_segment,
+    build_component_index,
     cluster_by_package_identity,
     component_match_query,
     component_name_candidates,
@@ -74,6 +77,7 @@ def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> Depen
     name = get_attr(dep, "name", "")
     # The bare-artifact alias keys are lowercased, dependency names are not.
     finding_info = lookup_component(findings_map, name) or {}
+    findings_count = sum(finding_info.values())
 
     return DependencyTreeNode(
         # The document id (uuid) is unique per dependency; PURL only backstops dict inputs in tests.
@@ -84,18 +88,9 @@ def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> Depen
         type=get_attr(dep, "type", "unknown"),
         direct=get_attr(dep, "direct", False),
         direct_inferred=get_attr(dep, "direct_inferred", False),
-        has_findings=finding_info.get("total", 0) > 0,
-        findings_count=finding_info.get("total", 0),
-        findings_severity=(
-            SeverityBreakdown(
-                critical=finding_info.get("critical", 0),
-                high=finding_info.get("high", 0),
-                medium=finding_info.get("medium", 0),
-                low=finding_info.get("low", 0),
-            )
-            if finding_info
-            else None
-        ),
+        has_findings=findings_count > 0,
+        findings_count=findings_count,
+        findings_severity=SeverityBreakdown(**finding_info) if finding_info else None,
         source_type=get_attr(dep, "source_type"),
         source_target=get_attr(dep, "source_target"),
         layer_digest=get_attr(dep, "layer_digest"),
@@ -188,11 +183,10 @@ async def get_dependency_tree(
     if not dependencies:
         return DependencyGraph()
 
-    findings = await finding_repo.find_many(
-        {"project_id": project_id, "scan_id": scan_id, "type": "vulnerability", "waived": {"$ne": True}},
-        limit=ANALYTICS_MAX_QUERY_LIMIT,
+    details_by_component = await vuln_details_by_component(finding_repo, {"project_id": project_id, "scan_id": scan_id})
+    findings_map = build_component_index(
+        {component: severity_counts_from_details(details) for component, details in details_by_component.items()}
     )
-    findings_map = build_findings_severity_map(findings)
 
     return _build_dependency_graph(dependencies, findings_map, dependencies_total)
 
@@ -363,7 +357,8 @@ async def get_dependency_metadata_endpoint(
 
     finding_query = await _package_finding_query(finding_repo, scan_ids, component, version)
     finding_count = await finding_repo.count(finding_query)
-    vuln_count = await finding_repo.count({**finding_query, "type": "vulnerability"})
+    package_details = await vuln_details_by_component(finding_repo, finding_query)
+    vuln_count = len(live_cves([details for per_component in package_details.values() for details in per_component]))
 
     return DependencyMetadata(
         name=get_attr(first_dep, "name", component),

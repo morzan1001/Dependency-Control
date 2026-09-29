@@ -11,9 +11,11 @@ from app.api.v1.helpers.analytics import (
     get_latest_scan_ids,
     get_projects_with_scans,
     get_user_project_ids,
+    live_cves,
     require_analytics_permission,
     require_any_analytics_permission,
     scope_resolution_counts,
+    vuln_details_by_component,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.permissions import Permissions
@@ -209,7 +211,12 @@ async def get_top_dependencies(
 
     results = await dep_repo.aggregate(pipeline)
 
-    vuln_count_map = build_component_index(await finding_repo.get_vuln_counts_by_components(scan_ids, project_ids))
+    details_by_component = await vuln_details_by_component(
+        finding_repo, {"scan_id": {"$in": scan_ids}, "project_id": {"$in": project_ids}}
+    )
+    vuln_count_map = build_component_index(
+        {component: len(live_cves(details)) for component, details in details_by_component.items()}
+    )
 
     enriched = []
     for dep in results:

@@ -90,6 +90,13 @@ def scorecard_details(details: Any) -> dict[str, Any]:
     return {}
 
 
+def live_advisories(details: Any) -> list[dict[str, Any]]:
+    """A vulnerability finding's advisories that no per-CVE waiver covers."""
+    if not isinstance(details, dict):
+        return []
+    return [a for a in details.get("vulnerabilities") or [] if isinstance(a, dict) and not a.get("waived")]
+
+
 def finding_cve_ids(finding: ModelOrDict) -> list[str]:
     """Every advisory a stored vulnerability finding names, collapsed to its CVE identity.
 

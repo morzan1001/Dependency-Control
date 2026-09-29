@@ -257,23 +257,3 @@ class FindingRepository(BaseRepository[FindingRecord]):
         ]
         results = await self.aggregate(pipeline)
         return {r["_id"]: r["count"] for r in results if r["_id"]}
-
-    async def get_vuln_counts_by_components(
-        self,
-        scan_ids: list[str],
-        project_ids: list[str],
-    ) -> dict[str, int]:
-        """{component_name: non_waived_vulnerability_count}; scan_ids+project_ids exclude prior-scan findings."""
-        pipeline: list[dict[str, Any]] = [
-            {
-                "$match": {
-                    "scan_id": {"$in": scan_ids},
-                    "project_id": {"$in": project_ids},
-                    "type": "vulnerability",
-                    "waived": {"$ne": True},
-                }
-            },
-            {"$group": {"_id": "$component", "count": {"$sum": 1}}},
-        ]
-        results = await self.aggregate(pipeline)
-        return {r["_id"]: r["count"] for r in results if r["_id"]}

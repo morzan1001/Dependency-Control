@@ -29,17 +29,19 @@ from app.core.constants import (
     KEV_OVERDUE_BOOST,
     KEV_RANSOMWARE_BOOST,
     RELEASE_ENVIRONMENT_PATTERN,
+    SEVERITY_ORDER,
     SEVERITY_WEIGHTS,
+    get_severity_value,
 )
+from app.core.cve import canonical_cves, counted_cves
 from app.core.permissions import Permissions, has_permission
 from app.core.purl import package_identity_expr
 from app.models.user import User
 from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
 from app.services.aggregation.versions import aggregate_fixed_version, split_fixed_versions
-from app.services.component_identity import build_component_index
 from app.services.enrichment.scoring import fold_enrichments
-from app.services.recommendation.common import get_attr
+from app.services.recommendation.common import live_advisories
 
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
@@ -188,13 +190,7 @@ def calculate_days_known(first_seen: datetime | None) -> int | None:
 
 def extract_fix_versions(details_list: list[Any], installed_version: str | None) -> set[str]:
     """The versions fixing every advisory of the group, else each advisory's own fixes."""
-    advisories = [
-        vuln
-        for details in details_list
-        if isinstance(details, dict)
-        for vuln in details.get("vulnerabilities") or []
-        if isinstance(vuln, dict)
-    ]
+    advisories = [vuln for details in details_list for vuln in live_advisories(details)]
     fixes_all = aggregate_fixed_version(advisories, installed_version)
     if fixes_all:
         return set(split_fixed_versions(fixes_all))
@@ -351,45 +347,58 @@ def build_priority_reasons(
     return reasons
 
 
-def count_severities(severities: list[str | None]) -> dict[str, int]:
-    """Count severities from a list."""
-    counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
-    for sev in severities:
-        if sev:
-            sev_lower = sev.lower()
-            if sev_lower in counts:
-                counts[sev_lower] += 1
+# Slim details before $group so the group never accumulates the raw analyzer payload: keep the
+# per-advisory fields the CVE counts, severities, enrichment and fix versions read.
+SLIM_DETAILS_EXPR: dict[str, Any] = {
+    "vulnerabilities": {
+        "$map": {
+            "input": {"$ifNull": ["$details.vulnerabilities", []]},
+            "as": "v",
+            "in": {
+                "id": "$$v.id",
+                "resolved_cve": "$$v.resolved_cve",
+                "aliases": "$$v.aliases",
+                "severity": "$$v.severity",
+                "fixed_version": "$$v.fixed_version",
+                "waived": "$$v.waived",
+            },
+        }
+    },
+}
+
+
+def live_cves(details_list: list[Any]) -> list[str]:
+    """Distinct CVEs across a group's advisory lists that no per-CVE waiver covers."""
+    return canonical_cves([{"vulnerabilities": live_advisories(details)} for details in details_list])
+
+
+def severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
+    """Distinct live CVEs per worst severity; the buckets are disjoint and sum to len(live_cves)."""
+    worst: dict[str, str] = {}
+    for details in details_list:
+        for vuln in live_advisories(details):
+            sev = str(vuln.get("severity") or "").upper()
+            sev = sev if sev in SEVERITY_ORDER else "UNKNOWN"
+            for cve in counted_cves(vuln):
+                if cve not in worst or get_severity_value(sev) > get_severity_value(worst[cve]):
+                    worst[cve] = sev
+    counts = {sev.lower(): 0 for sev in SEVERITY_ORDER}
+    for sev in worst.values():
+        counts[sev.lower()] += 1
     return counts
 
 
-def build_findings_severity_map(
-    findings: list[Any],
-) -> dict[str, dict[str, int]]:
-    """Map component names to their severity counts, plus unambiguous bare-artifact aliases."""
-    findings_map: dict[str, dict[str, int]] = {}
-
-    for finding in findings:
-        component = get_attr(finding, "component")
-        if not component:
-            continue
-
-        severity = get_attr(finding, "severity", "UNKNOWN")
-
-        if component not in findings_map:
-            findings_map[component] = {
-                "critical": 0,
-                "high": 0,
-                "medium": 0,
-                "low": 0,
-                "total": 0,
-            }
-
-        sev_lower = severity.lower()
-        if sev_lower in findings_map[component]:
-            findings_map[component][sev_lower] += 1
-        findings_map[component]["total"] += 1
-
-    return build_component_index(findings_map)
+async def vuln_details_by_component(finding_repo: Any, match: dict[str, Any]) -> dict[str, list[Any]]:
+    """Each component's slim advisory lists across the unwaived vulnerability findings `match` selects."""
+    rows = await finding_repo.aggregate(
+        [
+            {MONGO_MATCH: {**match, "type": "vulnerability", "waived": {"$ne": True}}},
+            {"$project": {"component": 1, "details": SLIM_DETAILS_EXPR}},
+            {MONGO_GROUP: {"_id": "$component", "details_list": {"$addToSet": "$details"}}},
+        ],
+        allow_disk_use=True,
+    )
+    return {r["_id"]: r["details_list"] for r in rows if r["_id"]}
 
 
 def build_hotspot_priority_reasons(

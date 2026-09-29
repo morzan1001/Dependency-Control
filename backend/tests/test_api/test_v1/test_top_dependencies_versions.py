@@ -40,7 +40,7 @@ async def _top_dependencies() -> list:
     dep_repo = MagicMock()
     dep_repo.aggregate = AsyncMock(return_value=[_aggregated_row()])
     finding_repo = MagicMock()
-    finding_repo.get_vuln_counts_by_components = AsyncMock(return_value={})
+    finding_repo.aggregate = AsyncMock(return_value=[])
     with (
         patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_PROJECT_IDS)),
         patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_SCANS)),
@@ -83,7 +83,14 @@ async def _vulnerability_counts(findings: list[dict], dependency_name: str) -> i
 
 
 def _vulnerability(finding_id: str, component: str) -> dict:
-    return {"_id": finding_id, "scan_id": "s1", "project_id": "p1", "type": "vulnerability", "component": component}
+    return {
+        "_id": finding_id,
+        "scan_id": "s1",
+        "project_id": "p1",
+        "type": "vulnerability",
+        "component": component,
+        "details": {"vulnerabilities": [{"id": f"CVE-2026-{finding_id}", "severity": "HIGH"}]},
+    }
 
 
 @pytest.mark.asyncio
