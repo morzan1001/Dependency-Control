@@ -67,7 +67,7 @@ def safe_get(
 
 
 class FindingIdPrefix(StrEnum):
-    """Id prefixes that readers dispatch on (quality buckets, waiver signatures, SAST merging)."""
+    """Id prefixes that readers dispatch on (quality buckets, waiver signatures and scoping, SAST merging)."""
 
     SCORECARD = "SCORECARD"
     MAINT = "MAINT"
@@ -76,6 +76,8 @@ class FindingIdPrefix(StrEnum):
     KICS = "KICS"
     SECRET = "SECRET"
     SAST_AGG = "SAST-AGG"
+    LICENSE = "LIC"
+    EOL = "EOL"
 
 
 def build_finding_id(

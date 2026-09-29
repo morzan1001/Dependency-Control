@@ -27,6 +27,7 @@ from app.repositories import ScanRepository, WaiverRepository
 from app.repositories.waivers import non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
+from app.services.normalizers.utils import FindingIdPrefix
 from app.services.stats import request_waiver_recalc, run_waiver_recalc
 from app.services.waivers.matching import finding_rule_id, waiver_query
 
@@ -47,7 +48,7 @@ _MSG_NO_MATCHING_FINDING = (
 
 # finding_id is not unique within a scan for these types (one document per affected
 # component), so a waiver carrying only a finding_id blankets every one of them.
-_BROAD_FINDING_ID_PREFIXES = {"license": "LIC-", "eol": "EOL-"}
+_BROAD_FINDING_ID_PREFIXES = {"license": f"{FindingIdPrefix.LICENSE}-", "eol": f"{FindingIdPrefix.EOL}-"}
 
 _MSG_NEEDS_PACKAGE_SCOPE = (
     "A {finding_type} finding_id is shared by every affected component, so this waiver would "

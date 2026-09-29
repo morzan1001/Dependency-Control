@@ -2,7 +2,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding_details import LicenseDetails
-from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
+from app.services.normalizers.utils import FindingIdPrefix, build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
@@ -26,7 +26,7 @@ def normalize_license(aggregator: "ResultAggregator", result: dict[str, Any], so
 
         aggregator.add_finding(
             Finding(
-                id=build_finding_id("LIC", license_name),
+                id=build_finding_id(FindingIdPrefix.LICENSE, license_name),
                 type=FindingType.LICENSE,
                 severity=severity,
                 component=component,
