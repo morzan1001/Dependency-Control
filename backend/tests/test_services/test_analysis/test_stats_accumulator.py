@@ -512,6 +512,28 @@ def _oracle_documents() -> list[dict[str, Any]]:
         },
         {"_id": "o9", "type": "secret", "severity": "INFO", "waived": False, "details": {}},
         {
+            # A waived advisory brought the document's marks, the live one carries next to none.
+            "_id": "o11",
+            "type": "vulnerability",
+            "severity": "MEDIUM",
+            "component": _ORACLE_PYPI_COMPONENT,
+            "waived": False,
+            "details": {
+                "epss_score": EPSS_VERY_HIGH_THRESHOLD,
+                DETAILS_KEY_IN_KEV: True,
+                DETAILS_KEY_KEV_RANSOMWARE: True,
+                "vulnerabilities": [
+                    {
+                        "waived": True,
+                        "epss_score": EPSS_VERY_HIGH_THRESHOLD,
+                        DETAILS_KEY_IN_KEV: True,
+                        DETAILS_KEY_KEV_RANSOMWARE: True,
+                    },
+                    {"epss_score": EPSS_MEDIUM_THRESHOLD / 2},
+                ],
+            },
+        },
+        {
             # Unbucketed severity on a non-vulnerability type carrying reachability.
             "_id": "o10",
             "type": "sast",
@@ -525,17 +547,22 @@ def _oracle_documents() -> list[dict[str, Any]]:
     return [{**shape, **_UNREAD_FIELDS, "scan_id": _ORACLE_SCAN_ID} for shape in shapes]
 
 
+def _drop(node: Any, keys: list[str]) -> None:
+    if isinstance(node, list):
+        for item in node:
+            _drop(item, keys)
+    elif isinstance(node, dict):
+        if len(keys) == 1:
+            node.pop(keys[0], None)
+        else:
+            _drop(node.get(keys[0]), keys[1:])
+
+
 def _without_path(doc: dict[str, Any], path: str) -> dict[str, Any]:
-    """``doc`` with one dotted path removed, standing in for a projection that forgot it."""
+    """``doc`` with one dotted path removed (from every array element on the way, as a projection
+    reads it), standing in for a projection that forgot it."""
     stripped = copy.deepcopy(doc)
-    parent: Any = stripped
-    head, _, rest = path.partition(".")
-    while rest:
-        parent = parent.get(head)
-        if not isinstance(parent, dict):
-            return stripped
-        head, _, rest = rest.partition(".")
-    parent.pop(head, None)
+    _drop(stripped, path.split("."))
     return stripped
 
 
@@ -605,3 +632,42 @@ class TestAdjustedRiskScoreMagnitude:
 
         assert stats.risk_score == _UNMODIFIED_CRITICAL_SCORE
         assert stats.adjusted_risk_score == expected_adjusted
+
+
+def _partly_waived_log4j() -> dict[str, Any]:
+    """A MEDIUM document whose KEV ransomware CVE is waived and whose one live CVE is barely scored."""
+    waived = {"id": "CVE-2021-44228", DETAILS_KEY_IN_KEV: True, DETAILS_KEY_KEV_RANSOMWARE: True, "epss_score": 0.93}
+    live = {"id": "CVE-2021-45105", "epss_score": 0.001}
+    doc = _finding(
+        severity="MEDIUM",
+        **{DETAILS_KEY_IN_KEV: True, DETAILS_KEY_KEV_RANSOMWARE: True, "epss_score": 0.93},
+    )
+    doc["details"]["vulnerabilities"] = [{**waived, "waived": True}, live]
+    return doc
+
+
+class TestWaivedAdvisoriesCarryNoThreatIntel:
+    def test_a_waived_kev_cve_leaves_the_live_one_to_speak_for_the_document(self):
+        stats = compute_stats([_partly_waived_log4j()], {})
+
+        intel = stats.threat_intel
+        assert (intel.kev_count, intel.kev_ransomware_count, intel.weaponized_count) == (0, 0, 0)
+        assert (intel.active_exploitation_count, intel.high_epss_count, intel.max_epss_score) == (0, 0, 0.001)
+        assert (stats.prioritized.actionable_total, stats.prioritized.deprioritized_count) == (0, 1)
+
+    def test_a_mark_no_advisory_carries_stays_the_documents(self):
+        doc = _finding(**{DETAILS_KEY_IN_KEV: True, "epss_score": 0.7})
+        doc["details"]["vulnerabilities"] = [{"id": "GHSA-a", "waived": True}, {"id": "GHSA-b"}]
+
+        intel = compute_stats([doc], {}).threat_intel
+
+        assert (intel.kev_count, intel.max_epss_score) == (1, 0.7)
+
+    @pytest.mark.asyncio
+    async def test_the_stored_scan_reads_the_advisory_marks_too(self):
+        db = FakeDatabase()
+        await db.findings.insert_one({**_partly_waived_log4j(), "_id": "f1", "scan_id": "s1"})
+
+        stats = await calculate_comprehensive_stats(db, "s1")
+
+        assert stats.threat_intel.kev_count == 0

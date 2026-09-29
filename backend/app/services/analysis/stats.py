@@ -321,6 +321,31 @@ def _numeric(raw: Any) -> float | None:
     return float(raw)
 
 
+def _max_epss(entries: Iterable[Mapping[str, Any]]) -> float | None:
+    return max((score for entry in entries if (score := _numeric(entry.get("epss_score"))) is not None), default=None)
+
+
+def _live_threat_intel(details: Mapping[str, Any]) -> tuple[float | None, bool, bool]:
+    """The document's EPSS, KEV and ransomware marks, less those only its waived advisories carry.
+    A mark no advisory carries (enrichment matched a document-level alias) stays the document's."""
+    epss = _numeric(details.get("epss_score"))
+    in_kev = details.get(DETAILS_KEY_IN_KEV) is True
+    ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
+    entries = [entry for entry in details.get("vulnerabilities") or [] if isinstance(entry, Mapping)]
+    waived = [entry for entry in entries if entry.get("waived") is True]
+    if not waived:
+        return epss, in_kev, ransomware
+    live = [entry for entry in entries if entry.get("waived") is not True]
+    if any(entry.get(DETAILS_KEY_IN_KEV) is True for entry in waived):
+        in_kev = any(entry.get(DETAILS_KEY_IN_KEV) is True for entry in live)
+    if any(entry.get(DETAILS_KEY_KEV_RANSOMWARE) is True for entry in waived):
+        ransomware = any(entry.get(DETAILS_KEY_KEV_RANSOMWARE) is True for entry in live)
+    waived_epss = _max_epss(waived)
+    if epss is not None and waived_epss is not None and waived_epss >= epss:
+        epss = _max_epss(live)
+    return epss, in_kev, ransomware
+
+
 def _reach_modifier(reachable: Any, level: Any) -> float:
     """Per-finding weight multiplier. Unreachable is tested first, so it wins over confirmed-reachable."""
     if reachable is False:
@@ -346,6 +371,10 @@ class StatsAccumulator:
             "details.epss_score",
             f"details.{DETAILS_KEY_IN_KEV}",
             f"details.{DETAILS_KEY_KEV_RANSOMWARE}",
+            "details.vulnerabilities.waived",
+            "details.vulnerabilities.epss_score",
+            f"details.vulnerabilities.{DETAILS_KEY_IN_KEV}",
+            f"details.vulnerabilities.{DETAILS_KEY_KEV_RANSOMWARE}",
             "details.verified",
             "details.in_current_tree",
             "details.reachability.confidence_score",
@@ -404,8 +433,7 @@ class StatsAccumulator:
         details: Mapping[str, Any] = raw_details if isinstance(raw_details, Mapping) else {}
         reachable = finding.get("reachable")
         level = finding.get("reachability_level")
-        epss = _numeric(details.get("epss_score"))
-        in_kev = details.get(DETAILS_KEY_IN_KEV) is True
+        epss, in_kev, kev_ransomware = _live_threat_intel(details)
 
         # Weights are keyed on bucket, not on raw severity: a new RISK_SEVERITY_WEIGHTS key that is
         # not also in _BUCKETED_SEVERITIES collapses to UNKNOWN and silently contributes 0.
@@ -416,7 +444,7 @@ class StatsAccumulator:
             self._add_vulnerability(bucket, epss, in_kev, reachable, finding.get("component"))
         elif finding_type == "secret":
             self._add_secret(details)
-        self._add_threat_intel(details, epss, in_kev)
+        self._add_threat_intel(epss, in_kev, kev_ransomware)
         self._add_reachability(bucket, reachable, level, details)
 
     def _add_vulnerability(self, bucket: str, epss: float | None, in_kev: bool, reachable: Any, component: Any) -> None:
@@ -451,8 +479,7 @@ class StatsAccumulator:
         if is_deprioritized_secret(verified, in_current_tree):
             self._secret_deprioritized += 1
 
-    def _add_threat_intel(self, details: Mapping[str, Any], epss: float | None, in_kev: bool) -> None:
-        kev_ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
+    def _add_threat_intel(self, epss: float | None, in_kev: bool, kev_ransomware: bool) -> None:
         if in_kev:
             self._kev += 1
         if kev_ransomware:

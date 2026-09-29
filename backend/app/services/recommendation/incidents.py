@@ -136,11 +136,12 @@ def process_typosquatting(
 
 
 def _card_advisories(details: dict[str, Any]) -> list[dict[str, Any]]:
-    """The marked advisories a record carries. A live enrichment refresh marks the document
+    """The live marked advisories a record carries. A live enrichment refresh marks the document
     without rewriting its advisories, so an unmarked group falls back to the document."""
     advisories = [a for a in details.get("vulnerabilities") or [] if isinstance(a, dict)]
     marked = [a for a in advisories if _advisory_is_kev(a) or _advisory_has_very_high_epss(a)]
-    return marked or [details]
+    # The document's marks are its advisories' then, and an accepted risk raises no card.
+    return [a for a in marked if not a.get("waived")] if marked else [details]
 
 
 def _classify_vuln_finding(

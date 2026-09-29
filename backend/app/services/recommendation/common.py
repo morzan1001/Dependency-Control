@@ -100,7 +100,11 @@ def finding_cve_ids(
     if not isinstance(details, dict):
         return []
     if advisory_filter is not None:
-        entries = [e for e in details.get("vulnerabilities") or [] if isinstance(e, dict) and advisory_filter(e)]
+        entries = [
+            e
+            for e in details.get("vulnerabilities") or []
+            if isinstance(e, dict) and not e.get("waived") and advisory_filter(e)
+        ]
         if entries:
             return canonical_cves([{"vulnerabilities": entries}])
     return canonical_cves([details])
