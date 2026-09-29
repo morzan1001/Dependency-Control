@@ -8,10 +8,16 @@ from app.core.metrics import analysis_waivers_applied_total
 from app.models.finding import Finding, FindingType, Severity
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
+from app.models.stats import Stats
 from app.repositories.findings import FindingRepository
+from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.services.analysis.adhoc import apply_global_waivers_in_memory
-from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
+from app.services.analysis.engine import (
+    _finalize_scan_and_project,
+    _persist_findings_and_waivers,
+    _prepare_finding_records,
+)
 from app.services.stats import recalculate_project_stats
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -25,6 +31,7 @@ _CVE_LOW = "CVE-2024-0002"
 _FIELD_REASON = "accepted component"
 _CVE_REASON = "not reachable"
 _SECRET_FILE = "deploy/values.yaml"
+_WORKER = "pod-a/worker-0"
 
 _DATABASES = [
     pytest.param("attrappe", id="attrappe"),
@@ -84,8 +91,18 @@ def _partial_cve_waiver(project_id: str | None = _PROJECT) -> Waiver:
 
 
 async def _seed_project(db) -> None:
-    await db.projects.insert_one({"_id": _PROJECT, "name": "p", "latest_scan_id": _HEAD, "deleted_branches": []})
-    await db.scans.insert_one({"_id": _HEAD, "project_id": _PROJECT, "status": "completed"})
+    await db.projects.insert_one(
+        {"_id": _PROJECT, "name": "p", "latest_scan_id": _HEAD, "default_branch": "main", "deleted_branches": []}
+    )
+    await db.scans.insert_one(
+        {
+            "_id": _HEAD,
+            "project_id": _PROJECT,
+            "branch": "main",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
 
 
 async def _seed_feature_tip(db) -> None:
@@ -121,10 +138,27 @@ def _waiver_where_the_secret_last_was() -> Waiver:
     )
 
 
-async def _persist(db, scan_id: str, *findings: Finding, head: bool = False) -> list[dict]:
+async def _persist(db, scan_id: str, *findings: Finding) -> list[dict]:
     records, _ = _prepare_finding_records(list(findings), scan_id, _PROJECT, datetime.now(timezone.utc))
-    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db, head=head)
+    await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db)
     return await db.findings.find({"scan_id": scan_id}).to_list(None)
+
+
+async def _finalize(db, scan_id: str) -> None:
+    scan_repo = ScanRepository(db)
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing", "worker_id": _WORKER}})
+    await _finalize_scan_and_project(
+        scan_id,
+        await scan_repo.get_by_id(scan_id),
+        _PROJECT,
+        1,
+        0,
+        Stats(),
+        {"scan_id": scan_id},
+        scan_repo,
+        worker_id=_WORKER,
+        external_load_start=datetime.now(timezone.utc),
+    )
 
 
 @pytest.mark.parametrize("_database", _DATABASES)
@@ -298,7 +332,8 @@ async def test_heads_analysis_records_each_waivers_outcome_and_leaves_the_recalc
     await _seed_feature_tip(db)
     await WaiverRepository(db).create(waiver())
     await _persist(db, _FEATURE, finding())
-    await _persist(db, _HEAD, finding(), head=True)
+    await _persist(db, _HEAD, finding())
+    await _finalize(db, _HEAD)
     restamped = _record_recalc_restamps(monkeypatch)
 
     await recalculate_project_stats(_PROJECT, db)
