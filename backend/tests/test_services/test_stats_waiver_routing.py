@@ -72,10 +72,13 @@ def _finding(
         details["cvss_score"] = cvss_score
     if risk_score is not None:
         details["risk_score"] = risk_score
+    marks = {}
     if epss_score is not None:
-        details["epss_score"] = epss_score
+        marks["epss_score"] = epss_score
     if is_kev:
-        details["in_kev"] = True
+        marks["in_kev"] = True
+    if marks:
+        details |= {**marks, "vulnerabilities": [{"id": f"CVE-2024-{_id}", **marks}]}
     doc = {
         "_id": _id,
         "finding_id": _id,

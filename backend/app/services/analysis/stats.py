@@ -47,6 +47,7 @@ from app.services.analysis.types import (
     ReachabilitySummary,
     VulnerabilityInfo,
 )
+from app.services.recommendation.common import live_advisories
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     build_component_language_map,
@@ -276,28 +277,12 @@ def _numeric(raw: Any) -> float | None:
     return float(raw)
 
 
-def _max_epss(entries: Iterable[Mapping[str, Any]]) -> float | None:
-    return max((score for entry in entries if (score := _numeric(entry.get("epss_score"))) is not None), default=None)
-
-
 def _live_threat_intel(details: Mapping[str, Any]) -> tuple[float | None, bool, bool]:
-    """The document's EPSS, KEV and ransomware marks, less those only its waived advisories carry."""
-    epss = _numeric(details.get("epss_score"))
-    in_kev = details.get(DETAILS_KEY_IN_KEV) is True
-    ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
-    entries = [entry for entry in details.get("vulnerabilities") or [] if isinstance(entry, Mapping)]
-    waived = [entry for entry in entries if entry.get("waived") is True]
-    if not waived:
-        return epss, in_kev, ransomware
-    live = [entry for entry in entries if entry.get("waived") is not True]
-    if any(entry.get(DETAILS_KEY_IN_KEV) is True for entry in waived):
-        in_kev = any(entry.get(DETAILS_KEY_IN_KEV) is True for entry in live)
-    if any(entry.get(DETAILS_KEY_KEV_RANSOMWARE) is True for entry in waived):
-        ransomware = any(entry.get(DETAILS_KEY_KEV_RANSOMWARE) is True for entry in live)
-    waived_epss = _max_epss(waived)
-    if epss is not None and waived_epss is not None and waived_epss >= epss:
-        epss = _max_epss(live)
-    return epss, in_kev, ransomware
+    """The finding's EPSS, KEV and ransomware marks, taken off its unwaived advisories."""
+    live = live_advisories(details)
+    epss = max((score for entry in live if (score := _numeric(entry.get("epss_score"))) is not None), default=None)
+    in_kev = any(entry.get(DETAILS_KEY_IN_KEV) is True for entry in live)
+    return epss, in_kev, any(entry.get(DETAILS_KEY_KEV_RANSOMWARE) is True for entry in live)
 
 
 class StatsAccumulator:
@@ -312,9 +297,6 @@ class StatsAccumulator:
             "reachable",
             "reachability_level",
             "component",
-            "details.epss_score",
-            f"details.{DETAILS_KEY_IN_KEV}",
-            f"details.{DETAILS_KEY_KEV_RANSOMWARE}",
             "details.vulnerabilities.waived",
             "details.vulnerabilities.epss_score",
             f"details.vulnerabilities.{DETAILS_KEY_IN_KEV}",

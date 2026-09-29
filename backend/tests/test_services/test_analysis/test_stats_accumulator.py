@@ -37,6 +37,11 @@ def _finding(ftype="vulnerability", severity="HIGH", **details):
     return {"type": ftype, "severity": severity, "component": "pkg", "details": dict(details), "waived": False}
 
 
+def _scored(ftype="vulnerability", severity="HIGH", **marks):
+    """A finding whose one advisory carries the given EPSS/KEV marks."""
+    return _finding(ftype, severity, vulnerabilities=[{"id": "CVE-2024-0001", **marks}])
+
+
 def _enriched(cve, *, kev=False, ransomware=False, epss=None):
     """A vulnerability finding as the enrichment writer leaves it."""
     kev_entry = (
@@ -69,7 +74,7 @@ class TestVulnerabilityGate:
         assert stats.prioritized.total == 0
 
     def test_unreachable_kev_vulnerability_is_deprioritized(self):
-        doc = _finding(**{DETAILS_KEY_IN_KEV: True, "epss_score": 0.9})
+        doc = _scored(**{DETAILS_KEY_IN_KEV: True, "epss_score": 0.9})
         doc["reachable"] = False
         stats = compute_stats([doc], {})
         assert stats.prioritized.deprioritized_count == 1
@@ -77,9 +82,9 @@ class TestVulnerabilityGate:
 
     def test_actionable_severity_split_only_counts_critical_and_high(self):
         findings = [
-            _finding(severity="CRITICAL", **{DETAILS_KEY_IN_KEV: True}),
-            _finding(severity="HIGH", **{DETAILS_KEY_IN_KEV: True}),
-            _finding(severity="MEDIUM", **{DETAILS_KEY_IN_KEV: True}),
+            _scored(severity="CRITICAL", **{DETAILS_KEY_IN_KEV: True}),
+            _scored(severity="HIGH", **{DETAILS_KEY_IN_KEV: True}),
+            _scored(severity="MEDIUM", **{DETAILS_KEY_IN_KEV: True}),
         ]
         stats = compute_stats(findings, {})
         assert (stats.prioritized.actionable_critical, stats.prioritized.actionable_high) == (1, 1)
@@ -161,7 +166,7 @@ class TestEpssTyping:
 
     @pytest.mark.parametrize("junk", ["0.9", True, False, [], {}, "n/a"])
     def test_non_numeric_epss_is_treated_as_missing(self, junk):
-        t = compute_stats([_finding(epss_score=junk)], {}).threat_intel
+        t = compute_stats([_scored(epss_score=junk)], {}).threat_intel
         assert t.high_epss_count == 0
         assert t.medium_epss_count == 0
         assert t.avg_epss_score is None
@@ -169,14 +174,14 @@ class TestEpssTyping:
         assert t.active_exploitation_count == 0
 
     def test_non_numeric_epss_leaves_the_finding_in_neither_bucket(self):
-        p = compute_stats([_finding(epss_score="0.9")], {}).prioritized
+        p = compute_stats([_scored(epss_score="0.9")], {}).prioritized
         assert p.deprioritized_count == 0
         assert p.actionable_total == 0
 
     @pytest.mark.parametrize("details", [{"epss_score": None}, {}])
     def test_an_explicit_null_epss_is_indistinguishable_from_an_absent_key(self, details):
         """Both shapes persist today; Mongo's $gte: [null, 0.1] is false, so neither may score."""
-        stats = compute_stats([_finding(**details)], {})
+        stats = compute_stats([_scored(**details)], {})
         assert stats.threat_intel.avg_epss_score is None
         assert stats.threat_intel.max_epss_score is None
         assert (stats.threat_intel.high_epss_count, stats.threat_intel.medium_epss_count) == (0, 0)
@@ -184,48 +189,48 @@ class TestEpssTyping:
         assert stats.prioritized.deprioritized_count == 0
 
     def test_zero_epss_is_a_real_value_not_a_missing_one(self):
-        t = compute_stats([_finding(epss_score=0.0)], {}).threat_intel
+        t = compute_stats([_scored(epss_score=0.0)], {}).threat_intel
         assert t.avg_epss_score == 0.0
         assert t.max_epss_score == 0.0
 
     def test_integer_epss_is_accepted(self):
-        t = compute_stats([_finding(epss_score=1)], {}).threat_intel
+        t = compute_stats([_scored(epss_score=1)], {}).threat_intel
         assert t.max_epss_score == 1.0
         assert t.high_epss_count == 1
 
 
 class TestThreatIntelBoundaries:
     def test_epss_buckets_are_exclusive_at_the_high_edge(self):
-        t = compute_stats([_finding(epss_score=EPSS_HIGH_THRESHOLD)], {}).threat_intel
+        t = compute_stats([_scored(epss_score=EPSS_HIGH_THRESHOLD)], {}).threat_intel
         assert (t.high_epss_count, t.medium_epss_count) == (1, 0)
 
     def test_ransomware_alone_is_weaponized(self):
-        t = compute_stats([_finding(**{DETAILS_KEY_KEV_RANSOMWARE: True})], {}).threat_intel
+        t = compute_stats([_scored(**{DETAILS_KEY_KEV_RANSOMWARE: True})], {}).threat_intel
         assert t.weaponized_count == 1
 
     def test_kev_and_epss_counters_ignore_the_finding_type(self):
-        t = compute_stats([_finding(ftype="secret", **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
+        t = compute_stats([_scored(ftype="secret", **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
         assert t.kev_count == 1
         assert t.active_exploitation_count == 1
 
     def test_in_kev_truthy_non_true_does_not_count(self):
         """in_kev must be True (not just truthy); matches Mongo where $eq [1, true] is false."""
-        t = compute_stats([_finding(**{DETAILS_KEY_IN_KEV: 1})], {}).threat_intel
+        t = compute_stats([_scored(**{DETAILS_KEY_IN_KEV: 1})], {}).threat_intel
         assert t.kev_count == 0
         assert t.active_exploitation_count == 0
 
     def test_medium_epss_threshold_is_inclusive_at_the_boundary(self):
         """Boundary: EPSS_MEDIUM_THRESHOLD is inclusive on the lower bound."""
-        t = compute_stats([_finding(epss_score=EPSS_MEDIUM_THRESHOLD)], {}).threat_intel
+        t = compute_stats([_scored(epss_score=EPSS_MEDIUM_THRESHOLD)], {}).threat_intel
         assert t.medium_epss_count == 1
         assert t.high_epss_count == 0
 
     def test_epss_alone_never_counts_as_exploited(self):
-        t = compute_stats([_finding(epss_score=1.0)], {}).threat_intel
+        t = compute_stats([_scored(epss_score=1.0)], {}).threat_intel
         assert (t.weaponized_count, t.active_exploitation_count) == (0, 0)
 
     def test_kev_with_very_high_epss_is_active_not_weaponized(self):
-        t = compute_stats([_finding(epss_score=1.0, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
+        t = compute_stats([_scored(epss_score=1.0, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
         assert (t.weaponized_count, t.active_exploitation_count) == (0, 1)
 
     def test_stats_count_exploitation_as_the_findings_own_maturity_does(self):
@@ -466,9 +471,13 @@ def _oracle_documents() -> list[dict[str, Any]]:
             "reachable": True,
             "reachability_level": REACHABILITY_LEVEL_SYMBOL,
             "details": {
-                "epss_score": EPSS_VERY_HIGH_THRESHOLD,
-                DETAILS_KEY_IN_KEV: True,
-                DETAILS_KEY_KEV_RANSOMWARE: True,
+                "vulnerabilities": [
+                    {
+                        "epss_score": EPSS_VERY_HIGH_THRESHOLD,
+                        DETAILS_KEY_IN_KEV: True,
+                        DETAILS_KEY_KEV_RANSOMWARE: True,
+                    }
+                ],
                 "reachability": {"confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD},
             },
         },
@@ -481,9 +490,9 @@ def _oracle_documents() -> list[dict[str, Any]]:
             "reachable": True,
             "reachability_level": REACHABILITY_LEVEL_IMPORT,
             "details": {
-                "epss_score": EPSS_HIGH_THRESHOLD,
-                DETAILS_KEY_IN_KEV: True,
-                DETAILS_KEY_KEV_RANSOMWARE: False,
+                "vulnerabilities": [
+                    {"epss_score": EPSS_HIGH_THRESHOLD, DETAILS_KEY_IN_KEV: True, DETAILS_KEY_KEV_RANSOMWARE: False}
+                ],
                 "reachability": {"confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD},
             },
         },
@@ -497,7 +506,7 @@ def _oracle_documents() -> list[dict[str, Any]]:
             "reachable": True,
             "reachability_level": REACHABILITY_LEVEL_SYMBOL,
             "details": {
-                "epss_score": EPSS_MEDIUM_THRESHOLD,
+                "vulnerabilities": [{"epss_score": EPSS_MEDIUM_THRESHOLD}],
                 "reachability": {"confidence_score": _LOW_CONFIDENCE},
             },
         },
@@ -509,7 +518,7 @@ def _oracle_documents() -> list[dict[str, Any]]:
             "waived": False,
             "reachable": False,
             "reachability_level": REACHABILITY_LEVEL_SYMBOL,
-            "details": {DETAILS_KEY_IN_KEV: True},
+            "details": {"vulnerabilities": [{DETAILS_KEY_IN_KEV: True}]},
         },
         {
             # Unanalysed: no reachable key at all, so the tri-state None branch is folded.
@@ -529,7 +538,7 @@ def _oracle_documents() -> list[dict[str, Any]]:
             "reachable": True,
             "reachability_level": REACHABILITY_LEVEL_SYMBOL,
             "details": {
-                DETAILS_KEY_IN_KEV: True,
+                "vulnerabilities": [{DETAILS_KEY_IN_KEV: True}],
                 "reachability": {"confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD},
             },
         },
@@ -692,13 +701,13 @@ class TestWaivedAdvisoriesCarryNoThreatIntel:
         assert (intel.active_exploitation_count, intel.high_epss_count, intel.max_epss_score) == (0, 0, 0.001)
         assert (stats.prioritized.actionable_total, stats.prioritized.deprioritized_count) == (0, 1)
 
-    def test_a_mark_no_advisory_carries_stays_the_documents(self):
+    def test_a_document_mark_counts_only_through_a_live_advisory(self):
         doc = _finding(**{DETAILS_KEY_IN_KEV: True, "epss_score": 0.7})
         doc["details"]["vulnerabilities"] = [{"id": "GHSA-a", "waived": True}, {"id": "GHSA-b"}]
 
         intel = compute_stats([doc], {}).threat_intel
 
-        assert (intel.kev_count, intel.max_epss_score) == (1, 0.7)
+        assert (intel.kev_count, intel.max_epss_score) == (0, None)
 
     @pytest.mark.asyncio
     async def test_the_stored_scan_reads_the_advisory_marks_too(self):
