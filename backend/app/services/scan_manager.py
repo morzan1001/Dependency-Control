@@ -50,7 +50,9 @@ class ScanManager:
             return f"{data.project_url}/-/pipelines/{data.pipeline_id}"
         return None
 
-    async def scan_upsert(self, data: BaseIngest, scan_id: str, now: datetime) -> dict[str, Any]:
+    async def record_release_and_build_scan_upsert(
+        self, data: BaseIngest, scan_id: str, now: datetime
+    ) -> dict[str, Any]:
         """The scan document every ingest of the run writes, sbom_refs aside; records the release the payload marks."""
         update: dict[str, Any] = {
             "$set": {
@@ -93,7 +95,7 @@ class ScanManager:
         """The run's scan id; the upsert lets concurrent scanners of one run share it across pods.
         ``scan_type`` is only ever set, never cleared, since the run's other scanners pass none."""
         scan_id = self.run_scan_id(data)
-        update = await self.scan_upsert(data, scan_id, datetime.now(timezone.utc))
+        update = await self.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
         update["$setOnInsert"]["sbom_refs"] = []
         if scan_type is not None:
             update["$set"]["scan_type"] = scan_type

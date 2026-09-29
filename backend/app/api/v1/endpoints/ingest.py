@@ -265,7 +265,7 @@ async def ingest_sbom(
         if total_deps_inserted:
             logger.info(f"Inserted {total_deps_inserted} dependencies for scan {scan_id}")
 
-        scan_update = await manager.scan_upsert(data, scan_id, datetime.now(timezone.utc))
+        scan_update = await manager.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
 
         # Replace (never append) so a CI retry cannot pile up duplicate SBOMs that get
         # stored and re-analysed forever; superseded GridFS uploads are deleted below.
