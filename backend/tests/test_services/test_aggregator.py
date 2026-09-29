@@ -315,14 +315,12 @@ def _grype_ghsa_entry():
         "id": "GHSA-3pjw-73gf-8qr5",
         "severity": "HIGH",
         "description": "jackson-databind vulnerable to deep wrapper array nesting",
-        "description_source": "grype",
         "fixed_version": "2.21.4",
         "cvss_score": 7.7,
         "cvss_vector": None,
         "references": [],
         "aliases": [],
         "scanners": ["grype"],
-        "source": "sbom.json",
         "details": {},
     }
 
@@ -332,14 +330,12 @@ def _trivy_cve_entry():
         "id": "CVE-2026-59888",
         "severity": "HIGH",
         "description": "jackson-databind: DoS via deeply nested wrapper arrays",
-        "description_source": "trivy",
         "fixed_version": "2.18.8, 2.21.4",
         "cvss_score": 7.5,
         "cvss_vector": None,
         "references": [],
         "aliases": [],
         "scanners": ["trivy"],
-        "source": "sbom.json",
         "details": {},
     }
 
@@ -349,14 +345,12 @@ def _osv_ghsa_entry_with_cve_alias():
         "id": "GHSA-3pjw-73gf-8qr5",
         "severity": "HIGH",
         "description": "Deeply nested wrapper array nesting in jackson-databind",
-        "description_source": "osv",
         "fixed_version": "2.21.4",
         "cvss_score": None,
         "cvss_vector": None,
         "references": [],
         "aliases": ["CVE-2026-59888"],
         "scanners": ["osv"],
-        "source": "sbom.json",
         "details": {},
     }
 
@@ -901,3 +895,57 @@ class TestAggregateDispatch:
         f = next(iter(self.agg.findings.values()))
         assert f.type == "system_warning"
         assert "trivy" in f.description
+
+
+class TestStoredEntryShape:
+    """Each advisory entry stores a field once, at the level its readers use."""
+
+    def test_lifted_scanner_fields_are_not_copied_into_the_entry_details(self):
+        agg = ResultAggregator()
+        agg.add_finding(
+            Finding(
+                id="CVE-2024-1",
+                type=FindingType.VULNERABILITY,
+                severity="HIGH",
+                component="foo",
+                version="1.2.0",
+                description="d",
+                scanners=["trivy"],
+                details={
+                    "fixed_version": "1.2.6",
+                    "cvss_score": 7.5,
+                    "cvss_vector": "T",
+                    "references": ["https://a"],
+                    "ecosystem_specific": {"imports": []},
+                    "published_date": "2024-01-01",
+                },
+            ),
+            source="sbom-a.json",
+        )
+        [finding] = agg.get_findings()
+        [entry] = finding.details["vulnerabilities"]
+
+        assert entry["fixed_version"] == "1.2.6"
+        assert entry["cvss_score"] == 7.5
+        assert entry["details"] == {"published_date": "2024-01-01"}
+        assert "description_source" not in entry
+        assert "source" not in entry
+
+    def test_quality_entries_leave_the_sbom_to_found_in(self):
+        agg = ResultAggregator()
+        for sbom in ("sbom-a.json", "sbom-b.json"):
+            agg.add_finding(
+                Finding(
+                    id="MAINT-lodash",
+                    type=FindingType.QUALITY,
+                    severity=Severity.MEDIUM,
+                    component="lodash",
+                    version="4.17.0",
+                    description="unmaintained",
+                    scanners=["maintainer_risk"],
+                ),
+                source=sbom,
+            )
+        [finding] = agg.get_findings()
+        assert finding.found_in == ["sbom-a.json", "sbom-b.json"]
+        assert "source" not in finding.details["quality_issues"][0]

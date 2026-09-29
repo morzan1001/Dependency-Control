@@ -126,14 +126,12 @@ class VulnerabilityEntryDetails(_DetailsModel):
     id: str | None = None
     severity: str | None = None
     description: str | None = None
-    description_source: str | None = None
     fixed_version: str | None = None
     cvss_score: float | None = None
     cvss_vector: str | None = None
     references: list[Any] = []
     aliases: list[str] = []
     scanners: list[str] = []
-    source: str | None = None
     details: VulnerabilityScannerDetails | None = None
     ecosystem_specific: dict[str, Any] | None = None
     # enrichment (enrichment.service)
@@ -269,7 +267,6 @@ class QualityIssueEntry(_DetailsModel):
     severity: str | None = None
     description: str | None = None
     scanners: list[str] = []
-    source: str | None = None
     details: dict[str, Any] = {}
 
 

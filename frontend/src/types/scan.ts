@@ -93,7 +93,6 @@ export interface QualityIssue {
   severity?: string;
   description?: string;
   scanners?: string[];
-  source?: string;
   details?: QualityIssueDetails;
 }
 

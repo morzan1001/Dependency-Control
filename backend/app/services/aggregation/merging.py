@@ -109,7 +109,6 @@ def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry
     theirs, ours = source_entry.get("description", ""), tv.get("description", "")
     if (len(theirs), ours) > (len(ours), theirs):
         tv["description"] = theirs
-        tv["description_source"] = source_entry.get("description_source", "unknown")
 
 
 def _lowest_fix_per_line(value: Any) -> dict[VersionKey, tuple[VersionKey, str]]:
@@ -159,8 +158,6 @@ def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: VulnerabilityEnt
         current = target_details.get(key)
         if not current:
             target_details[key] = value
-        elif key == "fixed_version":
-            target_details[key] = _merged_fixed_version(current, value)
         elif isinstance(current, list) and isinstance(value, list):
             target_details[key] = sorted({*current, *value}, key=str)
         elif source_first and current != value:
@@ -175,7 +172,6 @@ _EXPLICITLY_MERGED_KEYS = frozenset(
         "scanners",
         "severity",
         "description",
-        "description_source",
         "fixed_version",
         "cvss_score",
         "cvss_vector",

@@ -70,6 +70,7 @@ _LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
 _SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
 _SPDX_WITH_SPLIT = re.compile(r"\s++WITH\s++")
 _CATEGORY_RANK_BY_VALUE = {category.value: rank for category, rank in CATEGORY_RESTRICTIVENESS.items()}
+_ENTRY_LEVEL_KEYS = frozenset({"ecosystem_specific", "fixed_version", "cvss_score", "cvss_vector", "references"})
 
 
 def _package_key(finding: Finding) -> tuple[str, str]:
@@ -486,7 +487,8 @@ class ResultAggregator:
         else:
             self._add_generic_finding(finding, source)
 
-    def _build_vuln_entry(self, finding: Finding, source: str | None) -> VulnerabilityEntry:
+    @staticmethod
+    def _build_vuln_entry(finding: Finding) -> VulnerabilityEntry:
         """Build a vulnerability entry dict from a finding."""
         refs_from_details = finding.details.get("references", []) or []
 
@@ -494,7 +496,6 @@ class ResultAggregator:
             "id": finding.id,
             "severity": finding.severity,
             "description": finding.description,
-            "description_source": (finding.scanners[0] if finding.scanners else "unknown"),
             "fixed_version": (
                 str(finding.details.get("fixed_version")) if finding.details.get("fixed_version") else None
             ),
@@ -503,9 +504,7 @@ class ResultAggregator:
             "references": sorted(set(refs_from_details)),
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
-            "source": source,
-            # ecosystem_specific is lifted to the entry level below, not duplicated here.
-            "details": {k: v for k, v in (finding.details or {}).items() if k != "ecosystem_specific"},
+            "details": {k: v for k, v in (finding.details or {}).items() if k not in _ENTRY_LEVEL_KEYS},
         }
         ecosystem_specific = finding.details.get("ecosystem_specific")
         if ecosystem_specific:
@@ -534,7 +533,7 @@ class ResultAggregator:
         comp_key, version_key = _package_key(finding)
         agg_key = f"{AGG_KEY_VULNERABILITY}:{comp_key}:{version_key}"
 
-        vuln_entry = self._build_vuln_entry(finding, source)
+        vuln_entry = self._build_vuln_entry(finding)
 
         if agg_key in self.findings:
             self._merge_vuln_into_existing(self.findings[agg_key], finding, vuln_entry, source)
@@ -620,7 +619,6 @@ class ResultAggregator:
             "severity": finding.severity,
             "description": finding.description,
             "scanners": finding.scanners or [],
-            "source": source,
             "details": finding.details or {},
         }
 
