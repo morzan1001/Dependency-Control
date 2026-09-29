@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -409,7 +409,7 @@ class TestRecalculateReachesEveryBranchTip:
                 "project_id": PROJECT_ID,
                 "branch": "feature/login",
                 "status": "completed",
-                "created_at": datetime(2026, 9, 1, tzinfo=timezone.utc),
+                "created_at": datetime.now(timezone.utc) - timedelta(days=1),
             }
         )
         stale = _finding("f-feature", "CRITICAL", cvss_score=9.1, waived=True)
@@ -431,6 +431,40 @@ class TestRecalculateReachesEveryBranchTip:
         await recalculate_project_stats(PROJECT_ID, branch_db)
 
         assert (await branch_db.waivers.find_one({"_id": "w-1"}))["last_eval_scan_id"] == SCAN_ID
+
+    @pytest.mark.asyncio
+    async def test_a_branch_without_a_build_in_the_window_is_left_alone(self, branch_db, monkeypatch):
+        from app.core.constants import WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
+
+        await branch_db.scans.insert_one(
+            {
+                "_id": "scan-w4-quiet",
+                "project_id": PROJECT_ID,
+                "branch": "feature/abandoned",
+                "status": "completed",
+                "created_at": datetime.now(timezone.utc) - timedelta(days=WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS + 1),
+            }
+        )
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, branch_db)
+
+        assert restamped == [SCAN_ID, FEATURE_SCAN_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_recalc_that_lost_its_lock_stops_before_the_next_scan(self, branch_db, monkeypatch):
+        from app.repositories import DistributedLocksRepository
+
+        async def taken_over(self, lock_name, holder_id, ttl_seconds=30):
+            return False
+
+        monkeypatch.setattr(DistributedLocksRepository, "renew_lock", taken_over)
+        restamped = _record_restamps(monkeypatch)
+
+        await recalculate_project_stats(PROJECT_ID, branch_db)
+
+        assert restamped == [SCAN_ID]
+        assert (await branch_db.findings.find_one({"_id": "f-feature"}))["waived"] is True
 
 
 class TestEmptyCriteriaWaiverDoesNotWaiveEverything:

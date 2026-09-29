@@ -31,9 +31,9 @@ logger = logging.getLogger(__name__)
 
 _FieldsById = dict[str, dict[str, Any]]
 
-# What a pass writes, when an active waiver expires, and the creation time (defaulted on load for a document
-# without one) do not change how a waiver stamps.
-_NOT_STAMPED = {"last_eval_scan_id", "last_match_count", "expiration_date", "is_active", "created_at"}
+# What a pass writes (its outcome, and the signature it follows the finding with), when an active waiver expires,
+# and the creation time (defaulted on load for a document without one) do not change the decision a scan carries.
+_NOT_STAMPED = {"last_eval_scan_id", "last_match_count", "match", "expiration_date", "is_active", "created_at"}
 
 
 def waiver_fingerprint(waivers: list[Waiver]) -> str:

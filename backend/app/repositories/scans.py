@@ -248,9 +248,9 @@ class ScanRepository:
         }
 
     async def branch_tips(
-        self, project_id: str, deleted_branches: list[str] | None = None
+        self, project_id: str, deleted_branches: list[str] | None = None, since: datetime | None = None
     ) -> list[tuple[str, int, dict[str, Any] | None]]:
-        """``(branch, scan_count, tip)`` per branch, over every scan the project holds.
+        """``(branch, scan_count, tip)`` per branch, over every scan the project holds (``since``: created then or later).
 
         The tip is the module's head rule scoped to one branch: the branch's newest build,
         resolved to the freshest analysis of it, so the project tile reports the same numbers
@@ -260,6 +260,8 @@ class ScanRepository:
         match: dict[str, Any] = {"project_id": project_id}
         if deleted_branches:
             match["branch"] = {"$nin": list(deleted_branches)}
+        if since is not None:
+            match["created_at"] = {"$gte": since}
         rows = await self.aggregate(_branch_tip_pipeline(match))
         builds: list[tuple[str, int, str | None]] = []
         for row in rows:

@@ -911,10 +911,8 @@ async def _persist_findings_and_waivers(
 
     waiver_repo = WaiverRepository(db)
     waivers = await waiver_repo.find_active_for_project(project_id) if project_id else []
-    # Taken before the pass, which binds signatures to legacy waivers in memory: it names the set as stored.
-    fingerprint = waiver_fingerprint(waivers)
     matches = await restamp_waivers(finding_repo, waiver_repo if head else None, scan_id, waivers)
-    await ScanRepository(db).update_raw(scan_id, {"$set": {"waiver_fingerprint": fingerprint}})
+    await ScanRepository(db).update_raw(scan_id, {"$set": {"waiver_fingerprint": waiver_fingerprint(waivers)}})
     for waiver in waivers:
         if matches[waiver.id]:
             analysis_waivers_applied_total.labels(type=route_waiver(waiver)).inc()

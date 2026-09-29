@@ -90,6 +90,39 @@ async def _seed_project(db) -> None:
     await db.scans.insert_one({"_id": _HEAD, "project_id": _PROJECT, "status": "completed"})
 
 
+async def _seed_feature_tip(db) -> None:
+    await db.scans.insert_one(
+        {
+            "_id": _FEATURE,
+            "project_id": _PROJECT,
+            "branch": "feature/x",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+
+
+def _secret_signature(file_key: str = _SECRET_FILE, last_line: int = 40) -> MatchSignature:
+    return MatchSignature(
+        rule_key="trufflehog:AWS", file_key=file_key, anchor="h-1", anchor_kind="secret_hash", last_line=last_line
+    )
+
+
+def _moved_secret() -> Finding:
+    return _secret("aaaa1111").model_copy(update={"match": _secret_signature()})
+
+
+def _waiver_where_the_secret_last_was() -> Waiver:
+    return Waiver(
+        project_id=_PROJECT,
+        finding_id="SECRET-AWS-aaaa1111",
+        finding_type="secret",
+        match=_secret_signature(last_line=12),
+        reason="rotated",
+        created_by="u",
+    )
+
+
 async def _persist(db, scan_id: str, *findings: Finding, head: bool = False) -> list[dict]:
     records, _ = _prepare_finding_records(list(findings), scan_id, _PROJECT, datetime.now(timezone.utc))
     await _persist_findings_and_waivers(records, scan_id, _PROJECT, FindingRepository(db), db, head=head)
@@ -299,11 +332,20 @@ def _record_recalc_restamps(monkeypatch) -> list[str]:
     return restamped
 
 
-async def test_heads_analysis_records_each_waivers_outcome_and_leaves_the_recalc_nothing(monkeypatch):
+@pytest.mark.parametrize(
+    ("waiver", "finding"),
+    [
+        pytest.param(_field_waiver, _vulnerable_component, id="field"),
+        pytest.param(_waiver_where_the_secret_last_was, _moved_secret, id="signature-walking-with-its-finding"),
+    ],
+)
+async def test_heads_analysis_records_each_waivers_outcome_and_leaves_the_recalc_nothing(monkeypatch, waiver, finding):
     db = FakeDatabase()
     await _seed_project(db)
-    await WaiverRepository(db).create(_field_waiver())
-    await _persist(db, _HEAD, _vulnerable_component(), head=True)
+    await _seed_feature_tip(db)
+    await WaiverRepository(db).create(waiver())
+    await _persist(db, _FEATURE, finding())
+    await _persist(db, _HEAD, finding(), head=True)
     restamped = _record_recalc_restamps(monkeypatch)
 
     await recalculate_project_stats(_PROJECT, db)
@@ -320,6 +362,38 @@ async def test_another_branchs_analysis_leaves_each_waivers_outcome_to_head():
     await _persist(db, _FEATURE, _vulnerable_component())
 
     assert (await db.waivers.find_one({})).get("last_eval_scan_id") is None
+
+
+def _signed_secret_doc(scan_id: str, file_key: str) -> dict:
+    return {
+        "_id": f"{scan_id}:secret",
+        "scan_id": scan_id,
+        "project_id": _PROJECT,
+        "finding_id": "SECRET-AWS-aaaa1111",
+        "type": "secret",
+        "component": file_key,
+        "severity": "HIGH",
+        "waived": False,
+        "details": {"detector": "AWS"},
+        "match": _secret_signature(file_key).model_dump(),
+    }
+
+
+async def test_each_scan_binds_an_unsigned_waiver_to_its_own_finding():
+    """The tip holds the secret the waiver names in another file than head does, as its own analysis sees it."""
+    db = FakeDatabase()
+    await _seed_project(db)
+    await _seed_feature_tip(db)
+    await db.findings.insert_many(
+        [_signed_secret_doc(_HEAD, "config/a.yaml"), _signed_secret_doc(_FEATURE, "config/b.yaml")]
+    )
+    await WaiverRepository(db).create(
+        Waiver(finding_id="SECRET-AWS-aaaa1111", finding_type="secret", reason="rotated", created_by="u")
+    )
+
+    await recalculate_project_stats(_PROJECT, db)
+
+    assert {doc["scan_id"]: doc["waived"] async for doc in db.findings.find({})} == {_HEAD: True, _FEATURE: True}
 
 
 _ROUTES = ("query", "vulnerability", "signature")

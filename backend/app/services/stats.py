@@ -1,10 +1,12 @@
 import asyncio
 import logging
 import os
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS
 from app.models.project import Project
 from app.models.stats import Stats
 from app.models.waiver import Waiver
@@ -29,6 +31,7 @@ logger = logging.getLogger(__name__)
 # against the fully-committed waiver set. Total worst-case wait ~= 0.2*(2^5-1) = 6.2s.
 _LOCK_MAX_RETRIES = 5
 _LOCK_RETRY_BASE_DELAY = 0.2
+_LOCK_TTL_SECONDS = 300
 
 
 async def _restamp_scan(
@@ -56,6 +59,10 @@ async def _restamp_scan(
     return tally.stats
 
 
+def _copy(waivers: list[Waiver]) -> list[Waiver]:
+    return [w.model_copy(deep=True) for w in waivers]
+
+
 async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> list[str]:
     """The scans release mode reports for this project, one per environment.
 
@@ -72,15 +79,16 @@ async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> l
 
 
 async def _branch_tip_ids(scan_repo: ScanRepository, project: Project) -> list[str]:
-    tips = await scan_repo.branch_tips(project.id, project.deleted_branches)
+    since = datetime.now(timezone.utc) - timedelta(days=WAIVER_RESTAMP_BRANCH_ACTIVE_DAYS)
+    tips = await scan_repo.branch_tips(project.id, project.deleted_branches, since)
     return [tip["_id"] for _branch, _count, tip in tips if tip]
 
 
 async def recalculate_project_stats(
     project_id: str, db: AsyncIOMotorDatabase, reach: dict[str, Any] | None = None
 ) -> Stats | None:
-    """Re-stamp the project's active waiver set onto its head, every branch tip and the scans release
-    mode reports, and carry head's stats onto the project.
+    """Re-stamp the project's active waiver set onto its head, the tips of recently built branches and the scans
+    release mode reports, and carry head's stats onto the project.
 
     Restamps under a distributed lock to prevent races when pods modify waivers concurrently; a scan
     already stamped with this waiver set is left alone. ``reach`` is a finding filter: a project none
@@ -113,7 +121,7 @@ async def recalculate_project_stats(
     # now-committed waiver set (avoids stale stats / stale ignored_count).
     lock_acquired = False
     for attempt in range(_LOCK_MAX_RETRIES + 1):
-        lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, 300)
+        lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, _LOCK_TTL_SECONDS)
         if lock_acquired:
             break
         if attempt < _LOCK_MAX_RETRIES:
@@ -146,13 +154,16 @@ async def recalculate_project_stats(
             f"{'current' if head_current else 'stale'}, {len(stale)} of {len(other_ids)} other scans stale"
         )
         stats = None
-        # Head first and alone records waiver outcomes and signatures: those describe head, and the
-        # other passes then see the signatures head back-filled.
+        # Each pass binds unsigned waivers to its own scan's findings in memory, so each takes its own copy.
+        # Head alone records waiver outcomes and signatures: those describe head.
         if scan_id and not head_current:
-            stats = await _restamp_scan(scan_id, db, waivers, fingerprint, finding_repo, waiver_repo)
+            stats = await _restamp_scan(scan_id, db, _copy(waivers), fingerprint, finding_repo, waiver_repo)
             await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
         for other_id in stale:
-            await _restamp_scan(other_id, db, waivers, fingerprint, finding_repo, None)
+            if not await lock_repo.renew_lock(lock_name, holder_id, _LOCK_TTL_SECONDS):
+                logger.warning(f"Lost lock {lock_name} partway; the recalculation holding it now stamps the rest")
+                break
+            await _restamp_scan(other_id, db, _copy(waivers), fingerprint, finding_repo, None)
         return stats
 
     finally:
