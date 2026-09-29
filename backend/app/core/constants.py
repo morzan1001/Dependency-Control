@@ -369,7 +369,6 @@ OUTDATED_DEPENDENCY_THRESHOLD_DAYS: int = 365 * 2  # 2 years
 RECURRING_ISSUE_THRESHOLD: int = 3  # Min scans a CVE appears in to be "recurring"
 FINDING_DELTA_THRESHOLD: int = 10  # Min new findings to trigger regression warning
 MIN_VULNS_FOR_RECOMMENDATION: int = 3  # Min vulns to generate certain recommendations
-SIGNIFICANT_FRAGMENTATION_THRESHOLD: int = 3  # Min version count to be significant
 CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project patterns
 
 # EPSS very high threshold (for immediate action recommendations)

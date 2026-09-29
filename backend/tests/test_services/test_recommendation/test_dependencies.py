@@ -81,7 +81,7 @@ class TestAnalyzeOutdatedDependenciesDirectOutdated:
 
 
 class TestAnalyzeOutdatedDependenciesTransitive:
-    """Transitive outdated deps flagged only if above SIGNIFICANT_FRAGMENTATION_THRESHOLD."""
+    """Transitive outdated deps flagged only if above _OUTDATED_TRANSITIVE_CARD_MIN."""
 
     def test_few_transitive_not_flagged(self):
         deps = [
@@ -153,6 +153,22 @@ class TestAnalyzeVersionFragmentationSignificant:
         deps = [_dep(name="lodash", version=f"4.17.{15 + i}") for i in range(3)]
         rec = analyze_version_fragmentation(deps)[0]
         assert any("lodash" in c and "3 versions" in c for c in rec.affected_components)
+
+
+class TestAnalyzeVersionFragmentationCuts:
+    @staticmethod
+    def _fragmented(packages: int, versions: int) -> list:
+        return [_dep(name=f"pkg-{p}", version=f"1.0.{v}") for p in range(packages) for v in range(versions)]
+
+    @pytest.mark.parametrize(("packages", "priority"), [(3, Priority.LOW), (4, Priority.MEDIUM)])
+    def test_more_than_three_fragmented_packages_raise_the_priority(self, packages, priority):
+        (rec,) = analyze_version_fragmentation(self._fragmented(packages, 3))
+        assert rec.priority == priority
+
+    @pytest.mark.parametrize(("versions", "high", "medium"), [(4, 0, 1), (5, 1, 0)])
+    def test_five_versions_count_as_heavy_fragmentation(self, versions, high, medium):
+        (rec,) = analyze_version_fragmentation(self._fragmented(1, versions))
+        assert (rec.impact["high"], rec.impact["medium"]) == (high, medium)
 
 
 class TestAnalyzeVersionFragmentationBelowThreshold:

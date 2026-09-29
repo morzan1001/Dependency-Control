@@ -4,7 +4,6 @@ from typing import Any
 from app.core.constants import (
     DEV_DEPENDENCY_PATTERN,
     DEV_DEPENDENCY_RUNTIME_PACKAGES,
-    SIGNIFICANT_FRAGMENTATION_THRESHOLD,
 )
 from app.schemas.recommendation import (
     Priority,
@@ -19,6 +18,13 @@ from app.services.recommendation.common import (
     newest_first,
     sample_components,
 )
+
+# A package held at this many versions is fragmented, at the second count heavily so.
+_FRAGMENTATION_MIN_VERSIONS = 3
+_FRAGMENTATION_HIGH_VERSIONS = 5
+# Counts that must be exceeded: fragmented packages for a MEDIUM card, outdated transitives for a card at all.
+_FRAGMENTED_PACKAGES_FOR_MEDIUM = 3
+_OUTDATED_TRANSITIVE_CARD_MIN = 3
 
 
 def analyze_outdated_dependencies(
@@ -90,7 +96,7 @@ def analyze_outdated_dependencies(
             )
         )
 
-    if len(transitive_outdated) > SIGNIFICANT_FRAGMENTATION_THRESHOLD:
+    if len(transitive_outdated) > _OUTDATED_TRANSITIVE_CARD_MIN:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.OUTDATED_DEPENDENCY,
@@ -154,12 +160,10 @@ def analyze_version_fragmentation(
 
     fragmented.sort(key=lambda x: x["count"], reverse=True)
 
-    significant_fragmented = [f for f in fragmented if f["count"] >= SIGNIFICANT_FRAGMENTATION_THRESHOLD]
+    significant_fragmented = [f for f in fragmented if f["count"] >= _FRAGMENTATION_MIN_VERSIONS]
 
     if significant_fragmented:
-        priority = (
-            Priority.MEDIUM if len(significant_fragmented) > SIGNIFICANT_FRAGMENTATION_THRESHOLD else Priority.LOW
-        )
+        priority = Priority.MEDIUM if len(significant_fragmented) > _FRAGMENTED_PACKAGES_FOR_MEDIUM else Priority.LOW
 
         fragmented_shown, fragmented_total = sample_components(
             f"{f['name']} ({f['count']} versions)" for f in significant_fragmented
@@ -175,16 +179,20 @@ def analyze_version_fragmentation(
                     f"({sum(f['count'] for f in significant_fragmented)} total versions)"
                 ),
                 description=(
-                    f"These packages have {SIGNIFICANT_FRAGMENTATION_THRESHOLD} or more "
+                    f"These packages have {_FRAGMENTATION_MIN_VERSIONS} or more "
                     "versions in your dependency tree. This can increase bundle size "
                     "and cause subtle bugs. Consider deduplication or pinning to a "
                     "single version."
                 ),
                 impact={
                     "critical": 0,
-                    "high": len([f for f in significant_fragmented if f["count"] >= 5]),
+                    "high": len([f for f in significant_fragmented if f["count"] >= _FRAGMENTATION_HIGH_VERSIONS]),
                     "medium": len(
-                        [f for f in significant_fragmented if SIGNIFICANT_FRAGMENTATION_THRESHOLD <= f["count"] < 5]
+                        [
+                            f
+                            for f in significant_fragmented
+                            if _FRAGMENTATION_MIN_VERSIONS <= f["count"] < _FRAGMENTATION_HIGH_VERSIONS
+                        ]
                     ),
                     "low": 0,
                     "total": len(significant_fragmented),
