@@ -4,6 +4,7 @@ from contextvars import ContextVar
 from typing import Any
 
 from app.core.config import settings
+from app.core.constants import ExploitMaturity
 from app.repositories.base import find_window
 from app.services.aggregation.components import extract_artifact_name
 from app.services.analytics.findings_delta import finding_identity_key
@@ -25,7 +26,7 @@ MAX_PLAN_STEPS = 25
 MAX_DAY_WINDOW = 365
 
 # details.exploit_maturity values meaning actively exploited in the wild.
-KEV_EQUIVALENT_MATURITY = ("active", "weaponized")
+KEV_EQUIVALENT_MATURITY: tuple[ExploitMaturity, ...] = ("active", "weaponized")
 
 _FINDING_TOPLEVEL_FIELDS = (
     "finding_id",

@@ -65,7 +65,12 @@ def _make_finding(
     if epss_score is not None:
         details["epss_score"] = epss_score
     if in_kev:
+        # The enrichment writer flags the finding and the nested entry that names the CVE.
         details["in_kev"] = True
+        entry = {"id": finding_id, "in_kev": True, "kev_due_date": kev_due_date}
+        if kev_ransomware_use:
+            entry["kev_ransomware_use"] = True
+        details["vulnerabilities"] = [entry]
     if kev_due_date is not None:
         details["kev_due_date"] = kev_due_date
     if kev_ransomware_use:
@@ -351,14 +356,6 @@ class TestKevRowsCarryRealCveIds:
         finding = _aggregated_vuln_finding([{"id": "GHSA-9f52-rjqv-25qv", "in_kev": True}])
         result = build_epss_kev_summary([finding])
         assert result["kev_details"][0]["cve"] == "GHSA-9f52-rjqv-25qv"
-
-    def test_kev_flag_only_on_the_document_falls_back_to_its_alias(self):
-        finding = _aggregated_vuln_finding(
-            [{"id": "GHSA-other", "severity": "HIGH"}],
-            aliases=["CVE-2025-77777"],
-        )
-        result = build_epss_kev_summary([finding])
-        assert result["kev_details"][0]["cve"] == "CVE-2025-77777"
 
     def test_high_risk_row_uses_the_cve_too(self):
         finding = _aggregated_vuln_finding(

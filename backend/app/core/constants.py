@@ -448,14 +448,9 @@ GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED: int = 2
 # "low"/"medium"/"high" are the EPSS buckets; "active" is KEV, "weaponized" KEV with ransomware use.
 ExploitMaturity = Literal["unknown", "low", "medium", "high", "active", "weaponized"]
 
-# Exploit maturity levels for risk prioritization (higher = more severe)
+# Higher = more mature, in ExploitMaturity's declaration order.
 EXPLOIT_MATURITY_ORDER: dict[ExploitMaturity, int] = {
-    "unknown": 0,
-    "low": 1,
-    "medium": 2,
-    "high": 3,
-    "active": 4,
-    "weaponized": 5,
+    level: rank for rank, level in enumerate(get_args(ExploitMaturity))
 }
 
 # Exploit maturity boost factors for impact score calculation

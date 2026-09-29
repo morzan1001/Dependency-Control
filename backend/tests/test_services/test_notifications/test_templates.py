@@ -295,3 +295,13 @@ class TestTemplateEscaping:
 
         assert _HTML_INJECTION not in result
         assert _ESCAPED_INJECTION in result
+
+
+def test_the_high_epss_sentence_names_the_threshold_the_count_uses(monkeypatch):
+    monkeypatch.setattr("app.services.notifications.templates.EPSS_HIGH_THRESHOLD", 0.05)
+
+    html = get_vulnerability_found_template(
+        "https://dc/report", "svc", "svc", [], 0, has_high_epss=True, high_epss_count=2
+    )
+
+    assert "EPSS score of at least 5%" in html

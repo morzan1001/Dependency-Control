@@ -2,7 +2,12 @@ import asyncio
 import logging
 from typing import Any
 
-from app.core.constants import ANALYZER_TIMEOUTS, EXPLOIT_MATURITY_ORDER
+from app.core.constants import (
+    ANALYZER_TIMEOUTS,
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
+    EXPLOIT_MATURITY_ORDER,
+)
 from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry, VulnerabilityEnrichment
 from app.services.aggregation.merging import dedupe_vulnerability_entries
@@ -205,9 +210,9 @@ def _apply_enrichment_to_vuln(
         vuln["epss_score"] = enrichment.epss_score
         vuln["epss_percentile"] = enrichment.epss_percentile
     if enrichment.is_kev:
-        vuln["in_kev"] = True
+        vuln[DETAILS_KEY_IN_KEV] = True
         vuln["kev_due_date"] = enrichment.kev_due_date
-        vuln["kev_ransomware_use"] = enrichment.kev_ransomware_use
+        vuln[DETAILS_KEY_KEV_RANSOMWARE] = enrichment.kev_ransomware_use
 
 
 def _apply_enrichment_to_finding(
@@ -227,12 +232,14 @@ def _apply_enrichment_to_finding(
             details["epss_date"] = enrichment.epss_date
 
     if enrichment.is_kev:
-        details["in_kev"] = True
+        details[DETAILS_KEY_IN_KEV] = True
         details["kev_date_added"] = enrichment.kev_date_added
         details["kev_due_date"] = enrichment.kev_due_date
         details["kev_required_action"] = enrichment.kev_required_action
         # Stay flagged if any KEV CVE is ransomware-linked; don't clobber to False.
-        details["kev_ransomware_use"] = bool(details.get("kev_ransomware_use")) or enrichment.kev_ransomware_use
+        details[DETAILS_KEY_KEV_RANSOMWARE] = (
+            bool(details.get(DETAILS_KEY_KEV_RANSOMWARE)) or enrichment.kev_ransomware_use
+        )
 
     if enrichment.exploit_maturity and enrichment.exploit_maturity != "unknown":
         current_maturity = details.get("exploit_maturity", "unknown")
