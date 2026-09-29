@@ -215,6 +215,26 @@ async def test_a_head_cleared_while_its_branch_was_gone_comes_back_with_the_bran
 
 
 @pytest.mark.asyncio
+async def test_a_head_a_finalizer_moved_during_the_vcs_call_is_not_overwritten():
+    """The head derived here may predate the scan the finalizer just committed and pointed the project at."""
+    project = _project(latest_scan_id="s-gone")
+    db = await _db(project, [_scan("s-main", _MAIN), _scan("s-gone", _GONE, _T0 + _HOUR)])
+
+    async def list_branches_while_a_scan_finalizes() -> list[str]:
+        finalized = {"latest_scan_id": "s-finalized", "stats": {"critical": _CRITICALS}}
+        await db.projects.update_one({"_id": _PROJECT_ID}, {"$set": finalized})
+        return [_MAIN]
+
+    with patch(f"{MODULE}._vcs_repo", AsyncMock(return_value=(list_branches_while_a_scan_finalizes, AsyncMock()))):
+        assert await sync_project_branches(project, db) is True
+
+    stored = await db.projects.find_one({"_id": _PROJECT_ID})
+    assert stored["deleted_branches"] == [_GONE]
+    assert stored["latest_scan_id"] == "s-finalized"
+    assert stored["stats"] == {"critical": _CRITICALS}
+
+
+@pytest.mark.asyncio
 async def test_missing_default_branch_is_backfilled_from_the_vcs():
     stored = await _run(
         _project(default_branch=None),
