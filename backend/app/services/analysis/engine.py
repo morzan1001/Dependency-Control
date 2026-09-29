@@ -816,11 +816,9 @@ async def _persist_findings_and_waivers(
     return persisted_count, ignored_count, active_waivers
 
 
-async def _apply_handed_over_callgraphs(
-    scan_id: str, project_id: str | None, scan_repo: ScanRepository, db: Database
-) -> None:
+async def _apply_handed_over_callgraphs(scan_id: str, project_id: str | None, db: Database) -> None:
     # A callgraph uploaded during the run only flagged the scan, since the findings it would enrich were being replaced.
-    state = await scan_repo.get_minimal_by_id(scan_id)
+    state = await ScanRepository(db).get_minimal_by_id(scan_id)
     if project_id and state and state.reachability_pending:
         await run_pending_reachability_for_scan(scan_id, project_id, db)
 
@@ -1058,6 +1056,7 @@ async def _announce_outcome(
 ) -> None:
     """Best effort: the scan is already final, so a failure here is logged and never changes it."""
     try:
+        await _apply_handed_over_callgraphs(scan_id, project_id, db)
         if status == SCAN_STATUS_FAILED:
             await notify_analysis_failed(db, scan_id, project_id, error or status)
             return
@@ -1136,7 +1135,7 @@ async def run_analysis(
         )
         if outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS and project_id:
             await scan_repo.sync_project_head(project_id)
-            await _apply_handed_over_callgraphs(scan_id, project_id, scan_repo, db)
+            await _apply_handed_over_callgraphs(scan_id, project_id, db)
         return outcome
 
     await result_repo.delete_many(
@@ -1299,7 +1298,6 @@ async def run_analysis(
         _release_memory_to_os()
         return outcome
 
-    await _apply_handed_over_callgraphs(scan_id, project_id, scan_repo, db)
     await _announce_outcome(
         final_status, final_error, project_id, scan_id, scan_doc, stats, aggregated_findings, results_summary, db
     )
