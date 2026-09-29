@@ -67,6 +67,7 @@ function makeSettings(overrides: Partial<SystemSettingsType> = {}): SystemSettin
     global_rescan_enabled: true,
     global_rescan_interval: 7,
     crypto_policy_mode: 'global',
+    default_active_analyzers: ['trivy'],
     ...overrides,
   }
 }

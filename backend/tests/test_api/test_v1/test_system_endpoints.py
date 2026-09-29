@@ -223,6 +223,17 @@ class TestGetAppConfig:
         assert result.notifications.slack is False
         assert result.notifications.mattermost is False
 
+    def test_the_create_dialog_is_seeded_with_the_backend_default_analyzers(self, regular_user):
+        from app.api.v1.endpoints.system import get_app_config
+        from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
+
+        with patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = _make_settings()
+            result = asyncio.run(get_app_config(current_user=regular_user, db=MagicMock()))
+
+        assert result.default_project_analyzers == list(DEFAULT_ACTIVE_ANALYZERS)
+        assert "epss_kev" in result.default_project_analyzers
+
 
 class TestGetNotificationChannels:
     def test_returns_channels_based_on_config(self, regular_user):

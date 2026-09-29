@@ -1,6 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from app.core.constants import (
+    DEFAULT_ACTIVE_ANALYZERS,
     DEFAULT_RETENTION_DAYS,
     MAX_RETENTION_DAYS,
     RETENTION_ACTION_DELETE,
@@ -131,3 +132,5 @@ class AppConfig(BaseModel):
     slack_client_id: str | None
     slack_oauth_scopes: str | None
     chat_enabled: bool
+    # What a project created without an explicit choice runs; the create dialog starts from it.
+    default_project_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
