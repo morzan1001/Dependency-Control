@@ -182,3 +182,18 @@ async def test_a_failed_asset_store_leaves_the_shared_pipeline_scan_readable(cli
 
     assert resp.status_code == 500
     assert (await db.scans.find_one({"_id": first.json()["scan_id"]}))["status"] == "completed"
+
+
+@pytest.mark.asyncio
+async def test_a_cbom_posted_during_the_analysis_makes_the_running_one_start_over(client, db, api_key_headers):
+    """The crypto analyzers read the assets this post replaced, and a run that began before it
+    has not seen them; its finalize matches on the input generation it claimed."""
+    pipeline = {"pipeline_id": 10, "commit_hash": "abc123", "branch": "main", "cbom": _load("legacy_crypto_mixed.json")}
+    scan_id = (await client.post("/api/v1/ingest/cbom", json=pipeline, headers=api_key_headers)).json()["scan_id"]
+    claimed = (await db.scans.find_one({"_id": scan_id})).get("sbom_generation")
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing"}})
+
+    resp = await client.post("/api/v1/ingest/cbom", json=pipeline, headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    assert (await db.scans.find_one({"_id": scan_id})).get("sbom_generation") != claimed

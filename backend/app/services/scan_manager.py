@@ -183,6 +183,9 @@ class ScanManager:
             },
             "$addToSet": {"received_results": analyzer_name},
         }
+        if analyzer_name == "cbom":
+            # The crypto analyzers read the assets this post replaced, so a run under way must start over.
+            update_ops["$inc"] = {"sbom_generation": 1}
 
         from app.repositories.scans import ScanRepository
 
