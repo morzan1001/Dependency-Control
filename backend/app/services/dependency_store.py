@@ -53,9 +53,10 @@ async def store_scan_dependencies(
 ) -> int | None:
     """Replace the scan's inventory with the payload's merged dependencies; writes nothing and returns None
     when an SBOM failed (None), so a re-run cannot swap a stored complete inventory for a partial one."""
-    if not parsed_sboms or None in parsed_sboms:
+    sboms = [sbom for sbom in parsed_sboms if sbom is not None]
+    if not sboms or len(sboms) < len(parsed_sboms):
         return None
-    merged, _ = merge_duplicate_dependencies([dep for sbom in parsed_sboms if sbom for dep in sbom.dependencies])
+    merged, _ = merge_duplicate_dependencies([dep for sbom in sboms for dep in sbom.dependencies])
     # Deletes only rows no write since this one has touched, so after a failure part-way or an
     # overlapping store of the same scan the newest write's rows are all still there.
     written_at = datetime.now(timezone.utc)

@@ -265,23 +265,6 @@ class ScanRepository:
         result = await self.collection.delete_many(query)
         return result.deleted_count
 
-    async def find_by_project(
-        self,
-        project_id: str,
-        skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "created_at",
-        sort_order: int = -1,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
-        cursor = (
-            self.collection.find({"project_id": project_id}, projection)
-            .sort(sort_by, sort_order)
-            .skip(skip)
-            .limit(limit)
-        )
-        return await cursor.to_list(limit)
-
     async def find_one(self, query: dict[str, Any], sort: list[tuple] | None = None) -> dict[str, Any] | None:
         if sort:
             return await self.collection.find_one(query, sort=sort)

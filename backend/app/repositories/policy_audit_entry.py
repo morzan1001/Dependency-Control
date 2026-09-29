@@ -82,13 +82,12 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         policy_scope: str,
         project_id: str | None,
         cutoff: datetime,
-        policy_type: PolicyType = "crypto",
     ) -> int:
         query: dict[str, Any] = {
             "policy_scope": policy_scope,
             "project_id": project_id,
             "timestamp": {"$lt": cutoff},
-            **_policy_type_filter(policy_type),
+            **_policy_type_filter("crypto"),
         }
         result = await self.collection.delete_many(query)
         return result.deleted_count
