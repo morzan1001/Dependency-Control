@@ -38,10 +38,11 @@ from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project
 from app.repositories.distributed_locks import DistributedLocksRepository
-from app.repositories.scans import BRANCH_SCAN_FILTER, HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
+from app.repositories.scans import HAS_SBOM_MATCH, USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.analysis.notifications import notify_analysis_failed
 from app.services.audit.retention import prune_old_audit_entries
+from app.services.branch_sync import sync_project_branches
 from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.releases import reconcile_release_flags, release_protected_scan_ids
@@ -608,121 +609,6 @@ async def recover_stuck_scans(
         logger.exception("Stuck scan recovery failed: %s", e)
 
 
-async def _fetch_gitlab_branches(db: Any, instance_id: str, project_id: str) -> list | None:
-    from app.repositories.gitlab_instances import GitLabInstanceRepository
-    from app.services.gitlab import GitLabService
-
-    instance = await GitLabInstanceRepository(db).get_by_id(instance_id)
-    if not instance or not instance.access_token:
-        return None
-    try:
-        numeric_project_id = int(project_id)
-    except (TypeError, ValueError):
-        return None
-    return await GitLabService(instance).list_branches(numeric_project_id)
-
-
-async def _fetch_github_branches(db: Any, instance_id: str, repo_path: str) -> list | None:
-    from app.repositories.github_instances import GitHubInstanceRepository
-    from app.services.github import GitHubService
-
-    gh_instance = await GitHubInstanceRepository(db).get_by_id(instance_id)
-    if not gh_instance or not gh_instance.access_token:
-        return None
-    parts = repo_path.split("/", 1)
-    if len(parts) != 2:
-        return None
-    return await GitHubService(gh_instance).list_branches(parts[0], parts[1])
-
-
-async def _fetch_vcs_branches(project_data: dict, db: Any) -> list | None:
-    """Resolve the VCS provider and return its branch list, or None if unavailable."""
-    gitlab_instance_id = project_data.get("gitlab_instance_id")
-    gitlab_project_id = project_data.get("gitlab_project_id")
-    if gitlab_instance_id and gitlab_project_id:
-        return await _fetch_gitlab_branches(db, gitlab_instance_id, gitlab_project_id)
-
-    github_instance_id = project_data.get("github_instance_id")
-    github_repo_path = project_data.get("github_repository_path")
-    if github_instance_id and github_repo_path:
-        return await _fetch_github_branches(db, github_instance_id, github_repo_path)
-
-    return None
-
-
-async def _fetch_vcs_default_branch(project_data: dict, db: Any) -> str | None:
-    """The provider's default branch, so project views need not guess one from scan recency."""
-    from app.repositories.github_instances import GitHubInstanceRepository
-    from app.repositories.gitlab_instances import GitLabInstanceRepository
-    from app.services.github import GitHubService
-    from app.services.gitlab import GitLabService
-
-    gitlab_instance_id = project_data.get("gitlab_instance_id")
-    gitlab_project_id = project_data.get("gitlab_project_id")
-    if gitlab_instance_id and gitlab_project_id:
-        instance = await GitLabInstanceRepository(db).get_by_id(gitlab_instance_id)
-        if not instance or not instance.access_token:
-            return None
-        try:
-            numeric_project_id = int(gitlab_project_id)
-        except (TypeError, ValueError):
-            return None
-        details = await GitLabService(instance).get_project_details(numeric_project_id)
-        return details.default_branch if details else None
-
-    github_instance_id = project_data.get("github_instance_id")
-    github_repo_path = project_data.get("github_repository_path")
-    if github_instance_id and github_repo_path:
-        gh_instance = await GitHubInstanceRepository(db).get_by_id(github_instance_id)
-        if not gh_instance or not gh_instance.access_token:
-            return None
-        parts = github_repo_path.split("/", 1)
-        if len(parts) != 2:
-            return None
-        return await GitHubService(gh_instance).get_default_branch(parts[0], parts[1])
-
-    return None
-
-
-async def sync_project_branches(project_data: dict, db: Any) -> None:
-    """Sync branch status for a single project against its VCS provider."""
-    project_id = project_data["_id"]
-    project_name = project_data.get("name", project_id)
-
-    try:
-        vcs_branches = await _fetch_vcs_branches(project_data, db)
-        if not vcs_branches:
-            return
-
-        # Counting a tag build would file its tag as a branch the VCS has deleted.
-        our_branches = await db.scans.distinct("branch", {"project_id": project_id, **BRANCH_SCAN_FILTER})
-        vcs_set = set(vcs_branches)
-        deleted = sorted(b for b in our_branches if b not in vcs_set)
-
-        update_fields: dict = {
-            "deleted_branches": deleted,
-            "branches_checked_at": datetime.now(timezone.utc),
-        }
-
-        # A default the VCS deleted was renamed or retired, so it cannot be a deliberate choice either.
-        stored_default = project_data.get("default_branch")
-        if not stored_default or stored_default in deleted:
-            vcs_default = await _fetch_vcs_default_branch(project_data, db)
-            if vcs_default and vcs_default != stored_default:
-                update_fields["default_branch"] = vcs_default
-
-        if deleted or "default_branch" in update_fields:
-            update_fields.update(await ScanRepository(db).head_fields({**project_data, **update_fields}))
-
-        await db.projects.update_one({"_id": project_id}, {"$set": update_fields})
-
-        if deleted:
-            logger.info(f"Project {project_name}: {len(deleted)} deleted branch(es) detected")
-
-    except Exception as e:
-        logger.exception("Branch sync failed for project %s: %s", project_name, e)
-
-
 async def sync_branch_status() -> None:
     """Sync branch status for all projects with VCS connections."""
     logger.info("Starting branch status sync...")
@@ -751,7 +637,10 @@ async def sync_branch_status() -> None:
 
         count = 0
         async for project_data in cursor:
-            await sync_project_branches(project_data, db)
+            try:
+                await sync_project_branches(project_data, db)
+            except Exception as e:
+                logger.exception("Branch sync failed for project %s: %s", project_data.get("name"), e)
             count += 1
 
         logger.info(f"Branch status sync completed for {count} project(s)")

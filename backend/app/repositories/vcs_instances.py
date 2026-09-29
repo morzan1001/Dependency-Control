@@ -15,6 +15,11 @@ class VcsInstanceRepository[T: VcsInstanceModel](BaseRepository[T]):
 
     project_link_field: str
 
+    async def get_usable(self, instance_id: str) -> T | None:
+        """The instance only while it can be called: present, active and holding a token."""
+        instance = await self.get_by_id(instance_id)
+        return instance if instance and instance.is_active and instance.access_token else None
+
     async def get_by_url(self, url: str) -> T | None:
         """Matches the issuer claim with any trailing slash stripped."""
         return await self.find_one({"url": url.rstrip("/")})

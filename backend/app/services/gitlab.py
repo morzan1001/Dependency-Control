@@ -374,6 +374,11 @@ class GitLabService:
             return GitLabProjectDetails(**response.json())
         return None
 
+    async def get_default_branch(self, project_id: int) -> str | None:
+        """The project's default branch. Returns None on API failure."""
+        details = await self.get_project_details(project_id)
+        return details.default_branch if details else None
+
     async def get_merge_requests_for_commit(self, project_id: int, commit_sha: str) -> list[GitLabMergeRequest]:
         """Fetches merge requests associated with a specific commit."""
         response = await self._api_get(f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests")

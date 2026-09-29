@@ -79,6 +79,12 @@ _AUTO_TEAM_NAME_PREFIX = "GitHub Team:"
 _org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
 
 
+def split_repo_path(path: str | None) -> tuple[str, str] | None:
+    """``owner/repo`` as its two parts, or None unless both are present."""
+    owner, _, repo = (path or "").partition("/")
+    return (owner, repo) if owner and repo else None
+
+
 def _org_walk_gate() -> asyncio.Semaphore:
     """The walk's concurrency limit, shared by every walk running in this process.
 

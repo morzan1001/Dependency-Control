@@ -42,6 +42,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400_404_409_500,
     RESP_AUTH_404,
     RESP_AUTH_404_500,
+    RESP_502,
 )
 from app.core.constants import (
     MAX_PROJECT_TEAMS,
@@ -99,6 +100,7 @@ from app.schemas.project import (
     ScanWithReleases,
 )
 from app.services.aggregation.components import component_match_expr
+from app.services.branch_sync import sync_project_branches
 from app.services.gitlab import GitLabService
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, ExportedScan, iter_findings_rows
@@ -833,7 +835,7 @@ async def read_project_branches(
 @router.post(
     "/{project_id}/sync-branches",
     summary="Sync branch status from VCS",
-    responses=RESP_AUTH_400_404,
+    responses={**RESP_AUTH_400_404, **RESP_502},
 )
 async def sync_project_branches_endpoint(
     project_id: str,
@@ -841,21 +843,13 @@ async def sync_project_branches_endpoint(
     db: DatabaseDep,
 ) -> list[BranchInfo]:
     """Trigger branch status sync against the VCS provider for a project."""
-    await check_project_access(project_id, current_user, db, required_role="editor")
-
-    project_repo = ProjectRepository(db)
-    project = await project_repo.get_by_id(project_id)
-    if not project:
-        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-
-    if not project.gitlab_instance_id and not project.github_instance_id:
+    project = await check_project_access(project_id, current_user, db, required_role="editor")
+    linked_gitlab = project.gitlab_instance_id and project.gitlab_project_id
+    if not linked_gitlab and not (project.github_instance_id and project.github_repository_path):
         raise HTTPException(status_code=400, detail="Project has no VCS connection configured")
 
-    from app.core.housekeeping import sync_project_branches
-
-    project_data = await project_repo.get_raw_by_id(project_id)
-    if project_data:
-        await sync_project_branches(project_data, db)
+    if not await sync_project_branches(project.model_dump(by_alias=True), db):
+        raise HTTPException(status_code=502, detail="The VCS could not be reached or listed no branches")
 
     return await read_project_branches(project_id, current_user, db)
 
