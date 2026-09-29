@@ -5,11 +5,11 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
 
-from fastapi import Depends, HTTPException, Query
+from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BeforeValidator, ValidationError
 
-from app.api.deps import CurrentUserDep, DatabaseDep, PermissionChecker
+from app.api.deps import AdminUserDep, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import (
@@ -24,7 +24,6 @@ from app.api.v1.helpers.responses import (
 from app.core import ensure_utc
 from app.core.config import settings
 from app.core.constants import MAX_POLICY_AUDIT_PAGE
-from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
@@ -39,7 +38,6 @@ router = CustomAPIRouter(tags=["policy-audit"])
 
 # An unencoded '+HH:MM' offset arrives with its '+' decoded to a space.
 _SPACE_DECODED_OFFSET = re.compile(r"(:\d\d(?:\.\d+)?) (\d\d:?\d\d)$")
-AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]
 PruneCutoff = Annotated[
     datetime,
     BeforeValidator(lambda v: _SPACE_DECODED_OFFSET.sub(r"\1+\2", v) if isinstance(v, str) else v),

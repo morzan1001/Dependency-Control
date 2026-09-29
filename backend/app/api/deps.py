@@ -25,15 +25,15 @@ from app.db.mongodb import get_database
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.repositories.projects import ProjectRepository
-from app.repositories.system_settings import SystemSettingsRepository
-from app.repositories.users import UserRepository
 from app.repositories.api_keys import ApiKeyRepository
 from app.repositories.projects import (
+    ProjectRepository,
     owners_replaced_by,
     ownership_fields,
     replace_team_subset_pipeline,
 )
+from app.repositories.system_settings import SystemSettingsRepository
+from app.repositories.users import UserRepository
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
 
@@ -721,6 +721,7 @@ def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Await
 
 DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
+AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]
 CallgraphWriteDep = Annotated[str, Depends(authorize_callgraph_write)]
 ReleaseWriteDep = Annotated[str, Depends(authorize_release_write)]
 AdhocKeyDep = Annotated[

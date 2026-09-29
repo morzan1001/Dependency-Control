@@ -1,17 +1,15 @@
 """Admin + project-scoped crypto policy endpoints."""
 
-from typing import Annotated, Any
+from typing import Any
 
-from fastapi import Depends, HTTPException, status
+from fastapi import HTTPException, status
 
-from app.api.deps import CurrentUserDep, DatabaseDep, PermissionChecker
+from app.api.deps import AdminUserDep, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_500
 from app.core.constants import SETTINGS_MODE_GLOBAL
-from app.core.permissions import Permissions
 from app.models.crypto_policy import CryptoPolicy
-from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
@@ -21,8 +19,6 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver
 from app.services.crypto_policy.seeder import seed_crypto_policies
 
 router = CustomAPIRouter(tags=["crypto-policies"])
-
-AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]
 
 
 @router.get("/crypto-policies/system", responses=RESP_500)
