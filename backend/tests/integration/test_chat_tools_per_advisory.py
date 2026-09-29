@@ -249,6 +249,17 @@ async def test_a_ghsa_advisory_is_found_whatever_casing_the_question_uses(db, da
     assert details["description"] == "prototype pollution"
 
 
+@pytest.mark.parametrize("stored", ["PYSEC-2021-19", "GO-2022-0969", "RUSTSEC-2021-0001"])
+async def test_an_osv_advisory_is_found_when_asked_in_lower_case(db, database, stored):
+    await _seed_head(db)
+    await db.findings.insert_one(_finding("f-osv", "HIGH", "pkg", [{"id": stored, "severity": "HIGH"}]))
+
+    by_cve = await _call(db, "get_findings_by_cve", cve_id=stored.lower())
+    details = await _call(db, "get_cve_details", cve_id=stored.lower())
+
+    assert (by_cve["total_occurrences"], details["cve_id"]) == (1, stored)
+
+
 async def test_findings_by_cve_name_the_asked_cve_on_each_row(db, database):
     await _seed_head(db)
     await db.findings.insert_one(_log4j())

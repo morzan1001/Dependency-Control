@@ -5,15 +5,10 @@ from typing import Any
 
 
 def advisory_id(raw: Any) -> str | None:
-    """An advisory id as its database spells it: CVE ids upper case, a GHSA id's body lower case."""
-    if not isinstance(raw, str) or not (ident := raw.strip()):
+    """An advisory id as its database spells it: upper case, a GHSA id's body lower case."""
+    if not isinstance(raw, str) or not (ident := raw.strip().upper()):
         return None
-    scheme, _, rest = ident.partition("-")
-    if scheme.upper() == "CVE":
-        return f"CVE-{rest.upper()}"
-    if scheme.upper() == "GHSA":
-        return f"GHSA-{rest.lower()}"
-    return ident
+    return f"GHSA-{ident.removeprefix('GHSA-').lower()}" if ident.startswith("GHSA-") else ident
 
 
 def advisory_ids(entry: Mapping[str, Any]) -> set[str]:
