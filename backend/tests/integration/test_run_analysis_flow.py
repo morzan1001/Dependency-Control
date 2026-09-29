@@ -386,3 +386,58 @@ async def test_a_re_analysis_that_keeps_the_earlier_analysis_heads_the_project_a
     await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER)
 
     assert (await db.projects.find_one({"_id": _PROJECT_ID}))["latest_scan_id"] == scan.id
+
+
+@pytest.fixture
+def handed_over(monkeypatch) -> AsyncMock:
+    run = AsyncMock()
+    monkeypatch.setattr(engine, "run_pending_reachability_for_scan", run, raising=False)
+    return run
+
+
+async def _callgraph_upload(db, scan_id: str) -> None:
+    """What the upload endpoint leaves behind for a scan that is still being analysed."""
+    await db.callgraphs.insert_one({"_id": "cg-1", "project_id": _PROJECT_ID, "scan_id": scan_id, "language": "python"})
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"reachability_pending": True}})
+
+
+@pytest.mark.asyncio
+async def test_a_callgraph_uploaded_during_the_run_is_applied_once_the_scan_is_final(
+    db, notified, handed_over, monkeypatch
+):
+    scan_id = await _seed_scan(db)
+
+    async def _upload_after_the_callgraph_lookup(*_args):
+        await _callgraph_upload(db, scan_id)
+
+    monkeypatch.setattr(engine, "_run_vuln_enrichments", _upload_after_the_callgraph_lookup)
+
+    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+
+    handed_over.assert_awaited_once_with(scan_id, _PROJECT_ID, db)
+
+
+@pytest.mark.asyncio
+async def test_a_pending_marker_without_a_callgraph_is_left_for_the_upload(db, notified, handed_over):
+    scan_id = await _seed_scan(db)
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"reachability_pending": True}})
+
+    assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
+
+    handed_over.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_a_re_analysis_that_keeps_the_earlier_analysis_applies_a_callgraph_uploaded_meanwhile(
+    db, notified, handed_over, monkeypatch
+):
+    ref = _gridfs_outage(monkeypatch)
+    scan = Scan(
+        project_id=_PROJECT_ID, branch="main", sbom_refs=[ref], status="processing", worker_id=_WORKER, completed_at=_T0
+    )
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    await _callgraph_upload(db, scan.id)
+
+    assert await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+
+    handed_over.assert_awaited_once_with(scan.id, _PROJECT_ID, db)

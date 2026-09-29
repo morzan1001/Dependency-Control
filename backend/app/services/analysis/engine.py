@@ -49,7 +49,6 @@ from app.models.project import Scan
 from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.repositories.analysis_results import AnalysisResultRepository
-from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import FindingRepository, finding_identity
@@ -78,7 +77,11 @@ from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.github import is_public_github
-from app.services.reachability_enrichment import enrich_findings_with_reachability
+from app.services.reachability_enrichment import (
+    enrich_findings_with_reachability,
+    fetch_callgraphs,
+    run_pending_reachability_for_scan,
+)
 from app.services.sbom_parser import parse_sbom
 from app.services.update_frequency_rollup import record_scan_update_delta
 
@@ -571,21 +574,13 @@ async def _run_reachability_enrichment(
     vulnerability_findings: list[dict[str, Any]],
     scan_id: str,
     project_id: str,
-    scan_doc: Scan,
     db: Database,
-    callgraph_repo: CallgraphRepository,
     result_repo: AnalysisResultRepository,
     scan_repo: ScanRepository,
     results_summary: list[str],
 ) -> None:
     """Run reachability analysis on vulnerability findings."""
-    callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
-
-    if not callgraphs:
-        pipeline_id = scan_doc.pipeline_id if scan_doc else None
-        if pipeline_id:
-            callgraphs = await callgraph_repo.find_all_minimal_by_pipeline(project_id, pipeline_id)
-
+    callgraphs = await fetch_callgraphs(project_id, scan_id, db)
     if not callgraphs:
         await scan_repo.update_raw(
             scan_id,
@@ -776,10 +771,8 @@ async def _run_vuln_enrichments(
     vulnerability_findings: list[dict[str, Any]],
     scan_id: str,
     project_id: str | None,
-    scan_doc: Any,
     db: Database,
     result_repo: AnalysisResultRepository,
-    callgraph_repo: CallgraphRepository,
     scan_repo: ScanRepository,
     github_token: str | None,
     results_summary: list[str],
@@ -792,9 +785,7 @@ async def _run_vuln_enrichments(
             vulnerability_findings,
             scan_id,
             project_id,
-            scan_doc,
             db,
-            callgraph_repo,
             result_repo,
             scan_repo,
             results_summary,
@@ -846,6 +837,15 @@ async def _sync_project_head(project_id: str, scan_repo: ScanRepository, project
     if project_doc:
         head = await scan_repo.head_fields(project_doc)
         await project_repo.update_raw(project_id, {"$set": {**head, "last_scan_at": datetime.now(timezone.utc)}})
+
+
+async def _apply_handed_over_callgraphs(
+    scan_id: str, project_id: str | None, scan_repo: ScanRepository, db: Database
+) -> None:
+    # A callgraph uploaded during the run only flagged the scan, since the findings it would enrich were being replaced.
+    state = await scan_repo.get_minimal_by_id(scan_id)
+    if project_id and state and state.reachability_pending and await fetch_callgraphs(project_id, scan_id, db):
+        await run_pending_reachability_for_scan(scan_id, project_id, db)
 
 
 async def _write_final_state(
@@ -1118,7 +1118,6 @@ async def run_analysis(
     scan_repo = ScanRepository(db)
     result_repo = AnalysisResultRepository(db)
     finding_repo = FindingRepository(db)
-    callgraph_repo = CallgraphRepository(db)
     project_repo = ProjectRepository(db)
 
     scan_doc = await scan_repo.get_by_id(scan_id)
@@ -1157,6 +1156,7 @@ async def run_analysis(
         )
         if outcome == SCAN_STATUS_COMPLETED_WITH_ERRORS and project_id:
             await _sync_project_head(project_id, scan_repo, project_repo)
+            await _apply_handed_over_callgraphs(scan_id, project_id, scan_repo, db)
         return outcome
 
     await result_repo.delete_many(
@@ -1239,10 +1239,8 @@ async def run_analysis(
         vulnerability_findings,
         scan_id,
         project_id,
-        scan_doc,
         db,
         result_repo,
-        callgraph_repo,
         scan_repo,
         github_token,
         results_summary,
@@ -1316,6 +1314,7 @@ async def run_analysis(
         _release_memory_to_os()
         return outcome
 
+    await _apply_handed_over_callgraphs(scan_id, project_id, scan_repo, db)
     await _announce_outcome(
         final_status, final_error, project_id, scan_id, scan_doc, stats, aggregated_findings, results_summary, db
     )

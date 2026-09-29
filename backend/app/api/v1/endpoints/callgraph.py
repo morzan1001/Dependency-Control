@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -17,9 +18,10 @@ from app.api.v1.helpers.callgraph import (
     parse_madge_format,
 )
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
-from app.core.constants import CALLGRAPH_MAX_ENTRIES
+from app.core.constants import CALLGRAPH_MAX_ENTRIES, SCAN_ACTIVE_STATUSES
 from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
 from app.repositories.callgraphs import CallgraphRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.callgraph import (
     CallgraphResponse,
     CallgraphUploadRequest,
@@ -167,7 +169,13 @@ async def upload_callgraph(
         f"{len(analyzed_modules)} analyzed modules"
     )
 
-    if scan_id:
+    # A queued or running analysis is about to replace the findings, so it applies the callgraph once final.
+    handed_over = scan_id is not None and await ScanRepository(db).update_raw(
+        scan_id,
+        {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
+        guard={"status": {"$in": SCAN_ACTIVE_STATUSES}},
+    )
+    if scan_id and not handed_over:
         try:
             reachability_result = await run_pending_reachability_for_scan(
                 scan_id=scan_id,

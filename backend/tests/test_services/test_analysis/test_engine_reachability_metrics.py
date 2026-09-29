@@ -30,11 +30,11 @@ def _run(monkeypatch, findings):
         AsyncMock(return_value=len(findings)),
     )
 
-    callgraph_repo = SimpleNamespace(
-        find_all_minimal_by_scan=AsyncMock(
+    monkeypatch.setattr(
+        "app.services.analysis.engine.fetch_callgraphs",
+        AsyncMock(
             return_value=[SimpleNamespace(model_dump=lambda by_alias: {"language": "python", "module_usage": {}})]
         ),
-        find_all_minimal_by_pipeline=AsyncMock(return_value=[]),
     )
 
     asyncio.run(
@@ -42,9 +42,7 @@ def _run(monkeypatch, findings):
             vulnerability_findings=findings,
             scan_id="scan-1",
             project_id="proj-1",
-            scan_doc=SimpleNamespace(pipeline_id=None),  # type: ignore[arg-type]
             db=MagicMock(),
-            callgraph_repo=callgraph_repo,  # type: ignore[arg-type]
             result_repo=SimpleNamespace(replace_result=AsyncMock()),  # type: ignore[arg-type]
             scan_repo=SimpleNamespace(update_raw=AsyncMock()),  # type: ignore[arg-type]
             results_summary=[],

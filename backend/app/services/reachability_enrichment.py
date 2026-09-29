@@ -228,7 +228,7 @@ class ReachabilityResult(TypedDict, total=False):
     vulnerable_symbol_count: int
 
 
-async def _fetch_callgraphs(
+async def fetch_callgraphs(
     project_id: str,
     scan_id: str,
     db: AsyncIOMotorDatabase,
@@ -420,7 +420,7 @@ async def enrich_findings_with_reachability(
         logger.warning("No scan_id available for reachability enrichment")
         return 0
 
-    callgraphs = await _fetch_callgraphs(project_id, scan_id, db)
+    callgraphs = await fetch_callgraphs(project_id, scan_id, db)
 
     if not callgraphs:
         logger.debug(f"No callgraph available for scan {scan_id}")

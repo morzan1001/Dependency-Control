@@ -181,8 +181,10 @@ class ScanRepository:
         await self.collection.update_one({"_id": scan_id}, {"$set": update_data})
         return await self.get_by_id(scan_id)
 
-    async def update_raw(self, scan_id: str, update_ops: dict[str, Any]) -> None:
-        await self.collection.update_one({"_id": scan_id}, update_ops)
+    async def update_raw(self, scan_id: str, update_ops: dict[str, Any], guard: dict[str, Any] | None = None) -> bool:
+        """False when ``guard`` no longer held, so nothing was written."""
+        result = await self.collection.update_one({"_id": scan_id, **(guard or {})}, update_ops)
+        return bool(result.matched_count)
 
     async def claim_pending(self, scan_id: str, worker_id: str) -> dict[str, Any] | None:
         """Hand a pending scan to one worker; None when another worker took it first."""
