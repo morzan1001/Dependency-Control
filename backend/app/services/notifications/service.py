@@ -4,6 +4,7 @@ import os
 from typing import Any
 
 from app.core import abatched
+from app.core.constants import NotificationEvent
 from app.models.project import Project
 from app.models.system import SystemSettings
 from app.models.user import User
@@ -31,7 +32,7 @@ class NotificationService:
         self,
         user: User,
         prefs: dict[str, list[str]],
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         system_settings: SystemSettings | None = None,
@@ -89,7 +90,7 @@ class NotificationService:
     async def notify_users(
         self,
         users: list[User],
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         db: Any = None,
@@ -106,7 +107,9 @@ class NotificationService:
 
         tasks = []
         for user in users:
-            prefs = {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
+            prefs: dict[str, list[str]] = (
+                {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
+            )
 
             tasks.append(
                 self._send_based_on_prefs(
@@ -133,7 +136,7 @@ class NotificationService:
         db: Any,
         *,
         permission: str | list[str],
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         forced_channels: list[str] | None = None,
@@ -163,7 +166,7 @@ class NotificationService:
     async def notify_project_members(
         self,
         project: Project,
-        event_type: str,
+        event_type: NotificationEvent,
         subject: str,
         message: str,
         db: Any,
@@ -264,7 +267,7 @@ notification_service = NotificationService()
 async def safe_notify_project_event(
     db: Any,
     project_id: str | None,
-    event_type: str,
+    event_type: NotificationEvent,
     subject: str,
     message: str,
     *,

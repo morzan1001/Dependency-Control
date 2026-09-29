@@ -16,10 +16,11 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import get_user_project_ids
 from app.core.constants import (
-    ScopeName,
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CONCURRENT_COMPLIANCE_REPORTS,
+    NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED,
     WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
+    ScopeName,
 )
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
@@ -325,7 +326,7 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
         await safe_notify_project_event(
             db,
             project_id=report.scope_id,
-            event_type="compliance_report_generated",
+            event_type=NOTIFICATION_EVENT_COMPLIANCE_REPORT_GENERATED,
             subject=f"Compliance report ready ({_status_str(report.framework)})",
             message=f"A new {_status_str(report.framework)} compliance report ({_status_str(report.format)}) is available for this project.",
             context="compliance_reports",

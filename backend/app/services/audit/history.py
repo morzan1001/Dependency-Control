@@ -7,9 +7,12 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import (
+    NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED,
+    NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED,
     POLICY_CHANGE_SUMMARY_MAX_LENGTH,
     WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED,
     WEBHOOK_EVENT_LICENSE_POLICY_CHANGED,
+    NotificationEvent,
 )
 from app.models.crypto_policy import CryptoPolicy
 from app.models.policy_audit_entry import PolicyAuditEntry
@@ -182,7 +185,7 @@ async def _notify_relevant_users(
     entry: PolicyAuditEntry,
     *,
     subject_noun: str = "crypto policy",
-    event_type: str = "crypto_policy_changed",
+    event_type: NotificationEvent = NOTIFICATION_EVENT_CRYPTO_POLICY_CHANGED,
 ) -> None:
     """Notify users affected by a policy change; system-scope hits system:manage/analytics:global holders, project-scope hits members. Skipped for SEED."""
     if entry.action == PolicyAuditAction.SEED:
@@ -311,7 +314,7 @@ async def record_license_policy_change(
             db,
             entry,
             subject_noun="license policy",
-            event_type="license_policy_changed",
+            event_type=NOTIFICATION_EVENT_LICENSE_POLICY_CHANGED,
         )
     except Exception:
         logger.exception("License-policy notification failed (non-blocking)")

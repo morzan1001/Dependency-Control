@@ -13,6 +13,7 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from app.core.config import settings
+from app.core.constants import NOTIFICATION_EVENT_ANALYSIS_COMPLETED, NOTIFICATION_EVENT_VULNERABILITY_FOUND
 from app.core.permissions import Permissions
 from app.models.broadcast import Broadcast
 from app.models.project import Project
@@ -132,7 +133,7 @@ def _queue_announcement(
     background_tasks.add_task(
         notification_service.notify_users,
         users,
-        "analysis_completed",
+        NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
         subject,
         message,
         db=db,
@@ -372,7 +373,7 @@ def _queue_advisory_for_user(
     background_tasks.add_task(
         notification_service.notify_users,
         [data["user"]],
-        "vulnerability_found",
+        NOTIFICATION_EVENT_VULNERABILITY_FOUND,
         advisory_subject,
         context_message,
         db=db,

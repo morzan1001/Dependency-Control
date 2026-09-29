@@ -8,7 +8,12 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
-from app.core.constants import SCAN_STATUS_FAILED, SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING
+from app.core.constants import (
+    NOTIFICATION_EVENT_ANALYSIS_FAILED,
+    SCAN_STATUS_FAILED,
+    SCAN_STATUS_PENDING,
+    SCAN_STATUS_PROCESSING,
+)
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
     worker_active_count,
@@ -209,7 +214,7 @@ class AnalysisWorkerManager:
             await safe_notify_project_event(
                 db,
                 project_id=project_id_str,
-                event_type="analysis_failed",
+                event_type=NOTIFICATION_EVENT_ANALYSIS_FAILED,
                 subject=f"Scan failed: {project_name}",
                 message=f"Scan {scan_id} for project {project_name} failed: {error}",
                 context="worker.analysis_failed",

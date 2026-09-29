@@ -4,7 +4,13 @@ import logging
 from typing import Any
 
 from app.core.config import settings
-from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
+    NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
+    NOTIFICATION_EVENT_VULNERABILITY_FOUND,
+    get_severity_value,
+)
 from app.core.epss import bucket_epss
 from app.models.finding import Finding
 from app.models.project import Project
@@ -176,7 +182,7 @@ async def send_scan_notifications(
         )
         await notification_service.notify_project_members(
             project=project,
-            event_type="analysis_completed",
+            event_type=NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
             subject=f"Analysis Completed: {project.name}",
             message=(f"Scan {scan_id} completed.\nFound {len(aggregated_findings)} issues.\nResults:\n{results_text}"),
             db=db,
@@ -267,7 +273,7 @@ async def send_scan_notifications(
         )
         await notification_service.notify_project_members(
             project=project,
-            event_type="vulnerability_found",
+            event_type=NOTIFICATION_EVENT_VULNERABILITY_FOUND,
             subject=subject,
             message=message,
             db=db,

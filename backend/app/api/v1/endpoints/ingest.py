@@ -17,7 +17,12 @@ from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
-from app.core.constants import SCAN_STATUS_PENDING, SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
+from app.core.constants import (
+    NOTIFICATION_EVENT_SBOM_INGESTED,
+    SCAN_STATUS_PENDING,
+    SCAN_USABLE_STATUSES,
+    WEBHOOK_EVENT_SBOM_INGESTED,
+)
 from app.models.project import Project
 from app.models.release import Release
 from app.repositories.dependencies import DependencyRepository
@@ -387,7 +392,7 @@ async def ingest_sbom(
     await safe_notify_project_event(
         db,
         project_id=str(project.id),
-        event_type="sbom_ingested",
+        event_type=NOTIFICATION_EVENT_SBOM_INGESTED,
         subject=f"SBOM ingested: {project.name}",
         message=f"{sboms_processed} SBOM(s) ingested for project {project.name} ({total_deps_inserted} dependencies).",
         context="sbom_ingest",

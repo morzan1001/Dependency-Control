@@ -13,6 +13,7 @@ from app.api.router import CustomAPIRouter
 from app.core.constants import (
     MAX_CBOM_BODY_BYTES,
     MAX_CRYPTO_ASSETS_PER_SCAN,
+    NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
     SCAN_STATUS_FAILED,
     WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
 )
@@ -205,7 +206,7 @@ async def _persist_crypto_assets(
     await safe_notify_project_event(
         db,
         project_id=project_id,
-        event_type="crypto_asset_ingested",
+        event_type=NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
         subject=f"Crypto assets ingested: {summary['total']} entries",
         message=f"{summary['total']} crypto asset(s) ingested for scan {scan_id}.",
         context="cbom_ingest",

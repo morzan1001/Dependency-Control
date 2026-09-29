@@ -9,7 +9,12 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.api.deps import get_current_active_user, get_database
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_403
-from app.core.constants import MAX_PQC_PLAN_ITEMS, WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED, ScopeName
+from app.core.constants import (
+    MAX_PQC_PLAN_ITEMS,
+    NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED,
+    WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
+    ScopeName,
+)
 from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
 from app.services.analytics.cache import get_analytics_cache
@@ -92,7 +97,7 @@ async def _fire_pqc_webhook(
         await safe_notify_project_event(
             db,
             project_id=resolved.scope_id,
-            event_type="pqc_migration_plan_generated",
+            event_type=NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED,
             subject="PQC migration plan ready",
             message=f"A new post-quantum migration plan with {resp.summary.total_items} item(s) is available for this project.",
             context="pqc_migration",
