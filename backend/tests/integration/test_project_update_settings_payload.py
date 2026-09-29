@@ -67,3 +67,28 @@ async def test_toggling_rescan_off_takes_effect(client, db, owner_auth_headers_p
     stored = await db.projects.find_one({"_id": "p"})
     assert stored["rescan_enabled"] is False
     assert stored["rescan_interval"] == 6
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "field",
+    [
+        "name",
+        "active_analyzers",
+        "retention_days",
+        "retention_action",
+        "gitlab_mr_comments_enabled",
+        "github_pr_comments_enabled",
+        "enforce_notification_settings",
+    ],
+)
+async def test_a_null_the_stored_project_cannot_hold_is_refused_before_the_write(
+    client, db, owner_auth_headers_proj, field
+):
+    """Once stored, such a null fails every read of the project, including the update that could repair it."""
+    before = await db.projects.find_one({"_id": "p"})
+
+    resp = await client.put("/api/v1/projects/p", json={field: None}, headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 422, resp.text
+    assert await db.projects.find_one({"_id": "p"}) == before
