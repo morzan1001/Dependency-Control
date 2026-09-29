@@ -9,6 +9,7 @@ from app.models.finding import Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS
 
 from .constants import (
+    CANONICAL_LICENSE_ID,
     LICENSE_DATABASE,
     LICENSE_INCOMPATIBILITIES,
 )
@@ -62,8 +63,10 @@ def check_pair_conflict(a: dict[str, Any], b: dict[str, Any], seen: set) -> dict
     if pair in seen:
         return None
 
-    explanation = LICENSE_INCOMPATIBILITIES.get((a["license"], b["license"])) or LICENSE_INCOMPATIBILITIES.get(
-        (b["license"], a["license"])
+    explanation = LICENSE_INCOMPATIBILITIES.get(
+        frozenset(
+            {CANONICAL_LICENSE_ID.get(a["license"], a["license"]), CANONICAL_LICENSE_ID.get(b["license"], b["license"])}
+        )
     )
     if not explanation:
         return None

@@ -332,8 +332,8 @@ def create_undeterminable_issue(
     """
     if unrecognized:
         explanation = (
-            f"The SBOM declares {', '.join(unrecognized)} for this component, which is not a "
-            "recognised SPDX identifier, so its obligations cannot be evaluated."
+            f"The SBOM declares {', '.join(unrecognized)} for this component, which is not in the license "
+            "catalogue this analyzer evaluates, so its obligations cannot be evaluated."
         )
     else:
         explanation = (

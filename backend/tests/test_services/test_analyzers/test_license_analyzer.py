@@ -1,5 +1,7 @@
 """Tests for the LicenseAnalyzer - license compliance analysis."""
 
+import asyncio
+from dataclasses import replace
 from typing import Any, ClassVar
 
 import pytest
@@ -173,14 +175,33 @@ class TestLicenseDatabase:
         assert self.db[spdx_id].category == category
 
     @pytest.mark.parametrize(
-        ("spdx_id", "compatible"),
+        ("category", "spdx_ids"),
         [
-            pytest.param("MIT", True, id="mit"),
-            pytest.param("GPL-3.0", False, id="gpl3"),
+            (LicenseCategory.PROPRIETARY, "BUSL-1.1 Elastic-2.0 CC-BY-NC-SA-4.0 CC-BY-NC-ND-4.0 CC-BY-ND-4.0"),
+            (LicenseCategory.NETWORK_COPYLEFT, "AGPL-1.0 AGPL-1.0-only AGPL-1.0-or-later CPAL-1.0 RPL-1.5 OSL-3.0"),
+            (LicenseCategory.STRONG_COPYLEFT, "GPL-1.0 GPL-1.0-only GPL-1.0-or-later EUPL-1.1 EUPL-1.2 Sleepycat"),
+            (LicenseCategory.WEAK_COPYLEFT, "LGPL-2.0-only LGPL-2.0-or-later MPL-1.1 CDDL-1.1 MS-RL"),
+            (
+                LicenseCategory.PERMISSIVE,
+                "PSF-2.0 MIT-0 BlueOak-1.0.0 Unicode-DFS-2016 Unicode-3.0 BSD-4-Clause Apache-1.1 OpenSSL curl X11 "
+                "HPND ICU NCSA UPL-1.0 OFL-1.1 CC-BY-3.0 Python-2.0.1",
+            ),
         ],
     )
-    def test_proprietary_compatibility_is_recorded(self, spdx_id, compatible):
-        assert self.db[spdx_id].compatible_with_proprietary is compatible
+    def test_common_spdx_ids_are_filed_under_their_category(self, category, spdx_ids):
+        filed = {lic: self.db[lic].category if lic in self.db else None for lic in spdx_ids.split()}
+        assert filed == dict.fromkeys(spdx_ids.split(), category)
+
+    @pytest.mark.parametrize(
+        "deprecated", ["GPL-1.0", "GPL-2.0", "GPL-3.0", "LGPL-2.0", "LGPL-2.1", "LGPL-3.0", "AGPL-1.0", "AGPL-3.0"]
+    )
+    def test_a_deprecated_id_carries_the_terms_of_its_only_form(self, deprecated):
+        only = self.db[f"{deprecated}-only"]
+        assert replace(self.db[deprecated], spdx_id=only.spdx_id, name=only.name) == only
+
+    def test_every_licence_name_resolves_to_one_licence(self):
+        names = [info.name.lower() for info in self.db.values()]
+        assert len(set(names)) == len(names)
 
 
 class TestEvaluateLicenseWithContext:
@@ -504,6 +525,40 @@ class TestLicenseCompatibility:
         purl_by_name = {c["name"]: c["purl"] for c in components}
         component_a = issues[0]["component"].split(" + ")[0]
         assert issues[0]["purl"] == purl_by_name[component_a]
+
+
+class TestIncompatibilityTable:
+    @staticmethod
+    def _conflicts(*licences: str) -> list[str]:
+        components = _parsed_cyclonedx(
+            [
+                {"type": "library", "name": f"lib{i}", "version": "1.0", "licenses": [{"expression": licence}]}
+                for i, licence in enumerate(licences)
+            ]
+        )
+        result = asyncio.run(LicenseAnalyzer().analyze({}, parsed_components=components))
+        return [i["license"] for i in result["license_issues"] if i["category"] == "license_incompatibility"]
+
+    @pytest.mark.parametrize(
+        ("first", "second"),
+        [
+            ("EPL-1.0", "GPL-3.0-only"),
+            ("GPL-3.0-only", "SSPL-1.0"),
+            ("GPL-2.0-or-later", "SSPL-1.0"),
+            ("CDDL-1.0", "GPL-2.0-or-later"),
+            ("CDDL-1.1", "GPL-3.0-or-later"),
+            ("GPL-2.0-only", "GPL-3.0-or-later"),
+            ("AGPL-3.0-or-later", "GPL-2.0-only"),
+            ("GPL-2.0", "GPL-3.0-only"),
+            ("GPL-2.0", "GPL-3.0"),
+            ("AGPL-3.0", "GPL-2.0"),
+        ],
+    )
+    def test_every_spelling_of_an_incompatible_pair_conflicts(self, first, second):
+        assert self._conflicts(first, second) == [f"{first} / {second}"]
+
+    def test_gpl_2_or_later_combines_with_gpl_3(self):
+        assert self._conflicts("GPL-2.0-or-later", "GPL-3.0-only") == []
 
 
 class TestTransitiveDirectness:

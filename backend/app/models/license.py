@@ -64,8 +64,3 @@ class LicenseInfo:
     description: str
     obligations: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
-    compatible_with_proprietary: bool = False
-    requires_attribution: bool = True
-    requires_source_disclosure: bool = False
-    viral: bool = False
-    network_clause: bool = False
