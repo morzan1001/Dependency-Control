@@ -51,7 +51,8 @@ class TestHandleFailedAnalysis:
         assert mgr.queue.qsize() == 0
         update_one.assert_awaited_once()
         args, _ = update_one.await_args
-        assert args[0] == {"_id": "scan-1"}
+        # The engine's requeue left it pending; a scan claimed since is no longer this run's to fail.
+        assert args[0] == {"_id": "scan-1", "status": "pending"}
         assert args[1]["$set"]["status"] == "failed"
 
     def test_at_limit_emits_analysis_failed_webhook_and_notification(self):

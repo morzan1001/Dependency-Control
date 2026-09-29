@@ -194,19 +194,14 @@ class ScanManager:
             logger.warning(f"Scan {scan_id} not found during register_result")
             return
 
-        current_status = scan.get("status", SCAN_STATUS_PENDING)
         should_reaggregate = False
-
-        if current_status in SCAN_USABLE_STATUSES:
+        if scan.get("status") in SCAN_USABLE_STATUSES:
             logger.info(
                 f"Late result from {analyzer_name} for completed scan {scan_id}. "
                 f"Resetting to pending for re-aggregation."
             )
-            await scan_repo.update_raw(
-                scan_id,
-                {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0}},
-            )
-            should_reaggregate = True
+            # Acting on the write rather than on the status read above, so two late results queue one run.
+            should_reaggregate = await scan_repo.reopen_finished(scan_id)
 
         if trigger_analysis or should_reaggregate:
             await self.trigger_aggregation(scan_id)

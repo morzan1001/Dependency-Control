@@ -10,7 +10,8 @@ from app.services.analysis.engine import run_analysis
 class TestRunAnalysisScanNotFound:
     """A missing scan must terminate cleanly so the worker's retry path stops re-queueing it."""
 
-    def test_marks_scan_failed_and_returns_false(self, monkeypatch):
+    def test_returns_false_and_writes_nothing(self, monkeypatch):
+        """There is no document to write to, and an upsert-free write onto a missing id matches nothing."""
         update_raw = AsyncMock()
 
         def _scan_repo(_db):
@@ -28,7 +29,4 @@ class TestRunAnalysisScanNotFound:
         result = asyncio.run(run_analysis("missing-scan", [], [], MagicMock()))
 
         assert result is False
-        update_raw.assert_awaited_once()
-        scan_id_arg, update_doc = update_raw.await_args.args
-        assert scan_id_arg == "missing-scan"
-        assert update_doc["$set"]["status"] == "failed"
+        update_raw.assert_not_awaited()

@@ -2,7 +2,6 @@ import asyncio
 import logging
 import os
 import time
-from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -10,9 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.config import settings
 from app.core.constants import (
     NOTIFICATION_EVENT_ANALYSIS_FAILED,
-    SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
-    SCAN_STATUS_PROCESSING,
 )
 from app.core.housekeeping import housekeeping_loop, stale_scan_loop
 from app.core.metrics import (
@@ -22,6 +19,7 @@ from app.core.metrics import (
     worker_queue_size,
 )
 from app.db.mongodb import get_database
+from app.repositories.scans import ScanRepository
 from app.services.analysis import run_analysis
 from app.services.notifications.service import safe_notify_project_event
 from app.services.webhooks import webhook_service
@@ -233,16 +231,9 @@ class AnalysisWorkerManager:
                 f"Scan {scan_id} failed after {retry_count} retries due to persistent race conditions. Marking as failed."
             )
             error_message = f"Analysis failed after {retry_count} retry attempts due to race conditions."
-            await db.scans.update_one(
-                {"_id": scan_id},
-                {
-                    "$set": {
-                        "status": SCAN_STATUS_FAILED,
-                        "error": error_message,
-                    }
-                },
-            )
-            await self._notify_analysis_failed(db, scan, error_message)
+            # The engine sent it back to pending, so a scan another worker has claimed since is left alone.
+            if await ScanRepository(db).mark_failed(scan_id, error_message, status=SCAN_STATUS_PENDING):
+                await self._notify_analysis_failed(db, scan, error_message)
             return True
 
         logger.info(
@@ -287,19 +278,8 @@ class AnalysisWorkerManager:
 
                 db = await get_database()
 
-                # Atomic claim — flip 'pending' → 'processing' only if still pending.
-                # Prevents multiple workers across pods from processing the same scan.
-                scan = await db.scans.find_one_and_update(
-                    {"_id": scan_id, "status": SCAN_STATUS_PENDING},
-                    {
-                        "$set": {
-                            "status": SCAN_STATUS_PROCESSING,
-                            "worker_id": worker_id,
-                            "analysis_started_at": datetime.now(timezone.utc),
-                        }
-                    },
-                    return_document=True,
-                )
+                scan_repo = ScanRepository(db)
+                scan = await scan_repo.claim_pending(scan_id, worker_id)
 
                 if not scan:
                     logger.info(f"Scan {scan_id} already claimed or not found. Skipping.")
@@ -312,10 +292,7 @@ class AnalysisWorkerManager:
                 project = await db.projects.find_one({"_id": scan["project_id"]})
                 if not project:
                     logger.error(f"Project for scan {scan_id} not found, skipping.")
-                    await db.scans.update_one(
-                        {"_id": scan_id},
-                        {"$set": {"status": SCAN_STATUS_FAILED, "error": "Project not found"}},
-                    )
+                    await scan_repo.mark_failed(scan_id, "Project not found", worker_id=worker_id)
                     self._untrack_scan(scan_id)
                     self.queue.task_done()
                     continue
@@ -344,14 +321,12 @@ class AnalysisWorkerManager:
 
                 except Exception as e:
                     logger.exception("Error processing scan %s: %s", scan_id, e)
-                    await db.scans.update_one(
-                        {"_id": scan_id},
-                        {"$set": {"status": SCAN_STATUS_FAILED, "error": str(e)}},
-                    )
+                    failed = await scan_repo.mark_failed(scan_id, str(e), worker_id=worker_id)
                     if worker_jobs_processed_total:
                         worker_jobs_processed_total.labels(status="failed").inc()
 
-                    await self._notify_analysis_failed(db, scan, str(e))
+                    if failed:
+                        await self._notify_analysis_failed(db, scan, str(e))
 
                 self._untrack_scan(scan_id)
                 self.queue.task_done()

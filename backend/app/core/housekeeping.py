@@ -24,7 +24,6 @@ from app.core.constants import (
     RETENTION_ACTION_NONE,
     RETENTION_PROTECTED_FLAG_VALUES,
     SCAN_ACTIVE_STATUSES,
-    SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
     SCAN_USABLE_STATUSES,
@@ -566,6 +565,7 @@ async def recover_stuck_scans(
             seconds=settings.HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS
         )
         max_retries = HOUSEKEEPING_MAX_SCAN_RETRIES
+        scan_repo = ScanRepository(db)
 
         cursor = db.scans.find(
             {
@@ -586,32 +586,12 @@ async def recover_stuck_scans(
                 logger.warning(
                     f"Scan {scan_id} stuck in processing. Resetting to pending (Retry {retry_count + 1}/{max_retries})."
                 )
-                result = await db.scans.update_one(
-                    {"_id": scan_id, "status": SCAN_STATUS_PROCESSING},
-                    {
-                        "$set": {
-                            "status": SCAN_STATUS_PENDING,
-                            "worker_id": None,
-                            "analysis_started_at": None,
-                        },
-                        "$inc": {"retry_count": 1},
-                    },
-                )
-
-                if worker_manager and result.modified_count > 0:
+                if await scan_repo.requeue(scan_id) and worker_manager:
                     await worker_manager.add_job(str(scan_id))
 
             else:
                 logger.error(f"Scan {scan_id} failed after {max_retries} retries.")
-                await db.scans.update_one(
-                    {"_id": scan_id, "status": SCAN_STATUS_PROCESSING},
-                    {
-                        "$set": {
-                            "status": SCAN_STATUS_FAILED,
-                            "error": "Analysis timed out or worker crashed multiple times.",
-                        }
-                    },
-                )
+                await scan_repo.mark_failed(scan_id, "Analysis timed out or worker crashed multiple times.")
 
     except Exception as e:
         logger.exception("Stuck scan recovery failed: %s", e)

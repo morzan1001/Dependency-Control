@@ -17,13 +17,22 @@ import asyncio
 import logging
 from collections.abc import AsyncGenerator, Awaitable, Iterable, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReturnDocument
 
 from app.core import UNDATED
-from app.core.constants import MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES, SCANS_TIP_SORT
+from app.core.constants import (
+    MAX_RESCAN_HOPS,
+    SCAN_STATUS_FAILED,
+    SCAN_STATUS_PENDING,
+    SCAN_STATUS_PROCESSING,
+    SCAN_USABLE_STATUSES,
+    SCANS_TIP_SORT,
+    ScanStatus,
+)
 from app.models.project import Scan
 from app.schemas.projections import ScanMinimal, ScanWithStats
 
@@ -167,6 +176,51 @@ class ScanRepository:
 
     async def update_raw(self, scan_id: str, update_ops: dict[str, Any]) -> None:
         await self.collection.update_one({"_id": scan_id}, update_ops)
+
+    async def claim_pending(self, scan_id: str, worker_id: str) -> dict[str, Any] | None:
+        """Hand a pending scan to one worker; None when another worker took it first."""
+        claimed: dict[str, Any] | None = await self.collection.find_one_and_update(
+            {"_id": scan_id, "status": SCAN_STATUS_PENDING},
+            {
+                "$set": {
+                    "status": SCAN_STATUS_PROCESSING,
+                    "worker_id": worker_id,
+                    "analysis_started_at": datetime.now(timezone.utc),
+                }
+            },
+            return_document=ReturnDocument.AFTER,
+        )
+        return claimed
+
+    async def mark_failed(
+        self, scan_id: str, error: str, *, status: ScanStatus = SCAN_STATUS_PROCESSING, worker_id: str | None = None
+    ) -> bool:
+        """Fail a scan only while it is still in ``status`` and, given one, still held by ``worker_id``,
+        so a stale writer cannot fail a run housekeeping reset and another worker claimed."""
+        query: dict[str, Any] = {"_id": scan_id, "status": status}
+        if worker_id:
+            query["worker_id"] = worker_id
+        result = await self.collection.update_one(query, {"$set": {"status": SCAN_STATUS_FAILED, "error": error}})
+        return bool(result.modified_count)
+
+    async def requeue(self, scan_id: str) -> bool:
+        """Send a processing scan back to pending for another attempt, releasing its worker."""
+        result = await self.collection.update_one(
+            {"_id": scan_id, "status": SCAN_STATUS_PROCESSING},
+            {
+                "$set": {"status": SCAN_STATUS_PENDING, "worker_id": None, "analysis_started_at": None},
+                "$inc": {"retry_count": 1},
+            },
+        )
+        return bool(result.modified_count)
+
+    async def reopen_finished(self, scan_id: str) -> bool:
+        """Send a finished scan back to pending because new input arrived for it."""
+        result = await self.collection.update_one(
+            {"_id": scan_id, "status": {"$in": SCAN_USABLE_STATUSES}},
+            {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0}},
+        )
+        return bool(result.modified_count)
 
     async def delete(self, scan_id: str) -> bool:
         result = await self.collection.delete_one({"_id": scan_id})

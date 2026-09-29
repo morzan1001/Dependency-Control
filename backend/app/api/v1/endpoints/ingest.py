@@ -20,7 +20,6 @@ from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import (
     NOTIFICATION_EVENT_SBOM_INGESTED,
     SCAN_STATUS_PENDING,
-    SCAN_USABLE_STATUSES,
     WEBHOOK_EVENT_SBOM_INGESTED,
 )
 from app.models.project import Project
@@ -28,6 +27,7 @@ from app.models.release import Release
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.repositories.releases import ReleaseRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,
@@ -360,11 +360,7 @@ async def ingest_sbom(
             if superseded:
                 await cleanup_gridfs_files(db, superseded)
 
-        # Reset a finished scan to pending so re-ingest re-analyses it.
-        await db.scans.update_one(
-            {"_id": scan_id, "status": {"$in": SCAN_USABLE_STATUSES}},
-            {"$set": {"status": SCAN_STATUS_PENDING, "retry_count": 0}},
-        )
+        await ScanRepository(db).reopen_finished(scan_id)
 
         await manager.register_result(scan_id, "sbom", trigger_analysis=True)
     finally:

@@ -14,7 +14,6 @@ from app.core.constants import (
     MAX_CBOM_BODY_BYTES,
     MAX_CRYPTO_ASSETS_PER_SCAN,
     NOTIFICATION_EVENT_CRYPTO_ASSET_INGESTED,
-    SCAN_STATUS_FAILED,
     WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
 )
 from app.core.metrics import cbom_ingests_total
@@ -147,7 +146,6 @@ async def ingest_cbom(
     except Exception as exc:
         logger.exception("cbom_ingest failed for scan %s: %s", scan_id, exc)
         cbom_ingests_total.labels(status="error").inc()
-        await ScanRepository(db).update_raw(scan_id, {"$set": {"status": SCAN_STATUS_FAILED}})
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to persist crypto assets. Please retry the upload.",

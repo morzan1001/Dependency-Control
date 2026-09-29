@@ -136,8 +136,8 @@ class TestFinalizeTOCTOU:
     def test_late_result_reschedules_instead_of_completing(self):
         # find_one_and_update None -> last_result_at guard failed (result arrived after external load began)
         collection = SimpleNamespace(find_one_and_update=AsyncMock(return_value=None))
-        update_raw = AsyncMock()
-        scan_repo = SimpleNamespace(collection=collection, update_raw=update_raw)
+        requeue = AsyncMock(return_value=True)
+        scan_repo = SimpleNamespace(collection=collection, requeue=requeue)
         project_update = AsyncMock()
         project_repo = SimpleNamespace(update_raw=project_update, get_by_id=AsyncMock())
         scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None, created_at=None)
@@ -158,9 +158,7 @@ class TestFinalizeTOCTOU:
         )
 
         assert finalized is False
-        reschedule = update_raw.await_args.args[1]
-        assert reschedule["$set"]["status"] == "pending"
-        assert reschedule["$inc"]["retry_count"] == 1
+        requeue.assert_awaited_once_with("scan-1")
         # untouched project would otherwise publish stale/incomplete stats
         project_update.assert_not_awaited()
 

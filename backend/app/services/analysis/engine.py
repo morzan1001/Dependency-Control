@@ -19,7 +19,6 @@ from app.core.constants import (
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
-    SCAN_STATUS_PENDING,
     ScanStatus,
     SCAN_USABLE_STATUSES,
 )
@@ -650,10 +649,7 @@ async def _check_race_condition(scan_id: str, external_load_start: datetime, sca
         if analysis_race_conditions_total:
             analysis_race_conditions_total.inc()
 
-        await scan_repo.update_raw(
-            scan_id,
-            {"$set": {"status": SCAN_STATUS_PENDING}, "$inc": {"retry_count": 1}},
-        )
+        await scan_repo.requeue(scan_id)
         return True
 
     return False
@@ -925,10 +921,7 @@ async def _finalize_scan_and_project(
             )
             if analysis_race_conditions_total:
                 analysis_race_conditions_total.inc()
-            await scan_repo.update_raw(
-                scan_id,
-                {"$set": {"status": SCAN_STATUS_PENDING}, "$inc": {"retry_count": 1}},
-            )
+            await scan_repo.requeue(scan_id)
             return False
     else:
         await scan_repo.update_raw(scan_id, {"$set": set_fields, "$unset": unset_fields})
@@ -1074,12 +1067,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
 
     scan_doc = await scan_repo.get_by_id(scan_id)
     if not scan_doc:
-        # Mark terminal — worker re-claim only matches scans still in "pending".
-        logger.error(f"Scan {scan_id} not found, marking as failed")
-        await scan_repo.update_raw(
-            scan_id,
-            {"$set": {"status": SCAN_STATUS_FAILED, "error": "scan not found"}},
-        )
+        logger.error(f"Scan {scan_id} not found")
         return False
 
     project_id: str | None = scan_doc.project_id
