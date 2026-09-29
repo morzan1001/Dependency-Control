@@ -82,12 +82,11 @@ async def _resolve_scan_id(
     derived = deterministic_scan_id(project_id, pipeline_id, commit_hash)
     if derived is None:
         return None, False
-    scans = ScanRepository(db).collection
-    if await scans.find_one({"_id": derived, "project_id": project_id}, {"_id": 1}):
+    scan_repo = ScanRepository(db)
+    scan = await scan_repo.get_minimal_by_id(derived)
+    if scan and scan.project_id == project_id:
         return derived, True
-    newest = await scans.find_one(
-        {"project_id": project_id, "pipeline_id": pipeline_id}, {"_id": 1}, sort=SCANS_TIP_SORT
-    )
+    newest = await scan_repo.find_one({"project_id": project_id, "pipeline_id": pipeline_id}, sort=SCANS_TIP_SORT)
     return (newest["_id"], True) if newest else (derived, False)
 
 
@@ -189,7 +188,7 @@ async def upload_callgraph(
 
     if scan_exists:
         scan_repo = ScanRepository(db)
-        # Rescans created before this upload read the callgraph through their lineage root.
+        # Rescans created before this upload read the callgraph through the build they re-analyse.
         pending_rescans = await scan_repo.distinct(
             "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
         )
