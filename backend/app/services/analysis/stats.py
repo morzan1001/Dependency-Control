@@ -27,6 +27,7 @@ from app.core.risk_scoring import (
     saturating_risk_score,
     severity_exposure,
 )
+from app.models.finding import FindingType
 from app.models.stats import (
     PrioritizedCounts,
     ReachabilityStats,
@@ -370,7 +371,8 @@ class StatsAccumulator:
         self._coverable = 0
 
     def add(self, finding: Mapping[str, Any]) -> None:
-        if finding.get("waived") is True:
+        # A scanner error is missing coverage, recorded in failed_analyzers, not a security finding.
+        if finding.get("waived") is True or finding.get("type") == FindingType.SYSTEM_WARNING:
             return
         self._counted += 1
 

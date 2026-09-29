@@ -92,6 +92,18 @@ class TestVulnerabilityGate:
         assert stats.prioritized.total == 1
 
 
+class TestScannerErrors:
+    def test_a_lone_scanner_error_reads_as_no_data(self):
+        """A failed analyzer is missing coverage, not a HIGH defect in the project."""
+        stats = compute_stats([_finding(ftype="system_warning", severity="HIGH")], {})
+        assert (stats.high, stats.risk_score, stats.adjusted_risk_score) == (0, 0.0, 0.0)
+        assert stats.threat_intel is None
+
+    def test_a_scanner_error_leaves_the_real_findings_counts_alone(self):
+        findings = [_finding(ftype="system_warning", severity="HIGH"), _finding(severity="HIGH")]
+        assert compute_stats(findings, {}).model_dump() == compute_stats([_finding(severity="HIGH")], {}).model_dump()
+
+
 class TestSecretGate:
     def test_tree_state_buckets_are_mutually_exclusive(self):
         findings = [

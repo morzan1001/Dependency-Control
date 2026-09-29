@@ -161,6 +161,31 @@ class TestVulnerabilityWebhookCounters:
         assert captured["webhook"]["high_count"] == 1
 
 
+class TestAnalysisCompletedSeverityCounts:
+    @pytest.mark.asyncio
+    async def test_a_scanner_error_is_not_counted_as_a_high_finding(self):
+        findings = [
+            SimpleNamespace(type="system_warning", severity="HIGH"),
+            SimpleNamespace(type="vulnerability", severity="CRITICAL"),
+        ]
+        blocks = patch.object(notifications, "build_analysis_completed_blocks", return_value=[])
+        fake_notify = SimpleNamespace(notify_project_members=AsyncMock())
+        fake_webhook = SimpleNamespace(trigger_scan_completed=AsyncMock())
+        with (
+            blocks as build_blocks,
+            patch.object(notifications, "notification_service", fake_notify),
+            patch.object(notifications, "webhook_service", fake_webhook),
+        ):
+            await send_scan_notifications(
+                scan_id="scan-abc-123",
+                project=SimpleNamespace(id="proj-1", name="MyProject"),
+                aggregated_findings=findings,
+                results_summary=["osv: Partial"],
+                db=_FakeDB(),
+            )
+        assert build_blocks.call_args.kwargs["severity_counts"] == {"CRITICAL": 1, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+
+
 class TestAnalysisCompletedReachesSubscribers:
     @pytest.mark.asyncio
     async def test_a_member_subscribed_to_analysis_completed_is_emailed(self):

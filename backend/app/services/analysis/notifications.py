@@ -5,7 +5,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
-from app.models.finding import Finding
+from app.models.finding import Finding, FindingType
 from app.models.project import Project
 from app.schemas.notification import AlertVulnerability
 from app.services.analysis.types import Database
@@ -138,9 +138,8 @@ async def send_scan_notifications(
     try:
         severity_counts: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
         for f in aggregated_findings:
-            sev = f.severity if hasattr(f, "severity") else "UNKNOWN"
-            if sev in severity_counts:
-                severity_counts[sev] += 1
+            if f.type != FindingType.SYSTEM_WARNING and f.severity in severity_counts:
+                severity_counts[f.severity] += 1
 
         scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
         html_content = get_analysis_completed_template(
