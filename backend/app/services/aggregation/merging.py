@@ -106,20 +106,18 @@ def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry
         tv["description"] = theirs
 
 
-def _lowest_fix_per_line(value: Any) -> dict[VersionKey, tuple[VersionKey, str]]:
-    lowest: dict[VersionKey, tuple[VersionKey, str]] = {}
-    for version in {v.strip() for v in str(value or "").split(",")} - {""}:
-        key = parse_version_key(version)
-        lowest[key[:2]] = min(lowest.get(key[:2], (key, version)), (key, version))
-    return lowest
+def _fix_candidates(value: Any) -> set[tuple[VersionKey, str]]:
+    return {(parse_version_key(v), v) for v in {v.strip() for v in str(value or "").split(",")} - {""}}
 
 
 def _merged_fixed_version(a: Any, b: Any) -> str | None:
-    """Per release line, the higher of both scanners' lowest fixes: the lower claim may still be vulnerable."""
-    merged = _lowest_fix_per_line(a)
-    for line, claim in _lowest_fix_per_line(b).items():
-        merged[line] = max(merged.get(line, claim), claim)
-    return ", ".join(version for _, version in sorted(merged.values())) or None
+    """Both scanners' fixes, less those below the higher of their lowest fixes per release line (still vulnerable)."""
+    sides = _fix_candidates(a), _fix_candidates(b)
+    floor: dict[VersionKey, VersionKey] = {}
+    for side in sides:
+        for line, lowest in {key[:2]: key for key, _ in sorted(side, reverse=True)}.items():
+            floor[line] = max(floor.get(line, lowest), lowest)
+    return ", ".join(v for key, v in sorted(sides[0] | sides[1]) if key >= floor[key[:2]]) or None
 
 
 def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:

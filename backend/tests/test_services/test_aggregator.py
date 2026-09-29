@@ -301,6 +301,9 @@ class TestMergeVulnerabilityIntoList:
             pytest.param("1.2.5, 2.0.1", "1.2.6", "1.2.6, 2.0.1", id="distinct-lines-are-kept"),
             pytest.param("2.21.4, 2.18.8", "2.21.4, 2.2.0", "2.2.0, 2.18.8, 2.21.4", id="deduplicated-and-ordered"),
             pytest.param(None, "1.2.3", "1.2.3", id="added-when-target-has-none"),
+            pytest.param("4.17.21, 4.17.12", "4.17.21, 4.17.12", "4.17.12, 4.17.21", id="identical-lists-are-kept"),
+            pytest.param("4.17.12", "4.17.21, 4.17.12", "4.17.12, 4.17.21", id="agreeing-lowest-keeps-both"),
+            pytest.param("1.2.5", "1.2.3.4, 1.2.5", "1.2.5", id="below-the-higher-lowest-is-dropped"),
         ],
     )
     def test_fixed_versions_of_both_entries_are_merged(self, target_fixed, entry_fixed, expected):
@@ -498,6 +501,26 @@ class TestAddVulnerabilityFinding:
         [only] = single.get_findings()
         [merged] = double.get_findings()
         assert only.details["fixed_version"] == merged.details["fixed_version"] == "4.17.12"
+
+    @pytest.mark.parametrize(
+        ("component", "installed", "fixes", "expected"),
+        [
+            pytest.param("lodash", "4.17.15", "4.17.21, 4.17.12", "4.17.21", id="backport-below-installed"),
+            pytest.param("foo", "1.2.4", "1.2.3.4, 1.2.5", "1.2.5", id="four-part-backport-below-installed"),
+        ],
+    )
+    def test_reporting_a_cve_twice_keeps_the_upgrade_above_the_installed_version(
+        self, component, installed, fixes, expected
+    ):
+        single = ResultAggregator()
+        single.add_finding(self._make_vuln("CVE-1", component, installed, fixed_version=fixes), source="a.json")
+        double = ResultAggregator()
+        for sbom in ("a.json", "b.json"):
+            double.add_finding(self._make_vuln("CVE-1", component, installed, fixed_version=fixes), source=sbom)
+
+        [only] = single.get_findings()
+        [merged] = double.get_findings()
+        assert only.details["fixed_version"] == merged.details["fixed_version"] == expected
 
     def test_a_cve_without_a_fix_leaves_the_component_without_one(self):
         self.agg.add_finding(self._make_vuln("CVE-A", "libssl3", "3.0.9-1", severity="CRITICAL"))
