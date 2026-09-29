@@ -1,3 +1,5 @@
+import pytest
+
 from app.models.finding import Finding
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
@@ -171,3 +173,55 @@ class TestIngestHonoursScopeAndRule:
             )
             is False
         )
+
+
+def _manager_with(waivers):
+    manager = ScanManager(db=None, project=None)
+    manager._waivers = waivers
+    return manager
+
+
+class TestApplyWaivers:
+    @pytest.mark.asyncio
+    async def test_each_finding_is_waived_by_the_waivers_that_match_it(self):
+        signed = _waiver("fpA")
+        by_id = _legacy_waiver(finding_id="LIC-MIT", package_name="lib")
+        by_type = _legacy_waiver(finding_type="secret")
+        noise = [
+            Waiver(reason="r", created_by="u", vulnerability_id="CVE-1", package_name="lib"),
+            _legacy_waiver(),
+            _waiver("fpZ"),
+            _legacy_waiver(finding_id="LIC-GPL", package_name="lib"),
+        ]
+        findings = [
+            _finding("fpA"),
+            _finding("fpB"),
+            _legacy_finding("LIC-MIT", "license", "lib"),
+            _legacy_finding("LIC-MIT", "license", "other"),
+            _ingested("SECRET-1-ab", "secret", "a.env", {"detector": "1"}),
+        ]
+
+        kept, waived = await _manager_with([*noise, signed, by_id, by_type]).apply_waivers(findings)
+
+        assert waived == 3
+        assert kept == [findings[1], findings[3]]
+
+    @pytest.mark.asyncio
+    async def test_a_finding_is_checked_only_against_the_waivers_that_can_match_it(self, monkeypatch):
+        checked: list[Waiver] = []
+        original = ScanManager._finding_matches_waiver
+
+        def counting(self, finding, waiver):
+            checked.append(waiver)
+            return original(self, finding, waiver)
+
+        monkeypatch.setattr(ScanManager, "_finding_matches_waiver", counting)
+        waivers = [
+            *(_waiver(f"fp{n}") for n in range(50)),
+            *(_legacy_waiver(finding_id=f"OPENGREP-r-b.py-{n}") for n in range(50)),
+            *(Waiver(reason="r", created_by="u", vulnerability_id=f"CVE-{n}") for n in range(50)),
+        ]
+
+        await _manager_with(waivers).apply_waivers([_finding("fp7")])
+
+        assert checked == [waivers[7]]

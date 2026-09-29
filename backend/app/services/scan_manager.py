@@ -2,6 +2,7 @@
 
 import logging
 import uuid
+from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any
 
@@ -179,13 +180,28 @@ class ScanManager:
 
     async def apply_waivers(self, findings: list[Finding]) -> tuple[list[Finding], int]:
         """Apply waivers to findings, returning (non_waived_findings, waived_count)."""
-        waivers = await self._get_waivers()
+        # Keyed by what a matching finding must equal, so each finding meets only the waivers that can match it.
+        by_anchor: dict[tuple[str, str | None], list[Waiver]] = defaultdict(list)
+        by_finding_id: dict[str, list[Waiver]] = defaultdict(list)
+        unkeyed: list[Waiver] = []
+        for waiver in await self._get_waivers():
+            route = route_waiver(waiver)
+            if route == "signature" and waiver.match is not None and waiver.match.is_strong:
+                by_anchor[(waiver.match.file_key, waiver.match.anchor)].append(waiver)
+            elif route == "query" and (criteria := waiver_criteria(waiver)):
+                if "finding_id" in criteria:
+                    by_finding_id[criteria["finding_id"]].append(waiver)
+                else:
+                    unkeyed.append(waiver)
 
         final_findings = []
         waived_count = 0
 
         for finding in findings:
-            is_waived = any(self._finding_matches_waiver(finding, waiver) for waiver in waivers)
+            candidates = [*by_finding_id.get(finding.id, ()), *unkeyed]
+            if finding.match is not None:
+                candidates += by_anchor.get((finding.match.file_key, finding.match.anchor), ())
+            is_waived = any(self._finding_matches_waiver(finding, waiver) for waiver in candidates)
 
             if is_waived:
                 waived_count += 1
