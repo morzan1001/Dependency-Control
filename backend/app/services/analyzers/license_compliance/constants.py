@@ -7,6 +7,7 @@ from dataclasses import replace
 from app.core.constants import (
     SEVERITY_ORDER,
     SPDX_AGPL_3_0,
+    SPDX_APACHE_2_0,
     SPDX_GPL_2_0,
     SPDX_GPL_2_0_OR_LATER,
     SPDX_GPL_3_0,
@@ -32,6 +33,8 @@ CANNOT_USE_IN_COMMERCIAL_PRODUCTS = "Cannot use in commercial products"
 # Stands in for the licence of a component the SBOM does not let us determine.
 UNDETERMINED_LICENSE_ID = "UNKNOWN"
 UNDETERMINED_LICENSE_MESSAGE = "License could not be determined from the SBOM"
+
+LICENSE_INCOMPATIBILITY_CATEGORY = "license_incompatibility"
 
 SPDX_GPL_2_0_ONLY = "GPL-2.0-only"
 SPDX_GPL_3_0_ONLY = "GPL-3.0-only"
@@ -60,6 +63,10 @@ LICENSE_INCOMPATIBILITIES: dict[frozenset[str], str] = {
         frozenset({SPDX_SSPL_1_0, gpl}): f"{SPDX_SSPL_1_0} is not compatible with any GPL version."
         for gpl in _GPL_FAMILY
     },
+    frozenset({SPDX_APACHE_2_0, SPDX_GPL_2_0_ONLY}): (
+        f"The patent-termination and indemnity terms of {SPDX_APACHE_2_0} are further restrictions that "
+        f"{SPDX_GPL_2_0_ONLY} forbids; {SPDX_GPL_2_0_OR_LATER} code stays compatible through GPLv3."
+    ),
 }
 
 # Every policy escape in evaluate_license lands below HIGH, so HIGH is the first rank policy did not soften.

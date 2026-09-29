@@ -10,7 +10,8 @@ from app.models.finding import Severity
 from app.models.license import LicenseCategory
 from app.services.aggregation.aggregator import ResultAggregator
 from app.services.analyzers.license_compliance import LicenseAnalyzer, normalizer
-from app.services.analyzers.license_compliance.compatibility import check_license_compatibility, partition_or_groups
+from app.services.analyzers.license_compliance.compatibility import partition_or_groups
+from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITY_CATEGORY
 from app.services.inventory.licenses import license_ids
 from app.services.sbom_parser import parse_sbom
 
@@ -321,8 +322,9 @@ class TestCycloneDX:
 
     def test_the_mandatory_gpl_term_still_reaches_the_conflict_check(self):
         gpl2 = {**self.deps["mixed-lib"], "name": "gpl2-lib", "license": "GPL-2.0-only AND (MIT OR Apache-2.0)"}
-        issues = check_license_compatibility([gpl2, self.deps["mixed-lib"]], ignore_dev=True)
-        assert [issue["license"] for issue in issues] == ["GPL-2.0-only / GPL-3.0-only"]
+        issues = _analyze([gpl2, self.deps["mixed-lib"]])["license_issues"]
+        conflicts = [issue["license"] for issue in issues if issue["category"] == LICENSE_INCOMPATIBILITY_CATEGORY]
+        assert conflicts == ["GPL-2.0-only / GPL-3.0-only"]
 
 
 class TestSyft:

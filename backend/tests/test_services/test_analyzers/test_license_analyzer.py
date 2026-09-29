@@ -17,10 +17,8 @@ from app.models.license import (
 )
 from app.schemas.project import LicensePolicySchema
 from app.services.analyzers.license_compliance import LicenseAnalyzer
-from app.services.analyzers.license_compliance.compatibility import (
-    check_license_compatibility,
-    partition_or_groups,
-)
+from app.services.analyzers.license_compliance.compatibility import partition_or_groups
+from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITY_CATEGORY
 from app.services.analyzers.license_compliance.evaluator import (
     apply_transitive_adjustment,
     evaluate_license,
@@ -43,6 +41,17 @@ def _parsed_cyclonedx(components: list[dict[str, Any]], transitive_refs: tuple[s
             {"ref": "hub", "dependsOn": list(transitive_refs)},
         ]
     return [dep.model_dump() for dep in parse_sbom(sbom).dependencies]
+
+
+def _library(name: str, licence: str) -> dict[str, Any]:
+    return {
+        "type": "library",
+        "bom-ref": name,
+        "name": name,
+        "version": "1.0",
+        "purl": f"pkg:npm/{name}@1.0",
+        "licenses": [{"expression": licence}],
+    }
 
 
 class TestNormalizeLicense:
@@ -372,35 +381,76 @@ class TestSpdxExpressionEvaluation:
         ],
     )
     def test_an_or_offering_a_permissive_alternative_raises_no_issue(self, or_groups):
-        policy = LicensePolicySchema()
-        _, result = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, policy)
-        assert result is None
-
-    def test_evaluate_or_gpl_or_lgpl_picks_lgpl(self):
-        policy = LicensePolicySchema()
-        or_groups = [["GPL-3.0"], ["LGPL-3.0"]]
-        _, result = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, policy)
-        assert result is not None
-        assert result["severity"] == Severity.INFO.value
-        assert result["license"] == "LGPL-3.0"
+        _, issues = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, LicensePolicySchema())
+        assert issues == []
 
     @pytest.mark.parametrize(
-        ("policy", "or_groups", "expected_severity"),
+        ("policy", "or_groups", "expected"),
         [
-            pytest.param(LicensePolicySchema(), [["MIT", "GPL-3.0"]], Severity.HIGH, id="and-picks-most-restrictive"),
-            # Both become INFO with internal_only, but GPL is evaluated first.
+            pytest.param(LicensePolicySchema(), [["GPL-3.0"], ["LGPL-3.0"]], [("LGPL-3.0", Severity.INFO)], id="or"),
+            pytest.param(LicensePolicySchema(), [["MIT", "GPL-3.0"]], [("GPL-3.0", Severity.HIGH)], id="and"),
+            # Under internal_only GPL is INFO and AGPL on a network service MEDIUM, so GPL wins on severity.
             pytest.param(
                 LicensePolicySchema(distribution_model=DistributionModel.INTERNAL_ONLY),
                 [["GPL-3.0"], ["AGPL-3.0"]],
-                Severity.INFO,
+                [("GPL-3.0", Severity.INFO)],
                 id="or-respects-policy",
             ),
         ],
     )
-    def test_the_selected_alternative_carries_its_severity(self, policy, or_groups, expected_severity):
-        _, result = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, policy)
-        assert result is not None
-        assert result["severity"] == expected_severity.value
+    def test_the_selected_alternative_carries_its_verdicts(self, policy, or_groups, expected):
+        _, issues = self.analyzer._select_or_alternative(_TEST_PKG, or_groups, policy)
+        assert [(issue["license"], issue["severity"]) for issue in issues] == [
+            (lic, sev.value) for lic, sev in expected
+        ]
+
+
+class TestOrResolution:
+    """The alternative a dual-licensed component is settled on, and what is reported for it."""
+
+    @staticmethod
+    async def _analyze(expression, settings=None):
+        components = _parsed_cyclonedx([_library("dual", expression)])
+        return await LicenseAnalyzer().analyze({}, settings or {}, parsed_components=components)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("expression", "settings", "expected"),
+        [
+            pytest.param("LGPL-2.1-only OR MIT", {"library_usage": "unmodified"}, "MIT", id="no-finding-tie"),
+            pytest.param("MPL-2.0 OR Apache-2.0", {"library_usage": "unmodified"}, "Apache-2.0", id="weak-first"),
+            pytest.param("Apache-2.0 OR MPL-2.0", {"library_usage": "unmodified"}, "Apache-2.0", id="weak-last"),
+            pytest.param("CC-BY-NC-4.0 OR GPL-3.0", {}, "GPL-3.0", id="high-tie"),
+            pytest.param("GPL-2.0 OR CDDL-1.0", {"distribution_model": "internal_only"}, "CDDL-1.0", id="info-tie"),
+            pytest.param("GPL-3.0 OR MIT", {}, "MIT", id="later-and-lower"),
+            pytest.param("GPL-2.0 OR GPL-3.0", {}, "GPL-2.0", id="full-tie-keeps-declared-order"),
+            pytest.param("GPL-3.0 OR GPL-2.0", {}, "GPL-3.0", id="full-tie-keeps-declared-order-reversed"),
+        ],
+    )
+    async def test_a_severity_tie_goes_to_the_less_restrictive_alternative(self, expression, settings, expected):
+        result = await self._analyze(expression, settings)
+        assert [entry["license"] for entry in result["component_licenses"]] == [expected]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("expression", "expected"),
+        [
+            pytest.param(
+                "(GPL-3.0-only AND CC-BY-NC-4.0) OR AGPL-3.0-only",
+                [("GPL-3.0-only", Severity.HIGH), ("CC-BY-NC-4.0", Severity.HIGH)],
+                id="equally-severe-members",
+            ),
+            pytest.param(
+                "(MPL-2.0 AND GPL-2.0-only) OR SSPL-1.0",
+                [("MPL-2.0", Severity.INFO), ("GPL-2.0-only", Severity.HIGH)],
+                id="milder-member",
+            ),
+        ],
+    )
+    async def test_every_member_of_the_chosen_conjunction_is_reported(self, expression, expected):
+        result = await self._analyze(expression)
+        verdicts = [(issue["license"], issue["severity"]) for issue in result["license_issues"]]
+        assert verdicts == [(lic, sev.value) for lic, sev in expected]
 
 
 class TestTransitiveDependencySeverity:
@@ -455,72 +505,97 @@ class TestTransitiveDependencySeverity:
 
 
 class TestLicenseCompatibility:
-    """Cross-dependency license compatibility checking."""
+    """Cross-component conflicts, judged on the licences the analyzer settled each component on."""
 
-    def setup_method(self):
-        self.analyzer = LicenseAnalyzer()
+    _GPL_PAIR: ClassVar[list[dict[str, Any]]] = [_library("a", "GPL-2.0-only"), _library("b", "GPL-3.0-only")]
 
-    def _make_component(self, name, version, license_id, scope="runtime"):
-        return {
-            "name": name,
-            "version": version,
-            "license": license_id,
-            "scope": scope,
-            "purl": f"pkg:pypi/{name}@{version}",
-        }
+    @staticmethod
+    def _conflicts(components, settings=None, transitive_refs=()):
+        parsed = _parsed_cyclonedx(components, transitive_refs)
+        result = asyncio.run(LicenseAnalyzer().analyze({}, settings or {}, parsed_components=parsed))
+        return [issue for issue in result["license_issues"] if issue["category"] == LICENSE_INCOMPATIBILITY_CATEGORY]
 
     @pytest.mark.parametrize(
-        "specs",
+        "licences",
         [
-            pytest.param([("a", "1.0", "MIT"), ("b", "1.0", "Apache-2.0")], id="permissive-only"),
-            pytest.param(
-                [("a", "1.0", "GPL-2.0-only"), ("b", "1.0", "GPL-3.0-only", "excluded")],
-                id="incompatible-pair-in-excluded-scope",
-            ),
-            pytest.param([("a", "1.0", "GPL-3.0"), ("b", "1.0", "GPL-3.0")], id="same-license-twice"),
+            pytest.param(["MIT", "Apache-2.0"], id="permissive-only"),
+            pytest.param(["GPL-3.0", "GPL-3.0"], id="same-license-twice"),
+            pytest.param(["CDDL-1.0 OR GPL-2.0"], id="dual-licensed-alone"),
+            pytest.param(["CDDL-1.0 OR GPL-2.0", "EPL-1.0"], id="optional-gpl-branch-not-taken"),
+            pytest.param(["GPL-2.0-only AND GPL-3.0-only"], id="one-component-declaring-both"),
+            pytest.param(["GPL-2.0-only WITH Classpath-exception-2.0", "Apache-2.0"], id="linking-exception"),
+            pytest.param(["GPL-2.0-only WITH Classpath-exception-2.0", "GPL-3.0-only"], id="linking-exception-gpl3"),
         ],
     )
-    def test_components_that_can_ship_together_raise_no_conflict(self, specs):
-        components = [self._make_component(*spec) for spec in specs]
-        issues = check_license_compatibility(components, ignore_dev=True)
-        assert len(issues) == 0
-
-    def test_gpl2_only_vs_gpl3_only_conflict(self):
-        components = [
-            self._make_component("a", "1.0", "GPL-2.0-only"),
-            self._make_component("b", "1.0", "GPL-3.0-only"),
-        ]
-        issues = check_license_compatibility(components, ignore_dev=True)
-        assert len(issues) == 1
-        assert issues[0]["severity"] == Severity.HIGH.value
-        assert issues[0]["category"] == "license_incompatibility"
+    def test_components_that_can_ship_together_raise_no_conflict(self, licences):
+        assert self._conflicts([_library(f"lib{i}", licence) for i, licence in enumerate(licences)]) == []
 
     @pytest.mark.parametrize(
-        "specs",
+        ("licences", "expected"),
         [
-            pytest.param([("a", "1.0", "CDDL-1.0"), ("b", "1.0", "GPL-2.0")], id="cddl-vs-gpl"),
-            pytest.param(
-                [("a", "1.0", "GPL-2.0-only"), ("b", "1.0", "GPL-3.0-only"), ("c", "2.0", "GPL-2.0-only")],
-                id="repeated-pair-deduplicated",
-            ),
+            pytest.param(["GPL-2.0 AND GPL-3.0", "CDDL-1.0"], ["CDDL-1.0 / GPL-2.0", "CDDL-1.0 / GPL-3.0"], id="and"),
+            pytest.param(["GPL-2.0 OR GPL-3.0", "CDDL-1.0"], ["CDDL-1.0 / GPL-2.0"], id="tied-or-keeps-declared"),
         ],
     )
-    def test_an_incompatible_licence_pair_is_reported_once(self, specs):
-        components = [self._make_component(*spec) for spec in specs]
-        issues = check_license_compatibility(components, ignore_dev=True)
-        assert len(issues) == 1
+    def test_the_conflicts_follow_the_settled_licences(self, licences, expected):
+        conflicts = self._conflicts([_library(f"lib{i}", licence) for i, licence in enumerate(licences)])
+        assert [conflict["license"] for conflict in conflicts] == expected
 
-    def test_conflict_purl_points_at_the_component_named_first(self):
-        """The purl is the only machine-readable anchor on a pair finding; it must match Component A."""
+    def test_the_conflict_check_sees_the_alternative_the_policy_chose(self):
+        # Allowed network copyleft is MEDIUM while GPL-2.0-only stays HIGH, so the component is taken under AGPL.
+        components = [_library("dual", "GPL-2.0-only OR AGPL-3.0-only"), _library("gpl3-lib", "GPL-3.0-only")]
+        assert self._conflicts(components, {"allow_network_copyleft": True}) == []
+
+    def test_one_finding_per_licence_pair_names_every_component(self):
         components = [
-            self._make_component("alpha", "1.0", "CDDL-1.0"),
-            self._make_component("beta", "2.0", "GPL-2.0"),
+            _library("x", "GPL-2.0-only"),
+            _library("y", "GPL-3.0-only"),
+            _library("z", "GPL-3.0-only"),
+            _library("w", "GPL-2.0-only"),
         ]
-        issues = check_license_compatibility(components, ignore_dev=True)
-        assert len(issues) == 1
-        purl_by_name = {c["name"]: c["purl"] for c in components}
-        component_a = issues[0]["component"].split(" + ")[0]
-        assert issues[0]["purl"] == purl_by_name[component_a]
+        [conflict] = self._conflicts(components)
+        label = "GPL-2.0-only / GPL-3.0-only"
+        assert (conflict["component"], conflict["version"], conflict["license"]) == (label, "", label)
+        assert conflict["purl"] == "pkg:npm/w@1.0"
+        assert "GPL-2.0-only: w@1.0, x@1.0\nGPL-3.0-only: y@1.0, z@1.0" in conflict["explanation"]
+
+    def test_the_finding_does_not_depend_on_the_sbom_order(self):
+        components = [_library("x", "GPL-3.0-only"), _library("y", "GPL-2.0-only"), _library("z", "GPL-3.0-only")]
+        assert self._conflicts(components) == self._conflicts(components[::-1])
+
+    @pytest.mark.parametrize(
+        ("settings", "severity", "without_context"),
+        [
+            pytest.param({}, Severity.HIGH, None, id="distributed"),
+            pytest.param({"distribution_model": "open_source"}, Severity.HIGH, None, id="open-source"),
+            pytest.param({"allow_strong_copyleft": True}, Severity.HIGH, None, id="allowed-copyleft-still-conflicts"),
+            pytest.param({"distribution_model": "internal_only"}, Severity.INFO, Severity.HIGH, id="internal-only"),
+        ],
+    )
+    def test_the_conflict_severity_follows_the_distribution_model(self, settings, severity, without_context):
+        [conflict] = self._conflicts(self._GPL_PAIR, settings)
+        expected_without_context = without_context.value if without_context else None
+        assert (conflict["severity"], conflict.get("severity_without_context")) == (
+            severity.value,
+            expected_without_context,
+        )
+        assert ("context_reason" in conflict) == (without_context is not None)
+
+    def test_a_conflict_between_transitive_dependencies_is_downgraded(self):
+        [conflict] = self._conflicts(self._GPL_PAIR, transitive_refs=("a", "b"))
+        assert (conflict["severity"], conflict["severity_without_context"], conflict["is_transitive"]) == (
+            Severity.MEDIUM.value,
+            Severity.HIGH.value,
+            True,
+        )
+
+    def test_a_conflict_involving_a_direct_dependency_keeps_its_severity(self):
+        [conflict] = self._conflicts(self._GPL_PAIR, transitive_refs=("a",))
+        assert conflict["severity"] == Severity.HIGH.value
+        assert "is_transitive" not in conflict
+
+    def test_an_ignored_transitive_dependency_takes_no_part(self):
+        assert self._conflicts(self._GPL_PAIR, {"ignore_transitive": True}, transitive_refs=("a",)) == []
 
 
 class TestIncompatibilityTable:
@@ -533,7 +608,7 @@ class TestIncompatibilityTable:
             ]
         )
         result = asyncio.run(LicenseAnalyzer().analyze({}, parsed_components=components))
-        return [i["license"] for i in result["license_issues"] if i["category"] == "license_incompatibility"]
+        return [i["license"] for i in result["license_issues"] if i["category"] == LICENSE_INCOMPATIBILITY_CATEGORY]
 
     @pytest.mark.parametrize(
         ("first", "second"),
@@ -548,13 +623,17 @@ class TestIncompatibilityTable:
             ("GPL-2.0", "GPL-3.0-only"),
             ("GPL-2.0", "GPL-3.0"),
             ("AGPL-3.0", "GPL-2.0"),
+            ("CDDL-1.0", "GPL-2.0"),
+            ("Apache-2.0", "GPL-2.0-only"),
+            ("Apache-2.0", "GPL-2.0"),
         ],
     )
     def test_every_spelling_of_an_incompatible_pair_conflicts(self, first, second):
         assert self._conflicts(first, second) == [f"{first} / {second}"]
 
-    def test_gpl_2_or_later_combines_with_gpl_3(self):
-        assert self._conflicts("GPL-2.0-or-later", "GPL-3.0-only") == []
+    @pytest.mark.parametrize("other", ["GPL-3.0-only", "Apache-2.0"])
+    def test_gpl_2_or_later_combines_through_gpl_3(self, other):
+        assert self._conflicts("GPL-2.0-or-later", other) == []
 
 
 class TestTransitiveDirectness:
@@ -751,7 +830,7 @@ class TestStoredPolicy:
 _UNREADABLE_ALTERNATIVE = "Acme-1.0"
 _UNREADABLE_OR_EXPRESSION = f"{_UNREADABLE_ALTERNATIVE} OR Widget-2.0"
 _READABLE_OR_EXPRESSION = "MIT OR Apache-2.0"
-# least_restrictive_group returns one OR alternative, so one component contributes one count.
+# An OR expression settles on one alternative, so one component contributes one count.
 _ONE_ALTERNATIVE_RESOLVED = 1
 
 
@@ -867,7 +946,6 @@ class TestUndeterminableLicense:
 _PERMISSIVE_ID = "MIT"
 _STRONG_COPYLEFT_ID = "GPL-3.0-only"
 _CONFLICTING_ID = "CDDL-1.0"
-_INCOMPATIBILITY_CATEGORY = "license_incompatibility"
 _UNREADABLE_OR_COPYLEFT = f"{_UNREADABLE_ALTERNATIVE} OR {_STRONG_COPYLEFT_ID}"
 _UNREADABLE_OR_PERMISSIVE = f"{_UNREADABLE_ALTERNATIVE} OR {_PERMISSIVE_ID}"
 _UNREADABLE_CONJUNCT_OR_COPYLEFT = f"({_PERMISSIVE_ID} AND {_UNREADABLE_ALTERNATIVE}) OR {_STRONG_COPYLEFT_ID}"
@@ -945,7 +1023,7 @@ class TestUnreadableOrAlternative:
         assert len(self._by_category(result, LicenseCategory.UNKNOWN.value)) == _ONE_FINDING
 
     @pytest.mark.asyncio
-    async def test_a_shadowed_alternative_still_reaches_the_conflict_check(self):
+    async def test_an_unsettled_expression_takes_no_part_in_the_conflict_check(self):
         components = [
             {
                 "type": "library",
@@ -965,9 +1043,7 @@ class TestUnreadableOrAlternative:
 
         result = await LicenseAnalyzer().analyze({}, parsed_components=_parsed_cyclonedx(components))
 
-        conflicts = self._by_category(result, _INCOMPATIBILITY_CATEGORY)
-        assert len(conflicts) == _ONE_FINDING
-        assert _STRONG_COPYLEFT_ID in conflicts[0]["license"]
+        assert self._by_category(result, LICENSE_INCOMPATIBILITY_CATEGORY) == []
 
 
 class TestPolicyAcceptability:
