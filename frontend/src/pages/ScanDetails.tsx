@@ -3,6 +3,9 @@ import { useEffect, useRef, useCallback, useState } from 'react'
 import { SbomResponse, SbomTool, SbomToolComponent } from '@/types/scan'
 import { useScan, useScanHistory, useTriggerRescan, useScanResults, useScanStats, useScanSboms } from '@/hooks/queries/use-scans'
 import { useProject } from '@/hooks/queries/use-projects'
+import { useCurrentUser } from '@/hooks/queries/use-users'
+import { useAuth } from '@/context/useAuth'
+import { isProjectEditor } from '@/lib/project-roles'
 import { FindingsTable } from '@/components/findings/FindingsTable'
 import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSection'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -100,7 +103,9 @@ export default function ScanDetails() {
   const { data: scanResults, isLoading: isResultsLoading } = useScanResults(scanId!)
   const { data: scanSboms, isLoading: isSbomsLoading } = useScanSboms(scanId!)
   const { data: categoryStats } = useScanStats(scanId!)
-  
+  const { permissions } = useAuth()
+  const { data: currentUser } = useCurrentUser()
+
   const triggerRescanMutation = useTriggerRescan()
 
   const scrollToSbom = useCallback((index: number) => {
@@ -167,6 +172,8 @@ export default function ScanDetails() {
   if (!scan || !project) {
     return <div>No results found</div>
   }
+
+  const canWrite = !!currentUser && isProjectEditor(project, currentUser.id, permissions)
 
   const scanContext: ScanContext = {
     projectUrl: scan.project_url,
@@ -244,25 +251,29 @@ export default function ScanDetails() {
                     </SelectContent>
                 </Select>
             )}
-            <Button 
-                onClick={() => triggerRescanMutation.mutate({ projectId: projectId!, scanId: scanId! }, {
-                     onSuccess: () => {
-                         toast.success("Re-scan triggered", {
-                            description: "A new scan has been started.",
-                          })
-                     },
-                     onError: (error) => {
-                          toast.error("Re-scan not started", {
-                            description: getErrorMessage(error),
-                          })
-                     }
-                })} 
-                disabled={triggerRescanMutation.isPending || isScanInProgress(scan.status) || !scan.sbom_refs || scan.sbom_refs.length === 0}
-            >
-                <RefreshCw className={`mr-2 h-4 w-4 ${triggerRescanMutation.isPending ? 'animate-spin' : ''}`} />
-                Trigger Re-scan
-            </Button>
-            <MarkReleaseButton projectId={projectId!} scan={scan} />
+            {canWrite && (
+                <>
+                    <Button
+                        onClick={() => triggerRescanMutation.mutate({ projectId: projectId!, scanId: scanId! }, {
+                             onSuccess: () => {
+                                 toast.success("Re-scan triggered", {
+                                    description: "A new scan has been started.",
+                                  })
+                             },
+                             onError: (error) => {
+                                  toast.error("Re-scan not started", {
+                                    description: getErrorMessage(error),
+                                  })
+                             }
+                        })}
+                        disabled={triggerRescanMutation.isPending || isScanInProgress(scan.status) || !scan.sbom_refs || scan.sbom_refs.length === 0}
+                    >
+                        <RefreshCw className={`mr-2 h-4 w-4 ${triggerRescanMutation.isPending ? 'animate-spin' : ''}`} />
+                        Trigger Re-scan
+                    </Button>
+                    <MarkReleaseButton projectId={projectId!} scan={scan} />
+                </>
+            )}
         </div>
       </div>
 
@@ -295,7 +306,7 @@ export default function ScanDetails() {
                                 </ScmLink>
                             </div>
                         </div>
-                        <ScanReleaseControl projectId={projectId!} scan={scan} />
+                        <ScanReleaseControl projectId={projectId!} scan={scan} canWrite={canWrite} />
                         {scan.commit_hash && (
                             <div className="flex flex-col space-y-1">
                                 <span className="text-sm text-muted-foreground">Commit</span>
