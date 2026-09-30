@@ -73,6 +73,9 @@ class CryptoAsset(MongoDocument):
     properties: dict[str, str] = Field(
         default_factory=dict, description="Passthrough of additional CycloneDX properties"
     )
+    cbom_upload: bool = Field(
+        False, description="Stored by a CBOM upload, which replaces the scan's earlier uploaded assets"
+    )
 
     created_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), description="Persistence timestamp (UTC)"
