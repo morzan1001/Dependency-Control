@@ -11,8 +11,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.cache import cache_service
 from app.core.constants import (
     GITLAB_ADMIN_MIN_ACCESS,
-    GITLAB_JWKS_CACHE_TTL,
-    GITLAB_JWKS_URI_CACHE_TTL,
     GITLAB_TEAM_MEMBER_MIN_ACCESS,
     GITLAB_USER_EMAIL_CACHE_TTL,
     MAX_PROJECT_TEAMS,
@@ -35,6 +33,7 @@ from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult
 from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
 from app.services.github import response_ok
+from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
@@ -247,111 +246,27 @@ class GitLabService:
         )
         return True
 
-    async def _get_jwks_uri(self) -> str | None:
-        """Resolve the JWKS URI from the OIDC discovery document, Redis-cached."""
-        cache_key = self._get_cache_key("jwks_uri")
+    async def _jwks_uris(self) -> list[str]:
+        discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
+        fallbacks = [f"{self.base_url}/oauth/discovery/keys", f"{self.base_url}/-/jwks"]
+        return list(dict.fromkeys([discovered, *fallbacks] if discovered else fallbacks))
 
-        cached_uri = await cache_service.get(cache_key)
-        if cached_uri:
-            result: str = cached_uri
-            return result
-
-        async with InstrumentedAsyncClient("GitLab OIDC", timeout=10.0) as client:
-            try:
-                response = await client.get(f"{self.base_url}/.well-known/openid-configuration")
-                if response.status_code == 200:
-                    config = response.json()
-                    jwks_uri: str | None = config.get("jwks_uri")
-                    if jwks_uri:
-                        await cache_service.set(cache_key, jwks_uri, ttl_seconds=GITLAB_JWKS_URI_CACHE_TTL)
-                    return jwks_uri
-            except Exception as e:
-                logger.warning(f"Error fetching OIDC discovery: {type(e).__name__}: {e}")
-
-        return None
-
-    async def _fetch_jwks_from_uri(
-        self,
-        client: InstrumentedAsyncClient,
-        jwks_uri: str,
-        cache_key: str,
-    ) -> dict | None:
-        """Fetch JWKS from a known URI and cache it; returns None if unavailable."""
-        response = await client.get(jwks_uri)
-        if response.status_code != 200:
-            return None
-        jwks: dict[Any, Any] = response.json()
-        await cache_service.set(cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
-        return jwks
-
-    async def _fetch_jwks_from_fallbacks(
-        self,
-        client: InstrumentedAsyncClient,
-        cache_key: str,
-    ) -> dict | None:
-        """Try common fallback JWKS endpoints; returns None if all fail."""
-        for path in ["/oauth/discovery/keys", "/-/jwks"]:
-            response = await client.get(f"{self.base_url}{path}")
-            if response.status_code == 200:
-                jwks_fallback: dict[Any, Any] = response.json()
-                await cache_service.set(cache_key, jwks_fallback, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
-                logger.info(f"JWKS fetched from fallback path: {path}")
-                return jwks_fallback
-        return None
-
-    async def _try_fetch_jwks_once(self, cache_key: str) -> dict | None:
-        """Single attempt to fetch JWKS via discovery + fallbacks. Returns {} on definitive failure."""
-        jwks_uri = await self._get_jwks_uri()
-        async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
-            if jwks_uri:
-                jwks = await self._fetch_jwks_from_uri(client, jwks_uri, cache_key)
-                if jwks is not None:
-                    return jwks
-
-            fallback = await self._fetch_jwks_from_fallbacks(client, cache_key)
-            if fallback is not None:
-                return fallback
-
-            logger.error(f"Failed to fetch JWKS from any known endpoint for {self.base_url}")
-            return {}
+    async def refresh_jwks(self) -> dict | None:
+        return await fetch_jwks(self._get_cache_key(f"jwks:{self.base_url}"), self._jwks_uris, "GitLab")
 
     async def get_jwks(self) -> dict | None:
-        """Fetch and Redis-cache the JWKS from GitLab, retrying on transient failure."""
-        cache_key = self._get_cache_key("jwks")
-
-        cached_jwks = await cache_service.get(cache_key)
-        if cached_jwks:
-            result_jwks: dict[Any, Any] = cached_jwks
-            return result_jwks
-
-        import asyncio as _asyncio
-
-        for attempt in range(3):
-            try:
-                return await self._try_fetch_jwks_once(cache_key)
-            except Exception as e:
-                logger.warning(
-                    f"JWKS fetch attempt {attempt + 1}/3 failed for {self.base_url}: {type(e).__name__}: {e}"
-                )
-                if attempt < 2:
-                    await _asyncio.sleep(1)
-        logger.error(f"JWKS fetch failed after 3 attempts for {self.base_url}")
-        return {}
-
-    async def _invalidate_jwks_cache(self) -> None:
-        """Invalidate the JWKS cache to force a refresh on next request."""
-        cache_key = self._get_cache_key("jwks")
-        await cache_service.delete(cache_key)
+        """The instance's cached key set, fetched on a miss; None while GitLab serves none."""
+        cached: dict | None = await cache_service.get(self._get_cache_key(f"jwks:{self.base_url}"))
+        return cached or await self.refresh_jwks()
 
     async def validate_oidc_token(self, token: str) -> OIDCPayload | None:
         """Validate a GitLab OIDC JWT, refreshing JWKS on key rotation."""
         return await _validate_oidc_token(
             token=token,
             get_jwks=self.get_jwks,
-            invalidate_cache=self._invalidate_jwks_cache,
+            refresh_jwks=self.refresh_jwks,
             issuer=self.base_url,
-            # `or None` normalizes "" -> None so unconfigured instances fail the audience check closed.
-            audience=self.instance.oidc_audience or None,
+            audience=self.instance.oidc_audience,
             payload_model=OIDCPayload,
             provider_name="GitLab",
         )

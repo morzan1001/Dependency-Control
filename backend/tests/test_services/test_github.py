@@ -1,9 +1,12 @@
 """Tests for GitHubService OIDC validation, API pagination and write verbs."""
 
 import asyncio
+from functools import partial
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
+from jose import JWTError
 
 from app.models.github_api import GitHubOIDCPayload
 from app.services.github import GitHubService
@@ -144,7 +147,7 @@ class TestGitHubServiceOIDC:
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
             mock_jwks.return_value = {"keys": [{"kid": "other-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-            with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock):
+            with patch.object(service, "refresh_jwks", new_callable=AsyncMock, return_value=None):
                 with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                     mock_header.return_value = {"kid": "missing-key"}
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
@@ -195,43 +198,23 @@ class TestGitHubServiceOIDC:
                     assert call_kwargs["issuer"] == "https://token.actions.githubusercontent.com"
 
     def test_key_rotation_refreshes_jwks(self):
-        """When key is not in cached JWKS, should invalidate and retry."""
-        instance = github_instance_a()
-        service = GitHubService(instance)
-
+        """A kid missing from the cached set is looked up in a refetched one."""
+        service = GitHubService(github_instance_a())
         jwks_old = {"keys": [{"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-        jwks_new = {
-            "keys": [
-                {"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"},
-                {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"},
-            ]
-        }
+        jwks_new = {"keys": [*jwks_old["keys"], {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"}]}
+        claims = {"repository_id": "42", "repository": "o/p", "repository_owner": "o", "actor": "u"}
 
-        call_count = 0
+        with (
+            patch.object(service, "get_jwks", new_callable=AsyncMock, return_value=jwks_old),
+            patch.object(service, "refresh_jwks", new_callable=AsyncMock, return_value=jwks_new) as refresh,
+            patch("app.services.oidc_utils.jwt.get_unverified_header", return_value={"kid": "new-key"}),
+            patch("app.services.oidc_utils.jwt.decode", return_value=claims),
+        ):
+            result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
 
-        def get_jwks_side_effect():
-            nonlocal call_count
-            call_count += 1
-            return jwks_old if call_count == 1 else jwks_new
-
-        with patch.object(service, "get_jwks", new_callable=AsyncMock, side_effect=get_jwks_side_effect):
-            with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock) as mock_invalidate:
-                with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
-                    mock_header.return_value = {"kid": "new-key"}
-                    with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
-                        mock_decode.return_value = {
-                            "repository_id": "42",
-                            "repository": "o/p",
-                            "repository_owner": "o",
-                            "actor": "u",
-                        }
-
-                        result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
-
-                        assert isinstance(result, GitHubOIDCPayload)
-                        assert result.repository_id == "42"
-                        mock_invalidate.assert_called_once()
-                        assert call_count == 2
+        assert isinstance(result, GitHubOIDCPayload)
+        assert result.repository_id == "42"
+        refresh.assert_awaited_once()
 
     def test_uses_rs256_algorithm(self):
         """GitHub OIDC tokens use RS256, verify the service enforces this."""
@@ -281,7 +264,7 @@ class TestGitHubServiceOIDC:
                     assert result.repository_id == "1"
 
     def test_decode_exception_returns_none(self):
-        """If jwt.decode raises, should return None (not crash)."""
+        """A token the decoder rejects is a failed validation, not a crash."""
         instance = github_instance_a()
         service = GitHubService(instance)
 
@@ -290,10 +273,60 @@ class TestGitHubServiceOIDC:
             with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                 mock_header.return_value = {"kid": "k1"}
                 with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
-                    mock_decode.side_effect = Exception("Signature verification failed")
+                    mock_decode.side_effect = JWTError("Signature verification failed")
 
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
                     assert result is None
+
+
+_JWKS = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+
+
+@pytest.fixture
+def jwks_cache(fake_cache, monkeypatch):
+    monkeypatch.setattr("app.services.oidc_utils.cache_service", fake_cache)
+    monkeypatch.setattr("app.services.github.cache_service", fake_cache)
+    return fake_cache
+
+
+def _serve_idp(monkeypatch, handler):
+    requested: list[str] = []
+
+    async def recording(request):
+        requested.append(str(request.url))
+        return handler(request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(recording)))
+    return requested
+
+
+@pytest.mark.asyncio
+class TestGitHubJwksSource:
+    async def test_github_com_keys_come_from_the_fixed_location(self, monkeypatch, jwks_cache):
+        requested = _serve_idp(monkeypatch, lambda request: httpx.Response(200, json=_JWKS))
+
+        assert await GitHubService(github_instance_a()).get_jwks() == _JWKS
+        assert requested == ["https://token.actions.githubusercontent.com/.well-known/jwks"]
+
+    async def test_ghes_without_discovery_falls_back_without_remembering_the_guess(self, monkeypatch, jwks_cache):
+        base = "https://github.corp.example.com/_services/token"
+        rotated = {"keys": [{"kid": "k2", "kty": "RSA", "n": "n2", "e": "AQAB"}]}
+        discovery = {"up": False}
+
+        def handler(request):
+            if request.url.path.endswith("/openid-configuration"):
+                if discovery["up"]:
+                    return httpx.Response(200, json={"jwks_uri": f"{base}/keys"})
+                return httpx.Response(404)
+            return httpx.Response(200, json=rotated if request.url.path.endswith("/keys") else _JWKS)
+
+        requested = _serve_idp(monkeypatch, handler)
+        service = GitHubService(github_instance_b())
+        assert await service.get_jwks() == _JWKS
+        assert requested == [f"{base}/.well-known/openid-configuration", f"{base}/.well-known/jwks"]
+
+        discovery["up"] = True
+        assert await service.refresh_jwks() == rotated
 
 
 _TEAMS_ENDPOINT = "/repos/acme/widgets/teams"

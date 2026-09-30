@@ -114,6 +114,30 @@ class TestGitHubInstanceSyncTeams:
         assert response.sync_teams is True
 
 
+class TestCreateChecksTheIssuerServesKeys:
+    def test_an_issuer_without_keys_is_refused_and_not_saved(self, admin_user):
+        from app.api.v1.endpoints.github_instances import create_instance
+        from app.schemas.github_instance import GitHubInstanceCreate
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False, create=None)
+        service = MagicMock()
+        service.get_jwks = AsyncMock(return_value=None)
+        payload = GitHubInstanceCreate(
+            name="GHES", url="https://github.corp.example.com/_services/token", oidc_audience="dependency-control"
+        )
+
+        with (
+            patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo),
+            patch(f"{MODULE}.GitHubService", return_value=service),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            asyncio.run(create_instance(instance_data=payload, db=MagicMock(), current_user=admin_user))
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "OIDC endpoint unreachable or returned no signing keys. Verify the issuer URL."
+        mock_repo.create.assert_not_called()
+
+
 class TestGitHubInstanceUpdateTokenGuard:
     """The create-time validator is decorative if an update can flip sync_teams on without a token."""
 

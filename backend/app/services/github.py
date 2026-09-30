@@ -13,8 +13,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.cache import cache_service
 from app.core.constants import (
     GITHUB_API_URL,
-    GITHUB_JWKS_CACHE_TTL,
-    GITHUB_JWKS_URI_CACHE_TTL,
     GITHUB_ORG_REPO_MAP_CACHE_TTL,
     GITHUB_TEAM_SYNC_CACHE_TTL,
     GITHUB_USER_EMAIL_CACHE_TTL,
@@ -32,6 +30,7 @@ from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
 from app.models.team import GitHubTeamBinding, Team, TeamMember, TeamSyncResult, binding_of
 from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
+from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
@@ -1147,72 +1146,28 @@ class GitHubService:
             logger.error(f"Failed to update PR comment: {response.status_code} - {response.text}")
         return False
 
-    async def _get_jwks_uri(self) -> str:
-        """Resolve the JWKS URI: well-known endpoint for github.com, OIDC discovery for GHES."""
-        cache_key = self._get_cache_key("jwks_uri")
-
-        cached_uri = await cache_service.get(cache_key)
-        if cached_uri:
-            result: str = cached_uri
-            return result
-
+    async def _jwks_uris(self) -> list[str]:
         if "token.actions.githubusercontent.com" in self.base_url:
-            await cache_service.set(cache_key, _GITHUB_COM_JWKS_URI, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
-            return _GITHUB_COM_JWKS_URI
+            return [_GITHUB_COM_JWKS_URI]
+        discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
+        return [discovered or f"{self.base_url}/.well-known/jwks"]
 
-        async with InstrumentedAsyncClient("GitHub OIDC", timeout=10.0) as client:
-            try:
-                response = await client.get(f"{self.base_url}/.well-known/openid-configuration")
-                if response.status_code == 200:
-                    config = response.json()
-                    jwks_uri: str | None = config.get("jwks_uri")
-                    if jwks_uri:
-                        await cache_service.set(cache_key, jwks_uri, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
-                        return jwks_uri
-            except Exception as e:
-                logger.warning(f"Error fetching GitHub OIDC discovery: {e}")
-
-        fallback_uri = f"{self.base_url}/.well-known/jwks"
-        await cache_service.set(cache_key, fallback_uri, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
-        return fallback_uri
+    async def refresh_jwks(self) -> dict | None:
+        return await fetch_jwks(self._get_cache_key(f"jwks:{self.base_url}"), self._jwks_uris, "GitHub")
 
     async def get_jwks(self) -> dict | None:
-        """Fetch and Redis-cache the JWKS from GitHub."""
-        cache_key = self._get_cache_key("jwks")
-
-        cached_jwks = await cache_service.get(cache_key)
-        if cached_jwks:
-            result_jwks: dict[Any, Any] = cached_jwks
-            return result_jwks
-
-        jwks_uri = await self._get_jwks_uri()
-        async with InstrumentedAsyncClient("GitHub JWKS", timeout=10.0) as client:
-            try:
-                response = await client.get(jwks_uri)
-                if response.status_code == 200:
-                    jwks: dict[Any, Any] = response.json()
-                    await cache_service.set(cache_key, jwks, ttl_seconds=GITHUB_JWKS_CACHE_TTL)
-                    return jwks
-
-                logger.error("Failed to fetch GitHub JWKS")
-            except Exception as e:
-                logger.exception("Error fetching GitHub JWKS: %s", e)
-        return {}
-
-    async def _invalidate_jwks_cache(self) -> None:
-        """Invalidate the JWKS cache to force a refresh on next request."""
-        cache_key = self._get_cache_key("jwks")
-        await cache_service.delete(cache_key)
+        """The instance's cached key set, fetched on a miss; None while the issuer serves none."""
+        cached: dict | None = await cache_service.get(self._get_cache_key(f"jwks:{self.base_url}"))
+        return cached or await self.refresh_jwks()
 
     async def validate_oidc_token(self, token: str) -> GitHubOIDCPayload | None:
         """Validate a GitHub Actions OIDC JWT, refreshing JWKS on key rotation."""
         return await _validate_oidc_token(
             token=token,
             get_jwks=self.get_jwks,
-            invalidate_cache=self._invalidate_jwks_cache,
+            refresh_jwks=self.refresh_jwks,
             issuer=self.base_url,
-            # `or None` normalizes "" -> None so unconfigured instances fail the audience check closed.
-            audience=self.instance.oidc_audience or None,
+            audience=self.instance.oidc_audience,
             payload_model=GitHubOIDCPayload,
             provider_name="GitHub",
         )

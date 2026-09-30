@@ -1,6 +1,7 @@
 """Tests for GitLabService multi-instance support."""
 
 import asyncio
+from functools import partial
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
@@ -10,6 +11,7 @@ import pytest
 from app.models.gitlab_api import OIDCPayload
 from app.models.gitlab_instance import GitLabInstance
 from app.services.gitlab import GitLabGroupLookup, GitLabService
+from tests.mocks.gitlab import make_gitlab_instance
 
 
 class TestGitLabServiceInitialization:
@@ -135,7 +137,7 @@ class TestGitLabServiceOIDC:
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
             mock_jwks.return_value = {"keys": [{"kid": "other-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-            with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock):
+            with patch.object(service, "refresh_jwks", new_callable=AsyncMock, return_value=None):
                 with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                     mock_header.return_value = {"kid": "missing-key"}
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
@@ -182,37 +184,87 @@ class TestGitLabServiceOIDC:
                     assert call_kwargs["issuer"] == "https://gitlab.com"
 
     def test_key_rotation_refreshes_jwks(self, gitlab_instance_a):
-        """When key is not in cached JWKS, should invalidate and retry."""
+        """A kid missing from the cached set is looked up in a refetched one."""
+        service = GitLabService(gitlab_instance_a)
+        jwks_old = {"keys": [{"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+        jwks_new = {"keys": [*jwks_old["keys"], {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"}]}
+
+        with (
+            patch.object(service, "get_jwks", new_callable=AsyncMock, return_value=jwks_old),
+            patch.object(service, "refresh_jwks", new_callable=AsyncMock, return_value=jwks_new) as refresh,
+            patch("app.services.oidc_utils.jwt.get_unverified_header", return_value={"kid": "new-key"}),
+            patch("app.services.oidc_utils.jwt.decode", return_value={"project_id": "42", "project_path": "g/p"}),
+        ):
+            result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
+
+        assert isinstance(result, OIDCPayload)
+        assert result.project_id == "42"
+        refresh.assert_awaited_once()
+
+
+_JWKS = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+
+
+@pytest.fixture
+def jwks_cache(fake_cache, monkeypatch):
+    monkeypatch.setattr("app.services.oidc_utils.cache_service", fake_cache)
+    monkeypatch.setattr("app.services.gitlab.cache_service", fake_cache)
+    return fake_cache
+
+
+def _serve_idp(monkeypatch, handler):
+    requested: list[str] = []
+
+    async def recording(request):
+        requested.append(str(request.url))
+        return handler(request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(recording)))
+    return requested
+
+
+@pytest.mark.asyncio
+class TestGitLabJwksSource:
+    async def test_a_dead_instance_is_asked_once_per_known_location(self, monkeypatch, jwks_cache, gitlab_instance_a):
+        requested = _serve_idp(monkeypatch, lambda request: httpx.Response(502))
         service = GitLabService(gitlab_instance_a)
 
-        jwks_old = {"keys": [{"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-        jwks_new = {
-            "keys": [
-                {"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"},
-                {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"},
-            ]
-        }
+        assert await service.get_jwks() is None
+        assert await service.get_jwks() is None
+        assert requested == [
+            "https://gitlab-a.com/.well-known/openid-configuration",
+            "https://gitlab-a.com/oauth/discovery/keys",
+            "https://gitlab-a.com/-/jwks",
+        ]
 
-        call_count = 0
+    async def test_a_new_issuer_url_is_not_served_the_old_instances_keys(self, monkeypatch, jwks_cache):
+        moved = {"keys": [{"kid": "k2", "kty": "RSA", "n": "n2", "e": "AQAB"}]}
 
-        async def get_jwks_side_effect():
-            nonlocal call_count
-            call_count += 1
-            return jwks_old if call_count == 1 else jwks_new
+        def handler(request):
+            if request.url.path == "/.well-known/openid-configuration":
+                return httpx.Response(404)
+            return httpx.Response(200, json=_JWKS if request.url.host == "gitlab-old.com" else moved)
 
-        with patch.object(service, "get_jwks", side_effect=get_jwks_side_effect):
-            with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock) as mock_invalidate:
-                with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
-                    mock_header.return_value = {"kid": "new-key"}
-                    with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
-                        mock_decode.return_value = {"project_id": "42", "project_path": "g/p"}
+        _serve_idp(monkeypatch, handler)
 
-                        result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
+        assert await GitLabService(make_gitlab_instance(id="same", url="https://gitlab-old.com")).get_jwks() == _JWKS
+        assert await GitLabService(make_gitlab_instance(id="same", url="https://gitlab-new.com")).get_jwks() == moved
 
-                        assert isinstance(result, OIDCPayload)
-                        assert result.project_id == "42"
-                        mock_invalidate.assert_called_once()
-                        assert call_count == 2
+    async def test_a_failed_refresh_keeps_the_cached_keys(self, monkeypatch, jwks_cache, gitlab_instance_a):
+        status = {"code": 200}
+
+        def handler(request):
+            if request.url.path == "/.well-known/openid-configuration":
+                return httpx.Response(200, json={"jwks_uri": "https://gitlab-a.com/oauth/discovery/keys"})
+            return httpx.Response(status["code"], json=_JWKS)
+
+        _serve_idp(monkeypatch, handler)
+        service = GitLabService(gitlab_instance_a)
+        assert await service.get_jwks() == _JWKS
+
+        status["code"] = 503
+        assert await service.refresh_jwks() is None
+        assert await service.get_jwks() == _JWKS
 
 
 _GROUP = {

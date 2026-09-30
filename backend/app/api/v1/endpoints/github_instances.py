@@ -113,23 +113,12 @@ async def create_instance(
         created_at=datetime.now(timezone.utc),
     )
 
-    # Verify JWKS reachability before saving.
-    github_service = GitHubService(new_instance)
-    try:
-        jwks = await github_service.get_jwks()
-        if not jwks or not jwks.get("keys"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OIDC endpoint reachable but returned no signing keys. Verify the issuer URL.",
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.exception("JWKS connectivity test failed for %s: %s", instance_data.url, e)
+    jwks = await GitHubService(new_instance).get_jwks()
+    if not jwks or not jwks.get("keys"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to reach OIDC endpoint: {e!s}",
-        ) from e
+            detail="OIDC endpoint unreachable or returned no signing keys. Verify the issuer URL.",
+        )
 
     created_instance = await instance_repo.create(new_instance)
 
@@ -373,7 +362,7 @@ async def test_connection(
         jwks = await github_service.get_jwks()
 
         if not jwks or not jwks.get("keys"):
-            return _failed_test(instance, "JWKS endpoint returned no signing keys")
+            return _failed_test(instance, "JWKS endpoint unreachable or returned no signing keys")
 
         message = f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
         # Only an instance that syncs teams needs organisation access; demanding it of a
