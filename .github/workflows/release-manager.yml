@@ -55,13 +55,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update CHANGELOG.md
+        env:
+          VERSION: ${{ steps.get_version.outputs.VERSION }}
+          RELEASE_NOTES: ${{ steps.changelog.outputs.changelog }}
         run: |
-          # Prepend new changelog to existing file
-          echo "# Release ${{ steps.get_version.outputs.VERSION }}" > new_changelog.md
-          echo "" >> new_changelog.md
-          echo "${{ steps.changelog.outputs.changelog }}" >> new_changelog.md
-          echo "" >> new_changelog.md
-          
+          printf '# Release %s\n\n%s\n\n' "$VERSION" "$RELEASE_NOTES" > new_changelog.md
           if [ -f CHANGELOG.md ]; then
             cat CHANGELOG.md >> new_changelog.md
           fi
