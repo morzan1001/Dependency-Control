@@ -282,11 +282,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_dependency_tree",
-            "description": "Get the dependency tree of a project showing direct and transitive dependencies.",
+            "description": (
+                "List a project's head-build dependencies as a flat list, direct dependencies first, then by "
+                "name. Each row names up to 5 of its parents and its parent_count; dependencies_total counts "
+                "every dependency the filter matches."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
+                    "limit": _bounded(40, MAX_SUMMARY_ROWS, "Max dependencies"),
+                    "direct_only": {"type": "boolean", "description": "Only the direct dependencies."},
                 },
                 "required": ["project_id"],
             },
@@ -314,7 +320,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_dependency_details",
-            "description": "Get metadata about a dependency: versions, maintainer info, update frequency, known vulnerabilities.",
+            "description": (
+                "Get enrichment metadata for one package version (lookup by PURL, or by name, which returns one "
+                "matching version): license and license risks, homepage/repository links, deps.dev popularity "
+                "(stars, forks, dependents), OpenSSF scorecard, publish date, deprecation flag and known "
+                "advisory IDs."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

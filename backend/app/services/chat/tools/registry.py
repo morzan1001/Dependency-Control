@@ -54,6 +54,7 @@ from app.models.user import User
 from app.models.waiver import is_waiver_active
 from app.models.webhook import Webhook
 from app.repositories.base import and_filters
+from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
@@ -67,7 +68,6 @@ from app.services.component_identity import artifact_segment, build_component_in
 from app.services.analytics.crypto_trends import auto_bucket
 from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
-from app.core.purl import canonical_purl
 from app.services.compliance.visibility import report_visibility_filter
 from app.services.recommendation.common import live_advisories, max_advisory_cvss
 
@@ -174,10 +174,15 @@ _TOP_RISKY = 3
 _PROJECT_ROW_PROJECTION = dict.fromkeys(
     ("name", "team_ids", "last_scan_at", "created_at", "latest_scan_id", "default_branch", "deleted_branches"), 1
 )
+# Without _id, project_id and scan_id, _inject_urls adds no finding link to a dependency row.
+_DEPENDENCY_ROW_PROJECTION = {
+    "_id": 0,
+    **dict.fromkeys(("name", "version", "purl", "direct", "direct_inferred", "scope", "parent_components"), 1),
+}
+_PARENTS_SHOWN = 5
 
 # Read ceilings for the tools that answer from a whole collection rather than from a ranked page.
 # Every answer built on one of these carries the population it was cut from.
-_DEPENDENCY_TREE_READ = 200
 _TEAM_LIST_READ = 100
 _TEAM_PROJECT_READ = 50
 _WAIVER_READ = 100
@@ -719,14 +724,17 @@ class ChatToolRegistry:
             return {"error": _ERR_NO_SCAN_DATA}
         deps, deps_total = await bounded_read(
             ctx.db["dependencies"],
-            {"scan_id": head_scan_id},
+            {"scan_id": head_scan_id, **({"direct": True} if ctx.args.get("direct_only") else {})},
             subject="dependencies",
-            limit=_DEPENDENCY_TREE_READ,
+            limit=ctx.args["limit"],
+            projection=_DEPENDENCY_ROW_PROJECTION,
+            sort=[("direct", -1), ("name", 1)],
         )
-        return {
-            "dependencies": [_serialize_doc(d) for d in deps],
-            "dependencies_total": deps_total,
-        }
+        for dep in deps:
+            parents = dep.pop("parent_components", None) or []
+            dep["parents"] = parents[:_PARENTS_SHOWN]
+            dep["parent_count"] = len(parents)
+        return {"dependencies": deps, "dependencies_total": deps_total}
 
     async def _tool_get_hotspots(self, ctx: _ToolContext) -> dict[str, Any]:
         limit = ctx.args["limit"]
@@ -744,7 +752,7 @@ class ChatToolRegistry:
         return {"hotspots": hotspots}
 
     async def _tool_get_dependency_details(self, ctx: _ToolContext) -> dict[str, Any]:
-        dep = await ctx.db["dependency_enrichments"].find_one({"purl": canonical_purl(ctx.args["dependency_name"])})
+        dep = await DependencyEnrichmentRepository(ctx.db).get_by_purl(ctx.args["dependency_name"])
         if not dep:
             dep = await ctx.db["dependency_enrichments"].find_one(
                 {"name": {"$regex": re.escape(ctx.args["dependency_name"]), "$options": "i"}}

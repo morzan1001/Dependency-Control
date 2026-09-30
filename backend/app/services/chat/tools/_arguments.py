@@ -19,6 +19,8 @@ def _conforms(schema: dict[str, Any], value: Any) -> bool:
     declared = schema.get("type")
     if declared == "string":
         return isinstance(value, str)
+    if declared == "boolean":
+        return isinstance(value, bool)
     if declared == "integer":
         # _clamp_limit coerces a numeric string, and models send limits as "10".
         return isinstance(value, (int, float, str)) and not isinstance(value, bool)

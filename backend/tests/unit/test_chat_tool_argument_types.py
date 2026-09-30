@@ -93,6 +93,8 @@ def _valid_value(schema: dict):
         return schema["enum"][0]
     if schema["type"] == "integer":
         return 1
+    if schema["type"] == "boolean":
+        return True
     if schema["type"] == "array":
         return [_valid_value(schema["items"])]
     return _STAND_IN
