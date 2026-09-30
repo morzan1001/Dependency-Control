@@ -61,7 +61,6 @@ def _to_changed(from_doc: dict, to_doc: dict, change: str) -> ComponentDeltaItem
 async def compare_components(
     db: AsyncIOMotorDatabase, *, project_id: str, from_scan: str, to_scan: str
 ) -> ScanDeltaResponse:
-    """Every component change between two scans, sorted, with totals and coverage."""
     (from_docs, from_total), (to_docs, to_total) = await both_sides(
         lambda scan_id: _fetch_components(db, project_id, scan_id), from_scan, to_scan
     )

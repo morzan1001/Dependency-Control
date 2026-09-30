@@ -1,5 +1,4 @@
-"""get_stale_findings ages a head-build finding by the first_seen_at ingest persists, the date the CVE SLA
-report reads, so a finding whose first scans retention deleted still counts as old."""
+"""get_stale_findings ages a head-build finding by its persisted first_seen_at, so scan retention keeps it old."""
 
 from datetime import datetime, timedelta, timezone
 

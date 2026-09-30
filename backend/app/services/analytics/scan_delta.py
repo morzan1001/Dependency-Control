@@ -1,8 +1,4 @@
-"""Orchestrator for the unified scan-delta endpoint.
-
-Service-layer functions trust pre-validated inputs; auth and cross-project scan
-checks live one layer above (REST handler / chat tool registry).
-"""
+"""Scan-delta orchestrator; callers have already checked access and that both scans belong to the project."""
 
 from __future__ import annotations
 
@@ -93,8 +89,7 @@ def _validate_query(
 
 
 def _describe_sides(sides: list[tuple[str, dict]]) -> dict[str, Any]:
-    """Each side's build and the reachability it was scored with, as envelope fields, so a caller can
-    check a symbolic side resolved to what it expected."""
+    """Each side's build and reachability, so a caller can check a symbolic side resolved as expected."""
     fields: dict[str, Any] = {}
     for side, (scan_id, doc) in zip(("from", "to"), sides, strict=True):
         reach = (doc.get("stats") or {}).get("reachability")

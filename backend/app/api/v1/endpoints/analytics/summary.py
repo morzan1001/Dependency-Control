@@ -82,7 +82,7 @@ async def get_analytics_scope(
 async def _heads_and_types(
     db: AsyncIOMotorDatabase, projects: list[ProjectWithScanId], release_environment: str | None
 ) -> tuple[list[str], list[dict[str, Any]]]:
-    """The scope's resolved scans and their dependency type distribution, shared by /summary and /dependency-types."""
+    """The scope's resolved scans and their dependency type distribution."""
 
     async def compute() -> tuple[list[str], list[dict[str, Any]]]:
         scan_ids = await get_latest_scan_ids(projects, db, release_environment=release_environment)

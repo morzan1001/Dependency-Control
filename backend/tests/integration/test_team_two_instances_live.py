@@ -211,8 +211,7 @@ async def test_one_instance_resolves_only_through_its_own_binding_on_real_mongo(
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_a_generated_name_does_not_flip_between_the_instances_on_real_mongo(db):
-    """Named for A's binding, the team keeps that name through B's runs instead of taking the name
-    of whichever pipeline ran last."""
+    """The team keeps A's generated name through B's runs instead of the last pipeline's."""
     await _seed(db, name="GitHub Team: acme/payments")
 
     await _ingest(db, _B, _TEAMS_B, "p-b", "acme/p-b")

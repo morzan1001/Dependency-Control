@@ -82,7 +82,6 @@ async def delete_guarded(
     provider: str,
     username: str,
 ) -> None:
-    """Delete an instance no project links to, with its team bindings and the members its sync added."""
     instance_id = str(instance.id)
     project_count = await ProjectRepository(db).count({repo.project_link_field: instance_id})
     if project_count:

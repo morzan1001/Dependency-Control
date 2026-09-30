@@ -560,7 +560,6 @@ def _validate_existing_oidc_user(user: dict, email: str) -> None:
 
 
 async def _fetch_oidc_user_info(system_config: SystemSettings, code: str, redirect_uri: str) -> dict[str, Any]:
-    """Redeem the code at the token endpoint and read the account from the userinfo endpoint."""
     if not system_config.oidc_token_endpoint or not system_config.oidc_userinfo_endpoint:
         raise _OidcLoginError("not_configured")
     token_data = {

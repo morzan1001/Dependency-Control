@@ -1,4 +1,4 @@
-"""Expiry and deletion remove a report together with its artifact, so neither its metadata nor its download is served."""
+"""Expiry and deletion remove a report with its artifact, so neither its metadata nor its download is served."""
 
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock

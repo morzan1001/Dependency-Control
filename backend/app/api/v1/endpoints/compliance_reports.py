@@ -223,7 +223,7 @@ async def delete_report(
 
 
 async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, user: User) -> None:
-    """BackgroundTask target: run the engine, announce the outcome by webhook and tell project members once it is ready."""
+    """Run the engine, announce the outcome by webhook and tell project members once the report is ready."""
     try:
         status, summary = await ComplianceReportEngine().generate(report=report, db=db, user=user)
     except Exception:

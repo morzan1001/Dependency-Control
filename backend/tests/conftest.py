@@ -56,8 +56,7 @@ TEST_PURL_REQUESTS = "pkg:pypi/requests@2.31.0"
 
 @pytest.fixture(autouse=True)
 def _isolate_analytics_cache():
-    """The analytics endpoints share process-level TTL caches; clear them around every test
-    so one test's memoized aggregation can't leak into the next."""
+    """Clear the process-level analytics TTL caches so one test's memoized aggregation can't leak into the next."""
     from app.services.analytics.cache import get_analytics_cache, get_delta_cache
 
     get_analytics_cache().clear()

@@ -173,8 +173,7 @@ def _stand_in(name: str, schema: dict):
 
 
 def _project_scoped_cases() -> list[tuple[str, dict]]:
-    """Every tool taking a project_id, with each of its id arguments set to an operator and each
-    bounded argument at the default the argument check would fill in."""
+    """Each project_id tool with every id argument set to an operator and bounded arguments at their defaults."""
     cases: list[tuple[str, dict]] = []
     for definition in TOOL_DEFINITIONS:
         function = definition["function"]

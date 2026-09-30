@@ -313,11 +313,7 @@ def _analyzer_outcomes(results_summary: list[str]) -> dict[str, str]:
 
 
 def _failed_analyzer_names(outcomes: dict[str, str]) -> tuple[list[str], list[str]]:
-    """(analyzers, enrichments) that failed or ran partially.
-
-    An enrichment (EPSS/KEV, reachability) loses metadata, not findings, so it is recorded on the
-    scan without downgrading its status.
-    """
+    """(analyzers, enrichments) that failed or ran partially; a failed enrichment loses metadata, not findings."""
     failed = sorted(name for name, status in outcomes.items() if _outcome_rank(status))
     return (
         [name for name in failed if name not in _POST_PROCESSOR_ANALYZERS],
@@ -905,10 +901,7 @@ async def _finalize_scan_and_project(
 async def _filter_out_waived_findings(
     findings: list[dict[str, Any]], scan_id: str, db: Database
 ) -> list[dict[str, Any]]:
-    """Drop the records waived in this scan so notifications/webhooks match the waiver-aware stats.
-
-    Waivers are applied only as DB updates, so the persisted waived ``_id``s are re-read.
-    """
+    """Drop the records waived in this scan, re-read from the DB because waivers are applied only there."""
     finding_repo = FindingRepository(db)
     waived = {doc["_id"] async for doc in finding_repo.iterate_raw({"scan_id": scan_id, "waived": True}, {"_id": 1})}
     return [record for record in findings if record["_id"] not in waived]

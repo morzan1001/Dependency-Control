@@ -1,5 +1,4 @@
-"""Tokens end where the account says they end: an exchanged refresh token, a spent one-time code, a
-superseded reset link and a logged-out bearer stop working, whatever state the cache is in."""
+"""Exchanged, spent, superseded and logged-out tokens stop working whatever state the cache is in."""
 
 import asyncio
 import re

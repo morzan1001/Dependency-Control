@@ -122,7 +122,7 @@ _PARTIALLY_WAIVED = 3
 
 @pytest.mark.asyncio
 async def test_a_partially_waived_record_counts_once_in_the_coverage(db, monkeypatch):
-    """Such a record is in both the live and the waiver-touched read; counting it twice claims rows the scan does not hold."""
+    """Such a record is in both the live and the waiver-touched read; counting it twice claims rows the scan lacks."""
     monkeypatch.setattr(findings_delta_module, "MAX_FETCH", _CAP)
     _seed_diverging_natural_order(db["findings"], _vuln, _POPULATION)
     for doc in db["findings"]._docs.values():

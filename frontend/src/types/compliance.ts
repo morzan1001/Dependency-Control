@@ -28,7 +28,7 @@ export interface InputCoverage {
   limit: number;
 }
 
-// What the report's verdicts were computed over, per input a verdict can rest on; null for one the framework never reads.
+// What each input the verdicts rest on covered; null for an input the framework never reads.
 export interface EvaluationCoverage {
   findings?: InputCoverage | null;
   crypto_assets?: InputCoverage | null;

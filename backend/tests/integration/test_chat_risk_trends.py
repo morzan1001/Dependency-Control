@@ -1,5 +1,4 @@
-"""get_risk_trends charts each project's head branch: one point per period from the last usable build
-of each project, summed over projects, newest period first so a truncated answer loses the oldest end."""
+"""get_risk_trends sums each project's last usable head build per period, newest first so truncation cuts the oldest."""
 
 from datetime import datetime, timedelta, timezone
 

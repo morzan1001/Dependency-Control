@@ -100,8 +100,7 @@ class CacheTTL:
     # Update frequency analysis (changes only on new scan completion)
     UPDATE_FREQUENCY = 30 * 60  # 30 minutes
 
-    # Keyed by the scan's completion, so every finished analysis misses; TTL only bounds
-    # staleness of the cross-project signal woven in.
+    # Keyed by the scan's completion, so the TTL only bounds staleness of the cross-project signal.
     RECOMMENDATIONS = 10 * 60  # 10 minutes
 
     # Long TTL: version histories almost never change retroactively; new releases append.

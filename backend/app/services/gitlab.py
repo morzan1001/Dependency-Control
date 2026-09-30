@@ -41,8 +41,7 @@ logger = logging.getLogger(__name__)
 
 _GITLAB_API_TIMEOUT = 10.0
 
-# The project read, the group lookup and the member listing run inside the ingest request, and the
-# listing is uncapped, so a large group is many pages of 10s each. This bounds the reads as a whole.
+# Bounds the in-request project, group and uncapped member reads together; a large group is many 10s pages.
 _GITLAB_RESOLUTION_TIMEOUT = 30.0
 
 
@@ -72,8 +71,7 @@ def group_full_path(group: dict[str, Any], fallback: str = "") -> str:
 
 
 def build_group_options(groups: list[dict[str, Any]]) -> list[GitLabGroupOption]:
-    """The groups a human can bind to. An entry that cannot address a group is left out, as it is
-    everywhere else."""
+    """The groups a human can bind to; an entry that cannot address a group is left out."""
     options = []
     for group in groups:
         group_id = group.get("id")
@@ -480,13 +478,7 @@ class GitLabService:
         gitlab_members: list[GitLabMember],
         user_repo: UserRepository,
     ) -> tuple[list[TeamMember], int, bool]:
-        """Resolve each GitLab member to an EXISTING local user: the owners, the unresolved count, and
-        whether anyone resolved at all.
-
-        Tagged with this instance so the merge in ``_upsert_team_with_members`` refreshes only the
-        subset this instance established. Members without a verified local account are skipped:
-        a self-chosen username proves nothing, and sync never creates users.
-        """
+        """(owners, unresolved count, any resolved), matching only verified local users, tagged with this instance."""
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
         resolved_any = False
@@ -542,11 +534,7 @@ class GitLabService:
 
     @staticmethod
     def _renamed_fields(team: dict[str, Any], stored_path: str | None, group_path: str) -> dict[str, Any]:
-        """The name to follow GitLab with, while the team still carries the one this binding generated.
-
-        A team its owner renamed keeps that name for good, and so does one named after another
-        instance's binding: following it would rename the team back and forth between the two.
-        """
+        """Rename only a team still named by this binding; another binding's name would flip back and forth."""
         if not stored_path or stored_path == group_path or team.get("name") != _auto_team_name(stored_path):
             return {}
         return {"name": _auto_team_name(group_path), "description": _auto_team_description(group_path)}
@@ -595,11 +583,7 @@ class GitLabService:
         group_path: str,
         team_members: list[TeamMember] | None,
     ) -> TeamSyncResult:
-        """The team backing the group, refreshed or created.
-
-        No team and none creatable is an answer, not a failure: the group's members are all
-        strangers here, so nothing in Dependency Control owns the project.
-        """
+        """The team backing the group, refreshed or created; none creatable means no owner here, not a failure."""
         if existing_team:
             await self._refresh_team(team_repo, existing_team, group_id, group_path, team_members)
             return TeamSyncResult([str(existing_team["_id"])])
@@ -636,16 +620,7 @@ class GitLabService:
         *,
         owner_budget: int = MAX_PROJECT_TEAMS,
     ) -> TeamSyncResult:
-        """Sync the GitLab group's members to a local Team and report which team owns the project.
-
-        Undetermined on any failure: the owning group is what GitLab was asked for, and an
-        unanswered question must not read as "this project has no GitLab owner".
-
-        ``owner_budget`` is how many owners the project has room for. Below one no team is created:
-        a team created for an ownership write that is then refused is a team nobody owns anything through.
-
-        Never raises.
-        """
+        """Sync the group's team; undetermined on failure, none created at zero ``owner_budget``; never raises."""
         team_repo = TeamRepository(db)
         user_repo = UserRepository(db)
 

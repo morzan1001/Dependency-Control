@@ -38,12 +38,10 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
 
-# Findings held in memory for one report. The widest projection, a crypto finding's, measures 1.7 KiB per
-# document, so a report at the cap holds ~33 MiB.
+# Per report; a crypto finding, the widest projection, measures 1.7 KiB, so the cap holds ~33 MiB.
 _FINDINGS_LIMIT = 20000
 
-# Crypto assets held in memory for one report, across every scan in scope. A projected CryptoAsset measures
-# 2.3 KiB validated, so a report at the cap holds ~22 MiB.
+# Per report across all its scans; a validated CryptoAsset measures 2.3 KiB, so the cap holds ~22 MiB.
 _CRYPTO_ASSETS_LIMIT = 10000
 
 _REPORT_SLOTS = asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS)
@@ -189,8 +187,7 @@ class ComplianceReportEngine:
         resolved: ResolvedScope,
         producers: frozenset[str],
     ) -> tuple[dict[str, str], list[str]]:
-        """project_id -> the scan evaluated for it, and each part of the scope no input covers: a project
-        without a usable scan, a scan whose producing analyzer failed, a project running none of them."""
+        """project_id -> evaluated scan, plus the gaps: no usable scan, a failed producing analyzer, or none running."""
         from app.services.releases import resolve_scan_ids
 
         projects = resolved.projects
@@ -222,8 +219,7 @@ class ComplianceReportEngine:
         db: AsyncIOMotorDatabase,
         scan_by_project: dict[str, str],
     ) -> tuple[list[CryptoAsset], int]:
-        """The inventory the controls are evaluated over, and how many assets the scope holds. The
-        budget spans the whole report, so a global scope cannot multiply it by its scan count."""
+        """The inventory and the scope's asset count; one budget for the whole report, not one per scan."""
         query = {"project_id": {"$in": list(scan_by_project)}, "scan_id": {"$in": list(scan_by_project.values())}}
         docs, in_scope = await find_window(
             db.crypto_assets, query, _CRYPTO_ASSETS_LIMIT, projection=dict.fromkeys(_CRYPTO_ASSET_FIELDS, 1)
@@ -264,8 +260,7 @@ class ComplianceReportEngine:
     def _finding_type_filter(
         self, framework: ComplianceFramework
     ) -> tuple[dict[str, Any], tuple[str, ...], frozenset[str]] | None:
-        """The findings clause, the fields beyond the base ones and the analyzers producing those
-        findings, per framework; None for one that reads no findings."""
+        """Findings clause, extra fields and producing analyzers; None for a framework that reads no findings."""
         if framework.key == ReportFramework.PQC_MIGRATION_PLAN:
             return None
         if framework.key == ReportFramework.CVE_REMEDIATION_SLA:

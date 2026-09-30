@@ -45,9 +45,7 @@ def _checked(name: str, schema: dict[str, Any], value: Any) -> Any:
 
 
 def checked_arguments(tool_name: str, arguments: Any) -> dict[str, Any]:
-    """The arguments the tool declares, each of its declared type and vocabulary, with every declared
-    default filled and every bounded number held to its range; undeclared keys are dropped so a model
-    that adds one still gets its answer. Any other null stays null, which handlers read as not given."""
+    """Declared arguments typed, defaulted and clamped; extra keys are dropped so the model still gets an answer."""
     if not isinstance(arguments, dict):
         raise ToolArgumentError("Tool arguments must be a JSON object")
     declared = _DECLARED_PROPERTIES.get(tool_name, {})

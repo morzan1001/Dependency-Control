@@ -30,14 +30,7 @@ class MemberSubset(NamedTuple):
 
 
 def _subset_members(subset: MemberSubset) -> dict[str, Any]:
-    """The stored members with exactly the entries ``subset.source`` established replaced.
-
-    Merging a snapshot in Python and writing the whole array back loses a member added between
-    that read and the write, and the add has already been reported as done to whoever made it.
-    Everything the sync does not own is carried over untouched and wins over a resolved entry for
-    the same user, so a hand-added member keeps the role an admin gave them and stays when they
-    leave the group.
-    """
+    """Server-side swap of the ``subset.source`` entries: a concurrent add survives and a hand-added member wins."""
     kept = {
         "$filter": {
             "input": {"$ifNull": [f"${_MEMBERS}", []]},

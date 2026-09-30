@@ -38,7 +38,6 @@ _SIDE_SORT: list[tuple[str, int]] = [("component", 1), ("version", 1)]
 
 
 def _first_id(details: dict[str, Any], *keys: str) -> str:
-    """The first truthy ``details[k]`` among ``keys``, stringified; empty when none carries one."""
     for key in keys:
         value = details.get(key)
         if value:
@@ -55,7 +54,6 @@ def _finding_id_identifier(finding: dict[str, Any]) -> str:
 
 
 def sast_rule_ids(details: dict[str, Any]) -> list[str]:
-    """The distinct rule ids of a merged SAST finding, in entry order."""
     entries = details.get("sast_findings") or []
     return list(dict.fromkeys(str(e["id"]) for e in entries if isinstance(e, dict) and e.get("id")))
 
@@ -87,8 +85,7 @@ def _crypto_identifier(finding: dict[str, Any]) -> str:
 
 
 def _vulnerability_identifier(finding: dict[str, Any], include_waived: bool) -> str:
-    """Version plus the sorted advisory ids the side still reports, so a bump or a CVE gained or dropped
-    reads as a change; ``include_waived`` keys every entry, the identity had no waiver applied."""
+    """Version plus the reported advisory ids, so a bump or a CVE gained or dropped reads as a change."""
     entries = [e for e in (finding.get("details") or {}).get("vulnerabilities") or [] if isinstance(e, dict)]
     ids = _joined_ids(e for e in entries if include_waived or not e.get("waived"))
     version = finding.get("version") or ""
@@ -120,12 +117,7 @@ def _fallback_identifier(finding: dict[str, Any]) -> str:
 
 
 def finding_identity_key(finding: dict[str, Any], *, include_waived: bool = False) -> tuple[str, str, str]:
-    """Stable identity for matching the same finding across two scans. finding_id is deterministic, but
-    crypto's embeds the per-scan bom-ref and a vulnerability's leaves out its advisories.
-
-    ``include_waived`` keys a vulnerability record on every entry rather than only the live ones,
-    which is the identity it would have carried had no waiver been applied to it.
-    """
+    """Cross-scan identity: crypto's finding_id embeds the per-scan bom-ref, a vulnerability's omits its advisories."""
     ftype = finding.get("type") or ""
     component = finding.get("component") or ""
 
@@ -152,8 +144,7 @@ def advisory_keys(finding: dict[str, Any]) -> set[tuple[str, str]]:
     return {(artifact, cve) for cve in live_cves([finding.get("details")])}
 
 
-# Projecting details.vulnerabilities to .id avoids pulling the full per-CVE payload (hundreds of MB
-# on large scans) into the worker.
+# Only details.vulnerabilities.id: the full per-CVE payload reaches hundreds of MB on large scans.
 FINDING_IDENTITY_PROJECTION: dict[str, int] = dict.fromkeys(
     (
         "type",
@@ -179,8 +170,7 @@ _FETCH_PROJECTION: dict[str, int] = {
 }
 
 
-# Waived risk is out of every other metric, so the delta compares what is delivered. Documents
-# predating the flag carry no key and count as not waived.
+# The delivered risk, as in every other metric; documents predating the flag lack the key and count as unwaived.
 _LIVE = {"waived": {"$ne": True}}
 # A per-CVE waiver leaves the document-level flag unset.
 _WAIVER_TOUCHED = {"$or": [{"waived": True}, {"details.vulnerabilities.waived": True}]}
@@ -268,8 +258,7 @@ def _match(
 
 
 def _split_changed(removed: list[dict], added: list[dict]) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
-    """A vulnerability record whose version or advisories moved is the lone unpaired record of its
-    artifact on each side."""
+    """A vulnerability record whose version or advisories moved is its artifact's lone unpaired record per side."""
     vulnerable = [[d for d in docs if d.get("type") == "vulnerability"] for docs in (removed, added)]
     by_artifact = by_side(lambda doc: extract_artifact_name(doc.get("component") or ""), *vulnerable)
     changed = [(gone[0], new[0]) for gone, new in by_artifact.values() if len(gone) == len(new) == 1]
@@ -288,13 +277,7 @@ def _waiver_only_changes(
     from_read: list[dict],
     to_read: list[dict],
 ) -> int:
-    """Reported items the same comparison would not have produced had no waiver applied.
-
-    Waivers are re-evaluated only for the newest scan, so the older side's flags are frozen: a
-    waiver that lapsed since makes a pre-existing finding read as added, and a waiver created since
-    makes one read as removed. Both sides can hide the same number of findings while hiding
-    different ones, so a count comparison cannot see either.
-    """
+    """Items only waivers produced: the older side's flags stay frozen while waivers lapse or get created."""
     _, still_removed, still_added = _match(from_read, to_read, include_waived=True)
     real = {doc["_id"] for doc in (*still_removed, *still_added)}
     return sum(doc["_id"] not in real for doc in (*removed, *added)) + sum(
@@ -311,7 +294,6 @@ async def compare_findings(
     severity: list[str] | None,
     finding_type: list[str] | None,
 ) -> ScanDeltaResponse:
-    """Every finding change between two scans, sorted, with totals, waiver counts and coverage."""
     (from_live, from_read, from_total, from_waived), (to_live, to_read, to_total, to_waived) = await both_sides(
         lambda scan_id: _read_side(db, _side_query(project_id, scan_id, finding_type)), from_scan, to_scan
     )
@@ -331,7 +313,7 @@ async def compare_findings(
     items = [_to_item(doc, "added") for doc in added]
     items += (_to_changed_item(gone, new) for gone, new in changed)
     items += (_to_item(doc, "removed") for doc in removed)
-    # Stable sort (added, changed, removed, then severity, title, finding_id) for deterministic pagination.
+    # finding_id breaks ties so pagination does not depend on fetch order.
     items.sort(key=lambda i: (i.change, -get_severity_value(i.severity), i.title, i.finding_id))
 
     return ScanDeltaResponse(

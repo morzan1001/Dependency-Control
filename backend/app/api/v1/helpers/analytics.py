@@ -233,10 +233,7 @@ def impact_pre_score(severity_counts: dict[str, int], affected_projects: int) ->
 
 
 def select_impact_candidates[T](scored: list[tuple[float, T]], limit: int) -> list[T]:
-    """Payloads, scored by impact_pre_score, whose boosted ceiling can still beat the limit-th pre-score.
-
-    The boosts come from enrichment, so only these contenders need enriching and no true top-`limit` fix is lost.
-    """
+    """Payloads whose enrichment-boosted ceiling can still beat the limit-th pre-score; only these need enriching."""
     ranked = sorted(scored, key=lambda t: t[0], reverse=True)
     if len(ranked) <= limit:
         return [payload for _, payload in ranked]

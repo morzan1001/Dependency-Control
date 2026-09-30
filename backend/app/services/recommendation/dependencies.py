@@ -174,8 +174,7 @@ def analyze_version_fragmentation(
                         [
                             {
                                 "name": f["name"],
-                                # A set has no order, so rank before sampling: the newest versions are
-                                # what a reader pinning to one needs to see.
+                                # Sets are unordered; rank first so the sample shows the newest versions.
                                 "versions": newest_first(f["versions"])[:ACTION_VERSION_SAMPLE],
                                 "version_count": f["count"],
                                 "suggestion": f"Pin to {newest_first(f['versions'])[0]}",

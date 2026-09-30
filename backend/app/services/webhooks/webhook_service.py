@@ -214,7 +214,7 @@ class WebhookService:
     async def _post_bounded(
         self, client_name: str, webhook: Webhook, content: str, headers: Mapping[str, str]
     ) -> tuple[int | None, str | None, float | None]:
-        """One POST under one overall deadline: the status, the error text, and the delay before a retry (None: do not retry)."""
+        """One POST under one deadline: the status, the error text and the retry delay (None: do not retry)."""
         try:
             async with asyncio.timeout(self.timeout):
                 transport = await build_pinned_transport(webhook.url)
@@ -304,7 +304,7 @@ class WebhookService:
         *,
         team_ids: Sequence[str] | None = None,
     ) -> list[Webhook]:
-        """Deliverable webhooks of the project, the owning teams (read from the project unless given) and global scope."""
+        """Deliverable webhooks of the project, its owning teams (read from it unless given) and global scope."""
         if team_ids is None:
             team_ids = []
             if project_id:

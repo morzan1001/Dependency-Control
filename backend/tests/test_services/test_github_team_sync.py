@@ -133,10 +133,7 @@ def _sync_stubs(
     repo_map=_FROM_ACCESS,
     repository_status=200,
 ):
-    """Stub everything the sync reads: the organisation listing and map, the checks and the members.
-
-    Unless given, the map names every team ``access`` answers for as a holder of acme/widgets.
-    """
+    """Stub the sync's reads; unless given, the map names every team ``access`` answers for as holding acme/widgets."""
     answers = access or {}
     if repo_map is _FROM_ACCESS:
         repo_map = {"acme/widgets": [team["id"] for team in org_teams or [] if team["slug"] in answers]}
@@ -555,8 +552,7 @@ class TestSyncTeamFromGithub:
 
     @pytest.mark.asyncio
     async def test_a_stale_binding_that_owns_nothing_here_no_longer_freezes_the_organisation(self, caplog):
-        """Nothing removes a binding whose GitHub team was deleted, and it held every repository of
-        the organisation undetermined for as long as it stayed."""
+        """A deleted GitHub team's binding is never removed, so it must not hold the organisation undetermined."""
         service = _service()
         team_repo = _team_repo(_bound("t-gone", 6666, slug="dissolved", name="Dissolved"), _bound("t-pay", 4711))
 
@@ -570,8 +566,7 @@ class TestSyncTeamFromGithub:
 
     @pytest.mark.asyncio
     async def test_a_bound_team_neither_on_the_map_nor_an_owner_is_never_asked_directly(self):
-        """Asking every bound team of the organisation about every repository is what burnt the
-        token's budget; the map already says which of them hold this one."""
+        """Asking every bound team about every repository burns the token's budget; the map names the holders."""
         service = _service()
         team_repo = _team_repo(_bound("t-platform", 100, slug="platform", name="Platform"), _bound("t-pay", 4711))
         access = {"payments": True, "platform": True}

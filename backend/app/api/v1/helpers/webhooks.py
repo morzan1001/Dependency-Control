@@ -31,10 +31,7 @@ async def check_webhook_permission(
     project_id: str | None = None,
     team_id: str | None = None,
 ) -> None:
-    """The permission plus scope access (writes need membership or the write grant, never read_all), else scope admin.
-
-    Global webhooks require system:manage.
-    """
+    """Permission plus scope access (writes never via read_all), else scope admin; global needs system:manage."""
     has_perm = has_permission(current_user.permissions, required_permission)
     if project_id:
         if not has_perm:

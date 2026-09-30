@@ -103,8 +103,7 @@ async def test_a_dependency_tree_inside_its_ceiling_carries_no_caveat(seeded, ad
 
 @pytest.mark.asyncio
 async def test_the_byte_cap_note_names_the_population_not_the_page(seeded, admin_user):
-    """The page cuts first and the byte cap cuts what is left; naming the page as what the byte
-    cap cut from understates the tree by everything past the page."""
+    """The page cuts first, so naming it as the byte cap's base would understate the tree by everything past it."""
     population = _DEPENDENCY_PAGE + _OVER_THE_CEILING
     _fill(
         seeded.dependencies,

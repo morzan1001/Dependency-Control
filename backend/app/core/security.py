@@ -77,7 +77,6 @@ def decode_session_token(token: str, expected_type: str) -> TokenPayload | None:
 
 
 def create_access_token(subject: str, permissions: list[str] | None = None) -> str:
-    """Create an access token with permissions."""
     return _create_token(
         subject=subject,
         token_type="access",
@@ -93,7 +92,6 @@ def create_refresh_token(subject: str) -> str:
 
 
 def create_token_pair(subject: str, permissions: list[str]) -> tuple[str, str]:
-    """The access and refresh token that open a session for ``subject``."""
     return create_access_token(subject, permissions), create_refresh_token(subject)
 
 
@@ -118,7 +116,6 @@ def verify_totp(secret: str, code: str) -> int | None:
 
 
 def create_email_verification_token(email: str) -> str:
-    """Create an email verification token."""
     expire = datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS)
     return _create_token(subject=email, token_type="email_verification", expire=expire)
 
@@ -129,7 +126,6 @@ def verify_email_verification_token(token: str) -> str | None:
 
 
 def create_email_change_token(user_id: str, new_email: str) -> str:
-    """Create a token confirming that user_id may switch to new_email."""
     expire = datetime.now(timezone.utc) + timedelta(hours=EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS)
     return _create_token(subject=user_id, token_type="email_change", expire=expire, extra_claims={"email": new_email})
 
@@ -148,7 +144,6 @@ def password_fingerprint(hashed_password: str | None) -> str:
 
 
 def create_password_reset_token(email: str, hashed_password: str | None) -> str:
-    """Create a password reset token bound to the account's current password."""
     expire = datetime.now(timezone.utc) + timedelta(hours=PASSWORD_RESET_TOKEN_EXPIRE_HOURS)
     return _create_token(
         subject=email,

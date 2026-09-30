@@ -1,5 +1,4 @@
-"""Single sign-on finishes only in the browser that started it, hands the session over by cookie once,
-and sends every failure back to the login page with a fixed code."""
+"""SSO finishes only in its starting browser, hands over the session cookie once and fails with a fixed code."""
 
 import functools
 from unittest.mock import patch

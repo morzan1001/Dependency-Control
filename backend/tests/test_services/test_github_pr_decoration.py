@@ -207,8 +207,7 @@ def _json_response(payload, status_code=200):
 
 
 class TestPullRequestWorkflowScans:
-    """A `pull_request` workflow scans GITHUB_SHA, the test-merge commit of the PR head into its base.
-    GitHub replaces the PR's merge_commit_sha whenever it re-tests mergeability, e.g. after the base moved."""
+    """GITHUB_SHA is the test-merge commit; GitHub replaces merge_commit_sha whenever it re-tests mergeability."""
 
     @staticmethod
     def _decorate(pr_head):

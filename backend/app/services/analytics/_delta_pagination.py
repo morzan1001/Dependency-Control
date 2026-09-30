@@ -73,8 +73,7 @@ def by_side(key: Callable[[T], K], from_items: Iterable[T], to_items: Iterable[T
 
 
 def pair_versions(from_docs: list[dict], to_docs: list[dict]) -> tuple[list[tuple[dict, dict]], list[dict], list[dict]]:
-    """Pair the documents both sides hold under one identity: a lone document per side pairs whatever
-    its version, otherwise equal versions pair. Returns the pairs and the unpaired removed and added."""
+    """A lone doc per side pairs whatever its version, else equal versions pair; returns pairs, removed, added."""
     if len(from_docs) == len(to_docs) == 1:
         return [(from_docs[0], to_docs[0])], [], []
     by_version: dict[str, list[dict]] = defaultdict(list)

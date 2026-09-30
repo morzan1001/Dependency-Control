@@ -1,4 +1,4 @@
-"""MongoDB access for crypto_policy_history; every read names its policy_type, so crypto and license policies share one collection, and docs missing the field are treated as crypto."""
+"""Crypto and license entries share crypto_policy_history; a document without policy_type is a crypto one."""
 
 from datetime import datetime
 from typing import Any, Literal

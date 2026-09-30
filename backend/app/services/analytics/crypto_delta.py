@@ -49,7 +49,6 @@ async def _side_assets(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) 
 async def compare_crypto(
     db: AsyncIOMotorDatabase, *, project_id: str, from_scan: str, to_scan: str
 ) -> ScanDeltaResponse:
-    """Every crypto change between two scans, sorted, with totals and coverage."""
     (from_assets, from_total), (to_assets, to_total) = await both_sides(
         lambda scan_id: _side_assets(db, project_id, scan_id), from_scan, to_scan
     )

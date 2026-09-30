@@ -15,8 +15,6 @@ from app.models.types import PyObjectId
 
 
 class ProjectWithScanId(BaseModel):
-    """Project with ID, name, latest scan ID, the branch fields head resolution reads and its analyzers."""
-
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
     name: str
     latest_scan_id: str | None = None

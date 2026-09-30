@@ -820,14 +820,7 @@ async def compute_update_frequency(
     release_fetcher: ReleaseHistoryFetcher | None = None,
     hard_limit: int = WINDOW_HARD_LIMIT,
 ) -> UpdateFrequencyMetrics:
-    """Compute update-frequency metrics for one project on one branch.
-
-    Comparing across branches would count branch differences as updates;
-    ``branch`` is None when the project has no live branch to describe. With
-    ``window_days`` set, all scans of that calendar window are analysed (up
-    to ``hard_limit``). Otherwise the newest ``max_scans`` are taken and no
-    monthly rate is reported, since there is no shared denominator.
-    """
+    """One branch's metrics (other branches' differences are no updates); only ``window_days`` yields a monthly rate."""
     if branch is None:
         return _empty_metrics(project_id, project_name, 0, "", branch=None)
     since = window_cutoff(window_days)

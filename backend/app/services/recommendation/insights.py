@@ -256,8 +256,7 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
                 [
                     {
                         "name": p["name"],
-                        # $addToSet has no order, so rank before sampling: the newest versions
-                        # are the ones a reader standardising on one needs to see.
+                        # $addToSet is unordered; rank first so the sample shows the newest versions.
                         "versions": newest_first(p["versions"])[:ACTION_VERSION_SAMPLE],
                         "version_count": p["version_count"],
                         "suggestion": newest_first(p["versions"])[0],

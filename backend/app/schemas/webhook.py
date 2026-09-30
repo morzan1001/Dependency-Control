@@ -107,7 +107,6 @@ def validate_webhook_headers(headers: dict[str, str] | None) -> dict[str, str] |
 
 
 def detect_webhook_type(url: str) -> WebhookType:
-    """Returns "teams" for *.webhook.office.com, *.logic.azure.com/workflows/, and *.api.powerplatform.com/workflows/."""
     parsed = urlparse(url)
     hostname = (parsed.hostname or "").lower()
     path = parsed.path or ""

@@ -527,7 +527,7 @@ async def test_a_side_whose_rows_were_rewritten_is_compared_again(db, rewrite):
 
 @pytest.mark.asyncio
 async def test_a_side_still_being_analysed_is_never_cached(db):
-    """Re-analysis deletes the scan's findings before inserting the new ones, so a comparison read meanwhile is partial."""
+    """Re-analysis deletes the scan's findings before inserting new ones, so a comparison read meanwhile is partial."""
     await _seed_finished_sides(db, status=SCAN_STATUS_PROCESSING)
     with patch(
         "app.services.analytics.scan_delta.compare_findings",

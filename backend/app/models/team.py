@@ -58,8 +58,7 @@ def binding_of(team: dict[str, Any], instance_id: str) -> dict[str, Any] | None:
 
 
 class TeamSyncResult(NamedTuple):
-    """The teams a provider says own a project; None when it could not be asked, which leaves the
-    owners it set alone where the empty list retires them."""
+    """``team_ids`` None: the provider could not be asked, so the owners it set stay; ``[]`` retires them."""
 
     team_ids: list[str] | None
 

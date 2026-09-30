@@ -26,8 +26,7 @@ class _Entry:
 
 
 class TTLCache:
-    """LRU cache with per-entry TTL whose values' summed ``size_of`` stays within ``maxsize``; not thread-safe
-    (callers are single-threaded per event-loop)."""
+    """LRU cache with per-entry TTL, bounded by the summed ``size_of``; not thread-safe (one event loop)."""
 
     def __init__(self, maxsize: int, ttl_seconds: int, size_of: Callable[[Any], int] = lambda _value: 1):
         self.maxsize = maxsize
@@ -53,8 +52,7 @@ class TTLCache:
         self._size -= self._store.pop(key).size
 
     def set(self, key: Hashable, value: Any) -> None:
-        """Insert or update an entry after dropping expired ones, then evict LRU entries over capacity; a value
-        heavier than the whole cache only drops the stale one under its key."""
+        """A value heavier than the whole cache is not stored; it only drops the stale entry under its key."""
         now = time.monotonic()
         # get() reorders without refreshing expiry, so LRU order is not expiry order.
         for stale in [k for k, entry in self._store.items() if entry.expires_at < now or k == key]:

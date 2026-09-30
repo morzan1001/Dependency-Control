@@ -10,7 +10,6 @@ _REPLY_RESERVE_TOKENS = 2048
 
 
 def _approx_tokens(value: Any) -> int:
-    """Rough token estimate: ~4 UTF-8 bytes per token."""
     return len(json.dumps(value, ensure_ascii=False, default=str).encode()) // 4
 
 
@@ -119,7 +118,6 @@ def build_messages(
     new_message: str,
     budget: int,
 ) -> list[dict[str, Any]]:
-    """Build the Ollama message list, replaying stored tool calls in the order they ran, trimmed to the budget."""
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": SYSTEM_PROMPT},
     ]

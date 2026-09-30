@@ -36,12 +36,7 @@ async def build_user_project_query(
     user: User,
     team_repo: TeamRepository,
 ) -> dict[str, Any]:
-    """Build a MongoDB query for projects the user can access (empty dict for read_all or a write superuser).
-
-    The layers ``check_project_access`` composes, in its order: project:update opens every project,
-    otherwise membership and a project-read permission; a caller with neither permission reads no
-    project through any surface, however many it is a member of.
-    """
+    """The projects ``check_project_access`` admits the user to, as a query; empty for read_all or a write superuser."""
     if is_write_superuser(user):
         return {}
 
@@ -214,8 +209,7 @@ async def authorize_waiver_read(project_id: str | None, user: User, db: AsyncIOM
         await check_project_access(project_id, user, db)
 
 
-# Every owning team's member ids as one flat list. A field path across two array levels answers
-# an array per team, which the $in below can never match an id against.
+# Flattened: a path across two array levels yields one array per team, which $in never matches an id against.
 _OWNING_TEAM_MEMBER_IDS = {
     "$reduce": {
         "input": {"$ifNull": ["$team_data", []]},
@@ -262,8 +256,7 @@ def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
 
 async def load_project_with_members(db: AsyncIOMotorDatabase, project_id: str) -> dict[str, Any] | None:
     """The raw project with every member named: its own, then each owning team's at the role it grants."""
-    # One aggregation instead of N+1 lookups. The owning teams stay an array: an array localField
-    # joins many, and unwinding them would answer one copy of the project per owner.
+    # The owning teams stay an array: unwinding them would answer one copy of the project per owner.
     pipeline: list[dict[str, Any]] = [
         {"$match": {"_id": project_id}},
         {"$lookup": {"from": "teams", "localField": "team_ids", "foreignField": "_id", "as": "team_data"}},

@@ -1,5 +1,4 @@
-"""Two ingests of one group that both find no team: the unique binding index lets one create it, and
-the other has to own the project through the team that won rather than through nobody."""
+"""Two ingests racing to create a group's team: one wins on the unique index, the other owns through it."""
 
 import asyncio
 import logging

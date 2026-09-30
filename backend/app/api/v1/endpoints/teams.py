@@ -296,13 +296,7 @@ async def clear_team_binding(
     current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> TeamResponse:
-    """Remove a team's binding for one instance together with the members that instance's sync
-    added, leaving the bindings it holds on the others. Its projects keep the team they have; no
-    later ingest from that instance resolves to it.
-
-    It stays cleared because no sync ever binds an existing team: a group left without one gets a
-    team of its own, and only this endpoint's system:manage grants a team a group's projects.
-    """
+    """Remove the team's binding for one instance and the members that sync added; the team keeps its projects."""
     team_repo = TeamRepository(db)
     team = await team_repo.get_raw_by_id(team_id)
     if not team:

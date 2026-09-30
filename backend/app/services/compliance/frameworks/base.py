@@ -62,9 +62,7 @@ def _withheld(
     read: InputCoverage | None,
     subject: str,
 ) -> tuple[ControlStatus, str | None]:
-    """`status`, or NOT_EVALUATED and why, when the scope has gaps or the input it rests on did not
-    cover the scope. Call it only for a status whose evidence is that input holding no match: FAILED
-    never qualifies, because a cut input under-reports a violation but cannot invent one."""
+    """`status` unless gaps or a cut input could hide a match; not for FAILED, which a cut input cannot invent."""
     if coverage.gaps:
         return ControlStatus.NOT_EVALUATED, _GAPS_REASON.format(
             subject=subject, gaps=name_some(coverage.gaps, NAMES_SHOWN)
@@ -126,9 +124,7 @@ def default_evaluator(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> ControlResult:
-    """The matching findings' verdict. FAILED always stands; any other verdict turns NOT_EVALUATED when
-    the policy or inventory says a finding could be missing, and with no finding NOT_APPLICABLE when
-    no asset of the rules' kind or no enabled rule is in scope."""
+    """FAILED stands; else NOT_EVALUATED when a finding could be missing, NOT_APPLICABLE when nothing is in scope."""
     matching = [f for f in data.findings if _finding_matches_control(f, control)]
     status, evidence, status_reason = _classify(matching, data.coverage)
     if status is not ControlStatus.FAILED:
@@ -164,11 +160,7 @@ def _applicability(
     data: EvaluationInput,
     matching: list[dict[str, Any]],
 ) -> tuple[_Applicability, str | None]:
-    """Whether the control has a subject in scope, and why its verdict is unevaluated when it cannot be judged.
-
-    The inapplicable answers are told apart because only NO_ASSET_IN_SCOPE is read off the
-    inventory, and only that one is unsafe to state over a truncated inventory.
-    """
+    """Only NO_ASSET_IN_SCOPE rests on the inventory, so only it is unsafe over a truncated one."""
     rules = [rule for rule in data.policy_rules if rule.rule_id in control.maps_to_rule_ids]
     if not rules:
         unresolved = (
@@ -208,8 +200,7 @@ def _applicability(
 
 
 def _is_subject(asset: CryptoAsset, rule: CryptoRule) -> bool:
-    """Whether the rule judges the asset: a threshold rule what its scope matches, a deny-list rule
-    every asset of its primitive or protocol family, so a clean inventory of that kind passes it."""
+    """Threshold rules judge their scope; deny-list rules judge the whole family, so a clean inventory of it passes."""
     if rule.match_min_key_size_bits is not None:
         return asset_in_rule_scope(asset, rule)
     if rule.match_primitive is not None:

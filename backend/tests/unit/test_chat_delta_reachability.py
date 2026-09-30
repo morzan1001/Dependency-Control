@@ -1,5 +1,4 @@
-"""The chat and MCP delta tool returns the per-category envelope directly. An unlabelled envelope
-would tell the model that a reachability-enriched scan reports no reachability at all."""
+"""The delta tool labels its envelope, else a reachability-enriched scan reads as reporting no reachability."""
 
 import pytest
 

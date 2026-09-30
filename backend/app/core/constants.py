@@ -1147,8 +1147,7 @@ ADHOC_MAX_SCANNER_FINDINGS: int = 5_000
 # import pair: 5 000 such findings over 50 000 pairs take about 20 s.
 ADHOC_MAX_CALLGRAPH_ENTRIES: int = 50_000
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
-# Reports evaluating at once per process. A saturated report holds ~55 MiB of findings and assets, so two slots
-# in each of WORKER_COUNT=2 processes keep evaluation near 220 MiB of the 2 GiB pod limit.
+# Per process; at ~55 MiB per saturated report, 2 slots x 2 workers stay near 220 MiB of the 2 GiB pod limit.
 COMPLIANCE_REPORT_SLOTS: int = 2
 POLICY_AUDIT_DEFAULT_MIN_PRUNE_DAYS: int = 90
 CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500

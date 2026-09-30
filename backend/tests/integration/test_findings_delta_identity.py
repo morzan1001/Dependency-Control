@@ -1,8 +1,4 @@
-"""The findings delta matches what the analyzers actually persist across two scans.
-
-Each case runs real analyzer output through the aggregator and the engine's persist path, so the
-delta sees the documents a scan stores, including the fields that drift between runs.
-"""
+"""The findings delta over what real analyzer output persists across two scans, drifting fields included."""
 
 import copy
 import json
@@ -34,8 +30,7 @@ _PROJECT = "identity-project"
 # Whole seconds, so the server's millisecond precision cannot move the dates the tests compare.
 _NOW = datetime.now(timezone.utc).replace(microsecond=0)
 _FIXTURES = Path(__file__).parents[1] / "fixtures"
-# KICS 2.1.20 on one main.tf with two S3 buckets, then again after four lines were inserted above
-# them, and again with a third bucket appended.
+# KICS 2.1.20 on one main.tf with two S3 buckets, then with four lines inserted above, then a third bucket.
 _KICS = json.loads((_FIXTURES / "iac/kics_2.1.20_terraform.json").read_text())
 _KICS_MOVED_DOWN = json.loads((_FIXTURES / "iac/kics_2.1.20_terraform_moved_down.json").read_text())
 _KICS_THIRD_BUCKET = json.loads((_FIXTURES / "iac/kics_2.1.20_terraform_third_bucket.json").read_text())

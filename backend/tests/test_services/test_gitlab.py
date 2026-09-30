@@ -280,8 +280,7 @@ _GROUP = {
 
 
 class TestGroupLookup:
-    """A binding or an owning group the instance cannot resolve would silently own nothing, so the
-    lookup has to separate "no such group" from "the instance did not answer"."""
+    """An unresolvable group would silently own nothing, so "no such group" must differ from "no answer"."""
 
     _REFS: ClassVar = {
         "by id": (lambda service: service.get_group(77), "/groups/77"),

@@ -1,4 +1,4 @@
-"""Auth endpoint security: refresh-token must not bypass the enforced-2FA setup gate, and email endpoints must gate on the stored system settings."""
+"""Refresh must not bypass the enforced-2FA setup gate, and email endpoints gate on the stored system settings."""
 
 import asyncio
 import time

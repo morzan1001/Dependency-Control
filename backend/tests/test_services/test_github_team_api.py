@@ -314,7 +314,7 @@ class TestTeamRepositoryCheck:
 
     @pytest.mark.asyncio
     async def test_the_checks_share_the_instance_gate(self, fake_cache):
-        """A workflow run of eight jobs asking about every bound team put 960 requests in flight."""
+        """Eight jobs of one workflow run asking about every bound team would put 960 requests in flight."""
         service = _service()
 
         async def _answer(_path, _params):
@@ -412,8 +412,7 @@ class TestOrgTeams:
 
     @pytest.mark.asyncio
     async def test_an_unanswered_listing_is_not_asked_again_inside_the_listing_ttl(self, fake_cache):
-        """A throttled token asked again by every job of the run stays throttled; an hour of it
-        would hold the whole organisation undetermined long after GitHub answers again."""
+        """Re-asking a throttled token on every job keeps it throttled and the organisation undetermined."""
         service = _service()
 
         async def _answer(_path, _params):
@@ -502,9 +501,7 @@ class TestOrgRepositoryMap:
 
     @staticmethod
     def _listings(held: dict[str, list | None], delay: float = 0.0, released: asyncio.Event | None = None):
-        """GET /orgs/{org}/teams/{slug}/repos, one page per team. ``held`` maps a team slug to the
-        repositories it holds — a name, or a name and the access the team has to it — and to None
-        for a listing GitHub refuses."""
+        """Team repo listings; ``held`` maps a slug to names or (name, access) tuples, or None for a refusal."""
 
         def _entry(repository):
             if isinstance(repository, dict):
@@ -766,8 +763,7 @@ class TestOrgRepositoryMap:
 
     @pytest.mark.asyncio
     async def test_a_team_listed_twice_is_walked_once(self, fake_cache):
-        """A page-numbered listing repeats a team that moved while it was read; walked twice it
-        holds the repository twice and counts twice against the project's owner budget."""
+        """A page-numbered listing can repeat a moved team; walked twice it would count twice against the budget."""
         service = _service()
         api = self._listings({"payments": ["acme/widgets"]})
 
@@ -815,8 +811,7 @@ class TestOrgRepositoryMap:
 
     @pytest.mark.asyncio
     async def test_the_walk_budget_starts_once_the_walk_gets_the_gate(self, fake_cache):
-        """A walk paying for the queue behind another organisation's walk timed out and held its
-        organisation undetermined for the hour the failure is cached."""
+        """Queueing behind another organisation's walk must not time this one out and cache the failure."""
         service = _service()
         held = {**{slug: [] for slug in self._teams(16).values()}, "payments": ["acme/widgets"]}
         api = self._listings(held, delay=0.2)
@@ -834,8 +829,7 @@ class TestOrgRepositoryMap:
 
     @pytest.mark.asyncio
     async def test_a_waiter_never_walks_beside_a_walker_still_queued_at_the_gate(self, fake_cache):
-        """The walk budget starts at the gate, so the queue before it counts against no budget of the
-        walk's; a waiter that gave up then and walked as well is the stampede the lock is for."""
+        """The queue before the gate counts against no budget, so a waiter giving up there would stampede."""
         service = _service()
         api = self._listings({"payments": ["acme/widgets"]})
         gate = _org_walk_gate(str(service.instance.id))
@@ -1109,8 +1103,7 @@ class TestPublicProfileEmailCaching:
 
 
 class TestMemberResolution:
-    """Every holder's members are resolved on every ingest, so what one resolution costs is what
-    every job of every workflow run pays."""
+    """Every ingest resolves every holder's members, so each resolution's cost is paid by every workflow job."""
 
     _HOLDER = _HolderBinding(4711, "payments", {"_id": "t-pay", "name": "Payments", "bindings": []})
 
@@ -1183,8 +1176,7 @@ class TestMemberResolution:
 
     @pytest.mark.asyncio
     async def test_a_refusal_stops_the_profile_reads_still_to_come(self, fake_cache):
-        """A throttled token otherwise spends a failing request per member of every holder, on
-        every ingest, for a result that is thrown away."""
+        """Otherwise a throttled token spends a failing request per member of every holder on every ingest."""
         service = _service()
         refused = (403, {"message": "API rate limit exceeded for installation ID 1234."})
         api = self._api({f"user{index}": refused for index in range(40)})
@@ -1197,8 +1189,7 @@ class TestMemberResolution:
 
     @pytest.mark.asyncio
     async def test_a_profile_email_is_kept_for_hours(self, fake_cache):
-        """Profile emails rarely change, and re-reading every member's every five minutes was the
-        token's whole hourly budget for ten busy teams."""
+        """Re-reading every email every five minutes would spend the token's hourly budget on ten busy teams."""
         service = _service()
         api = self._api({"bob": (200, {"login": "bob", "email": "bob@acme.io"})})
 

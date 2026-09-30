@@ -1015,7 +1015,6 @@ def _build_scan_findings_match(
 
 
 def _scan_findings_dependency_join() -> list[dict[str, Any]]:
-    """The stages that pull each finding's dependency info into flat fields."""
     fields = (
         "source_type",
         "source_target",
@@ -1061,7 +1060,6 @@ def _scan_findings_dependency_join() -> list[dict[str, Any]]:
 
 
 def _scan_findings_add_fields_stage() -> dict[str, Any]:
-    """The ``$addFields`` stage that ranks severity and derives the id and sort helpers."""
     return {
         "$addFields": {
             "severity_rank": {
@@ -1129,7 +1127,6 @@ def _build_scan_findings_pipeline(
                     {"$skip": skip},
                     {"$limit": limit},
                     *page_join,
-                    # Drop the _id tiebreaker and first_scanner sort-helper from the output.
                     {"$project": {"_id": 0, "first_scanner": 0}},
                 ],
             }

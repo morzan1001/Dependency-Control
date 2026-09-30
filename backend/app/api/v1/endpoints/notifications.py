@@ -129,7 +129,6 @@ async def suggest_packages(
 def _queue_announcement(
     background_tasks: BackgroundTasks, query: dict[str, Any], payload: BroadcastRequest, db: Any
 ) -> None:
-    """Queue an announcement to every user the query matches."""
     frontend_url = settings.FRONTEND_BASE_URL
     background_tasks.add_task(
         notification_service._notify_matching,
@@ -150,7 +149,6 @@ def _queue_announcement(
 
 
 async def _announcement_audience(payload: BroadcastRequest, team_repo: TeamRepository) -> dict[str, Any]:
-    """The users query a global or teams announcement goes to."""
     if payload.target_type == "global":
         return {"is_active": True}
     teams = (await team_repo.members_by_team(payload.target_teams or [])).values()
@@ -228,7 +226,6 @@ def _group_projects_by_admin(
 
 
 def _queue_advisory_for_user(data: dict, payload: BroadcastRequest, background_tasks: BackgroundTasks, db: Any) -> None:
-    """Queue one admin's advisory, listing that admin's projects."""
     projects_data = data["projects"]
     frontend_url = settings.FRONTEND_BASE_URL
     subject = f"ACTION REQUIRED: {payload.subject}"
@@ -259,7 +256,7 @@ async def _notify_advisory_admins(
     background_tasks: BackgroundTasks,
     db: Any,
 ) -> int:
-    """Group affected projects by admin and queue one advisory per active admin. Returns that admin count."""
+    """Queue one advisory per active admin of the affected projects; returns how many admins that is."""
     admins_by_project = await project_admin_ids(projects, TeamRepository(db))
     admin_ids = list(set().union(*admins_by_project.values()))
     admin_users = await user_repo.find_many({"_id": {"$in": admin_ids}, "is_active": True}, limit=len(admin_ids))

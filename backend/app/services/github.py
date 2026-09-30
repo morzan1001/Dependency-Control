@@ -58,13 +58,10 @@ _REPOSITORY_ACCEPT = "application/vnd.github.v3.repository+json"
 # inside it and stays far below the hundred concurrent requests GitHub tolerates.
 _GITHUB_ORG_WALK_CONCURRENCY = 16
 
-# The walk's own share of the resolution budget, counted from its first listing's turn at the gate.
-# Exceeding it is recorded rather than abandoned, so the next ingest reads the failure from the
-# cache instead of paying the whole walk again.
+# The walk's share of the resolution budget, from its first gated listing; a timeout is cached as a failure.
 _GITHUB_ORG_WALK_TIMEOUT = 15.0
 
-# The locking helper stores a failed fetch as a bare {} for an hour, which would read as an empty
-# answer; an answer wrapped in this field carries its own None for the TTL it is cached under.
+# A failed fetch is cached as a bare {} for an hour; the wrapper keeps a real None answer distinct.
 _CACHED_FIELD = "value"
 
 # Write access or better. Read access is not ownership: a group holding every repository of the
@@ -85,11 +82,7 @@ def split_repo_path(path: str | None) -> tuple[str, str] | None:
 
 
 def _org_walk_gate(instance_id: str) -> asyncio.Semaphore:
-    """The limit on one instance's sync requests in flight, shared by every sync in this process.
-
-    Per instance because GitHub limits concurrency per token. Shared because one workflow run fans
-    out into many ingests: eight of them measured 112 requests in flight against a limit of 16.
-    """
+    """Per instance, as GitHub limits concurrency per token; process-wide, as one run's ingests put 112 in flight."""
     gates = _org_walk_gates.setdefault(asyncio.get_running_loop(), {})
     return gates.setdefault(instance_id, asyncio.Semaphore(_GITHUB_ORG_WALK_CONCURRENCY))
 
@@ -305,10 +298,7 @@ class GitHubService:
         params: dict[str, Any] | None = None,
         max_pages: int | None = 10,
     ) -> AsyncGenerator[list[dict[str, Any]] | None]:
-        """Each page of a GET paginated by GitHub's Link header, then a final None when one failed.
-
-        ``max_pages=None`` reads every page; a finite cap that is hit logs a truncation WARNING.
-        """
+        """Each page of a Link-header-paginated GET, then a final None if one failed; a hit ``max_pages`` warns."""
         if not self.instance.access_token or self.api_url is None:
             yield None
             return
@@ -529,12 +519,7 @@ class GitHubService:
         return written
 
     async def _walk_org_repository_map(self, org: str, slug_map: dict[int, str]) -> dict[str, list[int]] | None:
-        """Walk every team of the organisation. None when one of them went unanswered or the walk
-        outlasted its budget.
-
-        Half a walk names the wrong holders rather than fewer of them: the teams it did not reach
-        would read as teams that hold nothing, so a partial result is no result.
-        """
+        """None unless every team answered within budget: an unreached team would read as holding nothing."""
         try:
             async with asyncio.timeout(None) as budget:
                 listings = await asyncio.gather(
@@ -663,8 +648,7 @@ class GitHubService:
         return None if refused else {**emails, **answered}
 
     async def _resolve_logins(self, logins: list[str], user_repo: UserRepository) -> dict[str, dict[str, Any]] | None:
-        """Login -> the EXISTING local user that verified its public email; None when GitHub would
-        not say. A matching username proves nothing."""
+        """Login -> existing local user by verified public email, never by username; None when GitHub won't say."""
         emails = await self._public_emails(logins)
         if emails is None:
             return None
@@ -687,8 +671,7 @@ class GitHubService:
         members: list[dict[str, Any]],
         user_repo: UserRepository,
     ) -> list[TeamMember] | None:
-        """Map GitHub members onto existing local users, tagged with this instance; None when GitHub
-        would not answer for one of them."""
+        """GitHub members as existing local users tagged with this instance; None when GitHub won't answer for one."""
         users = await self._resolve_logins([member["login"] for member in members], user_repo)
         if users is None:
             return None
@@ -713,11 +696,7 @@ class GitHubService:
 
     @staticmethod
     def _renamed_fields(team: dict[str, Any], binding: dict[str, Any], org: str, team_slug: str) -> dict[str, Any]:
-        """The name to follow GitHub with, while the team still carries the one this binding generated.
-
-        A team its owner renamed keeps that name for good, and so does one named after another
-        instance's binding: following it would rename the team back and forth between the two.
-        """
+        """Rename only a team still named by this binding; another binding's name would flip back and forth."""
         stored_org, stored_slug = binding.get("org"), binding.get("slug")
         # Organisations are stored in whatever case they were first written in.
         if (
@@ -805,13 +784,7 @@ class GitHubService:
         holder_ids: list[int],
         current_owner_ids: set[str],
     ) -> list[_HolderBinding] | None:
-        """The bound teams to ask directly: those the map names as holders and the current owners.
-        None when a current owner cannot be asked.
-
-        The organisation listing omits the teams the token cannot see, secret ones above all.
-        Skipping such an owner would hand the repository to whichever team did answer and report
-        that as a determined result; a binding that owns nothing here has nothing to lose.
-        """
+        """Mapped holders plus current owners, whom the listing can omit; None when an owner cannot be asked."""
         addressed = []
         for team in bound_teams:
             owns = str(team["_id"]) in current_owner_ids
@@ -836,9 +809,7 @@ class GitHubService:
     async def _collect_repository_candidates(
         self, org: str, repo: str, addressed: list[_HolderBinding]
     ) -> list[_HolderBinding] | None:
-        """The addressed teams that hold the repository. None when a single check went unanswered:
-        an incomplete set would retire the owners whose answers are the ones missing.
-        """
+        """The addressed teams holding the repository; None on any unanswered check, which would retire its owner."""
         accesses = await asyncio.gather(
             *(self.team_writes_to_repository(org, holder.slug, holder.team_id, repo) for holder in addressed)
         )
@@ -854,11 +825,7 @@ class GitHubService:
         addressed: list[_HolderBinding],
         slug_map: dict[int, str],
     ) -> list[_HolderBinding]:
-        """The organisation's own groups holding the repository, addressed but not yet created.
-
-        Read on every sync rather than only when nothing bound holds the repository: a group
-        granted access after the first owner was found would otherwise never be seen.
-        """
+        """Unbound groups holding the repository, read every sync so a group granted access later is found."""
         # Already asked about this repository directly, and that answer is the fresher one.
         asked = {holder.team_id for holder in addressed}
         bindings: list[_HolderBinding] = []
@@ -965,23 +932,7 @@ class GitHubService:
         current_owner_ids: set[str],
         owner_budget: int = MAX_PROJECT_TEAMS,
     ) -> TeamSyncResult:
-        """Every team that holds the repository on GitHub, creating one for a group not bound yet.
-
-        All of them, not the best of them: each one's members are people who work on the
-        repository, and ranking them would hand the project to one team and hide it from the rest.
-
-        ``current_owner_ids`` are the project's owners this sync may replace: each is asked directly,
-        so an owner losing access leaves within the check's TTL rather than the map's.
-
-        ``owner_budget`` is how many owners the project has room for, which is the whole cap for one
-        that has no others. Past it nothing is created and nothing is written: a team created for an
-        ownership write that is then refused is a team nobody owns anything through.
-
-        Both ingest paths call this only for an instance whose ``sync_teams`` is on, so the switch
-        is not read again here.
-
-        Never raises.
-        """
+        """All teams holding the repository, creating unbound ones only within ``owner_budget``; never raises."""
         try:
             parts = split_repo_path(repository_path)
             if parts is None:

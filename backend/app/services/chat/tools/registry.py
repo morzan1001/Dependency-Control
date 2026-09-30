@@ -312,8 +312,7 @@ def _plan_step(findings: list[dict[str, Any]], dep_meta: dict[str, Any]) -> dict
 
 
 def _plan_sort_key(step: dict[str, Any]) -> tuple[Any, ...]:
-    # Resolved criticals lead so the max_steps cut drops the least urgent steps; a declared direct dependency
-    # still outranks an inferred one.
+    # Resolved criticals lead so the max_steps cut drops the least urgent; declared direct outranks inferred.
     return (
         -step["critical_count"],
         not step["has_fix"],

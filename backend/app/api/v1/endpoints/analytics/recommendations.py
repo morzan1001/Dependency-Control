@@ -124,8 +124,7 @@ async def get_project_recommendations(
         {"_id": scan_id}, limit=1, projection={"completed_at": 1, "waiver_fingerprint": 1}
     )
     stamp = stamped[0] if stamped else {}
-    # Per analysis, waiver set and caller scope so users with different project access never share an
-    # entry; cross-project signal isn't in the key and may be TTL-stale.
+    # Keyed by caller scope too, so differing project access never shares an entry; cross-project data may be stale.
     cache_key = CacheKeys.recommendations(
         project_id,
         scan_id,

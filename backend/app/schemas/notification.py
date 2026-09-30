@@ -144,18 +144,13 @@ PRIORITY_VULNS_LABEL = "Priority (Critical/High/KEV/High EPSS)"
 
 
 def scan_alert_level(critical: int, high: int) -> Literal["critical", "warning", "ok"]:
-    """How alarming a scan is, as every channel colours it."""
     if critical:
         return "critical"
     return "warning" if high else "ok"
 
 
 class AlertVulnerability(BaseModel):
-    """One vulnerability line in a "vulnerabilities found" alert.
-
-    Declares the field names every channel formatter reads. Defaults are tolerant because the
-    Teams card is built from the untyped webhook payload mapping.
-    """
+    """One vulnerability line of an alert; lenient defaults because the Teams card reads the untyped webhook payload."""
 
     id: str = Field("Unknown", description="CVE or advisory identifier")
     severity: str = Field("UNKNOWN", description="Severity of the vulnerability")

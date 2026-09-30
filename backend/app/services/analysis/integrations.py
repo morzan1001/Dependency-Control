@@ -24,7 +24,6 @@ _SCAN_COMMENT_MARKER = "<!-- dependency-control:scan-comment -->"
 
 
 def _build_scan_comment(stats: Stats, scan_url: str, status: ScanStatus, error: str | None) -> str:
-    """Build the MR/PR comment body for scan results."""
     status_label = "[OK]"
     if stats.risk_score > 0 or status != SCAN_STATUS_COMPLETED:
         status_label = "[WARNING]"
