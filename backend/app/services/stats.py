@@ -17,6 +17,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.services.analysis.stats import calculate_comprehensive_stats
+from app.services.analytics.cache import get_analytics_cache
 from app.services.reachability_enrichment import ComponentLanguages
 from app.services.releases import released_scan_ids
 from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
@@ -191,6 +192,8 @@ async def run_waiver_recalc(db: AsyncIOMotorDatabase) -> None:
                 if not await _recalculate_changed(db, queued, lock_repo, holder_id):
                     return
                 await db.waiver_recalc.delete_many({"_id": {"$in": [doc["_id"] for doc in queued]}})
+                # Reads during the pass may have cached the flags it replaced.
+                get_analytics_cache().clear()
         finally:
             await lock_repo.release_lock(_RECALC_LOCK, holder_id)
         # A change queued as this run finished found the lock still taken and was left to it.
