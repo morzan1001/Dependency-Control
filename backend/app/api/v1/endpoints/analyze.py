@@ -1,10 +1,8 @@
 """Stateless ad-hoc analysis: analyze a posted SBOM and return the result without storing it."""
 
 import asyncio
-import logging
 from typing import Any
 
-import redis.asyncio as redis
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -14,7 +12,6 @@ from app.api.deps import AdhocKeyDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.body_limit import enforce_declared_body_size, read_body_within_limit
 from app.api.v1.helpers.responses import RESP_AUTH_400
-from app.core.config import settings
 from app.core.constants import (
     ADHOC_DEADLINE_SECONDS,
     ADHOC_MAX_FINDINGS,
@@ -25,16 +22,13 @@ from app.core.constants import (
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import ADHOC_SLOTS, AdhocInputTooLarge, run_adhoc_analysis
 from app.services.analysis.adhoc_report import render_adhoc_html
-from app.services.chat.rate_limiter import SURFACE_ADHOC, ChatRateLimiter
-
-logger = logging.getLogger(__name__)
+from app.services.chat.rate_limiter import SURFACE_ADHOC, enforce_rate_limit
 
 router = CustomAPIRouter()
 
 _DEADLINE_EXCEEDED = "Analysis exceeded the {budget:.0f}s budget. Request fewer analyzers."
 # A namespace of its own, so an ad-hoc caller and a chat user never share a window.
 _RATE_LIMIT_PREFIX = "dc:adhoc:rl:"
-_RATE_LIMITED = "Rate limit exceeded"
 _HTML = "html"
 
 _DESCRIPTION = f"""
@@ -72,30 +66,6 @@ def _parse_request(raw: bytes) -> AdhocAnalyzeRequest:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from exc
 
 
-async def _enforce_rate_limit(owner_id: str) -> None:
-    """Sliding window keyed on the token owner: a caller may mint as many keys as they like, and
-    keying on any of them would let one budget be spent several times over. A Redis outage
-    degrades to no limit rather than to no analysis."""
-    try:
-        async with redis.from_url(settings.REDIS_URL) as redis_client:
-            limiter = ChatRateLimiter(redis_client, prefix=_RATE_LIMIT_PREFIX, surface=SURFACE_ADHOC)
-            allowed, retry_after = await limiter.check_rate_limit(
-                owner_id,
-                per_minute=ADHOC_RATE_LIMIT_PER_MINUTE,
-                per_hour=ADHOC_RATE_LIMIT_PER_HOUR,
-            )
-    except redis.RedisError:
-        logger.warning("adhoc: Redis unavailable for rate limiting, allowing request")
-        return
-
-    if not allowed:
-        raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=_RATE_LIMITED,
-            headers={"Retry-After": str(retry_after)},
-        )
-
-
 @router.post(
     "/analyze",
     response_model=AdhocAnalyzeResponse,
@@ -111,7 +81,14 @@ async def analyze(
 ) -> Response:
     """Run the analysis pipeline in memory and return the result. Persists nothing."""
     _owner, key = authenticated
-    await _enforce_rate_limit(key["user_id"])
+    # Keyed on the token owner: minting is uncapped, so a per-key window would multiply the budget.
+    await enforce_rate_limit(
+        key["user_id"],
+        prefix=_RATE_LIMIT_PREFIX,
+        surface=SURFACE_ADHOC,
+        per_minute=ADHOC_RATE_LIMIT_PER_MINUTE,
+        per_hour=ADHOC_RATE_LIMIT_PER_HOUR,
+    )
     payload = _parse_request(await read_body_within_limit(request, MAX_ADHOC_BODY_BYTES))
 
     async def _run() -> AdhocAnalyzeResponse:

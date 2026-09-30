@@ -89,10 +89,10 @@ def _bearer(token):
 def _rate_limit_allows(monkeypatch):
     """The window has its own file and its own Redis; here it must not depend on a listening port."""
 
-    async def _allow(_token_prefix):
+    async def _allow(*_args, **_kwargs):
         return None
 
-    monkeypatch.setattr("app.api.v1.endpoints.analyze._enforce_rate_limit", _allow)
+    monkeypatch.setattr("app.api.v1.endpoints.analyze.enforce_rate_limit", _allow)
 
 
 @pytest.mark.asyncio

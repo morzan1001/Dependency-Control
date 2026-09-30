@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, Self
+from typing import Any
 
 import pymongo
 import pytest
@@ -23,6 +23,7 @@ from app.db import mongodb
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import run_adhoc_analysis
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories
+from app.services.chat import rate_limiter
 from tests.helpers.analyzers import build_analyzer, serve_analyzer
 from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
 
@@ -698,12 +699,6 @@ class _RateLimitRedis:
     def __init__(self, keys: list[str]) -> None:
         self._keys = keys
 
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_exc: object) -> bool:
-        return False
-
     async def eval(self, _script: str, _numkeys: int, key: str, *_args: Any) -> list[int]:
         self._keys.append(key)
         return [_ALLOWED, 0]
@@ -733,7 +728,7 @@ async def test_the_endpoint_persists_nothing(
     db.writes.clear()
 
     redis_keys: list[str] = []
-    monkeypatch.setattr(redis.asyncio, "from_url", lambda *_a, **_k: _RateLimitRedis(redis_keys))
+    monkeypatch.setattr(rate_limiter, "_client", lambda: _RateLimitRedis(redis_keys))
 
     request = _full_request()
     async with AsyncClient(transport=ASGITransport(app=app), base_url=_BASE_URL) as ac:

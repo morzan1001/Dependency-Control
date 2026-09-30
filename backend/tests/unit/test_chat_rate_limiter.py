@@ -1,15 +1,19 @@
 """Unit tests for ChatRateLimiter, exercising the real Lua script via fakeredis."""
 
+import logging
+
 import fakeredis.aioredis
 import pytest
 import pytest_asyncio
+import redis.asyncio as redis
+from fastapi import HTTPException
 
 import app.services.chat.rate_limiter as rate_limiter_mod
 from app.core.metrics import REGISTRY
-from app.services.chat.rate_limiter import ChatRateLimiter
+from app.services.chat.rate_limiter import SURFACE_CHAT, ChatRateLimiter, enforce_rate_limit
 
-_REMAINING_METRIC = "dc_chat_rate_limit_remaining"
 _START = 1_000_000.0
+_PREFIX = "test:chat:rl:"
 
 
 class _FrozenClock:
@@ -32,10 +36,6 @@ def clock(monkeypatch):
     return frozen
 
 
-def _remaining(user_id: str, window: str) -> float | None:
-    return REGISTRY.get_sample_value(_REMAINING_METRIC, {"user_id": user_id, "window": window})
-
-
 @pytest_asyncio.fixture
 async def redis_client():
     client = fakeredis.aioredis.FakeRedis()
@@ -46,7 +46,7 @@ async def redis_client():
 
 @pytest_asyncio.fixture
 async def limiter(redis_client):
-    return ChatRateLimiter(redis_client, prefix="test:chat:rl:")
+    return ChatRateLimiter(redis_client, prefix=_PREFIX)
 
 
 @pytest.mark.asyncio
@@ -109,23 +109,61 @@ async def test_a_spent_hour_slot_is_held_for_a_full_hour(limiter, clock):
 
 
 @pytest.mark.asyncio
-async def test_the_remaining_gauge_counts_down_both_windows(limiter):
-    await limiter.check_rate_limit("gauge-user", per_minute=5, per_hour=20)
-    assert _remaining("gauge-user", "minute") == 4
-    assert _remaining("gauge-user", "hour") == 19
+async def test_a_check_adds_no_metric_series_per_user(limiter):
+    """Nothing ever removes a per-user child series, so every caller would stay in the registry."""
+    await limiter.check_rate_limit("series-user", per_minute=5, per_hour=20)
 
-    await limiter.check_rate_limit("gauge-user", per_minute=5, per_hour=20)
-    assert _remaining("gauge-user", "minute") == 3
-    assert _remaining("gauge-user", "hour") == 18
+    labelled = [s for metric in REGISTRY.collect() for s in metric.samples if "series-user" in s.labels.values()]
+    assert labelled == []
+
+
+@pytest.fixture
+def built_clients(monkeypatch):
+    built: list[fakeredis.aioredis.FakeRedis] = []
+
+    def _from_url(*_args, **_kwargs):
+        built.append(fakeredis.aioredis.FakeRedis())
+        return built[-1]
+
+    monkeypatch.setattr(redis, "from_url", _from_url)
+    rate_limiter_mod._client.cache_clear()
+    yield built
+    rate_limiter_mod._client.cache_clear()
+
+
+async def _enforce(owner_id: str = "owner-1", per_minute: int = 5) -> None:
+    await enforce_rate_limit(owner_id, prefix=_PREFIX, surface=SURFACE_CHAT, per_minute=per_minute, per_hour=100)
 
 
 @pytest.mark.asyncio
-async def test_a_minute_gauge_of_zero_means_the_next_request_is_denied(limiter):
-    for _ in range(3):
-        allowed, _ = await limiter.check_rate_limit("exhaust-user", per_minute=3, per_hour=100)
-        assert allowed is True
+async def test_every_request_checks_against_one_redis_client(built_clients):
+    await _enforce()
+    await _enforce()
 
-    assert _remaining("exhaust-user", "minute") == 0
+    assert len(built_clients) == 1
 
-    allowed, _ = await limiter.check_rate_limit("exhaust-user", per_minute=3, per_hour=100)
-    assert allowed is False
+
+@pytest.mark.asyncio
+async def test_a_request_over_the_window_is_refused_with_retry_after(built_clients):
+    await _enforce(per_minute=1)
+
+    with pytest.raises(HTTPException) as refused:
+        await _enforce(per_minute=1)
+
+    assert refused.value.status_code == 429
+    assert int(refused.value.headers["Retry-After"]) > 0
+
+
+class _UnreachableRedis:
+    async def eval(self, *_args):
+        raise redis.ConnectionError("redis down")
+
+
+@pytest.mark.asyncio
+async def test_a_redis_outage_lets_the_request_through(monkeypatch, caplog):
+    monkeypatch.setattr(rate_limiter_mod, "_client", _UnreachableRedis)
+
+    with caplog.at_level(logging.WARNING, logger=rate_limiter_mod.__name__):
+        await _enforce()
+
+    assert "allowing request" in caplog.text
