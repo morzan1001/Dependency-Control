@@ -51,10 +51,7 @@ class ChatService:
     async def get_conversation(self, conversation_id: str, user: User) -> dict[str, Any] | None:
         return await self.repo.get_conversation(conversation_id, user_id=str(user.id))
 
-    async def get_messages(self, conversation_id: str, user: User) -> list[dict[str, Any]]:
-        conv = await self.repo.get_conversation(conversation_id, user_id=str(user.id))
-        if not conv:
-            return []
+    async def get_messages(self, conversation_id: str) -> list[dict[str, Any]]:
         return await self.repo.get_messages(conversation_id)
 
     async def delete_conversation(self, conversation_id: str, user: User) -> bool:
@@ -87,6 +84,9 @@ class ChatService:
             content=content,
             images=images or [],
         )
+        if message_count is None:
+            yield f"data: {json.dumps({'type': 'error', 'message': 'Conversation not found'})}\n\n"
+            return
         if message_count == 1:
             title = content[:80] + ("..." if len(content) > 80 else "")
             await self.repo.update_conversation_title(conversation_id, str(user.id), title)

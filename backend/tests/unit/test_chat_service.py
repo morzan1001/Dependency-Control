@@ -257,6 +257,19 @@ async def test_send_message_error_stops_stream():
 
 
 @pytest.mark.asyncio
+async def test_a_turn_for_a_deleted_conversation_ends_before_the_model_runs():
+    service = _make_service()
+    service.repo.add_message = AsyncMock(return_value=None)
+    service.ollama.chat_stream = MagicMock(side_effect=AssertionError("the model must not run"))
+
+    events = [c async for c in service.send_message("conv-gone", _make_user(), "hi", max_tool_rounds=20)]
+
+    assert events == ['data: {"type": "error", "message": "Conversation not found"}\n\n']
+    assert service.repo.add_message.await_count == 1
+    service.repo.update_conversation_title.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_current_user_message_not_duplicated_in_prompt():
     """The just-saved user turn must appear exactly once in the Ollama prompt."""
     service = _make_service()
@@ -368,11 +381,10 @@ async def test_delete_conversation_scoped_to_user():
 
 
 @pytest.mark.asyncio
-async def test_get_messages_returns_empty_when_conversation_missing():
+async def test_get_messages_reads_the_messages_without_rechecking_ownership():
     service = _make_service()
-    service.repo.get_conversation = AsyncMock(return_value=None)
-    user = _make_user()
+    stored = [{"_id": "m1", "role": "user", "content": "hi"}]
+    service.repo.get_messages = AsyncMock(return_value=stored)
 
-    msgs = await service.get_messages("conv-missing", user)
-    assert msgs == []
-    service.repo.get_messages.assert_not_called()
+    assert await service.get_messages("conv-1") == stored
+    service.repo.get_messages.assert_awaited_once_with("conv-1")
