@@ -34,7 +34,11 @@ _PROJECT = "identity-project"
 # Whole seconds, so the server's millisecond precision cannot move the dates the tests compare.
 _NOW = datetime.now(timezone.utc).replace(microsecond=0)
 _FIXTURES = Path(__file__).parents[1] / "fixtures"
-_KICS = json.loads((_FIXTURES / "iac/kics_2.1.20_results.json").read_text())
+# KICS 2.1.20 on one main.tf with two S3 buckets, then again after four lines were inserted above
+# them, and again with a third bucket appended.
+_KICS = json.loads((_FIXTURES / "iac/kics_2.1.20_terraform.json").read_text())
+_KICS_MOVED_DOWN = json.loads((_FIXTURES / "iac/kics_2.1.20_terraform_moved_down.json").read_text())
+_KICS_THIRD_BUCKET = json.loads((_FIXTURES / "iac/kics_2.1.20_terraform_third_bucket.json").read_text())
 _OPENGREP = json.loads((_FIXTURES / "sast/crypto_misuse_findings.json").read_text())
 
 _DATABASES = [
@@ -95,21 +99,6 @@ async def _delta(db, from_scan: str = "scan-a", to_scan: str = "scan-b"):
 
 def _totals(response) -> tuple[int, int, int]:
     return response.totals.added, response.totals.removed, response.totals.unchanged
-
-
-def _kics_shifted(lines: int) -> dict:
-    shifted = copy.deepcopy(_KICS)
-    for query in shifted["queries"]:
-        for entry in query["files"]:
-            entry["line"] += lines
-    return shifted
-
-
-def _kics_with_a_second_instance() -> dict:
-    grown = copy.deepcopy(_KICS)
-    files = grown["queries"][0]["files"]
-    files.append({**files[0], "line": 9, "similarity_id": "0" * 64})
-    return grown
 
 
 def _opengrep_shifted(lines: int) -> dict:
@@ -205,8 +194,8 @@ def _crypto(bom_suffix: str) -> list[tuple[str, dict]]:
 
 
 def _every_type() -> list[Finding]:
-    kics = _kics_with_a_second_instance()
-    kics["queries"][1]["files"][0]["similarity_id"] = None
+    kics = copy.deepcopy(_KICS)
+    kics["queries"][1]["files"][0]["search_key"] = None
     vulnerability = Finding.model_validate(
         stored_vulnerability("lodash", "4.17.20", [{"id": "CVE-2021-23337"}, {"id": "CVE-2020-8203", "waived": True}])
     )
@@ -308,20 +297,20 @@ async def test_every_path_an_extractor_reads_is_projected(db):
 
 @pytest.mark.parametrize("database", _DATABASES)
 @pytest.mark.asyncio
-async def test_a_second_instance_of_an_iac_rule_in_one_file_is_added(db, database):
+async def test_a_further_instance_of_an_iac_rule_in_one_file_is_added(db, database):
     await _persist(db, "scan-a", _aggregated(("kics", _KICS)))
-    await _persist(db, "scan-b", _aggregated(("kics", _kics_with_a_second_instance())))
+    await _persist(db, "scan-b", _aggregated(("kics", _KICS_THIRD_BUCKET)))
 
-    assert _totals(await _delta(db)) == (1, 0, 6)
+    assert _totals(await _delta(db)) == (3, 0, 7)
 
 
 @pytest.mark.parametrize("database", _DATABASES)
 @pytest.mark.asyncio
 async def test_iac_findings_that_moved_down_the_file_are_unchanged(db, database):
     await _persist(db, "scan-a", _aggregated(("kics", _KICS)))
-    await _persist(db, "scan-b", _aggregated(("kics", _kics_shifted(3))))
+    await _persist(db, "scan-b", _aggregated(("kics", _KICS_MOVED_DOWN)))
 
-    assert _totals(await _delta(db)) == (0, 0, 6)
+    assert _totals(await _delta(db)) == (0, 0, 7)
 
 
 @pytest.mark.parametrize("database", _DATABASES)

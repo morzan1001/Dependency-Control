@@ -86,17 +86,22 @@ def test_identity_key_sast_distinguishes_rules_on_same_line():
     assert finding_identity_key(base) != finding_identity_key(other)
 
 
-def test_identity_key_iac_prefers_the_similarity_id_over_the_rule_and_line():
-    """KICS hashes each matched location into similarity_id; a finding without one keys on its rule and start line."""
+def test_identity_key_iac_keys_on_the_rule_and_search_key():
+    """KICS hashes the line into similarity_id for searchLine queries; search_key names the resource without it."""
     f = {
         "type": "iac",
-        "component": "deploy/main.tf",
-        "details": {"rule_id": "aws-s3-public", "start": {"line": 12}, "similarity_id": "7fb6285b"},
+        "component": "main.tf",
+        "details": {
+            "rule_id": "f861041c",
+            "start": {"line": 5},
+            "similarity_id": "dd089a52",
+            "search_key": "aws_s3_bucket[assets]",
+        },
     }
-    unhashed = {**f, "details": {"rule_id": "aws-s3-public", "start": {"line": 12}}}
+    keyless = {**f, "details": {"rule_id": "f861041c", "start": {"line": 5}}}
 
-    assert finding_identity_key(f) == ("iac", "deploy/main.tf", "7fb6285b")
-    assert finding_identity_key(unhashed) == ("iac", "deploy/main.tf", "aws-s3-public:12")
+    assert finding_identity_key(f) == ("iac", "main.tf", "f861041c:aws_s3_bucket[assets]")
+    assert finding_identity_key(keyless) == ("iac", "main.tf", "f861041c:5")
 
 
 def test_identity_key_license_uses_license():

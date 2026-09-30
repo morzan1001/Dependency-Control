@@ -53,13 +53,11 @@ def _sast_identifier(finding: dict[str, Any]) -> str:
 
 
 def _iac_identifier(finding: dict[str, Any]) -> str:
-    """KICS hashes each matched location into ``similarity_id``; other producers key on rule and start line."""
+    """KICS's search_key names the matched resource; its similarity_id hashes the line for searchLine queries."""
     details = finding.get("details") or {}
-    if details.get("similarity_id"):
-        return str(details["similarity_id"])
-    line = (details.get("start") or {}).get("line")
     rule = _first_id(details, "rule_id")
-    return f"{rule}:{line}" if rule and line is not None else rule
+    anchor = details.get("search_key") or (details.get("start") or {}).get("line")
+    return f"{rule}:{anchor}" if rule and anchor is not None else rule
 
 
 def _quality_identifier(finding: dict[str, Any]) -> str:
@@ -91,7 +89,7 @@ def _first_detail(*keys: str) -> tuple[Callable[[dict[str, Any]], str], tuple[st
 # Each extractor with the document paths it reads; "" means no stable id, and the description hash applies.
 _FINDING_TYPE_IDENTIFIER: dict[str, tuple[Callable[[dict[str, Any]], str], tuple[str, ...]]] = {
     "sast": (_sast_identifier, ("details.sast_findings.id",)),
-    "iac": (_iac_identifier, ("details.similarity_id", "details.rule_id", "details.start.line")),
+    "iac": (_iac_identifier, ("details.rule_id", "details.search_key", "details.start.line")),
     "secret": (_finding_id_identifier, ("finding_id",)),
     "outdated": (_finding_id_identifier, ("finding_id",)),
     "quality": (_quality_identifier, ("details.quality_issues.id", "finding_id")),
