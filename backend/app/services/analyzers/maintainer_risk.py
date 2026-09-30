@@ -33,7 +33,8 @@ _STALENESS_TYPES = ("stale_package", "infrequent_updates")
 _UNADDRESSED_ISSUES_MIN = 100
 # PyPI project_urls labels that name the source repository, most specific first.
 _REPOSITORY_LABELS = ("source", "source code", "repository", "github", "homepage")
-_GITHUB_REPO = re.compile(r"(?:github\.com[/:]|^github:)([^/]+)/([^/#?]+?)(?:\.git)?(?:[/#?]|$)")
+# GitHub's owner and repo charsets, so registry metadata cannot steer the token-bearing request off /repos/.
+_GITHUB_REPO = re.compile(r"(?:github\.com[/:]|^github:)([\w-]+)/(\.?[\w-][\w.-]*?)(?:\.git)?(?:[/#?]|$)")
 
 
 def correlate_maintainer_risks(risks: list[dict[str, Any]], github_active: bool | None) -> list[dict[str, Any]]:
@@ -111,23 +112,31 @@ class MaintainerRiskAnalyzer(Analyzer):
             return None
         registry = parsed.registry_system
 
-        registry_info: dict[str, Any] = {}
+        maintainer_info: dict[str, Any] = {}
         if registry in ("pypi", "npm"):
-            registry_info = (
+            maintainer_info = dict(
                 await cache_service.get_or_fetch_with_lock(
                     key=CacheKeys.maintainer(registry, name),
                     fetch_fn=lambda: (
-                        self._check_pypi(client, name)
-                        if registry == "pypi"
-                        else self._check_npm(client, name, parsed.deps_dev_name)
+                        self._check_pypi(client, name) if registry == "pypi" else self._check_npm(client, name)
                     ),
                     ttl_seconds=CacheTTL.MAINTAINER_INFO,
                 )
                 or {}
             )
+        if registry == "npm":
+            try:
+                package = await fetch_package_info(client, "npm", parsed.deps_dev_name) or {}
+            except (httpx.HTTPError, ValueError) as e:
+                logger.debug(f"deps.dev release lookup failed for {name}: {e}")
+                package = {}
+            released = self._parse_iso_datetime(package.get("published_at"))
+            if released:
+                maintainer_info["latest_release_date"] = released.isoformat()
+                maintainer_info["days_since_release"] = (datetime.now(timezone.utc) - released).days
 
         github_info = None
-        repo = self._resolve_github_repo(component, registry_info)
+        repo = self._resolve_github_repo(component, maintainer_info)
         if repo:
             try:
                 github_info = await cache_service.get_or_fetch_with_lock(
@@ -139,8 +148,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             except (httpx.HTTPError, ValueError) as e:
                 logger.debug(f"GitHub check failed for {repo}: {e}")
 
-        risks = self._assess_risks(registry_info)
-        maintainer_info = dict(registry_info)
+        risks = self._assess_risks(maintainer_info)
         if github_info:
             maintainer_info["github"] = github_info
             risks.extend(self._assess_github_risks(github_info))
@@ -222,8 +230,8 @@ class MaintainerRiskAnalyzer(Analyzer):
             logger.debug(f"PyPI check failed for {name}: {e}")
             return None
 
-    async def _check_npm(self, client: InstrumentedAsyncClient, name: str, deps_dev_name: str) -> dict[str, Any] | None:
-        """Maintainers and repository of the latest npm release; its publish date comes from deps.dev."""
+    async def _check_npm(self, client: InstrumentedAsyncClient, name: str) -> dict[str, Any] | None:
+        """Maintainers and repository of the latest npm release."""
         try:
             response = await client.get(f"{NPM_REGISTRY_URL}/{name.replace('/', '%2F')}/latest")
             if response.status_code != 200:
@@ -232,17 +240,10 @@ class MaintainerRiskAnalyzer(Analyzer):
             data = response.json()
             maintainers = data.get("maintainers") or []
             repository = data.get("repository")
-            package = await fetch_package_info(client, "npm", deps_dev_name) or {}
-            latest_release_date = self._parse_iso_datetime(package.get("published_at"))
-
             return {
                 "maintainer": ", ".join(m.get("name", "") for m in maintainers),
                 "maintainer_email": ", ".join(m["email"] for m in maintainers if m.get("email")),
                 "maintainer_count": len(maintainers),
-                "latest_release_date": (latest_release_date.isoformat() if latest_release_date else None),
-                "days_since_release": (
-                    (datetime.now(timezone.utc) - latest_release_date).days if latest_release_date else None
-                ),
                 "repository": repository.get("url") if isinstance(repository, dict) else repository,
             }
         except Exception as e:

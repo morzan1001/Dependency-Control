@@ -238,6 +238,52 @@ class TestAnalyze:
         assert issue["maintainer_info"]["days_since_release"] == 800
         assert f"{NPM_REGISTRY_URL}/{name}" not in [str(request.url) for request in requests]
 
+    @pytest.mark.parametrize(
+        "repository",
+        ["github:../repositories", "github:acme/..", "https://github.com/acme?per_page=100/lib"],
+        ids=["dot-owner", "dot-repo", "query-in-owner"],
+    )
+    @pytest.mark.asyncio
+    async def test_a_registry_repository_outside_githubs_name_charset_is_not_requested(
+        self, fake_cache, monkeypatch, repository
+    ):
+        requests = _serve(
+            monkeypatch,
+            fake_cache,
+            {
+                f"{NPM_REGISTRY_URL}/left-pad/latest": _npm_latest(
+                    repository, [{"name": "solo", "email": "s@acme.dev"}]
+                ),
+                f"{DEPS_DEV_API_URL}/systems/npm/packages/left-pad": _deps_dev_package(10),
+                f"{GITHUB_API_URL}/repositories": [{"id": 1}],
+            },
+        )
+
+        result = await analyze_cyclonedx(MaintainerRiskAnalyzer(), [_component("npm", "left-pad")])
+
+        assert _risk_types(result) == ["single_maintainer"]
+        assert not [request for request in requests if str(request.url).startswith(GITHUB_API_URL)]
+
+    @pytest.mark.asyncio
+    async def test_a_deps_dev_outage_keeps_the_npm_registry_facts(self, fake_cache, monkeypatch):
+        deps_dev_url = f"{DEPS_DEV_API_URL}/systems/npm/packages/left-pad"
+        routes: dict[str, Any] = {
+            f"{NPM_REGISTRY_URL}/left-pad/latest": _npm_latest(
+                "github:acme/left-pad", [{"name": "solo", "email": "s@acme.dev"}]
+            ),
+            deps_dev_url: 503,
+            f"{GITHUB_API_URL}/repos/acme/left-pad": _github_repo(archived=True),
+        }
+        _serve(monkeypatch, fake_cache, routes)
+        component = _component("npm", "left-pad")
+
+        outage = await analyze_cyclonedx(MaintainerRiskAnalyzer(), [component])
+        routes[deps_dev_url] = _deps_dev_package(800)
+        recovered = await analyze_cyclonedx(MaintainerRiskAnalyzer(), [component])
+
+        assert _risk_types(outage) == ["single_maintainer", "archived_repo"]
+        assert _risk_types(recovered) == ["stale_package", "single_maintainer", "archived_repo"]
+
     @pytest.mark.asyncio
     async def test_a_later_sbom_naming_the_repository_gets_the_github_facts(self, fake_cache, monkeypatch):
         _serve(
