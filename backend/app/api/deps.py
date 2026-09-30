@@ -79,8 +79,7 @@ async def decode_token(token: str, expected_type: str, db: AsyncIOMotorDatabase)
 
 
 def _count_validation(result: str) -> None:
-    if auth_token_validations_total:
-        auth_token_validations_total.labels(result=result).inc()
+    auth_token_validations_total.labels(result=result).inc()
 
 
 async def get_current_user(

@@ -131,15 +131,13 @@ class MattermostProvider(NotificationProvider):
                     user_id = await self._get_user_id_by_username(client, destination, base_url, headers)
                     if not user_id:
                         logger.error(f"Cannot send Mattermost DM: User {destination} not found")
-                        if notifications_failed_total:
-                            notifications_failed_total.labels(type="mattermost").inc()
+                        notifications_failed_total.labels(type="mattermost").inc()
                         return False
 
                     dm_channel_id = await self._create_dm_channel(client, user_id, base_url, headers)
                     if not dm_channel_id:
                         logger.error(f"Cannot send Mattermost DM: Failed to create channel for {destination}")
-                        if notifications_failed_total:
-                            notifications_failed_total.labels(type="mattermost").inc()
+                        notifications_failed_total.labels(type="mattermost").inc()
                         return False
 
                     channel_id = dm_channel_id
@@ -147,8 +145,7 @@ class MattermostProvider(NotificationProvider):
                     resolved_id = await self._get_channel_id_by_name(client, destination, base_url, headers)
                     if not resolved_id:
                         logger.error(f"Cannot send Mattermost message: Channel {destination} not found")
-                        if notifications_failed_total:
-                            notifications_failed_total.labels(type="mattermost").inc()
+                        notifications_failed_total.labels(type="mattermost").inc()
                         return False
                     channel_id = resolved_id
                 elif destination.count("-") != 4:
@@ -173,16 +170,13 @@ class MattermostProvider(NotificationProvider):
 
                 if response.status_code == 201:
                     logger.info(f"Mattermost message sent to {destination}")
-                    if notifications_sent_total:
-                        notifications_sent_total.labels(type="mattermost").inc()
+                    notifications_sent_total.labels(type="mattermost").inc()
                     return True
                 logger.error(f"Failed to send Mattermost notification: {response.text}")
-                if notifications_failed_total:
-                    notifications_failed_total.labels(type="mattermost").inc()
+                notifications_failed_total.labels(type="mattermost").inc()
                 return False
 
         except Exception as e:
             logger.exception("Error sending Mattermost notification: %s", e)
-            if notifications_failed_total:
-                notifications_failed_total.labels(type="mattermost").inc()
+            notifications_failed_total.labels(type="mattermost").inc()
             return False

@@ -127,15 +127,13 @@ async def _verify_totp_or_raise(user_repo: UserRepository, user: dict, otp: str 
 
     step = security.verify_totp(totp_secret, otp)
     if step is None or not await user_repo.claim_totp_step(user["_id"], step):
-        if auth_2fa_verifications_total:
-            auth_2fa_verifications_total.labels(result="failed").inc()
+        auth_2fa_verifications_total.labels(result="failed").inc()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid OTP code",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    if auth_2fa_verifications_total:
-        auth_2fa_verifications_total.labels(result="success").inc()
+    auth_2fa_verifications_total.labels(result="success").inc()
 
 
 def _ensure_email_verified(user: dict, system_config: SystemSettings) -> None:
@@ -183,8 +181,7 @@ async def login_access_token(
     user = await _lookup_user_for_login(user_repo, form_data.username)
 
     if not user or not security.verify_password(form_data.password, user.get("hashed_password")):
-        if auth_login_attempts_total:
-            auth_login_attempts_total.labels(status="failed").inc()
+        auth_login_attempts_total.labels(status="failed").inc()
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -192,8 +189,7 @@ async def login_access_token(
         )
 
     if not user.get("is_active", True):
-        if auth_login_attempts_total:
-            auth_login_attempts_total.labels(status="inactive_user").inc()
+        auth_login_attempts_total.labels(status="inactive_user").inc()
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Inactive user",
@@ -204,8 +200,7 @@ async def login_access_token(
     if user.get("totp_enabled", False):
         await _verify_totp_or_raise(user_repo, user, otp)
 
-    if auth_login_attempts_total:
-        auth_login_attempts_total.labels(status="success").inc()
+    auth_login_attempts_total.labels(status="success").inc()
 
     return _session_tokens(user, system_config)
 
@@ -290,8 +285,7 @@ async def create_user(
 
     send_verification_email(background_tasks, new_user.email, system_config)
 
-    if auth_signups_total:
-        auth_signups_total.labels(status="success").inc()
+    auth_signups_total.labels(status="success").inc()
 
     return new_user
 
@@ -655,8 +649,7 @@ async def login_oidc_callback(
             **_SSO_COOKIE_FLAGS,
         )
     response.delete_cookie(_OIDC_STATE_COOKIE, path=f"{settings.API_V1_STR}{_OIDC_CALLBACK_PATH}", **_SSO_COOKIE_FLAGS)
-    if auth_oidc_logins_total:
-        auth_oidc_logins_total.labels(status=outcome).inc()
+    auth_oidc_logins_total.labels(status=outcome).inc()
     return response
 
 
@@ -768,7 +761,6 @@ async def reset_password(request: Request, reset_in: UserPasswordReset, db: Data
     ):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_MSG_INVALID_RESET_TOKEN)
 
-    if auth_password_resets_total:
-        auth_password_resets_total.labels(status="success").inc()
+    auth_password_resets_total.labels(status="success").inc()
 
     return PasswordResetResponse(message="Password successfully reset")

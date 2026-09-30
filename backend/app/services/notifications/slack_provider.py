@@ -207,15 +207,12 @@ class SlackProvider(NotificationProvider):
                 response = await client.post(url, headers=headers, json=payload)
                 if response.status_code == 200 and response.json().get("ok"):
                     logger.info(f"Slack message sent to {destination}")
-                    if notifications_sent_total:
-                        notifications_sent_total.labels(type="slack").inc()
+                    notifications_sent_total.labels(type="slack").inc()
                     return True
                 logger.error(f"Failed to send Slack message: {response.text}")
-                if notifications_failed_total:
-                    notifications_failed_total.labels(type="slack").inc()
+                notifications_failed_total.labels(type="slack").inc()
                 return False
         except Exception as e:
             logger.exception("Error sending Slack message: %s", e)
-            if notifications_failed_total:
-                notifications_failed_total.labels(type="slack").inc()
+            notifications_failed_total.labels(type="slack").inc()
             return False

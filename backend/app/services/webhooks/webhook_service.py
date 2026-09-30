@@ -492,8 +492,7 @@ class WebhookService:
 
         logger.info(f"Triggering {len(webhooks)} webhook(s) for event {event_type} (project: {project_id or 'global'})")
 
-        if webhooks_triggered_total:
-            webhooks_triggered_total.labels(event_type=event_type).inc(len(webhooks))
+        webhooks_triggered_total.labels(event_type=event_type).inc(len(webhooks))
 
         tasks = [self._send_webhook(db, webhook, payload, event_type) for webhook in webhooks]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -506,7 +505,7 @@ class WebhookService:
             elif result is False:
                 failed_count += 1
 
-        if failed_count > 0 and webhooks_failed_total:
+        if failed_count > 0:
             webhooks_failed_total.labels(event_type=event_type).inc(failed_count)
 
         logger.info(
