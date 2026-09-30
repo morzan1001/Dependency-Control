@@ -1,9 +1,11 @@
 """Tests for email notification templates."""
 
 import pytest
+from jinja2 import UndefinedError
 
 from app.core.config import settings
 from app.core.constants import PASSWORD_RESET_TOKEN_EXPIRE_HOURS
+from app.schemas.notification import AlertVulnerability
 from app.services.notifications import templates
 from app.services.notifications.templates import (
     get_2fa_disabled_template,
@@ -18,6 +20,10 @@ from app.services.notifications.templates import (
     get_verification_email_template,
     get_vulnerability_found_template,
 )
+
+
+def _vuln(**fields):
+    return AlertVulnerability(**fields).model_dump()
 
 
 @pytest.fixture
@@ -42,6 +48,11 @@ class TestProjectName:
     )
     def test_a_renamed_deployment_is_named_in_every_mail(self, renamed, render):
         assert "Acme Deps" in render()
+
+
+def test_a_context_value_no_caller_passes_fails_the_render_instead_of_going_out_blank():
+    with pytest.raises(UndefinedError):
+        templates.render_template("password_reset.html", {"username": "u", "link": "https://example.com/reset"})
 
 
 class TestGetVerificationEmailTemplate:
@@ -94,7 +105,7 @@ class TestGetVulnerabilityFoundTemplate:
         defaults = {
             "report_link": "https://example.com/report/123",
             "project_name_scanned": "my-app",
-            "vulnerabilities": [{"id": "CVE-2024-001", "severity": "HIGH"}],
+            "vulnerabilities": [_vuln(id="CVE-2024-001", severity="HIGH")],
             "priority_count": 1,
         }
         defaults.update(overrides)
@@ -111,7 +122,7 @@ class TestGetVulnerabilityFoundTemplate:
 
     def test_the_high_epss_banner_and_badge_use_the_one_threshold(self):
         result = self._render(
-            vulnerabilities=[{"id": "CVE-2024-001", "severity": "MEDIUM", "epss_score": 0.1}],
+            vulnerabilities=[_vuln(id="CVE-2024-001", severity="MEDIUM", epss_score=0.1)],
             has_high_epss=True,
             high_epss_count=1,
         )
@@ -123,7 +134,7 @@ class TestGetVulnerabilityFoundTemplate:
         found = 431
 
         result = self._render(
-            vulnerabilities=[{"id": f"CVE-2024-{index:04d}", "severity": "HIGH"} for index in range(listed)],
+            vulnerabilities=[_vuln(id=f"CVE-2024-{index:04d}", severity="HIGH") for index in range(listed)],
             priority_count=found,
         )
 
@@ -132,8 +143,8 @@ class TestGetVulnerabilityFoundTemplate:
     def test_only_a_vulnerability_in_the_high_epss_bucket_carries_the_epss_badge(self):
         from app.core.constants import EPSS_HIGH_THRESHOLD
 
-        high = self._render(vulnerabilities=[{"id": "CVE-1", "severity": "HIGH", "epss_score": EPSS_HIGH_THRESHOLD}])
-        below = self._render(vulnerabilities=[{"id": "CVE-2", "severity": "HIGH", "epss_score": 0.0999}])
+        high = self._render(vulnerabilities=[_vuln(id="CVE-1", severity="HIGH", epss_score=EPSS_HIGH_THRESHOLD)])
+        below = self._render(vulnerabilities=[_vuln(id="CVE-2", severity="HIGH", epss_score=0.0999)])
 
         assert ("EPSS: 10.0%" in high, "EPSS:" in below) == (True, False)
 
@@ -253,7 +264,7 @@ class TestTemplateEscaping:
         result = get_vulnerability_found_template(
             report_link="https://example.com/report/123",
             project_name_scanned=_HTML_INJECTION,
-            vulnerabilities=[{"id": "CVE-2024-001", "severity": "HIGH"}],
+            vulnerabilities=[_vuln(id="CVE-2024-001", severity="HIGH")],
             priority_count=1,
         )
 
@@ -264,7 +275,7 @@ class TestTemplateEscaping:
         result = get_vulnerability_found_template(
             report_link="https://example.com/report/123",
             project_name_scanned="my-app",
-            vulnerabilities=[{"id": _HTML_INJECTION, "severity": "HIGH"}],
+            vulnerabilities=[_vuln(id=_HTML_INJECTION, severity="HIGH")],
             priority_count=1,
         )
 

@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from app.core.config import settings
 from app.core.constants import EPSS_HIGH_THRESHOLD, PASSWORD_RESET_TOKEN_EXPIRE_HOURS
@@ -10,7 +10,7 @@ from app.schemas.notification import PRIORITY_VULNS_LABEL
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 template_dir = os.path.join(current_dir, "../../templates/email")
-env = Environment(loader=FileSystemLoader(template_dir), autoescape=True)
+env = Environment(loader=FileSystemLoader(template_dir), autoescape=True, undefined=StrictUndefined)
 env.globals["project_name"] = settings.PROJECT_NAME
 
 
