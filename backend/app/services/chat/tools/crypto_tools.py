@@ -211,7 +211,7 @@ async def list_policy_audit_entries(
         policy_type=policy_type,
         limit=limit,
     )
-    return {"entries": [e.model_dump(by_alias=True) for e in entries]}
+    return {"entries": [e.model_dump(by_alias=True, exclude={"snapshot"}) for e in entries]}
 
 
 async def get_framework_evaluation_summary(

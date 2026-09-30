@@ -8,7 +8,7 @@ from app.schemas.policy_audit import PolicyAuditAction
 from app.schemas.project import LicensePolicySchema
 from app.services.audit.history import record_license_policy_change
 from app.services.chat.tools import ChatToolRegistry
-from app.services.crypto_policy.seeder import load_seed_rules, write_policy
+from app.services.crypto_policy.seeder import load_seed_rules, seed_crypto_policies, write_policy
 from tests.helpers.permission_presets import PRESET_ADMIN
 
 _PROJECT = "p-audit"
@@ -20,15 +20,18 @@ def _admin() -> User:
 
 @pytest_asyncio.fixture
 async def audited(db):
-    """A one-rule system crypto seed, one project crypto override and one project license-policy change."""
+    """The system crypto seed, one project crypto override and one project license-policy change."""
     await db.projects.insert_one(
         {"_id": _PROJECT, "name": "P", "default_branch": "main", "deleted_branches": [], "members": []}
     )
-    rules = list(load_seed_rules())[:1]
-    # A full seed snapshot outgrows the chat result cap on its own, which would empty the system listing.
-    await write_policy(db, scope="system", project_id=None, rules=rules, action=PolicyAuditAction.SEED, actor=None)
+    await seed_crypto_policies(db)
     await write_policy(
-        db, scope="project", project_id=_PROJECT, rules=rules, action=PolicyAuditAction.UPDATE, actor=_admin()
+        db,
+        scope="project",
+        project_id=_PROJECT,
+        rules=list(load_seed_rules()),
+        action=PolicyAuditAction.UPDATE,
+        actor=_admin(),
     )
     old = LicensePolicySchema().model_dump()
     await record_license_policy_change(
