@@ -5,19 +5,21 @@ import json
 import logging
 from typing import Any
 
-from app.core.config import settings
+from app.core.config import scan_link
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
     NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
     NOTIFICATION_EVENT_ANALYSIS_FAILED,
     NOTIFICATION_EVENT_VULNERABILITY_FOUND,
+    ScanStatus,
     get_severity_value,
 )
 from app.core.cve import canonical_cve
 from app.core.epss import HIGH_EPSS_LABEL, bucket_epss
-from app.models.finding import Finding, FindingType
+from app.models.finding import Finding
 from app.models.project import Project
+from app.models.stats import Stats
 from app.schemas.notification import PRIORITY_VULNS_LABEL, AlertVulnerability
 from app.services.analysis.types import Database
 from app.services.notifications import notification_service
@@ -44,31 +46,31 @@ logger = logging.getLogger(__name__)
 _TOP_VULNS_SHOWN = 10
 
 
-def _extract_vulnerability_info(entry_details: dict[str, Any], finding: dict[str, Any]) -> dict[str, Any]:
+def _extract_vulnerability_info(entry_details: dict[str, Any], finding: dict[str, Any]) -> AlertVulnerability:
     """Extract vulnerability info from a vulnerability entry and its parent finding."""
     return AlertVulnerability(
         id=canonical_cve(entry_details) or "Unknown",
         severity=entry_details["severity"],
         package=finding.get("component", "Unknown"),
-        version=finding.get("version", ""),
+        version=finding.get("version") or "",
         in_kev=entry_details.get(DETAILS_KEY_IN_KEV, False),
         epss_score=entry_details.get("epss_score"),
         kev_due_date=entry_details.get("kev_due_date"),
         kev_ransomware_use=entry_details.get(DETAILS_KEY_KEV_RANSOMWARE, False),
-    ).model_dump()
+    )
 
 
-def _is_high_epss(vuln: dict[str, Any]) -> bool:
-    return bucket_epss(vuln["epss_score"] or 0) == "high"
+def _is_high_epss(vuln: AlertVulnerability) -> bool:
+    return bucket_epss(vuln.epss_score or 0) == "high"
 
 
-def _is_priority(vuln: dict[str, Any]) -> bool:
-    return vuln["severity"] in ("CRITICAL", "HIGH") or vuln["in_kev"] or _is_high_epss(vuln)
+def _is_priority(vuln: AlertVulnerability) -> bool:
+    return vuln.severity in ("CRITICAL", "HIGH") or vuln.in_kev or _is_high_epss(vuln)
 
 
 def _categorize_vulnerabilities(
     vulnerability_findings: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[AlertVulnerability], list[AlertVulnerability], list[AlertVulnerability]]:
     """Categorize vulnerabilities into (kev_vulns, high_epss_vulns, priority_vulns)."""
     vulns = [
         _extract_vulnerability_info(entry_details, finding)
@@ -76,31 +78,31 @@ def _categorize_vulnerabilities(
         for entry_details in (finding.get("details") or {}).get("vulnerabilities") or []
     ]
     return (
-        [v for v in vulns if v["in_kev"]],
+        [v for v in vulns if v.in_kev],
         [v for v in vulns if _is_high_epss(v)],
         [v for v in vulns if _is_priority(v)],
     )
 
 
-def _format_vuln_line(index: int, vuln: dict[str, Any]) -> str:
+def _format_vuln_line(index: int, vuln: AlertVulnerability) -> str:
     """Format a single vulnerability line for notification message."""
-    vuln_line = f"  {index}. {vuln['id']} ({vuln['severity']}) - {vuln['package']}"
-    if vuln["version"]:
-        vuln_line += f"@{vuln['version']}"
-    if vuln.get("in_kev"):
+    vuln_line = f"  {index}. {vuln.id} ({vuln.severity}) - {vuln.package}"
+    if vuln.version:
+        vuln_line += f"@{vuln.version}"
+    if vuln.in_kev:
         vuln_line += " [KEV]"
-    if vuln.get("epss_score"):
-        vuln_line += f" [EPSS: {vuln['epss_score'] * 100:.1f}%]"
+    if vuln.epss_score:
+        vuln_line += f" [EPSS: {vuln.epss_score * 100:.1f}%]"
     return vuln_line
 
 
 def _build_vulnerability_message(
     project_name: str,
-    kev_vulns: list[dict[str, Any]],
-    high_epss_vulns: list[dict[str, Any]],
-    priority_vulns: list[dict[str, Any]],
-    top_vulns: list[dict[str, Any]],
-    scan_link: str,
+    kev_vulns: list[AlertVulnerability],
+    high_epss_vulns: list[AlertVulnerability],
+    priority_vulns: list[AlertVulnerability],
+    top_vulns: list[AlertVulnerability],
+    link: str,
 ) -> tuple[str, str]:
     """Build (subject, message) for a vulnerability notification."""
     subject = "[SECURITY ALERT] "
@@ -127,7 +129,7 @@ def _build_vulnerability_message(
         for i, vuln in enumerate(top_vulns, 1):
             message += _format_vuln_line(i, vuln) + "\n"
 
-    message += f"\nView full report: {scan_link}"
+    message += f"\nView full report: {link}"
 
     return subject, message
 
@@ -146,31 +148,32 @@ async def send_scan_notifications(
     scan_id: str,
     project: Project,
     aggregated_findings: list[Finding],
-    results_summary: list[str],
+    stats: Stats,
+    status: ScanStatus,
+    failed_analyzers: list[str],
+    analyzer_outcomes: dict[str, str],
+    analyzer_count: int,
     db: Database,
 ) -> None:
     """Send notifications and trigger webhooks for a completed scan.
 
     Each notification type is handled independently so one failure does not block others.
     """
-    severity_counts: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
-    for f in aggregated_findings:
-        if f.type != FindingType.SYSTEM_WARNING and f.severity in severity_counts:
-            severity_counts[f.severity] += 1
-
-    scan = await db.scans.find_one({"_id": scan_id}) or {}
-    completion = [len(aggregated_findings), severity_counts, scan.get("status"), scan.get("failed_analyzers")]
+    link = scan_link(str(project.id), scan_id)
+    severity_counts = {"CRITICAL": stats.critical, "HIGH": stats.high, "MEDIUM": stats.medium, "LOW": stats.low}
+    completion = [len(aggregated_findings), severity_counts, status, failed_analyzers]
     if await _first_announcement(db, scan_id, NOTIFICATION_EVENT_ANALYSIS_COMPLETED, completion):
+        results_summary = [f"{name}: {outcome}" for name, outcome in analyzer_outcomes.items()]
         try:
-            scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
             html_content = get_analysis_completed_template(
-                analysis_link=scan_link,
+                analysis_link=link,
                 project_name_scanned=project.name,
                 total_findings=len(aggregated_findings),
-                severity_critical=severity_counts["CRITICAL"],
-                severity_high=severity_counts["HIGH"],
-                severity_medium=severity_counts["MEDIUM"],
-                severity_low=severity_counts["LOW"],
+                analyzer_count=analyzer_count,
+                severity_critical=stats.critical,
+                severity_high=stats.high,
+                severity_medium=stats.medium,
+                severity_low=stats.low,
                 results_summary=results_summary,
             )
 
@@ -181,7 +184,8 @@ async def send_scan_notifications(
                 total_findings=len(aggregated_findings),
                 severity_counts=severity_counts,
                 results_summary=results_summary,
-                scan_link=scan_link,
+                analyzer_count=analyzer_count,
+                scan_link=link,
             )
             mm_props = mm_analysis_props(
                 project_name=project.name,
@@ -189,7 +193,8 @@ async def send_scan_notifications(
                 total_findings=len(aggregated_findings),
                 severity_counts=severity_counts,
                 results_summary=results_summary,
-                scan_link=scan_link,
+                analyzer_count=analyzer_count,
+                scan_link=link,
             )
             await notification_service.notify_project_members(
                 project=project,
@@ -212,9 +217,9 @@ async def send_scan_notifications(
             project_id=str(project.id),
             project_name=project.name,
             findings_count=len(aggregated_findings),
-            stats=scan.get("stats", {}),
-            scan_status=scan.get("status", "completed"),
-            failed_analyzers=scan.get("failed_analyzers") or [],
+            stats=stats.model_dump(),
+            scan_status=status,
+            failed_analyzers=failed_analyzers,
             team_ids=project.team_ids,
         )
 
@@ -227,37 +232,33 @@ async def send_scan_notifications(
         kev_vulns, high_epss_vulns, priority_vulns = _categorize_vulnerabilities(vulnerability_findings)
         if not priority_vulns:
             return
-        alerted = sorted({(v["id"], v["package"], v["version"], v["in_kev"]) for v in priority_vulns})
+        alerted = sorted({(v.id, v.package, v.version, v.in_kev) for v in priority_vulns})
         if not await _first_announcement(db, scan_id, NOTIFICATION_EVENT_VULNERABILITY_FOUND, alerted):
             return
 
         # Order: KEV first, then higher EPSS, then more severe.
         top_vulns = sorted(
             priority_vulns,
-            key=lambda x: (
-                not x.get("in_kev", False),
-                -(x.get("epss_score") or 0),
-                -get_severity_value(x.get("severity")),
-            ),
+            key=lambda v: (not v.in_kev, -(v.epss_score or 0), -get_severity_value(v.severity)),
         )[:_TOP_VULNS_SHOWN]
 
-        scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
         subject, message = _build_vulnerability_message(
             project.name,
             kev_vulns,
             high_epss_vulns,
             priority_vulns,
             top_vulns,
-            scan_link,
+            link,
         )
+        top_vuln_dicts = [v.model_dump() for v in top_vulns]
 
         vuln_html = get_vulnerability_found_template(
-            report_link=scan_link,
+            report_link=link,
             project_name_scanned=project.name,
-            vulnerabilities=top_vulns,
+            vulnerabilities=top_vuln_dicts,
             priority_count=len(priority_vulns),
             kev_count=len(kev_vulns),
-            kev_vulnerabilities=kev_vulns,
+            kev_vulnerabilities=[v.model_dump() for v in kev_vulns],
             high_epss_count=len(high_epss_vulns),
         )
 
@@ -266,16 +267,16 @@ async def send_scan_notifications(
             kev_count=len(kev_vulns),
             high_epss_count=len(high_epss_vulns),
             priority_count=len(priority_vulns),
-            top_vulns=top_vulns,
-            scan_link=scan_link,
+            top_vulns=top_vuln_dicts,
+            scan_link=link,
         )
         vuln_mm_props = mm_vulnerability_props(
             project_name=project.name,
             kev_count=len(kev_vulns),
             high_epss_count=len(high_epss_vulns),
             priority_count=len(priority_vulns),
-            top_vulns=top_vulns,
-            scan_link=scan_link,
+            top_vulns=top_vuln_dicts,
+            scan_link=link,
         )
         await notification_service.notify_project_members(
             project=project,
@@ -299,11 +300,11 @@ async def send_scan_notifications(
             scan_id=scan_id,
             project_id=str(project.id),
             project_name=project.name,
-            critical_count=sum(1 for v in priority_vulns if v["severity"] == "CRITICAL"),
-            high_count=sum(1 for v in priority_vulns if v["severity"] == "HIGH"),
+            critical_count=sum(1 for v in priority_vulns if v.severity == "CRITICAL"),
+            high_count=sum(1 for v in priority_vulns if v.severity == "HIGH"),
             kev_count=len(kev_vulns),
             high_epss_count=len(high_epss_vulns),
-            top_vulnerabilities=top_vulns,
+            top_vulnerabilities=top_vuln_dicts,
             team_ids=project.team_ids,
         )
 

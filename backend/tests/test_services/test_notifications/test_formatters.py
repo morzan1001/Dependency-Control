@@ -174,6 +174,7 @@ def _completed_colour(**severity_counts: int) -> str:
         total_findings=sum(severity_counts.values()),
         severity_counts=severity_counts,
         results_summary=[],
+        analyzer_count=0,
         scan_link=_SCAN_LINK,
     )
     return props["attachments"][0]["color"]

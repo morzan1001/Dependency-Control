@@ -40,6 +40,7 @@ def build_analysis_completed_props(
     total_findings: int,
     severity_counts: dict[str, int],
     results_summary: list[str],
+    analyzer_count: int,
     scan_link: str,
 ) -> dict[str, Any]:
     """Build Mattermost attachment props for analysis completed notification."""
@@ -68,7 +69,7 @@ def build_analysis_completed_props(
 
     if results_summary:
         analyzer_lines = "\n".join(f"- {r}" for r in results_summary)
-        text += f"\n\n**Analyzers ({len(results_summary)})**\n{analyzer_lines}"
+        text += f"\n\n**Analyzers ({analyzer_count})**\n{analyzer_lines}"
 
     text += f"\n\n[View Report \u2192]({scan_link})"
 

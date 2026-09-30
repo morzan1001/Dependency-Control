@@ -162,6 +162,7 @@ class TestGetAnalysisCompletedTemplate:
             "analysis_link": "https://example.com/analysis/789",
             "project_name_scanned": "my-service",
             "total_findings": 5,
+            "analyzer_count": 1,
         }
         defaults.update(overrides)
         return get_analysis_completed_template(**defaults)
@@ -176,14 +177,13 @@ class TestGetAnalysisCompletedTemplate:
         assert "backend-api" in result
 
     @pytest.mark.parametrize(
-        ("results_summary", "headline"),
-        [
-            pytest.param(["trivy: 3"], "1 analyzer ran.", id="one"),
-            pytest.param(["trivy: 3", "grype: 2"], "2 analyzers ran.", id="two"),
-        ],
+        ("analyzer_count", "headline"),
+        [pytest.param(1, "1 analyzer ran.", id="one"), pytest.param(2, "2 analyzers ran.", id="two")],
     )
-    def test_the_headline_counts_the_summarised_analyzers(self, results_summary, headline):
-        assert headline in self._render(results_summary=results_summary)
+    def test_the_headline_counts_the_analyzers_not_the_summary_lines(self, analyzer_count, headline):
+        summary = ["trivy: Success", "grype: Success", "epss_kev: Success (4 enriched)"]
+
+        assert headline in self._render(results_summary=summary, analyzer_count=analyzer_count)
 
 
 _ADVISED_PROJECT = {"id": "p1", "name": "billing", "findings": ["log4j-core (2.14.1)"]}

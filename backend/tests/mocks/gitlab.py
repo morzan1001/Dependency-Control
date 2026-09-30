@@ -73,18 +73,22 @@ def make_oidc_payload(**kwargs):
     return OIDCPayload(**defaults)
 
 
+# The user GET /user resolves the instance token to.
+BOT_USER_ID = 4242
+
+
 def make_merge_request(**kwargs):
-    """Create a GitLabMergeRequest with sensible defaults."""
-    defaults = {"iid": 1, "state": "opened", "draft": False, "work_in_progress": False}
+    """A GitLabMergeRequest parsed from a GET /projects/:id/repository/commits/:sha/merge_requests item."""
+    defaults = {"iid": 1, "state": "opened", "draft": False, "work_in_progress": False, "sha": "abc"}
     defaults.update(kwargs)
-    return GitLabMergeRequest(**defaults)
+    return GitLabMergeRequest.model_validate(defaults)
 
 
-def make_note(**kwargs):
-    """Create a GitLabNote with sensible defaults."""
-    defaults = {"id": 1, "body": ""}
+def make_note(author_id=BOT_USER_ID, **kwargs):
+    """A GitLabNote parsed from a GET /projects/:id/merge_requests/:iid/notes item."""
+    defaults = {"id": 1, "body": "", "system": False, "author": {"id": author_id, "username": f"user{author_id}"}}
     defaults.update(kwargs)
-    return GitLabNote(**defaults)
+    return GitLabNote.model_validate(defaults)
 
 
 def make_member(**kwargs):

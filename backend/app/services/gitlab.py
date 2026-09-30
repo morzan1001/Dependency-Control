@@ -810,3 +810,11 @@ class GitLabService:
                 e,
             )
             return GitLabTeamSyncResult(None)
+
+    async def get_current_user_id(self) -> int | None:
+        """The id of the account the token belongs to; None when GET /user does not answer it."""
+        response = await self._api_get("/user")
+        if response is None or response.status_code != 200:
+            return None
+        user_id = response.json().get("id")
+        return user_id if isinstance(user_id, int) else None

@@ -79,6 +79,7 @@ def build_analysis_completed_blocks(
     total_findings: int,
     severity_counts: dict[str, int],
     results_summary: list[str],
+    analyzer_count: int,
     scan_link: str,
 ) -> list[dict[str, Any]]:
     """Build rich Block Kit layout for analysis completed notification."""
@@ -134,7 +135,7 @@ def build_analysis_completed_blocks(
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": _fit(f"*Analyzers ({len(results_summary)})*\n{results_text}"),
+                    "text": _fit(f"*Analyzers ({analyzer_count})*\n{results_text}"),
                 },
             }
         )

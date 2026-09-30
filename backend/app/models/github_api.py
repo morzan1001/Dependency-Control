@@ -1,6 +1,6 @@
 """Pydantic models for GitHub API responses and Actions OIDC token payloads (extra="ignore" discards unused fields)."""
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasPath, BaseModel, ConfigDict, Field
 
 
 class GitHubOIDCPayload(BaseModel):
@@ -29,6 +29,8 @@ class GitHubPullRequest(BaseModel):
     number: int
     state: str
     draft: bool = False
+    head_sha: str | None = Field(None, validation_alias=AliasPath("head", "sha"))
+    merge_commit_sha: str | None = None
 
 
 class GitHubIssueComment(BaseModel):
@@ -39,3 +41,4 @@ class GitHubIssueComment(BaseModel):
     id: int
     # GitHub's issue-comment schema declares `body` optional.
     body: str | None = None
+    user_id: int | None = Field(None, validation_alias=AliasPath("user", "id"))

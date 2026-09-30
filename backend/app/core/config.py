@@ -110,3 +110,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def scan_link(project_id: str, scan_id: str) -> str:
+    return f"{settings.FRONTEND_BASE_URL}/projects/{project_id}/scans/{scan_id}"

@@ -1,9 +1,10 @@
 """Tests for GitLab multi-instance behavior."""
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
+from app.core.constants import SCAN_STATUS_COMPLETED, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.gitlab_api import GitLabMember
 from app.models.project import Project, Scan
 from app.models.stats import Stats
@@ -12,6 +13,7 @@ from app.repositories.teams import MemberSubset
 from app.services.gitlab import GitLabGroupLookup, GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.gitlab import (
+    BOT_USER_ID,
     make_gitlab_instance,
     make_merge_request,
     make_note,
@@ -116,7 +118,7 @@ class TestMrDecorationEarlyReturns:
 
         db = cls._db(instance_doc)
         with patch("app.services.analysis.integrations.GitLabService") as MockService:
-            asyncio.run(decorate_gitlab_mr(scan_id="s1", stats=Stats(), scan_doc=scan_doc, project=project, db=db))
+            asyncio.run(decorate_gitlab_mr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
 
         MockService.assert_not_called()
 
@@ -159,6 +161,19 @@ class TestMrDecorationEarlyReturns:
             gitlab_mr_comments_enabled=True,
         )
         self._run_and_assert_no_service(project, _make_scan(commit_hash="abc"), instance_doc=None)
+
+    def test_an_unusable_instance_is_logged_as_a_warning(self, caplog):
+        project = Project(
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-gone",
+            gitlab_project_id=100,
+            gitlab_mr_comments_enabled=True,
+        )
+        with caplog.at_level(logging.INFO, logger="app.services.analysis.integrations"):
+            self._run_and_assert_no_service(project, _make_scan(commit_hash="abc"), instance_doc=None)
+
+        assert [(r.levelno, "inst-gone" in r.getMessage()) for r in caplog.records] == [(logging.WARNING, True)]
 
     def test_skips_when_instance_inactive(self):
         project = Project(
@@ -219,6 +234,8 @@ class TestMrDecorationInstanceRouting:
                 decorate_gitlab_mr(
                     scan_id="s1",
                     stats=Stats(),
+                    status=SCAN_STATUS_COMPLETED,
+                    error=None,
                     scan_doc=_make_scan(commit_hash="abc123"),
                     project=project,
                     db=db,
@@ -285,6 +302,8 @@ class TestMrDecorationInstanceRouting:
                     decorate_gitlab_mr(
                         scan_id="s1",
                         stats=Stats(),
+                        status=SCAN_STATUS_COMPLETED,
+                        error=None,
                         scan_doc=_make_scan(commit_hash="abc"),
                         project=proj,
                         db=db,
@@ -327,6 +346,7 @@ class TestMrDecorationInstanceRouting:
         with patch("app.services.analysis.integrations.GitLabService") as MockService:
             mock_svc = MagicMock()
             mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
+            mock_svc.get_current_user_id = AsyncMock(return_value=BOT_USER_ID)
             mock_svc.get_merge_request_notes = AsyncMock(return_value=[])
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
             MockService.return_value = mock_svc
@@ -335,6 +355,8 @@ class TestMrDecorationInstanceRouting:
                 decorate_gitlab_mr(
                     scan_id="s1",
                     stats=Stats(),
+                    status=SCAN_STATUS_COMPLETED,
+                    error=None,
                     scan_doc=_make_scan(commit_hash="abc"),
                     project=project,
                     db=db,
@@ -375,6 +397,7 @@ class TestMrDecorationInstanceRouting:
         with patch("app.services.analysis.integrations.GitLabService") as MockService:
             mock_svc = MagicMock()
             mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
+            mock_svc.get_current_user_id = AsyncMock(return_value=BOT_USER_ID)
             mock_svc.get_merge_request_notes = AsyncMock(return_value=existing_notes)
             mock_svc.update_merge_request_comment = AsyncMock(return_value=True)
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
@@ -384,6 +407,8 @@ class TestMrDecorationInstanceRouting:
                 decorate_gitlab_mr(
                     scan_id="s1",
                     stats=Stats(),
+                    status=SCAN_STATUS_COMPLETED,
+                    error=None,
                     scan_doc=_make_scan(commit_hash="abc"),
                     project=project,
                     db=db,
@@ -397,8 +422,9 @@ class TestMrDecorationInstanceRouting:
 
     def test_skips_update_when_comment_unchanged(self):
         """If existing comment body matches new content, skip the update."""
+        from app.core.config import scan_link
         from app.services.analysis.integrations import (
-            _build_mr_comment,
+            _build_scan_comment,
             decorate_gitlab_mr,
         )
 
@@ -422,8 +448,7 @@ class TestMrDecorationInstanceRouting:
         db = create_mock_db({"gitlab_instances": collection})
 
         stats = Stats()
-        scan_url = "http://localhost:3000/projects/fixed-proj-id/scans/s1"
-        expected_body = _build_mr_comment("s1", stats, scan_url)
+        expected_body = _build_scan_comment(stats, scan_link("fixed-proj-id", "s1"), SCAN_STATUS_COMPLETED, None)
 
         mrs = [make_merge_request(iid=10, state="opened")]
         existing_notes = [make_note(id=888, body=expected_body)]
@@ -431,6 +456,7 @@ class TestMrDecorationInstanceRouting:
         with patch("app.services.analysis.integrations.GitLabService") as MockService:
             mock_svc = MagicMock()
             mock_svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
+            mock_svc.get_current_user_id = AsyncMock(return_value=BOT_USER_ID)
             mock_svc.get_merge_request_notes = AsyncMock(return_value=existing_notes)
             mock_svc.update_merge_request_comment = AsyncMock(return_value=True)
             mock_svc.post_merge_request_comment = AsyncMock(return_value=True)
@@ -440,6 +466,8 @@ class TestMrDecorationInstanceRouting:
                 decorate_gitlab_mr(
                     scan_id="s1",
                     stats=stats,
+                    status=SCAN_STATUS_COMPLETED,
+                    error=None,
                     scan_doc=_make_scan(commit_hash="abc"),
                     project=project,
                     db=db,
@@ -449,6 +477,65 @@ class TestMrDecorationInstanceRouting:
             # Neither update nor create should be called
             mock_svc.update_merge_request_comment.assert_not_called()
             mock_svc.post_merge_request_comment.assert_not_called()
+
+
+_MARKER = "<!-- dependency-control:scan-comment -->"
+
+
+class TestMrCommentTarget:
+    """Only an MR whose head is the scanned commit, and only a note the token's own user wrote."""
+
+    @staticmethod
+    def _decorate(mrs, notes, bot_id=BOT_USER_ID):
+        from app.services.analysis.integrations import decorate_gitlab_mr
+
+        project = Project(
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-1",
+            gitlab_project_id=100,
+            gitlab_mr_comments_enabled=True,
+        )
+        db = create_mock_db({"gitlab_instances": create_mock_collection(find_one=_USABLE_INSTANCE_DOC)})
+        svc = MagicMock()
+        svc.get_merge_requests_for_commit = AsyncMock(return_value=mrs)
+        svc.get_current_user_id = AsyncMock(return_value=bot_id)
+        svc.get_merge_request_notes = AsyncMock(return_value=notes)
+        svc.update_merge_request_comment = AsyncMock(return_value=True)
+        svc.post_merge_request_comment = AsyncMock(return_value=True)
+        with patch("app.services.analysis.integrations.GitLabService", return_value=svc):
+            scan_doc = _make_scan(commit_hash="abc")
+            asyncio.run(decorate_gitlab_mr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan_doc, project, db))
+        return svc
+
+    def test_an_mr_whose_head_moved_past_the_scanned_commit_is_left_alone(self):
+        svc = self._decorate([make_merge_request(iid=1, sha="abc"), make_merge_request(iid=2, sha="def")], [])
+
+        assert [c.args[1] for c in svc.post_merge_request_comment.await_args_list] == [1]
+
+    def test_a_marker_note_by_another_author_is_not_taken_over(self):
+        svc = self._decorate([make_merge_request(iid=1)], [make_note(id=7, body=f"{_MARKER}\nLGTM", author_id=99)])
+
+        svc.update_merge_request_comment.assert_not_awaited()
+        svc.post_merge_request_comment.assert_awaited_once()
+
+    def test_the_oldest_own_marker_note_is_updated(self):
+        # GitLab lists notes newest first.
+        notes = [
+            make_note(id=30, body=f"{_MARKER}\nforged", author_id=99),
+            make_note(id=20, body=f"{_MARKER}\nduplicate from a raced run"),
+            make_note(id=10, body=f"{_MARKER}\nfirst scan"),
+        ]
+        svc = self._decorate([make_merge_request(iid=1)], notes)
+
+        svc.post_merge_request_comment.assert_not_awaited()
+        assert svc.update_merge_request_comment.await_args.args[2] == 10
+
+    def test_nothing_is_decorated_when_the_token_user_cannot_be_resolved(self):
+        svc = self._decorate([make_merge_request(iid=1)], [], bot_id=None)
+
+        svc.get_merge_request_notes.assert_not_awaited()
+        svc.post_merge_request_comment.assert_not_awaited()
 
 
 class TestTeamSyncNamespaceCheck:

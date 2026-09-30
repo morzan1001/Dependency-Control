@@ -269,3 +269,23 @@ class TestWritePullRequestComments:
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         with patch.object(service, "_api_patch", new_callable=AsyncMock, return_value=None):
             assert asyncio.run(service.update_pull_request_comment("acme", "widget", 99, "new")) is False
+
+
+# Shape of GET /user for the account the token belongs to.
+_TOKEN_USER = {"login": "dc-bot", "id": 4242, "node_id": "U_kgDOABCDEF", "type": "User", "site_admin": False}
+
+
+class TestGetCurrentUserId:
+    def test_the_tokens_own_account_id(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        with patch.object(service, "_api_get", new_callable=AsyncMock, return_value=_json_response(_TOKEN_USER)) as g:
+            assert asyncio.run(service.get_current_user_id()) == 4242
+        g.assert_awaited_once_with("/user")
+
+    @pytest.mark.parametrize(
+        "response", [None, _json_response(_error_body("Resource not accessible by integration"), status_code=403)]
+    )
+    def test_an_unanswered_or_refused_lookup_resolves_no_one(self, response):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        with patch.object(service, "_api_get", new_callable=AsyncMock, return_value=response):
+            assert asyncio.run(service.get_current_user_id()) is None

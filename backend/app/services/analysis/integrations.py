@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
+from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.config import scan_link
+from app.core.constants import SCAN_STATUS_COMPLETED, ScanStatus
 from app.models.project import Project, Scan
 from app.models.stats import Stats
 from app.services.github import GitHubService, split_repo_path
@@ -19,51 +23,68 @@ logger = logging.getLogger(__name__)
 _SCAN_COMMENT_MARKER = "<!-- dependency-control:scan-comment -->"
 
 
-def _build_mr_comment(
-    scan_id: str,
-    stats: Stats,
-    scan_url: str | None,
-) -> str:
-    """Build the MR comment body for scan results."""
+def _build_scan_comment(stats: Stats, scan_url: str, status: ScanStatus, error: str | None) -> str:
+    """Build the MR/PR comment body for scan results."""
     status_label = "[OK]"
-    if stats.risk_score > 0:
+    if stats.risk_score > 0 or status != SCAN_STATUS_COMPLETED:
         status_label = "[WARNING]"
     if stats.critical > 0 or stats.high > 0:
         status_label = "[ALERT]"
+    status_text = "Completed" if status == SCAN_STATUS_COMPLETED else f"Completed with errors: {error}"
 
-    scan_marker = f"<!-- dependency-control:scan-id:{scan_id} -->"
+    return "\n".join(
+        [
+            _SCAN_COMMENT_MARKER,
+            f"### {status_label} Dependency Control Scan Results",
+            "",
+            f"**Status:** {status_text}",
+            f"**Risk Score:** {stats.risk_score}",
+            "",
+            "| Severity | Count |",
+            "| :--- | :--- |",
+            f"| Critical | {stats.critical} |",
+            f"| High | {stats.high} |",
+            f"| Medium | {stats.medium} |",
+            f"| Low | {stats.low} |",
+            "",
+            f"[View Full Report]({scan_url})",
+        ]
+    )
 
-    comment_lines: list[str] = [
-        _SCAN_COMMENT_MARKER,
-        scan_marker,
-        f"### {status_label} Dependency Control Scan Results",
-        "",
-        "**Status:** Completed",
-        f"**Risk Score:** {stats.risk_score}",
-        "",
-        "| Severity | Count |",
-        "| :--- | :--- |",
-        f"| Critical | {stats.critical} |",
-        f"| High | {stats.high} |",
-        f"| Medium | {stats.medium} |",
-        f"| Low | {stats.low} |",
-    ]
 
-    if scan_url:
-        comment_lines.append("")
-        comment_lines.append(f"[View Full Report]({scan_url})")
+async def _upsert_scan_comment(
+    comments: list[tuple[int, str]],
+    body: str,
+    update: Callable[[int, str], Awaitable[bool]],
+    post: Callable[[str], Awaitable[bool]],
+    label: str,
+) -> None:
+    """Edit the first marked comment in `comments` (the bot's own, oldest first) or post a new one."""
+    existing = next(((cid, text) for cid, text in comments if _SCAN_COMMENT_MARKER in text), None)
+    if existing is None:
+        action, success = "post", await post(body)
+    elif existing[1] == body:
+        logger.info("Scan comment on %s is already up to date", label)
+        return
+    else:
+        action, success = "update", await update(existing[0], body)
 
-    return "\n".join(comment_lines)
+    if success:
+        logger.info("Scan comment on %s: %s done", label, action)
+    else:
+        logger.warning("Scan comment on %s: %s failed", label, action)
 
 
 async def decorate_gitlab_mr(
     scan_id: str,
     stats: Stats,
+    status: ScanStatus,
+    error: str | None,
     scan_doc: Scan,
     project: Project,
     db: AsyncIOMotorDatabase,
 ) -> None:
-    """Post a comment to the GitLab Merge Request with scan results."""
+    """Comment the scan result on the open GitLab merge requests whose head is the scanned commit."""
     if not project.gitlab_mr_comments_enabled:
         return
     if not project.gitlab_instance_id or not project.gitlab_project_id:
@@ -77,7 +98,7 @@ async def decorate_gitlab_mr(
 
         gitlab_instance = await GitLabInstanceRepository(db).get_usable(project.gitlab_instance_id)
         if not gitlab_instance:
-            logger.info(
+            logger.warning(
                 "GitLab instance %s is missing, inactive or has no token; skipping MR decoration for project %s",
                 project.gitlab_instance_id,
                 project.id,
@@ -85,103 +106,52 @@ async def decorate_gitlab_mr(
             return
 
         gitlab_service = GitLabService(gitlab_instance)
-
-        mrs = await gitlab_service.get_merge_requests_for_commit(project.gitlab_project_id, scan_doc.commit_hash)
-
-        if not mrs:
-            return
-
-        relevant_mrs = [mr for mr in mrs if mr.state == "opened" and not mr.draft and not mr.work_in_progress]
-
+        gitlab_project_id = project.gitlab_project_id
+        mrs = await gitlab_service.get_merge_requests_for_commit(gitlab_project_id, scan_doc.commit_hash)
+        relevant_mrs = [
+            mr
+            for mr in mrs
+            if mr.state == "opened" and not mr.draft and not mr.work_in_progress and mr.sha == scan_doc.commit_hash
+        ]
         if not relevant_mrs:
-            logger.info(f"No relevant open MRs for scan {scan_id} in project {project.id}")
+            logger.info(f"No open MR has scan {scan_id}'s commit as head in project {project.id}")
             return
 
-        from app.core.config import settings
+        bot_id = await gitlab_service.get_current_user_id()
+        if bot_id is None:
+            logger.warning("GitLab token user unresolved; skipping MR decoration for project %s", project.id)
+            return
 
-        scan_url = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
-
-        comment_body = _build_mr_comment(scan_id, stats, scan_url)
-
+        body = _build_scan_comment(stats, scan_link(str(project.id), scan_id), status, error)
         for mr in relevant_mrs:
             try:
-                await _update_or_create_mr_comment(
-                    gitlab_service=gitlab_service,
-                    gitlab_project_id=project.gitlab_project_id,
-                    mr_iid=mr.iid,
-                    comment_body=comment_body,
-                    project_id=str(project.id),
-                    scan_id=scan_id,
+                notes = await gitlab_service.get_merge_request_notes(gitlab_project_id, mr.iid)
+                # GitLab lists notes newest first.
+                own = [(note.id, note.body) for note in reversed(notes) if note.author_id == bot_id]
+                await _upsert_scan_comment(
+                    own,
+                    body,
+                    partial(gitlab_service.update_merge_request_comment, gitlab_project_id, mr.iid),
+                    partial(gitlab_service.post_merge_request_comment, gitlab_project_id, mr.iid),
+                    f"MR !{mr.iid} of project {project.id}",
                 )
-            except Exception as mr_err:
-                logger.exception(
-                    "Failed to decorate MR !%s for project %s, scan %s: %s",
-                    mr.iid,
-                    project.id,
-                    scan_id,
-                    mr_err,
-                )
+            except Exception:
+                logger.exception("Failed to decorate MR !%s for project %s, scan %s", mr.iid, project.id, scan_id)
 
-    except Exception as e:
-        logger.exception(
-            "Failed to decorate GitLab MR for project %s, scan %s: %s",
-            project.id,
-            scan_id,
-            e,
-        )
-
-
-async def _update_or_create_mr_comment(
-    gitlab_service: GitLabService,
-    gitlab_project_id: int,
-    mr_iid: int,
-    comment_body: str,
-    project_id: str,
-    scan_id: str,
-) -> None:
-    """Upsert the MR comment carrying _SCAN_COMMENT_MARKER."""
-    existing_notes = await gitlab_service.get_merge_request_notes(gitlab_project_id, mr_iid)
-
-    existing_comment_id: int | None = None
-    existing_body: str | None = None
-
-    for note in existing_notes:
-        if _SCAN_COMMENT_MARKER in note.body:
-            existing_comment_id = note.id
-            existing_body = note.body
-            break
-
-    if existing_comment_id:
-        if existing_body == comment_body:
-            logger.info(f"MR comment already up to date for project {project_id}, MR !{mr_iid}, scan {scan_id}")
-            return
-
-        success = await gitlab_service.update_merge_request_comment(
-            gitlab_project_id,
-            mr_iid,
-            existing_comment_id,
-            comment_body,
-        )
-        if success:
-            logger.info(f"Updated MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}")
-        else:
-            logger.warning(f"Failed to update MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}")
-    else:
-        success = await gitlab_service.post_merge_request_comment(gitlab_project_id, mr_iid, comment_body)
-        if success:
-            logger.info(f"Posted MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}")
-        else:
-            logger.warning(f"Failed to post MR comment for project {project_id}, MR !{mr_iid}, scan {scan_id}")
+    except Exception:
+        logger.exception("Failed to decorate GitLab MR for project %s, scan %s", project.id, scan_id)
 
 
 async def decorate_github_pr(
     scan_id: str,
     stats: Stats,
+    status: ScanStatus,
+    error: str | None,
     scan_doc: Scan,
     project: Project,
     db: AsyncIOMotorDatabase,
 ) -> None:
-    """Post a comment to the GitHub Pull Request with scan results."""
+    """Comment the scan result on the open GitHub pull requests whose head is the scanned commit."""
     if not project.github_pr_comments_enabled:
         return
     repo_path = split_repo_path(project.github_repository_path)
@@ -196,7 +166,7 @@ async def decorate_github_pr(
 
         github_instance = await GitHubInstanceRepository(db).get_usable(project.github_instance_id)
         if not github_instance:
-            logger.info(
+            logger.warning(
                 "GitHub instance %s is missing, inactive or has no token; skipping PR decoration for project %s",
                 project.github_instance_id,
                 project.id,
@@ -205,87 +175,35 @@ async def decorate_github_pr(
 
         owner, repo = repo_path
         github_service = GitHubService(github_instance)
-
         prs = await github_service.get_pull_requests_for_commit(owner, repo, scan_doc.commit_hash)
-
-        if not prs:
-            return
-
-        relevant_prs = [pr for pr in prs if pr.state == "open" and pr.draft is False]
-
+        relevant_prs = [
+            pr
+            for pr in prs
+            if pr.state == "open" and pr.draft is False and scan_doc.commit_hash in {pr.head_sha, pr.merge_commit_sha}
+        ]
         if not relevant_prs:
-            logger.info(f"No relevant open PRs for scan {scan_id} in project {project.id}")
+            logger.info(f"No open PR has scan {scan_id}'s commit as head in project {project.id}")
             return
 
-        from app.core.config import settings
+        bot_id = await github_service.get_current_user_id()
+        if bot_id is None:
+            logger.warning("GitHub token user unresolved; skipping PR decoration for project %s", project.id)
+            return
 
-        scan_url = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
-
-        comment_body = _build_mr_comment(scan_id, stats, scan_url)
-
+        body = _build_scan_comment(stats, scan_link(str(project.id), scan_id), status, error)
         for pr in relevant_prs:
             try:
-                await _update_or_create_pr_comment(
-                    github_service=github_service,
-                    owner=owner,
-                    repo=repo,
-                    pr_number=pr.number,
-                    comment_body=comment_body,
-                    project_id=str(project.id),
-                    scan_id=scan_id,
+                comments = await github_service.get_pull_request_comments(owner, repo, pr.number)
+                own = [(comment.id, comment.body or "") for comment in comments if comment.user_id == bot_id]
+                await _upsert_scan_comment(
+                    own,
+                    body,
+                    partial(github_service.update_pull_request_comment, owner, repo),
+                    partial(github_service.post_pull_request_comment, owner, repo, pr.number),
+                    f"PR #{pr.number} of project {project.id}",
                 )
-            except Exception as pr_err:
-                logger.exception(
-                    "Failed to decorate PR #%s for project %s, scan %s: %s",
-                    pr.number,
-                    project.id,
-                    scan_id,
-                    pr_err,
-                )
+            except Exception:
+                logger.exception("Failed to decorate PR #%s for project %s, scan %s", pr.number, project.id, scan_id)
 
-    except Exception as e:
-        logger.exception(
-            "Failed to decorate GitHub PR for project %s, scan %s: %s",
-            project.id,
-            scan_id,
-            e,
-        )
-
-
-async def _update_or_create_pr_comment(
-    github_service: GitHubService,
-    owner: str,
-    repo: str,
-    pr_number: int,
-    comment_body: str,
-    project_id: str,
-    scan_id: str,
-) -> None:
-    """Upsert the PR comment carrying _SCAN_COMMENT_MARKER."""
-    existing_comments = await github_service.get_pull_request_comments(owner, repo, pr_number)
-
-    existing_comment_id: int | None = None
-    existing_body: str | None = None
-
-    for comment in existing_comments:
-        if _SCAN_COMMENT_MARKER in (comment.body or ""):
-            existing_comment_id = comment.id
-            existing_body = comment.body
-            break
-
-    if existing_comment_id is not None:
-        if existing_body == comment_body:
-            logger.info(f"PR comment already up to date for project {project_id}, PR #{pr_number}, scan {scan_id}")
-            return
-
-        success = await github_service.update_pull_request_comment(owner, repo, existing_comment_id, comment_body)
-        if success:
-            logger.info(f"Updated PR comment for project {project_id}, PR #{pr_number}, scan {scan_id}")
-        else:
-            logger.warning(f"Failed to update PR comment for project {project_id}, PR #{pr_number}, scan {scan_id}")
-    else:
-        success = await github_service.post_pull_request_comment(owner, repo, pr_number, comment_body)
-        if success:
-            logger.info(f"Posted PR comment for project {project_id}, PR #{pr_number}, scan {scan_id}")
-        else:
-            logger.warning(f"Failed to post PR comment for project {project_id}, PR #{pr_number}, scan {scan_id}")
+    except Exception:
+        logger.exception("Failed to decorate GitHub PR for project %s, scan %s", project.id, scan_id)

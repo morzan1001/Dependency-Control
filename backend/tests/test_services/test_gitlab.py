@@ -264,3 +264,30 @@ class TestGroupListing:
             asyncio.run(service.get_groups())
 
         assert "search" not in paginated.await_args[1]["params"]
+
+
+class TestGetCurrentUserId:
+    @staticmethod
+    def _resolve(service, response):
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)) as api_get:
+            return asyncio.run(service.get_current_user_id()), api_get
+
+    def test_the_tokens_own_account_id(self, gitlab_instance_a):
+        response = MagicMock(status_code=200)
+        # Shape of GET /user for the account the token belongs to.
+        response.json.return_value = {
+            "id": 4242,
+            "username": "dc-bot",
+            "name": "DC Bot",
+            "state": "active",
+            "bot": True,
+        }
+
+        user_id, api_get = self._resolve(GitLabService(gitlab_instance_a), response)
+
+        assert user_id == 4242
+        api_get.assert_awaited_once_with("/user")
+
+    @pytest.mark.parametrize("response", [None, MagicMock(status_code=401)])
+    def test_an_unanswered_or_refused_lookup_resolves_no_one(self, gitlab_instance_a, response):
+        assert self._resolve(GitLabService(gitlab_instance_a), response)[0] is None

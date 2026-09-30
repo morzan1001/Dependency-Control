@@ -127,11 +127,11 @@ async def test_rescan_keeps_the_ingested_crypto_assets_on_a_real_server(db, _gri
 
 
 async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], list[str]]:
-    """The rescan's analysis_results rows and results_summary after the original ran its crypto analyzers."""
-    summaries: list[list[str]] = []
+    """The rescan's analysis_results rows and announced analyzers after the original ran its crypto analyzers."""
+    announced: list[list[str]] = []
 
-    async def _capture(project_id, scan_id, scan_doc, stats, findings, results_summary, db):
-        summaries.append(list(results_summary))
+    async def _capture(project_id, scan_id, scan_doc, stats, status, error, failed, findings, analyzer_outcomes, db):
+        announced.append(sorted(analyzer_outcomes))
 
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
     await seed_crypto_policies(db)
@@ -149,13 +149,12 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
     assert await run_analysis(rescan.id, [], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     rows = await db.analysis_results.find({"scan_id": rescan.id}).to_list(None)
-    return sorted(row["analyzer_name"] for row in rows), summaries[-1]
+    return sorted(row["analyzer_name"] for row in rows), announced[-1]
 
 
-def _assert_crypto_rows_are_regenerated_not_carried(rows: list[str], summary: list[str]) -> None:
+def _assert_crypto_rows_are_regenerated_not_carried(rows: list[str], announced: list[str]) -> None:
     assert rows == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
-    reported = sorted(line.split(":")[0] for line in summary)
-    assert reported == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
+    assert announced == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
 
 
 @pytest.mark.asyncio

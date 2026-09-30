@@ -41,7 +41,7 @@ def _no_gridfs(monkeypatch):
 def notified(monkeypatch) -> list[Stats]:
     sent: list[Stats] = []
 
-    async def _capture(project_id, scan_id, scan_doc, stats, findings, results_summary, db):
+    async def _capture(project_id, scan_id, scan_doc, stats, status, error, failed, findings, analyzer_outcomes, db):
         sent.append(stats)
 
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
@@ -389,7 +389,7 @@ async def test_the_worker_retries_an_unreadable_re_analysis_before_keeping_the_e
     stored = await db.scans.find_one({"_id": scan_id})
     assert (stored["status"], stored["retry_count"]) == (SCAN_STATUS_COMPLETED_WITH_ERRORS, _LAST_ATTEMPT)
     await _assert_the_earlier_analysis_is_intact(db, scan_id)
-    failure_notice.assert_not_awaited()
+    failure_notice.assert_not_called()
 
 
 @pytest.mark.asyncio

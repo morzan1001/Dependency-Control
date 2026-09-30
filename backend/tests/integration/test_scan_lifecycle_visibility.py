@@ -210,9 +210,39 @@ async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors
 
 
 def test_enrichment_post_processor_failures_do_not_flip_the_status():
-    summary = ["grype: Failed", "epss_kev: Failed", "reachability: Failed", "osv: Partial (7 components skipped)"]
-    assert engine._failed_analyzer_names(summary) == ["grype", "osv"]
-    assert engine._enrichment_failure_names(summary) == ["epss_kev", "reachability"]
+    outcomes = engine._analyzer_outcomes(
+        ["grype: Failed", "epss_kev: Failed", "reachability: Failed", "osv: Partial (7 component(s) were not scanned)"]
+    )
+    assert engine._failed_analyzer_names(outcomes) == (["grype", "osv"], ["epss_kev", "reachability"])
+
+
+class _PartialOnTheSecondSbom:
+    def __init__(self):
+        self.calls = 0
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        self.calls += 1
+        if self.calls == 1:
+            return {"osv_vulnerabilities": []}
+        return {"osv_vulnerabilities": [], "partial_components_skipped": 7}
+
+
+@pytest.mark.asyncio
+async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcome(db, _gridfs_patched, monkeypatch):
+    announced: list[dict[str, str]] = []
+
+    async def _capture(project_id, scan_id, scan_doc, stats, status, error, failed, findings, analyzer_outcomes, db):
+        announced.append(analyzer_outcomes)
+
+    monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
+    serve_analyzer(monkeypatch, "osv", _PartialOnTheSecondSbom())
+    await _seed_project(db)
+    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    scan_id = await _seed_scan(db, refs)
+
+    assert await run_analysis(scan_id, refs, ["osv"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+
+    assert announced == [{"osv": "Partial (7 component(s) were not scanned)"}]
 
 
 @pytest.mark.asyncio

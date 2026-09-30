@@ -14,7 +14,7 @@ def _producer_entry(cve: str) -> dict:
     return _extract_vulnerability_info(
         {"id": cve, "severity": "CRITICAL"},
         {"component": "requests", "version": "2.30.0"},
-    )
+    ).model_dump()
 
 
 class TestTeamsFormatterEnvelope:
