@@ -88,7 +88,6 @@ class DependencyEnrichment(BaseModel):
 
     homepage: str | None = None
     repository_url: str | None = None
-    # Persisted as-is; aggregator._deps_dev_block picks its keys.
     deps_dev: dict[str, Any] = Field(default_factory=dict)
 
     description: str | None = None

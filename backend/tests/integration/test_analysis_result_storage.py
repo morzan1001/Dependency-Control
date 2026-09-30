@@ -138,7 +138,6 @@ async def test_a_retried_scanner_job_replaces_the_result_of_the_first_attempt(cl
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_resubmission_replaces_every_row_stored_without_a_source(db):
-    # the append-only writer left one row per CI attempt
     await db.analysis_results.insert_many(
         [
             {
