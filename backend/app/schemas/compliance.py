@@ -55,7 +55,7 @@ class ControlDefinition:
     severity: Severity
     remediation: str
     maps_to_rule_ids: list[str] = field(default_factory=list)
-    # If set, produces a ControlResult in place of the default evaluator.
+    # Called as (control, data) in place of the default evaluator.
     custom_evaluator: Callable[..., "ControlResult"] | None = None
 
 

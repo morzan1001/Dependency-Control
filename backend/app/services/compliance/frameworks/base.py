@@ -191,10 +191,7 @@ def evaluate_framework(
     controls: list[ControlDefinition],
     data: EvaluationInput,
 ) -> FrameworkEvaluation:
-    results = [
-        control.custom_evaluator(data) if control.custom_evaluator is not None else default_evaluator(control, data)
-        for control in controls
-    ]
+    results = [(control.custom_evaluator or default_evaluator)(control, data) for control in controls]
     return build_evaluation(framework, data, results, coverage=data.coverage)
 
 
