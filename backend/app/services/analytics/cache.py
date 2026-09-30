@@ -53,12 +53,15 @@ class TTLCache:
         self._size -= self._store.pop(key).size
 
     def set(self, key: Hashable, value: Any) -> None:
-        """Insert or update an entry after dropping expired ones, then evict LRU entries over capacity."""
+        """Insert or update an entry after dropping expired ones, then evict LRU entries over capacity; a value
+        heavier than the whole cache only drops the stale one under its key."""
         now = time.monotonic()
         # get() reorders without refreshing expiry, so LRU order is not expiry order.
         for stale in [k for k, entry in self._store.items() if entry.expires_at < now or k == key]:
             self._pop(stale)
         entry = _Entry(value=value, expires_at=now + self.ttl_seconds, size=self.size_of(value))
+        if entry.size > self.maxsize:
+            return
         self._store[key] = entry
         self._size += entry.size
         while self._size > self.maxsize:

@@ -52,11 +52,15 @@ def test_a_weighed_cache_evicts_until_the_summed_size_fits():
     assert (cache.get(("a",))[0], cache.get(("b",))[0], cache.get(("c",))[0]) == (False, True, True)
 
 
-def test_a_value_heavier_than_the_whole_cache_is_not_kept():
+def test_a_value_heavier_than_the_whole_cache_is_not_kept_and_evicts_nothing_else():
     cache = TTLCache(maxsize=3, ttl_seconds=60, size_of=len)
-    cache.set(("huge",), [1, 2, 3, 4])
     cache.set(("small",), [1])
-    assert (cache.get(("huge",))[0], cache.get(("small",))[0]) == (False, True)
+    cache.set(("other",), [1])
+    cache.set(("huge",), [1])
+    cache.set(("huge",), [1, 2, 3, 4])
+    assert (cache.get(("small",))[0], cache.get(("other",))[0], cache.get(("huge",))[0]) == (True, True, False)
+    cache.set(("third",), [1])
+    assert cache.get(("small",))[0] is True
 
 
 def test_a_write_drops_expired_entries_before_evicting_a_live_one(monkeypatch):
