@@ -7,7 +7,7 @@ from pathlib import Path
 
 import bson
 import pytest
-from pymongo.errors import OperationFailure
+from pymongo.errors import DocumentTooLarge
 
 from app.core import ensure_utc
 from app.models.waiver import Waiver
@@ -106,12 +106,29 @@ async def test_reanalysis_drops_rows_the_run_no_longer_found_and_rewrites_the_re
     assert (stored["waived"], stored["waiver_reason"]) == (True, "accepted")
 
 
-@pytest.mark.live_mongo
-async def test_a_vulnerability_finding_over_16_mib_is_stored_with_slim_advisories(db, caplog):
+def _padded_to(record: dict, size: int) -> dict:
+    record["description"] += " " * (size - len(bson.encode(record)))
+    return record
+
+
+def _vulnerability_with_advisories(size_at_least: int) -> tuple[dict, dict, list[str]]:
+    """One trivy finding whose 6,000 advisories carry descriptions long enough to reach ``size_at_least`` BSON bytes."""
     [record] = _trivy_records(_trivy_vulnerability("CVE-2016-2779", "linux-libc-dev"))
     advisory = record["details"]["vulnerabilities"][0]
     cves = [f"CVE-2024-{n:05d}" for n in range(6000)]
-    record["details"]["vulnerabilities"] = [{**advisory, "id": cve, "description": "d" * 3000} for cve in cves]
+    record["details"]["vulnerabilities"] = [{**advisory, "id": cve, "description": ""} for cve in cves]
+    length = -(-(size_at_least - len(bson.encode(record))) // len(cves))
+    for entry in record["details"]["vulnerabilities"]:
+        entry["description"] = "d" * length
+    return record, advisory, cves
+
+
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    "size_at_least", [_MAX_DOCUMENT + 4096, _MAX_DOCUMENT + 4_000_000], ids=["just-over", "far-over"]
+)
+async def test_a_vulnerability_finding_over_16_mib_is_stored_with_slim_advisories(db, caplog, size_at_least):
+    record, advisory, cves = _vulnerability_with_advisories(size_at_least)
     assert len(bson.encode(record)) > _MAX_DOCUMENT
 
     with caplog.at_level(logging.WARNING, logger="app.services.analysis.engine"):
@@ -127,20 +144,35 @@ async def test_a_vulnerability_finding_over_16_mib_is_stored_with_slim_advisorie
     assert record["finding_id"] in caplog.text
 
 
+def _sast_record() -> dict:
+    sast, _ = _prepare_finding_records(
+        _findings("bearer", {"findings": _BEARER_OUTPUT})[:1], _SCAN, _PROJECT, _SCAN_CREATED
+    )
+    return sast[0]
+
+
 @pytest.mark.live_mongo
-async def test_a_non_vulnerability_finding_over_16_mib_fails_and_keeps_the_previous_findings(db):
+@pytest.mark.parametrize(
+    ("oversized", "size"),
+    [
+        pytest.param(_sast_record, _MAX_DOCUMENT + 4096, id="sast-just-over"),
+        pytest.param(_sast_record, _MAX_DOCUMENT + 4_000_000, id="sast-far-over"),
+        pytest.param(
+            lambda: _trivy_records(_trivy_vulnerability("CVE-2016-2779", "linux-libc-dev"))[0],
+            _MAX_DOCUMENT + 4096,
+            id="vulnerability-over-even-when-slim",
+        ),
+    ],
+)
+async def test_a_finding_slimming_cannot_fit_fails_and_keeps_the_previous_findings(db, oversized, size):
     previous = _trivy_records(
         _trivy_vulnerability("CVE-2023-45288", "golang.org/x/net"),
         _trivy_vulnerability("CVE-2024-24790", "golang.org/x/text"),
     )
     await _persist(db, previous)
-    sast, _ = _prepare_finding_records(
-        _findings("bearer", {"findings": _BEARER_OUTPUT})[:1], _SCAN, _PROJECT, _SCAN_CREATED
-    )
-    sast[0]["details"]["sast_findings"] *= 40_000
-    assert len(bson.encode(sast[0])) > _MAX_DOCUMENT
+    record = _padded_to(oversized(), size)
 
-    with pytest.raises(OperationFailure):
-        await _persist(db, [*_trivy_records(_trivy_vulnerability("CVE-2023-45288", "golang.org/x/net")), *sast])
+    with pytest.raises(DocumentTooLarge, match=record["finding_id"]):
+        await _persist(db, [*_trivy_records(_trivy_vulnerability("CVE-2023-45288", "golang.org/x/net")), record])
 
     assert await _stored_ids(db) == sorted(r["_id"] for r in previous)

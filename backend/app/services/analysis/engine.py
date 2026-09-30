@@ -11,7 +11,7 @@ from typing import Any, Optional
 import bson
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateMany
-from pymongo.errors import DocumentTooLarge, OperationFailure
+from pymongo.errors import DocumentTooLarge
 
 from app.core.constants import (
     ANALYSIS_MAX_RETRIES,
@@ -94,7 +94,6 @@ logger = logging.getLogger(__name__)
 
 _BULK_CHUNK_SIZE = 500
 _MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
-_BSON_OBJECT_TOO_LARGE = 10334
 _SLIMMED_ADVISORY_FIELDS = frozenset({"description", "references", "details"})
 
 # Run inside the engine (not registered in ``analyzers``); regenerated per run, never carried over.
@@ -759,22 +758,20 @@ async def _stamp_first_seen(
 def _fit_finding(record: dict[str, Any]) -> dict[str, Any]:
     """The record, with its advisories slimmed when a vulnerability finding outgrows a Mongo document."""
     size = len(bson.encode(record))
-    if size <= _MAX_DOCUMENT_BYTES or record["type"] != "vulnerability":
+    if size <= _MAX_DOCUMENT_BYTES:
         return record
-    logger.warning("Finding %s exceeds 16 MiB (%d bytes); stored with slim advisories", record["finding_id"], size)
-    details = record["details"]
-    advisories = [{k: v for k, v in e.items() if k not in _SLIMMED_ADVISORY_FIELDS} for e in details["vulnerabilities"]]
-    return {**record, "details": {**details, "vulnerabilities": advisories}}
-
-
-async def _write_findings(finding_repo: FindingRepository, chunk: list[dict[str, Any]]) -> int:
-    try:
-        return await finding_repo.replace_many_raw(chunk)
-    except (DocumentTooLarge, OperationFailure) as exc:
-        # The driver refuses a document past the 48 MB message size; the server refuses a smaller one with its batch.
-        if isinstance(exc, OperationFailure) and exc.code != _BSON_OBJECT_TOO_LARGE:
-            raise
-        return await finding_repo.replace_many_raw([_fit_finding(record) for record in chunk])
+    if record["type"] == "vulnerability":
+        details = record["details"]
+        advisories = [
+            {k: v for k, v in e.items() if k not in _SLIMMED_ADVISORY_FIELDS} for e in details["vulnerabilities"]
+        ]
+        slim = {**record, "details": {**details, "vulnerabilities": advisories}}
+        if len(bson.encode(slim)) <= _MAX_DOCUMENT_BYTES:
+            logger.warning(
+                "Finding %s exceeds 16 MiB (%d bytes); stored with slim advisories", record["finding_id"], size
+            )
+            return slim
+    raise DocumentTooLarge(f"Finding {record['finding_id']} is {size} bytes, over the 16 MiB document limit")
 
 
 async def _persist_findings_and_waivers(
@@ -790,9 +787,11 @@ async def _persist_findings_and_waivers(
     written_at = datetime.now(timezone.utc)
     for record in findings_to_insert:
         record["created_at"] = written_at
+    # Fitted before the first write: the server drops a document just over 16 MiB from the batch without failing it.
+    fitted = [_fit_finding(record) for record in findings_to_insert]
     persisted_count = 0
-    for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
-        persisted_count += await _write_findings(finding_repo, findings_to_insert[i : i + _BULK_CHUNK_SIZE])
+    for i in range(0, len(fitted), _BULK_CHUNK_SIZE):
+        persisted_count += await finding_repo.replace_many_raw(fitted[i : i + _BULK_CHUNK_SIZE])
     # Only after every chunk is written, so a persist that raises leaves the previous findings in place.
     await finding_repo.delete_older_writes({"scan_id": scan_id}, written_at)
 
