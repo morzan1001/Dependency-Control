@@ -1,4 +1,4 @@
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Callable
 from typing import Any
 
@@ -40,17 +40,13 @@ _CVES_SAMPLED = 10
 _MARKED_CVES_SAMPLED = 5
 
 
-def process_vulnerabilities(
-    findings: list[ModelOrDict],
-    join_dependencies: list[ModelOrDict],
-    source_target: str | None,
-) -> list[Recommendation]:
+def process_vulnerabilities(findings: list[ModelOrDict], join_dependencies: list[ModelOrDict]) -> list[Recommendation]:
     """Update, base-image and no-fix cards; ``join_dependencies`` holds the inventory rows the findings name."""
     recommendations = []
 
     vulns_by_source = _categorize_by_source(findings, join_dependencies)
 
-    base_image_rec = _analyze_base_image_vulns(vulns_by_source.get("image", []), source_target)
+    base_image_rec = _analyze_base_image_vulns(vulns_by_source.get("image", []), _scanned_image(join_dependencies))
     if base_image_rec:
         recommendations.append(base_image_rec)
 
@@ -115,7 +111,17 @@ def _categorize_by_source(
     return categories
 
 
-def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], source_target: str | None) -> Recommendation | None:
+def _scanned_image(dependencies: list[ModelOrDict]) -> str | None:
+    """The image reference most image-SBOM rows name; application SBOMs of the same scan name their own root."""
+    images = Counter(
+        get_attr(d, "source_target")
+        for d in dependencies
+        if get_attr(d, "source_type") == SOURCE_TYPE_IMAGE and get_attr(d, "source_target")
+    )
+    return images.most_common(1)[0][0] if images else None
+
+
+def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], image: str | None) -> Recommendation | None:
     """Analyze if a base image update would be beneficial."""
 
     impact = severity_impact(v.severity for v in vulns)
@@ -124,11 +130,21 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], source_target: str
 
     affected_packages = {v.package_name for v in vulns}
     image_name = "your base image"
-    if source_target:
-        repository = source_target.split("@", 1)[0]
+    image_action: dict[str, Any] = {}
+    if image:
+        repository = image.split("@", 1)[0]
         # A ':' before the last '/' is a registry port, not a tag separator.
         tag_colon = repository.rfind(":")
         image_name = repository[:tag_colon] if tag_colon > repository.rfind("/") else repository
+        image_action = {
+            "current_image": image,
+            "commands": [
+                "# Check for available tags:",
+                f"docker pull {image_name}:latest",
+                "# Or use a specific newer version:",
+                f"# FROM {image_name}:<newer-tag>",
+            ],
+        }
 
     packages_shown, packages_total = sample_components(sorted(affected_packages))
     return Recommendation(
@@ -145,14 +161,8 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], source_target: str
         affected_components_total=packages_total,
         action={
             "type": "update_base_image",
-            "current_image": source_target,
             "suggestion": f"Check for newer tags of {image_name} or consider switching to a minimal/distroless image",
-            "commands": [
-                "# Check for available tags:",
-                f"docker pull {image_name}:latest",
-                "# Or use a specific newer version:",
-                f"# FROM {image_name}:<newer-tag>",
-            ],
+            **image_action,
         },
         effort=Effort.LOW if impact["total"] > 10 else Effort.MEDIUM,
     )

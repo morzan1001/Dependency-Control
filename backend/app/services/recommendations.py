@@ -100,7 +100,6 @@ class RecommendationEngine:
         findings: Sequence[ModelOrDict] | None = None,
         dependencies: Sequence[ModelOrDict] | None = None,
         join_dependencies: Sequence[ModelOrDict] | None = None,
-        source_target: str | None = None,
         previous_scan: trends.PreviousScan | None = None,
         previous_scan_dependencies: Sequence[ModelOrDict] | None = None,
         cve_recurrence: dict[str, trends.CveRecurrence] | None = None,
@@ -134,7 +133,7 @@ class RecommendationEngine:
 
         _safe_extend(
             recommendations,
-            lambda: vulnerabilities.process_vulnerabilities(vulns, join_list, source_target),
+            lambda: vulnerabilities.process_vulnerabilities(vulns, join_list),
             "vulnerabilities",
         )
         _safe_extend(recommendations, lambda: secrets.process_secrets(findings_by_type["secret"]), "secrets")

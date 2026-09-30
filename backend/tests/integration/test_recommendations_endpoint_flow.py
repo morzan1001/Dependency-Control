@@ -207,30 +207,32 @@ async def test_an_explicit_scan_id_of_another_project_is_not_found(client, db, o
     assert "No scan found for this project" in resp.text
 
 
+@pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_the_first_dependency_naming_a_source_target_reaches_the_engine(
-    client, db, owner_auth_headers_proj, monkeypatch
+async def test_the_base_image_card_names_the_scanned_image_rather_than_an_application_sbom(
+    client, db, owner_auth_headers_proj, no_live_intel
 ):
+    fixtures = Path(__file__).parents[1] / "fixtures" / "sbom"
+    app_rows, image_rows = (
+        [d.to_dict() for d in parse_sbom(json.loads((fixtures / name).read_text())).dependencies]
+        for name in ("mono.trivy.cdx.json", "alpine.syft.spdx.json")
+    )
     await _insert_scan(db, "s")
-    for index, target in enumerate([None, "registry/app:1", "registry/other:2"]):
-        await db.dependencies.insert_one(
-            {
-                "_id": f"d{index}",
-                "project_id": "p",
-                "scan_id": "s",
-                "name": f"dep-{index}",
-                "version": "1.0",
-                "source_target": target,
-            }
-        )
-    seen: dict = {}
-    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+    await db.dependencies.insert_many(
+        [row | {"_id": f"d{i}", "project_id": "p", "scan_id": "s"} for i, row in enumerate(app_rows + image_rows)]
+    )
+    advisory = {"id": "CVE-2024-0001", "severity": "CRITICAL", "fixed_version": "9.9.9"}
+    records = [
+        record for row in image_rows for record in _vulnerability_records("s", row["name"], row["version"], [advisory])
+    ]
+    await db.findings.insert_many(records)
 
     resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
 
     assert resp.status_code == 200, resp.text
-    assert seen["source_target"] == "registry/app:1"
-    assert resp.json()["dependencies_read"] == 3
+    [card] = [r for r in resp.json()["recommendations"] if r["type"] == "base_image_update"]
+    assert card["action"]["current_image"] == "alpine:3.20"
+    assert card["action"]["commands"][1] == "docker pull alpine:latest"
 
 
 @pytest.mark.asyncio

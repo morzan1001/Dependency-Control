@@ -275,7 +275,7 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
     return [
         Recommendation(
             type=RecommendationType.EOL_DEPENDENCY,
-            priority=Priority.HIGH if impact["critical"] else Priority.MEDIUM,
+            priority=Priority.HIGH if impact["high"] else Priority.MEDIUM,
             title="End-of-Life Dependencies",
             description=(
                 f"Found {len(eol_findings)} dependencies that have reached end-of-life. "

@@ -62,7 +62,7 @@ def test_the_update_action_names_how_many_advisories_it_sampled(direct, action_t
 
     installed = {"name": "log4j-core", "version": "2.14.1", "direct": direct}
 
-    recs = process_vulnerabilities([_vulnerability(index) for index in range(population)], [installed], None)
+    recs = process_vulnerabilities([_vulnerability(index) for index in range(population)], [installed])
 
     action = next(r for r in recs if r.action.get("type") == action_type).action
     assert len(action["cves"]) == _CVES_SAMPLED

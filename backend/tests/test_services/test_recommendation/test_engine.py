@@ -471,8 +471,8 @@ class TestGenerateRecommendationsErrorResilience:
         assert isinstance(result, list)
 
 
-class TestGenerateRecommendationsSourceTarget:
-    def test_source_target_in_base_image_rec(self):
+class TestGenerateRecommendationsBaseImage:
+    def test_the_image_rows_name_the_base_image(self):
         engine = RecommendationEngine()
         findings = [
             _make_vuln_finding(
@@ -488,15 +488,11 @@ class TestGenerateRecommendationsSourceTarget:
                 source_type="image",
                 dep_type="deb",
             )
+            | {"source_target": "python:3.11-slim"}
             for i in range(5)
         ]
 
-        result = engine.generate_recommendations(
-            findings=findings,
-            dependencies=deps,
-            join_dependencies=deps,
-            source_target="python:3.11-slim",
-        )
+        result = engine.generate_recommendations(findings=findings, dependencies=deps, join_dependencies=deps)
 
         [base_rec] = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert base_rec.action["current_image"] == "python:3.11-slim"

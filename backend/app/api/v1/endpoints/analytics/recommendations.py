@@ -135,7 +135,6 @@ async def get_project_recommendations(
         dependencies, dependencies_total = await dep_repo.find_by_scan(
             project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
         )
-        source_target = next((dep.source_target for dep in dependencies if dep.source_target), None)
         # The window above can miss a finding's row; the join reads exactly the rows the findings name.
         names = list({n for f in findings if f.type == "vulnerability" for n in component_name_candidates(f.component)})
         join_query = {"project_id": project_id, "scan_id": scan_id, "name": {"$in": names}}
@@ -173,7 +172,6 @@ async def get_project_recommendations(
             findings=findings,
             dependencies=dependencies,
             join_dependencies=join_dependencies,
-            source_target=source_target,
             previous_scan=previous,
             previous_scan_dependencies=previous_scan_dependencies,
             cve_recurrence=cve_recurrence,
