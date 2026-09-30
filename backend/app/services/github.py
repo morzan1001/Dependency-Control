@@ -605,7 +605,7 @@ class GitHubService:
                 members.extend({"login": user["login"], "role": role} for user in page if user.get("login"))
             return members
 
-        members: list[dict[str, Any]] | None = await self._cached(f"team_member_list:{org}/{team_id}", fetch, list)
+        members: list[dict[str, Any]] | None = await self._cached(f"team_member_roles:{org}/{team_id}", fetch, list)
         return members
 
     async def get_viewer_organisations(self) -> list[dict[str, Any]] | None:
