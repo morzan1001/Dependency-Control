@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
+import httpx
 from fastapi import HTTPException, Query, status
 
 from app.api import deps
@@ -118,8 +119,8 @@ async def create_instance(
                 response = await client.get(
                     f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers()
                 )
-        except Exception as e:
-            logger.exception("Connection test failed for %s: %s", instance_data.url, e)
+        except (httpx.HTTPError, httpx.InvalidURL) as e:
+            logger.warning("Connection test failed for %s: %s", instance_data.url, e)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {e!s}"
             ) from e
