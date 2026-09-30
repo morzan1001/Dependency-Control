@@ -1,8 +1,9 @@
 """Common framework machinery: the ComplianceFramework protocol and default evaluator."""
 
+import functools
 import hashlib
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
 from typing import Any, Protocol, runtime_checkable
@@ -10,6 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.crypto_asset import CryptoAsset
+from app.models.finding import Severity
 from app.schemas.compliance import (
     ControlDefinition,
     ControlResult,
@@ -21,8 +23,11 @@ from app.schemas.compliance import (
     ResidualRisk,
 )
 from app.schemas.crypto_policy import CryptoRule
+from app.schemas.finding_details import all_rule_ids
+from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.analyzers.crypto.matcher import asset_in_rule_scope
+from app.services.crypto_policy.seeder import load_seed_file
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +43,8 @@ class _Applicability(Enum):
     NO_ASSET_IN_SCOPE = auto()
     # The policy disabled every backing rule, so no inventory can change the answer.
     RULES_DISABLED = auto()
+    # The policy lacks every backing rule, so the analyzer never ran one.
+    RULES_UNRESOLVED = auto()
 
 
 def _withheld(
@@ -80,10 +87,12 @@ class EvaluationInput:
     scope_description: str
     crypto_assets: list[CryptoAsset]
     findings: list[dict]
-    policy_rules: list[dict]  # CryptoRule dumps from the effective policy
+    policy_rules: list[CryptoRule]
     policy_version: int | None
     iana_catalog_version: int | None
     scan_ids: list[str]
+    override_version: int | None = None
+    license_policy: LicensePolicySchema = field(default_factory=LicensePolicySchema)
     # Set for meta-frameworks that run their own DB queries (e.g. PQC).
     db: AsyncIOMotorDatabase[Any] | None = None
     # What `findings` covers of the scope. None where the caller assembled the input itself and
@@ -131,6 +140,12 @@ def default_evaluator(
             status, status_reason = findings_verdict(ControlStatus.PASSED, data.coverage)
         elif applicability is _Applicability.NO_ASSET_IN_SCOPE:
             status, status_reason = crypto_assets_verdict(ControlStatus.NOT_APPLICABLE, data.coverage)
+        elif applicability is _Applicability.RULES_UNRESOLVED:
+            status = ControlStatus.NOT_EVALUATED
+            status_reason = (
+                f"Rules {', '.join(control.maps_to_rule_ids)} are not in the effective crypto policy, "
+                "so no finding can exist for this control."
+            )
         else:
             status = ControlStatus.NOT_APPLICABLE
 
@@ -148,67 +163,23 @@ def default_evaluator(
     )
 
 
-def _finding_rule_ids(finding: dict) -> set:
-    """All rule_ids a finding attributes itself to (lead details.rule_id plus details.matched_rules)."""
-    details = finding.get("details") or {}
-    ids: set = set()
-    if lead_id := details.get("rule_id"):
-        ids.add(lead_id)
-    for m in details.get("matched_rules") or []:
-        if isinstance(m, dict) and m.get("rule_id"):
-            ids.add(m["rule_id"])
-    return ids
-
-
 def _finding_matches_control(finding: dict, control: ControlDefinition) -> bool:
-    # The control's finding types come from the seed; its rule_ids survive an admin retyping the rule.
-    if control.maps_to_rule_ids:
-        return bool(_finding_rule_ids(finding) & set(control.maps_to_rule_ids))
-    return finding.get("type") in control.maps_to_finding_types
-
-
-def _rules_for_control(
-    control: ControlDefinition,
-    policy_rules: list[dict],
-) -> list[CryptoRule]:
-    """Reconstruct the CryptoRule objects this control maps to from policy_rules dumps; skip absent/unparseable rules."""
-    if not control.maps_to_rule_ids:
-        return []
-    wanted = set(control.maps_to_rule_ids)
-    rules: list[CryptoRule] = []
-    for raw in policy_rules:
-        if raw.get("rule_id") in wanted:
-            try:
-                rules.append(CryptoRule.model_validate(raw))
-            except Exception:  # pragma: no cover
-                logger.debug("compliance: skipping unparseable policy rule %s", raw.get("rule_id"))
-                continue
-    return rules
+    # Matching by rule_id alone survives an admin retyping the rule.
+    return bool(all_rule_ids(finding.get("details")) & set(control.maps_to_rule_ids))
 
 
 def _applicability(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> "_Applicability":
-    """Applicable (eligible for PASSED) only when at least one crypto asset falls within a mapped rule's scope; falls back to inventory presence when the rules can't be resolved.
+    """Applicable (eligible for PASSED) only when at least one crypto asset falls within an enabled mapped rule's scope.
 
-    The two inapplicable answers are told apart because only one of them is read off the
+    The inapplicable answers are told apart because only NO_ASSET_IN_SCOPE is read off the
     inventory, and only that one is unsafe to state over a truncated inventory.
     """
-    if not data.crypto_assets:
-        return _Applicability.NO_ASSET_IN_SCOPE
-    rules = _rules_for_control(control, data.policy_rules)
+    rules = [rule for rule in data.policy_rules if rule.rule_id in control.maps_to_rule_ids]
     if not rules:
-        # Declared rule_ids resolve to none -> possible policy drift; warn rather
-        # than silently degrade to the any-asset fallback.
-        if control.maps_to_rule_ids:
-            logger.warning(
-                "compliance: control %s maps to rule_ids %s but none resolve from the system "
-                "policy; falling back to inventory presence (possible policy drift)",
-                control.control_id,
-                control.maps_to_rule_ids,
-            )
-        return _Applicability.APPLICABLE  # cannot scope to a primitive; fall back to inventory presence
+        return _Applicability.RULES_UNRESOLVED
     enabled_rules = [rule for rule in rules if rule.enabled]
     if not enabled_rules:
         # Every backing rule is disabled, so no finding can ever exist; PASSED
@@ -259,6 +230,36 @@ def evaluate_framework(
         residual_risks=residuals,
         inputs_fingerprint=fingerprint,
     )
+
+
+@dataclass
+class SeedFramework:
+    """A framework with one control per rule of its crypto-policy seed file."""
+
+    key: ReportFramework
+    name: str
+    version: str
+    source_url: str
+    seed_file: str
+    control_id_prefix: str
+    disclaimer: str | None = None
+
+    @functools.cached_property
+    def controls(self) -> list[ControlDefinition]:
+        return [
+            ControlDefinition(
+                control_id=f"{self.control_id_prefix}-{rule.rule_id}",
+                title=rule.name,
+                description=rule.description.strip() or rule.name,
+                severity=Severity(rule.default_severity),
+                remediation=rule.description.strip(),
+                maps_to_rule_ids=[rule.rule_id],
+            )
+            for rule in load_seed_file(self.seed_file)
+        ]
+
+    def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
+        return evaluate_framework(self, data)
 
 
 def extract_finding_id(finding: dict[str, Any]) -> str:
@@ -321,6 +322,7 @@ def _inputs_fingerprint(data: EvaluationInput) -> str:
     bits = "|".join(
         [
             f"policy={data.policy_version}",
+            f"override={data.override_version}",
             f"iana={data.iana_catalog_version}",
             f"scans={','.join(sorted(data.scan_ids))}",
         ]

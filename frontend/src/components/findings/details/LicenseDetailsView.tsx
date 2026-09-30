@@ -87,9 +87,9 @@ export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetai
   const explanation = details.explanation
   const recommendation = details.recommendation
   const obligations = (details.obligations as string[]) || []
-  const risks = (details.license_risks as string[]) || []
+  const risks = (details.risks ?? []).filter((r): r is string => typeof r === 'string')
   const contextReason = details.context_reason as string | undefined
-  const effectiveSeverity = details.effective_severity as string | undefined
+  const severityWithoutContext = details.severity_without_context
 
   const categoryConfig = LICENSE_CATEGORY_CONFIG[category] || LICENSE_CATEGORY_CONFIG.unknown
   const CategoryIcon = categoryConfig.icon
@@ -101,9 +101,9 @@ export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetai
           <ShieldCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
           <div className="text-sm">
             <p className="text-emerald-800 dark:text-emerald-300">{contextReason}</p>
-            {effectiveSeverity && (
+            {severityWithoutContext && (
               <p className="text-muted-foreground mt-1">
-                Without project context this would be <span className="font-medium uppercase">{effectiveSeverity}</span> severity.
+                Without project context this would be <span className="font-medium uppercase">{severityWithoutContext}</span> severity.
               </p>
             )}
           </div>

@@ -14,6 +14,12 @@ class CryptoPolicyRepository(BaseRepository[CryptoPolicy]):
         doc = await self.collection.find_one({"scope": "system", "project_id": None})
         return CryptoPolicy.model_validate(doc) if doc else None
 
+    async def require_system_policy(self) -> CryptoPolicy:
+        policy = await self.get_system_policy()
+        if policy is None:
+            raise RuntimeError("system crypto policy missing; startup seeding did not run")
+        return policy
+
     async def upsert_system_policy(self, policy: CryptoPolicy) -> None:
         assert policy.scope == "system"
         policy.project_id = None
@@ -39,5 +45,6 @@ class CryptoPolicyRepository(BaseRepository[CryptoPolicy]):
             upsert=True,
         )
 
-    async def delete_project_policy(self, project_id: str) -> None:
-        await self.collection.delete_one({"scope": "project", "project_id": project_id})
+    async def delete_project_policy(self, project_id: str) -> CryptoPolicy | None:
+        doc = await self.collection.find_one_and_delete({"scope": "project", "project_id": project_id})
+        return CryptoPolicy.model_validate(doc) if doc else None

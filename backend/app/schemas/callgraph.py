@@ -72,8 +72,6 @@ class CallgraphResponse(BaseModel):
     language: str
     tool: str | None = None
     tool_version: str | None = None
-    imports: list[dict[str, Any]] = []
-    calls: list[dict[str, Any]] = []
     module_usage: dict[str, Any] = {}
     analyzed_modules: list[str] = []
     source_files_analyzed: int = 0

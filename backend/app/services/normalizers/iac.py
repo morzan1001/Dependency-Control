@@ -47,7 +47,6 @@ def _process_kics_file(
         cwe_ids=normalize_cwe_list(query.get("cwe")),
         documentation_url=query.get("description_url") or f.get("resource_url"),
         references=query.get("references") or [],
-        full_description=description,
     ).model_dump(exclude_none=True)
 
     aggregator.add_finding(

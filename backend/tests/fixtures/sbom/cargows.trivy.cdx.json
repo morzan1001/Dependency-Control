@@ -1,0 +1,151 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.6",
+ "serialNumber": "urn:uuid:9fbb6f21-fe6f-4ae2-942a-84f71b68cc70",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-09-29T22:45:25+00:00",
+  "tools": {
+   "components": [
+    {
+     "type": "application",
+     "group": "aquasecurity",
+     "name": "trivy",
+     "version": "0.58.1"
+    }
+   ]
+  },
+  "component": {
+   "bom-ref": "144af375-9f49-446d-b01d-a20c5b4aaee9",
+   "type": "application",
+   "name": "/src/cargows2",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:SchemaVersion",
+     "value": "2"
+    }
+   ]
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "53fb0c2c-af70-4ad2-9910-fa17b7c99b29",
+   "type": "application",
+   "name": "Cargo.lock",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:Class",
+     "value": "lang-pkgs"
+    },
+    {
+     "name": "aquasecurity:trivy:Type",
+     "value": "cargo"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/itoa@1.0.11",
+   "type": "library",
+   "name": "itoa",
+   "version": "1.0.11",
+   "purl": "pkg:cargo/itoa@1.0.11",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "itoa@1.0.11"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "cargo"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/ryu@1.0.18",
+   "type": "library",
+   "name": "ryu",
+   "version": "1.0.18",
+   "purl": "pkg:cargo/ryu@1.0.18",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "ryu@1.0.18"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "cargo"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/serde@1.0.210",
+   "type": "library",
+   "name": "serde",
+   "version": "1.0.210",
+   "purl": "pkg:cargo/serde@1.0.210",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "serde@1.0.210"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "cargo"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:cargo/serde_json@1.0.128",
+   "type": "library",
+   "name": "serde_json",
+   "version": "1.0.128",
+   "purl": "pkg:cargo/serde_json@1.0.128",
+   "properties": [
+    {
+     "name": "aquasecurity:trivy:PkgID",
+     "value": "serde_json@1.0.128"
+    },
+    {
+     "name": "aquasecurity:trivy:PkgType",
+     "value": "cargo"
+    }
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "144af375-9f49-446d-b01d-a20c5b4aaee9",
+   "dependsOn": [
+    "53fb0c2c-af70-4ad2-9910-fa17b7c99b29"
+   ]
+  },
+  {
+   "ref": "53fb0c2c-af70-4ad2-9910-fa17b7c99b29",
+   "dependsOn": [
+    "pkg:cargo/serde_json@1.0.128"
+   ]
+  },
+  {
+   "ref": "pkg:cargo/itoa@1.0.11",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:cargo/ryu@1.0.18",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:cargo/serde@1.0.210",
+   "dependsOn": []
+  },
+  {
+   "ref": "pkg:cargo/serde_json@1.0.128",
+   "dependsOn": [
+    "pkg:cargo/itoa@1.0.11",
+    "pkg:cargo/ryu@1.0.18",
+    "pkg:cargo/serde@1.0.210"
+   ]
+  }
+ ],
+ "vulnerabilities": []
+}

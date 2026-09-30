@@ -1,4 +1,4 @@
-"""Project-level CryptoPolicy overrides tested directly against CryptoRuleAnalyzer with the fake DB."""
+"""Project-level CryptoPolicy overrides tested directly against the weak-algorithm rule evaluator with the fake DB."""
 
 import pytest
 
@@ -9,7 +9,7 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-from app.services.analyzers.crypto.base import CryptoRuleAnalyzer
+from tests.helpers.analyzers import evaluate_crypto
 
 
 def _rule(rule_id, enabled=True, **extra):
@@ -54,17 +54,7 @@ async def test_override_disables_rule_and_suppresses_findings(db):
         )
     )
 
-    analyzer = CryptoRuleAnalyzer(
-        name="crypto_weak_algorithm",
-        finding_types={FindingType.CRYPTO_WEAK_ALGORITHM},
-    )
-
-    r1 = await analyzer.analyze(
-        sbom={},
-        project_id="proj",
-        scan_id="scan",
-        db=db,
-    )
+    r1 = await evaluate_crypto("crypto_weak_algorithm", db, "proj", "scan")
     assert any(f["details"]["rule_id"] == "md5" for f in r1["findings"]), (
         "Expected a finding for rule 'md5' before override was applied"
     )
@@ -78,12 +68,7 @@ async def test_override_disables_rule_and_suppresses_findings(db):
         )
     )
 
-    r2 = await analyzer.analyze(
-        sbom={},
-        project_id="proj",
-        scan_id="scan",
-        db=db,
-    )
+    r2 = await evaluate_crypto("crypto_weak_algorithm", db, "proj", "scan")
     assert not any(f["details"]["rule_id"] == "md5" for f in r2["findings"]), (
         "Expected no findings for rule 'md5' after project override disabled it"
     )
@@ -124,11 +109,7 @@ async def test_override_adds_custom_rule(db):
             rules=[_rule("blowfish", match_name_patterns=["BLOWFISH"])],
         )
     )
-    analyzer = CryptoRuleAnalyzer(
-        name="crypto_weak_algorithm",
-        finding_types={FindingType.CRYPTO_WEAK_ALGORITHM},
-    )
-    r = await analyzer.analyze(sbom={}, project_id="proj2", scan_id="scan", db=db)
+    r = await evaluate_crypto("crypto_weak_algorithm", db, "proj2", "scan")
     assert any(f["details"]["rule_id"] == "blowfish" for f in r["findings"]), (
         "Expected a finding for custom rule 'blowfish' added by project override"
     )

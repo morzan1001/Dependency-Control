@@ -2,77 +2,21 @@
 
 from typing import Any
 
-from app.schemas.enrichment import ExtractedSymbols
+
+def extract_symbols_from_vulnerability(vuln_data: dict[str, Any]) -> list[str]:
+    """The symbols a vulnerability entry names in its OSV ecosystem_specific payload."""
+    eco = vuln_data.get("ecosystem_specific")
+    if not isinstance(eco, dict):
+        return []
+    symbols, imports = eco.get("symbols"), eco.get("imports")
+    if isinstance(symbols, list):
+        return symbols
+    if isinstance(imports, list):
+        return [symbol for imp in imports if isinstance(imp, dict) for symbol in imp.get("symbols", [])]
+    return []
 
 
-def extract_symbols_from_vulnerability(vuln_data: dict[str, Any]) -> ExtractedSymbols:
-    """Extract symbols from a vulnerability entry via its OSV ecosystem_specific payload."""
-    cve = vuln_data.get("id", "") or vuln_data.get("cve", "")
-    package = vuln_data.get("package", "") or vuln_data.get("component", "")
-
-    if "ecosystem_specific" in vuln_data:
-        eco = vuln_data["ecosystem_specific"]
-        if isinstance(eco, dict):
-            if "symbols" in eco and isinstance(eco["symbols"], list):
-                return ExtractedSymbols(
-                    cve=cve,
-                    package=package,
-                    symbols=eco["symbols"],
-                    confidence="high",
-                    extraction_method="osv_ecosystem",
-                )
-
-            if "imports" in eco and isinstance(eco["imports"], list):
-                symbols = []
-                for imp in eco["imports"]:
-                    if isinstance(imp, dict) and "symbols" in imp:
-                        symbols.extend(imp["symbols"])
-                if symbols:
-                    return ExtractedSymbols(
-                        cve=cve,
-                        package=package,
-                        symbols=symbols,
-                        confidence="high",
-                        extraction_method="osv_go_imports",
-                    )
-
-    return ExtractedSymbols(cve=cve, package=package)
-
-
-def get_symbols_for_finding(finding: dict[str, Any]) -> ExtractedSymbols:
-    """Combine ExtractedSymbols across all vulnerabilities in a finding's details.vulnerabilities."""
-    component = finding.get("component", "")
-
-    all_symbols: set[str] = set()
-    all_cves: list[str] = []
-    best_confidence = "low"
-    extraction_method = "none"
-
-    details = finding.get("details", {})
-    vulnerabilities = details.get("vulnerabilities", [])
-
-    for vuln in vulnerabilities:
-        vuln_id = vuln.get("id", "")
-        if vuln_id:
-            all_cves.append(vuln_id)
-
-        extracted = extract_symbols_from_vulnerability(vuln)
-
-        if extracted.symbols:
-            all_symbols.update(extracted.symbols)
-
-            if extracted.confidence == "high":
-                best_confidence = "high"
-            elif extracted.confidence == "medium" and best_confidence == "low":
-                best_confidence = "medium"
-
-            if extracted.extraction_method != "none":
-                extraction_method = extracted.extraction_method
-
-    return ExtractedSymbols(
-        cve=",".join(all_cves) if all_cves else "",
-        package=component,
-        symbols=list(all_symbols),
-        confidence=best_confidence,
-        extraction_method=extraction_method,
-    )
+def get_symbols_for_finding(finding: dict[str, Any]) -> list[str]:
+    """The sorted union of the symbols every entry of a finding's details.vulnerabilities names."""
+    vulnerabilities = finding.get("details", {}).get("vulnerabilities", [])
+    return sorted({symbol for vuln in vulnerabilities for symbol in extract_symbols_from_vulnerability(vuln)})

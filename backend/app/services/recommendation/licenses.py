@@ -1,9 +1,12 @@
 from collections import defaultdict
+from collections.abc import Iterable
 from typing import Any
 
+from app.core.purl import package_identity
+from app.models.finding import Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS, LicenseCategory
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.component_identity import extract_artifact_name
+from app.services.analyzers.license_compliance.constants import UNDETERMINED_LICENSE_ID
 from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components
 
 _LICENSES_NAMED = 5
@@ -13,22 +16,23 @@ _HIGH_PRIORITY_DRIFT_MIN_RANK = CATEGORY_RESTRICTIVENESS[LicenseCategory.STRONG_
 
 
 def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Process license compliance findings."""
-    if not findings:
-        return []
-
-    by_license = defaultdict(list)
-    for f in findings:
-        details = get_attr(f, "details", {})
-        license_name = (details.get("license") if isinstance(details, dict) else None) or "unknown"
-        by_license[license_name].append(f)
-
+    """License compliance card over the findings the project policy did not accept."""
     severity_counts: dict[str, int] = defaultdict(int)
     components = set()
-
+    licenses = set()
     for f in findings:
-        severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
+        severity = get_attr(f, "severity", "UNKNOWN")
+        license_name = get_attr(f, "details", {}).get("license") or "unknown"
+        # The evaluator marks a policy-accepted outcome INFO; an undeterminable licence is INFO yet needs action.
+        if severity == Severity.INFO and license_name != UNDETERMINED_LICENSE_ID:
+            continue
+        severity_counts[severity] += 1
         components.add(get_attr(f, "component", "unknown"))
+        licenses.add(license_name)
+
+    total = sum(severity_counts.values())
+    if not total:
+        return []
 
     if severity_counts.get("CRITICAL", 0) > 0:
         priority = Priority.CRITICAL
@@ -37,10 +41,10 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
     elif severity_counts.get("MEDIUM", 0) > 0 or severity_counts.get("LOW", 0) > 0:
         priority = Priority.MEDIUM
     else:
-        # All findings are INFO-only.
+        # Only undeterminable licences remain.
         priority = Priority.LOW
 
-    problematic_licenses = sorted(by_license)
+    problematic_licenses = sorted(licenses)
     components_shown, components_total = sample_components(sorted(components))
 
     return [
@@ -49,7 +53,7 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
             priority=priority,
             title="Resolve License Compliance Issues",
             description=(
-                f"Found {len(findings)} license compliance issues across {len(components)} components. "
+                f"Found {total} license compliance issues across {len(components)} components. "
                 f"Problematic licenses: {name_some(problematic_licenses, _LICENSES_NAMED)}."
             ),
             impact={
@@ -57,7 +61,7 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
                 "high": severity_counts.get("HIGH", 0),
                 "medium": severity_counts.get("MEDIUM", 0),
                 "low": severity_counts.get("LOW", 0),
-                "total": len(findings),
+                "total": total,
             },
             affected_components=components_shown,
             affected_components_total=components_total,
@@ -76,86 +80,49 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
     ]
 
 
-def _license_key(f: ModelOrDict) -> str:
-    """Drift is about the licence, so the key stays component-shaped — but scanners disagree on
-    how far a package name is qualified, and an unfolded name makes the previous licence
-    unfindable, which reads as no drift."""
-    return f"{extract_artifact_name(get_attr(f, 'component', '') or '')}@{get_attr(f, 'version', '')}"
-
-
-def _license_info(f: ModelOrDict) -> dict[str, Any]:
-    details = get_attr(f, "details", {})
-    return {
-        "license": details.get("license", "unknown") if isinstance(details, dict) else "unknown",
-        "category": details.get("category", "unknown") if isinstance(details, dict) else "unknown",
-        "severity": get_attr(f, "severity", "UNKNOWN"),
-    }
-
-
-def _build_prev_license_index(previous_findings: list[ModelOrDict]) -> dict[str, dict[str, Any]]:
-    """Build a component@version → license info lookup for the previous scan."""
-    prev_by_component: dict[str, dict[str, Any]] = {}
-    for f in previous_findings:
-        if get_attr(f, "type") != "license":
+def _most_restrictive_by_package(dependencies: Iterable[ModelOrDict]) -> dict[tuple[str, str], tuple[int, ModelOrDict]]:
+    """Per version-free package, the dependency with the highest known licence category and its rank."""
+    by_package: dict[tuple[str, str], tuple[int, ModelOrDict]] = {}
+    for dep in dependencies:
+        rank = CATEGORY_RESTRICTIVENESS.get(get_attr(dep, "license_category"), -1)
+        # An unknown or missing category is not comparable: a licence that became determinable did not change.
+        if rank < 0:
             continue
-        prev_by_component[_license_key(f)] = _license_info(f)
-    return prev_by_component
-
-
-def _check_license_drift(
-    f: ModelOrDict,
-    prev_by_component: dict[str, dict[str, Any]],
-) -> dict[str, Any]:
-    """Return a drift entry if the finding represents restrictive license drift, else empty dict."""
-    if get_attr(f, "type") != "license":
-        return {}
-    prev = prev_by_component.get(_license_key(f))
-    if not prev:
-        return {}
-
-    curr_info = _license_info(f)
-    if curr_info["license"] == prev["license"]:
-        return {}
-
-    prev_rank = CATEGORY_RESTRICTIVENESS.get(prev["category"], -1)
-    curr_rank = CATEGORY_RESTRICTIVENESS.get(curr_info["category"], -1)
-    if curr_rank <= prev_rank:
-        return {}
-
-    return {
-        "component": get_attr(f, "component", "unknown"),
-        "version": get_attr(f, "version", "unknown"),
-        "previous_license": prev["license"],
-        "previous_category": prev["category"],
-        "current_license": curr_info["license"],
-        "current_category": curr_info["category"],
-    }
+        key = package_identity(get_attr(dep, "purl"), get_attr(dep, "name") or "", None, None)
+        if key not in by_package or rank > by_package[key][0]:
+            by_package[key] = (rank, dep)
+    return by_package
 
 
 def detect_license_drift(
-    current_findings: list[ModelOrDict],
-    previous_findings: list[ModelOrDict],
+    current_dependencies: Iterable[ModelOrDict],
+    previous_dependencies: Iterable[ModelOrDict],
 ) -> list[Recommendation]:
-    """Flag components whose license changed to a more restrictive category (e.g. MIT → GPL)."""
-    if not previous_findings or not current_findings:
-        return []
-
-    prev_by_component = _build_prev_license_index(previous_findings)
-
+    """Flag packages whose licence moved to a more restrictive category since the previous scan (e.g. MIT → GPL)."""
+    previous = _most_restrictive_by_package(previous_dependencies)
     drifted: list[dict[str, Any]] = []
-    for f in current_findings:
-        drift = _check_license_drift(f, prev_by_component)
-        if drift:
-            drifted.append(drift)
+    for key, (rank, dep) in _most_restrictive_by_package(current_dependencies).items():
+        if key not in previous or rank <= previous[key][0]:
+            continue
+        before = previous[key][1]
+        drifted.append(
+            {
+                "component": get_attr(dep, "name"),
+                "previous_license": get_attr(before, "license"),
+                "previous_category": get_attr(before, "license_category"),
+                "current_license": get_attr(dep, "license"),
+                "current_category": get_attr(dep, "license_category"),
+            }
+        )
 
     if not drifted:
         return []
 
     restrictive = [
-        d for d in drifted if CATEGORY_RESTRICTIVENESS.get(d["current_category"], 0) >= _HIGH_PRIORITY_DRIFT_MIN_RANK
+        d for d in drifted if CATEGORY_RESTRICTIVENESS[d["current_category"]] >= _HIGH_PRIORITY_DRIFT_MIN_RANK
     ]
     drift_shown, drift_total = sample_components(
-        f"{d['component']}@{d['version']}: {d['previous_license']} → {d['current_license']}" for d in drifted
+        f"{d['component']}: {d['previous_license']} → {d['current_license']}" for d in drifted
     )
 
     return [

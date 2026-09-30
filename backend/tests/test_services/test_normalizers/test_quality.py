@@ -1,6 +1,13 @@
 """Tests for quality normalizers (Scorecard, Typosquatting, Maintainer Risk)."""
 
+from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
 from app.services.aggregation import ResultAggregator
+from app.services.analyzers.typosquatting import TyposquattingAnalyzer
+from tests.helpers.analyzers import analyze_cyclonedx
 
 
 class TestNormalizeScorecard:
@@ -114,37 +121,6 @@ class TestNormalizeScorecard:
         f = next(iter(self.agg.findings.values()))
         assert "3.5" in f.description
 
-    def test_record_scorecard_public_method(self):
-        assert hasattr(ResultAggregator, "record_scorecard")
-        self.agg.record_scorecard("pkg@2.0", {"overall_score": 4.2})
-        assert self.agg._scorecard_cache["pkg@2.0"] == {"overall_score": 4.2}
-
-    def test_scorecard_recorded_end_to_end(self):
-        """Recorded scorecard payload is complete and keyed by component@version."""
-        result = {
-            "scorecard_issues": [
-                {
-                    "component": "requests",
-                    "version": "2.31.0",
-                    "project_url": "https://github.com/psf/requests",
-                    "scorecard": {
-                        "overallScore": 2.5,
-                        "checks": [{"name": "Fuzzing", "score": 0}],
-                    },
-                    "failed_checks": [{"name": "Fuzzing", "score": 0}],
-                    "critical_issues": ["Maintained"],
-                }
-            ]
-        }
-        self.agg.aggregate("deps_dev", result)
-        cached = self.agg._scorecard_cache.get("requests@2.31.0")
-        assert cached is not None, "scorecard data was silently dropped"
-        assert cached["overall_score"] == 2.5
-        assert cached["project_url"] == "https://github.com/psf/requests"
-        assert cached["critical_issues"] == ["Maintained"]
-        assert cached["failed_checks"] == [{"name": "Fuzzing", "score": 0}]
-        assert cached["checks"] == [{"name": "Fuzzing", "score": 0}]
-
     def test_empty_scorecard_issues(self):
         self.agg.aggregate("deps_dev", {"scorecard_issues": []})
         assert len(self.agg.findings) == 0
@@ -165,58 +141,58 @@ class TestNormalizeScorecard:
         assert [(e["name"], e["version"]) for e in enrichments] == [("lodash", "4.17.21")]
 
 
+async def _typosquatting_result(name: str, settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    analyzer = TyposquattingAnalyzer()
+    component = {"type": "library", "name": name, "version": "1.0.0", "purl": f"pkg:npm/{name}@1.0.0"}
+    corpus = {"npm": {"lodash", "react", "typescript"}}
+    with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=corpus)):
+        return await analyze_cyclonedx(analyzer, [component], settings)
+
+
 class TestNormalizeTyposquatting:
     def setup_method(self):
         self.agg = ResultAggregator()
 
-    def test_basic_typosquat(self):
-        result = {
-            "typosquatting_issues": [
-                {
-                    "component": "lodassh",
-                    "version": "1.0.0",
-                    "imitated_package": "lodash",
-                    "similarity": 0.9,
-                }
-            ]
-        }
-        self.agg.aggregate("typosquatting", result)
-        findings = self.agg.get_findings()
-        assert len(findings) == 1
-        f = findings[0]
-        assert f.type == "malware"
-        assert f.severity == "CRITICAL"
-        assert "lodassh" in f.description
-        assert "lodash" in f.description
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("name", "severity"),
+        [
+            pytest.param("lodahs", "MEDIUM", id="similarity_0.83"),
+            pytest.param("reacct", "HIGH", id="similarity_0.91"),
+            pytest.param("typescriptt", "CRITICAL", id="similarity_0.95"),
+        ],
+    )
+    async def test_the_finding_keeps_the_severity_the_analyzer_graded(self, name, severity):
+        self.agg.aggregate("typosquatting", await _typosquatting_result(name))
 
-    def test_similarity_in_description(self):
-        result = {
-            "typosquatting_issues": [
-                {
-                    "component": "reacct",
-                    "imitated_package": "react",
-                    "similarity": 0.85,
-                }
-            ]
-        }
-        self.agg.aggregate("typosquatting", result)
-        f = next(iter(self.agg.findings.values()))
-        assert "85.0%" in f.description
+        [finding] = self.agg.get_findings()
+        assert finding.type == "malware"
+        assert finding.severity == severity
 
-    def test_details_contain_imitated_package(self):
-        result = {
-            "typosquatting_issues": [
-                {
-                    "component": "reacct",
-                    "imitated_package": "react",
-                    "similarity": 0.9,
-                }
-            ]
-        }
+    @pytest.mark.asyncio
+    async def test_the_project_similarity_settings_move_the_severity(self):
+        self.agg.aggregate("typosquatting", await _typosquatting_result("lodahs", {"high_similarity": 0.8}))
+
+        assert [finding.severity for finding in self.agg.get_findings()] == ["HIGH"]
+
+    @pytest.mark.asyncio
+    async def test_the_description_is_the_analyzer_message(self):
+        result = await _typosquatting_result("reacct")
         self.agg.aggregate("typosquatting", result)
-        f = next(iter(self.agg.findings.values()))
-        assert f.details["imitated_package"] == "react"
-        assert f.details["similarity"] == 0.9
+
+        [finding] = self.agg.get_findings()
+        assert finding.description == result["typosquatting_issues"][0]["message"]
+        assert finding.description == (
+            "Possible typosquatting detected! 'reacct' is 91.0% similar to popular package 'react'"
+        )
+
+    @pytest.mark.asyncio
+    async def test_details_contain_imitated_package(self):
+        self.agg.aggregate("typosquatting", await _typosquatting_result("reacct"))
+
+        [finding] = self.agg.get_findings()
+        assert finding.details["imitated_package"] == "react"
+        assert finding.details["similarity"] == 0.91
 
     def test_empty_issues(self):
         self.agg.aggregate("typosquatting", {"typosquatting_issues": []})

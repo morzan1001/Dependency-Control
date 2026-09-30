@@ -5,66 +5,23 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from app.core.constants import get_severity_value
+from app.core.constants import max_severity
 from app.core.cve import advisory_ids, entry_cves
-from app.services.normalizers.utils import FindingIdPrefix
-from app.models.finding import Finding, FindingType
+from app.models.finding import Finding
 from app.schemas.finding import VulnerabilityEntry
 from app.services.aggregation.versions import VersionKey, parse_version_key, split_fixed_versions
 
 
-def _sast_entry(f: Finding) -> dict[str, Any]:
-    """Build the per-scanner sast_findings entry from a single Finding."""
-    return {
+def to_sast_aggregate(f: Finding) -> Finding:
+    """Wrap one scanner's SAST finding in the persisted sast_findings shape."""
+    entry = {
         "id": f.details.get("rule_id", "unknown"),
-        "scanner": f.scanners[0] if f.scanners else "unknown",
+        "scanner": f.scanners[0],
         "severity": f.severity,
         "details": f.details,
     }
-
-
-def merge_sast_findings(findings: list[Finding]) -> Finding | None:
-    """Merge a list of SAST findings into one finding holding the per-scanner entries."""
-    if not findings:
-        return None
-
-    base = findings[0]
-
-    merged_details: dict[str, Any] = {
-        "sast_findings": [],
-        "file": base.component,
-        "line": base.details.get("line") or base.details.get("start", {}).get("line"),
-    }
-
-    merged_scanners: set = set()
-    max_severity_val = 0
-    max_severity = "INFO"
-
-    for f in findings:
-        s_val = get_severity_value(f.severity)
-        if s_val > max_severity_val:
-            max_severity_val = s_val
-            max_severity = f.severity
-
-        merged_scanners.update(f.scanners)
-        merged_details["sast_findings"].append(_sast_entry(f))
-
-    description = base.description
-    if len(findings) > 1 and len(merged_scanners) > 1:
-        description += f" (Confirmed by {len(merged_scanners)} scanners)"
-
-    return Finding(
-        id=(base.id if len(findings) == 1 else f"{FindingIdPrefix.SAST_AGG}-{base.component}-{merged_details['line']}"),
-        type=FindingType.SAST,
-        severity=max_severity,
-        component=base.component,
-        version=base.version,
-        description=description,
-        scanners=sorted(merged_scanners),
-        details=merged_details,
-        found_in=base.found_in,
-        aliases=(sorted({f.id for f in findings if f.id != base.id}) if len(findings) > 1 else base.aliases),
-    )
+    line = f.details.get("start", {}).get("line")
+    return f.model_copy(update={"details": {"sast_findings": [entry], "file": f.component, "line": line}})
 
 
 def _same_advisory(a_ids: set[str], a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:
@@ -88,8 +45,9 @@ def _merge_vuln_ids_and_severity(tv: dict[str, Any], source_entry: Vulnerability
     tv["id"] = _canonical_id(tv["id"], source_entry["id"])
     tv["aliases"] = sorted(all_ids - {tv["id"]})
 
-    if get_severity_value(source_entry.get("severity")) > get_severity_value(tv.get("severity")):
-        tv["severity"] = source_entry["severity"]
+    merged = max_severity(tv.get("severity"), source_entry.get("severity"))
+    if merged is not None:
+        tv["severity"] = merged
 
 
 def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
@@ -230,17 +188,16 @@ def merge_vulnerability_into_list(target_list: list[Any], source_entry: Vulnerab
     target_list.append(source_entry)
 
 
+def absorb_header(target: Finding, other: Finding, source: str | None = None) -> None:
+    """Fold other's scanners, severity and found_in (first-seen order) into target."""
+    target.scanners = sorted(set(target.scanners) | set(other.scanners))
+    target.severity = max_severity(target.severity, other.severity)
+    target.found_in = list(dict.fromkeys([*target.found_in, *other.found_in, *([source] if source else [])]))
+
+
 def merge_findings_data(target: Finding, source: Finding) -> None:
     """Merge data from source finding into target finding."""
-    target.scanners = sorted(set(target.scanners + source.scanners))
-
-    t_sev = get_severity_value(target.severity) or 0
-    s_sev = get_severity_value(source.severity) or 0
-    if s_sev > t_sev:
-        target.severity = source.severity
-
-    target.found_in = sorted(set(target.found_in + source.found_in))
-
+    absorb_header(target, source)
     target.aliases = sorted(set(target.aliases + source.aliases) | ({source.id} if source.id != target.id else set()))
 
     t_vulns_list = target.details.get("vulnerabilities", [])

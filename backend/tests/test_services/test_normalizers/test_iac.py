@@ -1,11 +1,28 @@
 """Tests for IaC normalizer (KICS)."""
 
+import json
+from pathlib import Path
+
 from app.services.aggregation import ResultAggregator
+
+# kics v2.1.20 `scan -p . --report-formats json` over `FROM ubuntu:latest` plus an unpinned apt-get install.
+_KICS_OUTPUT = json.loads((Path(__file__).parents[2] / "fixtures/iac/kics_2.1.20_results.json").read_text())
 
 
 class TestNormalizeKics:
     def setup_method(self):
         self.agg = ResultAggregator()
+
+    def test_real_output_carries_the_query_description_once(self):
+        self.agg.aggregate("kics", _KICS_OUTPUT)
+        user = next(f for f in self.agg.get_findings() if f.details["title"] == "Missing User Instruction")
+
+        assert user.description == (
+            "Missing User Instruction: Always set a user in the runtime stage of your Dockerfile. Without it, "
+            "the container defaults to root, even if earlier build stages define a user."
+        )
+        assert len(self.agg.get_findings()) == 6
+        assert all("full_description" not in f.details for f in self.agg.get_findings())
 
     def test_basic_finding(self):
         result = {

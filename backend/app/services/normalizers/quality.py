@@ -1,5 +1,6 @@
 from typing import TYPE_CHECKING, Any
 
+from app.core.constants import SCORECARD_FLAG_THRESHOLD, SCORECARD_HIGH_SEVERITY_THRESHOLD
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding_details import MaintainerRiskDetails, ScorecardIssueDetails, TyposquattingDetails
 from app.services.normalizers.utils import FindingIdPrefix, build_finding_id, safe_get, safe_severity
@@ -26,21 +27,9 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], 
         component = safe_get(item, "component", "unknown")
         version = item.get("version") or ""
 
-        component_key = f"{component}@{version}" if version else component
-
-        scorecard_data = {
-            "overall_score": overall,
-            "failed_checks": failed_checks,
-            "critical_issues": critical_issues,
-            "project_url": project_url,
-            "checks": scorecard.get("checks") or [],
-        }
-
-        aggregator.record_scorecard(component_key, scorecard_data)
-
-        if overall < 3.0 or "Maintained" in critical_issues or "Vulnerabilities" in critical_issues:
+        if overall < SCORECARD_HIGH_SEVERITY_THRESHOLD or {"Maintained", "Vulnerabilities"} & set(critical_issues):
             severity = Severity.HIGH
-        elif overall < 5.0 or critical_issues:
+        elif overall < SCORECARD_FLAG_THRESHOLD or critical_issues:
             severity = Severity.MEDIUM
         else:
             severity = Severity.LOW
@@ -105,7 +94,6 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], 
 
 def normalize_typosquatting(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for item in result.get("typosquatting_issues") or []:
-        similarity = item.get("similarity", 0)
         imitated = item.get("imitated_package") or "unknown"
         component = safe_get(item, "component", "unknown")
 
@@ -113,17 +101,14 @@ def normalize_typosquatting(aggregator: "ResultAggregator", result: dict[str, An
             Finding(
                 id=build_finding_id("TYPO", component),
                 type=FindingType.MALWARE,  # typosquatting is an attack, not a quality issue
-                severity=Severity.CRITICAL,
+                severity=safe_severity(item["severity"]),
                 component=component,
                 version=item.get("version"),
-                description=(
-                    f"Possible typosquatting detected! '{component}' is "
-                    f"{similarity * 100:.1f}% similar to popular package '{imitated}'"
-                ),
+                description=item["message"],
                 scanners=["typosquatting"],
-                details=TyposquattingDetails(imitated_package=imitated, similarity=similarity).model_dump(
-                    exclude_none=True
-                ),
+                details=TyposquattingDetails(
+                    imitated_package=imitated, similarity=item.get("similarity", 0)
+                ).model_dump(exclude_none=True),
             ),
             source=source,
         )

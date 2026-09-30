@@ -66,4 +66,12 @@ describe("FindingDetailsModal related findings", () => {
     expect(screen.getByText(SIBLING_ID)).toBeInTheDocument();
     expect(screen.queryByText(/Not listed/i)).not.toBeInTheDocument();
   });
+
+  it("shows a file's cross-type links beside the count of its same-type hits", () => {
+    renderModal(makeFinding({ related_findings: [SIBLING_ID], related_findings_omitted: OMITTED }));
+
+    expect(screen.getByText(SIBLING_ID)).toBeInTheDocument();
+    expect(screen.getAllByText("Related Findings")).toHaveLength(1);
+    expect(screen.getByText(/Not listed/i)).toBeInTheDocument();
+  });
 });

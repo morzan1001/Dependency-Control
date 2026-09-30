@@ -41,10 +41,15 @@ export const ANALYZER_SETTINGS_SCHEMAS: Record<string, AnalyzerSettingsSchema> =
         type: 'select',
         label: 'Distribution Model',
         description:
-          "GPL obligations only trigger on distribution. Internal-only projects don't need to worry about GPL dependencies.",
+          'GPL obligations only trigger on distribution. A public SaaS or API is offered to external users: keep ' +
+          "'Distributed' and turn on 'Allow Strong Copyleft' to mute GPL findings; AGPL/SSPL stays critical.",
         default: 'distributed',
         options: [
-          { value: 'internal_only', label: 'Internal only — not distributed outside the organization' },
+          {
+            value: 'internal_only',
+            label:
+              'Internal only — used only by people inside the organization (not distributed, not offered to external users)',
+          },
           { value: 'distributed', label: 'Distributed — binary or source shared with third parties' },
           { value: 'open_source', label: 'Open source — project itself is open source' },
         ],
@@ -54,7 +59,8 @@ export const ANALYZER_SETTINGS_SCHEMAS: Record<string, AnalyzerSettingsSchema> =
         type: 'select',
         label: 'Deployment Model',
         description:
-          'AGPL/SSPL clauses only trigger on network interaction. CLI tools and batch jobs are not affected.',
+          'The AGPL/SSPL network clause only triggers on network interaction. For CLI tools, desktop and embedded ' +
+          'software only that clause is waived; distributing them still carries the copyleft obligations.',
         default: 'network_facing',
         options: [
           { value: 'network_facing', label: 'Network-facing — SaaS, web app, or API' },

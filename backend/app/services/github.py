@@ -254,6 +254,14 @@ def is_public_github(github_url: str | None, issuer_url: str) -> bool:
     return _hostname(issuer_url) == _hostname(GITHUB_SHARED_OIDC_ISSUER)
 
 
+def github_api_headers(token: str | None) -> dict[str, str]:
+    """REST headers for api.github.com, pinned to one API version; anonymous without a token."""
+    headers = {"Accept": _DEFAULT_ACCEPT, "X-GitHub-Api-Version": "2022-11-28"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    return headers
+
+
 class GitHubService:
     """OIDC token validation and API operations for github.com and GHES instances."""
 

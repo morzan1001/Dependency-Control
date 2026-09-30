@@ -1,6 +1,6 @@
+import re
 from typing import TYPE_CHECKING, Any
 
-from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
 from app.models.finding import Finding, FindingType
 from app.schemas.finding_details import SecretDetails
 from app.schemas.trufflehog import TruffleHogFinding
@@ -25,13 +25,16 @@ def _extract_file_path(source_metadata: dict[str, Any] | None) -> str:
     return "unknown"
 
 
-def _extract_git_metadata(source_metadata: dict[str, Any] | None) -> dict[str, Any]:
-    git = ((source_metadata or {}).get("Data") or {}).get("Git") or {}
-    line = git.get("line")
+def _extract_source_metadata(source_metadata: dict[str, Any] | None) -> dict[str, Any]:
+    data = (source_metadata or {}).get("Data") or {}
+    git = data.get("Git") or {}
+    line = (git or data.get("Filesystem") or {}).get("line")
+    # CI-posted input: str.isdigit() admits "²" and int() rejects over 4300 digits; BSON caps ints at 64 bits.
+    line_text = str(line) if isinstance(line, (int, str)) else ""
     return {
         "commit": str(git["commit"]) if git.get("commit") else None,
         "commit_timestamp": str(git["timestamp"]) if git.get("timestamp") else None,
-        "line": int(line) if isinstance(line, (int, float)) or (isinstance(line, str) and line.isdigit()) else None,
+        "line": int(line_text) if re.fullmatch(r"[0-9]{1,9}", line_text) else None,
     }
 
 
@@ -40,25 +43,25 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any],
         # Stored rows and posted ad-hoc payloads can carry Raw; the model derives the same RawHash from it.
         finding = TruffleHogFinding.model_validate(entry)
         file_path = _extract_file_path(finding.SourceMetadata)
-        # The DetectorType ordinal is the stored identity (it reaches finding_id and every secret
-        # waiver's match.rule_key); app.core.trufflehog resolves it to a name at render time.
+        # The DetectorType ordinal is the stored identity: it reaches finding_id and every secret waiver's match.rule_key.
         detector = str(finding.DetectorType or "Generic Secret")
 
         finding_id = build_finding_id(FindingIdPrefix.SECRET, detector, (finding.RawHash or "nohash")[:8])
 
-        git_meta = _extract_git_metadata(finding.SourceMetadata)
+        source_meta = _extract_source_metadata(finding.SourceMetadata)
         in_current_tree = finding.DcInCurrentTree
         verified = finding.Verified
         risk_score, adjusted_risk_score = calculate_secret_risk_score(verified, in_current_tree)
 
         secret_details = SecretDetails(
             detector=detector,
+            detector_name=finding.DetectorName,
             decoder=finding.DecoderName,
             verified=verified,
             redacted=finding.Redacted,
-            commit=git_meta["commit"],
-            commit_timestamp=git_meta["commit_timestamp"],
-            line=git_meta["line"],
+            commit=source_meta["commit"],
+            commit_timestamp=source_meta["commit_timestamp"],
+            line=source_meta["line"],
             in_current_tree=in_current_tree,
             risk_score=risk_score,
             adjusted_risk_score=adjusted_risk_score,
@@ -71,7 +74,7 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any],
                 severity=calculate_secret_severity(verified, in_current_tree),
                 component=file_path,
                 version="",  # secrets live in files, not packages
-                description=f"{SECRET_DESCRIPTION_PREFIX}{resolve_detector_name(detector) or detector}",
+                description=f"Secret detected: {finding.DetectorName or detector}",
                 scanners=["trufflehog"],
                 details=secret_details,
             ),

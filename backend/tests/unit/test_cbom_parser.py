@@ -201,3 +201,69 @@ def test_invalid_not_valid_after_is_none():
     ]
     assets = parse_crypto_components(components)
     assert assets[0].not_valid_after is None
+
+
+def test_related_crypto_material_carries_its_size_and_algorithm_ref():
+    parsed = parse_crypto_components(
+        [
+            {
+                "type": "cryptographic-asset",
+                "bom-ref": "pubkey",
+                "name": "public key",
+                "cryptoProperties": {
+                    "assetType": "related-crypto-material",
+                    "relatedCryptoMaterialProperties": {"type": "public-key", "size": 1024, "algorithmRef": "rsa"},
+                },
+            }
+        ]
+    )
+    (key,) = parsed
+    assert (key.asset_type, key.key_size_bits, key.algorithm_ref) == (
+        CryptoAssetType.RELATED_CRYPTO_MATERIAL,
+        1024,
+        "rsa",
+    )
+
+
+def test_cipher_suite_code_points_are_kept_in_the_catalog_spelling():
+    suites = [
+        {"name": "A", "identifiers": ["0xC0", "0x30"]},
+        {"name": "B", "identifiers": ["0xc0,0x30"]},
+        {"name": ""},
+        {"name": "C", "identifiers": ["0xC030"]},
+        "D",
+        {"name": "E", "identifiers": ["0x13"]},
+    ]
+    (proto,) = parse_crypto_components(
+        [
+            {
+                "type": "cryptographic-asset",
+                "bom-ref": "proto",
+                "name": "TLS",
+                "cryptoProperties": {"assetType": "protocol", "protocolProperties": {"cipherSuites": suites}},
+            }
+        ]
+    )
+    assert proto.cipher_suites == ["A", "B", "C", "D", "E"]
+    assert proto.cipher_suite_ids == ["0xC0,0x30", "0xC0,0x30", "0xC0,0x30", None, None]
+
+
+def _rsa_component(**fields) -> dict:
+    rsa = next(c for c in _load("legacy_crypto_mixed.json")["components"] if c["bom-ref"] == "algo-rsa1024")
+    return {**rsa, **fields}
+
+
+def test_a_malformed_property_entry_drops_only_that_entry():
+    comp = _rsa_component(properties=["bad", {"name": "key_size", "value": "2048"}, {"name": "note", "value": ""}])
+
+    [asset] = parse_crypto_components([comp])
+
+    assert asset.properties == {"key_size": "2048"}
+
+
+def test_repeated_occurrence_locations_are_kept_once_in_order():
+    occurrences = [{"location": "b.py"}, {"location": "a.py"}, "bad", {"location": "b.py"}, {"line": 3}]
+
+    [asset] = parse_crypto_components([_rsa_component(evidence={"occurrences": occurrences})])
+
+    assert asset.occurrence_locations == ["b.py", "a.py"]

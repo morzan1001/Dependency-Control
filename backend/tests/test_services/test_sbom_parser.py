@@ -1,6 +1,8 @@
 """Tests for SBOM parser - format detection, CycloneDX/SPDX/Syft parsing."""
 
+import json
 import re
+from pathlib import Path
 
 import pytest
 
@@ -62,41 +64,267 @@ class TestExtractLicenseFromUrl:
         assert extract_license_from_url("https://unlicense.org") == "Unlicense"
 
 
-class TestResolveCyclonedxDirectRefs:
-    """The fallback (root bom-ref doesn't match a graph node) must return the root's children (direct deps), not the roots themselves — and flag them as inferred."""
+FIXTURES = Path(__file__).parent.parent / "fixtures" / "sbom"
 
-    def test_fallback_returns_root_children_not_roots(self):
-        # app -> [A, B]; A -> [C]. "app" is the root (nothing depends on it).
-        deps_graph = {"app": ["A", "B"], "A": ["C"], "B": [], "C": []}
-        all_transitive_refs = {"A", "B", "C"}
-        # main_bom_ref does NOT match any graph node (e.g. a purl vs. plain refs).
-        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(
-            deps_graph, all_transitive_refs, "pkg:maven/com.acme/app@1.0"
-        )
-        assert direct_refs == {"A", "B"}  # NOT {"app"}
-        assert inferred is True
 
-    def test_fallback_with_no_main_bom_ref(self):
-        deps_graph = {"app": ["A", "B"], "A": [], "B": []}
-        all_transitive_refs = {"A", "B"}
-        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
-        assert direct_refs == {"A", "B"}
-        assert inferred is True
+def _fixture(name: str) -> dict:
+    return json.loads((FIXTURES / name).read_text())
 
-    def test_matched_main_bom_ref_returns_root_depends_on(self):
-        deps_graph = {"app": ["A", "B"], "A": ["C"], "B": [], "C": []}
-        all_transitive_refs = {"A", "B", "C"}
-        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, "app")
-        assert direct_refs == {"A", "B"}
-        assert inferred is False
 
-    def test_flat_graph_treats_roots_as_direct(self):
-        # No real edges: every ref is a childless root -> treat all as direct (not empty).
-        deps_graph = {"X": [], "Y": []}
-        all_transitive_refs: set = set()
-        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
-        assert direct_refs == {"X", "Y"}
-        assert inferred is True
+def _fixture_with(name: str, field: str, entry: object) -> dict:
+    sbom = _fixture(name)
+    sbom[field] = [*sbom[field], entry]
+    return sbom
+
+
+def _directness(result) -> dict[str, tuple[bool, bool]]:
+    return {dep.name: (dep.direct, dep.direct_inferred) for dep in result.dependencies}
+
+
+_POETRY_TRANSITIVES = ("anyio", "certifi", "h11", "httpcore", "idna", "sniffio")
+_UV_DEV_TRANSITIVES = (
+    *("anyio", "certifi", "h11", "httpcore", "idna", "typing-extensions"),
+    *("colorama", "iniconfig", "packaging", "pluggy", "pygments"),
+)
+_SYFT_MONOREPO = {
+    "debug": (True, True),
+    "ms": (False, True),
+    "httpx": (True, True),
+    **dict.fromkeys(_POETRY_TRANSITIVES, (False, True)),
+}
+
+
+class TestDirectnessOfRealGraphs:
+    """syft 1.42.1 and trivy 0.58.1 output for one npm + poetry monorepo, in every format they write."""
+
+    @pytest.mark.parametrize(
+        ("fixture", "expected", "skipped_roots"),
+        [
+            pytest.param("mono.syft.json", _SYFT_MONOREPO, 1, id="syft-json"),
+            pytest.param("mono.syft.cdx.json", _SYFT_MONOREPO, 1, id="syft-cyclonedx"),
+            # syft's SPDX output carries none of the lockfile metadata that marks myapp as the project.
+            pytest.param(
+                "mono.syft.spdx.json",
+                {**_SYFT_MONOREPO, "myapp": (True, True), "debug": (False, True)},
+                0,
+                id="syft-spdx",
+            ),
+            pytest.param(
+                "poetry.syft.json",
+                {"httpx": (True, True), **dict.fromkeys(_POETRY_TRANSITIVES, (False, True))},
+                0,
+                id="syft-json-poetry-only",
+            ),
+            pytest.param(
+                "mono.trivy.cdx.json",
+                {
+                    "debug": (True, False),
+                    "ms": (False, False),
+                    "httpx": (True, False),
+                    **dict.fromkeys(_POETRY_TRANSITIVES, (False, False)),
+                },
+                0,
+                id="trivy-cyclonedx",
+            ),
+        ],
+    )
+    def test_each_format_resolves_the_same_direct_set(self, fixture, expected, skipped_roots):
+        result = parse_sbom(_fixture(fixture))
+
+        assert _directness(result) == expected
+        assert result.skipped_reasons.get("root-component", 0) == skipped_roots
+
+    @pytest.mark.parametrize(
+        "fixture", ["mono.syft.json", "mono.syft.cdx.json", "mono.syft.spdx.json", "mono.trivy.cdx.json"]
+    )
+    def test_each_format_records_the_same_parents(self, fixture):
+        deps = {dep.name: dep for dep in parse_sbom(_fixture(fixture)).dependencies}
+
+        assert deps["ms"].parent_components == ["pkg:npm/debug@4.3.4"]
+        assert deps["h11"].parent_components == ["pkg:pypi/httpcore@1.0.5"]
+
+    def test_trivy_os_descriptor_passes_directness_to_the_top_level_os_packages(self):
+        directness = _directness(parse_sbom(_fixture("rootfs.trivy.cdx.json")))
+
+        direct = {name for name, value in directness.items() if value == (True, False)}
+        assert direct == {
+            "alpine",
+            "myapp",
+            "alpine-baselayout",
+            "alpine-keys",
+            "apk-tools",
+            "musl-utils",
+            "ssl_client",
+        }
+        assert all(value == (False, False) for name, value in directness.items() if name not in direct)
+
+    @pytest.mark.parametrize(
+        ("fixture", "project_deps"),
+        [
+            pytest.param("maven.trivy.cdx.json", {"logback-classic", "slf4j-api"}, id="pom"),
+            pytest.param(
+                "gomod.trivy.cdx.json",
+                {"github.com/google/uuid", "golang.org/x/sys", "golang.org/x/text"},
+                id="gomod",
+            ),
+            pytest.param("gobinary.trivy.cdx.json", {"github.com/google/uuid", "stdlib"}, id="gobinary"),
+        ],
+    )
+    def test_trivy_root_package_is_skipped_and_its_children_are_direct(self, fixture, project_deps):
+        result = parse_sbom(_fixture(fixture))
+
+        directness = _directness(result)
+        assert {name for name, value in directness.items() if value == (True, False)} == project_deps
+        assert all(value == (False, False) for name, value in directness.items() if name not in project_deps)
+        assert result.skipped_reasons.get("root-component") == 1
+        ingested = {dep.purl for dep in result.dependencies}
+        assert all(set(dep.parent_components) <= ingested for dep in result.dependencies)
+
+    @pytest.mark.parametrize(
+        ("fixture", "expected"),
+        [
+            pytest.param(
+                "cargo.trivy.cdx.json",
+                {"myservice": (True, False), "serde_json": (False, False), "itoa": (False, False)},
+                id="crate",
+            ),
+            # A virtual workspace's members are absent, so its direct dependency looks like a crate root.
+            pytest.param(
+                "cargows.trivy.cdx.json",
+                {"serde_json": (True, False), **dict.fromkeys(("itoa", "ryu", "serde"), (False, False))},
+                id="virtual-workspace",
+            ),
+        ],
+    )
+    def test_trivy_cargo_lock_keeps_every_package(self, fixture, expected):
+        result = parse_sbom(_fixture(fixture))
+
+        assert _directness(result) == expected
+        assert "root-component" not in result.skipped_reasons
+
+    def test_trivy_go_binary_without_main_module_keeps_every_package(self):
+        # gofmt (Go toolchain) and a `go build main.go` binary carry no main module, so trivy gives them no root.
+        result = parse_sbom(_fixture("gobinnomain.trivy.cdx.json"))
+
+        assert sorted((dep.name, dep.direct, dep.direct_inferred) for dep in result.dependencies) == [
+            ("github.com/google/uuid", True, False),
+            ("stdlib", True, False),
+        ]
+        assert "root-component" not in result.skipped_reasons
+
+    @pytest.mark.parametrize(
+        ("fixture", "expected", "skipped_roots"),
+        [
+            # npm auto-installs react as react-dom's peer; syft links no edge to it, so it is a second lock root.
+            pytest.param(
+                "npmpeer.syft.cdx.json",
+                {
+                    "myapp": (True, True),
+                    "react": (True, True),
+                    **dict.fromkeys(("react-dom", "loose-envify", "scheduler", "js-tokens"), (False, True)),
+                },
+                0,
+                id="npm-peer-cyclonedx",
+            ),
+            pytest.param(
+                "npmpeer.syft.json",
+                {
+                    "react-dom": (True, True),
+                    "react": (True, True),
+                    **dict.fromkeys(("loose-envify", "scheduler", "js-tokens"), (False, True)),
+                },
+                1,
+                id="npm-peer-json",
+            ),
+            # syft links no uv dev group to the project, so pytest is a second lock root.
+            pytest.param(
+                "uvdev.syft.cdx.json",
+                {
+                    "uvdemo": (True, True),
+                    "pytest": (True, True),
+                    "httpx": (False, True),
+                    **dict.fromkeys(_UV_DEV_TRANSITIVES, (False, True)),
+                },
+                0,
+                id="uv-dev-cyclonedx",
+            ),
+            pytest.param(
+                "uvdev.syft.json",
+                {
+                    "pytest": (True, True),
+                    "httpx": (True, True),
+                    **dict.fromkeys(_UV_DEV_TRANSITIVES, (False, True)),
+                },
+                1,
+                id="uv-dev-json",
+            ),
+        ],
+    )
+    def test_a_second_lock_root_keeps_every_registry_package(self, fixture, expected, skipped_roots):
+        result = parse_sbom(_fixture(fixture))
+
+        assert _directness(result) == expected
+        assert result.skipped_reasons.get("root-component", 0) == skipped_roots
+
+    def test_spdx_image_root_sets_the_image_source(self):
+        result = parse_sbom(_fixture("alpine.syft.spdx.json"))
+
+        apk = [dep for dep in result.dependencies if dep.type == "apk"]
+        assert (result.source_type, result.source_target) == ("image", "alpine:3.20")
+        assert {(dep.source_type, dep.source_target) for dep in apk} == {("image", "alpine:3.20")}
+        assert {dep.name for dep in apk if dep.direct} == {
+            "alpine-baselayout",
+            "alpine-keys",
+            "apk-tools",
+            "musl-utils",
+            "ssl_client",
+        }
+
+
+class TestMalformedDependencyGraph:
+    """A graph entry of the wrong shape fails the document in every format instead of silently dropping an edge."""
+
+    @pytest.mark.parametrize(
+        ("sbom", "message"),
+        [
+            pytest.param(
+                _fixture_with("mono.trivy.cdx.json", "dependencies", None),
+                "dependencies must be a list of objects",
+                id="cyclonedx-entry",
+            ),
+            pytest.param(
+                _fixture_with(
+                    "mono.trivy.cdx.json",
+                    "dependencies",
+                    {"ref": "pkg:npm/debug@4.3.4", "dependsOn": "pkg:npm/ms@2.1.2"},
+                ),
+                "dependsOn",
+                id="cyclonedx-depends-on-string",
+            ),
+            pytest.param(
+                _fixture_with("mono.syft.spdx.json", "relationships", None),
+                "relationships must be a list of objects",
+                id="spdx-entry",
+            ),
+            pytest.param(
+                _fixture_with("mono.syft.json", "artifactRelationships", None),
+                "artifactRelationships must be a list of objects",
+                id="syft-entry",
+            ),
+        ],
+    )
+    def test_malformed_edge_fails_the_document(self, sbom, message):
+        with pytest.raises(ValueError, match=message):
+            parse_sbom(sbom)
+
+    def test_malformed_source_hints_leave_the_graph_intact(self):
+        sbom = _fixture("mono.trivy.cdx.json")
+        sbom["metadata"]["properties"] = [None]
+        sbom["metadata"]["component"] = None
+
+        result = parse_sbom(sbom)
+
+        assert len(result.dependencies) == 9
 
 
 def _cyclonedx_image_partial_graph() -> dict:
@@ -175,22 +403,29 @@ class TestCycloneDXDirectnessHonesty:
             assert deps[name].direct is True
             assert deps[name].direct_inferred is True
 
-    def test_roots_children_fallback_marks_direct_refs_inferred(self):
+    def test_roots_children_fallback_marks_the_whole_graph_inferred(self):
         sbom = _cyclonedx_image_partial_graph()
         # Main bom-ref absent from the graph (13 of 43 re-parsed prod SBOMs): the
-        # roots-children fallback resolves express as direct, but only as a guess.
+        # component-less root passes directness to express, but only as a guess.
         sbom["dependencies"] = [
             {"ref": "app-node", "dependsOn": ["pkg:npm/express@4.19.2"]},
             {"ref": "pkg:npm/express@4.19.2", "dependsOn": ["pkg:npm/body-parser@1.20.2"]},
         ]
         result = self.parser.parse(sbom)
-        deps = {d.name: d for d in result.dependencies}
-        assert deps["express"].direct is True
-        assert deps["express"].direct_inferred is True
-        assert deps["body-parser"].direct is False
-        assert deps["body-parser"].direct_inferred is False
-        assert deps["libssl3"].direct is True
-        assert deps["libssl3"].direct_inferred is True
+        assert _directness(result) == {
+            "express": (True, True),
+            "body-parser": (False, True),
+            "libssl3": (True, True),
+            "zlib1g": (True, True),
+        }
+
+    def test_main_component_named_by_purl_anchors_the_graph(self):
+        sbom = _cyclonedx_image_partial_graph()
+        root = sbom["metadata"]["component"]
+        del root["bom-ref"]
+        root["purl"] = sbom["dependencies"][0]["ref"] = "pkg:oci/service@sha256%3Aabc123"
+        result = self.parser.parse(sbom)
+        assert _directness(result)["express"] == (True, False)
 
     def test_no_graph_at_all_stays_fully_inferred(self):
         sbom = _cyclonedx_image_partial_graph()
@@ -204,51 +439,46 @@ class TestSBOMFormatDetection:
         self.parser = SBOMParser()
 
     def test_cyclonedx_by_bom_format(self, cyclonedx_minimal):
-        fmt, version = self.parser.detect_format(cyclonedx_minimal)
+        fmt = self.parser.detect_format(cyclonedx_minimal)
         assert fmt == SBOMFormat.CYCLONEDX
-        assert version == "1.5"
 
     def test_cyclonedx_by_schema(self):
         sbom = {"$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json"}
-        fmt, version = self.parser.detect_format(sbom)
+        fmt = self.parser.detect_format(sbom)
         assert fmt == SBOMFormat.CYCLONEDX
-        assert version == "1.5"
 
     def test_cyclonedx_by_components_with_purl(self):
         sbom = {
             "specVersion": "1.4",
             "components": [{"name": "pkg", "purl": "pkg:pypi/pkg@1.0"}],
         }
-        fmt, _ = self.parser.detect_format(sbom)
+        fmt = self.parser.detect_format(sbom)
         assert fmt == SBOMFormat.CYCLONEDX
 
     def test_spdx_by_spdx_version(self, spdx_minimal):
-        fmt, version = self.parser.detect_format(spdx_minimal)
+        fmt = self.parser.detect_format(spdx_minimal)
         assert fmt == SBOMFormat.SPDX
-        assert version == "SPDX-2.3"
 
     def test_spdx_by_schema(self):
         sbom = {"$schema": "https://spdx.org/schema/SPDX-2.3.json"}
-        fmt, _ = self.parser.detect_format(sbom)
+        fmt = self.parser.detect_format(sbom)
         assert fmt == SBOMFormat.SPDX
 
     def test_syft_by_descriptor(self, syft_minimal):
-        fmt, version = self.parser.detect_format(syft_minimal)
+        fmt = self.parser.detect_format(syft_minimal)
         assert fmt == SBOMFormat.SYFT
-        assert version == "0.100.0"
 
     def test_syft_by_source_type(self):
         sbom = {
             "source": {"type": "image", "target": "nginx:latest"},
             "artifacts": [],
         }
-        fmt, _ = self.parser.detect_format(sbom)
+        fmt = self.parser.detect_format(sbom)
         assert fmt == SBOMFormat.SYFT
 
     def test_unknown_format(self):
-        fmt, version = self.parser.detect_format({"random": "data"})
+        fmt = self.parser.detect_format({"random": "data"})
         assert fmt == SBOMFormat.UNKNOWN
-        assert version is None
 
 
 class TestCycloneDXParsing:
@@ -281,11 +511,6 @@ class TestCycloneDXParsing:
         result = self.parser.parse(cyclonedx_minimal)
         deps = {d.name: d for d in result.dependencies}
         assert deps["requests"].purl == "pkg:pypi/requests@2.31.0"
-
-    def test_tool_info_extracted(self, cyclonedx_minimal):
-        result = self.parser.parse(cyclonedx_minimal)
-        assert result.tool_name == "trivy"
-        assert result.tool_version == "0.50.0"
 
     def test_source_type_application(self, cyclonedx_minimal):
         result = self.parser.parse(cyclonedx_minimal)
@@ -465,16 +690,6 @@ class TestSyftParsing:
         assert result.source_type == "directory"
         assert result.source_target == "/app"
 
-    def test_source_type_image(self):
-        sbom = {
-            "descriptor": {"name": "syft", "version": "0.100.0"},
-            "source": {"type": "image", "target": "nginx:latest"},
-            "artifacts": [],
-            "artifactRelationships": [],
-        }
-        result = self.parser.parse(sbom)
-        assert result.source_type == "image"
-
     def test_license_extraction(self, syft_minimal):
         result = self.parser.parse(syft_minimal)
         assert result.dependencies[0].license == "Apache-2.0"
@@ -482,11 +697,6 @@ class TestSyftParsing:
     def test_locations_extracted(self, syft_minimal):
         result = self.parser.parse(syft_minimal)
         assert "/app/requirements.txt" in result.dependencies[0].locations
-
-    def test_tool_info(self, syft_minimal):
-        result = self.parser.parse(syft_minimal)
-        assert result.tool_name == "syft"
-        assert result.tool_version == "0.100.0"
 
 
 class TestParseSBOMConvenience:
@@ -800,8 +1010,17 @@ class TestDuplicateComponentMerge:
             "cpe:2.3:a:lib-a:lib-a:1.0:*:*:*:*:*:*:*",
             "cpe:2.3:a:liba:liba:1.0:*:*:*:*:*:*:*",
         }
-        assert dep.hashes == {"sha-1": "aaa", "sha-256": "bbb"}
+        assert dep.hashes == {"sha1": "aaa", "sha256": "bbb"}
         assert set(dep.parent_components) == {"pkg:generic/parent-x@1.0", "pkg:generic/parent-y@1.0"}
+
+    @pytest.mark.parametrize("scopes", [("optional", "required"), ("required", "optional"), ("excluded", None)])
+    def test_merge_lets_a_runtime_scope_win(self, scopes):
+        component = {"type": "library", "name": "x", "version": "1.0.0", "purl": "pkg:npm/x@1.0.0"}
+        copies = [{**component, "bom-ref": f"x-{i}", "scope": scope} for i, scope in enumerate(scopes)]
+
+        [dep] = self.parser.parse(_cyclonedx_with(copies)).dependencies
+
+        assert dep.scope == next(scope for scope in scopes if scope not in ("optional", "excluded"))
 
     def test_merge_direct_anywhere_wins_over_transitive(self):
         sbom = {
@@ -1056,11 +1275,16 @@ def _syft_json_project_sbom() -> dict:
             art["purl"] = purl
         return art
 
+    demo = _artifact("aaaa000000000001", "demo", "0.0.1-SNAPSHOT", "pkg:maven/com.example/demo@0.0.1-SNAPSHOT")
+    demo["metadata"] = {
+        "virtualPath": "",
+        "pomProject": {"path": "", "groupId": "com.example", "artifactId": "demo", "version": "0.0.1-SNAPSHOT"},
+    }
     return {
         "descriptor": {"name": "syft", "version": "1.42.3"},
         "source": {"id": _SYFT_SOURCE_ID, "type": "directory", "target": "/build", "name": "."},
         "artifacts": [
-            _artifact("aaaa000000000001", "demo", "0.0.1-SNAPSHOT", "pkg:maven/com.example/demo@0.0.1-SNAPSHOT"),
+            demo,
             _artifact("aaaa000000000002", "slf4j-api", "2.0.16", "pkg:maven/org.slf4j/slf4j-api@2.0.16"),
             _artifact("aaaa000000000003", "logback-core", "1.5.6", "pkg:maven/ch.qos.logback/logback-core@1.5.6"),
             _artifact("aaaa000000000004", "actions/checkout", "v4", "pkg:github/actions/checkout@v4", "github-action"),
@@ -1087,19 +1311,20 @@ class TestSyftRelationshipDirection:
         self.result = self.parser.parse(_syft_json_project_sbom())
         self.deps = {d.name: d for d in self.result.dependencies}
 
-    def test_single_root_children_are_direct(self):
+    def test_project_root_children_are_direct(self):
         assert self.deps["slf4j-api"].direct is True
 
     def test_transitive_dependency_is_not_direct(self):
         dep = self.deps["logback-core"]
         assert dep.direct is False
-        assert dep.direct_inferred is False
+        assert dep.direct_inferred is True
 
-    def test_root_project_does_not_list_its_dependencies_as_parents(self):
-        assert self.deps["demo"].parent_components == []
+    def test_pom_project_is_the_root_component_not_a_dependency(self):
+        assert "demo" not in self.deps
+        assert self.result.skipped_reasons.get("root-component") == 1
 
     def test_parents_point_at_dependents_not_dependencies(self):
-        assert self.deps["slf4j-api"].parent_components == ["pkg:maven/com.example/demo@0.0.1-SNAPSHOT"]
+        assert self.deps["slf4j-api"].parent_components == []
         assert self.deps["logback-core"].parent_components == ["pkg:maven/org.slf4j/slf4j-api@2.0.16"]
 
     def test_parent_refs_are_purls_not_syft_hex_ids(self):
@@ -1132,19 +1357,20 @@ class TestSyftRelationshipDirection:
         assert dep.direct is True
         assert dep.direct_inferred is False
 
-    def test_multiple_roots_do_not_promote_their_children(self):
-        # Two independent top-level packages: their children must stay transitive.
+    def test_roots_without_project_evidence_are_direct_and_their_children_transitive(self):
         sbom = _syft_json_project_sbom()
+        del sbom["artifacts"][0]["metadata"]
         sbom["artifactRelationships"] = [
             {"parent": "aaaa000000000002", "child": "aaaa000000000001", "type": "dependency-of"},
             {"parent": "aaaa000000000003", "child": "aaaa000000000004", "type": "dependency-of"},
         ]
         result = self.parser.parse(sbom)
-        deps = {d.name: d for d in result.dependencies}
-        assert deps["slf4j-api"].direct is False
-        assert deps["logback-core"].direct is False
-        assert deps["demo"].direct is True
-        assert deps["demo"].direct_inferred is True
+        assert _directness(result) == {
+            "demo": (True, True),
+            "actions/checkout": (True, True),
+            "slf4j-api": (False, True),
+            "logback-core": (False, True),
+        }
 
     def test_no_relationships_keeps_everything_direct_inferred(self):
         sbom = _syft_json_project_sbom()
@@ -1210,7 +1436,7 @@ class TestMalformedComponentResilience:
         result = self.parser.parse(sbom)
         names = [d.name for d in result.dependencies]
         assert names == ["first", "second", "third"]
-        assert result.dependencies[1].version == "unknown"
+        assert result.dependencies[1].version == "2.0"
 
     def test_properties_object_instead_of_list_is_not_fatal(self):
         sbom = _three_component_sbom(
@@ -1279,7 +1505,7 @@ class TestMalformedComponentResilience:
             "spdxVersion": "SPDX-2.3",
             "SPDXID": "SPDXRef-DOCUMENT",
             "packages": [
-                {"SPDXID": "SPDXRef-1", "name": "ok-1", "versionInfo": "1.0", "checksums": 5},
+                {"SPDXID": "SPDXRef-1", "name": "ok-1", "versionInfo": "1.0", "externalRefs": 5},
                 {"SPDXID": "SPDXRef-2", "name": "ok-2", "versionInfo": "2.0"},
             ],
             "relationships": [],
@@ -1312,7 +1538,7 @@ class TestMalformedComponentResilience:
 
     def test_dict_version_is_treated_as_missing(self):
         sbom = _three_component_sbom(
-            {"type": "library", "name": "second", "version": {"raw": "2.0"}, "purl": "pkg:pypi/second@2.0"}
+            {"type": "library", "name": "second", "version": {"raw": "2.0"}, "purl": "pkg:pypi/second"}
         )
         result = self.parser.parse(sbom)
         deps = {d.name: d for d in result.dependencies}
@@ -1420,8 +1646,8 @@ class TestSPDXRootSkipAndFields:
     def test_direct_dependency_has_no_unresolvable_root_parent(self):
         assert self.deps["npm:left-pad"].parent_components == []
 
-    def test_noassertion_version_is_normalized(self):
-        assert self.deps["org.apache.commons:commons-text"].version == "unknown"
+    def test_noassertion_version_falls_back_to_the_purl_version(self):
+        assert self.deps["org.apache.commons:commons-text"].version == "1.14.0"
 
     def test_none_license_is_dropped(self):
         assert self.deps["npm:left-pad"].license == ""
@@ -1440,6 +1666,19 @@ class TestSPDXRootSkipAndFields:
 
     def test_dependencies_inherit_source_target(self):
         assert self.deps["npm:left-pad"].source_target == "com.github.acme/my-service"
+
+    def test_document_describes_array_names_the_root(self):
+        sbom = _spdx_github_export()
+        sbom["spdxVersion"] = "SPDX-2.2"
+        sbom["documentDescribes"] = ["SPDXRef-repo"]
+        sbom["relationships"] = [r for r in sbom["relationships"] if r["relationshipType"] != "DESCRIBES"]
+
+        result = self.parser.parse(sbom)
+        left_pad = {d.name: d for d in result.dependencies}["npm:left-pad"]
+
+        assert result.skipped_reasons.get("root-component") == 1
+        assert (result.source_type, result.source_target) == ("application", "com.github.acme/my-service")
+        assert (left_pad.direct, left_pad.direct_inferred, left_pad.parent_components) == (True, False, [])
 
     def test_minimal_describes_only_document_keeps_package(self):
         # A document that DESCRIBES a package with no DEPENDS_ON children is an
@@ -1484,7 +1723,7 @@ def _syft_cyclonedx_component_sbom(properties: list[dict], **extra) -> dict:
 
 
 class TestSyftCycloneDXLocationProperties:
-    """syft:location:N:layerID feeds layer_digest, path/accessPath feed locations deduplicated (prod shape: 97% of location-bearing docs held a sha256 pseudo-path and layer_digest stayed null)."""
+    """syft:location:N:layerID feeds layer_digest, syft:location:N:path feeds locations (prod shape: 97% of location-bearing docs held a sha256 pseudo-path and layer_digest stayed null)."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -1503,12 +1742,12 @@ class TestSyftCycloneDXLocationProperties:
         assert dep.layer_digest == layer
         assert dep.locations == ["/app/libs/HdrHistogram-2.2.2.jar"]
 
-    def test_path_and_access_path_are_deduplicated(self):
+    def test_syft_metadata_paths_are_not_locations(self):
         result = self.parser.parse(
             _syft_cyclonedx_component_sbom(
                 [
                     {"name": "syft:location:0:path", "value": "/app/libs/HdrHistogram-2.2.2.jar"},
-                    {"name": "syft:location:0:accessPath", "value": "/app/libs/HdrHistogram-2.2.2.jar"},
+                    {"name": "syft:metadata:virtualPath", "value": "/app/libs/HdrHistogram-2.2.2.jar:inner.jar"},
                 ]
             )
         )
@@ -1792,7 +2031,7 @@ class TestTypeIsPurlEcosystem:
                 ]
             )
         )
-        assert result.dependencies[0].type == "binary"
+        assert result.dependencies[0].type == "generic"
 
     def test_fabricated_purl_prefers_syft_package_type_property(self):
         result = self.parser.parse(
@@ -1807,7 +2046,7 @@ class TestTypeIsPurlEcosystem:
                 ]
             )
         )
-        assert result.dependencies[0].type == "java-archive"
+        assert (result.dependencies[0].type, result.dependencies[0].purl) == ("maven", "pkg:maven/some-lib@1.0")
 
     def test_syft_artifact_type_replaced_by_purl_type(self):
         sbom = {
@@ -1883,7 +2122,7 @@ class TestVcsUrlNormalization:
 
 
 class TestSyftArtifactMetadata:
-    """language lives on the artifact, not in metadata; deb 'source' is a package name, not a URL."""
+    """deb 'source' is a package name, not a URL."""
 
     def setup_method(self):
         self.parser = SBOMParser()
@@ -1897,20 +2136,6 @@ class TestSyftArtifactMetadata:
         }
         return self.parser.parse(sbom).dependencies[0]
 
-    def test_top_level_language_is_captured(self):
-        dep = self._parse_artifact(
-            {
-                "id": "a1",
-                "name": "slf4j-api",
-                "version": "2.0.16",
-                "type": "java-archive",
-                "language": "java",
-                "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
-                "metadata": {},
-            }
-        )
-        assert dep.properties.get("language") == "java"
-
     def test_source_package_name_is_not_a_repository_url(self):
         dep = self._parse_artifact(
             {
@@ -1923,7 +2148,6 @@ class TestSyftArtifactMetadata:
             }
         )
         assert dep.repository_url is None
-        assert dep.properties.get("architecture") == "amd64"
 
     def test_real_source_url_is_kept(self):
         dep = self._parse_artifact(
@@ -2003,15 +2227,15 @@ class TestDetectFormatMalformed:
         self.parser = SBOMParser()
 
     def test_components_first_element_not_dict(self):
-        fmt, _ = self.parser.detect_format({"components": [123, 456]})
+        fmt = self.parser.detect_format({"components": [123, 456]})
         assert fmt == SBOMFormat.UNKNOWN
 
     def test_components_first_element_is_list(self):
-        fmt, _ = self.parser.detect_format({"components": [["nested"]]})
+        fmt = self.parser.detect_format({"components": [["nested"]]})
         assert fmt == SBOMFormat.UNKNOWN
 
     def test_source_is_string(self):
-        fmt, _ = self.parser.detect_format({"source": "some-string"})
+        fmt = self.parser.detect_format({"source": "some-string"})
         assert fmt == SBOMFormat.UNKNOWN
 
     def test_parse_does_not_raise_on_malformed(self):
@@ -2406,3 +2630,812 @@ class TestComponentSource:
     )
     def test_os_packages_are_image_only_in_an_image_context(self, purl, pkg_type, layer_digest, scan_source, expected):
         assert SBOMParser()._determine_component_source(purl, pkg_type, layer_digest, scan_source) == expected
+
+
+_AOPALLIANCE_SHA1 = "0235ba8b489512805ac13a8f9ea77a1ca5ebe3e8"
+_AOPALLIANCE_JAR = "/private/tmp/w3b-syft/proj/aopalliance-1.0.jar"
+
+
+def _syft_142_artifacts() -> list[dict]:
+    """Artifacts as syft 1.42.1 writes them for a jar, npm/yarn/pnpm lockfiles, Cargo.lock and composer.lock."""
+    return [
+        {
+            "id": "8552ae7062d051b8",
+            "name": "aopalliance",
+            "version": "1.0",
+            "type": "java-archive",
+            "foundBy": "java-archive-cataloger",
+            "locations": [
+                {"path": _AOPALLIANCE_JAR, "accessPath": _AOPALLIANCE_JAR, "annotations": {"evidence": "primary"}}
+            ],
+            "licenses": [],
+            "language": "java",
+            "cpes": [
+                {"cpe": "cpe:2.3:a:aopalliance:aopalliance:1.0:*:*:*:*:*:*:*", "source": "syft-generated"},
+                {"cpe": "cpe:2.3:a:aopalliance:aopalliance:1.0:*:*:*:*:*:*:*", "source": "syft-generated"},
+            ],
+            "purl": "pkg:maven/aopalliance/aopalliance@1.0",
+            "metadataType": "java-archive",
+            "metadata": {
+                "virtualPath": _AOPALLIANCE_JAR,
+                "manifest": {"main": [{"key": "Manifest-Version", "value": "1.0"}]},
+                "digest": [{"algorithm": "sha1", "value": _AOPALLIANCE_SHA1}],
+            },
+        },
+        {
+            "id": "676e218c311d0cdc",
+            "name": "lodash",
+            "version": "4.17.21",
+            "type": "npm",
+            "foundBy": "javascript-lock-cataloger",
+            "locations": [{"path": "/package-lock.json", "accessPath": "/package-lock.json"}],
+            "licenses": [],
+            "language": "javascript",
+            "cpes": [{"cpe": "cpe:2.3:a:lodash:lodash:4.17.21:*:*:*:*:*:*:*", "source": "syft-generated"}],
+            "purl": "pkg:npm/lodash@4.17.21",
+            "metadataType": "javascript-npm-package-lock-entry",
+            "metadata": {
+                "resolved": "https://registry.npmjs.org/lodash/-/lodash-4.17.21.tgz",
+                "integrity": "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg==",
+                "dependencies": None,
+            },
+        },
+        {
+            "id": "0b45582a9b830905",
+            "name": "ms",
+            "version": "2.1.3",
+            "type": "npm",
+            "foundBy": "javascript-lock-cataloger",
+            "locations": [{"path": "/yarn.lock", "accessPath": "/yarn.lock"}],
+            "licenses": [],
+            "language": "javascript",
+            "cpes": [],
+            "purl": "pkg:npm/ms@2.1.3",
+            "metadataType": "javascript-yarn-lock-entry",
+            "metadata": {
+                "resolved": "https://registry.yarnpkg.com/ms/-/ms-2.1.3.tgz",
+                "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+                "dependencies": {},
+            },
+        },
+        {
+            "id": "f8f75ae760ba5aeb",
+            "name": "debug",
+            "version": "4.3.4",
+            "type": "npm",
+            "foundBy": "javascript-lock-cataloger",
+            "locations": [{"path": "/pnpm-lock.yaml", "accessPath": "/pnpm-lock.yaml"}],
+            "licenses": [],
+            "language": "javascript",
+            "cpes": [],
+            "purl": "pkg:npm/debug@4.3.4",
+            "metadataType": "javascript-pnpm-lock-entry",
+            "metadata": {
+                "resolution": {
+                    "integrity": "sha512-PRWFHuSU3eDtQJPvnNY7Jcket1j0t5OuOsFzPPzsekD52Zl8qUfFIPEiswXqIvHWGVHOgX+7G/vCNNhehwxfkQ=="
+                },
+                "dependencies": {},
+            },
+        },
+        {
+            "id": "6ce1453c37754295",
+            "name": "itoa",
+            "version": "1.0.11",
+            "type": "rust-crate",
+            "foundBy": "rust-cargo-lock-cataloger",
+            "locations": [{"path": "/Cargo.lock", "accessPath": "/Cargo.lock"}],
+            "licenses": [],
+            "language": "rust",
+            "cpes": [],
+            "purl": "pkg:cargo/itoa@1.0.11",
+            "metadataType": "rust-cargo-lock-entry",
+            "metadata": {
+                "name": "itoa",
+                "version": "1.0.11",
+                "source": "registry+https://github.com/rust-lang/crates.io-index",
+                "checksum": "49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b",
+                "dependencies": [],
+            },
+        },
+        {
+            "id": "55bbf18cf4ab1368",
+            "name": "monolog/monolog",
+            "version": "3.5.0",
+            "type": "php-composer",
+            "foundBy": "php-composer-lock-cataloger",
+            "locations": [{"path": "/composer.lock", "accessPath": "/composer.lock"}],
+            "licenses": [],
+            "language": "php",
+            "cpes": [],
+            "purl": "pkg:composer/monolog/monolog@3.5.0",
+            "metadataType": "php-composer-lock-entry",
+            "metadata": {
+                "name": "monolog/monolog",
+                "version": "3.5.0",
+                "source": {
+                    "type": "git",
+                    "url": "https://github.com/Seldaek/monolog.git",
+                    "reference": "c915e2634718dbc8a4a15c61b0e62e7a44e14448",
+                },
+                "type": "library",
+                "authors": [{"name": "Jordi Boggiano", "email": "j.boggiano@seld.be", "homepage": "https://seld.be"}],
+                "description": "Sends your logs to files, sockets, inboxes, databases and various web services",
+                "homepage": "https://github.com/Seldaek/monolog",
+            },
+        },
+    ]
+
+
+def _syft_142_json(artifacts: list[dict] | None = None, source: dict | None = None) -> dict:
+    return {
+        "artifacts": _syft_142_artifacts() if artifacts is None else artifacts,
+        "artifactRelationships": [],
+        "source": source
+        or {
+            "id": "e73c023a2e8e90349bb4d853730e1bfc878257475334825422f01a09830de3b6",
+            "name": "proj",
+            "version": "",
+            "type": "directory",
+            "metadata": {"path": "proj"},
+        },
+        "distro": {},
+        "descriptor": {"name": "syft", "version": "1.42.1"},
+        "schema": {
+            "version": "16.0.43",
+            "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-16.0.43.json",
+        },
+    }
+
+
+class TestSyftJsonRealShapes:
+    def setup_method(self):
+        self.result = parse_sbom(_syft_142_json())
+        self.deps = {d.name: d for d in self.result.dependencies}
+
+    @pytest.mark.parametrize(
+        ("name", "expected"),
+        [
+            pytest.param("aopalliance", {"sha1": _AOPALLIANCE_SHA1}, id="jar-digest"),
+            pytest.param(
+                "lodash",
+                {
+                    "sha512": "bf690311ee7b95e713ba568322e3533f2dd1cb880b189e99d4edef13592b81764daec43e2c54c61d5c558dc5cfb35ecb85b65519e74026ff17675b6f8f916f4a"
+                },
+                id="npm-lock-integrity",
+            ),
+            pytest.param(
+                "ms",
+                {
+                    "sha512": "e85973b9b4cb646dc9d9afcd542025784863ceae68c601f268253dc985ef70bb2fa1568726afece715c8ebf5d73fab73ed1f7100eb479d23bfb57b45dd645394"
+                },
+                id="yarn-integrity",
+            ),
+            pytest.param(
+                "debug",
+                {
+                    "sha512": "3d15851ee494dde0ed4093ef9cd63b25c91eb758f4b793ae3ac1733cfcec7a40f9d9997ca947c520f122b305ea22f1d61951ce817fbb1bfbc234d85e870c5f91"
+                },
+                id="pnpm-resolution-integrity",
+            ),
+            pytest.param(
+                "itoa",
+                {"sha256": "49f1f14873335454500d59611f1cf4a4b0f786f9ac11f4312a78e4cf2566695b"},
+                id="cargo-checksum",
+            ),
+        ],
+    )
+    def test_hashes_come_from_every_syft_metadata_shape(self, name, expected):
+        assert self.deps[name].hashes == expected
+
+    def test_composer_object_authors_keep_the_package(self):
+        assert self.result.skipped_reasons == {}
+        assert self.deps["monolog/monolog"].author == "Jordi Boggiano"
+
+    def test_directory_source_target_comes_from_metadata_path(self):
+        assert (self.result.source_type, self.result.source_target) == ("directory", "proj")
+        assert self.deps["lodash"].source_target == "proj"
+
+    def test_group_comes_from_the_purl_namespace(self):
+        assert self.deps["aopalliance"].group == "aopalliance"
+        assert self.deps["monolog/monolog"].group == "monolog"
+        assert self.deps["lodash"].group is None
+
+    def test_repeated_cpes_are_stored_once(self):
+        assert self.deps["aopalliance"].cpes == ["cpe:2.3:a:aopalliance:aopalliance:1.0:*:*:*:*:*:*:*"]
+
+    def test_no_raw_properties_are_stored(self):
+        assert all(dep.properties == {} for dep in self.result.dependencies)
+
+    def test_a_symlinked_location_keeps_its_real_path(self):
+        [artifact] = [a for a in _syft_142_artifacts() if a["name"] == "aopalliance"]
+        artifact["locations"] = [{"path": "/usr/lib/libx.so.1.2", "accessPath": "/usr/lib/libx.so.1"}]
+        [dep] = parse_sbom(_syft_142_json([artifact])).dependencies
+        assert dep.locations == ["/usr/lib/libx.so.1.2"]
+
+    def test_placeholder_version_falls_back_to_the_purl_version(self):
+        [artifact] = [a for a in _syft_142_artifacts() if a["name"] == "lodash"]
+        artifact["version"] = ""
+        [dep] = parse_sbom(_syft_142_json([artifact])).dependencies
+        assert dep.version == "4.17.21"
+
+
+def _syft_060_alpine_image() -> dict:
+    """syft 0.60 (JSON schema 5): an image source keeps its details in a `target` object."""
+    return {
+        "artifacts": [
+            {
+                "id": "3d3fbd2b8d1f7e44",
+                "name": "busybox",
+                "version": "1.35.0-r29",
+                "type": "apk",
+                "foundBy": "apkdb-cataloger",
+                "locations": [
+                    {
+                        "path": "/lib/apk/db/installed",
+                        "layerID": "sha256:ded7a220bb058e28ee3254fbba04ca90b679070424424761a53a043b93b612bf",
+                    }
+                ],
+                "licenses": ["GPL-2.0-only"],
+                "language": "",
+                "cpes": ["cpe:2.3:a:busybox:busybox:1.35.0-r29:*:*:*:*:*:*:*"],
+                "purl": "pkg:apk/alpine/busybox@1.35.0-r29?arch=x86_64&upstream=busybox&distro=alpine-3.17.0",
+                "metadataType": "ApkMetadata",
+                "metadata": {
+                    "package": "busybox",
+                    "originPackage": "busybox",
+                    "version": "1.35.0-r29",
+                    "license": "GPL-2.0-only",
+                    "architecture": "x86_64",
+                    "url": "https://busybox.net/",
+                    "description": "Size optimized toolbox of many common UNIX utilities",
+                },
+            }
+        ],
+        "artifactRelationships": [],
+        "source": {
+            "type": "image",
+            "target": {
+                "userInput": "alpine:3.17",
+                "imageID": "sha256:042a816809aac8d0f7d7cacac7965782ee2ecac3f21bcf9f24b1de1a7387b769",
+                "manifestDigest": "sha256:e2e16842c9b54d985bf1ef9242a313f36b856181f188de21313820e177002501",
+                "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
+                "tags": ["alpine:3.17"],
+                "imageSize": 7049701,
+                "repoDigests": ["alpine@sha256:f271e74b17ced29b915d351685fd4644785c6d1559dd1f2d4189a5e851ef753a"],
+                "architecture": "amd64",
+                "os": "linux",
+            },
+        },
+        "distro": {"name": "alpine", "version": "3.17.0", "idLike": []},
+        "descriptor": {"name": "syft", "version": "0.60.3"},
+        "schema": {
+            "version": "5.0.0",
+            "url": "https://raw.githubusercontent.com/anchore/syft/main/schema/json/schema-5.0.0.json",
+        },
+    }
+
+
+class TestSyftSourceShapes:
+    def test_legacy_image_target_object_yields_the_image_reference(self):
+        result = parse_sbom(_syft_060_alpine_image())
+        assert result.skipped_reasons == {}
+        assert (result.source_type, result.source_target) == ("image", "alpine:3.17")
+        [dep] = result.dependencies
+        assert (dep.name, dep.source_target, dep.source_type) == ("busybox", "alpine:3.17", "image")
+
+    def test_current_image_source_reads_metadata_user_input(self):
+        source = {
+            "id": "sha256:91ef0af61f39ece4d6710e465df5ed6ca12112358344fd51ae6a3b886634148b",
+            "name": "alpine",
+            "version": "3.20",
+            "type": "image",
+            "metadata": {
+                "userInput": "alpine:3.20",
+                "imageID": "sha256:91ef0af61f39ece4d6710e465df5ed6ca12112358344fd51ae6a3b886634148b",
+                "tags": ["alpine:3.20"],
+                "architecture": "arm64",
+                "os": "linux",
+            },
+        }
+        result = parse_sbom(_syft_142_json(source=source))
+        assert (result.source_type, result.source_target) == ("image", "alpine:3.20")
+
+    def test_current_file_source_reads_metadata_path(self):
+        source = {
+            "id": "4e53b5e1c1a2b1f1",
+            "name": "app.jar",
+            "version": "sha256:7b1ffd2e48d3fce9e6e1b8a7a5f6c7d8e9f0a1b2c3d4e5f60718293a4b5c6d7e",
+            "type": "file",
+            "metadata": {"path": "app.jar", "mimeType": "application/zip"},
+        }
+        result = parse_sbom(_syft_142_json(source=source))
+        assert (result.source_type, result.source_target) == ("file", "app.jar")
+
+
+def _syft_package_json_artifact(aid: str, name: str, version: str, metadata: dict) -> dict:
+    return {
+        "id": aid,
+        "name": name,
+        "version": version,
+        "type": "npm",
+        "foundBy": "javascript-package-cataloger",
+        "locations": [{"path": f"/app/node_modules/{name}/package.json"}],
+        "licenses": [],
+        "language": "javascript",
+        "cpes": [],
+        "purl": f"pkg:npm/{name}@{version}",
+        "metadataType": "javascript-npm-package",
+        "metadata": {"name": name, "version": version, "private": False, **metadata},
+    }
+
+
+class TestSyftRepositoryUrls:
+    def setup_method(self):
+        artifacts = [
+            _syft_package_json_artifact(
+                "a-lodash",
+                "lodash",
+                "4.17.21",
+                {
+                    "author": "John-David Dalton <john.david.dalton@gmail.com>",
+                    "homepage": "https://lodash.com/",
+                    "description": "Lodash modular utilities.",
+                    "url": "git+https://github.com/lodash/lodash.git",
+                },
+            ),
+            _syft_package_json_artifact(
+                "a-debug", "debug", "4.3.4", {"url": "git+ssh://git@github.com/debug-js/debug.git"}
+            ),
+            {
+                "id": "a-zlib-apk",
+                "name": "zlib",
+                "version": "1.3.1-r0",
+                "type": "apk",
+                "foundBy": "apk-db-cataloger",
+                "locations": [{"path": "/lib/apk/db/installed"}],
+                "licenses": [],
+                "cpes": [],
+                "purl": "pkg:apk/alpine/zlib@1.3.1-r0?arch=x86_64&distro=alpine-3.20.0",
+                "metadataType": "apk-db-entry",
+                "metadata": {"package": "zlib", "originPackage": "zlib", "url": "https://zlib.net/"},
+            },
+            {
+                "id": "a-zlib-deb",
+                "name": "zlib1g",
+                "version": "1:1.2.13.dfsg-1",
+                "type": "deb",
+                "foundBy": "dpkg-db-cataloger",
+                "locations": [{"path": "/var/lib/dpkg/status"}],
+                "licenses": [],
+                "cpes": [],
+                "purl": "pkg:deb/debian/zlib1g@1:1.2.13.dfsg-1?arch=amd64&upstream=zlib&distro=debian-12",
+                "metadataType": "dpkg-db-entry",
+                "metadata": {"package": "zlib1g", "source": "zlib", "version": "1:1.2.13.dfsg-1"},
+            },
+        ]
+        self.deps = {d.name: d for d in parse_sbom(_syft_142_json(artifacts)).dependencies}
+
+    def test_npm_url_is_the_normalised_repository(self):
+        lodash = self.deps["lodash"]
+        assert (lodash.repository_url, lodash.homepage) == (
+            "https://github.com/lodash/lodash.git",
+            "https://lodash.com/",
+        )
+
+    def test_npm_ssh_url_is_normalised_and_never_a_homepage(self):
+        debug = self.deps["debug"]
+        assert (debug.repository_url, debug.homepage) == ("https://github.com/debug-js/debug.git", None)
+
+    def test_apk_url_stays_the_homepage(self):
+        assert (self.deps["zlib"].homepage, self.deps["zlib"].repository_url) == ("https://zlib.net/", None)
+
+    def test_deb_source_package_name_is_no_url(self):
+        assert (self.deps["zlib1g"].homepage, self.deps["zlib1g"].repository_url) == (None, None)
+
+
+class TestSyftPurlLessIdentity:
+    @pytest.mark.parametrize(
+        ("syft_type", "name", "version", "purl", "dep_type"),
+        [
+            pytest.param("python", "urllib3", "2.0.0", "pkg:pypi/urllib3@2.0.0", "pypi", id="python"),
+            pytest.param("rust-crate", "itoa", "1.0.11", "pkg:cargo/itoa@1.0.11", "cargo", id="rust-crate"),
+            pytest.param(
+                "dotnet", "Newtonsoft.Json", "13.0.3", "pkg:nuget/Newtonsoft.Json@13.0.3", "nuget", id="dotnet"
+            ),
+            pytest.param("go-module", "stdlib", "go1.22.5", "pkg:golang/stdlib@go1.22.5", "golang", id="go-module"),
+        ],
+    )
+    def test_a_purl_less_artifact_gets_its_purl_ecosystem(self, syft_type, name, version, purl, dep_type):
+        artifact = {"id": "a1", "name": name, "version": version, "type": syft_type, "purl": "", "cpes": []}
+        [dep] = parse_sbom(_syft_142_json([artifact])).dependencies
+        assert (dep.purl, dep.type, dep.source_type) == (purl, dep_type, "application")
+
+    def _binary(self, version: str) -> dict:
+        return {
+            "id": "b1",
+            "name": "node",
+            "version": version,
+            "type": "binary",
+            "foundBy": "binary-classifier-cataloger",
+            "locations": [{"path": "/usr/local/bin/node"}],
+            "licenses": [],
+            "cpes": [{"cpe": "cpe:2.3:a:nodejs:node.js:20.11.1:*:*:*:*:*:*:*", "source": "syft-generated"}],
+            "purl": "",
+            "metadataType": "binary-signature",
+            "metadata": {"matches": [{"classifier": "nodejs-binary", "location": {"path": "/usr/local/bin/node"}}]},
+        }
+
+    def test_a_binary_with_a_cpe_keeps_no_fabricated_purl(self):
+        [dep] = parse_sbom(_syft_142_json([self._binary("20.11.1")])).dependencies
+        assert (dep.purl, dep.type, dep.cpes) == (None, "generic", ["cpe:2.3:a:nodejs:node.js:20.11.1:*:*:*:*:*:*:*"])
+
+    def test_a_versionless_binary_with_a_cpe_is_kept_like_in_cyclonedx(self):
+        [dep] = parse_sbom(_syft_142_json([self._binary("")])).dependencies
+        assert (dep.name, dep.purl, dep.version) == ("node", None, "unknown")
+
+
+class TestCycloneDXFieldExtraction:
+    def test_distribution_hashes_are_kept_first_file_per_algorithm(self):
+        # cyclonedx-py 4.x puts every lockfile hash only on distribution references.
+        component = {
+            "bom-ref": "requests==2.32.3",
+            "type": "library",
+            "name": "requests",
+            "version": "2.32.3",
+            "purl": "pkg:pypi/requests@2.32.3",
+            "externalReferences": [
+                {
+                    "comment": "file: requests-2.32.3-py3-none-any.whl",
+                    "hashes": [
+                        {
+                            "alg": "SHA-256",
+                            "content": "70761cfe03c773ceb22aa2f671b4757976145175cdfca038c02654d061d6dcc6",
+                        }
+                    ],
+                    "type": "distribution",
+                    "url": "https://files.pythonhosted.org/packages/f9/9b/335f9764261e915ed497fcdeb11df5dfd6f7bf257d4a6a2a686d80da4d54/requests-2.32.3-py3-none-any.whl",
+                },
+                {
+                    "comment": "file: requests-2.32.3.tar.gz",
+                    "hashes": [
+                        {
+                            "alg": "SHA-256",
+                            "content": "55365417734eb18255590a9ff9eb97e9e1da868d4ccd6402399eaf68af20a760",
+                        }
+                    ],
+                    "type": "distribution",
+                    "url": "https://files.pythonhosted.org/packages/63/70/2bf7780ad2d390a8d301ad0b550f1581eadbd9a20f896afe06353c2a2913/requests-2.32.3.tar.gz",
+                },
+            ],
+        }
+        [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
+        assert dep.hashes == {"sha256": "70761cfe03c773ceb22aa2f671b4757976145175cdfca038c02654d061d6dcc6"}
+
+    def test_component_hashes_use_the_canonical_algorithm_name(self):
+        component = {
+            "type": "library",
+            "name": "lodash",
+            "version": "4.17.21",
+            "purl": "pkg:npm/lodash@4.17.21",
+            "hashes": [{"alg": "SHA-512", "content": "bf690311ee7b95e7"}],
+        }
+        [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
+        assert dep.hashes == {"sha512": "bf690311ee7b95e7"}
+
+    def test_cyclonedx_16_authors_and_supplier(self):
+        component = {
+            "type": "library",
+            "name": "acme-lib",
+            "version": "1.0.0",
+            "purl": "pkg:maven/com.acme/acme-lib@1.0.0",
+            "authors": [{"name": "Alice", "email": "alice@acme.example"}, {"email": "bob@acme.example"}],
+            "supplier": {"name": "ACME", "url": ["https://acme.example"]},
+        }
+        [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
+        assert (dep.author, dep.publisher) == ("Alice, bob@acme.example", "ACME")
+
+    def test_digest_pinned_container_joins_with_at(self):
+        root = {
+            "bom-ref": "b1a1a4fb7bd1d6c2",
+            "type": "container",
+            "name": "registry.example.com/team/app",
+            "version": "sha256:9b2c1f0e5d8a7b6c4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d",
+        }
+        result = parse_sbom(
+            _cyclonedx_with([{"type": "library", "name": "dep", "version": "1", "purl": "pkg:npm/dep@1"}], root=root)
+        )
+        assert result.source_target == (
+            "registry.example.com/team/app@sha256:9b2c1f0e5d8a7b6c4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d"
+        )
+
+    def test_tagged_container_joins_with_colon(self):
+        root = {"bom-ref": "r", "type": "container", "name": "registry.example.com/team/app", "version": "1.4.2"}
+        result = parse_sbom(
+            _cyclonedx_with([{"type": "library", "name": "dep", "version": "1", "purl": "pkg:npm/dep@1"}], root=root)
+        )
+        assert result.source_target == "registry.example.com/team/app:1.4.2"
+
+    def test_npm_development_marker_becomes_scope_excluded(self):
+        component = {
+            "type": "library",
+            "bom-ref": "jest@29.7.0",
+            "name": "jest",
+            "version": "29.7.0",
+            "purl": "pkg:npm/jest@29.7.0",
+            "properties": [
+                {"name": "cdx:npm:package:path", "value": "node_modules/jest"},
+                {"name": "cdx:npm:package:development", "value": "true"},
+            ],
+        }
+        [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
+        assert (dep.scope, dep.properties) == ("excluded", {})
+
+    def test_declared_scope_wins_over_the_development_marker(self):
+        component = {
+            "type": "library",
+            "name": "jest",
+            "version": "29.7.0",
+            "purl": "pkg:npm/jest@29.7.0",
+            "scope": "optional",
+            "properties": [{"name": "cdx:npm:package:development", "value": "true"}],
+        }
+        [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
+        assert dep.scope == "optional"
+
+    def test_only_trivy_source_package_properties_are_stored(self):
+        component = {
+            "bom-ref": "pkg:deb/debian/libc6@2.36-9+deb12u7?arch=amd64&distro=debian-12.6",
+            "type": "library",
+            "name": "libc6",
+            "version": "2.36-9+deb12u7",
+            "purl": "pkg:deb/debian/libc6@2.36-9+deb12u7?arch=amd64&distro=debian-12.6",
+            "properties": [
+                {
+                    "name": "aquasecurity:trivy:LayerDiffID",
+                    "value": "sha256:8e2ab394fabf557b00041a8f080b10b4e91c7027b7c174f095332c7ebb6501cb",
+                },
+                {
+                    "name": "aquasecurity:trivy:LayerDigest",
+                    "value": "sha256:e4fff0779e6ddd22366469f08626c3ab1884b5cbe1719b26da238c95f247b305",
+                },
+                {"name": "aquasecurity:trivy:PkgID", "value": "libc6@2.36-9+deb12u7"},
+                {"name": "aquasecurity:trivy:PkgType", "value": "debian"},
+                {"name": "aquasecurity:trivy:SrcName", "value": "glibc"},
+                {"name": "aquasecurity:trivy:SrcRelease", "value": "9+deb12u7"},
+                {"name": "aquasecurity:trivy:SrcVersion", "value": "2.36"},
+            ],
+        }
+        [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
+        assert dep.properties == {
+            "aquasecurity:trivy:SrcName": "glibc",
+            "aquasecurity:trivy:SrcRelease": "9+deb12u7",
+            "aquasecurity:trivy:SrcVersion": "2.36",
+        }
+
+    def test_a_name_already_carrying_its_scope_is_not_prefixed_again(self):
+        component = {
+            "type": "library",
+            "group": "@angular",
+            "name": "@angular/core",
+            "version": "16.2.0",
+            "purl": "pkg:npm/%40angular/core@16.2.0",
+        }
+        [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
+        assert dep.name == "@angular/core"
+
+    @pytest.mark.parametrize(
+        ("purl", "group"),
+        [
+            pytest.param("pkg:maven/commons-io/commons-io@2.1", "commons-io", id="maven"),
+            pytest.param("pkg:golang/github.com/sirupsen/logrus@v1.9.3", None, id="golang-host"),
+            pytest.param("pkg:deb/debian/libc6@2.36-9", None, id="distro-vendor"),
+        ],
+    )
+    def test_group_falls_back_to_the_purl_namespace(self, purl, group):
+        [dep] = parse_sbom(
+            _cyclonedx_with([{"type": "library", "name": "x", "version": "1", "purl": purl}])
+        ).dependencies
+        assert dep.group == group
+
+    def test_placeholder_version_falls_back_to_the_purl_version(self):
+        component = {
+            "type": "library",
+            "name": "guava",
+            "version": "UNKNOWN",
+            "purl": "pkg:maven/com.google.guava/guava@33.0.0",
+        }
+        [dep] = parse_sbom(_cyclonedx_with([component])).dependencies
+        assert dep.version == "33.0.0"
+
+
+def _syft_142_spdx() -> dict:
+    """syft 1.42.1 SPDX 2.3 JSON of a directory holding a jar and a composer.lock."""
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "dataLicense": "CC0-1.0",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": "proj",
+        "documentNamespace": "https://anchore.com/syft/dir/proj-5b3b5d7e-8a2f-4f55-9b0e-0c5a1f1e2d3c",
+        "creationInfo": {
+            "licenseListVersion": "3.27",
+            "creators": ["Organization: Anchore, Inc", "Tool: syft-1.42.1"],
+            "created": "2026-09-29T10:12:44Z",
+        },
+        "packages": [
+            {
+                "name": "aopalliance",
+                "SPDXID": "SPDXRef-Package-java-archive-aopalliance-8552ae7062d051b8",
+                "versionInfo": "1.0",
+                "supplier": "NOASSERTION",
+                "downloadLocation": "NOASSERTION",
+                "filesAnalyzed": False,
+                "checksums": [{"algorithm": "SHA1", "checksumValue": _AOPALLIANCE_SHA1}],
+                "sourceInfo": f"acquired package info from installed java archive: {_AOPALLIANCE_JAR}",
+                "licenseConcluded": "NOASSERTION",
+                "licenseDeclared": "NOASSERTION",
+                "copyrightText": "NOASSERTION",
+                "externalRefs": [
+                    {
+                        "referenceCategory": "SECURITY",
+                        "referenceType": "cpe23Type",
+                        "referenceLocator": "cpe:2.3:a:aopalliance:aopalliance:1.0:*:*:*:*:*:*:*",
+                    },
+                    {
+                        "referenceCategory": "SECURITY",
+                        "referenceType": "cpe23Type",
+                        "referenceLocator": "cpe:2.3:a:aopalliance:aopalliance:1.0:*:*:*:*:*:*:*",
+                    },
+                    {
+                        "referenceCategory": "PACKAGE-MANAGER",
+                        "referenceType": "purl",
+                        "referenceLocator": "pkg:maven/aopalliance/aopalliance@1.0",
+                    },
+                ],
+            },
+            {
+                "name": "monolog/monolog",
+                "SPDXID": "SPDXRef-Package-php-composer-monolog-monolog-55bbf18cf4ab1368",
+                "versionInfo": "3.5.0",
+                "supplier": "Person: Jordi Boggiano (j.boggiano@seld.be)",
+                "originator": "Person: Jordi Boggiano (j.boggiano@seld.be)",
+                "downloadLocation": "https://api.github.com/repos/Seldaek/monolog/zipball/c915e2634718dbc8a4a15c61b0e62e7a44e14448",
+                "filesAnalyzed": False,
+                "homepage": "https://github.com/Seldaek/monolog",
+                "sourceInfo": "acquired package info from PHP composer manifest: /composer.lock",
+                "licenseConcluded": "NOASSERTION",
+                "licenseDeclared": "MIT",
+                "copyrightText": "NOASSERTION",
+                "description": "Sends your logs to files, sockets, inboxes, databases and various web services",
+                "externalRefs": [
+                    {
+                        "referenceCategory": "PACKAGE-MANAGER",
+                        "referenceType": "purl",
+                        "referenceLocator": "pkg:composer/monolog/monolog@3.5.0",
+                    }
+                ],
+            },
+            {
+                "name": "proj",
+                "SPDXID": "SPDXRef-DocumentRoot-Directory-proj",
+                "supplier": "NOASSERTION",
+                "downloadLocation": "NOASSERTION",
+                "filesAnalyzed": False,
+                "licenseConcluded": "NOASSERTION",
+                "licenseDeclared": "NOASSERTION",
+                "copyrightText": "NOASSERTION",
+                "primaryPackagePurpose": "FILE",
+            },
+        ],
+        "relationships": [
+            {
+                "spdxElementId": "SPDXRef-DocumentRoot-Directory-proj",
+                "relatedSpdxElement": "SPDXRef-Package-java-archive-aopalliance-8552ae7062d051b8",
+                "relationshipType": "CONTAINS",
+            },
+            {
+                "spdxElementId": "SPDXRef-DocumentRoot-Directory-proj",
+                "relatedSpdxElement": "SPDXRef-Package-php-composer-monolog-monolog-55bbf18cf4ab1368",
+                "relationshipType": "CONTAINS",
+            },
+            {
+                "spdxElementId": "SPDXRef-DOCUMENT",
+                "relatedSpdxElement": "SPDXRef-DocumentRoot-Directory-proj",
+                "relationshipType": "DESCRIBES",
+            },
+        ],
+    }
+
+
+class TestSPDXFieldExtraction:
+    def setup_method(self):
+        self.result = parse_sbom(_syft_142_spdx())
+        self.deps = {d.name: d for d in self.result.dependencies}
+
+    def test_checksums_use_the_canonical_algorithm_name(self):
+        assert self.deps["aopalliance"].hashes == {"sha1": _AOPALLIANCE_SHA1}
+
+    def test_syft_documents_keep_the_generator_as_found_by(self):
+        assert {d.found_by for d in self.result.dependencies} == {"syft-1.42.1"}
+
+    def test_other_generators_leave_found_by_empty(self):
+        assert all(d.found_by is None for d in parse_sbom(_spdx_github_export()).dependencies)
+
+    def test_repeated_cpes_are_stored_once(self):
+        assert self.deps["aopalliance"].cpes == ["cpe:2.3:a:aopalliance:aopalliance:1.0:*:*:*:*:*:*:*"]
+
+    def test_no_raw_properties_are_stored(self):
+        assert all(dep.properties == {} for dep in self.result.dependencies)
+
+    def test_person_originator_becomes_the_author(self):
+        assert self.deps["monolog/monolog"].author == "Jordi Boggiano (j.boggiano@seld.be)"
+
+    def test_none_homepage_and_download_location_are_dropped(self):
+        package = {
+            "SPDXID": "SPDXRef-Package-npm-left-pad",
+            "name": "left-pad",
+            "versionInfo": "1.3.0",
+            "homepage": "NONE",
+            "downloadLocation": "NONE",
+            "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:npm/left-pad@1.3.0"}],
+        }
+        [dep] = parse_sbom(
+            {"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": [package]}
+        ).dependencies
+        assert (dep.homepage, dep.download_url) == (None, None)
+
+    def test_a_malformed_checksum_entry_keeps_the_package(self):
+        package = {
+            "SPDXID": "SPDXRef-Package-npm-left-pad",
+            "name": "left-pad",
+            "versionInfo": "1.3.0",
+            "checksums": [
+                "SHA1: 1e9b28b2c4b6b0fe0b3b2f4a1a6c1b3e6a8c9d0f",
+                {"algorithm": "SHA256", "checksumValue": "abc123"},
+            ],
+            "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:npm/left-pad@1.3.0"}],
+        }
+        result = parse_sbom({"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": [package]})
+        assert [d.hashes for d in result.dependencies] == [{"sha256": "abc123"}]
+
+    @pytest.mark.parametrize(
+        ("purl", "group"),
+        [
+            pytest.param("pkg:golang/github.com/sirupsen/logrus@v1.9.3", None, id="golang-host"),
+            pytest.param("pkg:deb/debian/libc6@2.36-9", None, id="distro-vendor"),
+            pytest.param("pkg:npm/%40angular/core@16.2.0", "@angular", id="npm-scope"),
+        ],
+    )
+    def test_group_is_the_purl_namespace_only_where_it_names_the_package(self, purl, group):
+        package = {
+            "SPDXID": "SPDXRef-Package-x",
+            "name": "x",
+            "versionInfo": "1",
+            "externalRefs": [{"referenceType": "purl", "referenceLocator": purl}],
+        }
+        [dep] = parse_sbom(
+            {"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": [package]}
+        ).dependencies
+        assert dep.group == group
+
+    def test_trivy_operating_system_package_keeps_no_fabricated_purl(self):
+        packages = [
+            {
+                "name": "debian",
+                "SPDXID": "SPDXRef-OperatingSystem-2d8ad1a2b3c4d5e6",
+                "versionInfo": "12.6",
+                "downloadLocation": "NONE",
+                "filesAnalyzed": False,
+                "primaryPackagePurpose": "OPERATING-SYSTEM",
+            },
+            {
+                "name": "Gemfile.lock",
+                "SPDXID": "SPDXRef-Application-9f8e7d6c5b4a3210",
+                "versionInfo": "1.0",
+                "downloadLocation": "NONE",
+                "filesAnalyzed": False,
+                "primaryPackagePurpose": "APPLICATION",
+            },
+        ]
+        result = parse_sbom({"spdxVersion": "SPDX-2.3", "SPDXID": "SPDXRef-DOCUMENT", "packages": packages})
+        assert [(d.name, d.purl) for d in result.dependencies] == [("debian", None)]
+        assert result.skipped_reasons.get("unidentifiable") == 1

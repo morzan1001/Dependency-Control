@@ -1,6 +1,5 @@
 from typing import TYPE_CHECKING, Any
 
-from app.core.constants import BEARER_SEVERITY_MAP, OPENGREP_SEVERITY_MAP
 from app.models.finding import Finding, FindingType
 from app.schemas.finding_details import LineSpan, SastScannerDetails
 from app.services.normalizers.utils import (
@@ -17,6 +16,10 @@ if TYPE_CHECKING:
 _CRYPTO_MISUSE_RULE_ID_PREFIX = "crypto-misuse-"
 # Semgrep CE writes this into extra.fingerprint and extra.lines of every result when run without login.
 _SEMGREP_LOGIN_PLACEHOLDER = "requires login"
+# OpenGrep uses INFO for low-signal rules, not for informational notes.
+_OPENGREP_OVERRIDES = {"INFO": "LOW"}
+# Bearer ranks warning below low, unlike the global WARNING alias.
+_BEARER_OVERRIDES = {"WARNING": "LOW"}
 
 
 def _finding_type_from_rule(rule_id: Any) -> FindingType:
@@ -52,7 +55,7 @@ def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
 
     extra = {k: v for k, v in (item.get("extra") or {}).items() if v != _SEMGREP_LOGIN_PLACEHOLDER}
     sev_str = (extra.get("severity") or "INFO").upper()
-    severity = safe_severity(OPENGREP_SEVERITY_MAP.get(sev_str, sev_str))
+    severity = safe_severity(_OPENGREP_OVERRIDES.get(sev_str, sev_str))
     message = extra.get("message") or "Potential issue found"
 
     metadata = extra.get("metadata") or {}
@@ -134,9 +137,8 @@ def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], sou
 
     for item in all_findings:
         title = item.get("title") or "Unknown data risk"
-        desc = item.get("description") or ""
-        sev_str = (item.get("severity") or "info").lower()
-        severity = safe_severity(BEARER_SEVERITY_MAP.get(sev_str, sev_str))
+        sev_str = (item.get("severity") or "info").upper()
+        severity = safe_severity(_BEARER_OVERRIDES.get(sev_str, sev_str))
 
         filename = item.get("full_filename") or item.get("filename") or item.get("file") or "unknown"
 
@@ -163,7 +165,6 @@ def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], sou
             category_groups=item.get("category_groups") or [],
             documentation_url=item.get("documentation_url"),
             references=item.get("references") or [],
-            full_description=desc,
         ).model_dump(exclude_none=True)
 
         aggregator.add_finding(

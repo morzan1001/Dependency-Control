@@ -1,18 +1,19 @@
 """Licence names, URLs and comma-bearing titles as SBOM generators write them resolve to SPDX ids."""
 
 import asyncio
+import itertools
 from typing import Any
 
 import pytest
 
-from app.core.constants import LICENSE_URL_PATTERNS
+from app.core.constants import LICENSE_ALIASES, LICENSE_URL_PATTERNS
 from app.services.analyzers.license_compliance import LICENSE_DATABASE, LicenseAnalyzer
+from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITIES
 from app.services.analyzers.license_compliance import normalizer
 from app.services.analyzers.license_compliance.normalizer import (
-    composite_license_expression,
     extract_license_from_url,
-    extract_licenses,
     normalize_license,
+    parse_license_expression,
     split_license_list,
     tokenize_license_string,
 )
@@ -48,8 +49,13 @@ def test_a_canonical_licence_url_resolves_to_a_known_id(url, expected):
     assert expected in LICENSE_DATABASE
 
 
-def test_every_url_pattern_names_a_licence_the_database_knows():
-    assert {target for target in LICENSE_URL_PATTERNS.values() if target not in LICENSE_DATABASE} == set()
+def test_every_licence_the_vocabulary_names_is_one_the_database_knows():
+    named = {
+        *LICENSE_URL_PATTERNS.values(),
+        *LICENSE_ALIASES.values(),
+        *itertools.chain.from_iterable(LICENSE_INCOMPATIBILITIES),
+    }
+    assert {lic for lic in named if lic not in LICENSE_DATABASE} == set()
 
 
 @pytest.mark.parametrize(
@@ -75,6 +81,8 @@ def test_every_url_pattern_names_a_licence_the_database_knows():
         ("GNU Lesser General Public License", "LGPL-2.1-or-later"),
         ("Common Development and Distribution License 1.0", "CDDL-1.0"),
         ("CDDL", "CDDL-1.0"),
+        ("Python Software Foundation License 2.0", "PSF-2.0"),
+        ("Unicode License Agreement - Data Files and Software (2016)", "Unicode-DFS-2016"),
     ],
 )
 def test_a_verbose_licence_name_resolves_to_its_spdx_id(name, expected):
@@ -82,11 +90,8 @@ def test_a_verbose_licence_name_resolves_to_its_spdx_id(name, expected):
 
 
 def test_a_licence_title_with_a_comma_stays_one_licence():
-    component = {"license": "Apache License, Version 2.0, MIT"}
-
-    assert extract_licenses(component) == [("Apache License, Version 2.0", None), ("MIT", None)]
+    assert parse_license_expression("Apache License, Version 2.0, MIT") == [["Apache-2.0", "MIT"]]
     assert tokenize_license_string("Apache License, Version 2.0") == ["Apache-2.0"]
-    assert composite_license_expression({"license": "Apache License, Version 2.0"}) is None
 
 
 def test_splitting_a_long_licence_list_normalizes_each_part_a_bounded_number_of_times(monkeypatch):
@@ -106,11 +111,8 @@ def test_splitting_a_long_licence_list_normalizes_each_part_a_bounded_number_of_
 
 
 def test_syft_prefers_the_spdx_expression_it_resolved_over_the_raw_value():
-    names: list[str] = []
-    SBOMParser()._handle_syft_license_dict(
-        {"value": "GPL-2.0+", "spdxExpression": "GPL-2.0-or-later", "type": "declared"}, names, None
-    )
-    assert names == ["GPL-2.0-or-later"]
+    entry = {"value": "GPL-2.0+", "spdxExpression": "GPL-2.0-or-later", "type": "declared"}
+    assert SBOMParser()._handle_syft_license_dict(entry) == ("GPL-2.0-or-later", None)
 
 
 def _analyze(licenses: list[dict[str, Any]]) -> dict[str, Any]:
@@ -145,3 +147,38 @@ def test_an_old_licenses_gpl_url_raises_the_copyleft_finding():
     result = _analyze([{"license": {"name": "https://www.gnu.org/licenses/old-licenses/gpl-2.0.html"}}])
 
     assert result["summary"]["strong_copyleft"] == 1
+
+
+@pytest.mark.parametrize(
+    ("spdx_id", "category", "severity"),
+    [
+        ("BUSL-1.1", "proprietary", "HIGH"),
+        ("Elastic-2.0", "proprietary", "HIGH"),
+        ("CC-BY-NC-SA-4.0", "proprietary", "HIGH"),
+        ("OSL-3.0", "network_copyleft", "CRITICAL"),
+        ("EUPL-1.2", "strong_copyleft", "HIGH"),
+    ],
+)
+def test_a_common_spdx_licence_gets_the_verdict_of_its_category(spdx_id, category, severity):
+    result = _analyze([{"license": {"id": spdx_id}}])
+
+    assert [(i["license"], i["category"], i["severity"]) for i in result["license_issues"]] == [
+        (spdx_id, category, severity)
+    ]
+
+
+@pytest.mark.parametrize("licence", ["PSF-2.0", "MIT-0", "Unicode-DFS-2016"])
+def test_a_common_permissive_licence_raises_no_finding(licence):
+    result = _analyze([{"license": {"name": licence}}])
+
+    assert result["summary"]["permissive"] == 1
+    assert result["license_issues"] == []
+
+
+def test_an_id_outside_the_catalogue_is_reported_as_a_catalogue_gap():
+    (issue,) = _analyze([{"license": {"id": "Glide"}}])["license_issues"]
+
+    assert issue["explanation"] == (
+        "The SBOM declares Glide for this component, which is not in the license catalogue this analyzer "
+        "evaluates, so its obligations cannot be evaluated."
+    )

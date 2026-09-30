@@ -1,8 +1,5 @@
 from .base import Analyzer
 from .cli_base import CLIAnalyzer
-from .crypto.base import CryptoRuleAnalyzer
-from .crypto.certificate_lifecycle import CertificateLifecycleAnalyzer
-from .crypto.protocol_cipher import ProtocolCipherSuiteAnalyzer
 from .deps_dev import DepsDevAnalyzer
 from .end_of_life import EndOfLifeAnalyzer
 from .epss_kev import EPSSKEVAnalyzer
@@ -20,8 +17,6 @@ from .typosquatting import TyposquattingAnalyzer
 __all__ = [
     "Analyzer",
     "CLIAnalyzer",
-    "CertificateLifecycleAnalyzer",
-    "CryptoRuleAnalyzer",
     "DepsDevAnalyzer",
     "EPSSKEVAnalyzer",
     "EndOfLifeAnalyzer",
@@ -32,7 +27,6 @@ __all__ = [
     "OSVAnalyzer",
     "OpenSourceMalwareAnalyzer",
     "OutdatedAnalyzer",
-    "ProtocolCipherSuiteAnalyzer",
     "ReachabilityAnalyzer",
     "TrivyAnalyzer",
     "TyposquattingAnalyzer",

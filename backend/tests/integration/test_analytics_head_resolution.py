@@ -131,22 +131,8 @@ _PERMISSIVE_LICENSE = "MIT"
 _COPYLEFT_LICENSE = "GPL-3.0-only"
 
 
-def _license_finding(scan_id: str, licence: str, category: str) -> dict:
-    return {
-        "_id": f"{scan_id}:license",
-        "id": f"LIC-{licence}",
-        "finding_id": f"LIC-{licence}",
-        "scan_id": scan_id,
-        "project_id": _PROJECT,
-        "type": "license",
-        "severity": "MEDIUM",
-        "component": _DRIFTING_COMPONENT,
-        "version": "1.0.0",
-        "description": "",
-        "scanners": ["licensecheck"],
-        "waived": False,
-        "details": {"license": licence, "category": category},
-    }
+def _licence(licence: str, category: str) -> dict:
+    return {"license": licence, "license_category": category}
 
 
 @pytest_asyncio.fixture
@@ -154,11 +140,11 @@ async def licence_drifted_under_a_queued_run(db, seeded):
     """The component's licence turned copyleft between the release and the tip, and CI has since
     enqueued a run that has analysed nothing."""
     await db.scans.insert_one(_scan(_QUEUED_SCAN, 0, status="pending"))
-    await db.findings.insert_many(
-        [
-            _license_finding(_RELEASE_SCAN, _PERMISSIVE_LICENSE, "permissive"),
-            _license_finding(_TIP_SCAN, _COPYLEFT_LICENSE, "strong_copyleft"),
-        ]
+    await db.dependencies.update_one(
+        {"_id": f"{_RELEASE_SCAN}:{_DRIFTING_COMPONENT}"}, {"$set": _licence(_PERMISSIVE_LICENSE, "permissive")}
+    )
+    await db.dependencies.insert_one(
+        {**_dependency(_TIP_SCAN, _DRIFTING_COMPONENT), **_licence(_COPYLEFT_LICENSE, "strong_copyleft")}
     )
     return seeded
 
@@ -167,7 +153,7 @@ async def licence_drifted_under_a_queued_run(db, seeded):
 async def test_recommendations_compare_against_the_preceding_build_not_a_queued_run(
     client, licence_drifted_under_a_queued_run
 ):
-    """A queued run has no findings to compare against, and the licence regression then goes unsaid."""
+    """A queued run has no dependencies to compare against, and the licence regression then goes unsaid."""
     resp = await client.get(
         f"/api/v1/analytics/projects/{_PROJECT}/recommendations", headers=licence_drifted_under_a_queued_run
     )

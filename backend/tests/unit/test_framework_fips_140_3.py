@@ -1,7 +1,21 @@
+from app.models.crypto_asset import CryptoAsset
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.compliance import ControlStatus, ReportFramework
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.fips_140_3 import Fips1403Framework
+
+
+def _asset(name, primitive, **kw):
+    return CryptoAsset(
+        project_id="p",
+        scan_id="s1",
+        bom_ref=f"crypto/algorithm/{name}",
+        name=name,
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=primitive,
+        **kw,
+    )
 
 
 def _eval_input(assets=None):
@@ -17,6 +31,11 @@ def _eval_input(assets=None):
     )
 
 
+def _statuses(assets):
+    result = Fips1403Framework().evaluate(_eval_input(assets))
+    return {c.control_id: c.status for c in result.controls}
+
+
 def test_fips_framework_identity():
     fw = Fips1403Framework()
     assert fw.key == ReportFramework.FIPS_140_3
@@ -25,60 +44,59 @@ def test_fips_framework_identity():
 
 
 def test_fips_disallowed_algorithm_fails():
-    fw = Fips1403Framework()
+    result = Fips1403Framework().evaluate(_eval_input([_asset("MD5", CryptoPrimitive.HASH)]))
 
-    class A:
-        name = "MD5"
-        asset_type = "algorithm"
-
-    result = fw.evaluate(_eval_input(assets=[A()]))
-    disallowed_hash_control = next(
-        c
-        for c in result.controls
-        if "hash" in c.title.lower() and ("md5" in c.description.lower() or "md5" in c.title.lower())
-    )
-    assert disallowed_hash_control.status == ControlStatus.FAILED.value or disallowed_hash_control.status == "failed"
+    hashes = next(c for c in result.controls if c.control_id == "FIPS-140-3-HASH_FUNCTIONS")
+    assert hashes.status == ControlStatus.FAILED
+    assert hashes.evidence_asset_bom_refs == ["crypto/algorithm/MD5"]
 
 
 def test_fips_approved_algorithm_passes():
-    fw = Fips1403Framework()
+    statuses = _statuses([_asset("AES-256", CryptoPrimitive.BLOCK_CIPHER, key_size_bits=256)])
 
-    class A:
-        name = "AES-256"
-        asset_type = "algorithm"
-
-    result = fw.evaluate(_eval_input(assets=[A()]))
-    disallowed_failed = [
-        c
-        for c in result.controls
-        if "disallowed" in c.title.lower() and (c.status == "failed" or c.status == ControlStatus.FAILED.value)
-    ]
-    assert disallowed_failed == []
+    assert statuses["FIPS-140-3-SYMMETRIC_CIPHERS"] == ControlStatus.PASSED
 
 
 def test_fips_disallowed_category_not_applicable_without_matching_primitive():
     """A hash-only project must report the asymmetric/symmetric disallowed-category controls as NOT_APPLICABLE, not a false PASS."""
-    fw = Fips1403Framework()
+    statuses = _statuses([_asset("SHA-256", CryptoPrimitive.HASH)])
 
-    class A:
-        name = "SHA-256"
-        asset_type = "algorithm"
-        primitive = "hash"
+    assert statuses["FIPS-140-3-ASYMMETRIC"] == ControlStatus.NOT_APPLICABLE
+    assert statuses["FIPS-140-3-SYMMETRIC_CIPHERS"] == ControlStatus.NOT_APPLICABLE
+    assert statuses["FIPS-140-3-HASH_FUNCTIONS"] == ControlStatus.PASSED
 
-    result = fw.evaluate(_eval_input(assets=[A()]))
 
-    def _status(c):
-        return c.status.value if hasattr(c.status, "value") else c.status
+def test_fips_triple_des_fails_the_symmetric_cipher_control():
+    for name in ("3DES", "TripleDES", "TDEA", "3-DES", "DESede"):
+        assert _statuses([_asset(name, CryptoPrimitive.BLOCK_CIPHER)])["FIPS-140-3-SYMMETRIC_CIPHERS"] == (
+            ControlStatus.FAILED
+        ), name
 
-    asym = next(c for c in result.controls if "asymmetric" in c.title.lower())
-    assert _status(asym) == "not_applicable"
-    sym = next(c for c in result.controls if "symmetric ciphers" in c.title.lower())
-    assert _status(sym) == "not_applicable"
-    hsh = next(c for c in result.controls if "hash functions" in c.title.lower())
-    assert _status(hsh) == "passed"
+
+def test_fips_matches_a_disallowed_algorithm_by_variant_and_family_token():
+    assert _statuses([_asset("DES-CBC-PKCS5", CryptoPrimitive.BLOCK_CIPHER)])["FIPS-140-3-SYMMETRIC_CIPHERS"] == (
+        ControlStatus.FAILED
+    )
+    assert _statuses([_asset("Digest", CryptoPrimitive.HASH, variant="SHA-1")])["FIPS-140-3-HASH_FUNCTIONS"] == (
+        ControlStatus.FAILED
+    )
+
+
+def test_fips_does_not_judge_an_hmac_by_its_digest():
+    """HMAC-SHA1 stays approved; the name holds SHA1, but the asset is a MAC, not a hash function."""
+    assert _statuses([_asset("HMAC-SHA1", CryptoPrimitive.MAC)])["FIPS-140-3-HASH_FUNCTIONS"] == (
+        ControlStatus.NOT_APPLICABLE
+    )
+
+
+def test_fips_key_agreement_and_authenticated_encryption_make_their_categories_applicable():
+    statuses = _statuses([_asset("ECDH", CryptoPrimitive.KEY_AGREE), _asset("AES-GCM", CryptoPrimitive.AE)])
+
+    assert statuses["FIPS-140-3-ASYMMETRIC"] == ControlStatus.PASSED
+    assert statuses["FIPS-140-3-SYMMETRIC_CIPHERS"] == ControlStatus.PASSED
 
 
 def test_fips_control_count_reasonable():
     fw = Fips1403Framework()
-    # 3 disallowed-category controls (hashes, ciphers, kdfs) + 1 RSA-min-2048.
+    # 3 disallowed-category controls (hashes, ciphers, asymmetric) + 1 RSA-min-2048.
     assert len(fw.controls) >= 4

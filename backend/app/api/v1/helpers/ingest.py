@@ -2,9 +2,13 @@
 
 from typing import Any
 
+from app.api.v1.helpers.body_limit import refuse_oversized_document
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
-from app.services.analysis.stats import compute_stats
+from app.services.analysis.stats import StatsAccumulator, compute_stats
 from app.services.scan_manager import ScanManager
+
+_STATS_FIELDS = {path.split(".", 1)[0] for path in StatsAccumulator.REQUIRED_PATHS}
 
 
 async def process_findings_ingest(
@@ -19,15 +23,17 @@ async def process_findings_ingest(
     'completed' before slower scanners (e.g. SBOM) finish; aggregation is kicked
     off later by the SBOM scanner or the housekeeping job.
     """
+    # Stored first so an oversized result is refused before the aggregation and waiver work.
+    with refuse_oversized_document(f"The {analyzer_name} result"):
+        await AnalysisResultRepository(manager.db).save_result(scan_id, analyzer_name, result_dict)
+
     aggregator = ResultAggregator()
     aggregator.aggregate(analyzer_name, result_dict)
     findings = aggregator.get_findings()
 
     final_findings, waived_count = await manager.apply_waivers(findings)
 
-    await manager.store_results(analyzer_name, result_dict, scan_id)
-
-    stats = compute_stats((f.model_dump() for f in final_findings), {})
+    stats = compute_stats((f.model_dump(include=_STATS_FIELDS) for f in final_findings), {})
 
     await manager.register_result(scan_id, analyzer_name, trigger_analysis=False)
 

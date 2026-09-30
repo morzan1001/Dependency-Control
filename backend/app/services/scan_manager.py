@@ -1,4 +1,4 @@
-"""ScanManager - scan lifecycle: find/create scans, apply waivers, store results, compute stats, trigger aggregation."""
+"""ScanManager - scan lifecycle: find/create scans, apply waivers, register scanner results."""
 
 import logging
 import uuid
@@ -50,7 +50,9 @@ class ScanManager:
             return f"{data.project_url}/-/pipelines/{data.pipeline_id}"
         return None
 
-    async def scan_upsert(self, data: BaseIngest, scan_id: str, now: datetime) -> dict[str, Any]:
+    async def record_release_and_build_scan_upsert(
+        self, data: BaseIngest, scan_id: str, now: datetime
+    ) -> dict[str, Any]:
         """The scan document every ingest of the run writes, sbom_refs aside; records the release the payload marks."""
         update: dict[str, Any] = {
             "$set": {
@@ -93,7 +95,7 @@ class ScanManager:
         """The run's scan id; the upsert lets concurrent scanners of one run share it across pods.
         ``scan_type`` is only ever set, never cleared, since the run's other scanners pass none."""
         scan_id = self.run_scan_id(data)
-        update = await self.scan_upsert(data, scan_id, datetime.now(timezone.utc))
+        update = await self.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
         update["$setOnInsert"]["sbom_refs"] = []
         if scan_type is not None:
             update["$set"]["scan_type"] = scan_type
@@ -154,20 +156,10 @@ class ScanManager:
 
             if is_waived:
                 waived_count += 1
-                finding.waived = True
             else:
                 final_findings.append(finding)
 
         return final_findings, waived_count
-
-    async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> None:
-        from app.repositories.analysis_results import AnalysisResultRepository
-
-        await AnalysisResultRepository(self.db).insert_result(scan_id, analyzer_name, result)
-
-    async def trigger_aggregation(self, scan_id: str) -> None:
-        """Add scan to worker queue for aggregation."""
-        await worker_manager.add_job(scan_id)
 
     async def register_result(self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False) -> None:
         """Record a scanner's submission; if the scan was completed, reset to pending and re-aggregate.
@@ -211,4 +203,4 @@ class ScanManager:
             should_reaggregate = await scan_repo.reopen_finished(scan_id)
 
         if trigger_analysis or should_reaggregate:
-            await self.trigger_aggregation(scan_id)
+            await worker_manager.add_job(scan_id)

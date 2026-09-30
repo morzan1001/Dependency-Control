@@ -2,48 +2,37 @@
 
 from __future__ import annotations
 
+import itertools
 import re
-from typing import Any
 
 from app.core.constants import LICENSE_ALIASES, LICENSE_URL_PATTERNS, UNKNOWN_LICENSE_PATTERNS
 
-from .constants import (
-    LICENSE_DATABASE,
-    SPDX_AND_SPLIT,
-    SPDX_EXPR_SPLIT,
-    SPDX_OR_SPLIT,
-    get_lowercase_mappings,
-)
+from .constants import LICENSE_DATABASE
+
+_DB_LOWER = {spdx_id.lower(): spdx_id for spdx_id in LICENSE_DATABASE}
+_ALIAS_LOWER = {info.name.lower(): spdx_id for spdx_id, info in LICENSE_DATABASE.items()} | {
+    alias.lower(): spdx_id for alias, spdx_id in LICENSE_ALIASES.items()
+}
+
+
+def _lookup(lic_id: str) -> str | None:
+    if lic_id in LICENSE_ALIASES:
+        return LICENSE_ALIASES[lic_id]
+    if lic_id in LICENSE_DATABASE:
+        return lic_id
+    return _ALIAS_LOWER.get(lic_id.lower()) or _DB_LOWER.get(lic_id.lower())
 
 
 def normalize_license(lic_id: str) -> str:
     """Normalize a license identifier to SPDX format."""
-    if not lic_id:
-        return ""
-
     # Strip metadata suffixes like ;link="..." common in NuGet/RPM SBOMs.
-    if ";" in lic_id:
-        lic_id = lic_id.split(";", 1)[0]
-    lic_id = lic_id.strip('" ')
-
-    if not lic_id:
-        return ""
-
-    if lic_id in LICENSE_ALIASES:
-        return LICENSE_ALIASES[lic_id]
-
-    if lic_id in LICENSE_DATABASE:
-        return lic_id
-
-    db_lower, alias_lower = get_lowercase_mappings()
-    lic_lower = lic_id.lower()
-
-    if lic_lower in alias_lower:
-        return alias_lower[lic_lower]
-
-    if lic_lower in db_lower:
-        return db_lower[lic_lower]
-
+    lic_id = lic_id.split(";", 1)[0].strip('" ')
+    known = _lookup(lic_id)
+    if known:
+        return known
+    if lic_id.endswith("+"):
+        base = (_lookup(lic_id.rstrip("+")) or "").removesuffix("-only").removesuffix("-or-later")
+        return next((spdx_id for spdx_id in (f"{base}-or-later", base) if spdx_id in LICENSE_DATABASE), lic_id)
     return lic_id
 
 
@@ -83,108 +72,105 @@ def split_license_list(raw: str) -> list[str]:
     return [name for name in names if name]
 
 
-def tokenize_license_string(raw: str) -> list[str]:
-    """Split a stored license value (SPDX expression or comma list) into constituent license units."""
+_WORD = re.compile(r"[()]|[^\s()]+")
+_SYNTAX = frozenset({"AND", "OR", "WITH", "(", ")"})
+# Bounds on SBOM-supplied input; past them the expression reads as one unrecognised term.
+_MAX_ALTERNATIVES = 64
+_MAX_NESTING = 32
+
+_Groups = list[list[str]]
+
+
+class _Unparseable(Exception):
+    pass
+
+
+def _tokens(raw: str) -> list[str]:
+    """Operators, parentheses and licence terms; a term keeps its spaces and any parentheses it opens."""
     tokens: list[str] = []
-    for part in split_license_list(raw or ""):
-        for or_part in SPDX_OR_SPLIT.split(part):
-            for and_part in SPDX_AND_SPLIT.split(or_part):
-                lic = normalize_license(and_part.strip("() "))
-                if lic and lic not in tokens:
-                    tokens.append(lic)
+    term: tuple[int, int] | None = None
+    open_in_term = 0
+    for match in _WORD.finditer(raw):
+        word = match.group()
+        # SPDX never puts '(' right after a licence, so there it belongs to a name like 'License (EDL)'.
+        if term and (word == "(" or (word == ")" and open_in_term) or word not in _SYNTAX):
+            open_in_term += (word == "(") - (word == ")")
+            term = (term[0], match.end())
+            continue
+        if term:
+            tokens.append(raw[term[0] : term[1]])
+            term, open_in_term = None, 0
+        if word in _SYNTAX:
+            tokens.append(word)
+        else:
+            term = match.span()
+    if term:
+        tokens.append(raw[term[0] : term[1]])
     return tokens
 
 
-def extract_licenses(component: dict[str, Any]) -> list[tuple[str, str | None]]:
-    """Return flat (license_id, url) tuples; OR/AND semantics need
-    has_spdx_expression / parse_spdx_expression."""
-    licenses: list[tuple[str, str | None]] = []
-
-    for lic_entry in component.get("licenses", []):
-        if "license" in lic_entry:
-            lic = lic_entry["license"]
-            lic_id = lic.get("id") or lic.get("name")
-            lic_url = lic.get("url")
-            if lic_id and lic_id.upper() not in UNKNOWN_LICENSE_PATTERNS:
-                licenses.append((lic_id, lic_url))
-
-        if "expression" in lic_entry:
-            expr = lic_entry["expression"]
-            if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS:
-                for raw_id in SPDX_EXPR_SPLIT.split(expr):
-                    lic_id = raw_id.strip("() ")
-                    if lic_id:
-                        licenses.append((lic_id, None))
-
-    direct_license = component.get("license")
-    license_url = component.get("license_url")
-    if (
-        isinstance(direct_license, str)
-        and direct_license.strip()
-        and direct_license.upper() not in UNKNOWN_LICENSE_PATTERNS
-    ):
-        if SPDX_EXPR_SPLIT.search(direct_license):
-            for raw_id in SPDX_EXPR_SPLIT.split(direct_license):
-                lic_id = raw_id.strip("() ")
-                if lic_id:
-                    licenses.append((lic_id, license_url))
-        else:
-            licenses.extend((lic_id, license_url) for lic_id in split_license_list(direct_license))
-
-    return licenses
+def _term_ids(term: str) -> list[str]:
+    ids = (normalize_license(name) for name in split_license_list(term))
+    return list(dict.fromkeys(lic for lic in ids if lic and lic.upper() not in UNKNOWN_LICENSE_PATTERNS))
 
 
-def composite_license_expression(component: dict[str, Any]) -> str | None:
-    """Return the raw license string when it declares more than one license (AND/WITH/comma list)."""
-    direct_license = component.get("license")
-    if isinstance(direct_license, str) and (
-        SPDX_EXPR_SPLIT.search(direct_license) or len(split_license_list(direct_license)) > 1
-    ):
-        return direct_license
-
-    for lic_entry in component.get("licenses", []):
-        if "expression" in lic_entry:
-            expr = lic_entry["expression"]
-            if isinstance(expr, str) and SPDX_EXPR_SPLIT.search(expr):
-                return expr
-
-    return None
-
-
-def has_spdx_expression(component: dict[str, Any]) -> str | None:
-    """Return the SPDX expression if the component contains an OR-expression."""
-    for lic_entry in component.get("licenses", []):
-        if "expression" in lic_entry:
-            expr = lic_entry["expression"]
-            if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS and SPDX_OR_SPLIT.search(expr):
-                return str(expr)
-
-    direct_license = component.get("license")
-    if isinstance(direct_license, str) and SPDX_OR_SPLIT.search(direct_license):
-        return direct_license
-
-    return None
+def _parse_atom(tokens: list[str], pos: int, depth: int) -> tuple[_Groups, int]:
+    if pos == len(tokens):
+        raise _Unparseable
+    token = tokens[pos]
+    if token == "(":
+        if depth == _MAX_NESTING:
+            raise _Unparseable
+        groups, pos = _parse_or(tokens, pos + 1, depth + 1)
+        if pos == len(tokens) or tokens[pos] != ")":
+            raise _Unparseable
+        return groups, pos + 1
+    if token in _SYNTAX:
+        raise _Unparseable
+    if pos + 2 < len(tokens) and tokens[pos + 1] == "WITH" and tokens[pos + 2] not in _SYNTAX:
+        return [[f"{normalize_license(token)} WITH {tokens[pos + 2]}"]], pos + 3
+    return [_term_ids(token)], pos + 1
 
 
-def parse_spdx_expression(expr: str) -> list[list[str]]:
-    """Parse an SPDX expression into OR-groups of AND-connected licenses."""
-    # WITH modifies the preceding license; strip it. The lookbehind keeps the scan linear for the
-    # same reason it does on the SPDX_* patterns.
-    expr = re.sub(r"(?<![ \t])[ \t]++WITH[ \t]++\S++", "", expr)
+def _parse_and(tokens: list[str], pos: int, depth: int) -> tuple[_Groups, int]:
+    part, pos = _parse_atom(tokens, pos, depth)
+    parts = [part]
+    combinations = len(part)
+    while pos < len(tokens) and tokens[pos] == "AND":
+        part, pos = _parse_atom(tokens, pos + 1, depth)
+        parts.append(part)
+        combinations *= len(part)
+        if combinations > _MAX_ALTERNATIVES:
+            raise _Unparseable
+    return [list(dict.fromkeys(itertools.chain.from_iterable(combo))) for combo in itertools.product(*parts)], pos
 
-    # OR has the lowest precedence in SPDX.
-    or_parts = SPDX_OR_SPLIT.split(expr)
-    result: list[list[str]] = []
-    for raw_or_part in or_parts:
-        or_part = raw_or_part.strip("() ")
-        if not or_part:
-            continue
-        and_parts = SPDX_AND_SPLIT.split(or_part)
-        group: list[str] = []
-        for and_part in and_parts:
-            lic_id = and_part.strip("() ")
-            if lic_id:
-                group.append(lic_id)
-        if group:
-            result.append(group)
-    return result if result else [[expr.strip()]]
+
+def _parse_or(tokens: list[str], pos: int, depth: int) -> tuple[_Groups, int]:
+    alternatives: dict[tuple[str, ...], None] = {}
+    while True:
+        groups, pos = _parse_and(tokens, pos, depth)
+        alternatives.update(dict.fromkeys(map(tuple, groups)))
+        if len(alternatives) > _MAX_ALTERNATIVES:
+            raise _Unparseable
+        if pos == len(tokens) or tokens[pos] != "OR":
+            break
+        pos += 1
+    # A placeholder alternative such as 'MIT OR NOASSERTION' offers no licence to choose.
+    return [list(group) for group in alternatives if group] or [[]], pos
+
+
+def parse_license_expression(raw: str) -> list[list[str]]:
+    """The OR-alternatives, each a list of AND-bound normalized ids, that a stored license value declares."""
+    tokens = _tokens(raw)
+    try:
+        groups, pos = _parse_or(tokens, 0, 0)
+        if pos != len(tokens):
+            raise _Unparseable
+    except _Unparseable:
+        groups = [_term_ids(raw.strip())]
+    return [group for group in groups if group]
+
+
+def tokenize_license_string(raw: str) -> list[str]:
+    """The distinct licenses a stored license value names, each WITH exception kept on its license."""
+    return list(dict.fromkeys(itertools.chain.from_iterable(parse_license_expression(raw))))

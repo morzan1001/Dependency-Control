@@ -32,7 +32,7 @@ from app.schemas.recommendation import (
 )
 
 # SBOM schemas (dataclasses + enums)
-from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat, SourceType
+from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 
 __all__ = [
     "AnalyticsSummary",
@@ -56,7 +56,6 @@ __all__ = [
     "SBOMFormat",
     # Analytics
     "SeverityBreakdown",
-    "SourceType",
     "VulnerabilityAggregatedDetails",
     # Finding
     "VulnerabilityEntry",

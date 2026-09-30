@@ -31,8 +31,7 @@ from app.schemas.analytics import (
 )
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
-from app.services.enrichment import get_cve_enrichment
-from app.services.enrichment.service import apply_enrichments
+from app.services.enrichment.service import apply_enrichments, vulnerability_enrichment_service
 from app.services.recommendation import trends
 from app.services.recommendation.common import live_cves, get_attr
 from app.services.recommendations import recommendation_engine
@@ -45,6 +44,8 @@ router = CustomAPIRouter()
 
 # Newest scans the recurrence count is taken over; the recommendation text names the window.
 _RECURRENCE_WINDOW_SCANS = 10
+
+_LICENSE_DRIFT_PROJECTION = {"name": 1, "purl": 1, "license": 1, "license_category": 1}
 
 # Recommendation type -> (summary key counted once per recommendation, summary key its impact total adds to).
 _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
@@ -83,7 +84,7 @@ async def _apply_live_threat_intel(findings: list[Any]) -> dict[str, Vulnerabili
     if not all_cves:
         return {}
     try:
-        enrichments = await get_cve_enrichment(all_cves)
+        enrichments = await vulnerability_enrichment_service.enrich_cves(all_cves)
     except Exception as e:
         logger.warning("Recommendations: live CVE enrichment failed, using stored data: %s", e)
         return {}
@@ -132,9 +133,11 @@ async def get_project_recommendations(
     source_target = next((dep.source_target for dep in dependencies if dep.source_target), None)
 
     previous_scan_findings = None
+    previous_scan_dependencies = None
     previous_scan = await scan_repo.get_preceding_scan(scan_id)
     if previous_scan:
         previous_scan_findings, _ = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
+        previous_scan_dependencies = await dep_repo.find_raw_by_scan(previous_scan.id, _LICENSE_DRIFT_PROJECTION)
 
     recent_scan_ids = [
         recent.id
@@ -153,6 +156,7 @@ async def get_project_recommendations(
         dependencies=dependencies,
         source_target=source_target,
         previous_scan_findings=previous_scan_findings,
+        previous_scan_dependencies=previous_scan_dependencies,
         cve_recurrence=cve_recurrence,
         recurrence_window_scans=len(recent_scan_ids),
         cross_project_data=cross_project_data,

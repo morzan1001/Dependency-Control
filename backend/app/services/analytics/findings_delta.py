@@ -96,7 +96,7 @@ _FINDING_TYPE_IDENTIFIER: dict[str, Callable[[dict[str, Any]], str]] = {
 
 def _fallback_identifier(finding: dict[str, Any]) -> str:
     """Hash of description + found_in so an unidentifiable finding matches itself across scans."""
-    digest_src = (finding.get("description") or "") + "|" + "|".join(finding.get("found_in") or [])
+    digest_src = (finding.get("description") or "") + "|" + "|".join(sorted(finding.get("found_in") or []))
     return hashlib.sha1(digest_src.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 

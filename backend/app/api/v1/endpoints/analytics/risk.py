@@ -44,7 +44,7 @@ from app.services.component_identity import (
 )
 from app.services.analytics.cache import get_analytics_cache
 from app.services.aggregation.versions import newest_first
-from app.services.enrichment import get_cve_enrichment
+from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.recommendation.common import live_cves
 
 logger = logging.getLogger(__name__)
@@ -148,7 +148,7 @@ async def get_impact_analysis(
     enrichments = {}
     if all_cves:
         try:
-            enrichments = await get_cve_enrichment(all_cves)
+            enrichments = await vulnerability_enrichment_service.enrich_cves(all_cves)
         except Exception as e:
             logger.warning(f"Failed to enrich CVEs: {e}")
 
@@ -365,7 +365,7 @@ async def get_vulnerability_hotspots(
     enrichments = {}
     if all_cves:
         try:
-            enrichments = await get_cve_enrichment(all_cves)
+            enrichments = await vulnerability_enrichment_service.enrich_cves(all_cves)
         except Exception as e:
             logger.warning(f"Failed to enrich CVEs: {e}")
 

@@ -22,10 +22,7 @@ def safe_severity(
     try:
         return Severity(normalized)
     except ValueError:
-        try:
-            return Severity[normalized]
-        except KeyError:
-            return default
+        return default
 
 
 def normalize_list(value: str | list[str] | None) -> list[str]:
@@ -67,7 +64,7 @@ def safe_get(
 
 
 class FindingIdPrefix(StrEnum):
-    """Id prefixes that readers dispatch on (quality buckets, waiver signatures and scoping, SAST merging)."""
+    """Id prefixes that readers dispatch on (quality buckets, waiver signatures and scoping)."""
 
     SCORECARD = "SCORECARD"
     MAINT = "MAINT"
@@ -75,7 +72,6 @@ class FindingIdPrefix(StrEnum):
     BEARER = "BEARER"
     KICS = "KICS"
     SECRET = "SECRET"
-    SAST_AGG = "SAST-AGG"
     LICENSE = "LIC"
     EOL = "EOL"
 
@@ -94,41 +90,19 @@ def build_finding_id(
     return f"{prefix}{separator}{separator.join(valid_parts)}"
 
 
-def _find_v3_score(cvss_data: dict[str, Any], source_priority: list[str]) -> tuple[float | None, str | None]:
-    for source in source_priority:
-        data = cvss_data.get(source)
-        if not data or "V3Score" not in data:
-            continue
-        v3_score = data.get("V3Score")
-        if v3_score is not None:
-            return float(v3_score), data.get("V3Vector")
-    return None, None
+_TRIVY_CVSS_SOURCES = ("nvd", "redhat", "ghsa", "bitnami")
+_TRIVY_CVSS_VERSIONS = (("V3Score", "V3Vector"), ("V40Score", "V40Vector"), ("V2Score", "V2Vector"))
 
 
-def extract_cvss(
-    cvss_data: dict[str, Any],
-    prefer_v3: bool = True,
-) -> tuple[float | None, str | None]:
-    """Extract a (score, vector) CVSS pair from Trivy/Grype data, preferring v3."""
+def extract_cvss(cvss_data: dict[str, Any]) -> tuple[float | None, str | None]:
+    """Extract a (score, vector) CVSS pair from Trivy data: v3, then v4, then v2, each by source priority."""
     if not cvss_data:
         return None, None
-
-    source_priority = ["nvd", "redhat", "ghsa", "bitnami"]
-
-    if prefer_v3:
-        v3_result = _find_v3_score(cvss_data, source_priority)
-        if v3_result[0] is not None:
-            return v3_result
-
-    for source in source_priority:
-        if source not in cvss_data:
-            continue
-        data = cvss_data[source]
-        if "V2Score" in data:
-            v2_score = data.get("V2Score")
-            if v2_score is not None:
-                return float(v2_score), data.get("V2Vector")
-
+    for score_key, vector_key in _TRIVY_CVSS_VERSIONS:
+        for source in _TRIVY_CVSS_SOURCES:
+            data = cvss_data.get(source) or {}
+            if (score := data.get(score_key)) is not None:
+                return float(score), data.get(vector_key)
     return None, None
 
 

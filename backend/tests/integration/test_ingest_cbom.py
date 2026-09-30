@@ -197,3 +197,31 @@ async def test_a_cbom_posted_during_the_analysis_makes_the_running_one_start_ove
 
     assert resp.status_code == 202, resp.text
     assert (await db.scans.find_one({"_id": scan_id})).get("sbom_generation") != claimed
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embedded_ones(client, db, api_key_headers):
+    from app.models.crypto_asset import CryptoAsset
+    from app.services.cbom_parser import parse_cbom
+
+    pipeline = {"pipeline_id": 11, "commit_hash": "abc123", "branch": "main"}
+    first = await client.post(
+        "/api/v1/ingest/cbom", json={**pipeline, "cbom": _load("legacy_crypto_mixed.json")}, headers=api_key_headers
+    )
+    scan_id = first.json()["scan_id"]
+    [embedded] = parse_cbom(_load("cyclonedx_1_6_with_crypto_assets.json")).assets
+    await CryptoAssetRepository(db).bulk_upsert(
+        "test-project-id",
+        scan_id,
+        [CryptoAsset(project_id="test-project-id", scan_id=scan_id, **embedded.model_dump())],
+    )
+
+    retry = await client.post(
+        "/api/v1/ingest/cbom", json={**pipeline, "cbom": _load("modern_crypto.json")}, headers=api_key_headers
+    )
+
+    assert (retry.status_code, retry.json()["scan_id"]) == (202, scan_id)
+    stored = await db.crypto_assets.find({"scan_id": scan_id}).to_list(None)
+    assert sorted(a["bom_ref"] for a in stored) == sorted(["algo-aes", "algo-rsa4096", "proto-tls13", embedded.bom_ref])
+    assert retry.json()["assets_stored"] == 4

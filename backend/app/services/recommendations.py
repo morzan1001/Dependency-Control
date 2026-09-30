@@ -126,6 +126,7 @@ class RecommendationEngine:
         dependencies: Sequence[ModelOrDict] | None = None,
         source_target: str | None = None,
         previous_scan_findings: Sequence[ModelOrDict] | None = None,
+        previous_scan_dependencies: Sequence[ModelOrDict] | None = None,
         cve_recurrence: dict[str, trends.CveRecurrence] | None = None,
         recurrence_window_scans: int = 0,
         cross_project_data: dict[str, Any] | None = None,
@@ -194,10 +195,10 @@ class RecommendationEngine:
         )
 
         # 5b. License drift detection (license changes between scans)
-        if previous_findings_list is not None:
+        if previous_scan_dependencies:
             _safe_extend(
                 recommendations,
-                lambda: licenses.detect_license_drift(findings_list, previous_findings_list),
+                lambda: licenses.detect_license_drift(dependencies_list, previous_scan_dependencies),
                 "license_drift",
             )
 

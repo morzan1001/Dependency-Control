@@ -16,11 +16,13 @@ _SEED_POLICY = "shipped seed rules"
 _CRYPTO_TYPE_PREFIX = "crypto_"
 _TYPE_WEAK_KEY = "crypto_weak_key"
 _TYPE_WEAK_ALGORITHM = "crypto_weak_algorithm"
+_TYPE_QUANTUM_VULNERABLE = "crypto_quantum_vulnerable"
 
 _RSA_REF = "crypto/rsa-1024"
 _SECOND_RSA_REF = "crypto/rsa-1024-signing"
 _AES_REF = "crypto/aes-256"
 _MD5_REF = "crypto/md5"
+_DSA_REF = "crypto/dsa"
 
 # A seeded rule the certificate-lifecycle analyzer grades. It constrains nothing the matcher
 # reads, so an unscoped evaluation would attribute it to every asset in the CBOM.
@@ -55,6 +57,14 @@ _MD5 = {
     "bom-ref": _MD5_REF,
     "name": "MD5",
     "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": {"primitive": "hash"}},
+}
+
+# Two seeded rules of different types grade it at the same severity.
+_DSA = {
+    "type": "cryptographic-asset",
+    "bom-ref": _DSA_REF,
+    "name": "DSA",
+    "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": {"primitive": "signature"}},
 }
 
 _LIBRARY_SBOM = {
@@ -93,13 +103,21 @@ def _matched_rule_ids(finding):
 
 
 @pytest.mark.asyncio
-async def test_a_weak_key_in_the_posted_cbom_becomes_a_finding():
+async def test_a_weak_key_in_the_posted_cbom_becomes_one_finding_per_violated_type():
+    """A scan of the same CBOM reports the weak key and the quantum exposure separately."""
     response = await _run([_cbom(_RSA_1024)])
 
     crypto = _crypto_findings(response)
-    assert [finding["type"] for finding in crypto] == [_TYPE_WEAK_KEY]
-    assert crypto[0]["details"]["bom_ref"] == _RSA_REF
+    assert sorted(finding["type"] for finding in crypto) == [_TYPE_QUANTUM_VULNERABLE, _TYPE_WEAK_KEY]
+    assert {finding["details"]["bom_ref"] for finding in crypto} == {_RSA_REF}
     assert _CRYPTO_RULES in response.analyzers.ran
+
+
+@pytest.mark.asyncio
+async def test_rules_of_two_types_at_the_same_severity_each_keep_their_finding():
+    crypto = _crypto_findings(await _run([_cbom(_DSA)]))
+
+    assert sorted(finding["type"] for finding in crypto) == [_TYPE_QUANTUM_VULNERABLE, _TYPE_WEAK_ALGORITHM]
 
 
 @pytest.mark.asyncio
@@ -121,7 +139,7 @@ async def test_two_distinct_crypto_assets_keep_distinct_ids():
     """Stability must not be bought by collapsing different assets onto one id."""
     crypto = _crypto_findings(await _run([_cbom(_RSA_1024, _MD5)]))
 
-    assert len({finding["id"] for finding in crypto}) == len(crypto) == 2
+    assert len({finding["id"] for finding in crypto}) == len(crypto) == 3
 
 
 @pytest.mark.asyncio
@@ -132,15 +150,15 @@ async def test_two_assets_sharing_a_name_keep_distinct_ids():
     crypto = _crypto_findings(await _run([_cbom(_RSA_1024, second_rsa)]))
 
     assert {finding["details"]["bom_ref"] for finding in crypto} == {_RSA_REF, _SECOND_RSA_REF}
-    assert len({finding["id"] for finding in crypto}) == 2
+    assert len({finding["id"] for finding in crypto}) == len(crypto) == 4
 
 
 @pytest.mark.asyncio
-async def test_a_crypto_rule_finding_names_the_rule_analyzer_as_its_source():
+async def test_a_crypto_rule_finding_names_the_stage_as_its_source():
     """scanners[0] is read positionally wherever a finding's origin is reported."""
     crypto = _crypto_findings(await _run([_cbom(_RSA_1024)]))
 
-    assert [finding["scanners"] for finding in crypto] == [["crypto_rule_analyzer"]]
+    assert [finding["scanners"] for finding in crypto] == [[_CRYPTO_RULES]] * len(crypto)
 
 
 @pytest.mark.asyncio
@@ -149,8 +167,8 @@ async def test_a_rule_another_analyzer_grades_is_left_to_that_analyzer():
 
     crypto = _crypto_findings(response)
     # The compliant asset is the one a certificate rule would have blanketed.
-    assert [finding["details"]["bom_ref"] for finding in crypto] == [_RSA_REF]
-    assert _CERTIFICATE_RULE not in _matched_rule_ids(crypto[0])
+    assert {finding["details"]["bom_ref"] for finding in crypto} == {_RSA_REF}
+    assert not any(_CERTIFICATE_RULE in _matched_rule_ids(finding) for finding in crypto)
 
 
 @pytest.mark.asyncio
@@ -198,5 +216,18 @@ async def test_a_cbom_the_stage_skipped_carries_no_policy_note():
 async def test_the_stage_reports_the_finding_type_each_rule_declares():
     response = await _run([_cbom(_MD5, _RSA_1024)])
 
-    by_ref = {finding["details"]["bom_ref"]: finding["type"] for finding in _crypto_findings(response)}
-    assert by_ref == {_MD5_REF: _TYPE_WEAK_ALGORITHM, _RSA_REF: _TYPE_WEAK_KEY}
+    graded = {(finding["details"]["bom_ref"], finding["type"]) for finding in _crypto_findings(response)}
+    assert graded == {
+        (_MD5_REF, _TYPE_WEAK_ALGORITHM),
+        (_RSA_REF, _TYPE_WEAK_KEY),
+        (_RSA_REF, _TYPE_QUANTUM_VULNERABLE),
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_cbom_gives_the_component_analyzers_no_components_to_grade():
+    request = AdhocAnalyzeRequest(sboms=[_cbom(_MD5)], analyzers=["license_compliance"], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert [finding for finding in response.findings if finding not in _crypto_findings(response)] == []

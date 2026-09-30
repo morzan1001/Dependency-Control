@@ -12,7 +12,8 @@ from app.core.constants import (
     DEPS_DEV_API_URL,
     SCORECARD_FLAG_THRESHOLD,
 )
-from app.core.http_utils import InstrumentedAsyncClient
+from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
+from app.schemas.sbom import has_known_version
 
 from .base import Analyzer
 from app.core.purl import parse_purl
@@ -20,26 +21,21 @@ from app.core.purl import parse_purl
 logger = logging.getLogger(__name__)
 
 
-def _validated_threshold(
-    settings: dict[str, Any] | None, key: str, default: float, min_value: float = 0.0, max_value: float = 10.0
-) -> float:
-    """Extract and validate a numeric threshold from settings, falling back to default."""
-    if not settings or key not in settings:
-        return default
-    try:
-        value = float(settings[key])
-        if min_value <= value <= max_value:
-            return value
-    except (ValueError, TypeError):
-        pass
-    return default
+async def fetch_deps_dev_json(client: InstrumentedAsyncClient, url: str) -> dict[str, Any] | None:
+    """A deps.dev document, or None when deps.dev does not know it; any other failure raises so nothing is cached."""
+    response = await client.get(url, follow_redirects=True)
+    if response.status_code == 404:
+        return None
+    response.raise_for_status()
+    document: dict[str, Any] = response.json()
+    return document
 
 
 def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
     """``(cache key, deps.dev system, deps.dev name)`` of a component deps.dev can look up at its version."""
     parsed = parse_purl(component.get("purl", ""))
     version = component.get("version", "")
-    if not parsed or not parsed.deps_dev_system or not parsed.deps_dev_name or not version:
+    if not parsed or not parsed.deps_dev_system or not parsed.deps_dev_name or not has_known_version(version):
         return None
     system, name = parsed.deps_dev_system, parsed.deps_dev_name
     return CacheKeys.deps_dev(system, name, version), system, name
@@ -51,8 +47,6 @@ class DepsDevAnalyzer(Analyzer):
     name = "deps_dev"
     base_url = DEPS_DEV_API_URL
 
-    MAX_CONCURRENT = ANALYZER_BATCH_SIZES.get("deps_dev", 10)
-
     @staticmethod
     def _collect(
         component: dict[str, Any],
@@ -63,9 +57,6 @@ class DepsDevAnalyzer(Analyzer):
         scorecard_issues: list[Any],
     ) -> None:
         """Apply a payload under this scan's component (a cached one names its fetcher), re-checking the threshold."""
-        if isinstance(payload, Exception):
-            logger.warning(f"deps_dev check failed: {payload}")
-            return
         if not payload:
             return
         name, version, purl = component.get("name", ""), component.get("version", ""), component.get("purl", "")
@@ -77,13 +68,20 @@ class DepsDevAnalyzer(Analyzer):
 
     async def _fetch_uncached(self, keys: list[str], targets: dict[str, tuple[dict[str, Any], str, str]]) -> list[Any]:
         """Fetch deps.dev data for uncached packages with bounded concurrency."""
-        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
-        timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
-
+        timeout = ANALYZER_TIMEOUTS["deps_dev"]
         async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-            tasks = [self._check_component_with_limit(semaphore, client, key, *targets[key]) for key in keys]
-            results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
-            return results
+
+            async def fetch(key: str) -> dict[str, Any] | None:
+                component, system, lookup_name = targets[key]
+                # Distributed lock prevents multiple pods fetching the same package.
+                return await cache_service.get_or_fetch_with_lock(
+                    key=key,
+                    fetch_fn=lambda: self._check_component(client, component, system, lookup_name),
+                    ttl_seconds=CacheTTL.DEPS_DEV_METADATA,
+                    reraise_fetch_errors=True,
+                )
+
+            return await gather_bounded(keys, fetch, ANALYZER_BATCH_SIZES["deps_dev"])
 
     async def analyze(
         self,
@@ -91,12 +89,12 @@ class DepsDevAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        components = self._get_components(sbom, parsed_components)
+        components = parsed_components or []
         scorecard_issues: list[Any] = []
         package_metadata: dict[str, Any] = {}
 
         # The cache is shared across projects, so it holds every scorecard and each project filters its own.
-        threshold = _validated_threshold(settings, "scorecard_threshold", SCORECARD_FLAG_THRESHOLD)
+        threshold = (settings or {}).get("scorecard_threshold", SCORECARD_FLAG_THRESHOLD)
 
         targets: dict[str, tuple[dict[str, Any], str, str]] = {}
         for component in components:
@@ -105,7 +103,7 @@ class DepsDevAnalyzer(Analyzer):
                 targets.setdefault(target[0], (component, target[1], target[2]))
 
         cached: dict[str, Any] = await cache_service.mget(list(targets))
-        payloads = {key: data for key, data in cached.items() if data}
+        payloads = {key: data for key, data in cached.items() if data is not None}
         uncached = [key for key in targets if key not in payloads]
         logger.debug(f"deps_dev: {len(payloads)} from cache, {len(uncached)} to fetch")
 
@@ -113,35 +111,18 @@ class DepsDevAnalyzer(Analyzer):
             fetched = await self._fetch_uncached(uncached, targets)
             payloads.update(zip(uncached, fetched, strict=True))
 
+        skipped = 0
         for key, payload in payloads.items():
-            self._collect(targets[key][0], key, payload, threshold, package_metadata, scorecard_issues)
+            if isinstance(payload, BaseException):
+                logger.warning(f"deps_dev lookup failed for {key}: {payload!r}")
+                skipped += 1
+            else:
+                self._collect(targets[key][0], key, payload, threshold, package_metadata, scorecard_issues)
 
-        return {
-            "scorecard_issues": scorecard_issues,
-            "package_metadata": package_metadata,
-        }
-
-    async def _check_component_with_limit(
-        self,
-        semaphore: asyncio.Semaphore,
-        client: InstrumentedAsyncClient,
-        cache_key: str,
-        component: dict[str, Any],
-        system: str,
-        lookup_name: str,
-    ) -> dict[str, Any] | None:
-        """Fetch component data with concurrency limit and distributed lock."""
-
-        async def fetch_component() -> dict[str, Any] | None:
-            async with semaphore:
-                return await self._check_component(client, component, system, lookup_name)
-
-        # Distributed lock prevents multiple pods fetching the same package.
-        return await cache_service.get_or_fetch_with_lock(
-            key=cache_key,
-            fetch_fn=fetch_component,
-            ttl_seconds=CacheTTL.DEPS_DEV_METADATA,
-        )
+        result: dict[str, Any] = {"scorecard_issues": scorecard_issues, "package_metadata": package_metadata}
+        if skipped:
+            result["partial_components_skipped"] = skipped
+        return result
 
     @staticmethod
     def _select_project_id(related_projects: list[dict[str, Any]]) -> str | None:
@@ -157,74 +138,54 @@ class DepsDevAnalyzer(Analyzer):
                 project_id = pid
         return project_id
 
-    async def _enrich_with_project(
-        self,
-        client: InstrumentedAsyncClient,
-        project_id: str,
-        metadata: dict[str, Any],
-        result: dict[str, Any],
-        name: str,
-        version: str,
-        purl: str,
-    ) -> None:
-        """Fetch project info and scorecard for the resolved project_id."""
-        encoded_project_id = quote(project_id, safe="")
-        project_url = f"{self.base_url}/projects/{encoded_project_id}"
+    async def _cached_project(self, client: InstrumentedAsyncClient, project_id: str | None) -> dict[str, Any] | None:
+        """The project summary and trimmed scorecard, cached once for every version that links the project."""
+        if not project_id:
+            return None
+        project: dict[str, Any] | None = await cache_service.get_or_fetch_with_lock(
+            key=CacheKeys.deps_dev_project(project_id),
+            fetch_fn=lambda: self._fetch_project(client, project_id),
+            ttl_seconds=CacheTTL.DEPS_DEV_METADATA,
+            reraise_fetch_errors=True,
+        )
+        return project
 
-        proj_response = await client.get(project_url)
-        if proj_response.status_code != 200:
-            return
-
-        proj_data = proj_response.json()
-        metadata["project"] = {
-            "id": project_id,
-            "url": f"https://{project_id}",
-            "stars": proj_data.get("starsCount"),
-            "forks": proj_data.get("forksCount"),
-            "open_issues": proj_data.get("openIssuesCount"),
-            "description": proj_data.get("description"),
-            "homepage": proj_data.get("homepage"),
-            "license": proj_data.get("license"),
+    async def _fetch_project(self, client: InstrumentedAsyncClient, project_id: str) -> dict[str, Any] | None:
+        data = await fetch_deps_dev_json(client, f"{self.base_url}/projects/{quote(project_id, safe='')}")
+        if data is None:
+            return None
+        scorecard = data.get("scorecard")
+        return {
+            "project": {
+                "id": project_id,
+                "url": f"https://{project_id}",
+                "stars": data.get("starsCount"),
+                "forks": data.get("forksCount"),
+                "open_issues": data.get("openIssuesCount"),
+                "description": data.get("description"),
+                "homepage": data.get("homepage"),
+                "license": data.get("license"),
+            },
+            "scorecard": {
+                "overallScore": scorecard.get("overallScore", 0),
+                "date": scorecard.get("date"),
+                "repository": scorecard.get("repository", {}).get("name"),
+                "checks": [
+                    {"name": c.get("name", ""), "score": c.get("score", -1)} for c in scorecard.get("checks", [])
+                ],
+            }
+            if scorecard
+            else None,
         }
 
-        scorecard = proj_data.get("scorecard")
-        if not scorecard:
-            return
-
-        overall_score = scorecard.get("overallScore", 0)
-        metadata["scorecard"] = {
-            "overall_score": overall_score,
-            "date": scorecard.get("date"),
-            "checks_count": len(scorecard.get("checks", [])),
-        }
-
-        result["scorecard_issue"] = self._create_scorecard_issue(name, version, purl, project_id, scorecard)
-
-    async def _enrich_with_dependents(
-        self,
-        client: InstrumentedAsyncClient,
-        metadata: dict[str, Any],
-        system: str,
-        encoded_name: str,
-        encoded_version: str,
-        name: str,
-        version: str,
-    ) -> None:
-        """Fetch dependent counts and add them to metadata."""
+    @staticmethod
+    async def _fetch_dependents(client: InstrumentedAsyncClient, version_url: str) -> dict[str, Any] | None:
+        """Dependent counts only enrich the metadata, so their failure never costs the component."""
         try:
-            dependents_url = (
-                f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}:dependents"
-            )
-            dep_response = await client.get(dependents_url)
-            if dep_response.status_code == 200:
-                dep_data = dep_response.json()
-                metadata["dependents"] = {
-                    "total": dep_data.get("dependentCount", 0),
-                    "direct": dep_data.get("directDependentCount", 0),
-                    "indirect": dep_data.get("indirectDependentCount", 0),
-                }
-        except Exception as e:
-            logger.debug(f"Could not fetch dependents for {name}@{version}: {e}")
+            return await fetch_deps_dev_json(client, f"{version_url}:dependents")
+        except (httpx.HTTPError, ValueError) as e:
+            logger.debug(f"deps.dev dependents unavailable at {version_url}: {e!r}")
+            return None
 
     async def _check_component(
         self,
@@ -233,7 +194,7 @@ class DepsDevAnalyzer(Analyzer):
         system: str,
         lookup_name: str,
     ) -> dict[str, Any] | None:
-        """Check a component for Scorecard data and package metadata via deps.dev API."""
+        """Package metadata and scorecard issue for a component, or None when deps.dev does not know its version."""
         purl = component.get("purl", "")
         name = component.get("name", "")
         version = component.get("version", "")
@@ -242,37 +203,37 @@ class DepsDevAnalyzer(Analyzer):
         encoded_version = quote(version, safe="")
         version_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}"
 
-        result: dict[str, Any | None] = {"metadata": None, "scorecard_issue": None}
-
-        try:
-            response = await client.get(version_url)
-            if response.status_code == 404:
-                return None
-            if response.status_code != 200:
-                logger.debug(f"deps.dev API returned {response.status_code} for {name}@{version}")
-                return None
-
-            data = response.json()
-            metadata = self._extract_metadata(data, name, version, system, purl)
-
-            project_id = self._select_project_id(data.get("relatedProjects", []))
-            if project_id:
-                await self._enrich_with_project(client, project_id, metadata, result, name, version, purl)
-
-            await self._enrich_with_dependents(client, metadata, system, encoded_name, encoded_version, name, version)
-
-            result["metadata"] = metadata
-            return result
-
-        except httpx.TimeoutException:
-            logger.debug(f"Timeout checking {name}@{version} on deps.dev")
+        data = await fetch_deps_dev_json(client, version_url)
+        if data is None:
             return None
-        except httpx.ConnectError:
-            logger.debug(f"Connection error checking {name}@{version} on deps.dev")
-            return None
-        except Exception as e:
-            logger.debug(f"Error checking {name}@{version} on deps.dev: {e}")
-            return None
+
+        metadata = self._extract_metadata(data, name, version, system, purl)
+        project_id = self._select_project_id(data.get("relatedProjects", []))
+        project, dependents = await asyncio.gather(
+            self._cached_project(client, project_id),
+            self._fetch_dependents(client, version_url),
+        )
+
+        if dependents:
+            metadata["dependents"] = {
+                "total": dependents.get("dependentCount", 0),
+                "direct": dependents.get("directDependentCount", 0),
+                "indirect": dependents.get("indirectDependentCount", 0),
+            }
+
+        scorecard_issue = None
+        if project:
+            metadata["project"] = project["project"]
+            scorecard = project["scorecard"]
+            if scorecard:
+                metadata["scorecard"] = {
+                    "overall_score": scorecard["overallScore"],
+                    "date": scorecard["date"],
+                    "checks_count": len(scorecard["checks"]),
+                }
+                scorecard_issue = self._create_scorecard_issue(project["project"]["url"], scorecard)
+
+        return {"metadata": metadata, "scorecard_issue": scorecard_issue}
 
     @staticmethod
     def _classify_link_label(label: str) -> str:
@@ -319,66 +280,18 @@ class DepsDevAnalyzer(Analyzer):
 
         return metadata
 
-    def _create_scorecard_issue(
-        self,
-        name: str,
-        version: str,
-        purl: str,
-        project_id: str,
-        scorecard: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Create a scorecard issue; normalize_scorecard grades its severity."""
-        overall_score = scorecard.get("overallScore", 0)
-        checks = scorecard.get("checks", [])
-
-        failed_checks = []
-        critical_issues = []
-
-        for check in checks:
-            check_name = check.get("name", "")
-            check_score = check.get("score", 10)
-            check_reason = check.get("reason", "")
-
-            # Score -1 means the check is not applicable.
-            if check_score == -1:
-                continue
-
-            if check_score < 5:
-                failed_checks.append({"name": check_name, "score": check_score, "reason": check_reason})
-
-                if check_name in [
-                    "Maintained",
-                    "Vulnerabilities",
-                    "Dangerous-Workflow",
-                ]:
-                    critical_issues.append(check_name)
-
-        warning_parts = [f"Low OpenSSF Scorecard score: {overall_score:.1f}/10"]
-
-        if critical_issues:
-            warning_parts.append(f"Critical issues: {', '.join(critical_issues)}")
-
-        if failed_checks:
-            failed_names = [f"{c['name']}({c['score']})" for c in failed_checks[:3]]
-            warning_parts.append(f"Failed checks: {', '.join(failed_names)}")
-            if len(failed_checks) > 3:
-                warning_parts[-1] += f" (+{len(failed_checks) - 3} more)"
-
-        message = ". ".join(warning_parts)
-
+    @staticmethod
+    def _create_scorecard_issue(project_url: str, scorecard: dict[str, Any]) -> dict[str, Any]:
+        """The fields normalize_scorecard reads; it grades the severity and writes the text."""
+        # Score -1 means the check is not applicable.
+        failed_checks = [check for check in scorecard["checks"] if 0 <= check["score"] < 5]
         return {
-            "component": name,
-            "version": version,
-            "purl": purl,
-            "message": message,
-            "project_url": f"https://{project_id}",
-            "scorecard": {
-                "overallScore": overall_score,
-                "date": scorecard.get("date"),
-                "checks": checks,
-                "repository": scorecard.get("repository", {}).get("name"),
-            },
+            "project_url": project_url,
+            "scorecard": scorecard,
             "failed_checks": failed_checks,
-            "critical_issues": critical_issues,
-            "warning": message,
+            "critical_issues": [
+                check["name"]
+                for check in failed_checks
+                if check["name"] in ("Maintained", "Vulnerabilities", "Dangerous-Workflow")
+            ],
         }

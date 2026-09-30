@@ -52,9 +52,9 @@ GRYPE = {
                 "description": "brace-expansion is vulnerable to a regular expression denial of service.",
                 "fix": {"versions": ["2.0.3", "1.1.12"], "state": "fixed"},
                 "urls": ["https://github.com/advisories/GHSA-3jxr-9vmj-r5cp"],
-                "relatedVulnerabilities": [{"id": "CVE-2026-13149"}],
                 "cvss": [{"metrics": {"baseScore": 3.1}, "vector": "CVSS:3.1/AV:N/AC:H", "version": "3.1"}],
             },
+            "relatedVulnerabilities": [{"id": "CVE-2026-13149"}],
             "artifact": {"name": "brace-expansion", "version": "2.0.2"},
         },
         {
@@ -196,3 +196,133 @@ class TestDetailConflictTieBreak:
         b = self._entry("CVE-2026-2", ["CVE-2026-1"], ["grype", "osv"], "1.0", "2026-02-02")
 
         assert _merge(a, b) == _merge(b, a)
+
+
+MAINTAINER_RISK = {
+    "maintainer_issues": [
+        {
+            "component": "left-pad",
+            "version": "1.0.0",
+            "purl": "pkg:npm/left-pad@1.0.0",
+            "risks": [{"type": "stale_package", "severity": "MEDIUM", "message": "No release in 1200 days"}],
+            "severity": "MEDIUM",
+        }
+    ]
+}
+
+
+def _crypto_result(locations: list[str]) -> dict:
+    from app.models.crypto_asset import CryptoAsset
+    from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+    from app.schemas.crypto_policy import CryptoRule
+    from app.services.analyzers.crypto.base import _build_finding_dedup
+
+    asset = CryptoAsset(
+        project_id="p",
+        scan_id="s",
+        bom_ref="crypto/algorithm/md5",
+        name="MD5",
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.HASH,
+        occurrence_locations=locations,
+    )
+    rule = CryptoRule(
+        rule_id="nist-131a-md5",
+        name="MD5 is disallowed",
+        description="MD5 is broken",
+        finding_type="crypto_weak_algorithm",
+        default_severity="HIGH",
+        source="nist-sp-800-131a",
+    )
+    return {"findings": [_build_finding_dedup(asset, [rule], "crypto_weak_algorithm")]}
+
+
+class TestMultiSbomArrivalOrder:
+    @staticmethod
+    def _identity(sources: list[str]) -> tuple[str, str, str]:
+        from app.services.analytics.findings_delta import finding_identity_key
+
+        aggregator = ResultAggregator()
+        for source in sources:
+            aggregator.aggregate("maintainer_risk", MAINTAINER_RISK, source=source)
+        [finding] = aggregator.get_findings()
+        return finding_identity_key(finding.model_dump())
+
+    def test_sbom_order_does_not_change_a_quality_finding_identity(self):
+        assert self._identity(["sbom-a", "sbom-b"]) == self._identity(["sbom-b", "sbom-a"])
+
+    def test_a_merged_crypto_finding_keeps_both_sboms_occurrence_paths(self):
+        aggregator = ResultAggregator()
+        aggregator.aggregate("crypto_weak_algorithm", _crypto_result(["src/a.py"]), source="sbom-a")
+        aggregator.aggregate("crypto_weak_algorithm", _crypto_result(["src/b.py"]), source="sbom-b")
+        [finding] = aggregator.get_findings()
+
+        assert finding.found_in == ["src/a.py", "sbom-a", "src/b.py", "sbom-b"]
+
+
+# trivy spells a Go toolchain version with a "v" prefix, grype (like the syft SBOM) with "go".
+STDLIB = {
+    "trivy": {
+        "Results": [
+            {
+                "Target": "usr/local/bin/app",
+                "Class": "lang-pkgs",
+                "Type": "gobinary",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-2024-24790",
+                        "PkgName": "stdlib",
+                        "InstalledVersion": "v1.21.5",
+                        "FixedVersion": "1.21.11, 1.22.4",
+                        "Severity": "CRITICAL",
+                        "Description": "net/netip: Unexpected behavior from Is methods for IPv4-mapped IPv6 addresses",
+                    }
+                ],
+            }
+        ]
+    },
+    "grype": {
+        "matches": [
+            {
+                "vulnerability": {
+                    "id": "CVE-2024-24790",
+                    "severity": "Critical",
+                    "description": "net/netip: Unexpected behavior from Is methods for IPv4-mapped IPv6 addresses",
+                    "fix": {"versions": ["1.21.11", "1.22.4"], "state": "fixed"},
+                    "urls": [],
+                },
+                "artifact": {"name": "stdlib", "version": "go1.21.5"},
+            }
+        ]
+    },
+}
+
+
+def _maintainer_risk(component: str) -> dict:
+    [issue] = MAINTAINER_RISK["maintainer_issues"]
+    return {"maintainer_issues": [{**issue, "component": component}]}
+
+
+class TestSurvivingSpelling:
+    @staticmethod
+    def _vulnerability(order: tuple[str, ...]) -> tuple[str, str, str | None]:
+        aggregator = ResultAggregator()
+        for analyzer in order:
+            aggregator.aggregate(analyzer, STDLIB[analyzer], source="app")
+        [finding] = aggregator.get_findings()
+        return finding.id, finding.component, finding.version
+
+    @staticmethod
+    def _quality(spellings: tuple[str, ...]) -> tuple[str, str, str | None]:
+        aggregator = ResultAggregator()
+        for i, component in enumerate(spellings):
+            aggregator.aggregate("maintainer_risk", _maintainer_risk(component), source=f"sbom-{i}")
+        [finding] = aggregator.get_findings()
+        return finding.id, finding.component, finding.version
+
+    def test_the_vulnerability_spelling_does_not_depend_on_analyzer_order(self):
+        assert self._vulnerability(("trivy", "grype")) == self._vulnerability(("grype", "trivy"))
+        assert self._vulnerability(("trivy", "grype")) == ("stdlib:go1.21.5", "stdlib", "go1.21.5")
+
+    def test_the_quality_spelling_does_not_depend_on_sbom_order(self):
+        assert self._quality(("left-pad", "Left-Pad")) == self._quality(("Left-Pad", "left-pad"))

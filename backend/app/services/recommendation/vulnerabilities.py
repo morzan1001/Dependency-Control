@@ -2,7 +2,13 @@ from collections import defaultdict
 from collections.abc import Callable
 from typing import Any
 
-from app.core.constants import DETAILS_KEY_IN_KEV, EPSS_HIGH_THRESHOLD, SOURCE_TYPE_IMAGE
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    EPSS_HIGH_THRESHOLD,
+    SOURCE_TYPE_DIRECTORY,
+    SOURCE_TYPE_FILE,
+    SOURCE_TYPE_IMAGE,
+)
 from app.core.cve import canonical_cves
 from app.core.epss import HIGH_EPSS_LABEL
 from app.core.purl import is_os_package_type
@@ -73,9 +79,10 @@ def _classify_category(vuln: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
         return "application"
 
     source_type = get_attr(dep, "source_type")
-    # The parser's source wins; only an SBOM naming no source leaves the package type to decide.
+    # An explicit filesystem source wins; otherwise an OS package ships with the base image.
     if source_type == SOURCE_TYPE_IMAGE or (
-        not source_type and is_os_package_type(get_attr(dep, "purl"), get_attr(dep, "type"))
+        source_type not in (SOURCE_TYPE_DIRECTORY, SOURCE_TYPE_FILE)
+        and is_os_package_type(get_attr(dep, "purl"), get_attr(dep, "type"))
     ):
         return "image"
     if get_attr(dep, "direct", False):
@@ -135,11 +142,12 @@ def _analyze_base_image_vulns(
     else:
         priority = Priority.LOW
 
-    image_name = source_target or "your base image"
-
-    if source_target and ":" in source_target:
-        parts = source_target.rsplit(":", 1)
-        image_name = parts[0]
+    image_name = "your base image"
+    if source_target:
+        repository = source_target.split("@", 1)[0]
+        # A ':' before the last '/' is a registry port, not a tag separator.
+        tag_colon = repository.rfind(":")
+        image_name = repository[:tag_colon] if tag_colon > repository.rfind("/") else repository
 
     packages_shown, packages_total = sample_components(sorted(affected_packages))
     return Recommendation(

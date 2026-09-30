@@ -108,24 +108,6 @@ class TestNormalizeEol:
         assert "2023-06-27" in f.description
         assert "3.7" in f.description
 
-    def test_fixed_version_is_latest(self):
-        result = {
-            "eol_issues": [
-                {
-                    "component": "ruby",
-                    "version": "2.7.0",
-                    "eol_info": {
-                        "eol": "2023-03-31",
-                        "cycle": "2.7",
-                        "latest": "3.3.0",
-                    },
-                }
-            ]
-        }
-        self.agg.aggregate("end_of_life", result)
-        f = next(iter(self.agg.findings.values()))
-        assert f.details["fixed_version"] == "3.3.0"
-
     def test_eol_details(self):
         result = {
             "eol_issues": [

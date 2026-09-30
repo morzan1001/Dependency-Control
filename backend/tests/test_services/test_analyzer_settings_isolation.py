@@ -9,7 +9,7 @@ import pytest
 
 from app.core.constants import EOL_HIGH_AFTER_DAYS, EOL_MEDIUM_AFTER_DAYS
 from app.models.finding import Severity
-from tests.helpers.analyzers import build_analyzer
+from tests.helpers.analyzers import analyze_cyclonedx, build_analyzer
 
 _EOL = "end_of_life"
 _MAINTAINER_RISK = "maintainer_risk"
@@ -17,12 +17,11 @@ _PRODUCT = "isolated-product"
 _DAYS_PAST_EOL = 60
 _TIGHT_EOL = {"eol_high_after_days": 30, "eol_medium_after_days": 15}
 _DEFAULT_EOL = {"eol_high_after_days": EOL_HIGH_AFTER_DAYS, "eol_medium_after_days": EOL_MEDIUM_AFTER_DAYS}
-_SBOM = {"components": [{"name": _PRODUCT, "version": "1.0", "type": "library"}]}
+_COMPONENTS = [{"name": _PRODUCT, "version": "1.0", "type": "library"}]
 _NO_COMPONENTS: dict[str, Any] = {"components": []}
-_TIGHT_MAINTAINER = {"stale_after_days": 30, "warn_after_days": 15}
+_TIGHT_MAINTAINER = {"stale_after_days": 30, "warn_after_days": 30}
 _DEFAULT_MAINTAINER: dict[str, Any] = {}
 _DAYS_SINCE_RELEASE = 60
-_NPM = "npm"
 _STALE_PACKAGE = "stale_package"
 
 
@@ -31,12 +30,16 @@ def _eol_cycle_in_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     """Serve the EOL cycle from cache, so the analyzer reaches its grading step without a fetch."""
     eol_date = (datetime.now(timezone.utc) - timedelta(days=_DAYS_PAST_EOL)).strftime("%Y-%m-%d")
 
-    async def _mget(keys: list[str]) -> dict[str, Any]:
+    cached = {"eol:all": [_PRODUCT], f"eol:{_PRODUCT}": [{"cycle": "1.0", "eol": eol_date}]}
+
+    async def _get_or_fetch_with_lock(key: str, **_kwargs: Any) -> Any:
         # A cache round trip yields the loop; without that the two runs never interleave.
         await asyncio.sleep(0)
-        return {key: [{"cycle": "1.0", "eol": eol_date}] for key in keys}
+        return cached[key]
 
-    monkeypatch.setattr("app.services.analyzers.end_of_life.cache_service.mget", _mget)
+    monkeypatch.setattr(
+        "app.services.analyzers.end_of_life.cache_service.get_or_fetch_with_lock", _get_or_fetch_with_lock
+    )
 
 
 def _severities(result: dict[str, Any]) -> list[str]:
@@ -51,8 +54,8 @@ def test_the_registry_hands_out_a_fresh_analyzer_per_resolution() -> None:
 async def test_two_projects_scanning_at_once_keep_their_own_eol_thresholds(_eol_cycle_in_cache: None) -> None:
     """60 days past EOL is HIGH under a 30-day threshold and LOW under the default 365-day one."""
     tight, default = await asyncio.gather(
-        build_analyzer(_EOL).analyze(_SBOM, _TIGHT_EOL),
-        build_analyzer(_EOL).analyze(_SBOM, _DEFAULT_EOL),
+        analyze_cyclonedx(build_analyzer(_EOL), _COMPONENTS, _TIGHT_EOL),
+        analyze_cyclonedx(build_analyzer(_EOL), _COMPONENTS, _DEFAULT_EOL),
     )
 
     assert _severities(tight) == [Severity.HIGH.value]
@@ -70,5 +73,5 @@ async def test_two_projects_scanning_at_once_keep_their_own_maintainer_threshold
     )
 
     info = {"days_since_release": _DAYS_SINCE_RELEASE}
-    assert [risk["type"] for risk in tight._assess_risks(info, _NPM)] == [_STALE_PACKAGE]
-    assert [risk["type"] for risk in default._assess_risks(info, _NPM)] == []
+    assert [risk["type"] for risk in tight._assess_risks(info)] == [_STALE_PACKAGE]
+    assert [risk["type"] for risk in default._assess_risks(info)] == []

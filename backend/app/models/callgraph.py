@@ -6,26 +6,6 @@ from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
 
 
-class ImportEntry(BaseModel):
-    """Represents an import statement in source code."""
-
-    module: str
-    file: str
-    line: int
-    imported_symbols: list[str] = []  # e.g. ['get', 'set']
-    is_dynamic: bool = False  # Dynamic import (require(), import())
-
-
-class CallEdge(BaseModel):
-    """Represents a function call relationship."""
-
-    caller: str  # fully qualified: file:function
-    callee: str  # fully qualified: module:function
-    file: str
-    line: int
-    call_type: str = "direct"  # direct, callback, async, conditional
-
-
 class ModuleUsage(BaseModel):
     """Aggregated usage information for a module/package."""
 
@@ -34,11 +14,10 @@ class ModuleUsage(BaseModel):
     call_count: int = 0  # number of calls into this module
     import_locations: list[str] = []
     used_symbols: list[str] = []
-    is_direct_dependency: bool = True  # vs transitive
 
 
 class Callgraph(MongoDocument, CreatedAtModel):
-    """Complete call graph data for a project."""
+    """What a project's callgraph upload resolves to: per-module usage, the coverage universe and totals."""
 
     project_id: str
 
@@ -52,10 +31,6 @@ class Callgraph(MongoDocument, CreatedAtModel):
     language: str  # javascript, typescript, python, go, java, etc.
     tool: str  # madge, jdeps, etc.
     tool_version: str | None = None
-
-    # Graph data
-    imports: list[ImportEntry] = Field(default_factory=list)
-    calls: list[CallEdge] = Field(default_factory=list)
 
     # Aggregated data for quick lookups
     module_usage: dict[str, ModuleUsage] = Field(default_factory=dict)

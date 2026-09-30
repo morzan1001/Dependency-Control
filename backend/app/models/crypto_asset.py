@@ -28,7 +28,7 @@ class CryptoAsset(MongoDocument):
     )
     mode: str | None = Field(None, description="Cipher mode (e.g. GCM, CBC, OFB) for algorithm assets")
     padding: str | None = Field(None, description="Padding scheme (e.g. PKCS1v15, OAEP, PSS) for algorithm assets")
-    key_size_bits: int | None = Field(None, description="Key size in bits for algorithm assets")
+    key_size_bits: int | None = Field(None, description="Key size in bits for algorithm and key material assets")
     curve: str | None = Field(None, description="Elliptic curve identifier (e.g. P-256, secp384r1)")
 
     # Certificate-only
@@ -40,9 +40,12 @@ class CryptoAsset(MongoDocument):
         None, description="bom-ref of the algorithm used to sign this certificate (the CA's signing key)"
     )
     subject_public_key_ref: str | None = Field(
-        None, description="bom-ref of the algorithm asset representing this certificate's own subject public key"
+        None, description="bom-ref of this certificate's own subject public key (key material or its algorithm)"
     )
     certificate_format: str | None = Field(None, description="Certificate format identifier (e.g. X.509)")
+
+    # Related-crypto-material-only
+    algorithm_ref: str | None = Field(None, description="bom-ref of the algorithm this key material belongs to")
 
     # Protocol-only
     protocol_type: str | None = Field(
@@ -51,6 +54,10 @@ class CryptoAsset(MongoDocument):
     version: str | None = Field(None, description="Protocol version string (e.g. '1.2', '1.3')")
     cipher_suites: list[str] = Field(
         default_factory=list, description="Cipher suites advertised/negotiated by a protocol asset"
+    )
+    cipher_suite_ids: list[str | None] = Field(
+        default_factory=list,
+        description="IANA code point of each cipher suite (0xHH,0xHH), None where the CBOM has none",
     )
 
     # Context
@@ -65,6 +72,9 @@ class CryptoAsset(MongoDocument):
 
     properties: dict[str, str] = Field(
         default_factory=dict, description="Passthrough of additional CycloneDX properties"
+    )
+    cbom_upload: bool = Field(
+        False, description="Stored by a CBOM upload, which replaces the scan's earlier uploaded assets"
     )
 
     created_at: datetime = Field(

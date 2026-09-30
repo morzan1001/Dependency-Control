@@ -47,11 +47,7 @@ def _enriched(cve, *, kev=False, ransomware=False, epss=None):
     kev_entry = (
         KEVEntry(
             cve=cve,
-            vendor_project="v",
-            product="p",
-            vulnerability_name="n",
             date_added="2024-01-01",
-            short_description="d",
             required_action="patch",
             due_date="2024-02-01",
             known_ransomware_use=ransomware,
@@ -382,16 +378,19 @@ class TestComponentLanguageMap:
             {"type": "npm"},
         ]
         m = component_language_map(deps)
-        assert m["requests"] == [("", frozenset({"python"}))]
-        assert m["left-pad"] == [("", frozenset({"javascript", "typescript"}))]
-        assert m["viapurl"] == [("", frozenset({"python"}))]
+        assert m["requests"] == [("", frozenset({"python"}), False)]
+        assert m["left-pad"] == [("", frozenset({"javascript", "typescript"}), False)]
+        assert m["viapurl"] == [("", frozenset({"python"}), False)]
         assert "rpmpkg" not in m
 
     def test_a_name_two_ecosystems_list_keeps_one_candidate_per_ecosystem(self):
         m = component_language_map(
             [{"name": "x", "version": "1.0", "type": "npm"}, {"name": "x", "version": "2.0", "type": "pypi"}]
         )
-        assert m["x"] == [("1.0", frozenset({"javascript", "typescript"})), ("2.0", frozenset({"python"}))]
+        assert m["x"] == [
+            ("1.0", frozenset({"javascript", "typescript"}), False),
+            ("2.0", frozenset({"python"}), False),
+        ]
 
 
 class TestDriverReadsOneCursor:

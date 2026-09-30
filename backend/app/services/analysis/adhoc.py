@@ -19,9 +19,7 @@ from app.core.constants import (
     ADHOC_MAX_SCANNER_FINDINGS,
     DEPS_DEV_API_URL,
     EOL_API_URL,
-    EPSS_API_URL,
     GITHUB_API_URL,
-    KEV_CATALOG_URL,
     MALWARE_API_URL,
     NPM_REGISTRY_URL,
     OSV_BATCH_API_URL,
@@ -43,7 +41,7 @@ from app.schemas.opengrep import OpenGrepFinding
 from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
-from app.services.aggregation import ResultAggregator
+from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories, post_processor_factories
@@ -51,15 +49,14 @@ from app.services.analysis.stats import build_epss_kev_summary, build_reachabili
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
+from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
-from app.services.enrichment.service import VulnerabilityEnrichmentService
+from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.reachability_enrichment import (
     ComponentLanguages,
-    _prepare_callgraph,
-    _PreparedCallgraph,
     component_language_map,
-    enrich_findings_from_callgraphs,
+    enrich_findings_with_reachability,
 )
 from app.services.recommendations import recommendation_engine
 from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, merge_duplicate_dependencies, parse_sbom
@@ -187,7 +184,9 @@ _STAGE_NOTES: dict[str, str] = {
     "outdated_packages": _COORDINATES_SENT.format(hosts=_hosts(DEPS_DEV_API_URL)),
     "end_of_life": _COORDINATES_SENT.format(hosts=_hosts(EOL_API_URL)),
     "hash_verification": _COORDINATES_SENT.format(hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL)),
-    "maintainer_risk": _COORDINATES_SENT.format(hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL, GITHUB_API_URL)),
+    "maintainer_risk": _COORDINATES_SENT.format(
+        hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL, DEPS_DEV_API_URL, GITHUB_API_URL)
+    ),
     "os_malware": _COORDINATES_SENT.format(hosts=_hosts(MALWARE_API_URL)),
     # The odd one out: it downloads a list and matches against it here, so nothing posted leaves.
     "typosquatting": (
@@ -195,17 +194,20 @@ _STAGE_NOTES: dict[str, str] = {
         "process; no posted coordinate is sent"
     ),
     _ENRICHMENT: (
-        f"vulnerability ids are sent to the EPSS API at {_hosts(EPSS_API_URL)} and matched "
-        f"against the CISA KEV catalog from {_hosts(KEV_CATALOG_URL)}"
+        f"vulnerability ids are sent to {_hosts(*vulnerability_enrichment_service.SENDS_IDS_TO)}; the CISA KEV "
+        f"catalog is downloaded from {_hosts(*vulnerability_enrichment_service.DOWNLOADS_FROM)} and matched in "
+        "this process"
     ),
     _CRYPTO_RULES: "graded against the shipped seed rules, not against this installation's crypto policy",
 }
 
 # Analyzers that put nothing the caller posted on the wire: the licence database ships with the
-# image, the crypto analyzers read stored assets, and the two CLI scanners match the SBOM against
-# a vulnerability database they fetch for themselves. Named rather than inferred so a new
-# analyzer has to be placed on one side of the contract before it can quietly break it.
-_SENDS_NOTHING: frozenset[str] = frozenset({"license_compliance", "trivy", "grype"}) | frozenset(CRYPTO_ANALYZERS)
+# image, and the two CLI scanners match the SBOM against a vulnerability database they fetch for
+# themselves. Named rather than inferred so a new analyzer has to be placed on one side of the
+# contract before it can quietly break it.
+_SENDS_NOTHING: frozenset[str] = frozenset({"license_compliance", "trivy", "grype"})
+
+_ADHOC_CRYPTO_RULES = tuple(r for r in load_seed_rules() if r.enabled and r.finding_type in RULE_DRIVEN_FINDING_TYPES)
 
 _NO_CALLGRAPH = "no callgraph supplied"
 _AUTO_FORMAT = "auto"
@@ -449,7 +451,7 @@ async def _run_one_analyzer(
     analyzer: Analyzer,
     sbom: dict[str, Any],
     settings: dict[str, Any],
-    parsed_components: list[dict[str, Any]] | None,
+    parsed_components: list[dict[str, Any]],
     aggregator: ResultAggregator,
     report: AnalyzerReport,
     fallback_source: str,
@@ -462,8 +464,7 @@ async def _run_one_analyzer(
     """
     try:
         result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
-        # The aggregator guards on membership, not truthiness, so ``{"error": ""}`` would reach it.
-        if "error" in result:
+        if is_error_result(result):
             _record_errored(report, name, f"{fallback_source}: {result['error']}")
             return
         aggregator.aggregate(name, result, source=_sbom_source(sbom, fallback_source))
@@ -485,16 +486,9 @@ async def _run_one_analyzer(
 
 
 def _aggregate_atomically(aggregator: ResultAggregator, name: str, payload: dict[str, Any], source: str) -> None:
-    """Normalise into a scratch aggregator, then hand over only a complete result.
-
-    The normalizers add each item as they read it, so a payload that dies half-way would
-    otherwise contribute whatever preceded the unreadable item — the same items in a different
-    order yielding a different set of findings alongside the same error.
-    """
-    staged = ResultAggregator()
-    staged.aggregate(name, payload, source=source)
-    for finding in staged.findings.values():
-        aggregator.add_finding(finding, source=source)
+    """Dry-run on a scratch aggregator: normalizers add item by item, so a half-read payload adds nothing."""
+    ResultAggregator().aggregate(name, payload, source=source)
+    aggregator.aggregate(name, payload, source=source)
 
 
 def _first_reason(exc: ValidationError) -> str:
@@ -547,7 +541,7 @@ def _aggregate_posted_scanners(
         if not payload:
             report.skipped[name] = _EMPTY_PAYLOAD
             continue
-        if "error" in payload:
+        if is_error_result(payload):
             _record_errored(report, name, str(payload["error"]))
             continue
         expected_keys = _SCANNER_RESULT_KEYS[name]
@@ -629,24 +623,19 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
 
     resolved: list[str] = []
     for name in selected:
-        if name in post_processor_factories:
-            # Stages rather than selectable analyzers: they report their own outcome, so a
-            # skip note here would contradict the same report.
+        if name in post_processor_factories or name in CRYPTO_ANALYZERS:
+            # Post-processors are stages that report their own outcome; every crypto name gets its note below.
             continue
-        if name in CRYPTO_ANALYZERS:
-            report.skipped[name] = _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED)
-        elif name not in analyzer_factories:
+        if name not in analyzer_factories:
             report.skipped[name] = _UNKNOWN_ANALYZER
         else:
             resolved.append(name)
 
     for name in analyzer_factories:
-        if name in resolved or name in report.skipped:
-            continue
-        if name in CRYPTO_ANALYZERS:
-            report.skipped[name] = _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED)
-        else:
+        if name not in resolved and name not in report.skipped:
             report.skipped[name] = ADHOC_SKIP_REASONS.get(name, _NOT_REQUESTED)
+    for name in sorted(CRYPTO_ANALYZERS):
+        report.skipped.setdefault(name, _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED))
 
     return resolved
 
@@ -664,14 +653,12 @@ def _aggregate_crypto_rules(
         report.skipped[_CRYPTO_RULES] = _NO_CRYPTO_ASSETS
         return
 
-    # A seeded lifecycle or cipher rule constrains no subject, so the matcher alone would fire it on every asset.
-    rules = [rule for rule in load_seed_rules() if rule.enabled and rule.finding_type in RULE_DRIVEN_FINDING_TYPES]
     for parsed_input in parsed_inputs:
         assets = [
             CryptoAsset(project_id=_ADHOC_SCOPE, scan_id=_ADHOC_SCOPE, **asset.model_dump())
             for asset in parsed_input.parsed.crypto_assets
         ]
-        findings = crypto_findings_for_assets(assets, rules)
+        findings = crypto_findings_for_assets(assets, _ADHOC_CRYPTO_RULES, scanner=_CRYPTO_RULES)
         if findings:
             aggregator.aggregate(
                 _CRYPTO_DISPATCH_KEY,
@@ -684,27 +671,24 @@ def _aggregate_crypto_rules(
 async def _enrich_vulnerabilities(
     records: list[dict[str, Any]], report: AnalyzerReport
 ) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
-    """Add EPSS/KEV to the vulnerability records through a service private to this request;
-    returns the EPSS/KEV summary and the per-CVE enrichment.
-
-    The module singleton carries a mutable GitHub token shared with background scans.
-    """
+    """Add EPSS/KEV to the vulnerability records; returns the EPSS/KEV summary and the per-CVE enrichment."""
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
-    service = VulnerabilityEnrichmentService()
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
     try:
-        threat_intel = await service.enrich_findings(vulnerabilities)
-        _record_ran(report, _ENRICHMENT)
+        threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(vulnerabilities)
     except Exception as exc:
         logger.warning("adhoc: EPSS/KEV enrichment failed: %s", exc)
         _record_errored(report, _ENRICHMENT, str(exc))
-    finally:
-        await service.close()
+    else:
+        if unavailable:
+            _record_errored(report, _ENRICHMENT, f"{' and '.join(unavailable)} unavailable")
+        else:
+            _record_ran(report, _ENRICHMENT)
     refresh_vulnerability_info(records)
     return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
 
-def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], _PreparedCallgraph]:
+def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
     """Turn a posted callgraph into the same in-memory shape the stored one resolves to."""
     from app.api.v1.helpers.callgraph import detect_format, parse_generic_format, parse_madge_format
 
@@ -723,21 +707,14 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
     if parser is None:
         raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
 
-    imports, _calls, module_usage, analyzed_modules = parser(data, language)
-    minimal = CallgraphMinimal(
+    parsed = parser(data, language)
+    return CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,
-        module_usage={key: usage.model_dump() for key, usage in module_usage.items()},
-        analyzed_modules=analyzed_modules,
+        module_usage={key: usage.model_dump() for key, usage in parsed.module_usage.items()},
+        analyzed_modules=parsed.analyzed_modules,
         language=language,
+        total_imports=parsed.total_imports,
     )
-    as_dict = {
-        "language": minimal.language,
-        "module_usage": minimal.module_usage,
-        "analyzed_modules": minimal.analyzed_modules,
-        "total_imports": len(imports),
-        "created_at": None,
-    }
-    return as_dict, _prepare_callgraph(minimal)
 
 
 def _run_reachability(
@@ -751,7 +728,7 @@ def _run_reachability(
         return None
 
     try:
-        callgraph_dict, prepared = _prepare_posted_callgraph(callgraph_payload)
+        callgraph = _prepare_posted_callgraph(callgraph_payload)
     except Exception as exc:
         logger.warning("adhoc: callgraph could not be prepared: %s", exc)
         _record_errored(report, _REACHABILITY, str(exc))
@@ -760,9 +737,9 @@ def _run_reachability(
     # The list holds the same dict objects as ``records``, so the mirroring store_reachability
     # does in place stays visible to every later stage.
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
-    enriched = enrich_findings_from_callgraphs(vulnerabilities, [prepared], languages)
+    enrich_findings_with_reachability(vulnerabilities, [callgraph], languages)
     _record_ran(report, _REACHABILITY)
-    return dict(build_reachability_summary(vulnerabilities, [callgraph_dict], enriched))
+    return dict(build_reachability_summary(vulnerabilities, [callgraph]))
 
 
 def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
@@ -841,8 +818,8 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
-    license_policy = request.license_policy.model_dump() if request.license_policy else None
-    settings_for = _build_settings_resolver(SystemSettings(), license_policy, None)
+    license_settings = {"license_compliance": request.license_policy.model_dump()} if request.license_policy else None
+    settings_for = _build_settings_resolver(SystemSettings(), license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
 
@@ -853,7 +830,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
                 analyzer_factories[name](),
                 parsed_input.sbom,
                 settings_for(name),
-                parsed_input.components or None,
+                parsed_input.components,
                 aggregator,
                 report,
                 _input_label(parsed_input),
@@ -896,8 +873,12 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         threat_intel=threat_intel,
     )
 
-    # A stage that errored still reached upstream, so attempted is the condition, not success.
-    report.notes = {name: note for name, note in _STAGE_NOTES.items() if name in report.ran or name in report.errored}
+    # A stage that errored still reached upstream, unless it stopped for want of an API key before any request.
+    report.notes = {
+        name: note
+        for name, note in _STAGE_NOTES.items()
+        if name in report.ran or any(MISSING_API_KEY not in reason for reason in report.errored.get(name, ()))
+    }
 
     return AdhocAnalyzeResponse(
         findings=records,

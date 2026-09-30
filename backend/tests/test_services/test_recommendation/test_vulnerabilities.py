@@ -1,9 +1,13 @@
 """Tests for app.services.recommendation.vulnerabilities."""
 
+import json
+from pathlib import Path
+
 import pytest
 
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.vulnerabilities import process_vulnerabilities
+from app.services.sbom_parser import parse_sbom
 from tests.helpers.findings import stored_vulnerability
 
 
@@ -278,6 +282,17 @@ class TestBaseImageUpdate:
 
         assert [r.type for r in result] == [RecommendationType.BASE_IMAGE_UPDATE]
 
+    def test_os_packages_of_an_application_rooted_sbom_count_as_image(self):
+        # trivy rootfs names the scanned tree an application, so its apk rows inherit that label.
+        sbom = json.loads((Path(__file__).parents[2] / "fixtures" / "sbom" / "rootfs.trivy.cdx.json").read_text())
+        dep = next(d.to_dict() for d in parse_sbom(sbom).dependencies if d.name == "libssl3")
+        finding = _make_finding(severity="CRITICAL", component="libssl3", version=dep["version"])
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], None)
+
+        assert dep["source_type"] == "application"
+        assert [r.type for r in result] == [RecommendationType.BASE_IMAGE_UPDATE]
+
     def test_few_low_severity_os_vulns_no_recommendation(self):
         """Fewer than 3 low-severity OS vulns should NOT trigger base image update."""
         findings = [
@@ -350,6 +365,31 @@ class TestBaseImageUpdate:
 
         base_recs = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
         assert base_recs[0].action["current_image"] == "python:3.11-slim"
+
+    @pytest.mark.parametrize(
+        ("source_target", "image_name"),
+        [
+            pytest.param(
+                "registry.example.com/team/app@sha256:9b2c1f0e5d8a7b6c4e3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a3b2c1d",
+                "registry.example.com/team/app",
+                id="digest",
+            ),
+            pytest.param("registry.example.com:5000/team/app", "registry.example.com:5000/team/app", id="port-no-tag"),
+            pytest.param("registry.example.com:5000/team/app:1.4", "registry.example.com:5000/team/app", id="port-tag"),
+            pytest.param("debian:11", "debian", id="tag"),
+        ],
+    )
+    def test_the_suggested_pull_names_the_image_repository(self, source_target, image_name):
+        finding = _make_finding(severity="CRITICAL", component="libssl")
+        dep = _make_dependency(
+            name="libssl", purl="pkg:deb/debian/libssl@1.0.0", direct=False, source_type="image", dep_type="deb"
+        )
+
+        result = process_vulnerabilities([finding], _build_lookup_maps([dep]), [dep], source_target)
+
+        [base_rec] = [r for r in result if r.type == RecommendationType.BASE_IMAGE_UPDATE]
+        assert base_rec.action["commands"][1] == f"docker pull {image_name}:latest"
+        assert base_rec.action["current_image"] == source_target
 
     def test_effort_low_for_many_vulns(self):
         """When more than 10 OS vulns, effort should be 'low' (batch fix via image update)."""

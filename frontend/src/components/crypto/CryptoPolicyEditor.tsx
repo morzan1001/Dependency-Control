@@ -61,7 +61,7 @@ function emptyRule(): CryptoRule {
     match_curves: [],
     match_protocol_versions: [],
     quantum_vulnerable: null,
-    enabled: true,
+    enabled: false,
     source: "custom",
     references: [],
   };

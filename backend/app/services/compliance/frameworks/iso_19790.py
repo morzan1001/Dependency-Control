@@ -2,13 +2,9 @@
 
 from functools import cached_property
 
-from app.models.finding import FindingType, Severity
 from app.schemas.compliance import ControlDefinition, FrameworkEvaluation, ReportFramework
 from app.services.compliance.frameworks.base import EvaluationInput, evaluate_framework
-from app.services.compliance.frameworks.fips_140_3 import (
-    Fips1403Framework,
-    build_disallowed_algorithm_controls,
-)
+from app.services.compliance.frameworks.fips_140_3 import algorithm_conformance_controls
 
 
 class Iso19790Framework:
@@ -22,25 +18,9 @@ class Iso19790Framework:
         "(e.g., via ISO/IEC 24759) is out of scope."
     )
 
-    def __init__(self) -> None:
-        self._fips = Fips1403Framework()
-
     @cached_property
     def controls(self) -> list[ControlDefinition]:
-        # rebuild with ISO prefix so closure-captured control_ids match this framework
-        out = build_disallowed_algorithm_controls(self._fips.data, control_id_prefix="ISO-19790")
-        out.append(
-            ControlDefinition(
-                control_id="ISO-19790-RSA-MIN-2048",
-                title="RSA minimum key size",
-                description=("Per ISO/IEC 19790:2012 Annex D and FIPS 140-3, RSA keys must be at least 2048 bits."),
-                severity=Severity.HIGH,
-                remediation="Rotate any RSA keys shorter than 2048 bits.",
-                maps_to_rule_ids=["nist-131a-rsa-min-2048"],
-                maps_to_finding_types=[FindingType.CRYPTO_WEAK_KEY],
-            )
-        )
-        return out
+        return algorithm_conformance_controls("ISO-19790", rsa_basis="ISO/IEC 19790:2012 Annex D and FIPS 140-3")
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
         return evaluate_framework(self, data)

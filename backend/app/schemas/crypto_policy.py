@@ -45,7 +45,8 @@ class CryptoRule(BaseModel):
         description="Match if (protocol_type, version) combines to one of these strings (case-insensitive)",
     )
     quantum_vulnerable: bool | None = Field(
-        None, description="When true, match if primitive is PKE/SIGNATURE/KEM and name is in match_name_patterns"
+        None,
+        description="When true, match if primitive is PKE/SIGNATURE/KEM/KEY-AGREE and name is in match_name_patterns",
     )
 
     # Certificate-Lifecycle thresholds (in days). None = "not used by this rule"
@@ -98,9 +99,13 @@ class CryptoRule(BaseModel):
         return self
 
 
-# The finding types CryptoRuleAnalyzer evaluates; its matchers run for no other type.
+# The finding types evaluate_rules evaluates; its matchers run for no other type.
 RULE_DRIVEN_FINDING_TYPES: frozenset[FindingType] = frozenset(
     {FindingType.CRYPTO_WEAK_ALGORITHM, FindingType.CRYPTO_WEAK_KEY, FindingType.CRYPTO_QUANTUM_VULNERABLE}
+)
+# The lifecycle analyzer reads a rule of these types for its enabled flag and severity alone.
+_CERT_CHECK_TYPES = frozenset(
+    {FindingType.CRYPTO_CERT_EXPIRED, FindingType.CRYPTO_CERT_NOT_YET_VALID, FindingType.CRYPTO_CERT_SELF_SIGNED}
 )
 _EXPIRY_LADDER = ("expiry_critical_days", "expiry_high_days", "expiry_medium_days", "expiry_low_days")
 _BOUNDED_LISTS = (
@@ -116,8 +121,13 @@ _MAX_RULES = 200
 
 
 def _unevaluable(rule: CryptoRule) -> str | None:
-    """Why no analyzer would evaluate the rule as written, or None when one would."""
-    # The lifecycle and cipher analyzers select rules by these fields, not by finding type.
+    """Why the rule cannot be stored, or why no analyzer would evaluate it while enabled; None otherwise."""
+    oversized = [f for f in _BOUNDED_LISTS if len(getattr(rule, f)) > _MAX_LIST_ITEMS]
+    if oversized:
+        return f"{', '.join(oversized)} hold more than {_MAX_LIST_ITEMS} entries"
+    if not rule.enabled:
+        return None
+    # Each family of fields is evaluated only on rules of the listed finding types.
     families = [
         finding_types
         for finding_types, used in (
@@ -134,7 +144,7 @@ def _unevaluable(rule: CryptoRule) -> str | None:
         )
         if used
     ]
-    allowed = set.intersection(*map(set, families)) if families else set(RULE_DRIVEN_FINDING_TYPES)
+    allowed = set.intersection(*map(set, families)) if families else RULE_DRIVEN_FINDING_TYPES | _CERT_CHECK_TYPES
     if not allowed:
         return "sets fields that no single analyzer evaluates together"
     if rule.finding_type not in allowed:
@@ -147,9 +157,6 @@ def _unevaluable(rule: CryptoRule) -> str | None:
     ladder = [getattr(rule, f) for f in _EXPIRY_LADDER if getattr(rule, f) is not None]
     if ladder != sorted(ladder):
         return "expiry thresholds must not decrease from critical to low"
-    oversized = [f for f in _BOUNDED_LISTS if len(getattr(rule, f)) > _MAX_LIST_ITEMS]
-    if oversized:
-        return f"{', '.join(oversized)} hold more than {_MAX_LIST_ITEMS} entries"
     return None
 
 

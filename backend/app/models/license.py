@@ -32,7 +32,7 @@ CATEGORY_RESTRICTIVENESS: dict[str, int] = {
 class DistributionModel(str, Enum):
     """How the project is distributed."""
 
-    INTERNAL_ONLY = "internal_only"  # Not distributed outside the organization
+    INTERNAL_ONLY = "internal_only"  # Used by internal users only
     DISTRIBUTED = "distributed"  # Distributed as binary or source to third parties
     OPEN_SOURCE = "open_source"  # Project itself is open source
 
@@ -55,17 +55,6 @@ class LibraryUsage(str, Enum):
 
 
 @dataclass
-class LicensePolicy:
-    """Project-level license compliance policy that provides context for severity decisions."""
-
-    distribution_model: DistributionModel = DistributionModel.DISTRIBUTED
-    deployment_model: DeploymentModel = DeploymentModel.NETWORK_FACING
-    library_usage: LibraryUsage = LibraryUsage.MIXED
-    allow_strong_copyleft: bool = False
-    allow_network_copyleft: bool = False
-
-
-@dataclass
 class LicenseInfo:
     """Detailed information about a license."""
 
@@ -75,8 +64,3 @@ class LicenseInfo:
     description: str
     obligations: list[str] = field(default_factory=list)
     risks: list[str] = field(default_factory=list)
-    compatible_with_proprietary: bool = False
-    requires_attribution: bool = True
-    requires_source_disclosure: bool = False
-    viral: bool = False
-    network_clause: bool = False

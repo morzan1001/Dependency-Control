@@ -1,13 +1,20 @@
 """Helper functions for callgraph endpoints."""
 
-from typing import Any
+from typing import Any, NamedTuple
 
-
-from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
+from app.models.callgraph import ModuleUsage
 from app.services.component_identity import canonical_module_key, npm_package_key
 
 _NODE_MODULES = "node_modules/"
 _ANALYZED_MODULES_KEY = "__analyzed_modules__"
+
+
+class ParsedCallgraph(NamedTuple):
+    module_usage: dict[str, ModuleUsage]
+    analyzed_modules: list[str]
+    total_imports: int
+    total_calls: int
+    source_files: int
 
 
 def callgraph_entry_count(data: dict[str, Any]) -> int:
@@ -67,24 +74,8 @@ def _madge_package(dep: str) -> str | None:
     return None
 
 
-def _record_madge_dep(
-    dep: str,
-    file_path: str,
-    language: str,
-    imports: list[ImportEntry],
-    module_usage: dict[str, ModuleUsage],
-) -> None:
+def _record_madge_dep(dep: str, file_path: str, language: str, module_usage: dict[str, ModuleUsage]) -> None:
     """Record one madge dependency; only external packages get a ModuleUsage."""
-    imports.append(
-        ImportEntry(
-            module=dep,
-            file=file_path,
-            line=0,  # madge provides no line numbers
-            imported_symbols=[],
-            is_dynamic=False,
-        )
-    )
-
     package = _madge_package(dep)
     if package is None:
         return
@@ -94,45 +85,33 @@ def _record_madge_dep(
     usage.import_locations.append(file_path)
 
 
-def parse_madge_format(
-    data: dict[str, Any], language: str
-) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage], list[str]]:
+def parse_madge_format(data: dict[str, Any], language: str) -> ParsedCallgraph:
     """Parse madge JSON output ({file: [dependencies]}); returns no call edges."""
-    imports: list[ImportEntry] = []
     module_usage: dict[str, ModuleUsage] = {}
     analyzed_modules = _canonical_module_list(data.get(_ANALYZED_MODULES_KEY), language)
+    total_imports = source_files = 0
 
     for file_path, dependencies in data.items():
         if file_path == _ANALYZED_MODULES_KEY or not isinstance(dependencies, list):
             continue
-        for dep in dependencies:
-            if isinstance(dep, str) and dep:
-                _record_madge_dep(dep, file_path, language, imports, module_usage)
+        valid = [dep for dep in dependencies if isinstance(dep, str) and dep]
+        for dep in valid:
+            _record_madge_dep(dep, file_path, language, module_usage)
+        total_imports += len(valid)
+        source_files += bool(valid)
 
     _dedupe_module_usage(module_usage)
-    return imports, [], module_usage, analyzed_modules
+    return ParsedCallgraph(module_usage, analyzed_modules, total_imports, 0, source_files)
 
 
-def _record_generic_import(
-    imp: dict[str, Any],
-    language: str,
-    imports: list[ImportEntry],
-    module_usage: dict[str, ModuleUsage],
-) -> None:
-    """Record one generic-format import entry and its module usage."""
+def _record_generic_import(imp: dict[str, Any], language: str, module_usage: dict[str, ModuleUsage]) -> None:
+    """Record one generic-format import entry in its module's usage."""
     module = imp.get("module", "")
     file_path = imp.get("file", "")
     symbols = imp.get("symbols", [])
-
-    imports.append(
-        ImportEntry(
-            module=module,
-            file=file_path,
-            line=imp.get("line", 0),
-            imported_symbols=symbols,
-            is_dynamic=False,
-        )
-    )
+    well_typed = isinstance(module, str) and isinstance(file_path, str) and isinstance(symbols, list)
+    if not well_typed or not all(isinstance(symbol, str) for symbol in symbols):
+        raise ValueError("an import needs a string module and file and a list of string symbols")
 
     if not module or module.startswith(("./", "../")):
         return
@@ -144,51 +123,46 @@ def _record_generic_import(
     usage.used_symbols.extend(symbols)
 
 
-def _record_generic_call(
-    call: dict[str, Any],
-    language: str,
-    calls: list[CallEdge],
-    module_usage: dict[str, ModuleUsage],
-) -> None:
-    """Record one generic-format call edge and its module usage."""
-    calls.append(
-        CallEdge(
-            caller=f"{call.get('caller_file', '')}:{call.get('caller_function', '')}",
-            callee=f"{call.get('callee_module', '')}:{call.get('callee_function', '')}",
-            file=call.get("caller_file", ""),
-            line=call.get("line", 0),
-            call_type="direct",
-        )
-    )
-
+def _record_generic_call(call: dict[str, Any], language: str, module_usage: dict[str, ModuleUsage]) -> None:
+    """Record one generic-format call edge in its callee module's usage."""
     module = call.get("callee_module", "")
+    func = call.get("callee_function", "")
+    caller_file = call.get("caller_file", "")
+    if not (isinstance(module, str) and isinstance(func, str) and isinstance(caller_file, str)):
+        raise ValueError("a call needs a string callee_module, callee_function and caller_file")
+
     if not module:
         return
 
     usage = _get_or_create_module_usage(module_usage, canonical_module_key(module, language))
     usage.call_count += 1
-    func = call.get("callee_function", "")
     if func:
         usage.used_symbols.append(func)
+    # A file that calls into a package references it, even when the producer emitted no import for it.
+    if caller_file:
+        usage.import_locations.append(caller_file)
 
 
-def parse_generic_format(
-    data: dict[str, Any], language: str
-) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage], list[str]]:
+def parse_generic_format(data: dict[str, Any], language: str) -> ParsedCallgraph:
     """Parse the generic callgraph format."""
-    imports: list[ImportEntry] = []
-    calls: list[CallEdge] = []
+    imports = data.get("imports", [])
+    calls = data.get("calls", [])
     module_usage: dict[str, ModuleUsage] = {}
-    analyzed_modules = _canonical_module_list(data.get("analyzed_modules"), language)
 
-    for imp in data.get("imports", []):
-        _record_generic_import(imp, language, imports, module_usage)
+    for imp in imports:
+        _record_generic_import(imp, language, module_usage)
 
-    for call in data.get("calls", []):
-        _record_generic_call(call, language, calls, module_usage)
+    for call in calls:
+        _record_generic_call(call, language, module_usage)
 
     _dedupe_module_usage(module_usage)
-    return imports, calls, module_usage, analyzed_modules
+    return ParsedCallgraph(
+        module_usage,
+        _canonical_module_list(data.get("analyzed_modules"), language),
+        total_imports=len(imports),
+        total_calls=len(calls),
+        source_files=len({imp.get("file", "") for imp in imports}),
+    )
 
 
 def detect_format(data: dict[str, Any]) -> str:

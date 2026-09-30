@@ -4,6 +4,7 @@ from collections import defaultdict
 
 from app.core.constants import get_severity_value
 from app.models.finding import CRYPTO_FINDING_TYPES
+from app.schemas.finding_details import all_rule_ids
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import ModelOrDict, get_attr, sampled
 
@@ -104,7 +105,7 @@ def _build_recommendation(
     effort = _TYPE_TO_EFFORT.get(finding_type, Effort.MEDIUM)
 
     bom_refs = sorted({ref for ref in (_bom_ref(f) for f in findings) if ref})
-    rule_ids = sorted({rid for rid in (_rule_id(f) for f in findings) if rid})
+    rule_ids = sorted({rid for f in findings for rid in all_rule_ids(get_attr(f, "details", {}))})
     descriptions = sorted({str(get_attr(f, "description", "")).strip() for f in findings if get_attr(f, "description")})
 
     impact: dict[str, int] = {
@@ -147,7 +148,7 @@ def _title_and_description(finding_type: str, asset_name: str, findings: list[Mo
         return (
             f"Replace weak algorithm: {asset_name}",
             (
-                f"{asset_name} is flagged by {count} crypto policy rule{plural} as broken or disallowed. "
+                f"{asset_name} is broken or disallowed by crypto policy in {count} location{plural}. "
                 f"Replace it with a modern primitive in the affected components."
             ),
         )
@@ -228,12 +229,4 @@ def _bom_ref(finding: ModelOrDict) -> str | None:
     if isinstance(details, dict):
         ref = details.get("bom_ref")
         return str(ref) if ref else None
-    return None
-
-
-def _rule_id(finding: ModelOrDict) -> str | None:
-    details = get_attr(finding, "details", {}) or {}
-    if isinstance(details, dict):
-        rid = details.get("rule_id")
-        return str(rid) if rid else None
     return None

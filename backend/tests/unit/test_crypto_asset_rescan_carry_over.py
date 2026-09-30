@@ -95,7 +95,7 @@ async def test_only_the_named_scan_is_copied(db):
 
 def _repo_spy(monkeypatch):
     spy = SimpleNamespace(carry_over_to_scan=AsyncMock(return_value=0))
-    monkeypatch.setattr("app.repositories.crypto_asset.CryptoAssetRepository", lambda _db: spy)
+    monkeypatch.setattr("app.services.analysis.engine.CryptoAssetRepository", lambda _db: spy)
     return spy
 
 

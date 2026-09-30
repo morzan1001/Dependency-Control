@@ -88,16 +88,7 @@ class _FakeOsv:
                             "id": _CVE,
                             "severity": _SEVERITY_CRITICAL,
                             "summary": _SUMMARY,
-                            "affected": [
-                                {
-                                    "ranges": [
-                                        {
-                                            "type": "ECOSYSTEM",
-                                            "events": [{"introduced": "0"}, {"fixed": _FIXED_VERSION}],
-                                        }
-                                    ]
-                                }
-                            ],
+                            "fixed_version": _FIXED_VERSION,
                         }
                     ],
                 }

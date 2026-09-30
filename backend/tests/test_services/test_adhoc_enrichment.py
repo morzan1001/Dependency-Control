@@ -1,20 +1,19 @@
-"""EPSS/KEV enrichment runs on a per-request service instance and is always closed."""
+"""How the ad-hoc EPSS/KEV stage reports what the enrichment did and where it reached."""
 
-from typing import ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import run_adhoc_analysis
+from app.services.enrichment.service import vulnerability_enrichment_service
 from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.enrichment import Upstreams, serve_enrichment
 from tests.mocks.fake_mongo import FakeDatabase
 
 _ENRICHMENT = "epss_kev"
 _TRUFFLEHOG_NAME = "trufflehog"
-_SERVICE_ATTRIBUTE = "app.services.analysis.adhoc.VulnerabilityEnrichmentService"
 _FEED_DOWN = "EPSS feed down"
-_SHARED_SINGLETON_USED = "the shared singleton must not be used ad-hoc"
 _SECRET_FILE = "app/config.py"
 _CVE = "CVE-2024-0001"
 _VULNERABLE_COMPONENT = "requests"
@@ -46,31 +45,24 @@ _SBOM = {
 }
 
 
-class _SpyService:
-    instances: ClassVar[list["_SpyService"]] = []
-
-    def __init__(self):
-        self.enriched = None
-        self.closed = False
-        _SpyService.instances.append(self)
-
-    async def enrich_findings(self, findings):
-        self.enriched = findings
-
-    async def close(self):
-        self.closed = True
+def _serve(monkeypatch, **mock) -> AsyncMock:
+    enrich = AsyncMock(**{"return_value": ({}, []), **mock})
+    monkeypatch.setattr(vulnerability_enrichment_service, "enrich_findings", enrich)
+    return enrich
 
 
-class _ExplodingService(_SpyService):
-    async def enrich_findings(self, findings):
-        raise RuntimeError(_FEED_DOWN)
+def _vulnerable_osv(*vulnerabilities: dict) -> object:
+    class _Osv:
+        name = "osv"
 
+        async def analyze(self, sbom, settings=None, parsed_components=None):
+            return {
+                "osv_vulnerabilities": [
+                    {"component": _VULNERABLE_COMPONENT, "version": "2.31.0", "vulnerabilities": list(vulnerabilities)}
+                ]
+            }
 
-@pytest.fixture(autouse=True)
-def _reset_instances():
-    _SpyService.instances = []
-    yield
-    _SpyService.instances = []
+    return _Osv()
 
 
 def _secrets_request() -> AdhocAnalyzeRequest:
@@ -78,36 +70,28 @@ def _secrets_request() -> AdhocAnalyzeRequest:
 
 
 @pytest.mark.asyncio
-async def test_module_singleton_is_never_used(monkeypatch):
-    import app.services.enrichment as enrichment_pkg
-
-    monkeypatch.setattr(
-        enrichment_pkg.vulnerability_enrichment_service,
-        "enrich_findings",
-        AsyncMock(side_effect=AssertionError(_SHARED_SINGLETON_USED)),
-    )
-    monkeypatch.setattr(_SERVICE_ATTRIBUTE, _SpyService)
-
-    await run_adhoc_analysis(_secrets_request(), FakeDatabase())
-
-    assert len(_SpyService.instances) == 1
-    assert _SpyService.instances[0].closed is True
-
-
-@pytest.mark.asyncio
-async def test_enrichment_failure_is_reported_and_the_client_still_closes(monkeypatch):
-    monkeypatch.setattr(_SERVICE_ATTRIBUTE, _ExplodingService)
+async def test_enrichment_failure_is_reported(monkeypatch):
+    _serve(monkeypatch, side_effect=RuntimeError(_FEED_DOWN))
 
     response = await run_adhoc_analysis(_secrets_request(), FakeDatabase())
 
     assert response.analyzers.errored[_ENRICHMENT] == [_FEED_DOWN]
     assert _ENRICHMENT not in response.analyzers.ran
-    assert _ExplodingService.instances[0].closed is True
+
+
+@pytest.mark.asyncio
+async def test_an_unreadable_source_reports_the_stage_as_errored(monkeypatch):
+    _serve(monkeypatch, return_value=({}, ["KEV"]))
+
+    response = await run_adhoc_analysis(_secrets_request(), FakeDatabase())
+
+    assert response.analyzers.errored[_ENRICHMENT] == ["KEV unavailable"]
+    assert _ENRICHMENT not in response.analyzers.ran
 
 
 @pytest.mark.asyncio
 async def test_summary_is_always_present(monkeypatch):
-    monkeypatch.setattr(_SERVICE_ATTRIBUTE, _SpyService)
+    _serve(monkeypatch)
 
     response = await run_adhoc_analysis(_secrets_request(), FakeDatabase())
 
@@ -117,7 +101,7 @@ async def test_summary_is_always_present(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_naming_the_stage_does_not_report_it_as_both_run_and_skipped(monkeypatch):
-    monkeypatch.setattr(_SERVICE_ATTRIBUTE, _SpyService)
+    _serve(monkeypatch)
 
     request = AdhocAnalyzeRequest(
         scanners={_TRUFFLEHOG_NAME: _TRUFFLEHOG}, analyzers=[_ENRICHMENT], apply_global_waivers=False
@@ -130,23 +114,8 @@ async def test_naming_the_stage_does_not_report_it_as_both_run_and_skipped(monke
 
 @pytest.mark.asyncio
 async def test_only_vulnerability_records_are_handed_to_the_service(monkeypatch):
-
-    class _Vulnerable:
-        name = "osv"
-
-        async def analyze(self, sbom, settings=None, parsed_components=None):
-            return {
-                "osv_vulnerabilities": [
-                    {
-                        "component": _VULNERABLE_COMPONENT,
-                        "version": "2.31.0",
-                        "vulnerabilities": [{"id": _CVE, "severity": "HIGH", "summary": "example"}],
-                    }
-                ]
-            }
-
-    serve_analyzer(monkeypatch, "osv", _Vulnerable())
-    monkeypatch.setattr(_SERVICE_ATTRIBUTE, _SpyService)
+    serve_analyzer(monkeypatch, "osv", _vulnerable_osv({"id": _CVE, "severity": "HIGH", "summary": "example"}))
+    enrich = _serve(monkeypatch)
 
     request = AdhocAnalyzeRequest(
         sboms=[_SBOM],
@@ -156,7 +125,7 @@ async def test_only_vulnerability_records_are_handed_to_the_service(monkeypatch)
     )
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    handed = _SpyService.instances[0].enriched
+    handed = enrich.await_args.args[0]
     assert [record["component"] for record in handed] == [_VULNERABLE_COMPONENT]
     assert response.epss_kev_summary["total_vulnerabilities"] == 1
     # The secret finding is still returned; it is only kept out of the enrichment batch.
@@ -175,28 +144,31 @@ async def test_the_kev_card_names_the_bundled_cve_the_enrichment_marks(monkeypat
         second: VulnerabilityEnrichment(cve=second, risk_score=40.0, is_kev=True),
     }
 
-    class _Bundled:
-        name = "osv"
+    async def enrich_findings(findings):
+        for finding in findings:
+            apply_enrichments(finding["details"], live)
+        return live, []
 
-        async def analyze(self, sbom, settings=None, parsed_components=None):
-            advisory = {"id": "ALAS2-2023-2001", "aliases": [first, second], "severity": "HIGH", "summary": "s"}
-            return {
-                "osv_vulnerabilities": [
-                    {"component": _VULNERABLE_COMPONENT, "version": "2.31.0", "vulnerabilities": [advisory]}
-                ]
-            }
-
-    class _KevService(_SpyService):
-        async def enrich_findings(self, findings):
-            for finding in findings:
-                apply_enrichments(finding["details"], live)
-            return live
-
-    serve_analyzer(monkeypatch, "osv", _Bundled())
-    monkeypatch.setattr(_SERVICE_ATTRIBUTE, _KevService)
+    advisory = {"id": "ALAS2-2023-2001", "aliases": [first, second], "severity": "HIGH", "summary": "s"}
+    serve_analyzer(monkeypatch, "osv", _vulnerable_osv(advisory))
+    _serve(monkeypatch, side_effect=enrich_findings)
 
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     [kev_card] = [r for r in response.recommendations if r["type"] == RecommendationType.KNOWN_EXPLOIT]
     assert kev_card["action"]["cves"] == [second]
+
+
+@pytest.mark.asyncio
+async def test_the_note_names_every_host_the_enrichment_reached(fake_cache, monkeypatch):
+    ghsa_id = "GHSA-jfh8-c2jp-5v3q"
+    serve_analyzer(monkeypatch, "osv", _vulnerable_osv({"id": ghsa_id, "severity": "HIGH", "summary": "s"}))
+    seen = serve_enrichment(monkeypatch, fake_cache, Upstreams(advisories={ghsa_id: _CVE}, kev=(_CVE,)))
+
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    contacted = {r.url.host for r in seen}
+    assert contacted == {"api.github.com", "api.first.org", "www.cisa.gov"}
+    assert all(host in response.analyzers.notes[_ENRICHMENT] for host in contacted)

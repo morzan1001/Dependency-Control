@@ -1,4 +1,5 @@
 from datetime import datetime
+from itertools import pairwise
 from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
@@ -6,9 +7,17 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 from app.core.constants import (
     DEFAULT_ACTIVE_ANALYZERS,
     DEFAULT_RETENTION_DAYS,
+    EOL_HIGH_AFTER_DAYS,
+    EOL_MEDIUM_AFTER_DAYS,
     MAX_RETENTION_DAYS,
     PROJECT_ROLE_VIEWER,
     RETENTION_ACTION_DELETE,
+    SCORECARD_FLAG_THRESHOLD,
+    STALE_PACKAGE_THRESHOLD_DAYS,
+    STALE_PACKAGE_WARNING_DAYS,
+    TYPOSQUATTING_CRITICAL_SIMILARITY,
+    TYPOSQUATTING_HIGH_SIMILARITY,
+    TYPOSQUATTING_SIMILARITY_THRESHOLD,
     ProjectRole,
     RetentionAction,
 )
@@ -28,13 +37,12 @@ class LicensePolicySchema(BaseModel):
     ``use_enum_values``/``validate_default`` serialize values as plain strings.
     """
 
-    # extra="forbid": a misspelt key used to be discarded, restoring the network-facing default and
-    # re-grading every AGPL finding in the project on every future scan.
+    # extra="forbid": a discarded misspelt key would silently restore a default on every future scan.
     model_config = ConfigDict(use_enum_values=True, validate_default=True, extra="forbid")
 
     distribution_model: DistributionModel = Field(
         DistributionModel.DISTRIBUTED,
-        description="How the project is distributed: internal_only (no external distribution), "
+        description="How the project is distributed: internal_only (internal users only), "
         "distributed (binary/source to third parties), open_source (project is open source)",
     )
     deployment_model: DeploymentModel = Field(
@@ -49,31 +57,64 @@ class LicensePolicySchema(BaseModel):
     )
     allow_strong_copyleft: bool = Field(False, description="Allow GPL-style licenses (reduces severity to INFO)")
     allow_network_copyleft: bool = Field(False, description="Allow AGPL/SSPL licenses (reduces severity)")
+    ignore_dev_dependencies: bool = Field(True, description="Skip components in a non-runtime scope")
+    ignore_transitive: bool = Field(False, description="Skip transitive dependencies")
 
 
-_LICENSE_POLICY_ENUMS: dict[str, type[DistributionModel] | type[DeploymentModel] | type[LibraryUsage]] = {
-    "distribution_model": DistributionModel,
-    "deployment_model": DeploymentModel,
-    "library_usage": LibraryUsage,
+def license_policy_from_settings(entry: dict[str, Any] | None) -> LicensePolicySchema:
+    """The effective policy of a stored license_compliance entry; the scan passes it merged with system settings."""
+    policy_fields = LicensePolicySchema.model_fields
+    return LicensePolicySchema.model_validate({k: v for k, v in (entry or {}).items() if k in policy_fields})
+
+
+def _validate_license_settings(value: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    entry = value.get("license_compliance")
+    if entry is not None:
+        value["license_compliance"] = LicensePolicySchema.model_validate(entry).model_dump(exclude_unset=True)
+    return value
+
+
+# analyzer -> key -> (type, min, max, default), with the ranges of frontend/src/lib/analyzer-settings-schemas.ts.
+# Each analyzer lists its keys from the largest to the smallest, and the values must keep that order.
+ANALYZER_TUNABLES: dict[str, dict[str, tuple[type[int] | type[float], float, float, float]]] = {
+    "deps_dev": {"scorecard_threshold": (float, 0, 10, SCORECARD_FLAG_THRESHOLD)},
+    "end_of_life": {
+        "eol_high_after_days": (int, 0, 3650, EOL_HIGH_AFTER_DAYS),
+        "eol_medium_after_days": (int, 0, 3650, EOL_MEDIUM_AFTER_DAYS),
+    },
+    "maintainer_risk": {
+        "stale_after_days": (int, 30, 3650, STALE_PACKAGE_THRESHOLD_DAYS),
+        "warn_after_days": (int, 30, 3650, STALE_PACKAGE_WARNING_DAYS),
+    },
+    "typosquatting": {
+        "critical_similarity": (float, 0.5, 1.0, TYPOSQUATTING_CRITICAL_SIMILARITY),
+        "high_similarity": (float, 0.5, 1.0, TYPOSQUATTING_HIGH_SIMILARITY),
+        "similarity_threshold": (float, 0.5, 1.0, TYPOSQUATTING_SIMILARITY_THRESHOLD),
+    },
 }
 
 
-def _reject_unusable_license_settings(value: dict[str, dict[str, Any]] | None) -> dict[str, dict[str, Any]] | None:
-    """The license analyzer coerces these three keys into enums on every scan, so a value it will
-    refuse must not be stored: the write returns 200 and each later scan of the project raises."""
-    settings = (value or {}).get("license_compliance")
-    if isinstance(settings, dict):
-        nested = settings.get("license_policy")
-        for scope in (settings, nested if isinstance(nested, dict) else {}):
-            for key, enum in _LICENSE_POLICY_ENUMS.items():
-                if key in scope:
-                    enum(scope[key])
+def _reject_invalid_tunables(value: dict[str, dict[str, Any]] | None) -> dict[str, dict[str, Any]] | None:
+    """The analyzers read these values as stored, so one they cannot use fails or silently disables every later scan."""
+    for analyzer, specs in ANALYZER_TUNABLES.items():
+        settings = (value or {}).get(analyzer) or {}
+        effective = []
+        for key, (kind, low, high, default) in specs.items():
+            number = settings.get(key, default)
+            if isinstance(number, bool) or not isinstance(number, (kind, int)) or not low <= number <= high:
+                raise ValueError(
+                    f"{analyzer}.{key} must be {'an integer' if kind is int else 'a number'} from {low} to {high}"
+                )
+            effective.append(number)
+        if any(larger < smaller for larger, smaller in pairwise(effective)):
+            raise ValueError(f"{analyzer} needs {' >= '.join(specs)}")
     return value
 
 
 AnalyzerSettings = Annotated[
     dict[str, dict[str, Any]],
-    AfterValidator(_reject_unusable_license_settings),
+    AfterValidator(_validate_license_settings),
+    AfterValidator(_reject_invalid_tunables),
 ]
 
 
@@ -152,9 +193,6 @@ class ProjectUpdate(BaseModel):
     github_pr_comments_enabled: bool | None = Field(None, description="Post scan results as PR comments on GitHub")
     enforce_notification_settings: bool | None = Field(
         None, description="Enforce admin notification settings for all members"
-    )
-    license_policy: LicensePolicySchema | None = Field(
-        None, description="License compliance policy controlling copyleft finding severity"
     )
     analyzer_settings: AnalyzerSettings | None = Field(
         None, description="Per-analyzer configuration overrides keyed by analyzer ID"
@@ -311,8 +349,8 @@ class ScanFindingItem(BaseModel):
     related_findings: list[str] = Field(default_factory=list, description="Related finding IDs")
     related_findings_omitted: int | None = Field(
         None,
-        description="Same-component findings left unlinked because the group exceeded the "
-        "cross-linking ceiling; None when the list above is complete",
+        description="Same-component findings left unlinked: same-type hits in one file, or every "
+        "sibling past the cross-linking ceiling; None when the list above is complete",
     )
     created_at: datetime | None = Field(None, description="When the finding was created")
 

@@ -84,12 +84,6 @@ class Project(MongoDocument, CreatedAtModel):
         False, description="Enable posting scan results as comments on pull requests"
     )
 
-    # Deprecated: use analyzer_settings["license_compliance"] instead.
-    license_policy: dict[str, Any] | None = Field(
-        None,
-        description="License compliance policy. Controls severity of copyleft findings based on project context.",
-    )
-
     # Per-analyzer settings: {analyzer_id: {setting_key: value}}
     analyzer_settings: dict[str, dict[str, Any]] | None = Field(
         None,
@@ -155,7 +149,6 @@ class Scan(MongoDocument, CreatedAtModel):
 
     # Reachability enrichment
     reachability_pending: bool | None = None
-    reachability_pending_since: datetime | None = None
 
     # Pinned scans are exempt from retention cleanup (housekeeping filters "pinned": {"$ne": True}).
     pinned: bool = False

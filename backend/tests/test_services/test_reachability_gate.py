@@ -1,10 +1,14 @@
 """The falsification gate: a callgraph may only mark a finding unreachable when the
 producer listed that package in ``analyzed_modules`` for a language covering its ecosystem."""
 
+import json
+from pathlib import Path
+
 import pytest
 
-from app.core.constants import REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE, REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED
+from app.api.v1.helpers.callgraph import ParsedCallgraph, parse_generic_format, parse_madge_format
 from app.core.risk_scoring import reachability_display_tier
+from app.schemas.finding_details import ReachabilityInfo
 from app.services.component_identity import canonical_module_key
 from app.schemas.projections import CallgraphMinimal
 from app.services.reachability_enrichment import (
@@ -12,7 +16,9 @@ from app.services.reachability_enrichment import (
     _lists_package,
     _prepare_callgraph,
     component_language_map,
+    enrich_findings_with_reachability,
 )
+from app.services.sbom_parser import parse_sbom
 
 _BASE_RISK = 80.0
 
@@ -50,8 +56,8 @@ def _finding(component="requests", symbols=None, in_kev=False):
     }
 
 
-def _enrich(finding, prepared, component_languages=None):
-    assert _enrich_finding_from_callgraphs(finding, [prepared], component_languages) is True
+def _enrich(finding, prepared, component_languages):
+    _enrich_finding_from_callgraphs(finding, [prepared], component_languages)
     return finding["details"]["reachability"]
 
 
@@ -146,7 +152,7 @@ class TestAliasResolution:
         prepared = _prepared(
             language="java", module_usage=_usage(self._COORDINATE), analyzed_modules=[self._COORDINATE]
         )
-        reach = _enrich(finding, prepared)
+        reach = _enrich(finding, prepared, {})
         assert reach["is_reachable"] is True
         assert reach["import_locations"] == ["app/client.py"]
 
@@ -155,7 +161,7 @@ class TestAliasResolution:
         prepared = _prepared(
             language="java", module_usage=_usage("jackson-databind"), analyzed_modules=["jackson-databind"]
         )
-        reach = _enrich(finding, prepared)
+        reach = _enrich(finding, prepared, {})
         assert reach["is_reachable"] is True
         assert reach["import_locations"] == ["app/client.py"]
 
@@ -200,7 +206,7 @@ class TestSameNameInTwoEcosystems:
         reach = self._verdict("5.7.1")
 
         assert reach["is_reachable"] is None
-        assert reach["unknown_reason"] == REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED
+        assert "No javascript/typescript callgraph was uploaded" in reach["message"]
 
     def test_the_python_twin_is_still_falsified(self):
         assert self._verdict("3.0.2")["is_reachable"] is False
@@ -234,9 +240,141 @@ class TestJvmCoverage:
         reach = self._verdict(prepared)
 
         assert reach["is_reachable"] is None
-        assert reach["unknown_reason"] == REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE
+        assert "cannot see reflective loading" in reach["message"]
 
     def test_without_a_java_graph_the_verdict_asks_for_one(self):
         reach = self._verdict(_prepared(language="python", analyzed_modules=["requests"]))
 
-        assert reach["unknown_reason"] == REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED
+        assert "No groovy/java/kotlin/scala callgraph was uploaded" in reach["message"]
+
+
+_SBOM_FIXTURES = Path(__file__).parent.parent / "fixtures" / "sbom"
+
+
+def _inventory(*fixtures):
+    """The language map of the dependencies the real SBOM parser extracts from these fixtures."""
+    return component_language_map(
+        dep.to_dict()
+        for name in fixtures
+        for dep in parse_sbom(json.loads((_SBOM_FIXTURES / name).read_text())).dependencies
+    )
+
+
+def _stored(parsed: ParsedCallgraph, language):
+    """The projection production reads back for an upload the real parser produced."""
+    return CallgraphMinimal(
+        _id=f"cg-{language}",
+        language=language,
+        module_usage={key: usage.model_dump() for key, usage in parsed.module_usage.items()},
+        analyzed_modules=parsed.analyzed_modules,
+    )
+
+
+class TestDependencyDepth:
+    """First-party code need not import a transitive package, so its absence falsifies nothing."""
+
+    # First-party code imports anyio only, while the producer lists the whole installed set.
+    _GRAPH = parse_generic_format(
+        {
+            "imports": [{"module": "anyio", "file": "app/worker.py", "line": 1, "symbols": ["run"]}],
+            "analyzed_modules": ["anyio", "certifi", "httpx", "idna"],
+        },
+        "python",
+    )
+
+    def _verdict(self, component, version, *fixtures):
+        finding = {**_finding(component=component), "version": version}
+        enrich_findings_with_reachability([finding], [_stored(self._GRAPH, "python")], _inventory(*fixtures))
+        return finding
+
+    def test_a_confirmed_transitive_package_stays_unknown(self):
+        finding = self._verdict("certifi", "2024.7.4", "mono.trivy.cdx.json")
+
+        reach = finding["details"]["reachability"]
+        assert reach["is_reachable"] is None
+        assert "transitive" in reach["message"]
+        assert finding["details"]["adjusted_risk_score"] == _BASE_RISK
+
+    def test_a_direct_package_nothing_imports_is_falsified(self):
+        finding = self._verdict("httpx", "0.27.0", "mono.trivy.cdx.json")
+
+        assert finding["details"]["reachability"]["is_reachable"] is False
+        assert finding["details"]["adjusted_risk_score"] == 32.0
+
+    def test_an_inferred_depth_does_not_block_falsification(self):
+        assert (
+            self._verdict("certifi", "2024.7.4", "poetry.syft.json")["details"]["reachability"]["is_reachable"] is False
+        )
+
+    def test_one_confirmed_transitive_row_blocks_falsification(self):
+        finding = self._verdict("certifi", "2024.7.4", "poetry.syft.json", "mono.trivy.cdx.json")
+
+        assert finding["details"]["reachability"]["is_reachable"] is None
+
+
+class TestEvidenceAcrossGraphs:
+    """Every graph that lists a package contributes its evidence, whatever order the graphs load in."""
+
+    _LODASH = component_language_map([{"name": "lodash", "version": "1.0.0", "type": "npm"}])
+
+    @pytest.mark.parametrize("ts_first", [False, True], ids=["js_first", "ts_first"])
+    def test_symbol_evidence_in_either_graph_confirms(self, ts_first):
+        js = _stored(
+            parse_madge_format(
+                {"src/index.js": ["../node_modules/lodash/index.js"], "__analyzed_modules__": ["lodash"]},
+                "javascript",
+            ),
+            "javascript",
+        )
+        ts = _stored(
+            parse_generic_format(
+                {"imports": [{"module": "lodash", "file": "src/app.ts", "line": 1, "symbols": ["template"]}]},
+                "typescript",
+            ),
+            "typescript",
+        )
+        finding = _finding(component="lodash", symbols=["template"])
+
+        enrich_findings_with_reachability([finding], [ts, js] if ts_first else [js, ts], self._LODASH)
+
+        reach = finding["details"]["reachability"]
+        assert reach["analysis_level"] == "symbol"
+        assert reach["confidence_score"] == 1.0
+        assert reach["matched_symbols"] == ["template"]
+        assert reach["import_locations"] == ["src/app.ts", "src/index.js"]
+        assert reach["import_location_count"] == 2
+        assert finding["details"]["adjusted_risk_score"] == 88.0
+
+
+class TestVerdictShape:
+    def test_every_verdict_persists_only_declared_fields(self):
+        graph = _stored(
+            parse_generic_format(
+                {
+                    "imports": [{"module": "requests", "file": "app/client.py", "line": 1, "symbols": ["get"]}],
+                    "analyzed_modules": ["requests", "urllib3"],
+                },
+                "python",
+            ),
+            "python",
+        )
+        languages = component_language_map(
+            [
+                {"name": "requests", "version": "1.0.0", "type": "pypi"},
+                {"name": "urllib3", "version": "1.0.0", "type": "pypi"},
+            ]
+        )
+        findings = [
+            _finding(symbols=["get"]),
+            _finding(symbols=["post"]),
+            _finding(),
+            _finding(component="urllib3"),
+            _finding(component="libc6"),
+        ]
+
+        enrich_findings_with_reachability(findings, [graph], languages)
+
+        verdicts = [finding["details"]["reachability"] for finding in findings]
+        assert [verdict["is_reachable"] for verdict in verdicts] == [True, True, True, False, None]
+        for verdict in verdicts:
+            assert set(verdict) <= set(ReachabilityInfo.model_fields)

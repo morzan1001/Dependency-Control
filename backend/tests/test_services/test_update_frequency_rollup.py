@@ -85,7 +85,6 @@ async def _seed_scan(
                         for name in outdated
                     ],
                     "ahead_of_default": [],
-                    "yanked_versions": [],
                 },
             }
         )

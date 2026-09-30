@@ -4,11 +4,12 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.api.v1.helpers.callgraph import parse_generic_format
 from app.models.stats import Stats
+from app.schemas.projections import CallgraphMinimal
 from app.schemas.enrichment import EPSSData, KEVEntry
 from app.services.analysis.stats import (
     _HIGH_RISK_SAMPLE_CAP,
-    _format_datetime,
     _numeric,
     build_epss_kev_summary,
     build_reachability_summary,
@@ -16,6 +17,7 @@ from app.services.analysis.stats import (
     compute_stats,
 )
 from app.services.enrichment.service import _build_enrichment, apply_enrichments
+from app.services.reachability_enrichment import component_language_map, enrich_findings_with_reachability
 from tests.mocks.fake_mongo import FakeDatabase
 
 _HIGH_RISK_POPULATION = _HIGH_RISK_SAMPLE_CAP + 5
@@ -23,30 +25,6 @@ _HIGH_RISK_POPULATION = _HIGH_RISK_SAMPLE_CAP + 5
 
 def _epss(cve, score):
     return EPSSData(cve=cve, epss_score=score, percentile=0.9, date="2024-01-01")
-
-
-# ---------------------------------------------------------------------------
-# _format_datetime
-# ---------------------------------------------------------------------------
-
-
-class TestFormatDatetime:
-    def test_none_returns_none(self):
-        assert _format_datetime(None) is None
-
-    def test_datetime_returns_isoformat(self):
-        dt = datetime(2024, 6, 15, 12, 30, 0, tzinfo=timezone.utc)
-        result = _format_datetime(dt)
-        assert result == dt.isoformat()
-
-    def test_string_passthrough(self):
-        assert _format_datetime("2024-01-01T00:00:00Z") == "2024-01-01T00:00:00Z"
-
-    def test_empty_string_returns_none(self):
-        assert _format_datetime("") is None
-
-    def test_int_returns_str(self):
-        assert _format_datetime(12345) == "12345"
 
 
 # ---------------------------------------------------------------------------
@@ -379,7 +357,7 @@ class TestVulnerabilityIdsNeverShowTheFindingId:
             "component": "lodash",
             "details": {"reachability": {"is_reachable": True, "analysis_level": "symbol"}},
         }
-        summary = build_reachability_summary([finding], [], 1)
+        summary = build_reachability_summary([finding], [])
         assert summary["reachable_vulnerabilities"][0]["cve"] == ""
 
 
@@ -398,11 +376,7 @@ class TestHighRiskRowsNameTheirOwnCve:
         }
         kev = KEVEntry(
             cve="CVE-2021-44228",
-            vendor_project="Apache",
-            product="Log4j2",
-            vulnerability_name="Log4Shell",
             date_added="2021-12-10",
-            short_description="RCE",
             required_action="patch",
             due_date="2021-12-24",
         )
@@ -459,15 +433,14 @@ def _make_reachable_finding(
 
 
 def _make_callgraph(language="python", modules=None, total_imports=0, analyzed_modules=None, created_at=None):
-    cg = {
-        "language": language,
-        "module_usage": modules if modules is not None else {},
-        "analyzed_modules": analyzed_modules if analyzed_modules is not None else [],
-        "total_imports": total_imports,
-    }
-    if created_at is not None:
-        cg["created_at"] = created_at
-    return cg
+    return CallgraphMinimal(
+        _id="cg-1",
+        language=language,
+        module_usage=modules if modules is not None else {},
+        analyzed_modules=analyzed_modules or [],
+        total_imports=total_imports,
+        created_at=created_at,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -477,36 +450,36 @@ def _make_callgraph(language="python", modules=None, total_imports=0, analyzed_m
 
 class TestBuildReachabilitySummaryEmpty:
     def test_empty_findings(self):
-        result = build_reachability_summary([], [_make_callgraph()], 0)
+        result = build_reachability_summary([], [_make_callgraph()])
         assert result["total_vulnerabilities"] == 0
         assert result["analyzed"] == 0
         assert result["reachable_vulnerabilities"] == []
         assert result["unreachable_vulnerabilities"] == []
 
     def test_empty_findings_has_timestamp(self):
-        result = build_reachability_summary([], [_make_callgraph()], 0)
+        result = build_reachability_summary([], [_make_callgraph()])
         assert result["timestamp"] is not None
 
 
 class TestBuildReachabilitySummaryLevels:
     def test_confirmed_level(self):
         findings = [_make_reachable_finding(reachable=True, reachability_level="confirmed")]
-        result = build_reachability_summary(findings, [_make_callgraph()], 1)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert result["reachability_levels"]["confirmed"] == 1
 
     def test_likely_level(self):
         findings = [_make_reachable_finding(reachable=True, reachability_level="likely")]
-        result = build_reachability_summary(findings, [_make_callgraph()], 1)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert result["reachability_levels"]["likely"] == 1
 
     def test_unknown_level(self):
         findings = [_make_reachable_finding(reachability_level="unknown")]
-        result = build_reachability_summary(findings, [_make_callgraph()], 0)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert result["reachability_levels"]["unknown"] == 1
 
     def test_unreachable_level(self):
         findings = [_make_reachable_finding(reachable=False, reachability_level="unreachable")]
-        result = build_reachability_summary(findings, [_make_callgraph()], 1)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert result["reachability_levels"]["unreachable"] == 1
 
     def test_multiple_levels_counted(self):
@@ -516,7 +489,7 @@ class TestBuildReachabilitySummaryLevels:
             _make_reachable_finding(finding_id="CVE-3", reachable=False, reachability_level="unreachable"),
             _make_reachable_finding(finding_id="CVE-4", reachability_level="unknown"),
         ]
-        result = build_reachability_summary(findings, [_make_callgraph()], 3)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         levels = result["reachability_levels"]
         assert levels["confirmed"] == 1
         assert levels["likely"] == 1
@@ -527,66 +500,65 @@ class TestBuildReachabilitySummaryLevels:
 class TestBuildReachabilitySummaryCallgraph:
     def test_language_extracted(self):
         cg = _make_callgraph(language="java")
-        result = build_reachability_summary([], [cg], 0)
+        result = build_reachability_summary([], [cg])
         assert result["callgraph_info"][0]["language"] == "java"
 
     def test_module_count(self):
         cg = _make_callgraph(modules={"mod_a": {}, "mod_b": {}})
-        result = build_reachability_summary([], [cg], 0)
+        result = build_reachability_summary([], [cg])
         assert result["callgraph_info"][0]["total_modules"] == 2
 
     def test_import_count_uses_persisted_counter(self):
         cg = _make_callgraph(modules={"mod_a": {}}, total_imports=17)
-        result = build_reachability_summary([], [cg], 0)
+        result = build_reachability_summary([], [cg])
         assert result["callgraph_info"][0]["total_imports"] == 17
 
     def test_coverage_modules_from_analyzed_modules(self):
         cg = _make_callgraph(analyzed_modules=["requests", "urllib3"])
-        result = build_reachability_summary([], [cg], 0)
+        result = build_reachability_summary([], [cg])
         assert result["callgraph_info"][0]["coverage_modules"] == 2
 
     def test_coverage_modules_zero_without_analyzed_modules(self):
-        result = build_reachability_summary([], [_make_callgraph()], 0)
+        result = build_reachability_summary([], [_make_callgraph()])
         assert result["callgraph_info"][0]["coverage_modules"] == 0
 
     def test_null_module_usage_is_not_a_crash(self):
-        cg = _make_callgraph()
-        cg["module_usage"] = None
-        result = build_reachability_summary([], [cg], 0)
+        cg = _make_callgraph().model_copy(update={"module_usage": None})
+        result = build_reachability_summary([], [cg])
         assert result["callgraph_info"][0]["total_modules"] == 0
 
     def test_generated_at_from_datetime(self):
         dt = datetime(2024, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
         cg = _make_callgraph(created_at=dt)
-        result = build_reachability_summary([], [cg], 0)
+        result = build_reachability_summary([], [cg])
         assert result["callgraph_info"][0]["generated_at"] == dt.isoformat()
 
     def test_generated_at_none_when_missing(self):
         cg = _make_callgraph()
-        result = build_reachability_summary([], [cg], 0)
+        result = build_reachability_summary([], [cg])
         assert result["callgraph_info"][0]["generated_at"] is None
 
     def test_missing_language_defaults_to_unknown(self):
-        result = build_reachability_summary([], [{"module_usage": {}}], 0)
+        result = build_reachability_summary([], [CallgraphMinimal(_id="cg-1")])
         assert result["callgraph_info"][0]["language"] == "unknown"
 
 
 class TestBuildReachabilitySummaryPartitioning:
     def test_reachable_true_goes_to_reachable_list(self):
         findings = [_make_reachable_finding(reachable=True, reachability_level="confirmed")]
-        result = build_reachability_summary(findings, [_make_callgraph()], 1)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert len(result["reachable_vulnerabilities"]) == 1
         assert len(result["unreachable_vulnerabilities"]) == 0
 
     def test_reachable_false_goes_to_unreachable_list(self):
         findings = [_make_reachable_finding(reachable=False, reachability_level="unreachable")]
-        result = build_reachability_summary(findings, [_make_callgraph()], 1)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert len(result["reachable_vulnerabilities"]) == 0
         assert len(result["unreachable_vulnerabilities"]) == 1
 
     def test_reachable_none_goes_to_neither_list(self):
         findings = [_make_reachable_finding(reachability_level="unknown")]
-        result = build_reachability_summary(findings, [_make_callgraph()], 0)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert len(result["reachable_vulnerabilities"]) == 0
         assert len(result["unreachable_vulnerabilities"]) == 0
 
@@ -602,7 +574,7 @@ class TestBuildReachabilitySummaryPartitioning:
                 reachable_functions=["SSL_read"],
             )
         ]
-        result = build_reachability_summary(findings, [_make_callgraph()], 1)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         vuln = result["reachable_vulnerabilities"][0]
         assert vuln["cve"] == "CVE-2024-5678"
         assert vuln["component"] == "openssl"
@@ -614,7 +586,7 @@ class TestBuildReachabilitySummaryPartitioning:
     def test_reachable_functions_limited_to_5(self):
         funcs = [f"func_{i}" for i in range(10)]
         findings = [_make_reachable_finding(reachable=True, reachability_level="confirmed", reachable_functions=funcs)]
-        result = build_reachability_summary(findings, [_make_callgraph()], 1)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert len(result["reachable_vulnerabilities"][0]["reachable_functions"]) == 5
 
 
@@ -627,7 +599,7 @@ class TestBuildReachabilitySummarySorting:
             ),
             _make_reachable_finding(finding_id="CVE-3", severity="MEDIUM", reachable=True, reachability_level="likely"),
         ]
-        result = build_reachability_summary(findings, [_make_callgraph()], 3)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         severities = [v["severity"] for v in result["reachable_vulnerabilities"]]
         assert severities == ["CRITICAL", "MEDIUM", "LOW"]
 
@@ -640,7 +612,7 @@ class TestBuildReachabilitySummarySorting:
                 finding_id="CVE-2", severity="HIGH", reachable=False, reachability_level="unreachable"
             ),
         ]
-        result = build_reachability_summary(findings, [_make_callgraph()], 2)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         severities = [v["severity"] for v in result["unreachable_vulnerabilities"]]
         assert severities == ["HIGH", "LOW"]
 
@@ -655,7 +627,7 @@ class TestBuildReachabilitySummaryLimits:
             )
             for i in range(35)
         ]
-        result = build_reachability_summary(findings, [_make_callgraph()], 35)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert len(result["reachable_vulnerabilities"]) == 30
         assert result["reachable_total"] == 35
 
@@ -668,7 +640,7 @@ class TestBuildReachabilitySummaryLimits:
             )
             for i in range(35)
         ]
-        result = build_reachability_summary(findings, [_make_callgraph()], 35)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert len(result["unreachable_vulnerabilities"]) == 30
         assert result["unreachable_total"] == 35
 
@@ -678,13 +650,31 @@ class TestBuildReachabilitySummaryLimits:
             _make_reachable_finding(finding_id="CVE-2", reachable=False, reachability_level="unreachable"),
             _make_reachable_finding(finding_id="CVE-3", reachability_level="unknown"),
         ]
-        result = build_reachability_summary(findings, [_make_callgraph()], 2)
+        result = build_reachability_summary(findings, [_make_callgraph()])
         assert result["reachable_total"] == 1
         assert result["unreachable_total"] == 1
 
-    def test_analyzed_count_passthrough(self):
-        result = build_reachability_summary([], [_make_callgraph()], 42)
-        assert result["analyzed"] == 42
+    def test_analyzed_counts_only_findings_with_a_verdict(self):
+        parsed = parse_generic_format(
+            {"imports": [{"module": "requests", "file": "app/client.py", "line": 1, "symbols": []}]}, "python"
+        )
+        callgraph = CallgraphMinimal(
+            _id="cg-py",
+            language="python",
+            module_usage={key: usage.model_dump() for key, usage in parsed.module_usage.items()},
+        )
+        findings = [
+            {**_make_finding(component="requests", version="2.31.0"), "type": "vulnerability"},
+            {**_make_finding(component="libc6", version="2.36-9"), "type": "vulnerability"},
+        ]
+        languages = component_language_map([{"name": "requests", "version": "2.31.0", "type": "pypi"}])
+        enrich_findings_with_reachability(findings, [callgraph], languages)
+
+        result = build_reachability_summary(findings, [callgraph])
+
+        assert result["total_vulnerabilities"] == 2
+        assert result["analyzed"] == 1
+        assert result["reachability_levels"]["unknown"] == 1
 
 
 # calculate_comprehensive_stats: risk_score is a saturating severity-weighted exposure

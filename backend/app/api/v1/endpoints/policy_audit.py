@@ -1,6 +1,5 @@
 """Policy audit endpoints (list/detail/revert/prune); system scope is admin-only, project scope is member-read/admin-write."""
 
-import logging
 import re
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any, Literal
@@ -11,12 +10,11 @@ from pydantic import BeforeValidator, ValidationError
 
 from app.api.deps import SystemManagerDep, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.projects import check_project_access
+from app.api.v1.helpers.projects import check_project_access, ensure_crypto_overrides_writable
 from app.api.v1.helpers.responses import (
     RESP_400,
     RESP_400_403,
     RESP_400_403_404,
-    RESP_400_404,
     RESP_403,
     RESP_403_404,
     RESP_404,
@@ -26,13 +24,11 @@ from app.core.config import settings
 from app.core.constants import MAX_POLICY_AUDIT_PAGE, PROJECT_ROLE_ADMIN
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
-from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.crypto_policy import CryptoPolicyPutRequest
 from app.schemas.policy_audit import PolicyAuditAction, PolicyRevertRequest
-from app.services.audit.history import record_policy_change
+from app.services.crypto_policy.seeder import write_policy
 
-logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter(tags=["policy-audit"])
 
@@ -76,31 +72,20 @@ async def get_system_audit_entry(
     return entry.model_dump(by_alias=True)
 
 
-@router.post(
-    "/crypto-policies/system/revert",
-    responses={
-        **RESP_400_403_404,
-        500: {"description": "Reverted policy not found"},
-    },
-)
+@router.post("/crypto-policies/system/revert", responses=RESP_400_403_404)
 async def revert_system_policy(
     current_user: SystemManagerDep,
     db: DatabaseDep,
     body: PolicyRevertRequest,
 ) -> dict[str, Any]:
-    target_version = body.target_version
-    comment = body.comment
-    await _revert_policy(
+    policy = await _revert_policy(
         db=db,
         actor=current_user,
         policy_scope="system",
         project_id=None,
-        target_version=target_version,
-        comment=comment,
+        target_version=body.target_version,
+        comment=body.comment,
     )
-    policy = await CryptoPolicyRepository(db).get_system_policy()
-    if policy is None:
-        raise HTTPException(status_code=500, detail="Reverted policy not found")
     return policy.model_dump(by_alias=True)
 
 
@@ -155,7 +140,7 @@ async def get_project_audit_entry(
     return entry.model_dump(by_alias=True)
 
 
-@router.post("/projects/{project_id}/crypto-policy/revert", responses=RESP_400_404)
+@router.post("/projects/{project_id}/crypto-policy/revert", responses=RESP_400_403_404)
 async def revert_project_policy(
     project_id: str,
     current_user: CurrentUserDep,
@@ -163,18 +148,16 @@ async def revert_project_policy(
     body: PolicyRevertRequest,
 ) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
-    target_version = body.target_version
-    comment = body.comment
-    await _revert_policy(
+    await ensure_crypto_overrides_writable(db)
+    policy = await _revert_policy(
         db=db,
         actor=current_user,
         policy_scope="project",
         project_id=project_id,
-        target_version=target_version,
-        comment=comment,
+        target_version=body.target_version,
+        comment=body.comment,
     )
-    policy = await CryptoPolicyRepository(db).get_project_policy(project_id)
-    return policy.model_dump(by_alias=True) if policy else {}
+    return policy.model_dump(by_alias=True)
 
 
 @router.delete("/projects/{project_id}/crypto-policy/audit", responses=RESP_400)
@@ -260,7 +243,7 @@ async def _revert_policy(
     project_id: str | None,
     target_version: int,
     comment: str | None,
-) -> None:
+) -> CryptoPolicy:
     target_entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope=policy_scope,
         project_id=project_id,
@@ -277,35 +260,15 @@ async def _revert_policy(
             status_code=422, detail=f"Version {target_version} holds rules a write would refuse: {reasons}"
         ) from exc
 
-    policy_repo = CryptoPolicyRepository(db)
-    current: CryptoPolicy | None
-    if policy_scope == "system":
-        current = await policy_repo.get_system_policy()
-    else:
-        if project_id is None:
-            raise HTTPException(status_code=400, detail="project_id required for project scope")
-        current = await policy_repo.get_project_policy(project_id)
-    new_version = (current.version + 1) if current else 1
-
-    new_policy = CryptoPolicy(
-        scope=policy_scope,
-        project_id=project_id if policy_scope == "project" else None,
-        rules=rules,
-        version=new_version,
-    )
-
-    await record_policy_change(
+    policy = await write_policy(
         db,
-        policy_scope=policy_scope,
+        scope=policy_scope,
         project_id=project_id,
-        old_policy=current,
-        new_policy=new_policy,
+        rules=rules,
         action=PolicyAuditAction.REVERT,
         actor=actor,
         comment=comment,
         reverted_from_version=target_version,
     )
-    if policy_scope == "system":
-        await policy_repo.upsert_system_policy(new_policy)
-    else:
-        await policy_repo.upsert_project_policy(new_policy)
+    assert policy is not None
+    return policy

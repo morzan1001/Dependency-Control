@@ -376,7 +376,7 @@ async def test_recommendations_recurrence_window_holds_the_newest_scans(
     async def _no_enrichment(_cves):
         return {}
 
-    monkeypatch.setattr(rec_module, "get_cve_enrichment", _no_enrichment)
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _no_enrichment)
 
     now = datetime.now(timezone.utc)
     scan_count = 14

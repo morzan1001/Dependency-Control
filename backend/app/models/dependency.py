@@ -23,6 +23,7 @@ class Dependency(MongoDocument):
     # Licensing
     license: str | None = Field(None, description="License expression or name")
     license_url: str | None = Field(None, description="URL to license text")
+    license_category: str | None = Field(None, description="License category the analysis copies from the license scan")
 
     # Scope and relationships
     scope: str | None = Field(None, description="Dependency scope (e.g. runtime, dev, optional)")
@@ -34,7 +35,7 @@ class Dependency(MongoDocument):
     parent_components: list[str] = Field(default_factory=list, description="The parents' dependency_node_key values")
 
     # Source/Origin info (from SBOM properties)
-    source_type: str | None = Field(None, description="Source type: image, file-system, directory, application")
+    source_type: str | None = Field(None, description="Source type: image, directory, file, application")
     source_target: str | None = Field(None, description="Source target: Docker image name, file path, etc.")
     layer_digest: str | None = Field(None, description="Docker layer digest if from container image")
     found_by: str | None = Field(

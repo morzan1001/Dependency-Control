@@ -13,13 +13,12 @@ from app.core.constants import (
     ANALYZER_TIMEOUTS,
     OSV_BATCH_API_URL,
     OSV_VULN_API_URL,
-    get_severity_value,
 )
 from app.core.cvss import cvss_base_score
 from app.core.http_utils import InstrumentedAsyncClient
-from app.core.metrics import external_api_rate_limit_hits_total
-from app.core.purl import ParsedPURL, canonical_purl, parse_purl
+from app.core.purl import PURL_TYPE_TO_SYSTEM, ParsedPURL, canonical_purl, package_identity, parse_purl
 from app.models.finding import Severity
+from app.services.aggregation.versions import parse_version_key
 
 from .base import Analyzer
 
@@ -88,6 +87,8 @@ _TRIVY = "aquasecurity:trivy:"
 
 # (component, versioned purl, querybatch query)
 _Target = tuple[dict[str, Any], str, dict[str, Any]]
+# Each target with the querybatch ``{id, modified}`` stubs naming its vulnerabilities.
+_Pending = list[tuple[_Target, list[dict[str, Any]]]]
 
 
 def _versioned_purl(component: dict[str, Any]) -> str | None:
@@ -111,7 +112,7 @@ def _osv_query(purl: str, component: dict[str, Any]) -> dict[str, Any] | None:
     parsed = parse_purl(purl)
     if parsed is None or not parsed.name or not _PURL_TYPE.fullmatch(parsed.type) or _INVALID_ESCAPE.search(purl):
         return None
-    rule = _OS_ECOSYSTEMS.get((parsed.type, parsed.namespace or ""))
+    rule = _OS_ECOSYSTEMS.get((parsed.type, (parsed.namespace or "").lower()))
     if rule is None:
         return {"package": {"purl": purl}}
     release_pattern, ecosystem = rule
@@ -166,13 +167,78 @@ def _query_targets(components: list[dict[str, Any]]) -> tuple[list[_Target], int
     return targets, len(unqueryable)
 
 
+def _package_key(package: dict[str, Any], purl_type: str | None) -> tuple[str, str] | None:
+    ecosystem, name = str(package.get("ecosystem") or ""), str(package.get("name") or "")
+    if purl_type is None:
+        return ecosystem, name.casefold()
+    purl = package.get("purl")
+    # OSV makes ``purl`` optional; Maven names are group:artifact.
+    if not purl and name and PURL_TYPE_TO_SYSTEM.get(purl_type) == ecosystem.casefold():
+        purl = f"pkg:{purl_type}/{name.replace(':', '/')}"
+    return package_identity(purl, "", None, None) if purl else None
+
+
+def _affected_entries(record: dict[str, Any], query: dict[str, Any]) -> list[dict[str, Any]]:
+    """The record's ``affected`` entries for the queried package; OS releases share a purl and match by ecosystem."""
+    parsed = parse_purl(query["package"].get("purl") or "")
+    purl_type = parsed.type if parsed else None
+    key = _package_key(query["package"], purl_type)
+    return [
+        entry for entry in record.get("affected") or [] if _package_key(entry.get("package") or {}, purl_type) == key
+    ]
+
+
+def _installed_version(query: dict[str, Any]) -> str:
+    if "purl" in query["package"]:
+        parsed = parse_purl(query["package"]["purl"])
+        return (parsed.version if parsed else None) or ""
+    return query.get("version") or ""
+
+
+def _fixed_version(entries: list[dict[str, Any]], installed: str) -> str | None:
+    """The ``fixed`` event closing the affected interval the installed version is in; GIT ranges fix by commit."""
+    current = parse_version_key(installed)
+    if not current:
+        return None
+    for entry in entries:
+        for version_range in entry.get("ranges") or []:
+            if version_range.get("type") not in ("ECOSYSTEM", "SEMVER"):
+                continue
+            introduced = None
+            for event in version_range.get("events") or []:
+                if "introduced" in event:
+                    introduced = parse_version_key(str(event["introduced"]))
+                elif (
+                    "fixed" in event
+                    and introduced is not None
+                    and introduced <= current < parse_version_key(str(event["fixed"]))
+                ):
+                    return str(event["fixed"])
+                else:
+                    introduced = None
+    return None
+
+
+def _vulnerable_symbols(entries: list[dict[str, Any]]) -> dict[str, list[Any]]:
+    """The entries' ``ecosystem_specific`` symbol data, which symbol-level reachability matches."""
+    merged: dict[str, list[Any]] = {}
+    for entry in entries:
+        eco = entry.get("ecosystem_specific")
+        if not isinstance(eco, dict):
+            continue
+        for key in ("symbols", "imports"):
+            if isinstance(eco.get(key), list):
+                merged.setdefault(key, []).extend(eco[key])
+    return merged
+
+
 class OSVAnalyzer(Analyzer):
     """Vulnerability lookup via the OSV batch API, cached across pods."""
 
     name = "osv"
     api_url = OSV_BATCH_API_URL
 
-    # Bounded retry on HTTP 429 so a throttled chunk isn't silently dropped.
+    # Retries per request on 429, 5xx and non-timeout transport errors, so a throttled chunk isn't silently dropped.
     max_retries: int = 3
     retry_base_delay: float = 5.0  # seconds, doubles each attempt
 
@@ -182,12 +248,15 @@ class OSVAnalyzer(Analyzer):
         settings: dict[str, Any] | None = None,
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
-        targets, unqueryable = _query_targets(self._get_components(sbom, parsed_components))
+        targets, unqueryable = _query_targets(parsed_components or [])
 
-        results, uncached = await self._get_cached_components(targets)
-        logger.debug(f"OSV: {len(results)} from cache, {len(uncached)} to fetch")
+        pending, uncached = await self._get_cached_stubs(targets)
+        logger.debug(f"OSV: {len(pending)} from cache, {len(uncached)} to fetch")
 
-        skipped, unhydrated = await self._fetch_uncached(uncached, results) if uncached else (0, 0)
+        timeout = ANALYZER_TIMEOUTS["osv"]
+        async with InstrumentedAsyncClient(_OSV_SERVICE_LABEL, timeout=timeout) as client:
+            skipped = await self._fetch_uncached(client, uncached, pending)
+            results, unhydrated = await self._hydrate_and_emit(client, pending)
         skipped += unqueryable
         result: dict[str, Any] = {"osv_vulnerabilities": results}
         # Surfaced by the engine as a partial scan; never silently report full coverage.
@@ -197,42 +266,46 @@ class OSVAnalyzer(Analyzer):
             result["partial_vulnerabilities_unhydrated"] = unhydrated
         return result
 
-    async def _fetch_uncached(
-        self,
-        uncached: list[_Target],
-        results: list[dict[str, Any]],
-    ) -> tuple[int, int]:
-        """Drive the chunked batch loop, then hydrate, populating ``results`` in-place.
+    async def _get_cached_stubs(self, targets: list[_Target]) -> tuple[_Pending, list[_Target]]:
+        """``(pending, uncached)``: the targets with their cached querybatch stubs, and the targets without."""
+        keys = [CacheKeys.osv(purl) for _, purl, _ in targets]
+        cached = await cache_service.mget(list(dict.fromkeys(keys)))
+        pending: _Pending = []
+        uncached: list[_Target] = []
+        for target, key in zip(targets, keys, strict=True):
+            stubs = cached.get(key)
+            if stubs is None:
+                uncached.append(target)
+            else:
+                pending.append((target, stubs))
+        return pending, uncached
 
-        Returns ``(components_never_scanned, vulnerability_records_not_fetched)``: dropped
-        batches, rejected queries, persistent rate limiting and truncated responses for the
-        first, OSV records that could not be resolved to their full form for the second.
+    async def _fetch_uncached(self, client: InstrumentedAsyncClient, uncached: list[_Target], pending: _Pending) -> int:
+        """Ask querybatch about ``uncached``, caching each answer's stubs and adding them to ``pending``.
+
+        Returns how many components were never scanned: dropped batches, rejected queries,
+        persistent rate limiting and truncated responses.
         """
-        timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
-        batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
-        total_skipped = 0
-        # (target, [{id, modified}, ...]) pairs; hydrated together so one id is fetched once.
-        pending: list[tuple[_Target, list[dict[str, Any]]]] = []
-
-        async with InstrumentedAsyncClient(_OSV_SERVICE_LABEL, timeout=timeout) as client:
-            for chunk_start in range(0, len(uncached), batch_size):
-                chunk = uncached[chunk_start : chunk_start + batch_size]
-                total_skipped += await self._send_chunk(client, chunk, pending, chunk_start, _MAX_REJECTION_RESENDS)
-                if chunk_start + batch_size < len(uncached):
-                    await asyncio.sleep(0.2)
-
-            unhydrated = await self._hydrate_and_emit(client, pending, results)
-        return total_skipped, unhydrated
+        batch_size = ANALYZER_BATCH_SIZES["osv"]
+        skipped = 0
+        fetched: _Pending = []
+        for chunk_start in range(0, len(uncached), batch_size):
+            chunk = uncached[chunk_start : chunk_start + batch_size]
+            skipped += await self._send_chunk(client, chunk, fetched, chunk_start, _MAX_REJECTION_RESENDS)
+            if chunk_start + batch_size < len(uncached):
+                await asyncio.sleep(0.2)
+        if fetched:
+            stubs_by_key = {CacheKeys.osv(purl): stubs for (_, purl, _), stubs in fetched}
+            await cache_service.mset(stubs_by_key, CacheTTL.OSV_VULNERABILITY)
+        pending.extend(fetched)
+        return skipped
 
     async def _hydrate_and_emit(
-        self,
-        client: InstrumentedAsyncClient,
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
-        results: list[dict[str, Any]],
-    ) -> int:
-        """Replace the querybatch stubs with full OSV records, then build the result entries.
+        self, client: InstrumentedAsyncClient, pending: _Pending
+    ) -> tuple[list[dict[str, Any]], int]:
+        """The result entries built from the full OSV records behind ``pending``'s stubs, all hydrated together.
 
-        Returns how many distinct ids stayed unresolved; their stubs are kept, so the
+        Also returns how many distinct ids stayed unresolved; their stubs are kept, so the
         vulnerability is still reported — as UNKNOWN severity rather than an invented one.
         """
         stubs: dict[str, str] = {}
@@ -244,21 +317,13 @@ class OSVAnalyzer(Analyzer):
 
         records, unresolved = await self._fetch_vuln_records(client, stubs)
 
-        cache_mapping: dict[str, dict[str, Any]] = {}
-        for (component, purl, _query), vulns in pending:
-            ids = [vuln.get("id", "") for vuln in vulns]
-            hydrated = [records.get(vuln_id, vuln) for vuln_id, vuln in zip(ids, vulns, strict=True)]
-            normalized = self._normalize_vulnerabilities(hydrated)
-            # Caching an entry built from unresolved stubs would serve UNKNOWN for the next
-            # six hours with no partial flag, making the failure invisible on the next scan.
-            if not any(vuln_id in unresolved for vuln_id in ids):
-                cache_mapping[CacheKeys.osv(purl)] = {"vulnerabilities": normalized}
+        results: list[dict[str, Any]] = []
+        for (component, _, query), vulns in pending:
+            hydrated = [records.get(vuln.get("id", ""), vuln) for vuln in vulns]
+            normalized = self._normalize_vulnerabilities(hydrated, query)
             if normalized:
                 results.append(self._result_entry(component, normalized))
-
-        if cache_mapping:
-            await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
-        return len(unresolved)
+        return results, len(unresolved)
 
     async def _fetch_vuln_records(
         self,
@@ -293,7 +358,7 @@ class OSVAnalyzer(Analyzer):
             async with semaphore:
                 if budget.exhausted():
                     return vuln_id, None
-                record = await self._get_vuln_record(client, vuln_id, budget)
+                record = await self._get_vuln_record(client, vuln_id, deadline)
                 budget.record(success=record is not None)
                 return vuln_id, record
 
@@ -318,111 +383,65 @@ class OSVAnalyzer(Analyzer):
         self,
         client: InstrumentedAsyncClient,
         vuln_id: str,
-        budget: "_HydrationBudget | None" = None,
+        deadline: float,
     ) -> dict[str, Any] | None:
-        """One full OSV record, retrying only on 429. None when it stays unresolved.
-
-        The deadline is rechecked between attempts: it cannot cancel a request already in
-        flight, so without this the tail past the budget would be the whole retry ladder
-        (4 x 60s timeout + 35s of backoff). The residual tail is one request timeout plus one
-        backoff sleep, because the sleep below runs before the next iteration rechecks.
-        """
-        for attempt in range(1 + self.max_retries):
-            if budget is not None and attempt and budget.exhausted():
-                return None
-            try:
-                response = await client.get(f"{OSV_VULN_API_URL}/{vuln_id}")
-            except Exception as exc:
-                logger.warning(f"OSV vuln fetch failed for {vuln_id}: {type(exc).__name__}: {exc}")
-                return None
-
-            if response.status_code == 200:
-                try:
-                    record = response.json()
-                except ValueError as exc:
-                    # A proxy or CDN error page answering 200 must cost one id, not the analyzer.
-                    logger.warning(f"OSV vuln fetch for {vuln_id} returned an unparseable body: {exc}")
-                    return None
-                return record if isinstance(record, dict) else None
-            if response.status_code != 429:
-                logger.warning(f"OSV vuln fetch for {vuln_id} returned {response.status_code}")
-                return None
-
-            external_api_rate_limit_hits_total.labels(service=_OSV_SERVICE_LABEL).inc()
-            if attempt < self.max_retries:
-                await asyncio.sleep(self.retry_base_delay * (2**attempt))
-        logger.error(f"OSV vuln fetch for {vuln_id} rate limited after {1 + self.max_retries} attempts")
-        return None
+        """One full OSV record, or None when it stays unresolved."""
+        try:
+            response = await client.send_with_backoff(
+                "GET",
+                f"{OSV_VULN_API_URL}/{vuln_id}",
+                attempts=1 + self.max_retries,
+                base_delay=self.retry_base_delay,
+                deadline=deadline,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(f"OSV vuln fetch failed for {vuln_id}: {type(exc).__name__}: {exc}")
+            return None
+        if response.status_code != 200:
+            logger.warning(f"OSV vuln fetch for {vuln_id} returned {response.status_code}")
+            return None
+        try:
+            record = response.json()
+        except ValueError as exc:
+            # A proxy or CDN error page answering 200 must cost one id, not the analyzer.
+            logger.warning(f"OSV vuln fetch for {vuln_id} returned an unparseable body: {exc}")
+            return None
+        return record if isinstance(record, dict) else None
 
     async def _send_chunk(
         self,
         client: InstrumentedAsyncClient,
         chunk: list[_Target],
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        pending: _Pending,
         chunk_start: int,
         resends: int,
     ) -> int:
-        """POST one chunk, retrying it on 429. Returns how many of its components were lost."""
-        for attempt in range(1 + self.max_retries):
-            rate_limited, skipped = await self._post_and_handle(client, chunk, pending, chunk_start, resends)
-            if not rate_limited:
-                return skipped
-            if attempt < self.max_retries:
-                delay = self.retry_base_delay * (2**attempt)
-                logger.warning(
-                    f"OSV API rate limit hit for batch starting at {chunk_start} "
-                    f"(attempt {attempt + 1}/{1 + self.max_retries}), retrying in {delay:.1f}s"
-                )
-                await asyncio.sleep(delay)
-        logger.error(
-            f"OSV API rate limit persisted after {1 + self.max_retries} attempts; "
-            f"dropping batch starting at {chunk_start} ({len(chunk)} components)"
-        )
-        return len(chunk)
-
-    async def _post_and_handle(
-        self,
-        client: InstrumentedAsyncClient,
-        chunk: list[_Target],
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
-        chunk_start: int,
-        resends: int,
-    ) -> tuple[bool, int]:
-        """POST one batch and dispatch on response status.
-
-        Returns ``(rate_limited, skipped)``: ``rate_limited`` asks the caller to
-        retry the same chunk, ``skipped`` counts components this batch lost.
-        """
+        """POST one chunk and collect its stubs in ``pending``; returns how many of its components were lost."""
         try:
-            response = await client.post(self.api_url, json={"queries": [query for _, _, query in chunk]})
-        except httpx.TimeoutException:
-            logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
-            return False, len(chunk)
-        except httpx.ConnectError:
-            logger.warning("OSV API connection error")
-            return False, len(chunk)
-        except Exception as e:
-            logger.warning(f"OSV Analysis Exception: {type(e).__name__}: {e}")
-            return False, len(chunk)
-
+            response = await client.send_with_backoff(
+                "POST",
+                self.api_url,
+                attempts=1 + self.max_retries,
+                base_delay=self.retry_base_delay,
+                json={"queries": [query for _, _, query in chunk]},
+            )
+        except httpx.HTTPError as exc:
+            logger.warning(f"OSV batch starting at {chunk_start} failed: {type(exc).__name__}: {exc}")
+            return len(chunk)
         if response.status_code == 200:
-            skipped = self._handle_success(response, chunk, pending)
-            return False, skipped
-        if response.status_code == 429:
-            external_api_rate_limit_hits_total.labels(service=_OSV_SERVICE_LABEL).inc()
-            return True, 0
+            return self._handle_success(response, chunk, pending)
         if response.status_code == 400 and resends:
-            return False, await self._resend_accepted(client, chunk, pending, chunk_start, response.text, resends - 1)
+            return await self._resend_accepted(client, chunk, pending, chunk_start, response.text, resends - 1)
         logger.warning(
             f"OSV Batch API error for batch starting at {chunk_start}: {response.status_code} {response.text[:200]}"
         )
-        return False, len(chunk)
+        return len(chunk)
 
     async def _resend_accepted(
         self,
         client: InstrumentedAsyncClient,
         chunk: list[_Target],
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        pending: _Pending,
         chunk_start: int,
         rejection: str,
         resends: int,
@@ -443,7 +462,7 @@ class OSVAnalyzer(Analyzer):
         self,
         response: Any,
         chunk: list[_Target],
-        pending: list[tuple[_Target, list[dict[str, Any]]]],
+        pending: _Pending,
     ) -> int:
         """Parse a 200 response and align its ``{id, modified}`` stubs with their components.
 
@@ -468,53 +487,45 @@ class OSVAnalyzer(Analyzer):
 
     def _result_entry(self, component: dict[str, Any], vulnerabilities: list[dict[str, Any]]) -> dict[str, Any]:
         """The analyzer result for one component from its normalized vulnerabilities."""
-        name = component.get("name", "")
-        version = component.get("version", "")
         return {
-            "component": name,
-            "version": version,
+            "component": component.get("name", ""),
+            "version": component.get("version", ""),
             "purl": component.get("purl", ""),
             "vulnerabilities": vulnerabilities,
-            "severity": self._get_highest_severity(vulnerabilities),
-            "message": self._create_summary_message(name, version, vulnerabilities),
         }
 
-    async def _get_cached_components(self, targets: list[_Target]) -> tuple[list[dict[str, Any]], list[_Target]]:
-        """``(cached result entries, uncached targets)``; cached per package version, named for this component."""
-        keys = [CacheKeys.osv(purl) for _, purl, _ in targets]
-        cached_data = await cache_service.mget(list(dict.fromkeys(keys)))
-        cached_results: list[dict[str, Any]] = []
-        uncached: list[_Target] = []
-        for target, key in zip(targets, keys, strict=True):
-            data = cached_data.get(key)
-            if not data:
-                uncached.append(target)
-            elif data.get("vulnerabilities"):
-                cached_results.append(self._result_entry(target[0], data["vulnerabilities"]))
-        return cached_results, uncached
-
-    def _normalize_vulnerabilities(self, vulns: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Normalize OSV vulnerabilities, dropping retracted entries (``withdrawn`` set)."""
+    def _normalize_vulnerabilities(self, vulns: list[dict[str, Any]], query: dict[str, Any]) -> list[dict[str, Any]]:
+        """The fields normalize_osv reads, resolved for the queried package; retracted records (``withdrawn``) drop."""
+        installed = _installed_version(query)
         normalized = []
         for vuln in vulns:
             if vuln.get("withdrawn"):
                 continue
-            vuln_id = vuln.get("id", "")
-            summary = vuln.get("summary", "")
-            normalized.append(
-                {
-                    "id": vuln_id,
-                    "aliases": vuln.get("aliases", []),
-                    "summary": summary,
-                    "details": vuln.get("details", ""),
-                    "severity": self._extract_severity(vuln),
-                    "message": summary or f"Vulnerability {vuln_id} detected",
-                    "references": [ref.get("url") for ref in vuln.get("references", []) if ref.get("url")],
-                    "published": vuln.get("published"),
-                    "modified": vuln.get("modified"),
-                    "affected": vuln.get("affected", []),
-                }
-            )
+            entries = _affected_entries(vuln, query)
+            cvss = self._select_cvss(vuln.get("severity") or [])
+            entry: dict[str, Any] = {
+                "id": vuln.get("id", ""),
+                "aliases": vuln.get("aliases", []),
+                "summary": vuln.get("summary", ""),
+                "severity": self._extract_severity(vuln),
+                "cvss_score": cvss[0] if cvss else None,
+                "cvss_vector": cvss[1] if cvss else None,
+                "fixed_version": _fixed_version(entries, installed),
+                "references": [ref.get("url") for ref in vuln.get("references", []) if ref.get("url")],
+                "published": vuln.get("published"),
+                "modified": vuln.get("modified"),
+            }
+            if not entry["summary"]:
+                entry["details"] = vuln.get("details", "")
+            symbols = _vulnerable_symbols(entries)
+            if symbols:
+                entry["ecosystem_specific"] = symbols
+            if entry["id"].startswith("MAL-"):
+                versions = [
+                    version for affected in vuln.get("affected") or [] for version in affected.get("versions") or []
+                ]
+                entry["affected_versions"] = versions[:10]
+            normalized.append(entry)
         return normalized
 
     # CVSS-type preference order — newest standard wins.
@@ -546,29 +557,21 @@ class OSVAnalyzer(Analyzer):
             return Severity.MEDIUM.value
         return Severity.LOW.value
 
-    def _severity_from_cvss_array(self, severity_array: list[dict[str, Any]]) -> str | None:
-        """Pick the highest-ranked CVSS entry (newest standard wins) and map it."""
-        entries_by_type: dict[str, list[dict[str, Any]]] = {}
-        for sev_info in severity_array:
-            sev_type = sev_info.get("type", "")
-            if "CVSS" in sev_type and sev_info.get("score"):
-                entries_by_type.setdefault(sev_type, []).append(sev_info)
-
-        for preferred_type in self._CVSS_TYPE_PREFERENCE:
-            for sev_info in entries_by_type.get(preferred_type, []):
-                cvss_score = self._parse_cvss_score(str(sev_info["score"]))
-                if cvss_score is not None:
-                    return self._cvss_to_severity(cvss_score, preferred_type)
-
-        # Fall through for unknown CVSS subtypes (e.g. a future v5).
-        for sev_info in severity_array:
-            sev_type = sev_info.get("type", "")
-            if "CVSS" not in sev_type or not sev_info.get("score"):
-                continue
-            cvss_score = self._parse_cvss_score(str(sev_info["score"]))
-            if cvss_score is not None:
-                return self._cvss_to_severity(cvss_score, sev_type)
+    def _select_cvss(self, severity_array: list[dict[str, Any]]) -> tuple[float, str | None, str] | None:
+        """``(score, vector or None for a bare number, type)`` of the newest-standard rating that parses."""
+        rank = {cvss_type: index for index, cvss_type in enumerate(self._CVSS_TYPE_PREFERENCE)}
+        ratings = [rating for rating in severity_array if "CVSS" in rating.get("type", "") and rating.get("score")]
+        # Unknown subtypes (e.g. a future v5) rank last, in their given order.
+        for rating in sorted(ratings, key=lambda rating: rank.get(rating["type"], len(rank))):
+            raw = str(rating["score"])
+            score = self._parse_cvss_score(raw)
+            if score is not None:
+                return score, raw if raw.startswith("CVSS:") else None, rating["type"]
         return None
+
+    def _severity_from_cvss_array(self, severity_array: list[dict[str, Any]]) -> str | None:
+        selected = self._select_cvss(severity_array)
+        return self._cvss_to_severity(selected[0], selected[2]) if selected else None
 
     @staticmethod
     def _severity_from_map(raw_severity: str | None) -> str | None:
@@ -606,28 +609,3 @@ class OSVAnalyzer(Analyzer):
         # float() accepts "nan"/"inf"; NaN survives the clamp in _cvss_to_severity as 10.0
         # (no comparison against it is true) and would land in CRITICAL.
         return value if math.isfinite(value) else None
-
-    def _get_highest_severity(self, vulns: list[dict[str, Any]]) -> str:
-        return max((vuln["severity"] for vuln in vulns), key=get_severity_value, default=Severity.INFO.value)
-
-    def _create_summary_message(self, component: str, version: str, vulns: list[dict[str, Any]]) -> str:
-        """Create a summary message for the component's vulnerabilities."""
-        if not vulns:
-            return ""
-
-        count = len(vulns)
-        critical = sum(1 for v in vulns if v.get("severity") == Severity.CRITICAL.value)
-        high = sum(1 for v in vulns if v.get("severity") == Severity.HIGH.value)
-
-        parts = [f"{component}@{version} has {count} known vulnerabilit{'y' if count == 1 else 'ies'}"]
-
-        severity_parts = []
-        if critical:
-            severity_parts.append(f"{critical} critical")
-        if high:
-            severity_parts.append(f"{high} high")
-
-        if severity_parts:
-            parts.append(f"({', '.join(severity_parts)})")
-
-        return " ".join(parts)

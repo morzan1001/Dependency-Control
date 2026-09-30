@@ -428,7 +428,7 @@ class ChatToolRegistry:
                     "rescan_enabled",
                     "rescan_interval",
                     "active_analyzers",
-                    "license_policy",
+                    "analyzer_settings",
                 ],
             )
         }

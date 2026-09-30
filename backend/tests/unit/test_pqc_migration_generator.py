@@ -15,12 +15,13 @@ _DEFAULT_BRANCH = "main"
 _DELETED_BRANCH = "feature/gone"
 
 
-def _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=2048, bom_ref="r"):
+def _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=2048, bom_ref="r", variant=None):
     return CryptoAsset(
         project_id="p1",
         scan_id="s1",
         bom_ref=bom_ref,
         name=name,
+        variant=variant,
         asset_type=CryptoAssetType.ALGORITHM,
         primitive=primitive,
         key_size_bits=key_size_bits,
@@ -192,3 +193,58 @@ async def test_the_summary_counts_every_migratable_group_not_the_page_it_returns
     assert resp.summary.items_returned == _PLAN_LIMIT
     assert resp.summary.total_items == _GROUPS_BEYOND_LIMIT
     assert sum(resp.summary.status_counts.values()) == _GROUPS_BEYOND_LIMIT
+
+
+async def _plan_for(assets):
+    """The plan for one project whose head scan holds these assets, through the vulnerability filter."""
+    db = FakeDatabase()
+    _scanned_project(db, "p1", [("scan-head", _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 1)])
+    repo = MagicMock()
+    repo.list_by_scan = AsyncMock(return_value=assets)
+    with patch("app.services.pqc_migration.generator.CryptoAssetRepository", return_value=repo):
+        resp = await PQCMigrationPlanGenerator(db).generate(
+            resolved=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]),
+        )
+    return {item.asset_bom_ref: item for item in resp.items}
+
+
+@pytest.mark.asyncio
+async def test_an_eddsa_signature_enters_the_plan_under_the_eddsa_family():
+    items = await _plan_for(
+        [
+            _asset(name="Ed25519", primitive=CryptoPrimitive.SIGNATURE, key_size_bits=256, bom_ref="ed25519"),
+            _asset(name="Ed448", primitive=CryptoPrimitive.SIGNATURE, key_size_bits=456, bom_ref="ed448"),
+        ]
+    )
+
+    assert set(items) == {"ed25519", "ed448"}
+    for item in items.values():
+        assert item.source_family == "EdDSA"
+        assert item.recommended_pqc == "ML-DSA-65"
+        assert item.recommended_deadline == "2030-01-01T00:00:00+00:00"
+
+
+@pytest.mark.asyncio
+async def test_dhe_and_ffdh_key_agreement_enter_the_plan_as_dh():
+    items = await _plan_for(
+        [
+            _asset(name="DHE", primitive=CryptoPrimitive.KEY_AGREE, bom_ref="dhe"),
+            _asset(name="FFDH", primitive=CryptoPrimitive.KEY_AGREE, bom_ref="ffdh"),
+        ]
+    )
+
+    assert {ref: item.source_family for ref, item in items.items()} == {"dhe": "DH", "ffdh": "DH"}
+    assert {item.recommended_pqc for item in items.values()} == {"ML-KEM-768"}
+
+
+@pytest.mark.asyncio
+async def test_an_asset_whose_name_is_no_family_resolves_it_from_the_variant():
+    """The policy matcher flags this asset through its variant, so the plan must list it too."""
+    items = await _plan_for(
+        [_asset(name="sha256WithRSAEncryption", variant="RSA", primitive=CryptoPrimitive.SIGNATURE, bom_ref="sig")]
+    )
+
+    item = items["sig"]
+    assert item.source_family == "RSA"
+    assert item.asset_name == "sha256WithRSAEncryption"
+    assert item.use_case == "digital-signature"

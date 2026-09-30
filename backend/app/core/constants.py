@@ -25,6 +25,11 @@ def get_severity_value(severity: str | None) -> int:
     return SEVERITY_ORDER.get(severity.upper(), 0)
 
 
+def max_severity[S: str | None](*severities: S) -> S:
+    """The most severe label; the first one wins a tie."""
+    return max(severities, key=get_severity_value)
+
+
 def sort_by_severity(items: list, key: str = "severity", reverse: bool = True) -> list:
     """Sort a list of dicts (or objects) by severity, most severe first by default."""
     return sorted(
@@ -72,7 +77,7 @@ LICENSE_URL_PATTERNS: dict[str, str] = {
     r"apache\.org/licenses/license-1\.1": SPDX_APACHE_1_1,
     # opensource.org serves both /licenses/<id> and /license/<id>.
     r"opensource\.org/licenses?/apache-2\.0": SPDX_APACHE_2_0,
-    r"opensource\.org/licenses?/mit": SPDX_MIT,
+    r"opensource\.org/licenses?/mit(?!-0)": SPDX_MIT,
     r"mit-license\.org": SPDX_MIT,
     r"opensource\.org/licenses?/bsd-3-clause": SPDX_BSD_3_CLAUSE,
     r"opensource\.org/licenses?/bsd-2-clause": SPDX_BSD_2_CLAUSE,
@@ -165,18 +170,8 @@ LICENSE_ALIASES: dict[str, str] = {
     "PSF": "Python-2.0",
 }
 
-# Patterns indicating unknown/missing license
-UNKNOWN_LICENSE_PATTERNS = {
-    "NOASSERTION",
-    "UNKNOWN",
-    "NONE",
-    "N/A",
-    "NOT FOUND",
-    "UNLICENSED",
-    "SEE LICENSE",
-    "CUSTOM",
-    "PROPRIETARY",
-}
+# Placeholders meaning the SBOM carries no licence data.
+UNKNOWN_LICENSE_PATTERNS = {"NOASSERTION", "UNKNOWN", "NONE", "N/A", "NOT FOUND"}
 
 # Project roles, weakest first: the order is the hierarchy.
 ProjectRole = Literal["viewer", "editor", "admin"]
@@ -378,8 +373,11 @@ CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project pattern
 EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploited
 
 # OpenSSF Scorecard thresholds
-# deps_dev raises a scorecard finding below this unless a project sets its own scorecard_threshold.
+# deps_dev raises a scorecard finding below this unless a project sets its own scorecard_threshold;
+# normalize_scorecard grades a score below it at least MEDIUM.
 SCORECARD_FLAG_THRESHOLD: float = 5.0
+# normalize_scorecard grades a score below this HIGH.
+SCORECARD_HIGH_SEVERITY_THRESHOLD: float = 3.0
 # Recommendations call a scored package poor quality below this.
 SCORECARD_POOR_QUALITY_THRESHOLD: float = 4.0
 
@@ -423,7 +421,6 @@ ANALYZER_BATCH_SIZES: dict[str, int] = {
     "malware": 20,
     "maintainer_risk": 10,
     "hash_verification": 10,
-    "typosquatting": 50,
     "end_of_life": 20,
     "epss": 100,  # Max CVEs per EPSS API request
 }
@@ -441,12 +438,12 @@ ANALYZER_TIMEOUTS: dict[str, float] = {
     "epss": 30.0,
     "kev": 30.0,
     "ghsa": 15.0,
-    "default": 30.0,
 }
 
 # GHSA concurrent fetching (with GitHub token: 5000 req/hour, without: 60 req/hour)
 GHSA_CONCURRENT_REQUESTS_AUTHENTICATED: int = 10
 GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED: int = 2
+EPSS_CONCURRENT_BATCHES: int = 4
 
 # "low"/"medium"/"high" are the EPSS buckets; "active" is KEV, "weaponized" KEV with ransomware use.
 ExploitMaturity = Literal["unknown", "low", "medium", "high", "active", "weaponized"]
@@ -528,7 +525,8 @@ IMPACT_MAX_SCORE_BOOST: float = (
 # Threat intelligence
 EPSS_API_URL = "https://api.first.org/data/v1/epss"
 KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-GHSA_API_URL = "https://api.github.com/advisories"
+GITHUB_API_URL = "https://api.github.com"
+GHSA_API_URL = f"{GITHUB_API_URL}/advisories"
 
 # Vulnerability databases
 # querybatch answers with {id, modified} only; the full record must be fetched per id.
@@ -544,7 +542,6 @@ NPM_REGISTRY_URL = "https://registry.npmjs.org"
 EOL_API_URL = "https://endoflife.date/api"
 MALWARE_API_URL = "https://api.opensourcemalware.com/functions/v1/check-malicious"
 TOP_PYPI_PACKAGES_URL = "https://hugovk.dev/top-pypi-packages/top-pypi-packages-30-days.json"
-GITHUB_API_URL = "https://api.github.com"
 
 # Mapping from package/component names to endoflife.date product IDs
 # See https://endoflife.date/api for all available products
@@ -635,11 +632,8 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "spring-framework": "spring-framework",
     "spring-boot": "spring-boot",
     "spring": "spring-framework",
-    # NVD CPE product names
-    "spring_framework": "spring-framework",
-    "spring_boot": "spring-boot",
-    "http_server": "apache-http-server",
-    "ruby_on_rails": "rails",
+    # NVD CPE product that does not normalise to its slug
+    "http-server": "apache-http-server",
     "laravel": "laravel",
     "symfony": "symfony",
     "express": "nodejs",
@@ -678,10 +672,6 @@ SEVERITY_ALIASES: dict[str, str] = {
     "ERROR": "HIGH",
     "TRACE": "INFO",
 }
-
-# Scanner-specific overrides applied before safe_severity and SEVERITY_ALIASES.
-OPENGREP_SEVERITY_MAP: dict[str, str] = {"INFO": "LOW"}
-BEARER_SEVERITY_MAP: dict[str, str] = {"warning": "LOW"}
 
 # Notification channel identifiers
 NOTIFICATION_CHANNEL_EMAIL = "email"
@@ -884,7 +874,6 @@ SOURCE_TYPE_IMAGE = "image"
 SOURCE_TYPE_APPLICATION = "application"
 SOURCE_TYPE_FILE = "file"
 SOURCE_TYPE_DIRECTORY = "directory"
-SOURCE_TYPE_FILE_SYSTEM = "file-system"
 
 # Package types that are typically OS/system packages (from container base images)
 OS_PACKAGE_TYPES = frozenset(
@@ -907,17 +896,11 @@ APP_PACKAGE_TYPES = frozenset(
         "npm",
         "pypi",
         "maven",
-        "gradle",
         "cargo",
         "gem",
         "nuget",
         "golang",
-        "go-module",
         "composer",
-        "pip",
-        "poetry",
-        "yarn",
-        "pnpm",
         "hex",
         "cocoapods",
         "swift",
@@ -935,13 +918,9 @@ REACHABILITY_LEVEL_SYMBOL = "symbol"
 REACHABILITY_CONFIDENCE_NOT_USED = 0.9  # High confidence package is NOT used
 REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS = 0.5  # Package imported, unknown functions
 REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO = 0.4  # Package imported, no symbol analysis available
-
-# Confidence base scores for symbol extraction
-REACHABILITY_EXTRACTION_CONFIDENCE = {
-    "high": 0.9,
-    "medium": 0.7,
-    "low": 0.5,
-}
+REACHABILITY_CONFIDENCE_SYMBOL_MATCHED = 1.0
+# Vulnerable symbols searched and none used directly: weaker evidence than having no symbol data.
+REACHABILITY_CONFIDENCE_SYMBOLS_NOT_USED = 0.35
 
 # Threshold above which a "reachable" verdict is considered high-confidence
 # enough to drive prioritisation/headline counts. Values below this still
@@ -949,17 +928,9 @@ REACHABILITY_EXTRACTION_CONFIDENCE = {
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
-# Why a finding carries no reachability verdict. "unsupported_ecosystem" and "absence_not_evidence"
-# are terminal — OS packages have no callgraph tooling, a JVM graph cannot rule a package out — while
-# the others name something a pipeline can fix.
-REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM = "unsupported_ecosystem"
-REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED = "language_not_analyzed"
-REACHABILITY_REASON_NO_COVERAGE_UNIVERSE = "no_coverage_universe"
-REACHABILITY_REASON_OUTSIDE_COVERAGE = "outside_coverage"
-REACHABILITY_REASON_ABSENCE_NOT_EVIDENCE = "absence_not_evidence"
-
 # Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
 # calls, the symbols each import names, madge dependencies and the analyzed-modules list.
+# It bounds parse cost only; whether the parsed graph fits one document is checked on write.
 CALLGRAPH_MAX_ENTRIES = 200_000
 
 GITLAB_ACCESS_GUEST = 10

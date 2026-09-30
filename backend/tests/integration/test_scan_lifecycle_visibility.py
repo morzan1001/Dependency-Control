@@ -11,6 +11,7 @@ from app.models.project import Project, Scan
 from app.repositories.findings import FindingRepository
 from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
+from app.services.crypto_policy.seeder import seed_crypto_policies
 from tests.helpers.analyzers import serve_analyzer
 
 _PROJECT_ID = "test-project-id"
@@ -84,8 +85,8 @@ async def _seed_scan(db, sbom_refs: list[dict], scan_type: str | None = None) ->
         branch="main",
         sbom_refs=sbom_refs,
         status="processing",
-        scan_type=scan_type,
         worker_id=_WORKER,
+        scan_type=scan_type,
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     return scan.id
@@ -216,13 +217,15 @@ def test_enrichment_post_processor_failures_do_not_flip_the_status():
 
 @pytest.mark.asyncio
 async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, monkeypatch):
-    """An EPSS/KEV outage writes no analysis_results document (create_raw sits inside the
+    """An EPSS/KEV outage writes no analysis_results document (the write sits inside the
     try) and must not change the status, so the scan field is its only queryable trace."""
 
     async def _enrichment_outage(*_args, **_kwargs):
         raise RuntimeError("EPSS feed unreachable")
 
-    monkeypatch.setattr("app.services.analysis.engine.enrich_vulnerability_findings", _enrichment_outage)
+    monkeypatch.setattr(
+        "app.services.analysis.engine.vulnerability_enrichment_service.enrich_findings", _enrichment_outage
+    )
     serve_analyzer(monkeypatch, "grype", _GrypeVulnAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
@@ -286,6 +289,30 @@ async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, 
     assert scan["failed_analyzers"] == ["osv"]
     error_findings = [d async for d in db.findings.find({"scan_id": scan_id, "finding_id": "SCAN-ERROR-osv"})]
     assert len(error_findings) == 1, "partial coverage must be visible in the findings list"
+    assert error_findings[0]["description"].startswith("Scanner 'osv' returned partial results: ")
+
+
+@pytest.mark.asyncio
+async def test_a_crypto_evaluator_failing_with_an_empty_message_still_counts_as_failed(
+    db, _gridfs_patched, monkeypatch
+):
+    real_evaluators = engine.crypto_evaluators
+
+    def _weak_key_times_out(catalog):
+        def _raise(_assets, _policy):
+            raise TimeoutError()  # str() of a bare TimeoutError is ""
+
+        return {**real_evaluators(catalog), "crypto_weak_key": _raise}
+
+    monkeypatch.setattr(engine, "crypto_evaluators", _weak_key_times_out)
+    await seed_crypto_policies(db)
+    await _seed_project(db)
+    scan_id = await _seed_scan(db, sbom_refs=[], scan_type="cbom")
+
+    assert await run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert scan["failed_analyzers"] == ["crypto_weak_key"]
 
 
 @pytest.mark.asyncio

@@ -1,8 +1,6 @@
-import asyncio
 import logging
+import time
 from typing import Any
-
-import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.config import settings
@@ -12,94 +10,54 @@ from app.schemas.enrichment import KEVEntry
 
 logger = logging.getLogger(__name__)
 
+_MEMO_SECONDS = 15 * 60
+
+
+async def _fetch_kev_catalog() -> dict[str, Any]:
+    timeout = ANALYZER_TIMEOUTS["kev"]
+    async with InstrumentedAsyncClient("CISA KEV", timeout=timeout) as client:
+        response = await client.send_with_backoff(
+            "GET",
+            KEV_CATALOG_URL,
+            attempts=settings.ENRICHMENT_MAX_RETRIES,
+            base_delay=settings.ENRICHMENT_RETRY_DELAY,
+        )
+    response.raise_for_status()
+    catalog = {
+        vuln["cveID"]: KEVEntry(
+            cve=vuln["cveID"],
+            date_added=vuln.get("dateAdded") or "",
+            required_action=vuln.get("requiredAction") or "",
+            due_date=vuln.get("dueDate") or "",
+            known_ransomware_use=(vuln.get("knownRansomwareCampaignUse") or "").lower() == "known",
+        ).model_dump()
+        for vuln in response.json().get("vulnerabilities", [])
+        if vuln.get("cveID")
+    }
+    if not catalog:
+        raise ValueError("CISA KEV catalog is empty")
+    logger.info(f"Fetched {len(catalog)} entries from CISA KEV catalog")
+    return catalog
+
 
 class KEVProvider:
     """Provider for CISA Known Exploited Vulnerabilities (KEV) catalog."""
 
-    def __init__(
-        self,
-        max_retries: int | None = None,
-        retry_delay: float | None = None,
-    ):
-        self._max_retries = max_retries if max_retries is not None else settings.ENRICHMENT_MAX_RETRIES
-        self._retry_delay = retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
+    def __init__(self) -> None:
+        self._memo: dict[str, KEVEntry] = {}
+        self._memo_expires = 0.0
 
-    async def load_kev_catalog(self, client: InstrumentedAsyncClient) -> dict[str, KEVEntry]:
-        """Load CISA KEV catalog, using Redis cache with distributed lock."""
-        cache_key = CacheKeys.kev_catalog()
-        timeout = ANALYZER_TIMEOUTS.get("kev", ANALYZER_TIMEOUTS["default"])
-
-        async def fetch_kev_catalog() -> dict[str, Any] | None:
-            last_error = None
-
-            for attempt in range(self._max_retries):
-                try:
-                    response = await client.get(KEV_CATALOG_URL, timeout=timeout)
-                    response.raise_for_status()
-
-                    data = response.json()
-                    vulnerabilities = data.get("vulnerabilities", [])
-
-                    kev_dict: dict[str, Any] = {}
-                    for vuln in vulnerabilities:
-                        cve = vuln.get("cveID", "")
-                        if cve:
-                            ransomware_value = vuln.get("knownRansomwareCampaignUse") or ""
-                            kev_entry = KEVEntry(
-                                cve=cve,
-                                vendor_project=vuln.get("vendorProject") or "",
-                                product=vuln.get("product") or "",
-                                vulnerability_name=vuln.get("vulnerabilityName") or "",
-                                date_added=vuln.get("dateAdded") or "",
-                                short_description=vuln.get("shortDescription") or "",
-                                required_action=vuln.get("requiredAction") or "",
-                                due_date=vuln.get("dueDate") or "",
-                                known_ransomware_use=ransomware_value.lower() == "known",
-                            )
-                            kev_dict[cve] = kev_entry.model_dump()
-
-                    logger.info(f"Fetched {len(kev_dict)} entries from CISA KEV catalog")
-                    if not kev_dict:
-                        logger.warning("KEV catalog returned empty - not caching")
-                        return None
-                    return kev_dict
-
-                except httpx.TimeoutException:
-                    last_error = "Timeout"
-                    logger.warning(f"KEV catalog fetch timeout (attempt {attempt + 1}/{self._max_retries})")
-                except httpx.ConnectError:
-                    last_error = "Connection error"
-                    logger.warning(f"KEV catalog connection error (attempt {attempt + 1}/{self._max_retries})")
-                except httpx.HTTPStatusError as e:
-                    last_error = f"HTTP {e.response.status_code}"
-                    if e.response.status_code >= 500:
-                        logger.warning(
-                            f"KEV catalog server error {e.response.status_code} "
-                            f"(attempt {attempt + 1}/{self._max_retries})"
-                        )
-                    else:
-                        # 4xx won't be fixed by retrying.
-                        logger.warning(f"KEV catalog client error: {e}")
-                        return None
-                except Exception as e:
-                    last_error = str(e)
-                    logger.warning(f"Failed to fetch CISA KEV catalog (attempt {attempt + 1}/{self._max_retries}): {e}")
-
-                if attempt < self._max_retries - 1:
-                    await asyncio.sleep(self._retry_delay * (attempt + 1))
-
-            logger.error(f"KEV catalog fetch failed after {self._max_retries} attempts: {last_error}")
-            return None
-
+    async def load_kev_catalog(self) -> dict[str, KEVEntry] | None:
+        """The KEV catalog from this process, Redis or CISA, in that order; None when it could not be read."""
+        if self._memo and time.monotonic() < self._memo_expires:
+            return self._memo
         cached = await cache_service.get_or_fetch_with_lock(
-            key=cache_key,
-            fetch_fn=fetch_kev_catalog,
+            key=CacheKeys.kev_catalog(),
+            fetch_fn=_fetch_kev_catalog,
             ttl_seconds=CacheTTL.KEV_CATALOG,
         )
-
-        if cached:
-            kev_data = {k: KEVEntry(**v) for k, v in cached.items()}
-            logger.debug(f"KEV catalog loaded ({len(kev_data)} entries)")
-            return kev_data
-
-        return {}
+        if not cached:
+            return None
+        self._memo = {cve: KEVEntry(**entry) for cve, entry in cached.items()}
+        self._memo_expires = time.monotonic() + _MEMO_SECONDS
+        return self._memo

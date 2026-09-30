@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 def normalize_license(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     # Enrichment reads the full classification list; issues only exist for policy
-    # violations and include synthetic cross-component "A + B" compatibility entries.
+    # violations and include synthetic cross-component "A / B" compatibility entries.
     for entry in result.get("component_licenses") or []:
         component = entry.get("component")
         version = entry.get("version")
@@ -44,7 +44,7 @@ def normalize_license(aggregator: "ResultAggregator", result: dict[str, Any], so
                     purl=item.get("purl"),
                     spdx_expression=item.get("spdx_expression"),
                     context_reason=item.get("context_reason"),
-                    effective_severity=item.get("effective_severity"),
+                    severity_without_context=item.get("severity_without_context"),
                 ).model_dump(exclude_none=True),
             ),
             source=source,

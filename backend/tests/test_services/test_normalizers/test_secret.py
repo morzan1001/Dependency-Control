@@ -2,7 +2,109 @@
 
 import hashlib
 
+import pytest
+
 from app.services.aggregation import ResultAggregator
+
+_AWS_DESCRIPTION = (
+    "AWS (Amazon Web Services) is a comprehensive cloud computing platform offering a wide range of on-demand "
+    "services like computing power, storage, databases. API keys for AWS can have varying amount of access to these "
+    "services depending on the IAM policy attached."
+)
+# trufflehog 3.97.9 `filesystem` and `git` output lines; the key material is swapped for AWS's documented example key.
+_FILESYSTEM_FINDING = {
+    "SourceMetadata": {"Data": {"Filesystem": {"file": "/scan/config.py", "line": 3}}},
+    "SourceID": 1,
+    "SourceType": 15,
+    "SourceName": "trufflehog - filesystem",
+    "DetectorType": 2,
+    "DetectorName": "AWS",
+    "DetectorDescription": _AWS_DESCRIPTION,
+    "DecoderName": "PLAIN",
+    "Verified": False,
+    "VerificationFromCache": False,
+    "Raw": "AKIAIOSFODNN7EXAMPLE",
+    "RawV2": "AKIAIOSFODNN7EXAMPLE:wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    "Redacted": "AKIAIOSFODNN7EXAMPLE",
+    "ExtraData": {"account": "123456789012", "resource_type": "Access key"},
+    "StructuredData": None,
+    "SecretParts": {
+        "access_key_id": "AKIAIOSFODNN7EXAMPLE",
+        "secret_access_key": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+    },
+}
+_GIT_FINDING = {
+    **_FILESYSTEM_FINDING,
+    "SourceMetadata": {
+        "Data": {
+            "Git": {
+                "commit": "a62105a16d9d66601e919bf2d2449afd3d437d2a",
+                "file": "config.py",
+                "email": "dev <dev@example.com>",
+                "repository": "file:///repo",
+                "timestamp": "2026-09-29 21:38:35 +0000",
+                "line": 3,
+                "repository_local_path": "/tmp/trufflehog-24-831200535",
+            }
+        }
+    },
+    "SourceType": 16,
+    "SourceName": "trufflehog - git",
+}
+
+
+def _with_line(line, source):
+    return {**_FILESYSTEM_FINDING, "SourceMetadata": {"Data": {source: {"file": "config.py", "line": line}}}}
+
+
+def _only_finding(*entries):
+    agg = ResultAggregator()
+    agg.aggregate("trufflehog", {"findings": list(entries)})
+    (finding,) = agg.findings.values()
+    return finding
+
+
+class TestRealTrufflehogOutput:
+    def test_filesystem_finding_keeps_its_line_and_detector_name(self):
+        f = _only_finding(_FILESYSTEM_FINDING)
+        assert (f.component, f.description, f.id) == ("/scan/config.py", "Secret detected: AWS", "SECRET-2-317e5726")
+        assert f.details["detector"] == "2"
+        assert f.details["detector_name"] == "AWS"
+        assert f.details["line"] == 3
+
+    def test_git_finding_keeps_line_commit_and_timestamp(self):
+        f = _only_finding(_GIT_FINDING)
+        assert f.component == "config.py"
+        assert (f.details["line"], f.details["commit"], f.details["commit_timestamp"]) == (
+            3,
+            "a62105a16d9d66601e919bf2d2449afd3d437d2a",
+            "2026-09-29 21:38:35 +0000",
+        )
+
+    def test_a_detector_newer_than_this_release_is_named_by_the_scanner(self):
+        f = _only_finding({**_FILESYSTEM_FINDING, "DetectorType": 1070, "DetectorName": "FutureCloudToken"})
+        assert f.description == "Secret detected: FutureCloudToken"
+        assert f.details["detector"] == "1070"
+
+    def test_without_a_detector_name_the_description_names_the_ordinal(self):
+        entry = {key: value for key, value in _FILESYSTEM_FINDING.items() if key != "DetectorName"}
+        f = _only_finding(entry)
+        assert f.description == "Secret detected: 2"
+        assert "detector_name" not in f.details
+
+    @pytest.mark.parametrize("source", ["Filesystem", "Git"])
+    @pytest.mark.parametrize(("line", "stored"), [("42", 42), ("0", 0), (999_999_999, 999_999_999)])
+    def test_a_line_number_is_kept(self, line, stored, source):
+        assert _only_finding(_with_line(line, source)).details["line"] == stored
+
+    @pytest.mark.parametrize("source", ["Filesystem", "Git"])
+    @pytest.mark.parametrize(
+        "line",
+        ["²", "\uff11\uff12", "1" * 5000, 10**30, -1, True, 3.5, "12a"],
+        ids=["superscript", "full-width", "5000-digits", "huge-int", "negative", "bool", "float", "suffix"],
+    )
+    def test_a_line_that_is_no_ascii_number_is_dropped(self, line, source):
+        assert "line" not in _only_finding(_with_line(line, source)).details
 
 
 class TestNormalizeTrufflehog:
@@ -14,6 +116,7 @@ class TestNormalizeTrufflehog:
             "findings": [
                 {
                     "DetectorType": "2",
+                    "DetectorName": "AWS",
                     "Raw": "AKIAIOSFODNN7EXAMPLE",
                     "Verified": True,
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "config/aws.env"}}},
@@ -128,9 +231,9 @@ class TestNormalizeTrufflehog:
         assert len(self.agg.findings) == 2
 
     def test_detector_type_ordinal_is_the_stored_identity(self):
-        """The ordinal, not the name, must reach finding_id: 373 of 504 production waivers
-        carry `SECRET-<ordinal>-<hash>` and a `match.rule_key` of the same ordinal, and the
-        ingest schema drops DetectorName, so a name here would silently un-suppress them."""
+        """The ordinal, not the name, must reach finding_id and details.detector: 373 of 504
+        production waivers carry `SECRET-<ordinal>-<hash>` and a `match.rule_key` of the same
+        ordinal, so a name there would silently un-suppress them."""
         result = {
             "findings": [
                 {

@@ -42,11 +42,11 @@ Analyze posted SBOMs and scanner results and return findings, statistics, depend
 recommendations. Nothing is written: no scan, no findings, no dependency records, no audit row.
 
 Storing nothing is not the same as sending nothing. Every run enriches vulnerability findings
-through the EPSS API and the CISA KEV catalog, and the default analyzer set includes `osv`,
-which sends the package coordinates read out of the posted SBOMs to `api.osv.dev`. Several
-further analyzers reach a third party of their own once named. Pass an explicit `analyzers`
-list to decide what leaves this process; `analyzers.notes` in the response names every stage
-that did, and the host it reached.
+through the EPSS API, GitHub's advisory API and the CISA KEV catalog, and the default analyzer
+set includes `osv`, which sends the package coordinates read out of the posted SBOMs to
+`api.osv.dev`. Several further analyzers reach a third party of their own once named. Pass an
+explicit `analyzers` list to decide what leaves this process; `analyzers.notes` in the response
+names every stage that did, and the host it reached.
 
 Posted scanner output is validated entry by entry against the same models `/api/v1/ingest/*`
 uses. A scanner whose entries do not validate is reported in `analyzers.errored` and contributes

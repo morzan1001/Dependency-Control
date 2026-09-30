@@ -284,10 +284,10 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 )}
                                 {!!finding.related_findings_omitted && (
                                     <div className="col-span-2">
-                                        <DetailSection label="Related Findings" compact>
+                                        <DetailSection label="Unlisted Findings" compact>
                                             <p className="text-xs text-muted-foreground">
-                                                Not listed: this component carries {finding.related_findings_omitted.toLocaleString()} other
-                                                findings, more than the scan pairs up. Filter the findings table by this component to see them.
+                                                Not listed: {finding.related_findings_omitted.toLocaleString()} other findings on this
+                                                component. Filter the findings table by this component to see them.
                                             </p>
                                         </DetailSection>
                                     </div>
@@ -325,7 +325,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                     })()}
                                     <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
                                         <DetailSection label="Detector" compact>
-                                            <p className="font-medium">{finding.details?.detector || "Unknown"}</p>
+                                            <p className="font-medium">{finding.details?.detector_name || finding.details?.detector || "Unknown"}</p>
                                         </DetailSection>
                                         <DetailSection label="Verified" compact>
                                             <Badge variant={finding.details?.verified ? "destructive" : "secondary"}>

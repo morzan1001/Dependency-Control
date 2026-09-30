@@ -1,6 +1,5 @@
 from collections import defaultdict
 
-from app.core.trufflehog import resolve_detector_name
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components
 
@@ -14,9 +13,8 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
 
     secrets_by_type = defaultdict(list)
     for f in findings:
-        raw_detector = get_attr(f, "details", {}).get("detector")
-        detector = resolve_detector_name(raw_detector) or str(raw_detector)
-        secrets_by_type[detector].append(f)
+        details = get_attr(f, "details", {})
+        secrets_by_type[str(details.get("detector_name") or details.get("detector"))].append(f)
 
     recommendations = []
 

@@ -1,0 +1,636 @@
+{
+ "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+ "bomFormat": "CycloneDX",
+ "specVersion": "1.6",
+ "serialNumber": "urn:uuid:b20929a1-330d-4936-9fb0-495929737811",
+ "version": 1,
+ "metadata": {
+  "timestamp": "2026-09-29T23:13:39+02:00",
+  "tools": {
+   "components": [
+    {
+     "type": "application",
+     "author": "anchore",
+     "name": "syft",
+     "version": "1.42.1"
+    }
+   ]
+  },
+  "component": {
+   "bom-ref": "52d33f83b124e2f1",
+   "type": "file",
+   "name": "/tmp/w3b-t2/mono"
+  }
+ },
+ "components": [
+  {
+   "bom-ref": "pkg:pypi/anyio@4.4.0?package-id=4370e91781766145",
+   "type": "library",
+   "name": "anyio",
+   "version": "4.4.0",
+   "cpe": "cpe:2.3:a:python-anyio:python-anyio:4.4.0:*:*:*:*:*:*:*",
+   "purl": "pkg:pypi/anyio@4.4.0",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "python-package-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "python-poetry-lock-entry"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-anyio:python_anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_anyio:python-anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_anyio:python_anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python-anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python_anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:anyio:python-anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:anyio:python_anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-anyio:anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_anyio:anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:anyio:anyio:4.4.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/backend/poetry.lock"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:pypi/certifi@2024.7.4?package-id=b929298c0a8dba24",
+   "type": "library",
+   "name": "certifi",
+   "version": "2024.7.4",
+   "cpe": "cpe:2.3:a:certifi:certifi:2024.7.4:*:*:*:*:python:*:*",
+   "purl": "pkg:pypi/certifi@2024.7.4",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "python-package-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "python-poetry-lock-entry"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/backend/poetry.lock"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:npm/debug@4.3.4?package-id=ce803f0c77037950",
+   "type": "library",
+   "name": "debug",
+   "version": "4.3.4",
+   "licenses": [
+    {
+     "license": {
+      "id": "MIT"
+     }
+    }
+   ],
+   "cpe": "cpe:2.3:a:debug_project:debug:4.3.4:*:*:*:*:node.js:*:*",
+   "purl": "pkg:npm/debug@4.3.4",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "javascript-lock-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "javascript"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "npm"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "javascript-npm-package-lock-entry"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/frontend/package-lock.json"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:pypi/h11@0.14.0?package-id=3334efaa48c913cf",
+   "type": "library",
+   "name": "h11",
+   "version": "0.14.0",
+   "cpe": "cpe:2.3:a:python-h11:python-h11:0.14.0:*:*:*:*:*:*:*",
+   "purl": "pkg:pypi/h11@0.14.0",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "python-package-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "python-poetry-lock-entry"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-h11:python_h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_h11:python-h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_h11:python_h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python-h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python_h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:h11:python-h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:h11:python_h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-h11:h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_h11:h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:h11:h11:0.14.0:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/backend/poetry.lock"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:pypi/httpcore@1.0.5?package-id=3c64d01bc4308259",
+   "type": "library",
+   "name": "httpcore",
+   "version": "1.0.5",
+   "cpe": "cpe:2.3:a:python-httpcore:python-httpcore:1.0.5:*:*:*:*:*:*:*",
+   "purl": "pkg:pypi/httpcore@1.0.5",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "python-package-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "python-poetry-lock-entry"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-httpcore:python_httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_httpcore:python-httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_httpcore:python_httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:httpcore:python-httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:httpcore:python_httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-httpcore:httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_httpcore:httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python-httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python_httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:httpcore:httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:httpcore:1.0.5:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/backend/poetry.lock"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:pypi/httpx@0.27.0?package-id=68836da4d6175af3",
+   "type": "library",
+   "name": "httpx",
+   "version": "0.27.0",
+   "cpe": "cpe:2.3:a:encode:httpx:0.27.0:*:*:*:*:python:*:*",
+   "purl": "pkg:pypi/httpx@0.27.0",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "python-package-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "python-poetry-lock-entry"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/backend/poetry.lock"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:pypi/idna@3.7?package-id=01a017eacc26c5b6",
+   "type": "library",
+   "name": "idna",
+   "version": "3.7",
+   "cpe": "cpe:2.3:a:python-idna:python-idna:3.7:*:*:*:*:*:*:*",
+   "purl": "pkg:pypi/idna@3.7",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "python-package-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "python-poetry-lock-entry"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-idna:python_idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_idna:python-idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_idna:python_idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python-idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python_idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:idna:python-idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:idna:python_idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-idna:idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_idna:idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:idna:idna:3.7:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/backend/poetry.lock"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:npm/ms@2.1.2?package-id=f6dde40e2affabcb",
+   "type": "library",
+   "name": "ms",
+   "version": "2.1.2",
+   "licenses": [
+    {
+     "license": {
+      "id": "MIT"
+     }
+    }
+   ],
+   "cpe": "cpe:2.3:a:vercel:ms:2.1.2:*:*:*:*:node.js:*:*",
+   "purl": "pkg:npm/ms@2.1.2",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "javascript-lock-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "javascript"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "npm"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "javascript-npm-package-lock-entry"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/frontend/package-lock.json"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:npm/myapp@1.0.0?package-id=62d3305559d9b148",
+   "type": "library",
+   "name": "myapp",
+   "version": "1.0.0",
+   "licenses": [
+    {
+     "license": {
+      "id": "MIT"
+     }
+    }
+   ],
+   "cpe": "cpe:2.3:a:myapp:myapp:1.0.0:*:*:*:*:*:*:*",
+   "purl": "pkg:npm/myapp@1.0.0",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "javascript-lock-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "javascript"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "npm"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "javascript-npm-package-lock-entry"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/frontend/package-lock.json"
+    }
+   ]
+  },
+  {
+   "bom-ref": "pkg:pypi/sniffio@1.3.1?package-id=477afa445824f209",
+   "type": "library",
+   "name": "sniffio",
+   "version": "1.3.1",
+   "cpe": "cpe:2.3:a:python-sniffio:python-sniffio:1.3.1:*:*:*:*:*:*:*",
+   "purl": "pkg:pypi/sniffio@1.3.1",
+   "properties": [
+    {
+     "name": "syft:package:foundBy",
+     "value": "python-package-cataloger"
+    },
+    {
+     "name": "syft:package:language",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:type",
+     "value": "python"
+    },
+    {
+     "name": "syft:package:metadataType",
+     "value": "python-poetry-lock-entry"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-sniffio:python_sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_sniffio:python-sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_sniffio:python_sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python-sniffio:sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python_sniffio:sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:sniffio:python-sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:sniffio:python_sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python-sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:python_sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:sniffio:sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:cpe23",
+     "value": "cpe:2.3:a:python:sniffio:1.3.1:*:*:*:*:*:*:*"
+    },
+    {
+     "name": "syft:location:0:path",
+     "value": "/backend/poetry.lock"
+    }
+   ]
+  },
+  {
+   "bom-ref": "5f5c52c9e4a2d497",
+   "type": "file",
+   "name": "/private/tmp/w3b-t2/mono/backend/poetry.lock",
+   "hashes": [
+    {
+     "alg": "SHA-1",
+     "content": "051e0f3d6c2c7f42d0dd786a070d2355844ae4c0"
+    },
+    {
+     "alg": "SHA-256",
+     "content": "2f3065d2da861ed58b3fa62a66c26069bf90c36951a1fce53f6a56bfb1298b90"
+    }
+   ]
+  },
+  {
+   "bom-ref": "c9e3ffd6671019b2",
+   "type": "file",
+   "name": "/private/tmp/w3b-t2/mono/frontend/package-lock.json",
+   "hashes": [
+    {
+     "alg": "SHA-1",
+     "content": "9bc6f6237cb7b5ef91cdc6f48bd2e4442cb1b229"
+    },
+    {
+     "alg": "SHA-256",
+     "content": "3d0a3e0d00d947eea932f02a0405e0a63e927781d99cacd01872917beae717e5"
+    }
+   ]
+  }
+ ],
+ "dependencies": [
+  {
+   "ref": "pkg:npm/debug@4.3.4?package-id=ce803f0c77037950",
+   "dependsOn": [
+    "pkg:npm/ms@2.1.2?package-id=f6dde40e2affabcb"
+   ]
+  },
+  {
+   "ref": "pkg:npm/myapp@1.0.0?package-id=62d3305559d9b148",
+   "dependsOn": [
+    "pkg:npm/debug@4.3.4?package-id=ce803f0c77037950"
+   ]
+  },
+  {
+   "ref": "pkg:pypi/anyio@4.4.0?package-id=4370e91781766145",
+   "dependsOn": [
+    "pkg:pypi/idna@3.7?package-id=01a017eacc26c5b6",
+    "pkg:pypi/sniffio@1.3.1?package-id=477afa445824f209"
+   ]
+  },
+  {
+   "ref": "pkg:pypi/httpcore@1.0.5?package-id=3c64d01bc4308259",
+   "dependsOn": [
+    "pkg:pypi/certifi@2024.7.4?package-id=b929298c0a8dba24",
+    "pkg:pypi/h11@0.14.0?package-id=3334efaa48c913cf"
+   ]
+  },
+  {
+   "ref": "pkg:pypi/httpx@0.27.0?package-id=68836da4d6175af3",
+   "dependsOn": [
+    "pkg:pypi/anyio@4.4.0?package-id=4370e91781766145",
+    "pkg:pypi/certifi@2024.7.4?package-id=b929298c0a8dba24",
+    "pkg:pypi/httpcore@1.0.5?package-id=3c64d01bc4308259",
+    "pkg:pypi/idna@3.7?package-id=01a017eacc26c5b6",
+    "pkg:pypi/sniffio@1.3.1?package-id=477afa445824f209"
+   ]
+  }
+ ]
+}

@@ -173,9 +173,20 @@ async def _store_crypto_assets(
     db: AsyncIOMotorDatabase, project_id: str, scan_id: str, parsed: ParsedCBOM
 ) -> dict[str, Any]:
     """Bulk-upsert the scan's CryptoAssets and return the summary of what is stored."""
-    crypto_assets = [CryptoAsset(project_id=project_id, scan_id=scan_id, **a.model_dump()) for a in parsed.assets]
+    crypto_assets = [
+        CryptoAsset(project_id=project_id, scan_id=scan_id, cbom_upload=True, **a.model_dump()) for a in parsed.assets
+    ]
     repo = CryptoAssetRepository(db)
     await repo.bulk_upsert(project_id, scan_id, crypto_assets)
+    # Deleted after the upsert so a failed write keeps the previous upload's assets.
+    await repo.delete_many(
+        {
+            "project_id": project_id,
+            "scan_id": scan_id,
+            "cbom_upload": True,
+            "bom_ref": {"$nin": [a.bom_ref for a in crypto_assets]},
+        }
+    )
     # Counts persisted docs, so duplicate bom_refs in one payload are reported honestly
     # (bulk_upsert returns submitted ops, which always equals the input length).
     summary: dict[str, Any] = await repo.summary_for_scan(project_id, scan_id)

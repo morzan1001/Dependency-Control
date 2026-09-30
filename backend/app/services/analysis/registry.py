@@ -7,13 +7,13 @@ two scans overlap.
 
 from collections.abc import Callable
 from functools import partial
+from typing import Any
 
 from app.core.constants import CI_SCANNER_ANALYZERS
+from app.models.crypto_asset import CryptoAsset
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.services.analyzers import (
     Analyzer,
-    CertificateLifecycleAnalyzer,
-    CryptoRuleAnalyzer,
     DepsDevAnalyzer,
     EndOfLifeAnalyzer,
     EPSSKEVAnalyzer,
@@ -24,11 +24,15 @@ from app.services.analyzers import (
     OpenSourceMalwareAnalyzer,
     OSVAnalyzer,
     OutdatedAnalyzer,
-    ProtocolCipherSuiteAnalyzer,
     ReachabilityAnalyzer,
     TrivyAnalyzer,
     TyposquattingAnalyzer,
 )
+from app.services.analyzers.crypto.base import evaluate_rules
+from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry
+from app.services.analyzers.crypto.certificate_lifecycle import evaluate_certificates
+from app.services.analyzers.crypto.protocol_cipher import evaluate_protocols
+from app.services.crypto_policy.resolver import EffectivePolicy
 
 AnalyzerFactory = Callable[[], Analyzer]
 
@@ -44,12 +48,6 @@ analyzer_factories: dict[str, AnalyzerFactory] = {
     "typosquatting": TyposquattingAnalyzer,
     "hash_verification": HashVerificationAnalyzer,
     "maintainer_risk": MaintainerRiskAnalyzer,
-    **{
-        finding_type.value: partial(CryptoRuleAnalyzer, name=finding_type.value, finding_types={finding_type})
-        for finding_type in sorted(RULE_DRIVEN_FINDING_TYPES)
-    },
-    "crypto_certificate_lifecycle": CertificateLifecycleAnalyzer,
-    "crypto_protocol_cipher": ProtocolCipherSuiteAnalyzer,
 }
 
 # Post-processors enrich existing findings; they run after analyzers and don't see SBOMs.
@@ -61,18 +59,28 @@ post_processor_factories: dict[str, AnalyzerFactory] = {
 # Vulnerability scanners — post-processors depend on these.
 VULNERABILITY_ANALYZERS: set[str] = {"trivy", "grype", "osv", "deps_dev"}
 
-CRYPTO_ANALYZERS: set[str] = {
-    *(finding_type.value for finding_type in RULE_DRIVEN_FINDING_TYPES),
-    "crypto_certificate_lifecycle",
-    "crypto_protocol_cipher",
-}
+# The only analyzers that read the posted document itself; every other one grades the parser's components.
+RAW_SBOM_ANALYZERS: set[str] = {"trivy", "grype"}
+
+CryptoEvaluator = Callable[[list[CryptoAsset], EffectivePolicy], dict[str, Any]]
 
 
-# Names a project may list; crypto analyzers are left out because CBOM presence decides them.
+# Scan-scoped: the engine runs these once per scan over the persisted crypto assets.
+def crypto_evaluators(catalog: dict[str, CipherSuiteEntry]) -> dict[str, CryptoEvaluator]:
+    return {
+        **{
+            finding_type.value: partial(evaluate_rules, finding_type=finding_type)
+            for finding_type in sorted(RULE_DRIVEN_FINDING_TYPES)
+        },
+        "crypto_certificate_lifecycle": evaluate_certificates,
+        "crypto_protocol_cipher": partial(evaluate_protocols, catalog=catalog),
+    }
+
+
+CRYPTO_ANALYZERS: frozenset[str] = frozenset(crypto_evaluators({}))
+
+
+# Names a project may list; crypto analyzers are not among them because CBOM presence decides them.
 SELECTABLE_ANALYZERS: frozenset[str] = frozenset(
-    (analyzer_factories.keys() - CRYPTO_ANALYZERS) | post_processor_factories.keys() | CI_SCANNER_ANALYZERS
+    analyzer_factories.keys() | post_processor_factories.keys() | CI_SCANNER_ANALYZERS
 )
-
-
-def is_crypto_analyzer(name: str) -> bool:
-    return name in CRYPTO_ANALYZERS

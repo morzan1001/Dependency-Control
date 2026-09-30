@@ -14,15 +14,21 @@ from .base import Analyzer
 logger = logging.getLogger(__name__)
 
 
-async def kill_and_reap(process: asyncio.subprocess.Process) -> None:
-    """End a scanner this process will never read again, and collect it.
-
-    Killing without waiting leaves a zombie in the pod's process table; a scanner left running
-    holds its CPU and its temp files for as long as the tool feels like, under no deadline the
-    request can still enforce.
-    """
-    process.kill()
-    await process.wait()
+async def run_process(args: list[str], time_limit: float) -> tuple[bytes, bytes, int] | None:
+    """Run a command to completion and return (stdout, stderr, returncode); None if it outlived ``time_limit``."""
+    process = await asyncio.create_subprocess_exec(
+        *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+    )
+    try:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=time_limit)
+    except asyncio.TimeoutError:
+        return None
+    finally:
+        # Also on cancel, which takes the time limit with it; waiting reaps the child instead of leaving a zombie.
+        if process.returncode is None:
+            process.kill()
+            await process.wait()
+    return stdout, stderr, process.returncode or 0
 
 
 class CLIAnalyzer(Analyzer):
@@ -37,9 +43,20 @@ class CLIAnalyzer(Analyzer):
             return False
         return shutil.which(self.cli_command) is not None
 
-    def _is_retryable_error(self, _stderr: bytes) -> bool:
-        """Whether the error is transient and worth retrying; default never."""
-        return False
+    retryable_patterns: tuple[str, ...] = (
+        "connection refused",
+        "connection reset",
+        "eof",
+        "context deadline exceeded",
+        "i/o timeout",
+    )
+    retry_on_empty_stderr = False
+
+    def _is_retryable_error(self, stderr: bytes) -> bool:
+        msg = stderr.decode(errors="replace").strip().lower()
+        if not msg:
+            return self.retry_on_empty_stderr
+        return any(p in msg for p in self.retryable_patterns)
 
     async def analyze(
         self,
@@ -62,31 +79,23 @@ class CLIAnalyzer(Analyzer):
         try:
             tmp_sbom_path = self._create_temp_sbom(sbom)
 
-            target_path, extra_paths = await self._preprocess_sbom(sbom, tmp_sbom_path, settings)
+            target_path, extra_paths = await self._preprocess_sbom(sbom, tmp_sbom_path)
+            args = self._build_command_args(target_path)
 
-            args = self._build_command_args(target_path, settings)
-
-            last_stderr = b""
-            for attempt in range(1 + self.max_retries):
+            attempt = 0
+            while True:
                 stdout, stderr, returncode = await self._execute_command(args)
-
                 if returncode == 0:
                     return self._parse_output(stdout)
-
-                last_stderr = stderr
-
-                if attempt < self.max_retries and self._is_retryable_error(stderr):
-                    delay = self.retry_delay * (2**attempt)
-                    logger.warning(
-                        f"{self.name} failed (attempt {attempt + 1}/{1 + self.max_retries}), "
-                        f"retrying in {delay:.1f}s: {stderr.decode()[:200]}"
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-
-                return self._handle_error(stderr)
-
-            return self._handle_error(last_stderr)
+                if attempt >= self.max_retries or not self._is_retryable_error(stderr):
+                    return self._handle_error(stderr)
+                delay = self.retry_delay * (2**attempt)
+                logger.warning(
+                    f"{self.name} failed (attempt {attempt + 1}/{1 + self.max_retries}), "
+                    f"retrying in {delay:.1f}s: {stderr.decode()[:200]}"
+                )
+                await asyncio.sleep(delay)
+                attempt += 1
 
         except Exception as e:
             logger.exception(f"Exception during {self.name} analysis")
@@ -101,17 +110,12 @@ class CLIAnalyzer(Analyzer):
             json.dump(sbom, tmp_file)
             return tmp_file.name
 
-    async def _preprocess_sbom(
-        self,
-        _sbom: dict[str, Any],
-        tmp_sbom_path: str,
-        _settings: dict[str, Any] | None,
-    ) -> tuple[str, list[str]]:
+    async def _preprocess_sbom(self, _sbom: dict[str, Any], tmp_sbom_path: str) -> tuple[str, list[str]]:
         """Preprocess SBOM before analysis; returns (target_path, extra_temp_files_to_cleanup)."""
         return tmp_sbom_path, []
 
     @abstractmethod
-    def _build_command_args(self, sbom_path: str, settings: dict[str, Any] | None) -> list[str]:
+    def _build_command_args(self, sbom_path: str) -> list[str]:
         """Build command line arguments. Must be implemented by subclasses."""
         raise NotImplementedError
 
@@ -122,23 +126,11 @@ class CLIAnalyzer(Analyzer):
 
     async def _execute_command(self, args: list[str]) -> tuple[bytes, bytes, int]:
         """Execute the CLI command and return stdout, stderr, returncode."""
-        process = await asyncio.create_subprocess_exec(
-            *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.cli_timeout)
-        except asyncio.TimeoutError:
-            await kill_and_reap(process)
-            logger.exception("%s timed out after %ss", self.name, self.cli_timeout)
+        result = await run_process(args, self.cli_timeout)
+        if result is None:
+            logger.error("%s timed out after %ss", self.name, self.cli_timeout)
             return b"", f"{self.name} timed out after {self.cli_timeout} seconds".encode(), 1
-        except asyncio.CancelledError:
-            # cli_timeout lives inside the coroutine being cancelled, so it is cancelled with it
-            # and the scanner would be left with no ceiling at all — and one more per retry.
-            await kill_and_reap(process)
-            raise
-        return stdout, stderr, process.returncode or 0
+        return result
 
     def _handle_error(self, stderr: bytes) -> dict[str, Any]:
         """Handle CLI error output."""

@@ -9,15 +9,18 @@ def _secret(
     severity="HIGH",
     component="src/config.py",
     detector="2",
+    detector_name="AWS",
     finding_id="s1",
 ):
-    # Mirrors the stored TruffleHog shape: details.detector is the numeric DetectorType
-    # ordinal (2 = AWS), which is what all 31,151 production secret findings carry.
+    # Mirrors a stored secret finding: TruffleHog's DetectorType ordinal and, when sent, its DetectorName.
+    details = {"detector": detector, "verified": True}
+    if detector_name:
+        details["detector_name"] = detector_name
     return {
         "type": "secret",
         "severity": severity,
         "component": component,
-        "details": {"detector": detector, "verified": True},
+        "details": details,
         "id": finding_id,
     }
 
@@ -82,7 +85,7 @@ class TestProcessSecretsMultipleGroupedByDetector:
     def test_different_detectors_listed_in_description(self):
         findings = [
             _secret(detector="2", finding_id="s1"),
-            _secret(detector="8", finding_id="s2"),
+            _secret(detector="8", detector_name="Github", finding_id="s2"),
         ]
         rec = process_secrets(findings)[0]
         assert "AWS" in rec.description
@@ -91,8 +94,8 @@ class TestProcessSecretsMultipleGroupedByDetector:
     def test_secret_types_in_action(self):
         findings = [
             _secret(detector="2", finding_id="s1"),
-            _secret(detector="8", finding_id="s2"),
-            _secret(detector="30", finding_id="s3"),
+            _secret(detector="8", detector_name="Github", finding_id="s2"),
+            _secret(detector="30", detector_name="SlackWebhook", finding_id="s3"),
         ]
         rec = process_secrets(findings)[0]
         secret_types = rec.action["secret_types"]
@@ -101,12 +104,12 @@ class TestProcessSecretsMultipleGroupedByDetector:
         assert "SlackWebhook" in secret_types
 
     def test_a_detector_trufflehog_does_not_name_keeps_its_stored_label(self):
-        rec = process_secrets([_secret(detector="Generic Secret")])[0]
+        rec = process_secrets([_secret(detector="Generic Secret", detector_name=None)])[0]
         assert rec.action["secret_types"] == ["Generic Secret"]
 
     def test_the_action_carries_every_detector_and_the_prose_counts_the_rest(self):
         found = 8
-        findings = [_secret(detector=str(i), finding_id=f"s{i}") for i in range(found)]
+        findings = [_secret(detector=str(i), detector_name=f"Detector{i}", finding_id=f"s{i}") for i in range(found)]
 
         rec = process_secrets(findings)[0]
 
@@ -202,27 +205,24 @@ class TestProcessSecretsSeverityCounts:
 
 
 class TestProcessSecretsDetectorFallbacks:
-    """Credential type comes from details.detector, falling back to 'generic'."""
+    """Credential type is details.detector_name, falling back to the stored details.detector."""
 
     def test_detector_named_in_description(self):
-        rec = process_secrets([_secret(detector="8")])[0]
+        rec = process_secrets([_secret(detector="8", detector_name="Github")])[0]
         assert "Github" in rec.description
         assert rec.action["secret_types"] == ["Github"]
 
-    def test_stored_ordinal_never_reaches_the_reader(self):
-        """Every production secret finding stores a numeric DetectorType ordinal;
-        rendering it raw produced recommendations reading 'These include: 17, 9'."""
+    def test_a_detector_newer_than_this_release_is_named(self):
         findings = [
-            _secret(detector="17", finding_id="s1"),
-            _secret(detector="9", finding_id="s2"),
+            _secret(detector="17", detector_name="URI", finding_id="s1"),
+            _secret(detector="1070", detector_name="FutureCloudToken", finding_id="s2"),
         ]
         rec = process_secrets(findings)[0]
-        assert "These include: Gitlab, URI" in rec.description
-        assert rec.action["secret_types"] == ["Gitlab", "URI"]
+        assert "These include: FutureCloudToken, URI" in rec.description
 
-    def test_unmapped_ordinal_falls_back_to_the_stored_value(self):
-        rec = process_secrets([_secret(detector="999999")])[0]
-        assert rec.action["secret_types"] == ["999999"]
+    def test_a_finding_stored_without_a_name_shows_its_ordinal(self):
+        rec = process_secrets([_secret(detector="17", detector_name=None)])[0]
+        assert rec.action["secret_types"] == ["17"]
 
     def test_effort_is_high(self):
         rec = process_secrets([_secret()])[0]

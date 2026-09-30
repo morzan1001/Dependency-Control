@@ -17,6 +17,8 @@ from app.models.project import Scan
 from app.models.stats import Stats
 from app.services import gridfs_maintenance
 from app.services.analysis import engine
+from app.services.crypto_policy.seeder import seed_crypto_policies
+from tests.helpers.analyzers import serve_analyzer
 
 _PROJECT_ID = "notify-project"
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -162,7 +164,8 @@ def enrichment_inputs(monkeypatch) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_a_cbom_scan_runs_the_crypto_analyzers_on_top_of_the_configured_ones(db, notified, enrichment_inputs):
+async def test_a_cbom_scan_runs_the_crypto_analyzers_once_beside_the_configured_ones(db, notified, enrichment_inputs):
+    await seed_crypto_policies(db)
     scan = Scan(
         project_id=_PROJECT_ID, branch="main", sbom_refs=[], status="processing", scan_type="cbom", worker_id=_WORKER
     )
@@ -170,7 +173,9 @@ async def test_a_cbom_scan_runs_the_crypto_analyzers_on_top_of_the_configured_on
 
     assert await engine.run_analysis(scan.id, [], ["osv"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
-    assert enrichment_inputs["analyzers"] == sorted({"osv"} | engine.CRYPTO_ANALYZERS)
+    assert enrichment_inputs["analyzers"] == ["osv"]
+    rows = await db.analysis_results.find({"scan_id": scan.id}).to_list(None)
+    assert sorted(row["analyzer_name"] for row in rows) == sorted(engine.CRYPTO_ANALYZERS)
 
 
 @pytest.mark.asyncio
@@ -205,6 +210,28 @@ async def test_without_a_settings_token_the_github_com_instance_token_is_used(db
     assert await engine.run_analysis(await _seed_scan(db), [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert enrichment_inputs["github_token"] == "instance-token"
+
+
+class _SettingsProbe:
+    name = "maintainer_risk"
+
+    def __init__(self) -> None:
+        self.settings: dict = {}
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        self.settings = settings or {}
+        return {"maintainer_issues": []}
+
+
+@pytest.mark.asyncio
+async def test_the_instance_token_reaches_the_analyzers_too(db, notified, enrichment_inputs, monkeypatch):
+    await db.github_instances.insert_one(_github_instance("gh", _T0, access_token="instance-token"))
+    probe = serve_analyzer(monkeypatch, "maintainer_risk", _SettingsProbe())
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
+
+    await engine.run_analysis(await _seed_scan(db), [sbom], ["maintainer_risk"], db, worker_id=_WORKER)
+
+    assert probe.settings["github_token"] == "instance-token"
 
 
 @pytest.mark.asyncio
@@ -475,7 +502,7 @@ async def test_a_callgraph_uploaded_during_the_run_is_applied_once_the_scan_is_f
 
 
 @pytest.mark.asyncio
-async def test_a_failing_hand_over_is_logged_and_leaves_the_final_scan_as_it_is(db, notified, handed_over, caplog):
+async def test_a_failing_hand_over_is_logged_and_the_final_scan_is_still_announced(db, notified, handed_over, caplog):
     scan_id = await _seed_scan(db)
     await _callgraph_upload(db, scan_id)
     handed_over.side_effect = RuntimeError("mongo down")
@@ -483,6 +510,7 @@ async def test_a_failing_hand_over_is_logged_and_leaves_the_final_scan_as_it_is(
     assert await engine.run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     assert (await db.scans.find_one({"_id": scan_id}))["status"] == SCAN_STATUS_COMPLETED
+    assert len(notified) == 1
     assert "mongo down" in caplog.text
 
 
@@ -516,3 +544,17 @@ async def test_a_re_analysis_that_keeps_the_earlier_analysis_applies_a_callgraph
     assert await engine.run_analysis(scan.id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     handed_over.assert_awaited_once_with(scan.id, _PROJECT_ID, db)
+
+
+@pytest.mark.asyncio
+async def test_a_failing_hand_over_after_keeping_the_earlier_analysis_still_returns_the_outcome(
+    db, notified, handed_over, monkeypatch, caplog
+):
+    ref = _gridfs_outage(monkeypatch)
+    scan_id = await _finished_scan_with_an_analysis(db, ref, retry_count=_LAST_ATTEMPT)
+    await _callgraph_upload(db, scan_id)
+    handed_over.side_effect = RuntimeError("mongo down")
+
+    assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
+
+    assert "mongo down" in caplog.text
