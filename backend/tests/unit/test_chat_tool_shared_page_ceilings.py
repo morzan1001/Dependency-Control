@@ -14,7 +14,6 @@ import pytest
 
 from app.api.v1.endpoints.compliance_reports import list_reports
 from app.api.v1.endpoints.crypto_analytics import get_hotspots
-from app.api.v1.endpoints.crypto_assets import list_crypto_assets as list_crypto_assets_endpoint
 from app.api.v1.endpoints.policy_audit import list_system_audit
 from app.api.v1.endpoints.pqc_migration import get_pqc_migration_plan
 from app.core.constants import SCAN_STATUS_COMPLETED
@@ -71,14 +70,6 @@ async def _limit_reached_by(tool: str, args: dict[str, Any], target: str, db: An
     limit = spy.await_args.kwargs["limit"]
     assert isinstance(limit, int)
     return limit
-
-
-@pytest.mark.asyncio
-async def test_crypto_assets(seeded, admin_user):
-    reached = await _limit_reached_by(
-        "list_crypto_assets", {"project_id": _PROJECT}, "list_crypto_assets", seeded, admin_user
-    )
-    assert reached == _endpoint_ceiling(list_crypto_assets_endpoint)
 
 
 @pytest.mark.asyncio

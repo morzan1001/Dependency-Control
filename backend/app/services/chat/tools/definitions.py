@@ -4,7 +4,6 @@ from typing import Any, get_args
 
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
-    MAX_CRYPTO_ASSET_PAGE,
     MAX_CRYPTO_HOTSPOT_PAGE,
     MAX_POLICY_AUDIT_PAGE,
     MAX_PQC_PLAN_ITEMS,
@@ -14,7 +13,7 @@ from app.core.permissions import Permissions
 from app.models.finding import FindingType, Severity
 from app.schemas.analytics import GroupBy, Metric
 
-from ._helpers import MAX_DAY_WINDOW, MAX_FINDING_ROWS, MAX_PLAN_STEPS, MAX_SUMMARY_ROWS
+from ._helpers import MAX_CRYPTO_ASSET_PAGE, MAX_DAY_WINDOW, MAX_FINDING_ROWS, MAX_PLAN_STEPS, MAX_SUMMARY_ROWS
 
 _DESC_PROJECT_ID = "The project ID"
 _DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."

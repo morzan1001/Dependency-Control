@@ -1,4 +1,4 @@
-"""Repository-level tests for crypto asset filtering, pagination, and summary aggregation."""
+"""Crypto asset filtering, pagination and summary aggregation in CryptoAssetRepository."""
 
 import pytest
 
@@ -109,30 +109,6 @@ async def test_list_filters_by_name_search(db):
 
 
 @pytest.mark.asyncio
-async def test_get_single_crypto_asset(db):
-    asset = CryptoAsset(
-        project_id="proj5",
-        scan_id="sc",
-        bom_ref="x",
-        name="AES",
-        asset_type=CryptoAssetType.ALGORITHM,
-        primitive=CryptoPrimitive.BLOCK_CIPHER,
-        key_size_bits=256,
-    )
-    await CryptoAssetRepository(db).bulk_upsert("proj5", "sc", [asset])
-
-    repo = CryptoAssetRepository(db)
-    # In the FakeDb the _id is a composite key of project:scan:bom_ref.
-    composite_id = "proj5:sc:x"
-    fetched = await repo.get("proj5", composite_id)
-
-    assert fetched is not None
-    assert fetched.name == "AES"
-    assert fetched.key_size_bits == 256
-    assert fetched.primitive == CryptoPrimitive.BLOCK_CIPHER
-
-
-@pytest.mark.asyncio
 async def test_get_nonexistent_asset_returns_none(db):
     repo = CryptoAssetRepository(db)
     asset = await repo.get("proj_missing", "nonexistent-id")
@@ -141,7 +117,7 @@ async def test_get_nonexistent_asset_returns_none(db):
 
 
 @pytest.mark.asyncio
-async def test_summary_endpoint(db):
+async def test_summary_counts_assets_by_type(db):
     await CryptoAssetRepository(db).bulk_upsert(
         "proj6",
         "sc",

@@ -477,7 +477,6 @@ ANALYTICS_MAX_SCOPE_PROJECTS: int = 100_000
 
 # Page ceilings for services reachable both through their REST endpoint and through a chat tool.
 # One name per concept, so the two entry points cannot bound the same read at different numbers.
-MAX_CRYPTO_ASSET_PAGE: int = 500
 MAX_CRYPTO_HOTSPOT_PAGE: int = 500
 MAX_PQC_PLAN_ITEMS: int = 2000
 MAX_COMPLIANCE_REPORT_PAGE: int = 200
