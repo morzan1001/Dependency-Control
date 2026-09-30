@@ -27,15 +27,14 @@ export type UnifiedInstance = {
   oidc_audience?: string;
   auto_create_projects: boolean;
   sync_teams?: boolean;
+  token_configured: boolean;
   created_at: string;
   // GitLab-specific
   is_default?: boolean;
   team_sync_depth?: number;
-  token_configured?: boolean;
   allowed_namespaces?: string[];
   // GitHub-specific
   github_url?: string;
-  has_access_token?: boolean;
   allowed_owner_ids?: string[];
 };
 
@@ -57,10 +56,10 @@ export function mergeInstances(
         oidc_audience: gl.oidc_audience,
         auto_create_projects: gl.auto_create_projects,
         sync_teams: gl.sync_teams,
+        token_configured: gl.token_configured,
         created_at: gl.created_at,
         is_default: gl.is_default,
         team_sync_depth: gl.team_sync_depth,
-        token_configured: gl.token_configured,
         allowed_namespaces: gl.allowed_namespaces,
       });
     }
@@ -78,9 +77,9 @@ export function mergeInstances(
         oidc_audience: gh.oidc_audience,
         auto_create_projects: gh.auto_create_projects,
         sync_teams: gh.sync_teams,
+        token_configured: gh.token_configured,
         created_at: gh.created_at,
         github_url: gh.github_url,
-        has_access_token: gh.has_access_token,
         allowed_owner_ids: gh.allowed_owner_ids,
       });
     }

@@ -69,7 +69,7 @@ function githubInstances(hasToken: boolean) {
           url: 'https://github.com',
           is_active: true,
           auto_create_projects: true,
-          has_access_token: hasToken,
+          token_configured: hasToken,
           created_at: '',
           created_by: 'a',
         },

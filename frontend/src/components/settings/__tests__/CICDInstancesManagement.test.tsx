@@ -50,7 +50,7 @@ function githubInstance(overrides: Partial<GitHubInstance> = {}) {
           auto_create_projects: false,
           sync_teams: false,
           allowed_owner_ids: [],
-          has_access_token: true,
+          token_configured: true,
           created_at: '2026-09-01T00:00:00Z',
           created_by: 'admin',
           ...overrides,
@@ -140,6 +140,27 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     renderManagement()
 
     expect(within(screen.getByRole('table')).getByText('Sync Teams')).toBeInTheDocument()
+  })
+
+  it('badges each provider whose instance holds no token', () => {
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance({ token_configured: false }))
+    mockUseGitHubInstances.mockReturnValue(githubInstance({ token_configured: false }))
+
+    renderManagement()
+
+    const table = within(screen.getByRole('table'))
+    expect(table.getByText('No Token')).toBeInTheDocument()
+    expect(table.getByText('No PAT')).toBeInTheDocument()
+  })
+
+  it('badges no instance that holds a token', () => {
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+
+    renderManagement()
+
+    const table = within(screen.getByRole('table'))
+    expect(table.queryByText('No Token')).toBeNull()
+    expect(table.queryByText('No PAT')).toBeNull()
   })
 
   // Spec §8: GHES has no IdP team sync, so its teams may be hand-maintained and less

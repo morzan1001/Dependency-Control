@@ -213,7 +213,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const linkedGithubInstance = project.github_instance_id
     ? githubInstances?.items.find((i) => i.id === project.github_instance_id)
     : undefined;
-  const githubHasToken = linkedGithubInstance?.has_access_token ?? false;
+  const githubHasToken = linkedGithubInstance?.token_configured ?? false;
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),

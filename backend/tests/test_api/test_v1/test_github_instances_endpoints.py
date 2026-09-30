@@ -63,7 +63,7 @@ class TestGitHubInstancePagination:
 
 
 class TestTokenConfiguredFlag:
-    """The Settings UI reads has_access_token to tell a configured instance from an unconfigured one."""
+    """The Settings UI reads token_configured, under the name GitLab uses too, to tell a configured instance apart."""
 
     def _get(self, admin_user, instance):
         from app.api.v1.endpoints.github_instances import get_instance
@@ -75,11 +75,11 @@ class TestTokenConfiguredFlag:
     def test_an_instance_holding_a_token_reads_as_configured(self, admin_user):
         result = self._get(admin_user, make_github_instance(access_token="ghp-secret"))
 
-        assert result.has_access_token is True
+        assert result.token_configured is True
         assert "ghp-secret" not in result.model_dump_json()
 
     def test_an_instance_without_a_token_reads_as_unconfigured(self, admin_user):
-        assert self._get(admin_user, make_github_instance()).has_access_token is False
+        assert self._get(admin_user, make_github_instance()).token_configured is False
 
 
 class TestGitHubInstanceSyncTeams:

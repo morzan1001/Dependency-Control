@@ -436,7 +436,7 @@ export function CICDInstancesManagement() {
                           No Token
                         </Badge>
                       )}
-                      {instance._type === "github" && instance.has_access_token === false && (
+                      {instance._type === "github" && !instance.token_configured && (
                         <Badge variant="secondary" className="text-xs">
                           No PAT
                         </Badge>

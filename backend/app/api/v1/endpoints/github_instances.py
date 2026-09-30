@@ -50,7 +50,7 @@ def _to_response(instance: GitHubInstance) -> GitHubInstanceResponse:
         auto_create_projects=instance.auto_create_projects,
         sync_teams=instance.sync_teams,
         allowed_owner_ids=instance.allowed_owner_ids,
-        has_access_token=bool(instance.access_token),
+        token_configured=bool(instance.access_token),
         created_at=instance.created_at,
         created_by=instance.created_by,
         last_modified_at=instance.last_modified_at,
