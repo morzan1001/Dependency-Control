@@ -7,6 +7,8 @@ bounded only by the tool deciding to exit. Both analyzers that fork are covered:
 """
 
 import asyncio
+import json
+import threading
 from pathlib import Path
 
 import pytest
@@ -115,3 +117,38 @@ async def test_a_failed_syft_conversion_leaves_trivy_the_posted_file(monkeypatch
     target, extra = await TrivyAnalyzer()._preprocess_sbom(_SYFT_JSON_SBOM, _TEMP_SBOM_PATH)
 
     assert (target, extra) == (_TEMP_SBOM_PATH, _NO_EXTRA_FILES)
+
+
+_GRYPE_OUTPUT = Path(__file__).parents[2] / "fixtures" / "grype" / "grype_0.119_matches.json"
+_UV_SBOM = Path(__file__).parents[2] / "fixtures" / "sbom" / "uvdev.syft.cdx.json"
+
+
+@pytest.mark.asyncio
+async def test_the_temp_sbom_and_the_scanner_output_are_handled_off_the_event_loop(monkeypatch):
+    analyzer = GrypeAnalyzer()
+    threads: dict[str, int] = {}
+    stdout = await asyncio.to_thread(_GRYPE_OUTPUT.read_bytes)
+
+    def recorded(step):
+        original = getattr(analyzer, step)
+
+        def run(*args):
+            threads[step] = threading.get_ident()
+            return original(*args)
+
+        return run
+
+    async def scanner_output(_args):
+        return stdout, b"", 0
+
+    for step in ("_create_temp_sbom", "_parse_output"):
+        monkeypatch.setattr(analyzer, step, recorded(step))
+    monkeypatch.setattr(analyzer, "is_tool_available", lambda: True)
+    monkeypatch.setattr(analyzer, "_execute_command", scanner_output)
+    sbom = json.loads(await asyncio.to_thread(_UV_SBOM.read_text))
+
+    result = await analyzer.analyze(sbom)
+
+    assert [match["artifact"]["name"] for match in result["matches"]] == ["brace-expansion", "libgnutls30", "libc-bin"]
+    assert sorted(threads) == ["_create_temp_sbom", "_parse_output"]
+    assert threading.get_ident() not in threads.values()

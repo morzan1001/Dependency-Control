@@ -1,5 +1,6 @@
 """GridFS SBOM references: their shape, loading them, deleting unreferenced files, reaping orphans."""
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timedelta, timezone
@@ -30,7 +31,7 @@ def gridfs_ref_id(ref: Any) -> str | None:
 async def load_gridfs_json(fs: AsyncIOMotorGridFSBucket, file_id: str) -> Any:
     """Download and parse one stored SBOM; raises on failure so each caller keeps its own policy."""
     stream = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
-    return json.loads(await stream.read())
+    return await asyncio.to_thread(json.loads, await stream.read())
 
 
 def extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:

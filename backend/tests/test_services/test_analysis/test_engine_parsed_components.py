@@ -1,11 +1,14 @@
 """The parser is the only component source: analyzers get its list, and an unparseable SBOM runs only the CLI scanners."""
 
 import json
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from app.services import gridfs_maintenance
 from app.services.aggregation import ResultAggregator
 from app.services.analysis import engine
 from app.services.analyzers import LicenseAnalyzer
@@ -62,3 +65,52 @@ async def test_components_the_parser_skipped_produce_no_license_findings():
 
     assert result["summary"]["total_components"] == 0
     assert result["license_issues"] == []
+
+
+_UV_SBOM = Path(__file__).parents[2] / "fixtures" / "sbom" / "uvdev.syft.cdx.json"
+
+
+@pytest.mark.asyncio
+async def test_the_sbom_is_parsed_off_the_event_loop(monkeypatch):
+    parse_threads: list[int] = []
+
+    def recording_parse(sbom):
+        parse_threads.append(threading.get_ident())
+        return parse_sbom(sbom)
+
+    monkeypatch.setattr(engine, "parse_sbom", recording_parse)
+
+    sbom = json.loads(_UV_SBOM.read_text())
+
+    seen = await _components_by_analyzer(monkeypatch, sbom, ["license_compliance"])
+
+    assert seen["license_compliance"] == [dependency.to_dict() for dependency in parse_sbom(sbom).dependencies]
+    assert parse_threads
+    assert threading.get_ident() not in parse_threads
+
+
+class _StoredSbom:
+    async def read(self) -> bytes:
+        return _UV_SBOM.read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_a_stored_sbom_is_decoded_off_the_event_loop(monkeypatch):
+    decode_threads: list[int] = []
+
+    def recording_loads(raw):
+        decode_threads.append(threading.get_ident())
+        return json.loads(raw)
+
+    async def stored(_fs, _file_id):
+        return _StoredSbom()
+
+    monkeypatch.setattr(gridfs_maintenance, "open_gridfs_download_with_retry", stored)
+    monkeypatch.setattr(gridfs_maintenance, "json", SimpleNamespace(loads=recording_loads))
+    ref = {"storage": "gridfs", "type": "gridfs_reference", "gridfs_id": "69d5332257c8763c8d8c82d7"}
+
+    sbom = await engine._resolve_sbom(ref, None, ResultAggregator())
+
+    assert sbom == json.loads(_UV_SBOM.read_text())
+    assert decode_threads
+    assert threading.get_ident() not in decode_threads

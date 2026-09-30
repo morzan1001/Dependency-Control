@@ -77,7 +77,7 @@ class CLIAnalyzer(Analyzer):
         extra_paths: list[str] = []
 
         try:
-            tmp_sbom_path = self._create_temp_sbom(sbom)
+            tmp_sbom_path = await asyncio.to_thread(self._create_temp_sbom, sbom)
 
             target_path, extra_paths = await self._preprocess_sbom(sbom, tmp_sbom_path)
             args = self._build_command_args(target_path)
@@ -86,7 +86,7 @@ class CLIAnalyzer(Analyzer):
             while True:
                 stdout, stderr, returncode = await self._execute_command(args)
                 if returncode == 0:
-                    return self._parse_output(stdout)
+                    return await asyncio.to_thread(self._parse_output, stdout)
                 if attempt >= self.max_retries or not self._is_retryable_error(stderr):
                     return self._handle_error(stderr)
                 delay = self.retry_delay * (2**attempt)

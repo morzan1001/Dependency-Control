@@ -433,7 +433,7 @@ async def _process_sbom(
     """Process a single resolved SBOM: parse, collect deps, run analyzers; returns the results summary."""
     fallback_source = f"SBOM #{index + 1}"
 
-    parsed_sbom, parsed_components = _parse_and_track_sbom(current_sbom)
+    parsed_sbom, parsed_components = await asyncio.to_thread(_parse_and_track_sbom, current_sbom)
 
     # Collected rather than stored here: the inventory is replaced once per payload (see store_scan_dependencies).
     if payload is not None and current_sbom:
