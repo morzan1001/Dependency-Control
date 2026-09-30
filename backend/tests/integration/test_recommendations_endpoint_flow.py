@@ -311,6 +311,7 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         t.DEV_IN_PRODUCTION,
         t.DUPLICATE_FUNCTIONALITY,
         t.DEEP_DEPENDENCY_CHAIN,
+        t.SUPPLY_CHAIN_RISK,
     }
     recommendations = [
         _rec(rec_type, {"total": 0}, components=n) if rec_type in hygiene else _rec(rec_type, {"total": n})

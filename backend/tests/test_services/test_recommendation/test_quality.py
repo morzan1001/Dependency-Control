@@ -103,7 +103,8 @@ class TestProcessQualityUnmaintained:
         ]
         recs = process_quality(findings)
         unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
-        assert unmaintained_rec.impact["total"] == 3
+        assert unmaintained_rec.impact == {"total": 0}
+        assert unmaintained_rec.affected_components_total == 3
 
     def test_effort_is_high(self):
         finding = _quality(critical_issues=["Maintained"])
@@ -299,7 +300,8 @@ class TestProcessQualityCodeReview:
         ]
         recs = process_quality(findings)
         cr_recs = [r for r in recs if "Code Review" in r.title]
-        assert cr_recs[0].impact["total"] == 3
+        assert cr_recs[0].impact == {"total": 0}
+        assert cr_recs[0].affected_components_total == 3
 
 
 class TestProcessQualityHighScore:
@@ -504,7 +506,7 @@ class TestQualityCardsCountPackagesNotVersions:
         ]
 
         assert rec.description.startswith("Found 1 potentially unmaintained packages.")
-        assert rec.impact["total"] == 1
+        assert rec.affected_components_total == 1
         assert rec.action["packages"] == [
             {"name": "old-lib", "score": 2.0, "url": "https://github.com/example/old-lib"}
         ]
@@ -513,7 +515,8 @@ class TestQualityCardsCountPackagesNotVersions:
         [rec] = [r for r in process_quality(self._versions()) if "Low-Quality" in r.title]
 
         assert rec.description.startswith("Found 1 packages with OpenSSF Scorecard")
-        assert rec.impact == {"total": 1}
+        assert rec.impact == {"total": 0}
+        assert rec.affected_components_total == 1
         assert rec.action["packages"] == [{"name": "old-lib", "score": 2.0, "issues": []}]
 
     def test_a_vulnerable_package_at_three_versions_is_one_package(self):
@@ -524,7 +527,8 @@ class TestQualityCardsCountPackagesNotVersions:
         ]
 
         assert rec.description.startswith("1 packages have unaddressed security vulnerabilities")
-        assert rec.impact["total"] == 1
+        assert rec.impact == {"total": 0}
+        assert rec.affected_components_total == 1
 
     def test_an_unmaintained_package_keeps_its_score_beside_an_unscored_version(self):
         findings = [

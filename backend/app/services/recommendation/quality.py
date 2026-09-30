@@ -78,7 +78,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"Found {unmaintained_total} potentially unmaintained packages. "
                     "These packages may not receive security updates, putting your application at risk."
                 ),
-                impact={"total": unmaintained_total},
+                impact={"total": 0},
                 affected_components=unmaintained_shown,
                 affected_components_total=unmaintained_total,
                 action={
@@ -114,9 +114,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"{vuln_total} packages have unaddressed security vulnerabilities "
                     "according to OpenSSF Scorecard. These need immediate attention."
                 ),
-                impact={
-                    "total": vuln_total,
-                },
+                impact={"total": 0},
                 affected_components=vuln_shown,
                 affected_components_total=vuln_total,
                 action={
@@ -146,7 +144,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"scores below {SCORECARD_POOR_QUALITY_THRESHOLD}/10. "
                     "These packages may have quality, security, or maintenance concerns."
                 ),
-                impact={"total": low_score_total},
+                impact={"total": 0},
                 affected_components=low_score_shown,
                 affected_components_total=low_score_total,
                 action={
@@ -181,7 +179,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"{review_total} packages have limited or no code review processes. "
                     "This increases the risk of unreviewed malicious or buggy changes."
                 ),
-                impact={"total": review_total},
+                impact={"total": 0},
                 affected_components=review_shown,
                 affected_components_total=review_total,
                 action={
