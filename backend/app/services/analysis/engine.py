@@ -766,9 +766,13 @@ async def _persist_findings_and_waivers(
 
 async def _apply_handed_over_callgraphs(scan_id: str, project_id: str | None, db: Database) -> None:
     # A callgraph uploaded during the run only flagged the scan, since the findings it would enrich were being replaced.
-    state = await ScanRepository(db).get_minimal_by_id(scan_id)
-    if project_id and state and state.reachability_pending:
-        await run_pending_reachability_for_scan(scan_id, project_id, db)
+    try:
+        state = await ScanRepository(db).get_minimal_by_id(scan_id)
+        if project_id and state and state.reachability_pending:
+            await run_pending_reachability_for_scan(scan_id, project_id, db)
+    except Exception:
+        # A failed pass stays flagged for the next upload; the final scan is still announced.
+        logger.exception("Scan %s: applying the callgraphs uploaded during the analysis failed", scan_id)
 
 
 async def _write_final_state(
