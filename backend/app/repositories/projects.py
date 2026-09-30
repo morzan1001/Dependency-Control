@@ -232,18 +232,10 @@ class ProjectRepository(BaseRepository[Project]):
     collection_name = "projects"
     model_class = Project
 
-    async def get_by_gitlab_composite_key(self, gitlab_instance_id: str, gitlab_project_id: int) -> Project | None:
-        return await self.find_one(_gitlab_key(gitlab_instance_id, gitlab_project_id))
-
     async def get_raw_by_gitlab_composite_key(
         self, gitlab_instance_id: str, gitlab_project_id: int
     ) -> dict[str, Any] | None:
         return await self.find_one_raw(_gitlab_key(gitlab_instance_id, gitlab_project_id))
-
-    async def list_by_instance(self, gitlab_instance_id: str, skip: int = 0, limit: int = 100) -> list[Project]:
-        cursor = self.collection.find({"gitlab_instance_id": gitlab_instance_id}).skip(skip).limit(limit)
-        docs = await cursor.to_list(length=limit)
-        return [Project(**doc) for doc in docs]
 
     async def get_raw_by_github_composite_key(
         self, github_instance_id: str, github_repository_id: str

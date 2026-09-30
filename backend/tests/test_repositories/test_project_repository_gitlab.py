@@ -36,16 +36,15 @@ class TestCompositeKeyLookup:
     async def test_the_instance_id_decides_between_two_rows_sharing_a_gitlab_project_id(self, db):
         repo = ProjectRepository(db)
 
-        found = await repo.get_by_gitlab_composite_key(_INSTANCE_B, _GITLAB_PROJECT_ID)
+        raw = await repo.get_raw_by_gitlab_composite_key(_INSTANCE_B, _GITLAB_PROJECT_ID)
 
-        assert found is not None
-        assert found.id == "b-0"
+        assert raw["_id"] == "b-0"
 
     @pytest.mark.asyncio
     async def test_an_unknown_pair_resolves_to_nothing(self, db):
         repo = ProjectRepository(db)
 
-        assert await repo.get_by_gitlab_composite_key(_INSTANCE_A, 99999) is None
+        assert await repo.get_raw_by_gitlab_composite_key(_INSTANCE_A, 99999) is None
         assert await repo.get_raw_by_gitlab_composite_key("absent", _GITLAB_PROJECT_ID) is None
 
     @pytest.mark.asyncio
@@ -55,21 +54,3 @@ class TestCompositeKeyLookup:
         raw = await repo.get_raw_by_gitlab_composite_key(_INSTANCE_A, _GITLAB_PROJECT_ID)
 
         assert raw == _project_doc("a-0", _INSTANCE_A, _GITLAB_PROJECT_ID)
-
-
-class TestInstanceQueries:
-    @pytest.mark.asyncio
-    async def test_list_by_instance_returns_that_instance_only(self, db):
-        repo = ProjectRepository(db)
-
-        listed = await repo.list_by_instance(_INSTANCE_A)
-
-        assert [project.id for project in listed] == [f"a-{i}" for i in range(_INSTANCE_A_PROJECTS)]
-
-    @pytest.mark.asyncio
-    async def test_list_by_instance_pages_from_the_requested_offset(self, db):
-        repo = ProjectRepository(db)
-
-        page = await repo.list_by_instance(_INSTANCE_A, skip=1, limit=1)
-
-        assert [project.id for project in page] == ["a-1"]
