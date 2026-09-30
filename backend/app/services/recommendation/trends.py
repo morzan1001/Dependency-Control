@@ -115,7 +115,7 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
                 priority=Priority.LOW,
                 title=f"{new_count} new findings since the last scan",
                 description=f"This scan reports {new_count} security findings the previous scan did not.",
-                impact={"critical": 0, "high": 0, "medium": 0, "low": new_count, "total": new_count},
+                impact={"total": 0},
                 affected_components=[],
                 action={"type": "review_changes", "new_findings": new_count},
                 effort=Effort.LOW,

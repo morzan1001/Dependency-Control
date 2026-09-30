@@ -4,6 +4,7 @@ from functools import cached_property
 from typing import Any
 
 from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
+from app.core.cve import counted_cves
 from app.models.finding import PACKAGE_FINDING_TYPES
 from app.schemas.recommendation import (
     Effort,
@@ -27,7 +28,7 @@ from app.services.recommendation.common import (
     VulnerabilityInfo,
     dependency_label,
     get_attr,
-    live_cves,
+    live_advisories,
     malware_kind,
     name_some,
     sample_components,
@@ -340,42 +341,46 @@ def analyze_attack_surface(
 
     recommendations = []
 
-    # Advisories per installed copy: another version of the package carries its own.
-    counts_by_version: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+    # Advisory severities per installed copy: another version of the package carries its own.
+    severities_by_version: dict[str, dict[str, list[str | None]]] = defaultdict(lambda: defaultdict(list))
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
-            counts_by_version[normalize_version(get_attr(f, "version"))][get_attr(f, "component", "")] += (
-                len(live_cves([get_attr(f, "details")])) or 1
-            )
+            by_cve = {
+                cve: advisory.get("severity")
+                for advisory in live_advisories(get_attr(f, "details", {}))
+                for cve in counted_cves(advisory)
+            }
+            severities_by_version[normalize_version(get_attr(f, "version"))][get_attr(f, "component", "")] += list(
+                by_cve.values()
+            ) or [get_attr(f, "severity")]
     # Findings carry the qualified component while the inventory keeps the bare name.
-    index_by_version = {version: build_component_index(counts) for version, counts in counts_by_version.items()}
+    index_by_version = {version: build_component_index(sev) for version, sev in severities_by_version.items()}
     edges = build_dependency_edges(dependencies)
     by_label: dict[str, dict[str, Any]] = {}
+    listed_severities: list[str | None] = []
     for key, dep in edges.dep_by_key.items():
         version = get_attr(dep, "version") or ""
-        vuln_count = (
-            lookup_component(index_by_version.get(normalize_version(version), {}), get_attr(dep, "name", "")) or 0
+        label = dependency_label(dep)
+        severities = (
+            lookup_component(index_by_version.get(normalize_version(version), {}), get_attr(dep, "name", "")) or []
         )
-        if key not in edges.direct_keys and vuln_count >= 2:
-            by_label.setdefault(
-                dependency_label(dep),
-                {
-                    "name": get_attr(dep, "name", ""),
-                    "version": version,
-                    "vuln_count": vuln_count,
-                    # A parent ref naming no inventory entry is shown as stored.
-                    "parents": [
-                        dependency_label(edges.dep_by_key[ref]) if ref in edges.dep_by_key else ref
-                        for ref in edges.parents_by_key[key]
-                    ],
-                },
-            )
-    transitive_with_vulns = list(by_label.values())
+        if key not in edges.direct_keys and len(severities) >= 2 and label not in by_label:
+            by_label[label] = {
+                "name": get_attr(dep, "name", ""),
+                "version": version,
+                "vuln_count": len(severities),
+                # A parent ref naming no inventory entry is shown as stored.
+                "parents": [
+                    dependency_label(edges.dep_by_key[ref]) if ref in edges.dep_by_key else ref
+                    for ref in edges.parents_by_key[key]
+                ],
+            }
+            listed_severities += severities
 
-    if transitive_with_vulns:
-        transitive_with_vulns.sort(key=lambda x: x["vuln_count"], reverse=True)
-
-        total_vulns = sum(t["vuln_count"] for t in transitive_with_vulns)
+    if by_label:
+        transitive_with_vulns = sorted(by_label.values(), key=lambda t: t["vuln_count"], reverse=True)
+        impact = severity_impact(listed_severities)
+        total_vulns = impact["total"]
         transitive_shown, transitive_total = sample_components(
             f"{t['name']}@{t['version']}"
             + (f" (via {name_some(t['parents'], _PARENTS_NAMED)})" if t["parents"] else "")
@@ -393,13 +398,7 @@ def analyze_attack_surface(
                     "Consider updating or replacing their parent dependencies "
                     "to reduce attack surface."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": total_vulns,
-                    "low": 0,
-                    "total": total_vulns,
-                },
+                impact=impact,
                 affected_components=transitive_shown,
                 affected_components_total=transitive_total,
                 action={
@@ -429,13 +428,7 @@ def analyze_attack_surface(
                     f"Your project has {total_deps} total dependencies but only {direct_deps} direct dependencies. "
                     f"This large transitive tree increases attack surface. Consider auditing heavy dependencies."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": total_deps,
-                    "total": total_deps,
-                },
+                impact={"total": 0},
                 affected_components=[f"Total: {total_deps} deps, Direct: {direct_deps} deps"],
                 action={
                     "type": "audit_dependencies",

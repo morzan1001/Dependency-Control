@@ -39,6 +39,12 @@ import {
 import { priorityConfig, typeConfig, effortConfig } from './config'
 
 const FILES_LISTED = 5
+const SEVERITY_CHIPS = [
+  ['critical', 'Critical'],
+  ['high', 'High'],
+  ['medium', 'Medium'],
+  ['low', 'Low'],
+] as const
 
 /** Files the recommendation covers beyond the ones listed; the action's own list is already a sample. */
 function filesBeyond(action: RecommendationAction): number {
@@ -100,33 +106,27 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
               {recommendation.description}
             </p>
             <div className="flex items-center gap-4 mt-2">
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="flex items-center gap-1.5 text-sm">
-                      <Zap className="h-4 w-4 text-yellow-500" />
-                      <span className="font-medium">{recommendation.impact.total}</span>
-                      <span className="text-muted-foreground">vulns fixed</span>
-                    </div>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <div className="space-y-1">
-                      {recommendation.impact.critical > 0 && (
-                        <div>Critical: {recommendation.impact.critical}</div>
-                      )}
-                      {recommendation.impact.high > 0 && (
-                        <div>High: {recommendation.impact.high}</div>
-                      )}
-                      {recommendation.impact.medium > 0 && (
-                        <div>Medium: {recommendation.impact.medium}</div>
-                      )}
-                      {recommendation.impact.low > 0 && (
-                        <div>Low: {recommendation.impact.low}</div>
-                      )}
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              {recommendation.impact.total > 0 && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <div className="flex items-center gap-1.5 text-sm">
+                        <Zap className="h-4 w-4 text-yellow-500" />
+                        <span className="font-medium">{recommendation.impact.total}</span>
+                        <span className="text-muted-foreground">vulns fixed</span>
+                      </div>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <div className="space-y-1">
+                        {SEVERITY_CHIPS.map(([key, label]) => {
+                          const count = recommendation.impact[key] ?? 0
+                          return count > 0 && <div key={key}>{label}: {count}</div>
+                        })}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
 
               <div className={cn("text-sm", effortInfo.color)}>
                 {effortInfo.label}

@@ -368,8 +368,6 @@ EFFORT_BONUSES: dict[str, int] = {
 
 # Dependencies nested deeper than this below their nearest direct dependency are reported.
 MAX_DEPENDENCY_DEPTH: int = 5
-# Reported chains at least this deep count as medium impact, shallower ones as low.
-DEEP_CHAIN_MEDIUM_IMPACT_DEPTH: int = 8
 
 # Thresholds for recommendation analysis
 RECURRING_ISSUE_THRESHOLD: int = 3  # Min scans a CVE appears in to be "recurring"

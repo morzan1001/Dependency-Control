@@ -55,7 +55,7 @@ def _finding(_id: str, finding_type: str) -> dict:
     }
 
 
-def _rec(rec_type: RecommendationType, impact: dict) -> Recommendation:
+def _rec(rec_type: RecommendationType, impact: dict, components: int = 0) -> Recommendation:
     return Recommendation(
         type=rec_type,
         priority=Priority.LOW,
@@ -63,6 +63,7 @@ def _rec(rec_type: RecommendationType, impact: dict) -> Recommendation:
         description="d",
         impact=impact,
         affected_components=[],
+        affected_components_total=components,
         action={},
     )
 
@@ -301,7 +302,18 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         (t.LICENSE_DRIFT, 77),
         (t.CRITICAL_HOTSPOT, 88),
     ]
-    recommendations = [_rec(rec_type, {"total": total}) for rec_type, total in impacts]
+    # Hygiene cards count no findings; the summary tallies the components they cover.
+    hygiene = {
+        t.OUTDATED_DEPENDENCY,
+        t.VERSION_FRAGMENTATION,
+        t.DEV_IN_PRODUCTION,
+        t.DUPLICATE_FUNCTIONALITY,
+        t.DEEP_DEPENDENCY_CHAIN,
+    }
+    recommendations = [
+        _rec(rec_type, {"total": 0}, components=n) if rec_type in hygiene else _rec(rec_type, {"total": n})
+        for rec_type, n in impacts
+    ]
     recommendations.append(_rec(t.BASE_IMAGE_UPDATE, {}))
     monkeypatch.setattr(
         rec_module.recommendation_engine, "generate_recommendations", _engine_returning(recommendations, {})

@@ -1,7 +1,7 @@
 from collections import deque
 from dataclasses import dataclass
 
-from app.core.constants import DEEP_CHAIN_MEDIUM_IMPACT_DEPTH, MAX_DEPENDENCY_DEPTH, SIMILAR_PACKAGE_GROUPS
+from app.core.constants import MAX_DEPENDENCY_DEPTH, SIMILAR_PACKAGE_GROUPS
 from app.core.purl import dependency_node_key, package_identity
 from app.schemas.recommendation import (
     Effort,
@@ -137,13 +137,7 @@ def _circular_dependency_recommendation(members: set[str], edges: DependencyEdge
             "Circular dependencies were detected in your dependency graph. "
             "This can cause issues with builds, updates, and increases complexity."
         ),
-        impact={
-            "critical": 0,
-            "high": 0,
-            "medium": cycle_total,
-            "low": 0,
-            "total": cycle_total,
-        },
+        impact={"total": 0},
         affected_components=cycle_shown,
         affected_components_total=cycle_total,
         action={
@@ -175,7 +169,6 @@ def _deep_chain_recommendation(
     deep_shown, deep_total = sample_components(
         f"{dependency_label(edges.dep_by_key[key])} (depth: {depth})" for key, depth in deep
     )
-    medium = sum(1 for _, depth in deep if depth >= DEEP_CHAIN_MEDIUM_IMPACT_DEPTH)
     return Recommendation(
         type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
         priority=Priority.LOW,
@@ -185,13 +178,7 @@ def _deep_chain_recommendation(
             "even along their shortest chain from a direct dependency. Deep chains increase "
             "supply chain attack surface and make dependency updates more complex."
         ),
-        impact={
-            "critical": 0,
-            "high": 0,
-            "medium": medium,
-            "low": len(deep) - medium,
-            "total": len(deep),
-        },
+        impact={"total": 0},
         affected_components=deep_shown,
         affected_components_total=deep_total,
         action={
@@ -252,13 +239,7 @@ def analyze_duplicate_packages(
                     "Consolidating to one package per category can reduce bundle size "
                     "and maintenance burden."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": len(duplicates_found),
-                    "total": len(duplicates_found),
-                },
+                impact={"total": 0},
                 affected_components=[f"{d['category']}: {', '.join(d['found'])}" for d in duplicates_found],
                 action={
                     "type": "consolidate_packages",

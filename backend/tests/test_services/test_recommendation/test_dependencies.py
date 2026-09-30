@@ -78,7 +78,8 @@ class TestAnalyzeOutdatedDependenciesDirectOutdated:
             _dep(name="flask", version="2.0.0", latest_version="3.0.0", direct=True),
         ]
         rec = analyze_outdated_dependencies(deps)[0]
-        assert rec.impact["total"] == 2
+        assert rec.impact == {"total": 0}
+        assert rec.affected_components_total == 2
 
 
 class TestAnalyzeOutdatedDependenciesTransitive:
@@ -166,10 +167,10 @@ class TestAnalyzeVersionFragmentationCuts:
         (rec,) = analyze_version_fragmentation(self._fragmented(packages, 3))
         assert rec.priority == priority
 
-    @pytest.mark.parametrize(("versions", "high", "medium"), [(4, 0, 1), (5, 1, 0)])
-    def test_five_versions_count_as_heavy_fragmentation(self, versions, high, medium):
-        (rec,) = analyze_version_fragmentation(self._fragmented(1, versions))
-        assert (rec.impact["high"], rec.impact["medium"]) == (high, medium)
+    def test_the_card_counts_packages_rather_than_findings(self):
+        (rec,) = analyze_version_fragmentation(self._fragmented(2, 5))
+        assert rec.impact == {"total": 0}
+        assert rec.action["packages_total"] == 2
 
 
 class TestAnalyzeVersionFragmentationBelowThreshold:
@@ -238,7 +239,8 @@ class TestAnalyzeDevInProductionFlagged:
         ]
         result = analyze_dev_in_production(deps)
         assert len(result) == 1
-        assert result[0].impact["total"] == 2
+        assert result[0].impact == {"total": 0}
+        assert result[0].affected_components_total == 2
 
     def test_a_scoped_package_split_into_group_and_name_is_flagged(self):
         # cdxgen writes @types/node as group "@types", name "node".

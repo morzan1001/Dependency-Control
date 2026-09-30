@@ -161,7 +161,6 @@ _SHARED_CVES_HIGH_PRIORITY = 5
 _CRITICAL_RANK_WEIGHT = 10
 _TOP_PROJECTS = 3
 _TOP_PROJECT_CRITICAL_GATE = 5
-_WIDE_VERSION_SPREAD = 2
 
 
 def analyze_cross_project_patterns(cross_project_data: dict[str, Any]) -> list[Recommendation]:
@@ -209,7 +208,7 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
             "Fixing them once (e.g., in a shared package or template) "
             "could benefit all affected projects."
         ),
-        impact={"critical": 0, "high": len(widespread_cves), "medium": 0, "low": 0, "total": len(widespread_cves)},
+        impact={"total": len(widespread_cves)},
         affected_components=widespread_shown,
         affected_components_total=widespread_total,
         action={
@@ -239,7 +238,6 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
         f"{p['name']}: {p['version_count']} versions across {p['project_count']} projects"
         for p in inconsistent_packages
     )
-    wide = sum(1 for p in inconsistent_packages if p["version_count"] > _WIDE_VERSION_SPREAD)
     return Recommendation(
         type=RecommendationType.CROSS_PROJECT_PATTERN,
         priority=Priority.LOW,
@@ -249,13 +247,7 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
             f"different versions, {scope_note}. Standardizing versions can simplify "
             "maintenance and reduce security gaps."
         ),
-        impact={
-            "critical": 0,
-            "high": 0,
-            "medium": wide,
-            "low": len(inconsistent_packages) - wide,
-            "total": len(inconsistent_packages),
-        },
+        impact={"total": 0},
         affected_components=inconsistent_shown,
         affected_components_total=inconsistent_total,
         action={

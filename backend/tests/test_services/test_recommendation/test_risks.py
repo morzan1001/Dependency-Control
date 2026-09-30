@@ -1,6 +1,7 @@
 """Tests for risk detection: hotspots, toxic dependencies, and attack surface analysis."""
 
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.aggregation import ResultAggregator
 from app.services.recommendation.common import MALWARE_REMEDIATION_STEPS
 from app.services.recommendation.risks import (
     CRITICAL_HOTSPOTS_SHOWN,
@@ -875,6 +876,43 @@ class TestAttackSurfaceCountsEachInstalledCopy:
 
         assert rec.affected_components == ["github.com/gin-gonic/gin@v1.6.0"]
         assert rec.impact["total"] == 2
+
+
+def _trivy_findings(*vulnerabilities):
+    aggregator = ResultAggregator()
+    aggregator.aggregate("trivy", {"Results": [{"Target": "app", "Vulnerabilities": list(vulnerabilities)}]})
+    return [f.model_dump() for f in aggregator.get_findings()]
+
+
+class TestAttackSurfaceImpactHoldsSeverities:
+    def test_each_advisory_counts_at_its_own_severity(self):
+        findings = _trivy_findings(
+            {
+                "VulnerabilityID": "CVE-2021-44906",
+                "PkgName": "minimist",
+                "InstalledVersion": "0.0.8",
+                "Severity": "CRITICAL",
+            },
+            {
+                "VulnerabilityID": "CVE-2020-7598",
+                "PkgName": "minimist",
+                "InstalledVersion": "0.0.8",
+                "Severity": "MEDIUM",
+            },
+        )
+
+        [rec] = analyze_attack_surface([_dep("minimist", "0.0.8", direct=False)], findings)
+
+        assert rec.impact == {"critical": 1, "high": 0, "medium": 1, "low": 0, "total": 2}
+
+    def test_the_large_tree_card_counts_no_findings(self):
+        deps = [_dep(f"direct-{i}", direct=True) for i in range(10)]
+        deps += [_dep(f"transitive-{i}", direct=False) for i in range(491)]
+
+        [rec] = analyze_attack_surface(deps, [])
+
+        assert rec.impact == {"total": 0}
+        assert (rec.action["total_deps"], rec.action["direct_deps"]) == (501, 10)
 
 
 class TestAttackSurfaceNamesTheParents:

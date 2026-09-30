@@ -232,7 +232,7 @@ class TestAnalyzeRegressionsNewCount:
         [rec] = analyze_regressions(current, _previous(*previous))
 
         assert rec.title == "30 new findings since the last scan"
-        assert rec.impact["total"] == 30
+        assert rec.impact == {"total": 0}
         assert rec.action == {"type": "review_changes", "new_findings": 30}
 
     def test_findings_recounted_under_one_identity_are_not_new(self):

@@ -336,11 +336,12 @@ export type RecommendationType =
 
 export type RecommendationPriority = 'critical' | 'high' | 'medium' | 'low';
 
+// Hygiene cards count no findings: total 0 and no severity breakdown.
 export interface RecommendationImpact {
-  critical: number;
-  high: number;
-  medium: number;
-  low: number;
+  critical?: number;
+  high?: number;
+  medium?: number;
+  low?: number;
   total: number;
 }
 

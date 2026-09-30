@@ -23,9 +23,8 @@ from app.services.recommendation.common import (
     severity_impact,
 )
 
-# A package held at this many versions is fragmented, at the second count heavily so.
+# A package held at this many versions is fragmented.
 _FRAGMENTATION_MIN_VERSIONS = 3
-_FRAGMENTATION_HIGH_VERSIONS = 5
 # Counts that must be exceeded: fragmented packages for a MEDIUM card, outdated transitives for a card at all.
 _FRAGMENTED_PACKAGES_FOR_MEDIUM = 3
 _OUTDATED_TRANSITIVE_CARD_MIN = 3
@@ -75,13 +74,7 @@ def analyze_outdated_dependencies(
                     "versions. Upgrading can improve security, performance, and "
                     "maintainability."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": len(direct_outdated),
-                    "low": 0,
-                    "total": len(direct_outdated),
-                },
+                impact={"total": 0},
                 affected_components=direct_shown,
                 affected_components_total=direct_total,
                 action={
@@ -110,13 +103,7 @@ def analyze_outdated_dependencies(
                     "Several transitive dependencies use old major versions. "
                     "Updating parent packages may resolve these."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": len(transitive_outdated),
-                    "total": len(transitive_outdated),
-                },
+                impact={"total": 0},
                 affected_components=transitive_shown,
                 affected_components_total=transitive_total,
                 action={
@@ -175,19 +162,7 @@ def analyze_version_fragmentation(
                     "and cause subtle bugs. Consider deduplication or pinning to a "
                     "single version."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": len([f for f in significant_fragmented if f["count"] >= _FRAGMENTATION_HIGH_VERSIONS]),
-                    "medium": len(
-                        [
-                            f
-                            for f in significant_fragmented
-                            if _FRAGMENTATION_MIN_VERSIONS <= f["count"] < _FRAGMENTATION_HIGH_VERSIONS
-                        ]
-                    ),
-                    "low": 0,
-                    "total": len(significant_fragmented),
-                },
+                impact={"total": 0},
                 affected_components=fragmented_shown,
                 affected_components_total=fragmented_total,
                 action={
@@ -254,13 +229,7 @@ def analyze_dev_in_production(
                     "in your build. If these are in your production bundle, consider "
                     "moving them to devDependencies."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": len(potential_dev_deps),
-                    "total": len(potential_dev_deps),
-                },
+                impact={"total": 0},
                 affected_components=dev_deps_shown,
                 affected_components_total=dev_deps_total,
                 action={

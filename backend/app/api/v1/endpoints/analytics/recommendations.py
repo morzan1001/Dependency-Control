@@ -247,5 +247,6 @@ def _summarize(recommendations: list[Recommendation], finding_counts: dict[str, 
         if count_key:
             summary[count_key] += 1
         if impact_key:
-            summary[impact_key] += rec.impact.get("total", 0)
+            # Hygiene cards count no findings, so they tally the components they cover.
+            summary[impact_key] += rec.impact.get("total") or rec.affected_components_total
     return summary

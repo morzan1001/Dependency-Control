@@ -1,6 +1,6 @@
 """Tests for app.services.recommendation.graph."""
 
-from app.core.constants import DEEP_CHAIN_MEDIUM_IMPACT_DEPTH, MAX_DEPENDENCY_DEPTH
+from app.core.constants import MAX_DEPENDENCY_DEPTH
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.graph import (
     analyze_deep_dependency_chains,
@@ -175,7 +175,8 @@ class TestAnalyzeDeepDependencyChainsCycleSegment:
         assert any("pkg-b" in c for c in components)
         assert any("pkg-c" in c for c in components)
         assert not any("pkg-a" in c for c in components)
-        assert circular_recs[0].impact["total"] == 2
+        assert circular_recs[0].impact == {"total": 0}
+        assert circular_recs[0].affected_components_total == 2
 
 
 class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
@@ -285,7 +286,7 @@ class TestDepthIsTheShortestNestingFromADirectDependency:
 
         result = analyze_deep_dependency_chains([*chain, *chain], max_dependency_depth=2)
 
-        assert result[0].impact["total"] == 2
+        assert result[0].action["deepest_chains_total"] == 2
         assert result[0].affected_components == ["pkg-3@1.0 (depth: 4)", "pkg-2@1.0 (depth: 3)"]
 
     def test_the_default_threshold_is_the_production_one(self):
@@ -293,13 +294,11 @@ class TestDepthIsTheShortestNestingFromADirectDependency:
             f"Deep dependency chains detected (max depth: {MAX_DEPENDENCY_DEPTH + 1})"
         ]
 
-    def test_impact_splits_at_the_named_medium_depth(self):
-        threshold = DEEP_CHAIN_MEDIUM_IMPACT_DEPTH - 3
-        rec = analyze_deep_dependency_chains(
-            _chain(DEEP_CHAIN_MEDIUM_IMPACT_DEPTH + 1), max_dependency_depth=threshold
-        )[0]
+    def test_the_card_counts_dependencies_rather_than_findings(self):
+        [rec] = analyze_deep_dependency_chains(_chain(9), max_dependency_depth=5)
 
-        assert rec.impact == {"critical": 0, "high": 0, "medium": 2, "low": 2, "total": 4}
+        assert rec.impact == {"total": 0}
+        assert rec.action["deepest_chains_total"] == 4
 
 
 class TestChainPreviewIsARealPath:
@@ -338,7 +337,7 @@ class TestCycleMembershipIsEveryNodeOnACycle:
         [rec] = analyze_deep_dependency_chains([a, b, dict(b)], max_dependency_depth=50)
 
         assert rec.title == "Circular dependencies detected (2 packages)"
-        assert rec.impact["total"] == rec.affected_components_total == 2
+        assert rec.affected_components_total == 2
 
     def test_a_self_parent_is_a_cycle(self):
         assert _cycle_members([_dep("a", direct=True, parent_components=["pkg:npm/a@1.0"])]) == ["a@1.0"]
@@ -418,7 +417,8 @@ class TestAnalyzeDuplicatePackagesMultipleCategories:
         ]
         result = analyze_duplicate_packages(deps)
         assert len(result) == 1
-        assert result[0].impact["total"] == 2
+        assert result[0].impact == {"total": 0}
+        assert len(result[0].action["duplicates"]) == 2
 
     def test_multiple_categories_all_listed(self):
         deps = [

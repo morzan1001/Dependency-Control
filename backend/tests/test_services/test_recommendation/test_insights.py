@@ -241,6 +241,8 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
         shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
         assert any("CVE-2024-001" in c and "2/2 projects compared" in c for c in shared_recs[0].affected_components)
         assert "compared across 2 of your 3 projects" in shared_recs[0].description
+        # The per-project CVE lists carry no severity to break the count down by.
+        assert shared_recs[0].impact == {"total": 1}
 
 
 class TestAnalyzeCrossProjectPatternsInconsistentVersions:
@@ -252,6 +254,8 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
         result = analyze_cross_project_patterns(data)
         pattern_recs = [r for r in result if r.type == RecommendationType.CROSS_PROJECT_PATTERN]
         assert len(pattern_recs) == 1
+        assert pattern_recs[0].impact == {"total": 0}
+        assert pattern_recs[0].action["packages_total"] == 1
 
     @pytest.mark.parametrize(
         ("shared_packages", "expected"),

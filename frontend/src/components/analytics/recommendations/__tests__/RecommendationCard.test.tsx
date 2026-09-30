@@ -109,6 +109,26 @@ describe('RecommendationCard CVE rendering', () => {
     expect(screen.queryByText(/^Ranked /)).not.toBeInTheDocument()
   })
 
+  it('counts the vulnerabilities a card fixes', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard recommendation={makeRecommendation({ type: 'update_dependency' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('vulns fixed')).toBeInTheDocument()
+  })
+
+  it('shows no vulnerability count on a hygiene card, which counts no findings', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard
+          recommendation={makeRecommendation({ type: 'audit_dependencies' }, { impact: { total: 0 } })}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText('vulns fixed')).not.toBeInTheDocument()
+  })
+
   it('still renders the generic Related Vulnerabilities block for other action types', () => {
     renderExpanded(
       makeRecommendation({
