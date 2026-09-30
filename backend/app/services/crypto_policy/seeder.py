@@ -47,6 +47,7 @@ async def write_policy(
     actor: User | None,
     comment: str | None = None,
     reverted_from_version: int | None = None,
+    editor: str | None = None,
 ) -> CryptoPolicy | None:
     """The one write path of a crypto policy; rules=None deletes the project override and returns None if none existed."""
     repo = CryptoPolicyRepository(db)
@@ -68,7 +69,7 @@ async def write_policy(
         rules=list(rules or []),
         version=max(current.version if current else 0, audited) + 1,
         # A seed write keeps the last editor, the marker by which the seeder spares an edited policy.
-        updated_by=str(actor.id) if actor else (current.updated_by if current else None),
+        updated_by=str(actor.id) if actor else editor,
         seed_version=CURRENT_SEED_VERSION
         if action == PolicyAuditAction.SEED
         else (current.seed_version if current else None),
@@ -95,11 +96,18 @@ async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
         logger.info("crypto_policy_seed: skipping, seed version %s is current", existing.seed_version)
         return
     rules = list(load_seed_rules())
-    if existing is not None and existing.updated_by is not None:
+    editor = existing.updated_by if existing else None
+    if existing is not None and existing.seed_version is None and editor is None:
+        # Reverts once stored no updated_by, so a legacy policy's last editor is read from its audit history.
+        newest = await PolicyAuditRepository(db).list(policy_scope="system", limit=1)
+        editor = newest[0].actor_user_id if newest else None
+    if existing is not None and editor is not None:
         # A person edited this policy, so their rules stand and only seed rule_ids it lacks are added.
         held = {r.rule_id for r in existing.rules}
         rules = existing.rules + [r for r in rules if r.rule_id not in held]
-    await write_policy(db, scope="system", project_id=None, rules=rules, action=PolicyAuditAction.SEED, actor=None)
+    await write_policy(
+        db, scope="system", project_id=None, rules=rules, action=PolicyAuditAction.SEED, actor=None, editor=editor
+    )
     logger.info(
         "crypto_policy_seed: applied seed version %d, system policy holds %d rules",
         CURRENT_SEED_VERSION,

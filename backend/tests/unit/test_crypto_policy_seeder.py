@@ -141,3 +141,19 @@ async def test_an_edited_policy_keeps_its_rules_and_editor_through_consecutive_s
     got = await repo.get_system_policy()
     assert (got.rules[0].rule_id, got.updated_by) == ("custom-admin-rule", "admin-user")
     assert (got.version, got.seed_version) == (4, CURRENT_SEED_VERSION + 1)
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_policy_whose_last_change_was_a_seed_takes_the_new_seed(db):
+    from app.services.audit.history import record_policy_change
+
+    with patch("app.services.crypto_policy.seeder.record_policy_change", new=record_policy_change):
+        await seed_crypto_policies(db)
+        await db.crypto_policies.update_one(
+            {"scope": "system"},
+            {"$set": {"rules": [_custom_rule().model_dump(mode="json")]}, "$unset": {"seed_version": ""}},
+        )
+        await seed_crypto_policies(db)
+
+    got = await CryptoPolicyRepository(db).get_system_policy()
+    assert ([r.rule_id for r in got.rules], got.updated_by) == ([r.rule_id for r in load_seed_rules()], None)
