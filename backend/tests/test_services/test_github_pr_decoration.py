@@ -32,7 +32,7 @@ def _make_scan(**kwargs):
     return Scan(**defaults)
 
 
-def _pr(number, state="open", draft=False, head="abc", merge_commit="m-abc"):
+def _pr(number, state="open", draft=False, head="abc"):
     """One item of GET /repos/{owner}/{repo}/commits/{sha}/pulls."""
     return GitHubPullRequest.model_validate(
         {
@@ -42,7 +42,7 @@ def _pr(number, state="open", draft=False, head="abc", merge_commit="m-abc"):
             "user": {"login": "octocat", "id": 1},
             "head": {"ref": "feature", "sha": head},
             "base": {"ref": "main", "sha": "base"},
-            "merge_commit_sha": merge_commit,
+            "merge_commit_sha": f"m-{head}",
         }
     )
 
@@ -142,7 +142,7 @@ def _run_with_service(project, scan_doc, mock_svc, instance_doc=_USABLE_INSTANCE
 
 def _service(prs, comments=(), post=True, update=True, bot=_BOT):
     svc = MagicMock()
-    svc.get_pull_requests_for_commit = AsyncMock(return_value=list(prs))
+    svc.get_pull_requests_for_commit = AsyncMock(return_value=("abc", list(prs)))
     svc.get_current_user_id = AsyncMock(return_value=bot)
     svc.get_pull_request_comments = AsyncMock(return_value=list(comments))
     svc.post_pull_request_comment = AsyncMock(return_value=post)
@@ -180,14 +180,7 @@ class TestPullRequestFiltering:
         svc.get_pull_requests_for_commit.assert_awaited_once_with("acme", "widget", "abc")
 
     def test_a_pull_request_whose_head_moved_past_the_scanned_commit_is_left_alone(self):
-        svc = _service([_pr(7, head="abc"), _pr(8, head="def", merge_commit="m-def")])
-        _run_with_service(_enabled_project(), _make_scan(commit_hash="abc"), svc)
-
-        assert [c.args[2] for c in svc.post_pull_request_comment.await_args_list] == [7]
-
-    def test_a_scan_of_the_test_merge_commit_decorates_its_pull_request(self):
-        """A `pull_request` workflow checks out the PR's merge_commit_sha, not its head."""
-        svc = _service([_pr(7, head="head-sha", merge_commit="abc")])
+        svc = _service([_pr(7, head="abc"), _pr(8, head="def")])
         _run_with_service(_enabled_project(), _make_scan(commit_hash="abc"), svc)
 
         assert [c.args[2] for c in svc.post_pull_request_comment.await_args_list] == [7]
@@ -198,6 +191,67 @@ class TestPullRequestFiltering:
 
         svc.post_pull_request_comment.assert_not_awaited()
         svc.update_pull_request_comment.assert_not_awaited()
+
+
+_TEST_MERGE = "1f0e9c2a3b4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f"
+_RETESTED_MERGE = "5d4c3b2a1f0e9d8c7b6a5f4e3d2c1b0a9f8e7d6c"
+_BASE = "9c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f6a7b8c9d"
+_HEAD = "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a"
+_NEWER_HEAD = "7b6a5c4d3e2f1a0b9c8d7e6f5a4b3c2d1e0f9a8b"
+
+
+def _json_response(payload, status_code=200):
+    response = MagicMock(status_code=status_code)
+    response.json.return_value = payload
+    return response
+
+
+class TestPullRequestWorkflowScans:
+    """A `pull_request` workflow scans GITHUB_SHA, the test-merge commit of the PR head into its base.
+    GitHub replaces the PR's merge_commit_sha whenever it re-tests mergeability, e.g. after the base moved."""
+
+    @staticmethod
+    def _decorate(pr_head):
+        from app.services.analysis.integrations import decorate_github_pr
+        from app.services.github import GitHubService
+
+        routes = {
+            f"/repos/acme/widget/commits/{_TEST_MERGE}/pulls": _json_response([]),
+            f"/repos/acme/widget/commits/{_TEST_MERGE}": _json_response(
+                {"sha": _TEST_MERGE, "parents": [{"sha": _BASE}, {"sha": _HEAD}]}
+            ),
+            f"/repos/acme/widget/commits/{_HEAD}/pulls": _json_response(
+                [
+                    {
+                        "number": 42,
+                        "state": "open",
+                        "draft": False,
+                        "head": {"ref": "feature", "sha": pr_head},
+                        "base": {"ref": "main", "sha": _BASE},
+                        "merge_commit_sha": _RETESTED_MERGE,
+                    }
+                ]
+            ),
+            "/user": _json_response({"login": "dc-bot", "id": _BOT}),
+        }
+        api_post = AsyncMock(return_value=_json_response({"id": 1}, 201))
+        db = create_mock_db({"github_instances": create_mock_collection(find_one=_USABLE_INSTANCE_DOC)})
+        with (
+            patch.object(
+                GitHubService, "_api_get", AsyncMock(side_effect=lambda endpoint, params=None: routes.get(endpoint))
+            ),
+            patch.object(GitHubService, "_api_get_paginated", AsyncMock(return_value=[])),
+            patch.object(GitHubService, "_api_post", api_post),
+        ):
+            scan = _make_scan(commit_hash=_TEST_MERGE)
+            asyncio.run(decorate_github_pr("s1", Stats(), SCAN_STATUS_COMPLETED, None, scan, _enabled_project(), db))
+        return [call.args[0] for call in api_post.await_args_list]
+
+    def test_the_current_head_is_decorated_after_github_retested_the_merge(self):
+        assert self._decorate(pr_head=_HEAD) == ["/repos/acme/widget/issues/42/comments"]
+
+    def test_a_test_merge_of_a_superseded_head_is_left_alone(self):
+        assert self._decorate(pr_head=_NEWER_HEAD) == []
 
 
 class TestCommentUpsert:

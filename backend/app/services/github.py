@@ -1087,11 +1087,13 @@ class GitHubService:
             )
             return GitHubTeamSyncResult(None)
 
-    async def get_pull_requests_for_commit(self, owner: str, repo: str, commit_sha: str) -> list[GitHubPullRequest]:
-        """Pull requests associated with a commit, retrying via the head parent when it is a merge commit."""
+    async def get_pull_requests_for_commit(
+        self, owner: str, repo: str, commit_sha: str
+    ) -> tuple[str, list[GitHubPullRequest]]:
+        """The sha that matched and its pull requests, retrying via the head parent when it is a merge commit."""
         pull_requests = await self._pull_requests_for_sha(owner, repo, commit_sha)
         if pull_requests:
-            return pull_requests
+            return commit_sha, pull_requests
 
         # A `pull_request` workflow checks out an ephemeral test-merge commit that GitHub associates with
         # no pull request (HTTP 200 and an empty list, never a 404); its parents[1] is the PR head.
@@ -1107,7 +1109,7 @@ class GitHubService:
                     [pr.number for pr in pull_requests],
                     head_sha,
                 )
-                return pull_requests
+                return head_sha, pull_requests
 
         logger.info(
             "No pull request found for %s/%s commit %s (head parent tried: %s)",
@@ -1116,7 +1118,7 @@ class GitHubService:
             commit_sha,
             head_sha or "none",
         )
-        return []
+        return commit_sha, []
 
     async def _pull_requests_for_sha(self, owner: str, repo: str, sha: str) -> list[GitHubPullRequest]:
         endpoint = f"/repos/{owner}/{repo}/commits/{sha}/pulls"

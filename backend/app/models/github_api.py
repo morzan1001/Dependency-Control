@@ -30,7 +30,6 @@ class GitHubPullRequest(BaseModel):
     state: str
     draft: bool = False
     head_sha: str | None = Field(None, validation_alias=AliasPath("head", "sha"))
-    merge_commit_sha: str | None = None
 
 
 class GitHubIssueComment(BaseModel):

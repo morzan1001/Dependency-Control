@@ -175,12 +175,8 @@ async def decorate_github_pr(
 
         owner, repo = repo_path
         github_service = GitHubService(github_instance)
-        prs = await github_service.get_pull_requests_for_commit(owner, repo, scan_doc.commit_hash)
-        relevant_prs = [
-            pr
-            for pr in prs
-            if pr.state == "open" and pr.draft is False and scan_doc.commit_hash in {pr.head_sha, pr.merge_commit_sha}
-        ]
+        head_sha, prs = await github_service.get_pull_requests_for_commit(owner, repo, scan_doc.commit_hash)
+        relevant_prs = [pr for pr in prs if pr.state == "open" and pr.draft is False and pr.head_sha == head_sha]
         if not relevant_prs:
             logger.info(f"No open PR has scan {scan_id}'s commit as head in project {project.id}")
             return
