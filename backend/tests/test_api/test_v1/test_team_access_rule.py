@@ -77,6 +77,20 @@ class TestChatTeamTools:
         assert ("team" in result) is readable
 
     @pytest.mark.asyncio
+    async def test_team_details_name_every_member(self):
+        db = await _db(members=(_member("u-1", TEAM_ROLE_ADMIN), _member("u-gone")))
+        await db.users.insert_one({"_id": "u-1", "username": "alice", "email": "alice@corp.com"})
+
+        result = await ChatToolRegistry().execute_tool(
+            "get_team_details", {"team_id": "t-1"}, _user(Permissions.TEAM_READ), db
+        )
+
+        assert [(m["user_id"], m["username"], m["role"]) for m in result["team"]["members"]] == [
+            ("u-1", "alice", TEAM_ROLE_ADMIN),
+            ("u-gone", None, TEAM_ROLE_MEMBER),
+        ]
+
+    @pytest.mark.asyncio
     async def test_a_read_all_holder_lists_every_team(self):
         db = await _db()
         result = await ChatToolRegistry().execute_tool(

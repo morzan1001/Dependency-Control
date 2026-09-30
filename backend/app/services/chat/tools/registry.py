@@ -12,8 +12,14 @@ from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ValidationError
 
-from app.api.v1.helpers.projects import authorize_waiver_read, build_user_project_query
-from app.api.v1.helpers.teams import check_team_access, resolve_team_names, team_refs, visible_teams_filter
+from app.api.v1.helpers.projects import authorize_waiver_read, build_user_project_query, load_project_with_members
+from app.api.v1.helpers.teams import (
+    check_team_access,
+    enrich_team_with_usernames,
+    resolve_team_names,
+    team_refs,
+    visible_teams_filter,
+)
 from app.api.v1.helpers.webhooks import (
     check_team_webhook_list_permission,
     check_webhook_list_permission,
@@ -114,6 +120,7 @@ def _rendered_fields(model: type[BaseModel], *, withheld: frozenset[str] = froze
 
 
 _PROJECT_FIELDS = _rendered_fields(Project)
+_MEMBER_FIELDS = ("user_id", "username", "role", "effective_role", "inherited_from")
 # Custom headers hold receiver credentials, and a tool answer leaves the process for the LLM provider.
 _WEBHOOK_FIELDS = _rendered_fields(WebhookResponse, withheld=frozenset({"headers"}))
 
@@ -467,7 +474,10 @@ class ChatToolRegistry:
 
     async def _tool_get_project_members(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        return {"members": project.get("members", [])}
+        data = await load_project_with_members(ctx.db, project["_id"])
+        if data is None:
+            raise _ToolRefusal(_ERR_PROJECT_NOT_FOUND)
+        return {"members": [{key: m.get(key) for key in _MEMBER_FIELDS} for m in data["members"]]}
 
     async def _tool_get_project_settings(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
@@ -737,14 +747,14 @@ class ChatToolRegistry:
 
     async def _tool_get_team_details(self, ctx: _ToolContext) -> dict[str, Any]:
         team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
-        return {
-            "team": {
-                "id": team.id,
-                "name": team.name,
-                "description": team.description,
-                "members": [m.model_dump() for m in team.members],
-            }
+        details = {
+            "id": team.id,
+            "name": team.name,
+            "description": team.description,
+            "members": [m.model_dump() for m in team.members],
         }
+        await enrich_team_with_usernames(details, ctx.db)
+        return {"team": details}
 
     async def _tool_get_team_projects(self, ctx: _ToolContext) -> dict[str, Any]:
         team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)

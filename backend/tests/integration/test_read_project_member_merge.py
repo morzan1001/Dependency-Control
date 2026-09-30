@@ -16,6 +16,7 @@ from fastapi import HTTPException
 from app.api.v1.endpoints.projects import read_project
 from app.core.permissions import Permissions
 from app.models.user import User
+from app.services.chat.tools import ChatToolRegistry
 
 _PROJECT = "p-merge"
 
@@ -236,3 +237,31 @@ async def test_read_all_reads_a_project_it_owns_no_part_of(db):
     await _seed(db)
 
     assert (await read_project(_PROJECT, _user("u-zulu", Permissions.PROJECT_READ_ALL), db)).id == _PROJECT
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("database", _DATABASES)
+async def test_the_chat_member_list_matches_the_project_page(db, database):
+    """Chat and MCP answer "who has access" from the same merge, named, without per-user preferences."""
+    await _seed(db)
+    user = _user("u-direct")
+
+    page = await read_project(_PROJECT, user, db)
+    result = await ChatToolRegistry().execute_tool("get_project_members", {"project_id": _PROJECT}, user, db)
+
+    assert result["members"] == [
+        {
+            "user_id": m.user_id,
+            "username": m.username,
+            "role": m.role,
+            "effective_role": m.effective_role,
+            "inherited_from": m.inherited_from,
+        }
+        for m in page.members
+    ]
+    assert {m["user_id"]: (m["username"], m["effective_role"]) for m in result["members"]} == {
+        "u-direct": ("name-u-direct", "editor"),
+        "u-both": ("name-u-both", "admin"),
+        "u-alpha": ("name-u-alpha", "admin"),
+        "u-bravo": ("name-u-bravo", "viewer"),
+    }
