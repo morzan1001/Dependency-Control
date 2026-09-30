@@ -1,4 +1,6 @@
+import asyncio
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -342,3 +344,25 @@ async def test_the_listed_locations_are_distinct_so_the_display_cap_bounds_colum
     locations = result.items[0].locations
     assert len(locations) == len(set(locations))
     assert len(locations) <= _LOCATIONS_PER_ENTRY
+
+
+@pytest.mark.asyncio
+async def test_concurrent_callers_of_one_view_share_one_aggregation(db):
+    await db.projects.insert_one({"_id": "pc", "name": "pc", "latest_scan_id": "sc"})
+    await db.scans.insert_one(
+        {"_id": "sc", "project_id": "pc", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+    runs = 0
+
+    async def _aggregate(**_kwargs):
+        nonlocal runs
+        runs += 1
+        await asyncio.sleep(0)
+        return []
+
+    resolved = ResolvedScope(scope="project", scope_id="pc", project_ids=["pc"])
+    service = CryptoHotspotService(db)
+    with patch.object(service, "_aggregate", new=_aggregate):
+        await asyncio.gather(*(service.hotspots(resolved=resolved, group_by="name", limit=10) for _ in range(3)))
+
+    assert runs == 1

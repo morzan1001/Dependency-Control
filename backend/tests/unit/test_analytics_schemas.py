@@ -37,7 +37,6 @@ def test_hotspot_response_requires_scope_enum():
             items=[],
             total=0,
             generated_at=datetime.now(timezone.utc),
-            cache_hit=False,
         )
 
 

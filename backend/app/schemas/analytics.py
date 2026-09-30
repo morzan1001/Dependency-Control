@@ -535,7 +535,6 @@ class HotspotResponse(BaseModel):
     items: list[HotspotEntry] = Field(default_factory=list)
     total: int = Field(..., ge=0)
     generated_at: datetime
-    cache_hit: bool = False
 
 
 class TrendPoint(BaseModel):
@@ -556,4 +555,3 @@ class TrendSeries(BaseModel):
     points: list[TrendPoint] = Field(default_factory=list)
     range_start: datetime
     range_end: datetime
-    cache_hit: bool = False

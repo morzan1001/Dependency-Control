@@ -10,7 +10,7 @@ import pytest
 import redis.asyncio as redis
 from fakeredis import TcpFakeServer
 
-from app.core.cache import CacheKeys, CacheService, CacheTTL, settings, suppress_cache_writes
+from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, settings, suppress_cache_writes
 
 
 class TestCacheTTLValues:
@@ -60,6 +60,19 @@ class TestCacheTTLExpectedValues:
 
     def test_negative_result_is_1_hour(self):
         assert CacheTTL.NEGATIVE_RESULT == 3600
+
+
+class TestScopeDigest:
+    """One digest bounds every analytics cache entry to the caller's id set."""
+
+    def test_order_of_the_ids_does_not_matter(self):
+        assert scope_digest(["b", "a", "c"]) == scope_digest(["c", "b", "a"])
+
+    def test_different_sets_differ(self):
+        assert scope_digest(["a", "b"]) != scope_digest(["a", "c"])
+
+    def test_the_global_scope_is_not_the_empty_scope(self):
+        assert scope_digest(None) != scope_digest([])
 
 
 class TestCacheKeysRecommendations:

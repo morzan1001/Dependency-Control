@@ -36,7 +36,6 @@ export interface HotspotResponse {
   items: HotspotEntry[];
   total: number;
   generated_at: string;
-  cache_hit: boolean;
 }
 
 export interface TrendPoint {
@@ -53,7 +52,6 @@ export interface TrendSeries {
   points: TrendPoint[];
   range_start: string;
   range_end: string;
-  cache_hit: boolean;
 }
 
 export interface ScanDelta {

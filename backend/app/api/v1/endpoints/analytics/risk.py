@@ -1,11 +1,11 @@
 """Analytics risk endpoints: /impact and /hotspots."""
 
-import hashlib
 import logging
 from datetime import datetime
 from typing import Annotated, Any
 
 from fastapi import Query
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -27,7 +27,8 @@ from app.api.v1.helpers.analytics import (
     SLIM_DETAILS_EXPR,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
-from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
+from app.api.v1.helpers.sorting import SortOrder, SortOrderQuery, parse_sort_direction
+from app.core.cache import scope_digest
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.core.permissions import Permissions
 from app.repositories.dependencies import DependencyRepository
@@ -37,6 +38,7 @@ from app.schemas.analytics import (
     SeverityBreakdown,
     VulnerabilityHotspot,
 )
+from app.schemas.projections import ProjectWithScanId
 from app.services.component_identity import (
     build_component_index,
     component_name_candidates,
@@ -50,16 +52,6 @@ from app.services.recommendation.common import live_cves
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
-
-
-def _scope_digest(project_ids: list[str], scan_ids: list[str]) -> str:
-    """Stable key over the caller's accessible projects and their active scans. Keying on the
-    scan set auto-invalidates on a new scan; waiver mutations flush the whole cache separately."""
-    h = hashlib.sha256()
-    h.update(",".join(sorted(project_ids)).encode())
-    h.update(b"|")
-    h.update(",".join(sorted(scan_ids)).encode())
-    return h.hexdigest()[:16]
 
 
 # Samples named on a card; each is returned beside the population it was drawn from, so a reader
@@ -83,22 +75,21 @@ async def get_impact_analysis(
     """Analyze which dependency fixes would have the highest impact across projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_IMPACT)
 
-    finding_repo = FindingRepository(db)
-
     projects = await get_user_projects(current_user, db)
     if not projects:
         return []
-    project_ids = [p.id for p in projects]
+    # Keyed on the scope, not its head scans: an ingest shows up once the per-pod TTL ends.
+    key = ("impact", scope_digest(p.id for p in projects), release_environment, limit)
+    return await get_analytics_cache().get_or_compute(key, lambda: _impact(db, projects, release_environment, limit))
 
+
+async def _impact(
+    db: AsyncIOMotorDatabase, projects: list[ProjectWithScanId], release_environment: str | None, limit: int
+) -> list[ImpactAnalysisResult]:
+    project_ids = [p.id for p in projects]
     project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
-
-    cache = get_analytics_cache()
-    cache_key = ("impact", _scope_digest(project_ids, scan_ids), limit)
-    hit, cached = cache.get(cache_key)
-    if hit:
-        return [ImpactAnalysisResult.model_validate(r) for r in cached]
 
     pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
@@ -137,7 +128,7 @@ async def get_impact_analysis(
         {"$limit": ANALYTICS_MAX_QUERY_LIMIT},
     ]
 
-    results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
+    results = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
 
     # Severity/vuln counts come from the advisory lists (finding_id is only component:version).
     counted = [(r, severity_counts_from_details(r["details_list"])) for r in results]
@@ -215,10 +206,7 @@ async def get_impact_analysis(
         )
 
     impact_results.sort(key=lambda x: x.fix_impact_score, reverse=True)
-
-    top = impact_results[:limit]
-    cache.set(cache_key, [r.model_dump() for r in top])
-    return top
+    return impact_results[:limit]
 
 
 def _format_first_seen(first_seen: Any) -> str:
@@ -304,23 +292,28 @@ async def get_vulnerability_hotspots(
     """Get dependencies with the most vulnerabilities (hotspots)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_HOTSPOTS)
 
-    finding_repo = FindingRepository(db)
-    dep_repo = DependencyRepository(db)
-
     projects = await get_user_projects(current_user, db)
     if not projects:
         return []
-    project_ids = [p.id for p in projects]
+    key = ("hotspots", scope_digest(p.id for p in projects), release_environment, sort_by, sort_order, skip, limit)
+    return await get_analytics_cache().get_or_compute(
+        key, lambda: _hotspots(db, projects, release_environment, sort_by, sort_order, skip, limit)
+    )
 
+
+async def _hotspots(
+    db: AsyncIOMotorDatabase,
+    projects: list[ProjectWithScanId],
+    release_environment: str | None,
+    sort_by: str,
+    sort_order: SortOrder,
+    skip: int,
+    limit: int,
+) -> list[VulnerabilityHotspot]:
+    project_ids = [p.id for p in projects]
     project_name_map, scan_ids = await get_projects_with_scans(projects, db, release_environment=release_environment)
     if not scan_ids:
         return []
-
-    cache = get_analytics_cache()
-    cache_key = ("hotspots", _scope_digest(project_ids, scan_ids), sort_by, sort_order, skip, limit)
-    hit, cached = cache.get(cache_key)
-    if hit:
-        return [VulnerabilityHotspot.model_validate(r) for r in cached]
 
     sort_direction = parse_sort_direction(sort_order)
     # finding_count/epss/risk are derived in Python (from advisories / enrichment), so they are
@@ -357,7 +350,7 @@ async def get_vulnerability_hotspots(
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})
 
-    results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
+    results = await FindingRepository(db).aggregate(pipeline, allow_disk_use=True)
 
     all_cves = list({cve for r in results for cve in live_cves(r.get("details_list", []))})
 
@@ -382,7 +375,7 @@ async def get_vulnerability_hotspots(
     ]
     types_by_version: dict[str, dict[str, set[str]]] = {}
     types_by_name: dict[str, set[str]] = {}
-    for row in await dep_repo.aggregate(type_pipeline):
+    for row in await DependencyRepository(db).aggregate(type_pipeline):
         name, version = row["_id"]["name"], normalize_version(row["_id"]["version"])
         types_by_version.setdefault(version, {}).setdefault(name, set()).update(row["types"])
         types_by_name.setdefault(name, set()).update(row["types"])
@@ -409,6 +402,4 @@ async def get_vulnerability_hotspots(
     if post_sort_by:
         hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=sort_direction == -1)
         hotspots = hotspots[skip : skip + limit]
-
-    cache.set(cache_key, [h.model_dump() for h in hotspots])
     return hotspots

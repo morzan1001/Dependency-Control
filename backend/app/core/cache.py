@@ -10,7 +10,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, TypeVar, cast
@@ -106,6 +106,13 @@ class CacheTTL:
 
     # Long TTL: version histories almost never change retroactively; new releases append.
     RELEASE_HISTORY = 24 * 3600  # 24 hours
+
+
+def scope_digest(ids: Iterable[str] | None) -> str:
+    """Digest of an id set for cache keys; None (global scope) gets a sentinel no set can equal."""
+    if ids is None:
+        return "*"
+    return hashlib.sha256(",".join(sorted(ids)).encode()).hexdigest()[:16]
 
 
 class CacheKeys:

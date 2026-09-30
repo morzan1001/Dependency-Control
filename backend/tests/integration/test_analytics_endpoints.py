@@ -189,9 +189,9 @@ async def test_trends_user_scope_accepted(client, db, owner_auth_headers_proj):
 
 
 @pytest.mark.asyncio
-async def test_cache_hit_on_second_call(client, db, owner_auth_headers_proj):
+async def test_a_second_call_is_served_from_the_cache(client, db, owner_auth_headers_proj):
     params = {"scope": "project", "scope_id": "p", "group_by": "name"}
-    await client.get(
+    resp1 = await client.get(
         "/api/v1/analytics/crypto/hotspots",
         params=params,
         headers=owner_auth_headers_proj,
@@ -202,7 +202,8 @@ async def test_cache_hit_on_second_call(client, db, owner_auth_headers_proj):
         headers=owner_auth_headers_proj,
     )
     assert resp2.status_code == 200
-    assert resp2.json().get("cache_hit") is True
+    assert resp2.json()["generated_at"] == resp1.json()["generated_at"]
+    assert "cache_hit" not in resp2.json()
 
 
 @pytest.mark.asyncio

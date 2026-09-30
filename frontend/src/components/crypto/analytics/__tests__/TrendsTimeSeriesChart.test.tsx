@@ -16,7 +16,6 @@ vi.mock("@/api/cryptoAnalytics", () => ({
     ],
     range_start: "2026-01-01T00:00:00Z",
     range_end: "2026-01-15T00:00:00Z",
-    cache_hit: false,
   }),
 }));
 
