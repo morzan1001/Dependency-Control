@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import Any
 
-from app.schemas.recommendation import Recommendation, RecommendationType
+from app.schemas.recommendation import Effort, Recommendation, RecommendationType
 from app.services.analytics.findings_delta import sast_rule_ids
 from app.services.recommendation.common import (
     ModelOrDict,
@@ -89,7 +89,7 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "files_total": files_total,
                     **sampled("rules", rule_ids, _RULES_SAMPLED),
                 },
-                effort="medium" if len(cat_findings) < 10 else "high",
+                effort=Effort.MEDIUM if len(cat_findings) < 10 else Effort.HIGH,
             )
         )
 

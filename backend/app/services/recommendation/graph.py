@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from app.core.constants import DEEP_CHAIN_MEDIUM_IMPACT_DEPTH, MAX_DEPENDENCY_DEPTH, SIMILAR_PACKAGE_GROUPS
 from app.core.purl import dependency_node_key, package_identity
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -153,7 +154,7 @@ def _circular_dependency_recommendation(members: set[str], edges: DependencyEdge
                 "Check if updated versions resolve the cycle",
             ],
         },
-        effort="high",
+        effort=Effort.HIGH,
     )
 
 
@@ -210,7 +211,7 @@ def _deep_chain_recommendation(
             ],
             "deepest_chains_total": len(deep),
         },
-        effort="high",
+        effort=Effort.HIGH,
     )
 
 
@@ -263,7 +264,7 @@ def analyze_duplicate_packages(
                     "type": "consolidate_packages",
                     "duplicates": duplicates_found,
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 

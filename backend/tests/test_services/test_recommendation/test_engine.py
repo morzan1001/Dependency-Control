@@ -1,6 +1,6 @@
 """Tests for app.services.recommendations."""
 
-from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.aggregation import ResultAggregator
 from app.services.recommendation import risks
 from app.services.recommendation.trends import PreviousScan
@@ -118,7 +118,7 @@ def _make_recommendation(
     title="Test Recommendation",
     component="test-pkg",
     score_impact=None,
-    effort="medium",
+    effort=Effort.MEDIUM,
 ):
     return Recommendation(
         type=rec_type,
@@ -646,6 +646,28 @@ class TestMalwareSignalsGetTheirOwnCards:
         malware, hotspot = by_type[RecommendationType.MALWARE_DETECTED], by_type[RecommendationType.CRITICAL_HOTSPOT]
         assert malware.action["steps"] == hotspot.action["steps"]
         assert malware.effort == hotspot.effort == "low"
+
+
+def test_every_generated_card_carries_an_effort_member():
+    findings = [
+        *_produced(
+            hash_verification={"hash_issues": [_HASH_ISSUE]},
+            os_malware={"malware_issues": [_MALWARE_ISSUE]},
+            end_of_life={"eol_issues": [_EOL_ISSUE]},
+            typosquatting={"typosquatting_issues": [_TYPOSQUAT_ISSUE]},
+        ),
+        _make_vuln_finding(),
+        _make_secret_finding(),
+        _make_sast_finding(),
+    ]
+    dep = _make_dependency()
+
+    result = RecommendationEngine().generate_recommendations(
+        findings=findings, dependencies=[dep], join_dependencies=[dep]
+    )
+
+    assert len({r.type for r in result}) >= 6
+    assert {type(r.effort) for r in result} == {Effort}
 
 
 class TestTyposquatCollection:

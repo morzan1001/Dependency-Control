@@ -8,6 +8,7 @@ from app.core.constants import (
 )
 from app.core.purl import package_identity
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -95,7 +96,7 @@ def analyze_outdated_dependencies(
                         for d in direct_outdated
                     ],
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 
@@ -122,7 +123,7 @@ def analyze_outdated_dependencies(
                     "type": "review_transitive",
                     "suggestion": "Update direct dependencies to pull in newer transitive versions",
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
@@ -218,7 +219,7 @@ def analyze_version_fragmentation(
                         "# For pnpm: pnpm dedupe",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
@@ -276,7 +277,7 @@ def analyze_dev_in_production(
                     "packages": [d["name"] for d in potential_dev_deps],
                     "suggestion": "Review if these packages should be moved to devDependencies",
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
@@ -326,6 +327,6 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
                     "Update CI/CD pipelines for new versions",
                 ],
             },
-            effort="high",
+            effort=Effort.HIGH,
         )
     ]

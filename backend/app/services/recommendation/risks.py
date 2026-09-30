@@ -6,6 +6,7 @@ from typing import Any
 from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
 from app.models.finding import PACKAGE_FINDING_TYPES
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -243,7 +244,7 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
             "is_kev": stats.kev > 0,
             "steps": _hotspot_steps(pkg),
         },
-        effort="low" if pkg.has_malware or stats.fixed_versions else "high",
+        effort=Effort.LOW if pkg.has_malware or stats.fixed_versions else Effort.HIGH,
         rank=rank,
         ranked_out_of=ranked_out_of,
     )
@@ -329,7 +330,7 @@ def _toxic_recommendation(
                 "Plan migration to a safer alternative",
             ],
         },
-        effort="high",
+        effort=Effort.HIGH,
         rank=rank,
         ranked_out_of=ranked_out_of,
     )
@@ -417,7 +418,7 @@ def analyze_attack_surface(
                         "Evaluate if parent dependencies are essential or could be removed",
                     ],
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 
@@ -454,7 +455,7 @@ def analyze_attack_surface(
                         "Use tools like depcheck (npm) to find unused deps",
                     ],
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 

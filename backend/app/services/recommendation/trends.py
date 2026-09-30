@@ -12,6 +12,7 @@ from app.core.constants import (
 from app.core.cve import canonical_cves, counted_cves
 from app.models.finding import FindingType
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -104,7 +105,7 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
                     "new_critical_cves": sorted(cve for cve, severity in new_cves.items() if severity == "CRITICAL"),
                     "suggestion": "Review recent dependency updates and code changes",
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         ]
     if new_count > FINDING_DELTA_THRESHOLD:
@@ -117,7 +118,7 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
                 impact={"critical": 0, "high": 0, "medium": 0, "low": new_count, "total": new_count},
                 affected_components=[],
                 action={"type": "review_changes", "new_findings": new_count},
-                effort="low",
+                effort=Effort.LOW,
             )
         ]
     return []
@@ -196,6 +197,6 @@ def analyze_recurring_issues(
                     "Check if upgrading to a different major version resolves the issues",
                 ],
             },
-            effort="high",
+            effort=Effort.HIGH,
         )
     ]

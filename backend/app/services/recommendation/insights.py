@@ -3,6 +3,7 @@ from typing import Any
 
 from app.core.constants import CROSS_PROJECT_MIN_OCCURRENCES
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -137,7 +138,7 @@ def correlate_scorecard_with_vulnerabilities(
                         "Monitor for community forks that may have applied security fixes",
                     ],
                 },
-                effort="high",
+                effort=Effort.HIGH,
             )
         )
 
@@ -226,7 +227,7 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
             "cves_total": len(widespread_cves),
             "suggestion": "Consider creating a shared fix or updating your project templates",
         },
-        effort="medium",
+        effort=Effort.MEDIUM,
     )
 
 
@@ -280,7 +281,7 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
                 "Implement a dependency bot to keep versions aligned",
             ],
         },
-        effort="medium",
+        effort=Effort.MEDIUM,
     )
 
 
@@ -320,5 +321,5 @@ def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendati
                 for p in top_problematic
             ],
         },
-        effort="medium",
+        effort=Effort.MEDIUM,
     )

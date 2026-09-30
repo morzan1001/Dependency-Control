@@ -15,10 +15,8 @@ class RecommendationType(str, Enum):
     DIRECT_DEPENDENCY_UPDATE = "direct_dependency_update"
     TRANSITIVE_FIX_VIA_PARENT = "transitive_fix_via_parent"
     NO_FIX_AVAILABLE = "no_fix_available"
-    CONSIDER_WAIVER = "consider_waiver"
     # Secret-related
     ROTATE_SECRETS = "rotate_secrets"
-    REMOVE_SECRETS = "remove_secrets"
     # SAST-related
     FIX_CODE_SECURITY = "fix_code_security"
     # IAC-related
@@ -26,7 +24,6 @@ class RecommendationType(str, Enum):
     # License-related
     LICENSE_COMPLIANCE = "license_compliance"
     LICENSE_DRIFT = "license_drift"
-    LICENSE_INCOMPATIBILITY = "license_incompatibility"
     # Quality-related
     SUPPLY_CHAIN_RISK = "supply_chain_risk"
     CRITICAL_RISK = "critical_risk"  # Combined vuln + scorecard risk
@@ -34,7 +31,6 @@ class RecommendationType(str, Enum):
     OUTDATED_DEPENDENCY = "outdated_dependency"
     VERSION_FRAGMENTATION = "version_fragmentation"
     DEV_IN_PRODUCTION = "dev_in_production"
-    UNMAINTAINED_PACKAGE = "unmaintained_package"
     # Trend-based
     RECURRING_VULNERABILITY = "recurring_vulnerability"
     REGRESSION_DETECTED = "regression_detected"
@@ -157,7 +153,7 @@ class Recommendation:
     impact: dict[str, Any]  # {critical: X, high: Y, total: Z, ...} + optional metadata
     affected_components: list[str]
     action: dict[str, Any]  # Specific action details
-    effort: str = Effort.MEDIUM  # Accepts Effort enum or string for compatibility
+    effort: Effort = Effort.MEDIUM
     affected_components_total: int = 0
     # Where this sat in the ranked list its generator emitted, and how many were ranked; both 0
     # unless that list was cut, in which case they are what says the rest exist.
@@ -170,7 +166,6 @@ class Recommendation:
         self.affected_components_total = max(self.affected_components_total, len(self.affected_components))
 
     def to_dict(self) -> dict[str, Any]:
-        effort_value = self.effort.value if isinstance(self.effort, Effort) else self.effort
         return {
             "type": self.type.value,
             "priority": self.priority.value,
@@ -182,5 +177,5 @@ class Recommendation:
             "rank": self.rank,
             "ranked_out_of": self.ranked_out_of,
             "action": self.action,
-            "effort": effort_value,
+            "effort": self.effort.value,
         }

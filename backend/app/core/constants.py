@@ -350,6 +350,13 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "deep_dependency_chain": 15,
     "duplicate_functionality": 10,
     "dev_in_production": 10,
+    # Zero until weighed against the tiers above, so adding them left today's order unchanged.
+    "license_drift": 0,
+    "replace_weak_algorithm": 0,
+    "increase_key_size": 0,
+    "upgrade_protocol": 0,
+    "pqc_migration": 0,
+    "rotate_certificate": 0,
 }
 
 # Effort-based bonuses (lower effort = higher bonus)

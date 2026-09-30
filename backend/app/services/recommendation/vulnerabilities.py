@@ -13,6 +13,7 @@ from app.core.cve import canonical_cves
 from app.core.epss import HIGH_EPSS_LABEL
 from app.core.purl import is_os_package_type
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -156,7 +157,7 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], source_target: str
                 f"# FROM {image_name}:<newer-tag>",
             ],
         },
-        effort="low" if impact["total"] > 10 else "medium",
+        effort=Effort.LOW if impact["total"] > 10 else Effort.MEDIUM,
     )
 
 
@@ -230,7 +231,7 @@ def _build_update_recommendation(
                 _MARKED_CVES_SAMPLED,
             ),
         },
-        effort="high" if transitive else "medium" if direct_inferred else "low",
+        effort=Effort.HIGH if transitive else Effort.MEDIUM if direct_inferred else Effort.LOW,
     )
 
 
@@ -266,6 +267,6 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
                     "Accept the risk if it's not exploitable in your context",
                 ],
             },
-            effort="high",
+            effort=Effort.HIGH,
         )
     ]

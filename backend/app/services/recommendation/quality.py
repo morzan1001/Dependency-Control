@@ -1,7 +1,7 @@
 from typing import Any
 
 from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
-from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
@@ -99,7 +99,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         for p in unmaintained_packages[:10]
                     ],
                 },
-                effort="high",
+                effort=Effort.HIGH,
             )
         )
 
@@ -128,7 +128,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         "If no fix is available, consider alternatives",
                     ],
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 
@@ -169,7 +169,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         for p in sorted(low_score_packages, key=lambda x: x["score"])[:10]
                     ],
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 
@@ -195,7 +195,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         "Consider pinning versions and manually reviewing changes",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 

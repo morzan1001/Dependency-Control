@@ -4,6 +4,7 @@ import pytest
 from pydantic import BaseModel
 
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -241,7 +242,7 @@ def _make_recommendation(
     priority=Priority.MEDIUM,
     rec_type=RecommendationType.DIRECT_DEPENDENCY_UPDATE,
     impact=None,
-    effort="medium",
+    effort=Effort.MEDIUM,
 ) -> Recommendation:
     return Recommendation(
         type=rec_type,
@@ -369,8 +370,8 @@ class TestCalculateScore:
     @pytest.mark.parametrize(
         ("lighter", "heavier"),
         [
-            pytest.param("low", "high", id="low_over_high"),
-            pytest.param("medium", "high", id="medium_over_high"),
+            pytest.param(Effort.LOW, Effort.HIGH, id="low_over_high"),
+            pytest.param(Effort.MEDIUM, Effort.HIGH, id="medium_over_high"),
         ],
     )
     def test_a_lighter_effort_scores_higher(self, lighter, heavier):

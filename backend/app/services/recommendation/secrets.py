@@ -1,4 +1,4 @@
-from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components, severity_impact
 
 _SECRET_TYPES_NAMED = 5
@@ -69,7 +69,7 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "files_total": files_total,
                     "steps": list(steps),
                 },
-                effort="high",
+                effort=Effort.HIGH,
             )
         )
 

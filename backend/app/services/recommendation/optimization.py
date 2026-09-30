@@ -2,6 +2,7 @@ from collections import defaultdict
 
 from app.core.constants import QUICK_WIN_SCORING_WEIGHTS
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -100,7 +101,7 @@ def _quick_win_recommendation(
             "is_direct": is_direct,
             "fixes_count": stats.total,
         },
-        effort="low",
+        effort=Effort.LOW,
         rank=rank,
         ranked_out_of=ranked_out_of,
     )

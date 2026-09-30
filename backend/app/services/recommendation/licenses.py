@@ -4,7 +4,7 @@ from typing import Any
 from app.core.purl import package_identity
 from app.models.finding import Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS, LicenseCategory
-from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.analyzers.license_compliance.constants import UNDETERMINED_LICENSE_ID
 from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components, severity_impact
 
@@ -68,7 +68,7 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "Document license decisions and exceptions",
                 ],
             },
-            effort="medium",
+            effort=Effort.MEDIUM,
         )
     ]
 
@@ -144,6 +144,6 @@ def detect_license_drift(
                     "Update license waivers if needed",
                 ],
             },
-            effort="medium",
+            effort=Effort.MEDIUM,
         )
     ]

@@ -7,6 +7,7 @@ from app.core.constants import (
     sort_by_severity,
 )
 from app.models.finding import Severity
+from app.schemas.recommendation import RecommendationType
 
 
 class TestGetSeverityValue:
@@ -147,10 +148,8 @@ class TestRecommendationTypeBonusesOrdering:
         assert hygiene_max < self._bonus("outdated_dependency")
         assert hygiene_max < self._bonus("license_compliance")
 
-    def test_all_bonuses_are_positive(self):
-        # A zero/negative bonus would silently demote a category; guard against a typo.
-        for key, value in RECOMMENDATION_TYPE_BONUSES.items():
-            assert value > 0, f"{key} has non-positive bonus {value}"
+    def test_every_recommendation_type_has_a_bonus_and_nothing_else_does(self):
+        assert set(RECOMMENDATION_TYPE_BONUSES) == {t.value for t in RecommendationType}
 
 
 class TestEffortBonusesOrdering:

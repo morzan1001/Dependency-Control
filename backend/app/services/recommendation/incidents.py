@@ -4,6 +4,7 @@ from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, E
 from app.core.cve import counted_cves
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -85,7 +86,7 @@ def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]
                 "urgency": "immediate",
                 "steps": list(MALWARE_REMEDIATION_STEPS),
             },
-            effort="low",
+            effort=Effort.LOW,
         )
     ]
 
@@ -119,7 +120,7 @@ def process_hash_mismatch(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "Escalate as tampering only if the mismatch persists",
                 ],
             },
-            effort="low",
+            effort=Effort.LOW,
         )
     ]
 
@@ -160,7 +161,7 @@ def process_typosquatting(typosquat_findings: list[ModelOrDict]) -> list[Recomme
                     "Audit for any malicious activity",
                 ],
             },
-            effort="low",
+            effort=Effort.LOW,
         )
     ]
 
@@ -226,7 +227,7 @@ def detect_known_exploits(
                         "Brief your security team and management",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
@@ -258,7 +259,7 @@ def detect_known_exploits(
                         "Document remediation efforts for compliance",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
@@ -293,7 +294,7 @@ def detect_known_exploits(
                         "Monitor threat intelligence for exploit activity",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 

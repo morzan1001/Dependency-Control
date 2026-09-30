@@ -1,11 +1,9 @@
 import {
   AlertTriangle,
   ArrowUpCircle,
-  Calendar,
   Clock,
   Code,
   Container,
-  FileWarning,
   FolderTree,
   GitBranch,
   Globe,
@@ -57,23 +55,11 @@ export const typeConfig: Record<string, { icon: typeof Container; label: string;
     color: 'text-gray-500',
     bgColor: 'bg-gray-500/10',
   },
-  consider_waiver: {
-    icon: Shield,
-    label: 'Consider Waiver',
-    color: 'text-amber-500',
-    bgColor: 'bg-amber-500/10',
-  },
   rotate_secrets: {
     icon: Key,
     label: 'Rotate Secrets',
     color: 'text-destructive',
     bgColor: 'bg-destructive/10',
-  },
-  remove_secrets: {
-    icon: FileWarning,
-    label: 'Remove Secrets',
-    color: 'text-severity-high',
-    bgColor: 'bg-severity-high/10',
   },
   fix_code_security: {
     icon: Code,
@@ -116,12 +102,6 @@ export const typeConfig: Record<string, { icon: typeof Container; label: string;
     label: 'Dev in Production',
     color: 'text-teal-500',
     bgColor: 'bg-teal-500/10',
-  },
-  unmaintained_package: {
-    icon: Calendar,
-    label: 'Unmaintained Package',
-    color: 'text-gray-600',
-    bgColor: 'bg-gray-600/10',
   },
   recurring_vulnerability: {
     icon: RefreshCw,

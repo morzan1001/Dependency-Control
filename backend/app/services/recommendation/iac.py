@@ -1,6 +1,6 @@
 from collections import Counter, defaultdict
 
-from app.schemas.recommendation import Recommendation, RecommendationType
+from app.schemas.recommendation import Effort, Recommendation, RecommendationType
 from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
@@ -57,7 +57,7 @@ def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "files_total": files_total,
                     "common_issues": _get_common_iac_issues(plat_findings),
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 
