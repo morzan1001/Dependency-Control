@@ -123,7 +123,7 @@ async def _handle_request(item: Any, user: User, db: AsyncIOMotorDatabase[Any]) 
     if not isinstance(method, str):
         return _rpc_error(_INVALID_REQUEST, "Missing 'method'", request_id)
 
-    params = item.get("params") or {}
+    params = item.get("params", {})
     try:
         if not isinstance(params, dict):
             raise _RpcError(_INVALID_PARAMS, "'params' must be an object")

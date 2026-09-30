@@ -5,14 +5,18 @@ from datetime import datetime, time, timedelta, timezone
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
+from app.models.user import User
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.services.chat.tools import ChatToolRegistry
+from tests.helpers.permission_presets import PRESET_ADMIN
 
 
-@pytest.mark.asyncio
-async def test_mcp_get_crypto_hotspots(db):
-    from app.services.chat.tools import get_crypto_hotspots
+def _admin() -> User:
+    return User(id="admin-1", username="admin", email="admin@test.com", permissions=list(PRESET_ADMIN))
 
+
+async def _seed_md5_scan(db):
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
         "s",
@@ -37,10 +41,39 @@ async def test_mcp_get_crypto_hotspots(db):
         }
     )
 
-    result = await get_crypto_hotspots(db, project_id="p", group_by="name")
+
+@pytest.mark.asyncio
+async def test_mcp_get_crypto_hotspots(db):
+    from app.services.chat.tools import get_crypto_hotspots
+
+    await _seed_md5_scan(db)
+
+    result = await get_crypto_hotspots(db, project_id="p", group_by="name", limit=20)
 
     assert result["total"] >= 1
     assert any(i["key"] and "MD5" in i["key"] for i in result["items"])
+
+
+@pytest.mark.asyncio
+async def test_a_null_grouping_groups_hotspots_by_name(db):
+    await _seed_md5_scan(db)
+
+    result = await ChatToolRegistry().execute_tool(
+        "get_crypto_hotspots", {"project_id": "p", "group_by": None}, _admin(), db
+    )
+
+    assert result["grouping_dimension"] == "name"
+
+
+@pytest.mark.asyncio
+async def test_a_null_metric_trends_the_total_crypto_findings(db):
+    await _seed_md5_scan(db)
+
+    result = await ChatToolRegistry().execute_tool(
+        "get_crypto_trends", {"project_id": "p", "metric": None}, _admin(), db
+    )
+
+    assert result["metric"] == "total_crypto_findings"
 
 
 @pytest.mark.asyncio

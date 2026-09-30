@@ -36,7 +36,7 @@ def _checked(name: str, schema: dict[str, Any], value: Any) -> Any:
     if not _conforms(schema, value):
         raise ToolArgumentError(f"Argument '{name}' must be of type {schema.get('type')}")
     members = schema.get("enum")
-    if members and value:
+    if members:
         spelling = next((member for member in members if member.casefold() == value.casefold()), None)
         if spelling is None:
             raise ToolArgumentError(f"Argument '{name}' must be one of: {', '.join(members)}")

@@ -195,10 +195,9 @@ async def test_a_request_without_a_method_is_invalid_with_a_null_id(client, db):
 
 
 @pytest.mark.asyncio
-async def test_params_that_are_not_an_object_are_invalid_params(client, db):
-    resp = await _rpc(
-        client, db, {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "tools/call", "params": ["list_projects"]}
-    )
+@pytest.mark.parametrize("params", [["name"], [], "", 0, False, None])
+async def test_params_that_are_not_an_object_are_invalid_params(client, db, params):
+    resp = await _rpc(client, db, {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "tools/list", "params": params})
 
     assert resp.json()["error"]["code"] == _INVALID_PARAMS
 

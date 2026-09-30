@@ -1573,7 +1573,7 @@ class ChatToolRegistry:
         return await get_crypto_hotspots(
             ctx.db,
             project_id=project["_id"],
-            group_by=ctx.args.get("group_by", "name"),
+            group_by=ctx.args["group_by"],
             limit=ctx.args["limit"],
         )
 
@@ -1582,7 +1582,7 @@ class ChatToolRegistry:
         return await get_crypto_trends(
             ctx.db,
             project_id=project["_id"],
-            metric=ctx.args.get("metric", "total_crypto_findings"),
+            metric=ctx.args["metric"],
             days=ctx.args["days"],
         )
 

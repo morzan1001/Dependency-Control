@@ -126,8 +126,8 @@ async def get_crypto_hotspots(
     db: AsyncIOMotorDatabase,
     *,
     project_id: str,
-    group_by: str = "name",
-    limit: int = 20,
+    group_by: str,
+    limit: int,
 ) -> dict[str, Any]:
     from app.schemas.analytics import GroupBy
     from app.services.analytics.crypto_hotspots import CryptoHotspotService
@@ -147,7 +147,7 @@ async def get_crypto_trends(
     db: AsyncIOMotorDatabase,
     *,
     project_id: str,
-    metric: str = "total_crypto_findings",
+    metric: str,
     days: int,
 ) -> dict[str, Any]:
     from app.schemas.analytics import Metric

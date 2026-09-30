@@ -64,10 +64,11 @@ async def test_every_report_framework_is_evaluated(audited, framework):
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_framework_is_refused_with_the_frameworks_that_exist(audited):
+@pytest.mark.parametrize("framework", ["nist", ""])
+async def test_an_unknown_framework_is_refused_with_the_frameworks_that_exist(audited, framework):
     result = await ChatToolRegistry().execute_tool(
         "get_framework_evaluation_summary",
-        {"scope": "project", "scope_id": _PROJECT, "framework": "nist"},
+        {"scope": "project", "scope_id": _PROJECT, "framework": framework},
         _admin(),
         audited,
     )

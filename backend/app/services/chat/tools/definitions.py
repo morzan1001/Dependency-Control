@@ -948,7 +948,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "group_by": {"type": "string", "enum": list(get_args(GroupBy))},
+                    "group_by": {"type": "string", "enum": list(get_args(GroupBy)), "default": "name"},
                     "limit": _bounded(20, MAX_CRYPTO_HOTSPOT_PAGE, "Max hotspots"),
                 },
                 "required": ["project_id"],
@@ -967,7 +967,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "metric": {"type": "string", "enum": list(get_args(Metric))},
+                    "metric": {"type": "string", "enum": list(get_args(Metric)), "default": "total_crypto_findings"},
                     "days": _bounded(30, MAX_DAY_WINDOW, "Days to look back"),
                 },
                 "required": ["project_id"],
