@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,6 +34,11 @@ class Settings(BaseSettings):
 
     # Frontend
     FRONTEND_BASE_URL: str = "http://localhost:3000"
+
+    @field_validator("FRONTEND_BASE_URL")
+    @classmethod
+    def _strip_trailing_slash(cls, value: str) -> str:
+        return value.rstrip("/")
 
     # Time (seconds) a scan can be in 'processing' before considered stuck
     # Increase this if your analysis typically takes longer

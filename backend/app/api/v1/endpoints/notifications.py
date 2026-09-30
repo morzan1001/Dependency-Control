@@ -134,11 +134,11 @@ def _queue_announcement(
     subject: str,
     message: str,
     message_html: str,
-    frontend_url: str,
     db: Any,
     forced_channels: Any,
 ) -> None:
     """Queue an announcement notification for a list of users."""
+    frontend_url = settings.FRONTEND_BASE_URL
     html_msg = get_announcement_template(message=message_html, link=frontend_url)
     blocks = build_advisory_blocks(subject=subject, message=message, dashboard_link=frontend_url)
     mm_props = mm_advisory_props(subject=subject, message=message, dashboard_link=frontend_url)
@@ -161,7 +161,6 @@ async def _handle_global_broadcast(
     background_tasks: BackgroundTasks,
     user_repo: UserRepository,
     message_html: str,
-    frontend_url: str,
     db: Any,
     forced_channels: Any,
 ) -> tuple[int, int]:
@@ -169,7 +168,7 @@ async def _handle_global_broadcast(
     users = await user_repo.find_many({"is_active": True}, limit=2000)
     if users and not payload.dry_run:
         _queue_announcement(
-            background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels
+            background_tasks, users, payload.subject, payload.message, message_html, db, forced_channels
         )
     return len(users), 0
 
@@ -180,7 +179,6 @@ async def _handle_teams_broadcast(
     user_repo: UserRepository,
     team_repo: "TeamRepository",
     message_html: str,
-    frontend_url: str,
     db: Any,
     forced_channels: Any,
 ) -> tuple[int, int]:
@@ -200,7 +198,7 @@ async def _handle_teams_broadcast(
     users = await user_repo.find_many({"_id": {"$in": list(user_ids)}, "is_active": True}, limit=2000)
     if users and not payload.dry_run:
         _queue_announcement(
-            background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels
+            background_tasks, users, payload.subject, payload.message, message_html, db, forced_channels
         )
     return len(users), 0
 
@@ -251,9 +249,9 @@ async def _find_affected_projects(db: Any, rules: list[AdvisoryPackage]) -> dict
 def _build_advisory_html(
     message_html: str,
     projects_data: list,
-    frontend_url: str,
 ) -> tuple[str, str]:
     """Build HTML and plain-text messages for an advisory notification. Returns (html, text)."""
+    frontend_url = settings.FRONTEND_BASE_URL
     projects_html_parts = []
     projects_text_parts = []
 
@@ -322,13 +320,12 @@ def _queue_advisory_for_user(
     payload: "BroadcastRequest",
     background_tasks: BackgroundTasks,
     message_html: str,
-    frontend_url: str,
     db: Any,
     forced_channels: Any,
 ) -> None:
     """Build and queue an advisory notification background task for a single user."""
     projects_data = data["projects"]
-    final_html, findings_text = _build_advisory_html(message_html, projects_data, frontend_url)
+    final_html, findings_text = _build_advisory_html(message_html, projects_data)
     context_message = f"{payload.message}\n\n--- Affected Projects ---\n{findings_text}\n"
 
     advisory_subject = f"ACTION REQUIRED: {payload.subject}"
@@ -336,13 +333,13 @@ def _queue_advisory_for_user(
         subject=advisory_subject,
         message=payload.message,
         affected_projects=projects_data,
-        dashboard_link=frontend_url,
+        dashboard_link=settings.FRONTEND_BASE_URL,
     )
     advisory_mm = mm_advisory_props(
         subject=advisory_subject,
         message=payload.message,
         affected_projects=projects_data,
-        dashboard_link=frontend_url,
+        dashboard_link=settings.FRONTEND_BASE_URL,
     )
 
     background_tasks.add_task(
@@ -366,7 +363,6 @@ async def _notify_advisory_admins(
     payload: "BroadcastRequest",
     background_tasks: BackgroundTasks,
     message_html: str,
-    frontend_url: str,
     db: Any,
     forced_channels: Any,
 ) -> int:
@@ -386,7 +382,6 @@ async def _notify_advisory_admins(
                 payload,
                 background_tasks,
                 message_html,
-                frontend_url,
                 db,
                 forced_channels,
             )
@@ -413,8 +408,6 @@ async def broadcast_message(
     unique_user_count = 0
     uncomparable: list[str] = []
 
-    frontend_url = settings.FRONTEND_BASE_URL.rstrip("/")
-
     forced_channels = payload.channels if payload.channels else None
 
     # Escape raw HTML before Markdown to prevent XSS via embedded tags.
@@ -427,7 +420,6 @@ async def broadcast_message(
             background_tasks,
             user_repo,
             message_html_content,
-            frontend_url,
             db,
             forced_channels,
         )
@@ -439,7 +431,6 @@ async def broadcast_message(
             user_repo,
             team_repo,
             message_html_content,
-            frontend_url,
             db,
             forced_channels,
         )
@@ -460,7 +451,6 @@ async def broadcast_message(
                 payload,
                 background_tasks,
                 message_html_content,
-                frontend_url,
                 db,
                 forced_channels,
             )

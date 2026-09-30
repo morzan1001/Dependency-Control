@@ -99,8 +99,7 @@ async def decorate_gitlab_mr(
 
         from app.core.config import settings
 
-        frontend_url = settings.FRONTEND_BASE_URL.rstrip("/")
-        scan_url = f"{frontend_url}/projects/{project.id}/scans/{scan_id}"
+        scan_url = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
 
         comment_body = _build_mr_comment(scan_id, stats, scan_url)
 
@@ -220,8 +219,7 @@ async def decorate_github_pr(
 
         from app.core.config import settings
 
-        frontend_url = settings.FRONTEND_BASE_URL.rstrip("/")
-        scan_url = f"{frontend_url}/projects/{project.id}/scans/{scan_id}"
+        scan_url = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
 
         comment_body = _build_mr_comment(scan_id, stats, scan_url)
 

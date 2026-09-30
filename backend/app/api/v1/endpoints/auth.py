@@ -472,11 +472,7 @@ async def login_oidc_authorize(request: Request, db: DatabaseDep) -> RedirectRes
             detail="OIDC is not properly configured",
         )
 
-    # Prefer FRONTEND_BASE_URL (external URL behind a reverse proxy), else request.url_for for local dev.
-    if settings.FRONTEND_BASE_URL and not settings.FRONTEND_BASE_URL.startswith("http://localhost"):
-        redirect_uri = f"{settings.FRONTEND_BASE_URL.rstrip('/')}/api/v1/login/oidc/callback"
-    else:
-        redirect_uri = str(request.url_for("login_oidc_callback"))
+    redirect_uri = _resolve_oidc_redirect_uri(request)
 
     # State prevents CSRF.
     state = secrets.token_urlsafe(32)
@@ -516,9 +512,9 @@ async def _validate_oidc_state(state: str | None) -> None:
 
 
 def _resolve_oidc_redirect_uri(request: Request) -> str:
-    """Build the callback redirect URI used for token exchange."""
+    """Prefer FRONTEND_BASE_URL (external URL behind a reverse proxy), else request.url_for for local dev."""
     if settings.FRONTEND_BASE_URL and not settings.FRONTEND_BASE_URL.startswith("http://localhost"):
-        return f"{settings.FRONTEND_BASE_URL.rstrip('/')}/api/v1/login/oidc/callback"
+        return f"{settings.FRONTEND_BASE_URL}/api/v1/login/oidc/callback"
     return str(request.url_for("login_oidc_callback"))
 
 
@@ -736,10 +732,9 @@ async def login_oidc_callback(
     if auth_oidc_logins_total:
         auth_oidc_logins_total.labels(status="success").inc()
 
-    base_url = settings.FRONTEND_BASE_URL.rstrip("/")
-    frontend_url = f"{base_url}/login/callback#access_token={access_token}&refresh_token={refresh_token}"
-
-    return RedirectResponse(frontend_url)
+    return RedirectResponse(
+        f"{settings.FRONTEND_BASE_URL}/login/callback#access_token={access_token}&refresh_token={refresh_token}"
+    )
 
 
 @router.post(
