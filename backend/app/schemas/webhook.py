@@ -3,10 +3,11 @@
 import ipaddress
 import re
 from datetime import datetime
+from typing import Any
 from urllib.parse import urlparse
 
 import httpx
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, ValidationInfo, field_validator
 
 from app.core.config import settings
 from app.core.constants import (
@@ -78,12 +79,6 @@ def validate_webhook_url(url: str) -> str:
     return url
 
 
-def validate_webhook_url_optional(url: str | None) -> str | None:
-    if url is None:
-        return None
-    return validate_webhook_url(url)
-
-
 def validate_webhook_events(events: list[str]) -> list[str]:
     if not events:
         raise ValueError("At least one event type is required")
@@ -92,12 +87,6 @@ def validate_webhook_events(events: list[str]) -> list[str]:
     if invalid_events:
         raise ValueError(f"Invalid event types: {invalid_events}. Valid events: {WEBHOOK_VALID_EVENTS}")
     return list(dict.fromkeys(WEBHOOK_EVENT_ALIASES.get(e, e) for e in events))
-
-
-def validate_webhook_events_optional(events: list[str] | None) -> list[str] | None:
-    if events is None:
-        return None
-    return validate_webhook_events(events)
 
 
 def validate_webhook_event_type(event_type: str) -> str:
@@ -132,11 +121,6 @@ def detect_webhook_type(url: str) -> WebhookType:
     return "generic"
 
 
-def effective_webhook_type(stored: WebhookType, url: str) -> WebhookType:
-    """Delivered as Teams when stored so or when the URL is a Teams workflow, whatever type was stored."""
-    return "teams" if stored == "teams" else detect_webhook_type(url)
-
-
 class WebhookCreate(BaseModel):
     """Schema for creating a new webhook."""
 
@@ -165,7 +149,7 @@ class WebhookCreate(BaseModel):
 
 
 class WebhookUpdate(BaseModel):
-    """Schema for updating an existing webhook."""
+    """Only the sent fields change; a null clears secret or headers and is refused for the rest."""
 
     url: str | None = None
     events: list[str] | None = None
@@ -174,17 +158,22 @@ class WebhookUpdate(BaseModel):
     headers: dict[str, str] | None = None
     webhook_type: WebhookType | None = None
 
+    @field_validator("url", "events", "is_active", "webhook_type")
+    @classmethod
+    def _reject_null(cls, v: Any, info: ValidationInfo) -> Any:
+        if v is None:
+            raise ValueError(f"{info.field_name} cannot be null")
+        return v
+
     @field_validator("events")
     @classmethod
-    def _validate_events(cls, v: list[str] | None) -> list[str] | None:
-        """Validate that all events are valid event types."""
-        return validate_webhook_events_optional(v)
+    def _validate_events(cls, v: list[str]) -> list[str]:
+        return validate_webhook_events(v)
 
     @field_validator("url")
     @classmethod
-    def _validate_url(cls, v: str | None) -> str | None:
-        """Validate that URL is HTTPS (except for localhost in development)."""
-        return validate_webhook_url_optional(v)
+    def _validate_url(cls, v: str) -> str:
+        return validate_webhook_url(v)
 
     @field_validator("headers")
     @classmethod

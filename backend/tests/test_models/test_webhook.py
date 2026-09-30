@@ -158,6 +158,21 @@ class TestWebhookCreateSchemaType:
             WebhookUpdate(webhook_type="pagerduty")
 
 
+class TestWebhookUpdateNulls:
+    @pytest.mark.parametrize("field", ["url", "events", "is_active", "webhook_type"])
+    def test_an_explicit_null_for_a_field_the_stored_model_requires_is_rejected(self, field):
+        with pytest.raises(ValidationError, match="cannot be null"):
+            WebhookUpdate(**{field: None})
+
+    @pytest.mark.parametrize("field", ["secret", "headers"])
+    def test_an_explicit_null_clears_the_secret_or_the_headers(self, field):
+        assert WebhookUpdate(**{field: None}).model_dump(exclude_unset=True) == {field: None}
+
+    def test_a_legacy_event_name_is_stored_in_its_canonical_form(self):
+        update = WebhookUpdate(events=["scan_completed", "scan.completed", "vulnerability_found"])
+        assert update.events == ["scan.completed", "vulnerability.found"]
+
+
 class TestWebhookHeaders:
     @pytest.mark.parametrize("schema", [WebhookCreate, WebhookUpdate])
     def test_ordinary_custom_headers_are_kept(self, schema):

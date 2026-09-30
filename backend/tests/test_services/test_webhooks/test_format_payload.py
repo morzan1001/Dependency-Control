@@ -220,7 +220,7 @@ class TestLogWebhookDeliveryProjectId:
 
 
 class TestNonBlockingSemantics:
-    """Only safe_trigger_webhooks swallows errors; trigger_webhooks propagates them."""
+    """trigger_webhooks propagates errors; safe_trigger_webhooks and the typed triggers swallow them."""
 
     @pytest.mark.asyncio
     async def test_trigger_webhooks_propagates_internal_error(self):
@@ -234,6 +234,22 @@ class TestNonBlockingSemantics:
         service = WebhookService()
         with patch.object(service, "trigger_webhooks", new=AsyncMock(side_effect=RuntimeError("boom"))):
             await service.safe_trigger_webhooks(MagicMock(), "scan.completed", {}, "p1", context="test")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "fire",
+        [
+            pytest.param(lambda s: s.trigger_scan_completed(MagicMock(), "s1", "p1", "P", 0, {}), id="scan"),
+            pytest.param(
+                lambda s: s.trigger_vulnerability_found(MagicMock(), "s1", "p1", "P", 1, 0, 0, 0, []), id="vuln"
+            ),
+            pytest.param(lambda s: s.trigger_analysis_failed(MagicMock(), "s1", "p1", "P", "boom"), id="failed"),
+        ],
+    )
+    async def test_the_typed_triggers_swallow_a_failed_lookup(self, fire):
+        service = WebhookService()
+        with patch.object(service, "_get_webhooks_for_event", new=AsyncMock(side_effect=RuntimeError("boom"))):
+            await fire(service)
 
 
 async def _streamed(body: bytes) -> AsyncIterator[bytes]:
@@ -272,7 +288,7 @@ class TestTestWebhookForTeams:
         assert container["style"] == "accent"
 
     @pytest.mark.asyncio
-    async def test_a_teams_url_stored_as_generic_gets_the_test_card(self):
+    async def test_a_teams_url_stored_as_generic_gets_the_raw_test_payload(self):
         webhook = make_webhook("generic")
         webhook.url = "https://tenant.webhook.office.com/webhookb2/abc"
 
@@ -283,8 +299,8 @@ class TestTestWebhookForTeams:
         ):
             await WebhookService().test_webhook(webhook)
 
-        card = json.loads(requests[0].content)["attachments"][0]["content"]
-        assert next(b for b in card["body"] if b["type"] == "Container")["style"] == "accent"
+        sent = json.loads(requests[0].content)
+        assert (sent["test"], "attachments" in sent) == (True, False)
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("webhook_type", ["teams", "generic"])
@@ -343,10 +359,13 @@ class TestTestWebhookForTeams:
 class TestDeliverySignature:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
-        ("webhook_type", "url"),
-        [("teams", "https://example.test/teams-hook"), ("generic", "https://tenant.webhook.office.com/webhookb2/abc")],
+        ("webhook_type", "url", "shape"),
+        [
+            ("teams", "https://example.test/teams-hook", "message"),
+            ("generic", "https://prod-1.westeurope.logic.azure.com/workflows/abc/triggers/manual", "scan.completed"),
+        ],
     )
-    async def test_a_teams_delivery_is_signed_over_the_card_it_transmits(self, webhook_type, url):
+    async def test_the_stored_type_decides_the_body_and_the_signature_covers_it(self, webhook_type, url, shape):
         webhook = make_webhook(webhook_type)
         webhook.url = url
         webhook.secret = "s3cret"
@@ -365,5 +384,5 @@ class TestDeliverySignature:
         body = requests[0].content
         expected = hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
         assert delivered is True
-        assert json.loads(body)["type"] == "message"
+        assert json.loads(body).get("type", json.loads(body).get("event")) == shape
         assert requests[0].headers["X-Webhook-Signature"] == f"sha256={expected}"

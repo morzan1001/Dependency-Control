@@ -794,8 +794,7 @@ WEBHOOK_EVENT_LICENSE_POLICY_CHANGED = "license_policy.changed"
 WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report.generated"
 WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan.generated"
 
-# snake_case event names clients may still send; validation stores their canonical form, and
-# dispatch also matches subscriptions stored before it did.
+# snake_case event names clients may still send; validation stores their canonical form.
 WEBHOOK_EVENT_ALIASES: dict[str, str] = {
     "scan_completed": WEBHOOK_EVENT_SCAN_COMPLETED,
     "vulnerability_found": WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -816,6 +815,8 @@ WEBHOOK_VALID_EVENTS = [
 
 WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.keys()]
 
+WebhookType = Literal["generic", "teams"]
+
 # Webhook HTTP headers
 WEBHOOK_HEADER_CONTENT_TYPE = "Content-Type"
 WEBHOOK_HEADER_USER_AGENT = "User-Agent"
@@ -825,7 +826,6 @@ WEBHOOK_HEADER_ID = "X-Webhook-ID"
 WEBHOOK_HEADER_SIGNATURE = "X-Webhook-Signature"
 WEBHOOK_HEADER_SIGNATURE_V2 = "X-Webhook-Signature-V2"
 WEBHOOK_HEADER_DELIVERY = "X-Webhook-Delivery"
-WebhookType = Literal["generic", "teams"]
 WEBHOOK_HEADER_TEST = "X-Webhook-Test"
 WEBHOOK_USER_AGENT_VALUE = "DependencyControl-Webhook/1.0"
 

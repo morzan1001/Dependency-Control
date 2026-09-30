@@ -9,7 +9,7 @@ import pytest
 async def test_sbom_ingested_dispatches_webhook(client, db, api_key_headers):
     dispatched_calls: list = []
 
-    def _capture_trigger(inner_db, event_type, payload, project_id=None):
+    def _capture_trigger(inner_db, event_type, payload, project_id=None, team_ids=None):
         dispatched_calls.append({"event": event_type, "payload": payload, "project_id": project_id})
 
     request_payload = {

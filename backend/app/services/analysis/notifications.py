@@ -206,19 +206,17 @@ async def send_scan_notifications(
         except Exception as e:
             logger.exception("Failed to send analysis_completed notification: %s", e)
 
-        try:
-            await webhook_service.trigger_scan_completed(
-                db=db,
-                scan_id=scan_id,
-                project_id=str(project.id),
-                project_name=project.name,
-                findings_count=len(aggregated_findings),
-                stats=scan.get("stats", {}),
-                scan_status=scan.get("status", "completed"),
-                failed_analyzers=scan.get("failed_analyzers") or [],
-            )
-        except Exception as e:
-            logger.exception("Failed to trigger scan_completed webhook: %s", e)
+        await webhook_service.trigger_scan_completed(
+            db=db,
+            scan_id=scan_id,
+            project_id=str(project.id),
+            project_name=project.name,
+            findings_count=len(aggregated_findings),
+            stats=scan.get("stats", {}),
+            scan_status=scan.get("status", "completed"),
+            failed_analyzers=scan.get("failed_analyzers") or [],
+            team_ids=project.team_ids,
+        )
 
     try:
         vulnerability_findings = [f.model_dump() for f in aggregated_findings if f.type == "vulnerability"]
@@ -296,20 +294,18 @@ async def send_scan_notifications(
             f"{len(priority_vulns)} priority"
         )
 
-        try:
-            await webhook_service.trigger_vulnerability_found(
-                db=db,
-                scan_id=scan_id,
-                project_id=str(project.id),
-                project_name=project.name,
-                critical_count=sum(1 for v in priority_vulns if v["severity"] == "CRITICAL"),
-                high_count=sum(1 for v in priority_vulns if v["severity"] == "HIGH"),
-                kev_count=len(kev_vulns),
-                high_epss_count=len(high_epss_vulns),
-                top_vulnerabilities=top_vulns,
-            )
-        except Exception as e:
-            logger.exception("Failed to trigger vulnerability_found webhook: %s", e)
+        await webhook_service.trigger_vulnerability_found(
+            db=db,
+            scan_id=scan_id,
+            project_id=str(project.id),
+            project_name=project.name,
+            critical_count=sum(1 for v in priority_vulns if v["severity"] == "CRITICAL"),
+            high_count=sum(1 for v in priority_vulns if v["severity"] == "HIGH"),
+            kev_count=len(kev_vulns),
+            high_epss_count=len(high_epss_vulns),
+            top_vulnerabilities=top_vulns,
+            team_ids=project.team_ids,
+        )
 
     except Exception as e:
         logger.exception("Failed to process vulnerability notifications: %s", e)

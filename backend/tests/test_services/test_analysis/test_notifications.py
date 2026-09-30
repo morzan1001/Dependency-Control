@@ -64,7 +64,7 @@ async def _db_with_scan(scan_id: str = "scan-abc-123") -> FakeDatabase:
 
 async def _capture_vuln_message(findings):
     """Drive send_scan_notifications and return the vulnerability_found message and webhook call."""
-    project = SimpleNamespace(id="proj-1", name="MyProject")
+    project = Project(id="proj-1", name="MyProject")
     captured = {}
 
     async def _notify(**kwargs):
@@ -202,7 +202,7 @@ class TestAnalysisCompletedSeverityCounts:
         ):
             await send_scan_notifications(
                 scan_id="scan-abc-123",
-                project=SimpleNamespace(id="proj-1", name="MyProject"),
+                project=Project(id="proj-1", name="MyProject"),
                 aggregated_findings=findings,
                 results_summary=["osv: Partial"],
                 db=await _db_with_scan(),
@@ -261,7 +261,7 @@ def _sast_finding(fid):
 async def _announce_twice(first, second):
     """Two analyses of one scan, as a late scanner result that reopens it produces."""
     db = await _db_with_scan()
-    project = SimpleNamespace(id="proj-1", name="MyProject")
+    project = Project(id="proj-1", name="MyProject")
     notify = SimpleNamespace(notify_project_members=AsyncMock())
     webhooks = SimpleNamespace(trigger_scan_completed=AsyncMock(), trigger_vulnerability_found=AsyncMock())
     with (
@@ -301,3 +301,32 @@ class TestReAnalysisAnnouncements:
 
         assert events.count("vulnerability_found") == 2
         assert webhooks.trigger_vulnerability_found.await_count == 2
+
+
+class TestScanWebhookScope:
+    @pytest.mark.asyncio
+    async def test_both_scan_events_reach_the_owning_teams_webhooks(self):
+        db = await _db_with_scan()
+        await db.webhooks.insert_one(
+            {
+                "_id": "team-hook",
+                "url": "https://example.com/team",
+                "team_id": "alpha",
+                "project_id": None,
+                "events": ["scan.completed", "vulnerability.found"],
+                "is_active": True,
+            }
+        )
+        project = Project(id="proj-1", name="MyProject", team_ids=["alpha"])
+        send = AsyncMock(return_value=True)
+
+        with (
+            patch.object(notifications, "notification_service", SimpleNamespace(notify_project_members=AsyncMock())),
+            patch.object(notifications.webhook_service, "_send_webhook", send),
+        ):
+            await send_scan_notifications("scan-abc-123", project, [_finding("CVE-1", "CRITICAL")], ["osv: ok"], db)
+
+        assert [(c.args[1].id, c.args[3]) for c in send.await_args_list] == [
+            ("team-hook", "scan.completed"),
+            ("team-hook", "vulnerability.found"),
+        ]

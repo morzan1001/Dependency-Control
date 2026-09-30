@@ -67,14 +67,6 @@ export function WebhookManager({
     secret: ""
   })
 
-  // Stored webhooks may still carry legacy snake_case event names; map to canonical dot-notation.
-  const EVENT_ALIASES: Record<string, string> = {
-    scan_completed: "scan.completed",
-    vulnerability_found: "vulnerability.found",
-    analysis_failed: "analysis.failed",
-  }
-  const canonicalize = (eventId: string): string => EVENT_ALIASES[eventId] ?? eventId
-
   const availableEvents = [
     {
       id: "scan.completed",
@@ -221,7 +213,7 @@ export function WebhookManager({
                     <div key={event.id} className="flex items-start space-x-2">
                       <Checkbox
                         id={event.id}
-                        checked={(newWebhook.events || []).some(e => canonicalize(e) === event.id)}
+                        checked={(newWebhook.events || []).includes(event.id)}
                         onCheckedChange={() => toggleEvent(event.id)}
                         className="mt-1"
                       />
@@ -273,7 +265,7 @@ export function WebhookManager({
                   <TableCell>
                     <div className="flex gap-1 flex-wrap">
                       {(webhook.events || []).map(e => (
-                        <Badge key={e} variant="secondary">{canonicalize(e)}</Badge>
+                        <Badge key={e} variant="secondary">{e}</Badge>
                       ))}
                     </div>
                   </TableCell>

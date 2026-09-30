@@ -105,3 +105,13 @@ class TestNotifyAnalysisFailed:
 
         db.projects.find_one = AsyncMock(side_effect=RuntimeError("primary stepped down"))
         asyncio.run(notify_analysis_failed(db, "scan-1", "proj-1", "boom"))
+
+    def test_a_failed_webhook_lookup_still_notifies_the_members(self):
+        db = FakeDatabase()
+        asyncio.run(db.projects.insert_one({"_id": "proj-1", "name": "My Project"}))
+        db.webhooks.find = MagicMock(side_effect=RuntimeError("primary stepped down"))
+
+        with patch("app.services.analysis.notifications.safe_notify_project_event", AsyncMock()) as notify:
+            asyncio.run(notify_analysis_failed(db, "scan-1", "proj-1", "boom"))
+
+        assert notify.await_args.kwargs["event_type"] == "analysis_failed"

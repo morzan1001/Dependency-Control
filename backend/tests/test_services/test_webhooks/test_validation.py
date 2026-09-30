@@ -13,9 +13,7 @@ from app.schemas.webhook import (
     detect_webhook_type,
     validate_webhook_event_type,
     validate_webhook_events,
-    validate_webhook_events_optional,
     validate_webhook_url,
-    validate_webhook_url_optional,
 )
 from app.services.webhooks.validation import (
     WebhookTargetBlocked,
@@ -125,19 +123,6 @@ class TestValidateWebhookUrl:
                 validate_webhook_url("http://localhost:8080/hook")
             with pytest.raises(ValueError, match="Localhost"):
                 validate_webhook_url("http://127.0.0.1/hook")
-
-
-class TestValidateWebhookUrlOptional:
-    def test_none_returns_none(self):
-        assert validate_webhook_url_optional(None) is None
-
-    def test_valid_url_passes(self):
-        result = validate_webhook_url_optional("https://example.com/hook")
-        assert result == "https://example.com/hook"
-
-    def test_invalid_url_raises(self):
-        with pytest.raises(ValueError):
-            validate_webhook_url_optional("http://example.com/hook")
 
 
 class TestResolveAndVet:
@@ -296,19 +281,6 @@ class TestValidateWebhookEvents:
     def test_empty_list_raises(self):
         with pytest.raises(ValueError, match="At least one"):
             validate_webhook_events([])
-
-
-class TestValidateWebhookEventsOptional:
-    def test_none_returns_none(self):
-        assert validate_webhook_events_optional(None) is None
-
-    def test_a_legacy_event_name_is_stored_in_its_canonical_form(self):
-        result = validate_webhook_events_optional(["scan_completed", "scan.completed", "vulnerability_found"])
-        assert result == ["scan.completed", "vulnerability.found"]
-
-    def test_invalid_events_raises(self):
-        with pytest.raises(ValueError):
-            validate_webhook_events_optional(["bogus"])
 
 
 class TestValidateWebhookEventType:

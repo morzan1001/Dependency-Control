@@ -1,4 +1,4 @@
-"""Webhook delivery; canonical event names are dot-notation, snake_case aliases accepted via WEBHOOK_EVENT_ALIASES."""
+"""Webhook delivery to the subscribers of dot-notation events."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -19,7 +19,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.config import settings
 from app.core.constants import (
     WEBHOOK_BACKOFF_BASE,
-    WEBHOOK_EVENT_ALIASES,
     WEBHOOK_EVENT_ANALYSIS_FAILED,
     WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED,
     WEBHOOK_EVENT_LICENSE_POLICY_CHANGED,
@@ -41,9 +40,9 @@ from app.core.constants import (
 from app.core.http_utils import InstrumentedAsyncClient, _retry_after_seconds
 from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
 from app.models.webhook import Webhook
+from app.repositories.projects import ProjectRepository
 from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
-from app.repositories.webhooks import GLOBAL_WEBHOOK_SCOPE
-from app.schemas.webhook import effective_webhook_type
+from app.repositories.webhooks import WebhookRepository
 from app.services.webhooks.teams_formatter import TeamsFormatter
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
@@ -60,17 +59,6 @@ _CIRCUIT_BREAKER_THRESHOLD = 5
 _CIRCUIT_BREAKER_DURATION = timedelta(hours=1)
 # Longer waits are not worth it: delivery is awaited inside the ingest request or worker slot.
 _RETRY_AFTER_CAP_SECONDS = 10.0
-
-
-def _circuit_closed(now: datetime) -> dict[str, Any]:
-    return {"$or": [{"circuit_breaker_until": None}, {"circuit_breaker_until": {"$lte": now}}]}
-
-
-def _event_match_set(event_type: str) -> list[str]:
-    """The canonical event plus its snake_case aliases, which subscriptions written before
-    validation canonicalised event names may still store."""
-    return [event_type, *(alias for alias, target in WEBHOOK_EVENT_ALIASES.items() if target == event_type)]
-
 
 logger = logging.getLogger(__name__)
 
@@ -155,49 +143,20 @@ class WebhookService:
         """Track delivery state in DB with circuit-breaker — required for multi-pod
         deployments where any pod may fire a webhook."""
         try:
+            repo = WebhookRepository(db)
             now = datetime.now(timezone.utc)
-
             if success:
-                await db.webhooks.update_one(
-                    {"_id": webhook_id},
-                    {
-                        "$set": {
-                            "last_triggered_at": now,
-                            "consecutive_failures": 0,
-                            "circuit_breaker_until": None,
-                        },
-                        "$inc": {"total_deliveries": 1},
-                    },
+                await repo.record_success(webhook_id, now)
+                return
+            circuit_until = now + _CIRCUIT_BREAKER_DURATION
+            opened = await repo.record_failure(webhook_id, now, _CIRCUIT_BREAKER_THRESHOLD, circuit_until)
+            if opened:
+                logger.warning(
+                    "Circuit breaker activated for webhook %s after %s consecutive failures. Will retry after %s",
+                    webhook_id,
+                    opened.get("consecutive_failures", 0),
+                    circuit_until.isoformat(),
                 )
-            else:
-                await db.webhooks.update_one(
-                    {"_id": webhook_id},
-                    {
-                        "$set": {"last_failure_at": now},
-                        "$inc": {"consecutive_failures": 1, "total_failures": 1},
-                    },
-                )
-
-                # Conditional update is race-safe: flips only once per threshold breach, avoiding duplicate logs.
-                circuit_until = now + _CIRCUIT_BREAKER_DURATION
-                result = await db.webhooks.find_one_and_update(
-                    {
-                        "_id": webhook_id,
-                        "consecutive_failures": {"$gte": _CIRCUIT_BREAKER_THRESHOLD},
-                        **_circuit_closed(now),
-                    },
-                    {"$set": {"circuit_breaker_until": circuit_until}},
-                    return_document=True,
-                )
-
-                if result:
-                    consecutive = result.get("consecutive_failures", 0)
-                    logger.warning(
-                        f"Circuit breaker activated for webhook {webhook_id} "
-                        f"after {consecutive} consecutive failures. "
-                        f"Will retry after {circuit_until.isoformat()}"
-                    )
-
         except Exception as e:
             logger.exception("Failed to update webhook status for %s: %s", webhook_id, e)
 
@@ -350,8 +309,7 @@ class WebhookService:
         event_type: str,
     ) -> bool:
         """Send a single webhook with retries. Retries are in-memory — delivery is lost if the pod crashes mid-retry."""
-        webhook_type = effective_webhook_type(webhook.webhook_type, webhook.url)
-        json_payload = json.dumps(self._format_payload(webhook_type, event_type, payload))
+        json_payload = json.dumps(self._format_payload(webhook.webhook_type, event_type, payload))
         headers = self._build_headers(webhook, event_type, json_payload)
 
         for attempt in range(1, self.max_attempts + 1):
@@ -383,49 +341,27 @@ class WebhookService:
         )
         return success
 
-    async def _fetch_webhooks_by_query(
-        self, db: AsyncIOMotorDatabase, query: dict[str, Any], label: str
-    ) -> list[Webhook]:
-        results: list[Webhook] = []
-        cursor = db.webhooks.find(query)
-        async for webhook_data in cursor:
-            try:
-                results.append(Webhook(**webhook_data))
-            except Exception as e:
-                logger.exception("Failed to parse %s webhook data: %s", label, e)
-        return results
-
     async def _get_webhooks_for_event(
-        self, db: AsyncIOMotorDatabase, project_id: str | None, event_type: str
+        self,
+        db: AsyncIOMotorDatabase,
+        project_id: str | None,
+        event_type: str,
+        *,
+        team_ids: Sequence[str] | None = None,
     ) -> list[Webhook]:
-        """Active webhooks for the event across project, team, and global scope, excluding circuit-broken ones."""
-        # Match both dot-notation and snake_case alias forms stored in subscriptions.
-        base_conditions: dict[str, Any] = {
-            "is_active": True,
-            "events": {"$in": _event_match_set(event_type)},
-            **_circuit_closed(datetime.now(timezone.utc)),
-        }
-
-        webhooks: list[Webhook] = []
-
-        if project_id:
-            webhooks.extend(
-                await self._fetch_webhooks_by_query(db, {**base_conditions, "project_id": project_id}, "project")
-            )
-
-            try:
-                project_doc = await db.projects.find_one({"_id": project_id}, {"team_ids": 1})
-                owners = (project_doc or {}).get("team_ids") or []
-                if owners:
-                    webhooks.extend(
-                        await self._fetch_webhooks_by_query(db, {**base_conditions, "team_id": {"$in": owners}}, "team")
-                    )
-            except Exception as e:
-                logger.exception("Failed to look up team webhooks for project %s: %s", project_id, e)
-
-        webhooks.extend(await self._fetch_webhooks_by_query(db, {**base_conditions, **GLOBAL_WEBHOOK_SCOPE}, "global"))
-
-        return webhooks
+        """Deliverable webhooks of the project, the owning teams (read from the project unless given) and global scope."""
+        if team_ids is None:
+            team_ids = []
+            if project_id:
+                try:
+                    project = await ProjectRepository(db).find_one_raw({"_id": project_id}, {"team_ids": 1})
+                    team_ids = (project or {}).get("team_ids") or []
+                except Exception:
+                    webhooks_failed_total.labels(event_type=event_type).inc()
+                    logger.exception("Team webhooks for project %s skipped: team lookup failed", project_id)
+        return await WebhookRepository(db).find_deliverable(
+            event_type, datetime.now(timezone.utc), project_id, team_ids
+        )
 
     async def safe_trigger_webhooks(
         self,
@@ -434,15 +370,13 @@ class WebhookService:
         payload: Mapping[str, Any],
         project_id: str | None = None,
         *,
+        team_ids: Sequence[str] | None = None,
         context: str = "webhook",
     ) -> None:
         """Non-blocking trigger_webhooks — a failed dispatch never rolls back the caller."""
         try:
             await self.trigger_webhooks(
-                db,
-                event_type=event_type,
-                payload=payload,
-                project_id=project_id,
+                db, event_type=event_type, payload=payload, project_id=project_id, team_ids=team_ids
             )
         except Exception:
             logger.exception(
@@ -457,9 +391,11 @@ class WebhookService:
         event_type: str,
         payload: Mapping[str, Any],
         project_id: str | None = None,
+        *,
+        team_ids: Sequence[str] | None = None,
     ) -> None:
         """Dispatch an event to all matching webhooks; a failure while resolving webhooks may propagate, so use safe_trigger_webhooks when the caller must not be affected."""
-        webhooks = await self._get_webhooks_for_event(db, project_id, event_type)
+        webhooks = await self._get_webhooks_for_event(db, project_id, event_type, team_ids=team_ids)
 
         if not webhooks:
             logger.debug(f"No webhooks configured for event {event_type}")
@@ -498,6 +434,8 @@ class WebhookService:
         scan_url: str | None = None,
         scan_status: str = "completed",
         failed_analyzers: list[str] | None = None,
+        *,
+        team_ids: Sequence[str] | None = None,
     ) -> None:
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_SCAN_COMPLETED,
@@ -516,7 +454,9 @@ class WebhookService:
             "failed_analyzers": failed_analyzers or [],
         }
 
-        await self.trigger_webhooks(db, WEBHOOK_EVENT_SCAN_COMPLETED, payload, project_id)
+        await self.safe_trigger_webhooks(
+            db, WEBHOOK_EVENT_SCAN_COMPLETED, payload, project_id, team_ids=team_ids, context="scan.completed"
+        )
 
     async def trigger_vulnerability_found(
         self,
@@ -530,6 +470,8 @@ class WebhookService:
         high_epss_count: int,
         top_vulnerabilities: list[dict[str, Any]],
         scan_url: str | None = None,
+        *,
+        team_ids: Sequence[str] | None = None,
     ) -> None:
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -549,7 +491,9 @@ class WebhookService:
             },
         }
 
-        await self.trigger_webhooks(db, WEBHOOK_EVENT_VULNERABILITY_FOUND, payload, project_id)
+        await self.safe_trigger_webhooks(
+            db, WEBHOOK_EVENT_VULNERABILITY_FOUND, payload, project_id, team_ids=team_ids, context="vulnerability.found"
+        )
 
     async def trigger_analysis_failed(
         self,
@@ -572,7 +516,9 @@ class WebhookService:
             "error": error_message,
         }
 
-        await self.trigger_webhooks(db, WEBHOOK_EVENT_ANALYSIS_FAILED, payload, project_id)
+        await self.safe_trigger_webhooks(
+            db, WEBHOOK_EVENT_ANALYSIS_FAILED, payload, project_id, context="analysis.failed"
+        )
 
     async def test_webhook(
         self,
@@ -586,7 +532,7 @@ class WebhookService:
         }
 
         # Teams gets the test card: formatting test_payload's event would produce a scan card.
-        teams = effective_webhook_type(webhook.webhook_type, webhook.url) == "teams"
+        teams = webhook.webhook_type == "teams"
         json_payload = json.dumps(TeamsFormatter.build_test_card() if teams else test_payload)
         headers = self._build_headers(webhook, event_type, json_payload, is_test=True)
 

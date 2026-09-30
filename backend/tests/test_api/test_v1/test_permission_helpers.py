@@ -15,6 +15,7 @@ from app.core.constants import (
 )
 from app.models.project import Project, ProjectMember
 from app.models.team import Team, TeamMember
+from app.models.user import User
 from app.models.webhook import Webhook
 
 HELPERS_TEAMS = "app.api.v1.helpers.teams"
@@ -557,81 +558,65 @@ class TestGetTeamWithAccess:
 
 
 class TestCheckWebhookPermission:
-    """Tests for check_webhook_permission — project vs global authorization."""
+    """check_webhook_permission: the permission plus scope access, or the scope's admin role."""
 
-    def _make_webhook(self, project_id="proj-1"):
-        return Webhook(
-            id="wh-1",
-            project_id=project_id,
-            url="https://example.com/hook",
-            events=["scan_completed"],
+    @pytest.fixture
+    def webhook_user(self):
+        return User(
+            id="hooker-1", username="hooker", email="h@test.com", permissions=["webhook:read", "webhook:create"]
         )
 
-    def test_project_webhook_user_with_perm_and_project_access(self, regular_user):
+    def test_project_read_with_the_permission_needs_project_access(self, webhook_user):
         from app.api.v1.helpers.webhooks import check_webhook_permission
         from app.core.permissions import Permissions
 
-        webhook = self._make_webhook(project_id="proj-1")
-
         with patch(f"{HELPERS_WEBHOOKS}.check_project_access", new_callable=AsyncMock) as mock_access:
             asyncio.run(
-                check_webhook_permission(
-                    webhook,
-                    regular_user,
-                    MagicMock(),
-                    Permissions.WEBHOOK_READ,
-                )
+                check_webhook_permission(webhook_user, MagicMock(), Permissions.WEBHOOK_READ, project_id="proj-1")
             )
-        mock_access.assert_called_once()
-        call_args = mock_access.call_args
-        assert call_args[0][0] == "proj-1"
+        assert mock_access.call_args.args[0] == "proj-1"
+        assert mock_access.call_args.kwargs == {}
 
-    def test_project_webhook_user_without_perm_needs_admin(self, viewer_user):
+    def test_project_access_without_the_permission_needs_project_admin(self, viewer_user):
         from app.api.v1.helpers.webhooks import check_webhook_permission
 
-        webhook = self._make_webhook(project_id="proj-1")
-
         with patch(f"{HELPERS_WEBHOOKS}.check_project_access", new_callable=AsyncMock) as mock_access:
+            asyncio.run(check_webhook_permission(viewer_user, MagicMock(), "webhook:update", project_id="proj-1"))
+        assert mock_access.call_args.kwargs["required_role"] == "admin"
+
+    def test_team_create_with_the_permission_needs_team_membership(self, webhook_user):
+        from app.api.v1.helpers.webhooks import check_webhook_permission
+        from app.core.permissions import Permissions
+
+        with patch(f"{HELPERS_WEBHOOKS}.get_team_with_access", new_callable=AsyncMock) as mock_access:
             asyncio.run(
-                check_webhook_permission(
-                    webhook,
-                    viewer_user,
-                    MagicMock(),
-                    "webhook:update",
-                )
+                check_webhook_permission(webhook_user, MagicMock(), Permissions.WEBHOOK_CREATE, team_id="team-1")
             )
-        call_kwargs = mock_access.call_args
-        assert call_kwargs.kwargs["required_role"] == "admin"
+        assert mock_access.call_args.args[0] == "team-1"
+        assert mock_access.call_args.kwargs["required_role"] == TEAM_ROLE_MEMBER
+
+    def test_team_read_without_the_permission_needs_team_admin(self, no_perms_user):
+        from app.api.v1.helpers.webhooks import check_webhook_permission
+        from app.core.permissions import Permissions
+
+        with patch(f"{HELPERS_WEBHOOKS}.check_team_access", new_callable=AsyncMock) as mock_access:
+            asyncio.run(
+                check_webhook_permission(no_perms_user, MagicMock(), Permissions.WEBHOOK_READ, team_id="team-1")
+            )
+        assert mock_access.call_args.args[0] == "team-1"
+        assert mock_access.call_args.kwargs["required_role"] == TEAM_ROLE_ADMIN
 
     def test_global_webhook_requires_system_manage(self, regular_user):
         from app.api.v1.helpers.webhooks import check_webhook_permission
 
-        webhook = self._make_webhook(project_id=None)
-
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(
-                check_webhook_permission(
-                    webhook,
-                    regular_user,
-                    MagicMock(),
-                    "webhook:read",
-                )
-            )
+            asyncio.run(check_webhook_permission(regular_user, MagicMock(), "webhook:read"))
         assert exc_info.value.status_code == 403
 
     def test_global_webhook_admin_allowed(self, admin_user):
         from app.api.v1.helpers.webhooks import check_webhook_permission
 
-        webhook = self._make_webhook(project_id=None)
-
-        asyncio.run(
-            check_webhook_permission(
-                webhook,
-                admin_user,
-                MagicMock(),
-                "webhook:read",
-            )
-        )
+        asyncio.run(check_webhook_permission(admin_user, MagicMock(), "webhook:read"))
 
 
 class TestGetWebhookOr404:

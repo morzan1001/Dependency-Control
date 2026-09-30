@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import importlib
+import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -20,6 +21,7 @@ import pytest
 
 from app.core.config import settings
 from app.core.constants import WEBHOOK_USER_AGENT_VALUE
+from app.core.metrics import webhooks_failed_total
 from tests.mocks.fake_mongo import FakeDatabase
 
 ws_module = importlib.import_module("app.services.webhooks.webhook_service")
@@ -79,6 +81,59 @@ class TestWebhookSelection:
         db.webhooks._docs["no-breaker-field-at-all"].pop("circuit_breaker_until", None)
 
         assert await _selected(db) == {"never-tripped", "no-breaker-field-at-all"}
+
+    @pytest.mark.asyncio
+    async def test_a_subscription_stored_under_a_snake_case_alias_is_not_matched(self):
+        db = FakeDatabase()
+        await _seed_hook(db, "canonical")
+        await _seed_hook(db, "alias", events=["scan_completed"])
+
+        assert await _selected(db) == {"canonical"}
+
+
+class TestWebhookScope:
+    @pytest.mark.asyncio
+    async def test_team_ids_reach_those_teams_hooks_without_a_project(self):
+        db = FakeDatabase()
+        await _seed_hook(db, "global")
+        await _seed_hook(db, "alpha", team_id="alpha")
+        await _seed_hook(db, "bravo", team_id="bravo")
+
+        hooks = await ws_module.WebhookService()._get_webhooks_for_event(db, None, _EVENT, team_ids=["alpha"])
+
+        assert {hook.id for hook in hooks} == {"global", "alpha"}
+
+    @pytest.mark.asyncio
+    async def test_the_callers_team_ids_replace_the_project_read_and_one_query_serves_every_scope(self):
+        db = FakeDatabase()
+        await db.projects.insert_one({"_id": "p1", "name": "p1", "team_ids": ["bravo"]})
+        await _seed_hook(db, "project", project_id="p1")
+        await _seed_hook(db, "alpha", team_id="alpha")
+        await _seed_hook(db, "bravo", team_id="bravo")
+        await _seed_hook(db, "global")
+        find = MagicMock(wraps=db.webhooks.find)
+        db.webhooks.find = find
+
+        hooks = await ws_module.WebhookService()._get_webhooks_for_event(db, "p1", _EVENT, team_ids=["alpha"])
+
+        assert {hook.id for hook in hooks} == {"project", "alpha", "global"}
+        assert find.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_failed_team_lookup_is_counted_and_the_other_scopes_still_fire(self, caplog):
+        db = FakeDatabase()
+        await _seed_hook(db, "global")
+        await _seed_hook(db, "project", project_id="p1")
+        db.projects.find_one = AsyncMock(side_effect=RuntimeError("primary stepped down"))
+        failed = webhooks_failed_total.labels(event_type=_EVENT)
+        before = failed._value.get()
+
+        with caplog.at_level(logging.ERROR, logger=ws_module.__name__):
+            hooks = await ws_module.WebhookService()._get_webhooks_for_event(db, "p1", _EVENT)
+
+        assert {hook.id for hook in hooks} == {"global", "project"}
+        assert failed._value.get() == before + 1
+        assert [r.levelno for r in caplog.records] == [logging.ERROR]
 
 
 async def _streamed(body: bytes) -> AsyncIterator[bytes]:

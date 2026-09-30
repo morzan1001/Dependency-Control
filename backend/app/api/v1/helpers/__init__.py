@@ -80,10 +80,6 @@ from app.api.v1.helpers.users import (
     get_user_or_404,
 )
 from app.api.v1.helpers.webhooks import (
-    check_team_webhook_create_permission,
-    check_team_webhook_list_permission,
-    check_webhook_create_permission,
-    check_webhook_list_permission,
     check_webhook_permission,
     get_webhook_or_404,
 )
@@ -125,10 +121,6 @@ __all__ = [
     "check_project_access",
     "check_team_access",
     # Webhook helpers
-    "check_team_webhook_create_permission",
-    "check_team_webhook_list_permission",
-    "check_webhook_create_permission",
-    "check_webhook_list_permission",
     "check_webhook_permission",
     # Storage helpers
     "detect_format",
