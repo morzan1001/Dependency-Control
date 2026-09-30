@@ -187,7 +187,7 @@ async def test_a_revert_names_the_admin_who_made_it(client, db, admin_auth_heade
 async def test_a_legacy_policy_last_changed_by_a_revert_keeps_its_rules_through_the_seed_bumps(
     client, db, admin_auth_headers
 ):
-    """Reverts once stored no updated_by, so only the audit history records that a person chose these rules."""
+    """Without updated_by and seed_version, the seeder reads the editor from the newest audit entry."""
     for rule_id in ("alpha", "beta"):
         await client.put(
             "/api/v1/crypto-policies/system", json={"rules": [_rule_dict(rule_id)]}, headers=admin_auth_headers

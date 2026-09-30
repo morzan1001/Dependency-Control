@@ -37,7 +37,7 @@ def test_a_nested_license_policy_is_rejected():
 
 @pytest.mark.parametrize("model", [ProjectCreate, ProjectUpdate])
 def test_a_string_boolean_is_stored_as_the_bool_the_scan_reads(model):
-    """'false' was stored verbatim and graded every GPL finding as allowed by policy."""
+    """A string 'false' is stored as False, so the scan does not read it as allowed."""
     fields = {"name": "p"} if model is ProjectCreate else {}
     settings = model(
         **fields, analyzer_settings=_license_settings({"allow_strong_copyleft": "false", "ignore_transitive": "true"})

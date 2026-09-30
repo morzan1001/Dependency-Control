@@ -19,7 +19,7 @@ def _control(**kwargs) -> ControlDefinition:
 
 
 def test_a_rule_retyped_since_the_seed_still_counts_against_its_control():
-    """Matching on the seed's finding type hid a retyped rule and reported PASSED."""
+    """A finding counts against the control that maps its rule_id, whatever finding type the rule has now."""
     control = _control(maps_to_rule_ids=[_RULE_ID])
     finding = {"type": "crypto_weak_key", "details": {"rule_id": _RULE_ID}}
 

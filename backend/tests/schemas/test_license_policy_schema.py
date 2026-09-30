@@ -77,7 +77,7 @@ def test_no_stored_entry_resolves_to_the_default_policy():
 
 
 def test_a_legacy_string_boolean_reads_as_the_bool_it_spells():
-    """Entries stored before write validation hold 'false', which a truthiness test read as allowed."""
+    """A stored 'false' resolves to False, so the copyleft toggle stays off."""
     assert license_policy_from_settings({"allow_strong_copyleft": "false"}).allow_strong_copyleft is False
 
 

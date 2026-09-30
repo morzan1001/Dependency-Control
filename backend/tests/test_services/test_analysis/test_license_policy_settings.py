@@ -27,8 +27,8 @@ _GPL_SBOM = {
 
 
 @pytest.mark.asyncio
-async def test_a_stored_legacy_license_policy_no_longer_overrides_the_saved_settings():
-    """The legacy field said internal_only and turned GPL into INFO although the page saved distributed."""
+async def test_a_stored_legacy_license_policy_does_not_override_the_saved_settings():
+    """A top-level license_policy of internal_only leaves GPL graded HIGH under the saved distributed policy."""
     db = FakeDatabase()
     doc = Project(
         id="p1",

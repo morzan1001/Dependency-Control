@@ -46,7 +46,7 @@ async def test_project_update_records_license_policy_change(client, db, owner_au
 
 @pytest.mark.asyncio
 async def test_restating_the_default_policy_creates_no_audit_entry(client, db, owner_auth_headers_proj):
-    """The scan grades exactly as before, so there is nothing to audit."""
+    """Restating the default leaves the resolved policy and every grade unchanged, so nothing is audited."""
     resp = await client.put(
         "/api/v1/projects/p",
         json=_license_settings(distribution_model="distributed", allow_strong_copyleft=False),

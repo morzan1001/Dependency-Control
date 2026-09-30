@@ -392,7 +392,7 @@ async def test_gather_inputs_passes_the_saved_license_policy_beside_the_crypto_r
 
 @pytest.mark.asyncio
 async def test_gather_inputs_ignores_a_stored_legacy_license_policy():
-    """The scan grades under analyzer_settings alone, so the report must not judge by the legacy field."""
+    """The report judges by the analyzer_settings entry the scan grades under, not by a top-level license_policy."""
     db, _, _ = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}],
         project_doc={"_id": "p1", "license_policy": {"allow_strong_copyleft": True}},

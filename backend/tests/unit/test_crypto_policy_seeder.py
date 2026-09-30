@@ -98,7 +98,7 @@ async def test_the_seed_skips_a_policy_at_the_current_seed_version_whatever_its_
 
 @pytest.mark.asyncio
 async def test_a_seed_bump_replaces_a_policy_no_person_edited(db):
-    """A legacy document carries no seed_version, and its edit count used to decide whether the seed shipped."""
+    """A document without seed_version and without an editor takes the full seed, whatever its version."""
     repo = CryptoPolicyRepository(db)
     await repo.upsert_system_policy(CryptoPolicy(scope="system", rules=[_custom_rule()], version=4))
 
