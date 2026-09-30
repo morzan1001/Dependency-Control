@@ -46,7 +46,8 @@ async def put_system_policy(
         actor=current_user,
         comment=body.comment,
     )
-    assert policy is not None
+    if policy is None:
+        raise HTTPException(status_code=500, detail="Crypto policy write returned no policy")
     return policy.model_dump(by_alias=True)
 
 
@@ -83,7 +84,8 @@ async def put_project_policy(
         actor=current_user,
         comment=body.comment,
     )
-    assert policy is not None
+    if policy is None:
+        raise HTTPException(status_code=500, detail="Crypto policy write returned no policy")
     return policy.model_dump(by_alias=True)
 
 

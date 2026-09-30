@@ -1,7 +1,10 @@
 """Unit tests for the license-policy change-summary helper, which diffs two resolved policies."""
 
+import pytest
+
+from app.schemas.policy_audit import PolicyAuditAction
 from app.schemas.project import LicensePolicySchema
-from app.services.audit.history import compute_license_policy_change_summary
+from app.services.audit.history import compute_license_policy_change_summary, record_license_policy_change
 
 
 def _policy(**fields):
@@ -25,9 +28,19 @@ def test_the_flags_the_scan_reads_are_compared():
     assert s == "ignore_transitive: False -> True"
 
 
-def test_restating_a_default_is_no_effective_change():
-    s = compute_license_policy_change_summary(old=_policy(), new=_policy(distribution_model="distributed"))
-    assert s == "No effective changes"
+@pytest.mark.asyncio
+async def test_restating_a_default_records_nothing(db):
+    entry = await record_license_policy_change(
+        db,
+        project_id="p",
+        old_policy=_policy(),
+        new_policy=_policy(distribution_model="distributed"),
+        action=PolicyAuditAction.UPDATE,
+        actor=None,
+    )
+
+    assert entry is None
+    assert await db.crypto_policy_history.count_documents({}) == 0
 
 
 def test_summary_is_capped_at_200_chars():

@@ -50,6 +50,7 @@ async def list_system_audit(
 ) -> dict[str, Any]:
     entries = await PolicyAuditRepository(db).list(
         policy_scope="system",
+        policy_type="crypto",
         skip=skip,
         limit=limit,
     )
@@ -66,6 +67,7 @@ async def get_system_audit_entry(
         policy_scope="system",
         project_id=None,
         version=version,
+        policy_type="crypto",
     )
     if entry is None:
         raise HTTPException(status_code=404, detail="Audit entry not found")
@@ -100,6 +102,7 @@ async def prune_system_audit(
         policy_scope="system",
         project_id=None,
         cutoff=before,
+        policy_type="crypto",
     )
     return {"deleted": deleted}
 
@@ -116,6 +119,7 @@ async def list_project_audit(
     entries = await PolicyAuditRepository(db).list(
         policy_scope="project",
         project_id=project_id,
+        policy_type="crypto",
         skip=skip,
         limit=limit,
     )
@@ -134,6 +138,7 @@ async def get_project_audit_entry(
         policy_scope="project",
         project_id=project_id,
         version=version,
+        policy_type="crypto",
     )
     if entry is None:
         raise HTTPException(status_code=404, detail="Audit entry not found")
@@ -173,6 +178,7 @@ async def prune_project_audit(
         policy_scope="project",
         project_id=project_id,
         cutoff=before,
+        policy_type="crypto",
     )
     return {"deleted": deleted}
 
@@ -248,6 +254,7 @@ async def _revert_policy(
         policy_scope=policy_scope,
         project_id=project_id,
         version=target_version,
+        policy_type="crypto",
     )
     if target_entry is None:
         raise HTTPException(status_code=404, detail=f"Version {target_version} not found")
@@ -255,7 +262,10 @@ async def _revert_policy(
     try:
         rules = CryptoPolicyPutRequest(rules=target_entry.snapshot.get("rules", [])).rules
     except ValidationError as exc:
-        reasons = "; ".join(error["msg"].removeprefix("Value error, ") for error in exc.errors())
+        reasons = "; ".join(
+            f"{'.'.join(map(str, error['loc'])) or 'rules'}: {error['msg'].removeprefix('Value error, ')}"
+            for error in exc.errors()
+        )
         raise HTTPException(
             status_code=422, detail=f"Version {target_version} holds rules a write would refuse: {reasons}"
         ) from exc
@@ -270,5 +280,6 @@ async def _revert_policy(
         comment=comment,
         reverted_from_version=target_version,
     )
-    assert policy is not None
+    if policy is None:
+        raise HTTPException(status_code=500, detail="Crypto policy write returned no policy")
     return policy

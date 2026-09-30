@@ -225,6 +225,7 @@ async def list_policy_audit_entries(
     entries = await pkg.PolicyAuditRepository(db).list(
         policy_scope=cast(Literal["system", "project"], policy_scope),
         project_id=project_id,
+        policy_type="crypto",
         limit=limit,
     )
     return {"entries": [e.model_dump(by_alias=True) for e in entries]}
