@@ -6,6 +6,7 @@ import pytest
 
 from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABILITY_LEVEL_IMPORT
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.schemas.finding_details import ReachabilityInfo
 from app.schemas.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
@@ -421,7 +422,7 @@ class TestRunPendingBulkPersist:
     """run_pending_reachability_for_scan must persist via a chunked bulk_write, not one sequential update per finding."""
 
     @pytest.mark.asyncio
-    async def test_persists_via_bulk_write_and_writes_summary(self, monkeypatch):
+    async def test_persists_via_bulk_write_and_writes_summary(self, monkeypatch, fake_gridfs):
         from app.services.reachability_enrichment import run_pending_reachability_for_scan
         from tests.mocks.fake_mongo import FakeDatabase
 
@@ -484,13 +485,12 @@ class TestRunPendingBulkPersist:
             assert doc["reachability_level"] == "import"
 
         summary = await db.analysis_results.find_one({"scan_id": sid})
-        assert summary is not None
-        assert summary["result"]["analyzed"] == 3
+        assert (await AnalysisResultRepository(db).load_result(summary))["analyzed"] == 3
         scan = await db.scans.find_one({"_id": sid})
         assert scan["stats"]["reachability"]["analyzed_count"] == 3
 
     @pytest.mark.asyncio
-    async def test_second_language_callgraph_still_runs(self):
+    async def test_second_language_callgraph_still_runs(self, fake_gridfs):
         """A multi-language repo uploads one callgraph per language; the later ones must not be ignored."""
         from app.services.reachability_enrichment import run_pending_reachability_for_scan
         from tests.mocks.fake_mongo import FakeDatabase

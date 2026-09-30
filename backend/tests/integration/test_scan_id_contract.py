@@ -27,6 +27,7 @@ def test_the_rule(pipeline_id, commit_hash, expected):
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_one_ci_run_lands_on_one_scan(client, db, api_key_headers, _project):
     async def _stored_sboms(*_args, **_kwargs):
         return ([{"gridfs_id": "fake-1", "filename": "fake.json"}], [], 1, 0, 0)

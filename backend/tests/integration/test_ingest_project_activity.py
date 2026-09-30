@@ -25,6 +25,7 @@ async def _fake_process_sboms(*_args, **_kwargs):
     ],
     ids=["sbom", "cbom", "findings"],
 )
+@pytest.mark.live_mongo
 async def test_every_scanner_post_records_the_project_activity(client, db, api_key_headers, route, upload):
     with (
         patch("app.api.v1.endpoints.ingest._process_sboms", side_effect=_fake_process_sboms),

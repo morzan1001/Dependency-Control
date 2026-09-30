@@ -28,7 +28,6 @@ from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
-from app.services.compliance.retention import delete_report_artifact
 from app.services.compliance.visibility import report_visibility_filter
 from app.services.notifications.service import safe_notify_project_event
 from app.services.webhooks import webhook_service
@@ -218,7 +217,6 @@ async def delete_report(
             status_code=403,
             detail="Cannot delete a report you did not request",
         )
-    await delete_report_artifact(db, r.artifact_gridfs_id)
     await repo.delete(report_id)
 
 

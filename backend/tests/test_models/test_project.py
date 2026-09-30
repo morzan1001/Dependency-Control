@@ -81,14 +81,8 @@ class TestScanModel:
 
 class TestAnalysisResultModel:
     def test_minimal_valid(self):
-        result = AnalysisResult(
-            scan_id="scan-1",
-            analyzer_name="trivy",
-            result={"vulnerabilities": []},
-        )
-        assert result.scan_id == "scan-1"
-        assert result.analyzer_name == "trivy"
-        assert result.result == {"vulnerabilities": []}
+        result = AnalysisResult(scan_id="scan-1", analyzer_name="trivy")
+        assert (result.scan_id, result.analyzer_name, result.source) == ("scan-1", "trivy", None)
 
 
 class TestProjectGitHubTeamProvenance:

@@ -4,6 +4,7 @@ import asyncio
 from types import SimpleNamespace
 
 from app.models.finding import FindingType
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _aggregate_external_results
 
@@ -17,7 +18,9 @@ def _repo_yielding(*rows: dict) -> SimpleNamespace:
         for row in rows:
             yield row
 
-    return SimpleNamespace(iterate_raw=iterate_raw)
+    return SimpleNamespace(
+        iterate_raw=iterate_raw, load_result=lambda row: AnalysisResultRepository.load_result(None, row)
+    )
 
 
 class TestAggregateExternalResultsResilience:

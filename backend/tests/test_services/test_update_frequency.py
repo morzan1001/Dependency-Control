@@ -366,6 +366,8 @@ class FakeDepRepo:
 
 
 class FakeAnalysisRepo:
+    load_result = AnalysisResultRepository.load_result
+
     def __init__(self, results: list[dict[str, Any]]):
         self._results = results
         self.queries: list[dict[str, Any]] = []

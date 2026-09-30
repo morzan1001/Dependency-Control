@@ -147,7 +147,7 @@ _PRODUCERS = [
 
 
 @pytest_asyncio.fixture
-async def db():
+async def db(fake_gridfs):
     return FakeDatabase()
 
 

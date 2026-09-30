@@ -162,22 +162,12 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
     return sorted(row["analyzer_name"] for row in rows), announced[-1]
 
 
-def _assert_crypto_rows_are_regenerated_not_carried(rows: list[str], announced: list[str]) -> None:
-    assert rows == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
-    assert announced == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
-
-
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_rescan_reruns_the_crypto_analyzers_instead_of_carrying_their_rows_over(
     db, monkeypatch, _gridfs_patched
 ):
-    _assert_crypto_rows_are_regenerated_not_carried(*await _rescan_an_analysed_cbom_scan(db, monkeypatch))
-
-
-@pytest.mark.live_mongo
-@pytest.mark.asyncio
-async def test_a_rescan_reruns_the_crypto_analyzers_instead_of_carrying_their_rows_over_on_a_real_server(
-    db, monkeypatch, _gridfs_patched
-):
     await create_indexes(db)
-    _assert_crypto_rows_are_regenerated_not_carried(*await _rescan_an_analysed_cbom_scan(db, monkeypatch))
+    expected = sorted([*CRYPTO_ANALYZERS, "trufflehog"])
+
+    assert await _rescan_an_analysed_cbom_scan(db, monkeypatch) == (expected, expected)

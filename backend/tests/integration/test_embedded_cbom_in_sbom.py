@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
+from app.core.init_db import create_indexes
 from app.models.crypto_policy import CryptoPolicy
 from app.models.project import Scan
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.services.analysis import engine
@@ -121,7 +123,9 @@ async def _analyze(db, sboms: list[dict]) -> tuple[str, str | None]:
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_scan_of_several_sboms_evaluates_its_crypto_assets_once(db, catalog_loader):
+    await create_indexes(db)
     sboms = [_sbom_embedding("legacy_crypto_mixed.json", f"app-{n}") for n in (1, 2, 3)]
 
     scan_id, status = await _analyze(db, sboms)
@@ -142,7 +146,9 @@ async def test_a_scan_of_several_sboms_evaluates_its_crypto_assets_once(db, cata
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_scan_without_protocol_assets_never_loads_the_cipher_catalog(db, catalog_loader):
+    await create_indexes(db)
     scan_id, status = await _analyze(db, [_sbom_embedding("cyclonedx_1_6_with_crypto_assets.json", "app")])
 
     assert status == SCAN_STATUS_COMPLETED
@@ -151,13 +157,16 @@ async def test_a_scan_without_protocol_assets_never_loads_the_cipher_catalog(db,
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_crypto_assets_beyond_the_scan_budget_mark_the_crypto_results_partial(db, catalog_loader, monkeypatch):
+    await create_indexes(db)
     monkeypatch.setattr(engine, "MAX_CRYPTO_ASSETS_PER_SCAN", 2)
 
     scan_id, status = await _analyze(db, [_sbom_embedding("legacy_crypto_mixed.json", "app")])
 
     assert status == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    repo = AnalysisResultRepository(db)
     rows = await db.analysis_results.find({"scan_id": scan_id}).to_list(None)
-    assert {row["result"]["partial_components_skipped"] for row in rows} == {1}
+    assert {(await repo.load_result(row))["partial_components_skipped"] for row in rows} == {1}
     scan = await db.scans.find_one({"_id": scan_id})
     assert sorted(scan["failed_analyzers"]) == sorted(CRYPTO_ANALYZERS)

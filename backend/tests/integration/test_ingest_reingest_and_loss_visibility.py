@@ -6,6 +6,7 @@ from bson import ObjectId
 
 from app.api.v1.endpoints.ingest import _process_sboms
 from app.repositories.dependencies import DependencyRepository
+from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 
 _PROJECT_ID = "test-project-id"
 _SCAN_ID = "8e0d76a5-1291-5949-8e0d-0d90b4bd9e01"
@@ -127,13 +128,10 @@ async def test_skipped_components_are_surfaced_in_warnings(db):
 
 
 @pytest.mark.asyncio
-async def test_w14_reingest_replaces_sbom_refs_and_deletes_superseded_files(client, db, api_key_headers, monkeypatch):
-    from app.api.v1.endpoints import ingest as ingest_module
-    from app.services import gridfs_maintenance
-
-    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
-    monkeypatch.setattr(gridfs_maintenance, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
-
+@pytest.mark.live_mongo
+async def test_w14_reingest_replaces_sbom_refs_and_the_reaper_frees_the_superseded_file(
+    client, db, api_key_headers, monkeypatch
+):
     payload = {
         "pipeline_id": 424242,
         "commit_hash": "b" * 40,
@@ -157,8 +155,9 @@ async def test_w14_reingest_replaces_sbom_refs_and_deletes_superseded_files(clie
     assert len(scan["sbom_refs"]) == 1, f"re-ingest must replace sbom_refs, got {len(scan['sbom_refs'])}"
     assert scan["sbom_refs"][0]["gridfs_id"] != first_refs[0]["gridfs_id"]
 
-    stored_files = await db["fs.files"].count_documents({})
-    assert stored_files == 1, f"the superseded GridFS upload must be deleted, got {stored_files} files"
+    monkeypatch.setattr("app.services.gridfs_maintenance.ARCHIVE_ORPHAN_MIN_AGE_HOURS", -1)
+    assert await reap_orphan_gridfs_files(db) == 1
+    assert [str(doc["_id"]) async for doc in db["fs.files"].find()] == [scan["sbom_refs"][0]["gridfs_id"]]
 
 
 @pytest.mark.asyncio
@@ -166,10 +165,8 @@ async def test_a_reingest_during_the_analysis_marks_the_sbom_replaced_and_keeps_
     client, db, api_key_headers, monkeypatch
 ):
     from app.api.v1.endpoints import ingest as ingest_module
-    from app.services import gridfs_maintenance
 
     monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
-    monkeypatch.setattr(gridfs_maintenance, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
     payload = {"pipeline_id": 424244, "commit_hash": "d" * 40, "branch": "main", "sboms": [_GOOD_SBOM]}
 
     scan_id = (await client.post("/api/v1/ingest", json=payload, headers=api_key_headers)).json()["scan_id"]

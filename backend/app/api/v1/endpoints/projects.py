@@ -928,7 +928,7 @@ async def read_analysis_results(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> list[AnalysisResult]:
-    """Get the results of all analyzers for a specific scan."""
+    """List the analyzer result rows of a scan, without the results themselves."""
     await _require_scan_access(scan_id, current_user, db)
     return await AnalysisResultRepository(db).find_by_scan(scan_id, limit=1000)
 

@@ -237,6 +237,7 @@ async def test_a_later_job_without_the_field_keeps_the_flag_and_the_record(clien
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_findings_ingest_of_the_same_pipeline_keeps_the_flag_and_the_record(
     client, db, api_key_headers, latest_release
 ):
@@ -263,6 +264,7 @@ async def test_findings_ingest_of_the_same_pipeline_keeps_the_flag_and_the_recor
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_findings_ingest_can_promote_a_scan_created_by_the_sbom_job(client, db, api_key_headers, latest_release):
     process_sboms, gridfs = _patched_sbom_ingest()
     with process_sboms, gridfs:
@@ -305,6 +307,7 @@ async def test_sbom_ingest_can_promote_an_existing_scan(client, db, api_key_head
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(("route", "payload"), [(_SBOM_ROUTE, _sbom_payload), (_FINDINGS_ROUTE, _findings_payload)])
+@pytest.mark.live_mongo
 async def test_a_failed_release_write_leaves_the_scan_unflagged(client, db, api_key_headers, route, payload):
     """The backfill repairs a row whose flag is missing; a flag whose row is missing it never sees."""
     process_sboms, gridfs = _patched_sbom_ingest()
@@ -328,6 +331,7 @@ async def test_a_failed_release_write_leaves_the_scan_unflagged(client, db, api_
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_findings_ingest_creates_a_scan_with_the_release_record(client, db, api_key_headers, latest_release):
     resp = await client.post(
         "/api/v1/ingest/opengrep",

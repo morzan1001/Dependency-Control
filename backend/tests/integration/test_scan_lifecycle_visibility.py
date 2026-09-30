@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS, SCAN_STATUS_FAILED
+from app.core.init_db import create_indexes
 from app.models.project import Project, Scan
 from app.repositories.findings import FindingRepository
 from app.services.analysis import engine
@@ -228,7 +229,9 @@ class _PartialOnTheSecondSbom:
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcome(db, _gridfs_patched, monkeypatch):
+    await create_indexes(db)
     announced: list[dict[str, str]] = []
 
     async def _capture(project_id, scan_id, scan_doc, stats, status, error, failed, findings, analyzer_outcomes, db):
@@ -246,9 +249,11 @@ async def test_a_two_sbom_run_announces_each_analyzer_once_with_its_worst_outcom
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, monkeypatch):
     """An EPSS/KEV outage writes no analysis_results document (the write sits inside the
     try) and must not change the status, so the scan field is its only queryable trace."""
+    await create_indexes(db)
 
     async def _enrichment_outage(*_args, **_kwargs):
         raise RuntimeError("EPSS feed unreachable")
@@ -273,7 +278,9 @@ async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, m
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_clean_scan_records_no_enrichment_failures(db, _gridfs_patched, monkeypatch):
+    await create_indexes(db)
     serve_analyzer(monkeypatch, "grype", _GrypeVulnAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
@@ -303,7 +310,9 @@ async def test_w12_scan_with_errors_still_becomes_project_latest(db, _gridfs_pat
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, _gridfs_patched, monkeypatch):
+    await create_indexes(db)
     serve_analyzer(monkeypatch, "osv", _PartialResultAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
@@ -323,9 +332,11 @@ async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_crypto_evaluator_failing_with_an_empty_message_still_counts_as_failed(
     db, _gridfs_patched, monkeypatch
 ):
+    await create_indexes(db)
     real_evaluators = engine.crypto_evaluators
 
     def _weak_key_times_out(catalog):

@@ -9,7 +9,6 @@ from typing import Any
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from pymongo import ReturnDocument
 
 from app.api.deps import DatabaseDep, ProjectIngestDep
 from app.api.router import CustomAPIRouter
@@ -17,7 +16,6 @@ from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import (
     NOTIFICATION_EVENT_SBOM_INGESTED,
-    SCAN_STATUS_PROCESSING,
     WEBHOOK_EVENT_SBOM_INGESTED,
 )
 from app.repositories.dependencies import DependencyRepository
@@ -36,7 +34,7 @@ from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogIngest
 from app.services.dependency_store import store_scan_dependencies
-from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, make_gridfs_ref
+from app.services.gridfs_maintenance import make_gridfs_ref
 from app.services.notifications.service import safe_notify_project_event
 from app.services.sbom_parser import parse_sbom
 from app.services.scan_manager import ScanManager
@@ -251,25 +249,14 @@ async def ingest_sbom(
         scan_update = await manager.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
 
         # Replace (never append) so a CI retry cannot pile up duplicate SBOMs that get
-        # stored and re-analysed forever; superseded GridFS uploads are deleted below.
+        # stored and re-analysed forever; the orphan reaper frees the superseded uploads.
         if sbom_refs:
             scan_update["$set"]["sbom_refs"] = sbom_refs
             scan_update["$inc"] = {"sbom_generation": 1}
         else:
             scan_update["$setOnInsert"]["sbom_refs"] = []
 
-        previous = await db.scans.find_one_and_update(
-            {"_id": scan_id}, scan_update, upsert=True, return_document=ReturnDocument.BEFORE
-        )
-
-        # A run still on the old SBOM reads these files; the orphan reaper collects them after it.
-        if previous and sbom_refs and previous.get("status") != SCAN_STATUS_PROCESSING:
-            new_ids = set(extract_gridfs_ids_from_refs(sbom_refs))
-            superseded = [
-                gid for gid in extract_gridfs_ids_from_refs(previous.get("sbom_refs", [])) if gid not in new_ids
-            ]
-            if superseded:
-                await cleanup_gridfs_files(db, superseded)
+        await db.scans.update_one({"_id": scan_id}, scan_update, upsert=True)
 
         await ScanRepository(db).reopen_finished(scan_id)
 

@@ -168,6 +168,7 @@ def enrichment_inputs(monkeypatch) -> dict:
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_a_cbom_scan_runs_the_crypto_analyzers_once_beside_the_configured_ones(db, notified, enrichment_inputs):
     await seed_crypto_policies(db)
     scan = Scan(

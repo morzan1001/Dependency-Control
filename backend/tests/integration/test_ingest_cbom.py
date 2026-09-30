@@ -150,6 +150,7 @@ async def test_a_queueing_failure_after_the_store_announces_nothing_and_leaves_t
 
 
 @pytest.mark.asyncio
+@pytest.mark.live_mongo
 async def test_another_scanner_of_the_pipeline_keeps_the_cbom_tag(client, db, api_key_headers):
     """The engine selects crypto analyzers from the tag, so a later scanner upload must not clear it."""
     pipeline = {"pipeline_id": 8, "commit_hash": "abc123", "branch": "main"}

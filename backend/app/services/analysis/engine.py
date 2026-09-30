@@ -47,7 +47,7 @@ from app.core.metrics import (
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Scan
 from app.models.stats import Stats
-from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.analysis_results import RESULT_PROJECTION, AnalysisResultRepository
 from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
@@ -177,12 +177,7 @@ async def _record_result(
     row_source: str | None = None,
 ) -> str:
     aggregator.aggregate(analyzer_name, result, source=source)
-
-    # The findings are already aggregated, so a refused raw row costs only the raw-results view.
-    try:
-        await AnalysisResultRepository(db).save_result(scan_id, analyzer_name, result, source=row_source)
-    except Exception as e:
-        logger.exception("Storing the raw %s result of %s failed: %s", analyzer_name, scan_id, e)
+    await AnalysisResultRepository(db).save_result(scan_id, analyzer_name, result, source=row_source)
 
     # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts instead of raising.
     if is_error_result(result):
@@ -631,10 +626,10 @@ async def _aggregate_external_results(
 ) -> None:
     """Fetch external analyzer results and aggregate them; failures land in results_summary."""
     query = {"scan_id": scan_id, "analyzer_name": {"$nin": list(_ENGINE_RESULT_NAMES)}}
-    async for row in result_repo.iterate_raw(query, {"analyzer_name": 1, "result": 1}):
+    async for row in result_repo.iterate_raw(query, RESULT_PROJECTION):
         analyzer_name = row["analyzer_name"]
         try:
-            result = row["result"]
+            result = await result_repo.load_result(row)
             aggregator.aggregate(analyzer_name, result)
             if is_error_result(result):
                 # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.

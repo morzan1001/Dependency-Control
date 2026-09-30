@@ -239,12 +239,14 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["scans"].create_index("pipeline_id")
     await database["scans"].create_index([("created_at", pymongo.DESCENDING)])
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)])
+    await database["scans"].create_index("sbom_refs.gridfs_id")
 
     # Analysis Results
     await database["analysis_results"].create_index("scan_id")
     await database["analysis_results"].create_index(
         [("scan_id", pymongo.ASCENDING), ("analyzer_name", pymongo.ASCENDING)]
     )
+    await database["analysis_results"].create_index("result_gridfs_id", sparse=True)
 
     # Waivers
     await database["waivers"].create_index("project_id")
@@ -593,6 +595,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["compliance_reports"].create_index(
         [("requested_by", pymongo.ASCENDING), ("status", pymongo.ASCENDING)]
     )
+    await database["compliance_reports"].create_index("artifact_gridfs_id", sparse=True)
 
     # Findings: scan_created_at analytics indexes
     await database["findings"].create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
