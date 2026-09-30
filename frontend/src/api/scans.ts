@@ -1,4 +1,4 @@
-import { api } from '@/api/client';
+import { api, getServerFile } from '@/api/client';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
 import { ProjectBranchTips, Scan, ScanAnalysisResult, SbomResponse, ScanFindingsParams, ScanFindingsResponse, ScanHistoryResponse, ScanStats, ScanWithReleases } from '@/types/scan';
 
@@ -46,10 +46,20 @@ export const scanApi = {
         return response.data;
     },
 
+    getResult: async (scanId: string, resultId: string): Promise<unknown> => {
+        const response = await api.get(`/projects/scans/${scanId}/results/${encodeURIComponent(resultId)}`, { timeout: 0 });
+        return response.data;
+    },
+
+    downloadResult: (scanId: string, resultId: string) =>
+        getServerFile(`/projects/scans/${scanId}/results/${encodeURIComponent(resultId)}`),
+
     getSboms: async (scanId: string): Promise<SbomResponse[]> => {
         const response = await api.get<SbomResponse[]>(`/projects/scans/${scanId}/sboms`);
         return response.data;
     },
+
+    downloadSbom: (scanId: string, index: number) => getServerFile(`/projects/scans/${scanId}/sboms/${index}`),
 
     getFindings: async (scanId: string, params: ScanFindingsParams = {}): Promise<ScanFindingsResponse> => {
         const response = await api.get<ScanFindingsResponse>(`/projects/scans/${scanId}/findings`, { params });

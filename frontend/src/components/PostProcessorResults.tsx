@@ -1,6 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
 import { 
   AlertTriangle, 
   Shield, 
@@ -31,6 +32,7 @@ import {
 } from "@/components/ui/collapsible";
 import { getSeverityBadgeVariant } from "@/lib/finding-utils";
 import { formatDateTime } from "@/lib/utils";
+import { useScanResult } from "@/hooks/queries/use-scans";
 import { ReachabilitySummary } from "@/types/scan";
 
 export interface EPSSKEVSummary {
@@ -671,7 +673,9 @@ export function ReachabilityResults({ data }: Readonly<{ data: ReachabilitySumma
   );
 }
 
-export function PostProcessorResultCard({ analyzerName, result }: Readonly<{ analyzerName: string; result: unknown }>) {
+export function PostProcessorResultCard({ scanId, resultId, analyzerName }: Readonly<{ scanId: string; resultId: string; analyzerName: string }>) {
+  const { data: result, isPending, isError, isSuccess } = useScanResult(scanId, resultId);
+
   const getIcon = () => {
     switch (analyzerName) {
       case "epss_kev":
@@ -720,10 +724,12 @@ export function PostProcessorResultCard({ analyzerName, result }: Readonly<{ ana
         </CardTitle>
       </CardHeader>
       <CardContent className="pt-6">
-        {analyzerName === "epss_kev" && (
+        {isPending && <Skeleton className="h-40" />}
+        {isError && <p className="text-sm text-muted-foreground">The result could not be loaded.</p>}
+        {isSuccess && analyzerName === "epss_kev" && (
           <EPSSKEVResults data={result as EPSSKEVSummary} />
         )}
-        {analyzerName === "reachability" && (
+        {isSuccess && analyzerName === "reachability" && (
           <ReachabilityResults data={result as ReachabilitySummary} />
         )}
       </CardContent>

@@ -55,10 +55,12 @@ async def test_ingest_neither_stores_nor_serves_the_plaintext_secret(client, db,
     assert _FULL_DIGEST not in stored
     assert json.loads(stored)["findings"][0]["RawHash"] == _PINNED_DIGEST_PREFIX
 
-    served = await client.get(f"/api/v1/projects/scans/{scan_id}/results", headers=member_auth_headers)
+    served = await client.get(f"/api/v1/projects/scans/{scan_id}/results/{row['_id']}", headers=member_auth_headers)
     assert served.status_code == 200, served.text
-    assert _SECRET not in served.text
-    assert _FULL_DIGEST not in served.text
+    assert served.json()["findings"][0]["RawHash"] == _PINNED_DIGEST_PREFIX
+    assert b'"Raw"' not in served.content
+    assert _SECRET.encode() not in served.content
+    assert _FULL_DIGEST.encode() not in served.content
 
 
 @pytest.mark.asyncio

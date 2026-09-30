@@ -1,9 +1,12 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { toast } from 'sonner'
 
+import { scanApi } from '@/api/scans'
 import type { ProjectMember } from '@/types/project'
+import type { SbomResponse, ScanAnalysisResult } from '@/types/scan'
 
 import ScanDetails from '../ScanDetails'
 
@@ -13,15 +16,28 @@ const releaseControlProps = vi.fn()
 const { member } = vi.hoisted(() => ({ member: { current: undefined as ProjectMember | undefined } }))
 const ALREADY_UNDER_WAY = 'A re-scan of this scan is already under way.'
 const RESCAN_BUTTON = { name: /trigger re-scan/i }
+const SCAN_PATH = '/projects/p1/scans/s1'
+const RAW_TAB = `${SCAN_PATH}?tab=raw`
+const SCANNER_ROW_ID = 's1:trivy:SBOM #1'
+
+// The rows GET /scans/{id}/results and /sboms answer: one scanner row per SBOM, a post-processor row, and a lost file.
+const RESULT_ROWS: ScanAnalysisResult[] = [
+  { id: SCANNER_ROW_ID, scan_id: 's1', analyzer_name: 'trivy', source: 'SBOM #1', created_at: '2026-09-01T00:05:00Z' },
+  { id: 's1:epss_kev', scan_id: 's1', analyzer_name: 'epss_kev', source: null, created_at: '2026-09-01T00:06:00Z' },
+]
+const SBOM_ROWS: SbomResponse[] = [
+  { index: 0, filename: 'app.cdx.json', size: 2048 },
+  { index: 1, filename: null, size: null },
+]
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
-vi.mock('@/hooks/queries/use-scans', () => ({
+vi.mock('@/api/scans')
+vi.mock('@/hooks/queries/use-scans', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/queries/use-scans')>()),
   useScan: (...args: unknown[]) => mockUseScan(...args),
   useScanHistory: () => ({ data: undefined }),
   useTriggerRescan: () => ({ mutate: mockMutate, isPending: false }),
-  useScanResults: () => ({ data: [], isLoading: false }),
-  useScanSboms: () => ({ data: [], isLoading: false }),
   useScanStats: () => ({ data: undefined }),
 }))
 
@@ -60,13 +76,16 @@ function scan(status: string) {
   }
 }
 
-function renderPage() {
+function renderPage(entry = SCAN_PATH) {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   return render(
-    <MemoryRouter initialEntries={['/projects/p1/scans/s1']}>
-      <Routes>
-        <Route path="/projects/:projectId/scans/:scanId" element={<ScanDetails />} />
-      </Routes>
-    </MemoryRouter>,
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[entry]}>
+        <Routes>
+          <Route path="/projects/:projectId/scans/:scanId" element={<ScanDetails />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
   )
 }
 
@@ -136,5 +155,55 @@ describe('ScanDetails for an editor', () => {
     expect(screen.getByRole('button', RESCAN_BUTTON)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Mark as release' })).toBeInTheDocument()
     expect(releaseControlProps).toHaveBeenCalledWith(expect.objectContaining({ canWrite: true }))
+  })
+})
+
+describe('ScanDetails raw tab', () => {
+  beforeEach(() => {
+    mockUseScan.mockReturnValue({ data: scan('completed'), isLoading: false })
+    vi.mocked(scanApi.getResults).mockResolvedValue(RESULT_ROWS)
+    vi.mocked(scanApi.getSboms).mockResolvedValue(SBOM_ROWS)
+    vi.mocked(scanApi.downloadResult).mockResolvedValue({ blob: new Blob(['{}']), filename: null })
+    vi.mocked(scanApi.downloadSbom).mockResolvedValue({ blob: new Blob(['{}']), filename: null })
+  })
+
+  it('fetches neither list while another tab is open', () => {
+    renderPage()
+
+    expect(screen.getByRole('button', RESCAN_BUTTON)).toBeInTheDocument()
+    expect(scanApi.getResults).not.toHaveBeenCalled()
+    expect(scanApi.getSboms).not.toHaveBeenCalled()
+  })
+
+  it('fetches each list once when opened', async () => {
+    renderPage(RAW_TAB)
+
+    expect(await screen.findByText('app.cdx.json')).toBeInTheDocument()
+    expect(scanApi.getResults).toHaveBeenCalledTimes(1)
+    expect(scanApi.getSboms).toHaveBeenCalledTimes(1)
+  })
+
+  it('downloads a result row and an SBOM through their own routes', async () => {
+    renderPage(RAW_TAB)
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Download trivy SBOM #1' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Download app.cdx.json' }))
+
+    expect(scanApi.downloadResult).toHaveBeenCalledWith('s1', SCANNER_ROW_ID)
+    expect(scanApi.downloadSbom).toHaveBeenCalledWith('s1', 0)
+  })
+
+  it('marks an SBOM whose stored file is gone and offers no download for it', async () => {
+    renderPage(RAW_TAB)
+
+    expect(await screen.findByRole('button', { name: 'Download SBOM #2' })).toBeDisabled()
+    expect(screen.getByText('Missing')).toBeInTheDocument()
+  })
+
+  it('highlights the SBOM a deep link names', async () => {
+    renderPage(`${RAW_TAB}&sbom=1`)
+
+    const row = (await screen.findByRole('button', { name: 'Download SBOM #2' })).parentElement
+    await waitFor(() => expect(row).toHaveClass('ring-2'))
   })
 })

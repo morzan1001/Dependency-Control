@@ -1,10 +1,13 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectOverview } from '../ProjectOverview'
+import { scanApi } from '@/api/scans'
+import type { EPSSKEVSummary } from '@/components/PostProcessorResults'
 import type { LatestProjectRelease } from '@/hooks/queries/use-releases'
 import type { ReleaseItem } from '@/types/release'
-import type { BranchTip, EnhancedStats, ProjectBranchTips, ScanWithReleases } from '@/types/scan'
+import type { BranchTip, EnhancedStats, ProjectBranchTips, ScanAnalysisResult, ScanWithReleases } from '@/types/scan'
 
 const PROJECT_ID = 'p1'
 const MAIN_BRANCH = 'main'
@@ -18,7 +21,9 @@ const mockUseLatestProjectRelease = vi.fn()
 const mockUseProjectWaivers = vi.fn()
 const mockNavigate = vi.fn()
 
-vi.mock('@/hooks/queries/use-scans', () => ({
+vi.mock('@/api/scans')
+vi.mock('@/hooks/queries/use-scans', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/queries/use-scans')>()),
   useProjectScans: (...args: unknown[]) => mockUseProjectScans(...args),
   useProjectBranchTips: (...args: unknown[]) => mockUseProjectBranchTips(...args),
   useScan: (...args: unknown[]) => mockUseScan(...args),
@@ -110,13 +115,56 @@ function renderOverview(
   mockUseProjectScans.mockReturnValue({ data: scans, isLoading: false })
   mockUseProjectBranchTips.mockReturnValue({ data: branchTips, isLoading: false })
   mockUseScan.mockImplementation((scanId: string) => ({ data: byId.get(scanId) }))
-  mockUseScanResults.mockReturnValue({ data: [] })
   mockUseLatestProjectRelease.mockReturnValue(releases)
   mockUseProjectWaivers.mockReturnValue({ data: undefined })
-  return render(<ProjectOverview projectId={PROJECT_ID} selectedBranches={selectedBranches} />)
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(
+    <QueryClientProvider client={queryClient}>
+      <ProjectOverview projectId={PROJECT_ID} selectedBranches={selectedBranches} />
+    </QueryClientProvider>,
+  )
 }
 
-beforeEach(() => vi.clearAllMocks())
+beforeEach(() => {
+  vi.clearAllMocks()
+  mockUseScanResults.mockReturnValue({ data: [] })
+})
+
+describe('ProjectOverview - enrichment cards', () => {
+  const EPSS_ROW: ScanAnalysisResult = {
+    id: 'scan-1:epss_kev', scan_id: 'scan-1', analyzer_name: 'epss_kev', source: null, created_at: '2026-07-01T00:05:00Z',
+  }
+  // The epss_kev post-processor's summary as the engine stores it.
+  const EPSS_SUMMARY: EPSSKEVSummary = {
+    total_vulnerabilities: 12,
+    epss_enriched: 12,
+    kev_matches: 2,
+    kev_ransomware: 1,
+    epss_scores: { high: 2, medium: 3, low: 7 },
+    exploit_maturity: { weaponized: 1, active: 1, high: 1, medium: 3, low: 6, unknown: 0 },
+    avg_epss_score: 0.0712,
+    max_epss_score: 0.9431,
+    avg_risk_score: 31.2,
+    max_risk_score: 88.4,
+    kev_details: [
+      { cve: 'CVE-2021-44228', component: 'log4j-core', due_date: '2021-12-24', ransomware: true },
+      { cve: 'CVE-2023-4863', component: 'libwebp', due_date: '2023-10-04', ransomware: false },
+    ],
+    high_risk_cves: [],
+    high_risk_total: 0,
+    timestamp: '2026-07-01T00:06:00+00:00',
+  }
+
+  it('loads the post-processor result it shows and renders its EPSS/KEV summary', async () => {
+    vi.mocked(scanApi.getResult).mockResolvedValue(EPSS_SUMMARY)
+    mockUseScanResults.mockReturnValue({ data: [EPSS_ROW] })
+
+    renderOverview([makeScan({}, { critical: 1 })])
+
+    expect(await screen.findByText('CVE-2021-44228')).toBeInTheDocument()
+    expect(scanApi.getResult).toHaveBeenCalledWith('scan-1', EPSS_ROW.id)
+  })
+})
 
 describe('ProjectOverview - ThreatIntelligenceDashboard gating', () => {
   it('renders the dashboard when reachability analysis exists with zero KEV/high-EPSS', () => {

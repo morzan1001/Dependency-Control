@@ -15,21 +15,12 @@ export type FindingType =
   | "quality"
   | "other";
 
-export interface AnalyzerResultData {
-  status?: string;
-  findings?: unknown[];
-  summary?: Record<string, string | number | boolean>;
-  metadata?: Record<string, string | number | boolean | null>;
-  raw_output?: string;
-  [key: string]: string | number | boolean | null | undefined | unknown[] | Record<string, unknown>;
-}
-
 export interface ScanAnalysisResult {
   id: string;
+  scan_id: string;
   analyzer_name: string;
-  result: AnalyzerResultData;
-  created_at?: string;
-  scan_id?: string;
+  source: string | null;
+  created_at: string;
 }
 
 export interface ReachabilityInfo {
@@ -405,36 +396,11 @@ export interface SbomData {
   [key: string]: string | number | boolean | null | undefined | Array<{ name: string; version?: string; type?: string; purl?: string }>;
 }
 
-export interface SbomToolComponent {
-  name: string;
-}
-
-export interface SbomTool {
-  name?: string;
-  vendor?: string;
-}
-
-export interface SbomMetadata {
-  component?: {
-    name?: string;
-  };
-  tools?: SbomTool[] | {
-    components?: SbomToolComponent[];
-  };
-}
-
-export interface SbomDocument {
-  metadata?: SbomMetadata;
-  serialNumber?: string;
-  [key: string]: unknown;
-}
-
 export interface SbomResponse {
   index: number;
   filename: string | null;
-  storage: 'gridfs' | 'inline';
-  sbom: SbomDocument | null;
-  error?: string;
+  // Null when the stored file is gone.
+  size: number | null;
 }
 
 export interface ScanFindingsParams {
@@ -522,7 +488,7 @@ export interface Scan {
   completed_at?: string;
   sbom?: SbomData;
   sboms?: SbomData[];
-  sbom_refs?: string[];
+  sbom_refs?: { type: string; gridfs_id: string; filename?: string | null }[];
   is_rescan?: boolean;
   original_scan_id?: string;
   latest_rescan_id?: string;

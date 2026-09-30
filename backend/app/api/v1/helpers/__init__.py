@@ -58,10 +58,6 @@ from app.api.v1.helpers.sorting import (
     get_sort_field,
     parse_sort_direction,
 )
-from app.api.v1.helpers.storage import (
-    load_from_gridfs,
-    resolve_sbom_refs,
-)
 from app.api.v1.helpers.system import get_available_channels
 from app.api.v1.helpers.teams import (
     build_team_enrichment_pipeline,
@@ -122,7 +118,6 @@ __all__ = [
     "check_team_access",
     # Webhook helpers
     "check_webhook_permission",
-    # Storage helpers
     "detect_format",
     "enrich_team_with_usernames",
     "ensure_can_manage_target",
@@ -146,7 +141,6 @@ __all__ = [
     "get_webhook_or_404",
     "is_write_superuser",
     "last_admin_guard",
-    "load_from_gridfs",
     "may_read_projects",
     "parse_generic_format",
     "parse_madge_format",
@@ -156,7 +150,6 @@ __all__ = [
     "process_findings_ingest",
     # Analytics helpers
     "require_analytics_permission",
-    "resolve_sbom_refs",
     "resolve_team_names",
     "team_refs",
     "visible_teams_filter",

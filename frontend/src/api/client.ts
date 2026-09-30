@@ -1,5 +1,6 @@
 import axios, { AxiosError, AxiosHeaders } from 'axios';
 import { logger } from '@/lib/logger';
+import { filenameFromContentDisposition } from '@/lib/download';
 import { API_TIMEOUT_MS, API_REFRESH_TIMEOUT_MS } from '@/lib/constants';
 
 declare module 'axios' {
@@ -112,6 +113,12 @@ export const refreshAccessToken = async (): Promise<string | null> => {
 
   return refreshPromise;
 };
+
+// No timeout: stored SBOMs and analyzer results have no size limit.
+export async function getServerFile(url: string): Promise<{ blob: Blob; filename: string | null }> {
+  const response = await api.get<Blob>(url, { responseType: 'blob', timeout: 0 });
+  return { blob: response.data, filename: filenameFromContentDisposition(response.headers['content-disposition']) };
+}
 
 // Build URLSearchParams, skipping null/undefined/empty values; arrays joined with commas.
 export function buildQueryParams(obj: Record<string, string | number | boolean | string[] | undefined | null>): URLSearchParams {

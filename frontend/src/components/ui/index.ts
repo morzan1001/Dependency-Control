@@ -15,7 +15,6 @@ export { Table, TableHeader, TableBody, TableFooter, TableHead, TableRow, TableC
 export { Tabs, TabsList, TabsTrigger, TabsContent } from './tabs'
 export { Textarea } from './textarea'
 export { Tooltip, TooltipTrigger, TooltipContent, TooltipProvider } from './tooltip'
-export { CodeBlock } from './code-block'
 export { PackageAutocomplete } from './package-autocomplete'
 export { ProjectCombobox } from './project-combobox'
 export { Spinner } from './spinner'

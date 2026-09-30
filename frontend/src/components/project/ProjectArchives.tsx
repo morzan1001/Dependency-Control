@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/select"
 import { ChevronLeft, ChevronRight, Archive, RotateCcw, Download, GitBranch, GitCommit, AlertTriangle, Package, FileText } from 'lucide-react'
 import { toast } from "sonner"
-import { getErrorMessage, formatDateTime, shortCommitHash } from '@/lib/utils'
+import { formatBytes, getErrorMessage, formatDateTime, shortCommitHash } from '@/lib/utils'
 import {
   Dialog,
   DialogContent,
@@ -36,14 +36,6 @@ import type { ArchiveFilters } from '@/types/archive'
 
 interface ProjectArchivesProps {
   projectId: string
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes === 0) return '0 B'
-  const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
-  return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
 
 export function ProjectArchives({ projectId }: Readonly<ProjectArchivesProps>) {

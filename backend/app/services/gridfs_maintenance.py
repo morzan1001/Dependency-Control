@@ -1,9 +1,10 @@
-"""GridFS files: SBOM reference shape, JSON upload and load, and the orphan reaper, the one deleter of files."""
+"""GridFS files: SBOM reference shape, JSON upload, load and streaming, and the orphan reaper, the one deleter of files."""
 
 import asyncio
 import contextlib
 import json
 import logging
+from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -42,6 +43,18 @@ async def load_gridfs_json(fs: AsyncIOMotorGridFSBucket, file_id: str) -> Any:
     """Download and parse one stored JSON file; raises on failure so each caller keeps its own policy."""
     stream = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
     return await asyncio.to_thread(json.loads, await stream.read())
+
+
+async def iter_gridfs_chunks(stream: Any) -> AsyncIterator[bytes]:
+    """Yield an open download stream chunk by chunk and close it once drained or abandoned."""
+    try:
+        while chunk := await stream.readchunk():
+            yield chunk
+    finally:
+        # motor's AgnosticGridOut.close() returns a coroutine at runtime though the stub claims None.
+        close_result = stream.close()
+        if close_result is not None:
+            await close_result
 
 
 def extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:

@@ -27,6 +27,7 @@ export const scanKeys = {
     history: (projectId: string, scanId: string) => [...scanKeys.project(projectId), 'history', scanId] as const,
     findings: (scanId: string, filters: ScanFindingsParams) => [...scanKeys.detail(scanId), 'findings', filters] as const,
     results: (scanId: string) => [...scanKeys.detail(scanId), 'results'] as const,
+    result: (scanId: string, resultId: string) => [...scanKeys.results(scanId), resultId] as const,
     stats: (scanId: string) => [...scanKeys.detail(scanId), 'stats'] as const,
     sboms: (scanId: string) => [...scanKeys.detail(scanId), 'sboms'] as const,
     window: (projectId: string, pages: number) => [...scanKeys.project(projectId), 'window', pages] as const,
@@ -119,11 +120,18 @@ export const useScanFindings = (scanId: string, params: ScanFindingsParams) => {
     })
 }
 
-export const useScanResults = (scanId: string) => {
+export const useScanResults = (scanId: string, enabled = true) => {
     return useQuery({
         queryKey: scanKeys.results(scanId),
         queryFn: () => scanApi.getResults(scanId),
-        enabled: !!scanId
+        enabled: !!scanId && enabled
+    })
+}
+
+export const useScanResult = (scanId: string, resultId: string) => {
+    return useQuery({
+        queryKey: scanKeys.result(scanId, resultId),
+        queryFn: () => scanApi.getResult(scanId, resultId)
     })
 }
 
@@ -135,11 +143,11 @@ export const useScanStats = (scanId: string) => {
     })
 }
 
-export const useScanSboms = (scanId: string) => {
+export const useScanSboms = (scanId: string, enabled: boolean) => {
     return useQuery({
         queryKey: scanKeys.sboms(scanId),
         queryFn: () => scanApi.getSboms(scanId),
-        enabled: !!scanId
+        enabled: !!scanId && enabled
     })
 }
 
