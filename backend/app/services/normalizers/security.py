@@ -16,21 +16,21 @@ def normalize_malware(aggregator: "ResultAggregator", result: dict[str, Any], so
         component = safe_get(item, "component", "unknown")
         version = item.get("version")
 
-        description = "Potential malware detected"
-        if isinstance(threats, list) and threats:
-            if isinstance(threats[0], str):
-                threat_list = threats[:5]
-                description = f"Malware detected: {', '.join(threat_list)}"
-                if len(threats) > 5:
-                    description += f" (+{len(threats) - 5} more)"
-        elif malware_info.get("description"):
-            description = f"Malware detected: {malware_info.get('description')}"
+        report_description = malware_info.get("description")
+        tags = [tag for tag in threats if isinstance(tag, str)] if isinstance(threats, list) else []
+        if report_description:
+            description = f"Malware detected: {report_description}"
+        elif tags:
+            more = f" (+{len(tags) - 5} more)" if len(tags) > 5 else ""
+            description = f"Malware detected: {', '.join(tags[:5])}{more}"
+        else:
+            description = "Potential malware detected"
 
         aggregator.add_finding(
             Finding(
                 id=build_finding_id("MALWARE", component),
                 type=FindingType.MALWARE,
-                severity=Severity.CRITICAL,
+                severity=safe_severity(item.get("severity"), default=Severity.CRITICAL),
                 component=component,
                 version=version,
                 description=description,

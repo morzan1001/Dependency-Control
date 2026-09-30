@@ -51,6 +51,7 @@ from app.services.analysis.stats import build_epss_kev_summary, build_reachabili
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
+from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import VulnerabilityEnrichmentService
@@ -898,8 +899,12 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         threat_intel=threat_intel,
     )
 
-    # A stage that errored still reached upstream, so attempted is the condition, not success.
-    report.notes = {name: note for name, note in _STAGE_NOTES.items() if name in report.ran or name in report.errored}
+    # A stage that errored still reached upstream, unless it stopped for want of an API key before any request.
+    report.notes = {
+        name: note
+        for name, note in _STAGE_NOTES.items()
+        if name in report.ran or any(MISSING_API_KEY not in reason for reason in report.errored.get(name, ()))
+    }
 
     return AdhocAnalyzeResponse(
         findings=records,
