@@ -254,21 +254,21 @@ class TyposquattingAnalyzer(Analyzer):
             return None
 
         matcher = difflib.SequenceMatcher(None, b=name)
+        best_ratio, best_popular = similarity_threshold, None
         for popular in popular_names:
             if abs(len(name) - len(popular)) > 2:
                 continue
             # Both quick ratios bound ratio() from above in either orientation; ratio() itself is not symmetric.
             matcher.set_seq1(popular)
-            if matcher.real_quick_ratio() <= similarity_threshold or matcher.quick_ratio() <= similarity_threshold:
+            if matcher.real_quick_ratio() <= best_ratio or matcher.quick_ratio() <= best_ratio:
                 continue
             ratio = difflib.SequenceMatcher(None, name, popular).ratio()
-            if ratio <= similarity_threshold:
-                continue
-            if not self._is_suspicious(name, popular):
-                continue
-            severity = _severity_for_ratio(ratio, critical_at, high_at)
-            return _build_typosquat_issue(component, popular, ratio, severity)
-        return None
+            if ratio > best_ratio and self._is_suspicious(name, popular):
+                best_ratio, best_popular = ratio, popular
+        if best_popular is None:
+            return None
+        severity = _severity_for_ratio(best_ratio, critical_at, high_at)
+        return _build_typosquat_issue(component, best_popular, best_ratio, severity)
 
     def _is_suspicious(self, name: str, popular: str) -> bool:
         """Whether ``name`` near-matches another ``popular``; a prefix then ``-`` (``react-dom``) is legitimate."""

@@ -348,23 +348,27 @@ class TestTheEcosystemComesFromThePurl:
 
 
 class TestSeveralPassingPopularNames:
-    """Two popular names can both pass; the one that sorts first is reported, whatever the hash seed."""
+    """Several popular names can pass; the closest is reported, and a tie goes to the name that sorts first."""
 
     _RANKING: ClassVar[list[str]] = [
         "tomlkit",
         "typing-extensions",
+        "pymysql",
         "botocore",
+        "flake8",
         "mypy-extensions",
         "tomli",
+        "pymssql",
         "aiobotocore",
+        "blake3",
     ]
 
     @pytest.mark.asyncio
-    async def test_the_first_popular_name_in_sorted_order_is_reported(self, monkeypatch):
+    async def test_the_closest_popular_name_is_reported_and_a_tie_goes_to_the_first_in_sorted_order(self, monkeypatch):
         monkeypatch.setattr(typosquatting, "cache_service", _CorpusCache({_PYPI_KEY: self._RANKING}))
         components = [
             {"type": "library", "name": name, "version": "1.0", "purl": f"pkg:pypi/{name}@1.0"}
-            for name in ("abotocore", "tomlki", "typin-extensions", "mypyi-extensions")
+            for name in ("abotocore", "tomlki", "typin-extensions", "mypyi-extensions", "pmyssql", "flake3")
         ]
 
         result = await analyze_cyclonedx(TyposquattingAnalyzer(), components)
@@ -373,10 +377,12 @@ class TestSeveralPassingPopularNames:
             (issue["component"], issue["imitated_package"], issue["similarity"], issue["severity"])
             for issue in result["typosquatting_issues"]
         ] == [
-            ("abotocore", "aiobotocore", 0.9, "MEDIUM"),
-            ("tomlki", "tomli", 0.91, "HIGH"),
-            ("typin-extensions", "mypy-extensions", 0.84, "MEDIUM"),
+            ("abotocore", "botocore", 0.94, "HIGH"),
+            ("tomlki", "tomlkit", 0.92, "HIGH"),
+            ("typin-extensions", "typing-extensions", 0.97, "CRITICAL"),
             ("mypyi-extensions", "mypy-extensions", 0.97, "CRITICAL"),
+            ("pmyssql", "pymssql", 0.86, "MEDIUM"),
+            ("flake3", "blake3", 0.83, "MEDIUM"),
         ]
 
 
@@ -450,11 +456,16 @@ class TestALargeSbomDoesNotStallTheLoop:
 
 
 def _ungated_verdict(analyzer: TyposquattingAnalyzer, name: str, popular: list[str]) -> tuple[str, float, str]:
-    """The first popular name whose plain ratio passes, as a scan without the quick-ratio gate reports it."""
-    for candidate in popular:
-        ratio = difflib.SequenceMatcher(None, name, candidate).ratio()
-        passes = ratio > TYPOSQUATTING_SIMILARITY_THRESHOLD and analyzer._is_suspicious(name, candidate)
-        if abs(len(name) - len(candidate)) <= 2 and passes:
-            severity = _severity_for_ratio(ratio, TYPOSQUATTING_CRITICAL_SIMILARITY, TYPOSQUATTING_HIGH_SIMILARITY)
-            return candidate, round(ratio, 2), severity
-    raise AssertionError(f"{name} imitates no popular name")
+    """The passing popular name with the highest plain ratio (first of sorted ``popular`` on a tie), ungated."""
+    passing = [
+        (ratio, candidate)
+        for candidate in popular
+        if abs(len(name) - len(candidate)) <= 2 and analyzer._is_suspicious(name, candidate)
+        for ratio in [difflib.SequenceMatcher(None, name, candidate).ratio()]
+        if ratio > TYPOSQUATTING_SIMILARITY_THRESHOLD
+    ]
+    if not passing:
+        raise AssertionError(f"{name} imitates no popular name")
+    ratio, candidate = max(passing, key=lambda pair: pair[0])
+    severity = _severity_for_ratio(ratio, TYPOSQUATTING_CRITICAL_SIMILARITY, TYPOSQUATTING_HIGH_SIMILARITY)
+    return candidate, round(ratio, 2), severity
