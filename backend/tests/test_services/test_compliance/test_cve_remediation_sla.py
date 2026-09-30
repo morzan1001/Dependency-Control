@@ -10,6 +10,7 @@ from app.services.compliance.frameworks.cve_remediation_sla import (
     CveRemediationSlaFramework,
     _is_overdue,
 )
+from tests.helpers.compliance import evaluation_input
 
 
 def _vuln(severity: Severity, days_ago: int, **kwargs) -> dict:
@@ -23,51 +24,37 @@ def _vuln(severity: Severity, days_ago: int, **kwargs) -> dict:
 
 
 def _eval_input(findings: list) -> EvaluationInput:
-    return EvaluationInput(
-        findings=findings,
-        crypto_assets=[],
-        scope_description="test",
-        resolved=[],
-        policy_rules=[],
-        policy_version="0",
-        iana_catalog_version="0",
-        scan_ids=[],
-    )
+    return evaluation_input(findings=findings)
 
 
 class TestDefaultSlaBuckets:
     @pytest.mark.asyncio
     async def test_default_critical_window_is_7_days(self):
         framework = CveRemediationSlaFramework()
-        result = await framework.evaluate_async(_eval_input([_vuln(Severity.CRITICAL, 8)]))
+        result = await framework.evaluate(_eval_input([_vuln(Severity.CRITICAL, 8)]))
         critical_control = next(c for c in result.controls if c.severity == Severity.CRITICAL)
         assert critical_control.status == "failed"
 
     @pytest.mark.asyncio
     async def test_default_high_window_is_30_days(self):
         framework = CveRemediationSlaFramework()
-        result = await framework.evaluate_async(_eval_input([_vuln(Severity.HIGH, 25)]))
+        result = await framework.evaluate(_eval_input([_vuln(Severity.HIGH, 25)]))
         high = next(c for c in result.controls if c.severity == Severity.HIGH)
         assert high.status == "passed"
 
 
 class TestEvaluationSemantics:
-    def test_sync_evaluate_rejected(self):
-        framework = CveRemediationSlaFramework()
-        with pytest.raises(RuntimeError, match="async-only"):
-            framework.evaluate(_eval_input([]))
-
     @pytest.mark.asyncio
     async def test_empty_input_yields_three_passing_buckets(self):
         framework = CveRemediationSlaFramework()
-        result = await framework.evaluate_async(_eval_input([]))
+        result = await framework.evaluate(_eval_input([]))
         assert result.summary["failed"] == 0
         assert result.summary["total"] == 3  # CRITICAL / HIGH / MEDIUM buckets
 
     @pytest.mark.asyncio
     async def test_waived_overdue_marks_control_waived_with_reason(self):
         framework = CveRemediationSlaFramework()
-        result = await framework.evaluate_async(
+        result = await framework.evaluate(
             _eval_input([_vuln(Severity.HIGH, days_ago=60, waived=True, waiver_reason="compensating control")])
         )
         high = next(c for c in result.controls if c.severity == Severity.HIGH)
@@ -77,7 +64,7 @@ class TestEvaluationSemantics:
     @pytest.mark.asyncio
     async def test_waiver_reasons_name_only_the_waived_findings(self):
         framework = CveRemediationSlaFramework()
-        result = await framework.evaluate_async(
+        result = await framework.evaluate(
             _eval_input(
                 [
                     _vuln(

@@ -3,10 +3,10 @@
 import functools
 import hashlib
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum, auto
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Protocol
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -49,13 +49,13 @@ class _Applicability(Enum):
 
 def _withheld(
     status: ControlStatus,
-    coverage: InputCoverage | None,
+    coverage: InputCoverage,
     subject: str,
 ) -> tuple[ControlStatus, str | None]:
     """`status`, or NOT_EVALUATED and why, when the input it rests on did not cover the scope.
     Call it only for a status whose evidence is that input holding no match: FAILED never
     qualifies, because a cut input under-reports a violation but cannot invent one."""
-    if coverage is None or coverage.complete:
+    if coverage.complete:
         return status, None
     return ControlStatus.NOT_EVALUATED, _WITHHELD_REASON.format(
         subject=subject,
@@ -67,18 +67,18 @@ def _withheld(
 
 def findings_verdict(
     status: ControlStatus,
-    coverage: EvaluationCoverage | None,
+    coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, str | None]:
     """`status`, or NOT_EVALUATED, for a verdict resting on the findings holding no match."""
-    return _withheld(status, coverage.findings if coverage else None, "findings")
+    return _withheld(status, coverage.findings, "findings")
 
 
 def crypto_assets_verdict(
     status: ControlStatus,
-    coverage: EvaluationCoverage | None,
+    coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, str | None]:
     """`status`, or NOT_EVALUATED, for a verdict resting on the inventory holding no such asset."""
-    return _withheld(status, coverage.crypto_assets if coverage else None, "crypto assets")
+    return _withheld(status, coverage.crypto_assets, "crypto assets")
 
 
 @dataclass
@@ -91,32 +91,21 @@ class EvaluationInput:
     policy_version: int | None
     iana_catalog_version: int | None
     scan_ids: list[str]
-    override_version: int | None = None
-    license_policy: LicensePolicySchema = field(default_factory=LicensePolicySchema)
-    # Set for meta-frameworks that run their own DB queries (e.g. PQC).
-    db: AsyncIOMotorDatabase[Any] | None = None
-    # What `findings` covers of the scope. None where the caller assembled the input itself and
-    # therefore already knows.
-    coverage: EvaluationCoverage | None = None
+    override_version: int | None
+    license_policy: LicensePolicySchema
+    db: AsyncIOMotorDatabase[Any]
+    coverage: EvaluationCoverage
 
 
-@runtime_checkable
 class ComplianceFramework(Protocol):
     """Interface every framework must implement."""
 
     name: str
     key: ReportFramework
     version: str
-    source_url: str
+    disclaimer: str | None
 
-    @property
-    def disclaimer(self) -> str | None:  # shown on report cover
-        ...
-
-    @property
-    def controls(self) -> list[ControlDefinition]: ...
-
-    def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation: ...
+    async def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation: ...
 
 
 def default_evaluator(
@@ -205,11 +194,12 @@ def _extract_bom_refs(findings: list[dict]) -> list[str]:
 
 def evaluate_framework(
     framework: ComplianceFramework,
+    controls: list[ControlDefinition],
     data: EvaluationInput,
 ) -> FrameworkEvaluation:
     """Run every control and build the FrameworkEvaluation."""
     control_results: list[ControlResult] = []
-    for control in framework.controls:
+    for control in controls:
         if control.custom_evaluator is not None:
             result = control.custom_evaluator(data)
         else:
@@ -229,6 +219,7 @@ def evaluate_framework(
         summary=summary,
         residual_risks=residuals,
         inputs_fingerprint=fingerprint,
+        coverage=data.coverage,
     )
 
 
@@ -239,7 +230,6 @@ class SeedFramework:
     key: ReportFramework
     name: str
     version: str
-    source_url: str
     seed_file: str
     control_id_prefix: str
     disclaimer: str | None = None
@@ -258,8 +248,8 @@ class SeedFramework:
             for rule in load_seed_file(self.seed_file)
         ]
 
-    def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        return evaluate_framework(self, data)
+    async def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
+        return evaluate_framework(self, self.controls, data)
 
 
 def extract_finding_id(finding: dict[str, Any]) -> str:
@@ -269,7 +259,7 @@ def extract_finding_id(finding: dict[str, Any]) -> str:
 
 def _classify(
     matching: list[dict[str, Any]],
-    coverage: EvaluationCoverage | None,
+    coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, list[str], str | None]:
     """Map matched findings to (status, evidence_ids, status_reason): empty -> PASSED, any active
     -> FAILED, else WAIVED, with the absence-backed verdicts withheld on partial coverage."""

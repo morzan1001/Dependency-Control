@@ -1,12 +1,10 @@
 """CVE Remediation SLA: one control per severity bucket; FAILED when overdue."""
 
-import asyncio
 from datetime import datetime, timedelta, timezone
-from typing import Any, ClassVar
+from typing import Any
 
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
-    ControlDefinition,
     ControlResult,
     FrameworkEvaluation,
     ReportFramework,
@@ -35,16 +33,9 @@ class CveRemediationSlaFramework:
     key: ReportFramework = ReportFramework.CVE_REMEDIATION_SLA
     name: str = "CVE Remediation SLA"
     version: str = "1"
-    source_url: str = "https://www.first.org/cvss/"
     disclaimer: str | None = None
-    controls: ClassVar[list[ControlDefinition]] = []
 
-    def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        raise RuntimeError("CveRemediationSlaFramework is async-only; callers must dispatch via evaluate_async()")
-
-    async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
-        # yield once so sibling framework tasks can progress
-        await asyncio.sleep(0)
+    async def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
         findings = data.findings or []
         now = datetime.now(timezone.utc)
 
@@ -84,6 +75,7 @@ class CveRemediationSlaFramework:
             summary=build_summary(controls),
             residual_risks=build_residual_risks(controls),
             inputs_fingerprint="cve-remediation-sla-v1",
+            coverage=data.coverage,
         )
 
 

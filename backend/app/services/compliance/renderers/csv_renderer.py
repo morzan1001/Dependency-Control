@@ -5,12 +5,11 @@ import io
 from typing import ClassVar
 
 from app.models.compliance_report import ComplianceReport
-from app.schemas.compliance import ControlStatus, FrameworkEvaluation, ReportFormat
+from app.schemas.compliance import ControlStatus, FrameworkEvaluation
 from app.services.compliance.renderers.base import build_filename, coverage_statement
 
 
 class CsvRenderer:
-    format = ReportFormat.CSV
     mime_type = "text/csv"
     extension = "csv"
 
@@ -48,9 +47,7 @@ class CsvRenderer:
             if fw_header:
                 buf.write(f"# Framework: {fw_header}\n")
             buf.write(f"# Generated: {evaluation.generated_at.isoformat()}\n")
-        coverage = coverage_statement(evaluation.coverage)
-        if coverage:
-            buf.write(f"# Coverage: {coverage}\n")
+        buf.write(f"# Coverage: {coverage_statement(evaluation.coverage)}\n")
         writer = csv.DictWriter(buf, fieldnames=self.FIELDS)
         writer.writeheader()
         for c in evaluation.controls:

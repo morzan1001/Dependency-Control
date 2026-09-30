@@ -5,11 +5,10 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.compliance import ControlStatus, ReportFramework
-from app.services.analytics.scopes import ResolvedScope
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
-from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.crypto_policy.seeder import load_seed_file, load_seed_rules
+from tests.helpers.compliance import evaluation_input
 
 _SEEDS = [
     (ReportFramework.NIST_SP_800_131A, "nist_sp_800_131a.yaml", "NIST-131A"),
@@ -34,18 +33,9 @@ def _asset(name, primitive):
     )
 
 
-def _statuses(key, assets, findings):
-    data = EvaluationInput(
-        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
-        scope_description="user 'alice'",
-        crypto_assets=assets,
-        findings=findings,
-        policy_rules=list(load_seed_rules()),
-        policy_version=1,
-        iana_catalog_version=1,
-        scan_ids=["s1"],
-    )
-    return {c.control_id: c.status for c in FRAMEWORK_REGISTRY[key].evaluate(data).controls}
+async def _statuses(key, assets, findings):
+    data = evaluation_input(crypto_assets=assets, findings=findings, policy_rules=list(load_seed_rules()))
+    return {c.control_id: c.status for c in (await FRAMEWORK_REGISTRY[key].evaluate(data)).controls}
 
 
 @pytest.mark.parametrize(("key", "seed_file", "prefix"), _SEEDS)
@@ -58,29 +48,32 @@ def test_each_seed_rule_becomes_one_control(key, seed_file, prefix):
     ]
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("key", list(_MD5_CONTROLS))
-def test_an_md5_finding_fails_the_control_of_every_rule_it_matched(key):
+async def test_an_md5_finding_fails_the_control_of_every_rule_it_matched(key):
     md5 = _asset("MD5", CryptoPrimitive.HASH)
     findings = crypto_findings_for_assets([md5], load_seed_rules(), scanner="crypto_weak_algorithm")
 
-    assert _statuses(key, [md5], findings)[_MD5_CONTROLS[key]] == ControlStatus.FAILED
+    assert (await _statuses(key, [md5], findings))[_MD5_CONTROLS[key]] == ControlStatus.FAILED
 
 
-def test_a_waived_md5_finding_waives_its_control():
+@pytest.mark.asyncio
+async def test_a_waived_md5_finding_waives_its_control():
     md5 = _asset("MD5", CryptoPrimitive.HASH)
     findings = crypto_findings_for_assets([md5], load_seed_rules(), scanner="crypto_weak_algorithm")
     for finding in findings:
         finding.update(waived=True, waiver_reason="accepted risk")
 
-    statuses = _statuses(ReportFramework.NIST_SP_800_131A, [md5], findings)
+    statuses = await _statuses(ReportFramework.NIST_SP_800_131A, [md5], findings)
 
     assert statuses["NIST-131A-nist-131a-md5"] == ControlStatus.WAIVED
 
 
-def test_a_compliant_inventory_fails_no_control():
+@pytest.mark.asyncio
+async def test_a_compliant_inventory_fails_no_control():
     aes = _asset("AES-256", CryptoPrimitive.BLOCK_CIPHER)
 
-    statuses = _statuses(ReportFramework.NIST_SP_800_131A, [aes], [])
+    statuses = await _statuses(ReportFramework.NIST_SP_800_131A, [aes], [])
 
     assert ControlStatus.FAILED not in statuses.values()
     assert ControlStatus.PASSED in statuses.values()

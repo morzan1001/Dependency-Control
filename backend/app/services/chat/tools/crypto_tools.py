@@ -250,14 +250,9 @@ async def get_framework_evaluation_summary(
         scope_id=scope_id,
     )
 
-    engine = pkg.ComplianceReportEngine()
-    inputs = await engine._gather_inputs(db, resolved)
     framework_obj = pkg.FRAMEWORK_REGISTRY[fw_enum]
-    if hasattr(framework_obj, "evaluate_async"):
-        eval_result = await framework_obj.evaluate_async(inputs)
-    else:
-        eval_result = framework_obj.evaluate(inputs)
-    coverage = coverage_statement(inputs.coverage)
+    _, eval_result = await pkg.ComplianceReportEngine().evaluate(db, resolved, framework_obj)
+    coverage = coverage_statement(eval_result.coverage)
     return {
         "framework": framework,
         "framework_name": eval_result.framework_name,

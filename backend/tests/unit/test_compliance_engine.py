@@ -12,10 +12,10 @@ from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
-from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
 from app.services.crypto_policy.resolver import EffectivePolicy
+from tests.helpers.compliance import evaluation_input
 
 
 @pytest.fixture(autouse=True)
@@ -52,21 +52,9 @@ async def test_engine_marks_report_completed_on_success():
     report = _report()
     user = MagicMock(id="u1", permissions=frozenset())
 
-    # Real EvaluationInput (not a MagicMock) so the engine must wire the correct shape.
-    inputs = EvaluationInput(
-        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=[]),
-        scope_description="u",
-        crypto_assets=[],
-        findings=[],
-        policy_rules=[],
-        policy_version=1,
-        iana_catalog_version=2,
-        scan_ids=["s1"],
-    )
+    inputs = evaluation_input(policy_version=1, iana_catalog_version=2)
     evaluation = MagicMock(summary={"total": 0})
-    # spec=["evaluate"] makes hasattr(fw, "evaluate_async") False so the engine takes the sync path.
-    fw = MagicMock(spec=["evaluate"])
-    fw.evaluate = MagicMock(return_value=evaluation)
+    fw = MagicMock(evaluate=AsyncMock(return_value=evaluation))
 
     resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(scope="user", scope_id=None, project_ids=[])))
 
@@ -90,57 +78,11 @@ async def test_engine_marks_report_completed_on_success():
     ):
         await engine.generate(report=report, db=db, user=user)
 
-    assert update_mock.call_count >= 2
+    fw.evaluate.assert_awaited_once_with(inputs)
     final_call = update_mock.call_args_list[-1]
     assert final_call.kwargs.get("status") == ReportStatus.COMPLETED
-
-    # The engine must pass a real EvaluationInput so evaluators can rely on its attributes.
-    fw.evaluate.assert_called_once()
-    passed_arg = fw.evaluate.call_args.args[0]
-    assert isinstance(passed_arg, EvaluationInput)
-    assert passed_arg.policy_version == 1
-    assert passed_arg.iana_catalog_version == 2
-
-
-@pytest.mark.asyncio
-async def test_engine_awaits_evaluate_async_when_available():
-    """The engine must await evaluate_async when a framework exposes it."""
-    db = MagicMock()
-    update_mock = AsyncMock()
-    engine = ComplianceReportEngine()
-    report = _report()
-    user = MagicMock(id="u1", permissions=frozenset())
-
-    inputs = MagicMock(policy_version=1, iana_catalog_version=2)
-    evaluation = MagicMock(summary={"total": 0})
-    fw = MagicMock(spec=["evaluate_async"])
-    fw.evaluate_async = AsyncMock(return_value=evaluation)
-
-    resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(scope="user", scope_id=None, project_ids=[])))
-
-    with (
-        patch(
-            "app.services.compliance.engine.ComplianceReportRepository",
-            return_value=MagicMock(update_status=update_mock, get=AsyncMock(return_value=report)),
-        ),
-        patch(
-            "app.services.compliance.engine.ScopeResolver",
-            return_value=resolver,
-        ),
-        patch.dict(
-            "app.services.compliance.engine.FRAMEWORK_REGISTRY",
-            {ReportFramework.NIST_SP_800_131A: fw},
-            clear=False,
-        ),
-        patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=inputs)),
-        patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")),
-        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
-    ):
-        await engine.generate(report=report, db=db, user=user)
-
-    fw.evaluate_async.assert_awaited_once()
-    final_call = update_mock.call_args_list[-1]
-    assert final_call.kwargs.get("status") == ReportStatus.COMPLETED
+    assert final_call.kwargs.get("policy_version_snapshot") == 1
+    assert final_call.kwargs.get("iana_catalog_version_snapshot") == 2
 
 
 @pytest.mark.asyncio
@@ -179,18 +121,8 @@ async def test_engine_counts_a_completed_report_under_the_success_status():
     before = _reports_counted("success")
     engine = ComplianceReportEngine()
     report = _report()
-    inputs = EvaluationInput(
-        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=[]),
-        scope_description="u",
-        crypto_assets=[],
-        findings=[],
-        policy_rules=[],
-        policy_version=1,
-        iana_catalog_version=2,
-        scan_ids=["s1"],
-    )
-    fw = MagicMock(spec=["evaluate"])
-    fw.evaluate = MagicMock(return_value=MagicMock(summary={"total": 0}))
+    inputs = evaluation_input()
+    fw = MagicMock(evaluate=AsyncMock(return_value=MagicMock(summary={"total": 0})))
 
     with (
         patch(
@@ -272,7 +204,7 @@ async def test_engine_gather_inputs_builds_evaluation_input():
             return_value=policy_repo_mock,
         ),
     ):
-        result = await engine._gather_inputs(db, resolved)
+        result = await engine._gather_inputs(db, resolved, FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A])
 
     assert result.resolved is resolved
     assert "user scope" in result.scope_description
@@ -360,18 +292,6 @@ async def test_gather_inputs_keeps_crypto_filter_for_crypto_framework():
     await _run_gather(engine, db, resolved, FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A])
 
     assert captured["findings_query"]["type"] == {"$in": sorted(CRYPTO_FINDING_TYPES)}
-
-
-@pytest.mark.asyncio
-async def test_gather_inputs_union_filter_when_framework_unknown():
-    """Without a framework, the filter must load every consumed finding type."""
-    db, captured, _ = _make_engine_db(agg_rows=[{"_id": "p1", "scan_id": "s1"}])
-    resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
-    engine = ComplianceReportEngine()
-
-    await _run_gather(engine, db, resolved, None)
-
-    assert captured["findings_query"]["type"] == {"$in": sorted(CRYPTO_FINDING_TYPES | {"vulnerability", "license"})}
 
 
 @pytest.mark.asyncio

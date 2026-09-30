@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Protocol
 
 from app.models.compliance_report import ComplianceReport
-from app.schemas.compliance import EvaluationCoverage, FrameworkEvaluation, InputCoverage, ReportFormat
+from app.schemas.compliance import EvaluationCoverage, FrameworkEvaluation, InputCoverage
 
 _INPUT_COMPLETE = "Evaluated all {in_scope} {subject} in scope."
 _INPUT_PARTIAL = (
@@ -30,10 +30,8 @@ def _input_statement(coverage: InputCoverage, subject: str) -> str:
     )
 
 
-def coverage_statement(coverage: EvaluationCoverage | None) -> str | None:
+def coverage_statement(coverage: EvaluationCoverage) -> str:
     """The sentence a reader needs to know whether the verdicts cover the scope."""
-    if coverage is None:
-        return None
     parts = [
         _input_statement(coverage.findings, "findings"),
         _input_statement(coverage.crypto_assets, "crypto assets"),
@@ -46,7 +44,6 @@ def coverage_statement(coverage: EvaluationCoverage | None) -> str | None:
 
 
 class Renderer(Protocol):
-    format: ReportFormat
     mime_type: str
     extension: str
 

@@ -1,12 +1,10 @@
-"""License Audit: evaluates SBOM licenses against the project license policy; async-only."""
+"""License Audit: evaluates SBOM licenses against the project license policy."""
 
-import asyncio
 from datetime import datetime, timezone
-from typing import Any, ClassVar
+from typing import Any
 
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
-    ControlDefinition,
     ControlResult,
     ControlStatus,
     FrameworkEvaluation,
@@ -48,21 +46,14 @@ class LicenseAuditFramework:
     key: ReportFramework = ReportFramework.LICENSE_AUDIT
     name: str = "License Audit (project policy)"
     version: str = "1"
-    source_url: str = "https://spdx.dev/learn/handling-license-info/"
     disclaimer: str | None = (
         "This report checks the project's SBOM dependencies against the "
         "configured license policy (allow_strong_copyleft / "
         "allow_network_copyleft etc.). It is an advisory signal, not legal "
         "advice."
     )
-    controls: ClassVar[list[ControlDefinition]] = []
 
-    def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        raise RuntimeError("LicenseAuditFramework is async-only; callers must dispatch via evaluate_async()")
-
-    async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
-        # yield once so sibling framework tasks can progress
-        await asyncio.sleep(0)
+    async def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
         findings = data.findings or []
 
         controls: list[ControlResult] = []
@@ -135,6 +126,7 @@ class LicenseAuditFramework:
             summary=build_summary(controls),
             residual_risks=build_residual_risks(controls),
             inputs_fingerprint="license-audit-v1",
+            coverage=data.coverage,
         )
 
 

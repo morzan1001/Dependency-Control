@@ -5,13 +5,12 @@ from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.compliance import ControlDefinition, ControlStatus
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.frameworks.base import (
-    EvaluationInput,
     _Applicability,
     _applicability,
     default_evaluator,
 )
+from tests.helpers.compliance import evaluation_input
 
 _RSA_RULE = CryptoRule(
     rule_id="nist-131a-rsa-min-2048",
@@ -41,17 +40,8 @@ def _asset(**kw):
     return CryptoAsset(**defaults)
 
 
-def _input(assets, *, findings=None):
-    return EvaluationInput(
-        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
-        scope_description="user 'alice'",
-        crypto_assets=assets,
-        findings=findings or [],
-        policy_rules=[_RSA_RULE],
-        policy_version=1,
-        iana_catalog_version=1,
-        scan_ids=["s1"],
-    )
+def _input(assets, rules=(_RSA_RULE,), *, findings=()):
+    return evaluation_input(crypto_assets=assets, findings=list(findings), policy_rules=list(rules))
 
 
 def test_rsa_control_not_applicable_when_only_aes_present():
@@ -97,16 +87,7 @@ def test_no_assets_is_not_applicable():
 def test_a_control_whose_rules_are_missing_from_the_policy_is_not_evaluated():
     """The analyzer never ran the missing rule, so no finding can exist and PASSED would be a false attestation."""
     aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER)
-    data = EvaluationInput(
-        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
-        scope_description="user 'alice'",
-        crypto_assets=[aes],
-        findings=[],
-        policy_rules=[],
-        policy_version=1,
-        iana_catalog_version=1,
-        scan_ids=["s1"],
-    )
+    data = _input([aes], [])
     assert _applicability(_RSA_CONTROL, data) is _Applicability.RULES_UNRESOLVED
     result = default_evaluator(_RSA_CONTROL, data)
     assert result.status == ControlStatus.NOT_EVALUATED
@@ -129,29 +110,16 @@ _DISABLED_RSA_RULE = CryptoRule(
 )
 
 
-def _input_with_rules(assets, rules, *, findings=None):
-    return EvaluationInput(
-        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
-        scope_description="user 'alice'",
-        crypto_assets=assets,
-        findings=findings or [],
-        policy_rules=rules,
-        policy_version=1,
-        iana_catalog_version=1,
-        scan_ids=["s1"],
-    )
-
-
 def test_control_backed_only_by_disabled_rule_is_not_applicable():
     """A disabled rule is never evaluated, so no finding can exist and PASSED would be a false attestation."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
-    data = _input_with_rules([rsa], [_DISABLED_RSA_RULE])
+    data = _input([rsa], [_DISABLED_RSA_RULE])
     assert _applicability(_RSA_CONTROL, data) is _Applicability.RULES_DISABLED
 
 
 def test_disabled_rule_control_reports_not_applicable_not_passed():
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
-    data = _input_with_rules([rsa], [_DISABLED_RSA_RULE])
+    data = _input([rsa], [_DISABLED_RSA_RULE])
     result = default_evaluator(_RSA_CONTROL, data)
     assert result.status == ControlStatus.NOT_APPLICABLE
 
@@ -159,7 +127,7 @@ def test_disabled_rule_control_reports_not_applicable_not_passed():
 def test_enabled_rule_still_applicable_alongside_disabled_duplicate():
     """If at least one backing rule is enabled the control is still evaluable."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
-    data = _input_with_rules([rsa], [_RSA_RULE])
+    data = _input([rsa], [_RSA_RULE])
     assert _applicability(_RSA_CONTROL, data) is _Applicability.APPLICABLE
 
 
@@ -189,7 +157,7 @@ def test_evaluator_matches_finding_via_matched_rules():
             ],
         },
     }
-    data = _input_with_rules([], [], findings=[finding])
+    data = _input([], [], findings=[finding])
     result = default_evaluator(_MD5_CONTROL, data)
     assert result.status == ControlStatus.FAILED
     assert "f1" in result.evidence_finding_ids
@@ -205,6 +173,6 @@ def test_evaluator_ignores_finding_when_no_rule_matches():
             "matched_rules": [{"rule_id": "bsi-02102-md5"}],
         },
     }
-    data = _input_with_rules([], [], findings=[finding])
+    data = _input([], [], findings=[finding])
     result = default_evaluator(_MD5_CONTROL, data)
     assert result.status != ControlStatus.FAILED

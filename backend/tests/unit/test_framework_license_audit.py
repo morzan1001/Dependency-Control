@@ -3,37 +3,20 @@
 import pytest
 
 from app.schemas.project import LicensePolicySchema
-from app.services.analytics.scopes import ResolvedScope
-from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
 from tests.helpers.analyzers import analyze_cyclonedx
+from tests.helpers.compliance import evaluation_input
 
 
 def _eval_input(findings=None, policy=None):
-    return EvaluationInput(
-        resolved=ResolvedScope(scope="project", scope_id="p", project_ids=["p"]),
-        scope_description="project 'p'",
-        crypto_assets=[],
-        findings=findings or [],
-        policy_rules=[],
-        policy_version=1,
-        iana_catalog_version=1,
-        scan_ids=["s1"],
-        license_policy=LicensePolicySchema(**(policy or {})),
-    )
-
-
-def test_sync_evaluate_raises_runtime_error():
-    fw = LicenseAuditFramework()
-    with pytest.raises(RuntimeError, match="async-only"):
-        fw.evaluate(_eval_input())
+    return evaluation_input(findings=findings or [], license_policy=LicensePolicySchema(**(policy or {})))
 
 
 @pytest.mark.asyncio
 async def test_no_findings_all_controls_pass():
     fw = LicenseAuditFramework()
     policy = {"allow_strong_copyleft": False, "allow_network_copyleft": False}
-    result = await fw.evaluate_async(_eval_input(findings=[], policy=policy))
+    result = await fw.evaluate(_eval_input(findings=[], policy=policy))
     assert result.summary["failed"] == 0
     assert result.summary["total"] == 3  # strong + network + unknown-license controls
 
@@ -50,7 +33,7 @@ async def test_strong_copyleft_violation_fails():
             "waived": False,
         }
     ]
-    result = await fw.evaluate_async(_eval_input(findings=findings, policy=policy))
+    result = await fw.evaluate(_eval_input(findings=findings, policy=policy))
     failed = [c for c in result.controls if c.status == "failed"]
     assert any(c.control_id == "LICENSE-AUDIT-STRONG-COPYLEFT" for c in failed)
 
@@ -67,7 +50,7 @@ async def test_allowed_category_is_not_applicable():
             "waived": False,
         }
     ]
-    result = await fw.evaluate_async(_eval_input(findings=findings, policy=policy))
+    result = await fw.evaluate(_eval_input(findings=findings, policy=policy))
     strong_ctrl = next(c for c in result.controls if c.control_id == "LICENSE-AUDIT-STRONG-COPYLEFT")
     assert strong_ctrl.status == "not_applicable"
 
@@ -84,7 +67,7 @@ async def test_network_copyleft_violation_fails():
             "waived": False,
         }
     ]
-    result = await fw.evaluate_async(_eval_input(findings=findings, policy=policy))
+    result = await fw.evaluate(_eval_input(findings=findings, policy=policy))
     failed = [c for c in result.controls if c.status == "failed"]
     assert any(c.control_id == "LICENSE-AUDIT-NETWORK-COPYLEFT" for c in failed)
 
@@ -100,7 +83,7 @@ async def test_unknown_license_fails_identified_control():
             "waived": False,
         }
     ]
-    result = await fw.evaluate_async(_eval_input(findings=findings, policy={}))
+    result = await fw.evaluate(_eval_input(findings=findings, policy={}))
     ctrl = next(c for c in result.controls if c.control_id == "LICENSE-AUDIT-LICENSE-IDENTIFIED")
     assert ctrl.status == "failed"
     assert ctrl.evidence_finding_ids == ["f1"]
@@ -119,7 +102,7 @@ async def test_waived_finding_produces_waived_control():
             "waiver_reason": "accepted risk",
         }
     ]
-    result = await fw.evaluate_async(_eval_input(findings=findings, policy=policy))
+    result = await fw.evaluate(_eval_input(findings=findings, policy=policy))
     strong_ctrl = next(c for c in result.controls if c.control_id == "LICENSE-AUDIT-STRONG-COPYLEFT")
     assert strong_ctrl.status == "waived"
     assert "accepted risk" in strong_ctrl.waiver_reasons
@@ -143,7 +126,7 @@ async def test_analyzer_output_reaches_the_identified_control():
     normalize_license(aggregator, result, source="sbom.json")
     findings = [f.model_dump() | {"_id": f.id} for f in aggregator.get_findings()]
 
-    evaluation = await LicenseAuditFramework().evaluate_async(_eval_input(findings=findings, policy={}))
+    evaluation = await LicenseAuditFramework().evaluate(_eval_input(findings=findings, policy={}))
     ctrl = next(c for c in evaluation.controls if c.control_id == "LICENSE-AUDIT-LICENSE-IDENTIFIED")
     assert ctrl.status == "failed"
     assert len(ctrl.evidence_finding_ids) == 1

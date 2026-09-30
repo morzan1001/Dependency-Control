@@ -36,7 +36,6 @@ class Fips1403Framework:
     key: ReportFramework = ReportFramework.FIPS_140_3
     name: str = "FIPS 140-3 (Algorithm-level Conformance)"
     version: str = "2019"
-    source_url: str = "https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.140-3.pdf"
     disclaimer: str | None = (
         "Algorithm-level conformance only. Module-level CMVP certification status is out of scope of this report."
     )
@@ -45,8 +44,8 @@ class Fips1403Framework:
     def controls(self) -> list[ControlDefinition]:
         return algorithm_conformance_controls("FIPS-140-3", rsa_basis="NIST SP 800-140D")
 
-    def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        return evaluate_framework(self, data)
+    async def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
+        return evaluate_framework(self, self.controls, data)
 
 
 @functools.cache

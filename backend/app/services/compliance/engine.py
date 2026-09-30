@@ -58,15 +58,7 @@ class ComplianceReportEngine:
                 scope_id=report.scope_id,
             )
             framework = FRAMEWORK_REGISTRY[report.framework]
-            inputs = await self._gather_inputs(db, resolved, framework)
-            if hasattr(framework, "evaluate_async"):
-                evaluation = await framework.evaluate_async(inputs)  # type: ignore[attr-defined]
-            else:
-                evaluation = framework.evaluate(inputs)
-            # Every framework builds its own FrameworkEvaluation, so the engine is the one place
-            # that can guarantee no renderer receives a verdict without its coverage. A framework
-            # bounded by an input the engine does not gather widens it and keeps its own.
-            evaluation.coverage = evaluation.coverage or inputs.coverage
+            inputs, evaluation = await self.evaluate(db, resolved, framework)
             artifact_bytes, filename, mime = self._render(
                 report.format,
                 framework,
@@ -105,11 +97,20 @@ class ComplianceReportEngine:
                 completed_at=datetime.now(timezone.utc),
             )
 
+    async def evaluate(
+        self,
+        db: AsyncIOMotorDatabase,
+        resolved: ResolvedScope,
+        framework: ComplianceFramework,
+    ) -> tuple[EvaluationInput, FrameworkEvaluation]:
+        inputs = await self._gather_inputs(db, resolved, framework)
+        return inputs, await framework.evaluate(inputs)
+
     async def _gather_inputs(
         self,
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
-        framework: ComplianceFramework | None = None,
+        framework: ComplianceFramework,
     ) -> EvaluationInput:
         scan_pairs = await self._pick_scan_ids(db, resolved)
         scan_ids = [sid for _, sid in scan_pairs]
@@ -193,7 +194,7 @@ class ComplianceReportEngine:
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
         scan_ids: list[str],
-        framework: ComplianceFramework | None = None,
+        framework: ComplianceFramework,
     ) -> tuple[list[dict], int]:
         """The findings the controls are evaluated over, and how many the scope holds. The count
         costs a round trip only once the fetch has saturated."""
@@ -223,27 +224,23 @@ class ComplianceReportEngine:
         )
         return results, in_scope
 
-    def _finding_type_filter(self, framework: ComplianceFramework | None) -> Any:
-        """Findings-query `type` clause per framework; unknown framework loads the union."""
-        key = getattr(framework, "key", None)
-        if key == ReportFramework.CVE_REMEDIATION_SLA:
+    def _finding_type_filter(self, framework: ComplianceFramework) -> Any:
+        """Findings-query `type` clause per framework."""
+        if framework.key == ReportFramework.CVE_REMEDIATION_SLA:
             return "vulnerability"
-        if key == ReportFramework.LICENSE_AUDIT:
+        if framework.key == ReportFramework.LICENSE_AUDIT:
             return "license"
-        if key is None:
-            return {"$in": sorted(CRYPTO_FINDING_TYPES | {"vulnerability", "license"})}
         return {"$in": sorted(CRYPTO_FINDING_TYPES)}
 
     async def _resolve_license_policy(
         self,
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
-        framework: ComplianceFramework | None,
+        framework: ComplianceFramework,
     ) -> LicensePolicySchema:
         """The single project's saved policy; every other scope, and a crypto framework, gets the default."""
-        key = getattr(framework, "key", None)
         project_ids = resolved.project_ids or []
-        if key not in (ReportFramework.LICENSE_AUDIT, None) or resolved.scope != "project" or len(project_ids) != 1:
+        if framework.key != ReportFramework.LICENSE_AUDIT or resolved.scope != "project" or len(project_ids) != 1:
             return LicensePolicySchema()
         doc = await db["projects"].find_one({"_id": project_ids[0]}, {"analyzer_settings.license_compliance": 1})
         return license_policy_from_settings(((doc or {}).get("analyzer_settings") or {}).get("license_compliance"))
@@ -265,9 +262,7 @@ class ComplianceReportEngine:
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
     ) -> tuple[bytes, str, str]:
-        renderer = RENDERER_REGISTRY[fmt]
-        disclaimer = getattr(framework, "disclaimer", None)
-        return renderer.render(evaluation, report, disclaimer=disclaimer)
+        return RENDERER_REGISTRY[fmt].render(evaluation, report, disclaimer=framework.disclaimer)
 
     async def _store_artifact(
         self,

@@ -1,11 +1,9 @@
-"""PQC Migration Plan framework; async-only (generator issues DB queries), one ControlResult per plan item."""
+"""PQC Migration Plan framework: one ControlResult per plan item."""
 
 from datetime import datetime, timezone
-from typing import ClassVar
 
 from app.models.finding import Severity
 from app.schemas.compliance import (
-    ControlDefinition,
     ControlResult,
     ControlStatus,
     EvaluationCoverage,
@@ -43,22 +41,13 @@ class PQCMigrationPlanFramework:
     key: ReportFramework = ReportFramework.PQC_MIGRATION_PLAN
     name: str = "PQC Migration Plan"
     version: str = "1"
-    source_url: str = "https://csrc.nist.gov/Projects/post-quantum-cryptography"
     disclaimer: str | None = (
         "This report enumerates currently-detected quantum-vulnerable crypto "
         "assets and their NIST-standardised PQC successors. It is not a "
         "formal compliance assessment against an external standard."
     )
-    controls: ClassVar[list[ControlDefinition]] = []
 
-    def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        """Sync entry point unsupported; dispatch via evaluate_async."""
-        raise RuntimeError("Use evaluate_async for PQC framework")
-
-    async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
-        if data.db is None:
-            raise ValueError("EvaluationInput.db is required for PQC meta-framework")
-
+    async def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
         plan = await PQCMigrationPlanGenerator(data.db).generate(
             resolved=data.resolved,
             limit=_PLAN_ITEM_LIMIT,
@@ -79,11 +68,9 @@ class PQCMigrationPlanFramework:
         )
 
 
-def _coverage(data: EvaluationInput, plan: MigrationPlanResponse) -> EvaluationCoverage | None:
+def _coverage(data: EvaluationInput, plan: MigrationPlanResponse) -> EvaluationCoverage:
     """The engine's coverage widened by the plan's own bound: past the ceiling the control list
     is a cut of a plan whose summary counts every item."""
-    if data.coverage is None:
-        return None
     return data.coverage.model_copy(
         update={
             "plan_items": InputCoverage(

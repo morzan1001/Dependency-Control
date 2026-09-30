@@ -120,7 +120,6 @@ class FrameworkEvaluation(BaseModel):
     summary: dict[str, int] = Field(default_factory=dict)
     residual_risks: list[ResidualRisk] = Field(default_factory=list)
     inputs_fingerprint: str
-    # Set by the engine, which is the only caller that knows the scope's true finding count.
-    coverage: EvaluationCoverage | None = None
+    coverage: EvaluationCoverage
 
     model_config = ConfigDict(use_enum_values=True)

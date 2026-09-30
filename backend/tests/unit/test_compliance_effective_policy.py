@@ -50,10 +50,10 @@ async def test_a_rule_the_project_disabled_makes_its_control_not_applicable_rath
     await _project_with_md5_and_an_override_disabling_its_rule(db)
     framework = FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A]
 
-    inputs = await ComplianceReportEngine()._gather_inputs(
+    inputs, evaluation = await ComplianceReportEngine().evaluate(
         db, ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]), framework
     )
-    statuses = {c.control_id: c.status for c in framework.evaluate(inputs).controls}
+    statuses = {c.control_id: c.status for c in evaluation.controls}
 
     assert statuses[_MD5_CONTROL] == ControlStatus.NOT_APPLICABLE
     assert (inputs.policy_version, inputs.override_version) == (3, 2)
@@ -81,7 +81,9 @@ async def test_a_project_report_under_the_global_lock_names_no_override(db):
     await SystemSettingsRepository(db).update({"crypto_policy_mode": "global"})
 
     inputs = await ComplianceReportEngine()._gather_inputs(
-        db, ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]), None
+        db,
+        ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]),
+        FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A],
     )
 
     assert next(r for r in inputs.policy_rules if r.rule_id == "nist-131a-md5").enabled

@@ -14,4 +14,4 @@ RENDERER_REGISTRY: "dict[ReportFormat, Renderer]" = {
     ReportFormat.SARIF: SarifRenderer(),
 }
 
-__all__ = ["RENDERER_REGISTRY", "Renderer"]
+__all__ = ["RENDERER_REGISTRY"]

@@ -16,8 +16,8 @@ from app.schemas.compliance import ControlStatus
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
-from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
+from tests.helpers.compliance import evaluation_input
 
 _PROJECT = "sla-project"
 _OTHER_PROJECT = "other-project"
@@ -179,17 +179,8 @@ async def test_a_critical_cve_first_seen_200_days_ago_fails_its_sla(db, database
     resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
     findings, _ = await ComplianceReportEngine()._collect_findings(db, resolved, ["scan-2"], framework)
 
-    evaluation = await framework.evaluate_async(
-        EvaluationInput(
-            resolved=resolved,
-            scope_description=f"project '{_PROJECT}'",
-            crypto_assets=[],
-            findings=findings,
-            policy_rules=[],
-            policy_version=None,
-            iana_catalog_version=None,
-            scan_ids=["scan-2"],
-        )
+    evaluation = await framework.evaluate(
+        evaluation_input(resolved=resolved, findings=findings, scan_ids=["scan-2"], db=db)
     )
 
     critical = next(c for c in evaluation.controls if c.control_id == "CVE-SLA-CRITICAL")

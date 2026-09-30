@@ -1,9 +1,12 @@
 import csv
-import io
 
 from app.schemas.compliance import ControlStatus, ReportFormat
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
 from tests.unit.test_renderer_json import _evaluation, _report
+
+
+def _table(out: bytes) -> list[str]:
+    return [ln for ln in out.decode("utf-8").splitlines() if not ln.startswith("#")]
 
 
 def test_csv_renderer_outputs_rows_per_control():
@@ -13,8 +16,7 @@ def test_csv_renderer_outputs_rows_per_control():
     out, filename, mime = r.render(_evaluation(), rep)
     assert mime == "text/csv"
     assert filename.endswith(".csv")
-    reader = csv.DictReader(io.StringIO(out.decode("utf-8")))
-    rows = list(reader)
+    rows = list(csv.DictReader(_table(out)))
     assert len(rows) == 1
     assert rows[0]["control_id"] == "NIST-131A-01"
     assert rows[0]["status"] == "failed"
@@ -32,7 +34,7 @@ def test_csv_marks_a_waived_control_in_the_waived_column():
     rep = _report()
     rep.format = ReportFormat.CSV
     out, _, _ = CsvRenderer().render(evaluation, rep)
-    rows = list(csv.DictReader(io.StringIO(out.decode("utf-8"))))
+    rows = list(csv.DictReader(_table(out)))
     assert [r["status"] for r in rows] == ["failed", "waived"]
     assert [r["waived"] for r in rows] == ["false", "true"]
 
@@ -42,7 +44,7 @@ def test_csv_header_present():
     rep = _report()
     rep.format = ReportFormat.CSV
     out, _, _ = r.render(_evaluation(), rep)
-    first_line = out.decode("utf-8").splitlines()[0]
+    first_line = _table(out)[0]
     assert "control_id" in first_line
     assert "title" in first_line
     assert "remediation" in first_line
@@ -64,10 +66,7 @@ def test_csv_renderer_includes_disclaimer_comment():
     comment_block = [ln for ln in lines if ln.startswith("#")]
     assert any("# Framework:" in ln for ln in comment_block)
     assert any("# Generated:" in ln for ln in comment_block)
-    header_idx = next(i for i, ln in enumerate(lines) if ln.startswith("control_id"))
-    body = "\n".join(lines[header_idx:])
-    reader = csv.DictReader(io.StringIO(body))
-    rows = list(reader)
+    rows = list(csv.DictReader(_table(out)))
     assert len(rows) == 1
     assert rows[0]["control_id"] == "NIST-131A-01"
 
@@ -77,6 +76,4 @@ def test_csv_renderer_omits_disclaimer_when_none():
     rep = _report()
     rep.format = ReportFormat.CSV
     out, _, _ = r.render(_evaluation(), rep, disclaimer=None)
-    text = out.decode("utf-8")
-    assert not text.startswith("#")
-    assert text.splitlines()[0].startswith("control_id")
+    assert "# Disclaimer:" not in out.decode("utf-8")
