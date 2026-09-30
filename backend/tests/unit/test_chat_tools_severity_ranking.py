@@ -27,6 +27,9 @@ _ODD_SEVERITY = "SEVERE"
 _SEV_CRITICAL = "CRITICAL"
 _SEV_HIGH = "HIGH"
 _SEV_LOW = "LOW"
+_SEV_NEGLIGIBLE = "NEGLIGIBLE"
+_SEV_INFO = "INFO"
+_TOTAL = _LOW_COUNT + _CRITICAL_COUNT
 
 
 @pytest.fixture
@@ -76,7 +79,7 @@ async def test_criticals_survive_a_flood_of_low_findings(flooded, admin_user, mo
     monkeypatch.setattr(registry_module, "_FINDING_RANK_FETCH_CAP", _CAP)
 
     result = await ChatToolRegistry().execute_tool(
-        "get_project_findings", {"project_id": _PROJECT, "limit": _ANSWER_LIMIT}, admin_user, flooded
+        "get_scan_findings", {"project_id": _PROJECT, "limit": _ANSWER_LIMIT}, admin_user, flooded
     )
 
     assert [f["severity"] for f in result["findings"]] == [_SEV_CRITICAL] * _CRITICAL_COUNT
@@ -88,7 +91,7 @@ async def test_a_tier_larger_than_the_cap_says_its_order_is_a_sample(flooded, ad
     monkeypatch.setattr(registry_module, "_FINDING_RANK_FETCH_CAP", _CAP)
 
     result = await ChatToolRegistry().execute_tool(
-        "get_project_findings", {"project_id": _PROJECT, "limit": _LOW_COUNT}, admin_user, flooded
+        "get_scan_findings", {"project_id": _PROJECT, "limit": _LOW_COUNT}, admin_user, flooded
     )
 
     assert _SEV_LOW in result["ranking_note"]
@@ -98,7 +101,7 @@ async def test_a_tier_larger_than_the_cap_says_its_order_is_a_sample(flooded, ad
 @pytest.mark.asyncio
 async def test_a_complete_tier_walk_carries_no_caveat(flooded, admin_user):
     result = await ChatToolRegistry().execute_tool(
-        "get_project_findings", {"project_id": _PROJECT, "limit": _ANSWER_LIMIT}, admin_user, flooded
+        "get_scan_findings", {"project_id": _PROJECT, "limit": _ANSWER_LIMIT}, admin_user, flooded
     )
 
     assert "ranking_note" not in result
@@ -108,7 +111,7 @@ async def test_a_complete_tier_walk_carries_no_caveat(flooded, admin_user):
 async def test_a_requested_severity_narrows_the_walk_instead_of_being_overwritten(flooded, admin_user):
     """The tier walk replaces the query's `severity` clause, so it has to be derived from it."""
     result = await ChatToolRegistry().execute_tool(
-        "get_project_findings",
+        "get_scan_findings",
         {"project_id": _PROJECT, "severity": _SEV_LOW, "limit": _LOW_COUNT},
         admin_user,
         flooded,
@@ -124,7 +127,7 @@ async def test_a_severity_outside_the_ranked_set_is_still_reachable(flooded, adm
     flooded.findings._docs[odd["_id"]] = odd
 
     result = await ChatToolRegistry().execute_tool(
-        "get_project_findings",
+        "get_scan_findings",
         {"project_id": _PROJECT, "limit": _LOW_COUNT + _CRITICAL_COUNT + 1},
         admin_user,
         flooded,
@@ -140,10 +143,59 @@ async def test_severity_ordering_survives_across_tiers(flooded, admin_user):
     flooded.findings._docs[high["_id"]] = high
 
     result = await ChatToolRegistry().execute_tool(
-        "get_project_findings",
+        "get_scan_findings",
         {"project_id": _PROJECT, "limit": _CRITICAL_COUNT + 1},
         admin_user,
         flooded,
     )
 
     assert result["findings"][-1]["severity"] == _SEV_HIGH
+
+
+@pytest.mark.asyncio
+async def test_a_tier_is_ordered_by_epss(flooded, admin_user):
+    result = await ChatToolRegistry().execute_tool(
+        "get_scan_findings", {"project_id": _PROJECT, "limit": _CRITICAL_COUNT}, admin_user, flooded
+    )
+
+    assert [f["finding_id"] for f in result["findings"]] == [f"{_SEV_CRITICAL}-{i}" for i in (2, 1, 0)]
+
+
+@pytest.mark.asyncio
+async def test_negligible_findings_rank_above_info_ones(flooded, admin_user):
+    for doc in (_finding(0, _SEV_INFO), _finding(0, _SEV_NEGLIGIBLE)):
+        flooded.findings._docs[doc["_id"]] = doc
+
+    result = await ChatToolRegistry().execute_tool(
+        "get_scan_findings", {"project_id": _PROJECT, "limit": _TOTAL + 2}, admin_user, flooded
+    )
+
+    assert [f["severity"] for f in result["findings"]][-2:] == [_SEV_NEGLIGIBLE, _SEV_INFO]
+
+
+@pytest.mark.asyncio
+async def test_a_full_page_names_the_population_it_was_cut_from(flooded, admin_user):
+    result = await ChatToolRegistry().execute_tool(
+        "get_scan_findings", {"project_id": _PROJECT, "limit": _ANSWER_LIMIT}, admin_user, flooded
+    )
+
+    assert (result["count"], result["findings_total"]) == (_ANSWER_LIMIT, _TOTAL)
+
+
+@pytest.mark.asyncio
+async def test_a_page_with_room_left_is_the_whole_population(flooded, admin_user):
+    result = await ChatToolRegistry().execute_tool(
+        "get_scan_findings", {"project_id": _PROJECT, "limit": _TOTAL + 1}, admin_user, flooded
+    )
+
+    assert result["count"] == result["findings_total"] == _TOTAL
+
+
+@pytest.mark.asyncio
+async def test_a_search_cut_short_names_how_many_matched(flooded, admin_user):
+    result = await ChatToolRegistry().execute_tool(
+        "search_findings", {"query": "lib-", "limit": _ANSWER_LIMIT}, admin_user, flooded
+    )
+
+    assert (result["count"], result["findings_total"]) == (_ANSWER_LIMIT, _TOTAL)
+    assert result["_bounded_read"] is True

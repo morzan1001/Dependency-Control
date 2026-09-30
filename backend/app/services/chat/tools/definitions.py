@@ -2,19 +2,48 @@
 
 from typing import Any, get_args
 
-from app.core.constants import ScopeName
+from app.core.constants import (
+    MAX_COMPLIANCE_REPORT_PAGE,
+    MAX_CRYPTO_ASSET_PAGE,
+    MAX_CRYPTO_HOTSPOT_PAGE,
+    MAX_POLICY_AUDIT_PAGE,
+    MAX_PQC_PLAN_ITEMS,
+    ScopeName,
+)
 from app.core.permissions import Permissions
+from app.models.finding import FindingType, Severity
 from app.schemas.analytics import GroupBy, Metric
+
+from ._helpers import MAX_DAY_WINDOW, MAX_FINDING_ROWS, MAX_PLAN_STEPS, MAX_SUMMARY_ROWS
 
 _DESC_PROJECT_ID = "The project ID"
 _DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."
-_DESC_MAX_FINDINGS_10_25 = "Max findings (default 10, max 25)."
 _DESC_OPTIONAL_SCAN_ID = (
     "Optional scan ID. Omit it to ask about the project's head build — the newest usable build on "
     "its default branch. Pass one only when the question is about that specific build; a scan ID "
     "taken from the top of get_scan_history is frequently a queued run or a deleted branch."
 )
 _DESC_ANSWER_NAMES_BUILD = "The result's 'scan' object names the build described and whether it is head."
+_SEVERITIES = [s.value for s in Severity]
+_FINDING_TYPES = [t.value for t in FindingType]
+_SEVERITY_FILTER = {"type": "string", "enum": _SEVERITIES, "description": "Filter by severity."}
+_TYPE_FILTER = {
+    "type": "string",
+    "enum": _FINDING_TYPES,
+    "description": "Filter by finding type. Typosquats are malware findings from the typosquatting scanner.",
+}
+
+
+def _bounded(default: int, maximum: int, noun: str) -> dict[str, Any]:
+    """An integer argument that checked_arguments defaults and holds to [1, maximum]."""
+    return {
+        "type": "integer",
+        "default": default,
+        "minimum": 1,
+        "maximum": maximum,
+        "description": f"{noun} (default {default}, max {maximum}).",
+    }
+
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
@@ -23,7 +52,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "list_projects",
             "description": (
                 "List projects the user can access, with stats (vulnerability counts, "
-                "last scan date). Returns max 15 by default. For 'where should I start' "
+                "last scan date). For 'where should I start' "
                 "use get_top_priority_findings or get_hotspots instead — those answer "
                 "the prioritisation question directly."
             ),
@@ -34,7 +63,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "Optional case-insensitive substring filter on project name.",
                     },
-                    "limit": {"type": "integer", "description": "Max projects (default 15, max 50)."},
+                    "limit": _bounded(15, MAX_SUMMARY_ROWS, "Max projects"),
                 },
                 "required": [],
             },
@@ -96,7 +125,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
-                    "limit": {"type": "integer", "description": "Max number of scans to return (default 10)"},
+                    "limit": _bounded(10, MAX_SUMMARY_ROWS, "Max scans"),
                 },
                 "required": ["project_id"],
             },
@@ -125,46 +154,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_scan_findings",
             "description": (
-                "Get findings from a scan, optionally filtered by severity or type. Answers about the "
-                f"project's head build unless scan_id says otherwise. {_DESC_ANSWER_NAMES_BUILD}"
+                "Get findings from a scan, worst first, optionally filtered by severity or type. Answers "
+                f"about the project's head build unless scan_id says otherwise. {_DESC_ANSWER_NAMES_BUILD} "
+                "findings_total says how many findings match."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "scan_id": {"type": "string", "description": _DESC_OPTIONAL_SCAN_ID},
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
-                    "severity": {
-                        "type": "string",
-                        "description": "Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO",
-                    },
-                    "type": {
-                        "type": "string",
-                        "description": "Filter by type: vulnerability, secret, sast, malware, license, typosquat",
-                    },
-                    "limit": {"type": "integer", "description": "Max findings to return (default 50)"},
-                },
-                "required": ["project_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_project_findings",
-            "description": "Get the current/latest findings for a project, optionally filtered.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
-                    "severity": {
-                        "type": "string",
-                        "description": "Filter by severity: CRITICAL, HIGH, MEDIUM, LOW, INFO",
-                    },
-                    "type": {
-                        "type": "string",
-                        "description": "Filter by type: vulnerability, secret, sast, malware, license, typosquat",
-                    },
-                    "limit": {"type": "integer", "description": "Max findings to return (default 50)"},
+                    "severity": _SEVERITY_FILTER,
+                    "type": _TYPE_FILTER,
+                    "limit": _bounded(10, MAX_FINDING_ROWS, "Max findings"),
                 },
                 "required": ["project_id"],
             },
@@ -193,7 +194,10 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "search_findings",
-            "description": "Search across all findings the user has access to. Use for cross-project queries like 'find all log4j vulnerabilities'.",
+            "description": (
+                "Search across all findings the user has access to. Use for cross-project queries like "
+                "'find all log4j vulnerabilities'. findings_total says how many findings match."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -201,9 +205,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                         "type": "string",
                         "description": "Search term (CVE ID, package name, description keyword)",
                     },
-                    "severity": {"type": "string", "description": "Filter by severity"},
-                    "type": {"type": "string", "description": "Filter by type"},
-                    "limit": {"type": "integer", "description": "Max results (default 50)"},
+                    "severity": _SEVERITY_FILTER,
+                    "type": _TYPE_FILTER,
+                    "limit": _bounded(10, MAX_FINDING_ROWS, "Max findings"),
                 },
                 "required": ["query"],
             },
@@ -213,7 +217,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_findings_by_severity",
-            "description": "Get a count breakdown of findings grouped by severity for a project.",
+            "description": "Count the unwaived findings of a project's head build, grouped by severity.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -227,7 +231,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_findings_by_type",
-            "description": "Get findings grouped by type (vulnerability, secret, sast, malware, license, typosquat) for a project.",
+            "description": "Count the unwaived findings of a project's head build, grouped by finding type.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -263,7 +267,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": "Optional: limit to a specific project"},
-                    "days": {"type": "integer", "description": "Number of days to look back (default 30)"},
+                    "days": _bounded(30, MAX_DAY_WINDOW, "Days to look back"),
                 },
                 "required": [],
             },
@@ -291,7 +295,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "limit": {"type": "integer", "description": "Number of hotspots to return (default 10)"},
+                    "limit": _bounded(10, MAX_SUMMARY_ROWS, "Max hotspots"),
                 },
                 "required": [],
             },
@@ -408,20 +412,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_top_priority_findings",
             "description": (
-                "Return the top N most urgent findings across ALL accessible projects, "
-                "sorted by severity (CRITICAL first) and EPSS score. Use this when the "
-                "user asks 'where should I start?', 'what should I fix first?' or "
-                "'which project has the biggest problem?'. Returns a compact list "
-                "with finding_id, severity, CVE, affected component and fix_version, "
+                "Return the top N most urgent unwaived CRITICAL/HIGH findings across ALL accessible "
+                "projects: actively exploited ones first, then CRITICAL before HIGH, each group by EPSS "
+                "score and highest advisory CVSS. Use this when the user asks 'where should I start?', "
+                "'what should I fix first?' or 'which project has the biggest problem?'. Returns a "
+                "compact list with finding_id, severity, CVE, affected component and fixed_version, "
                 "so you can give an actionable answer in a single turn."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "How many findings to return (default 5, max 20).",
-                    },
+                    "limit": _bounded(5, MAX_FINDING_ROWS, "Max findings"),
                     "project_id": {
                         "type": "string",
                         "description": _DESC_OPTIONAL_SINGLE_PROJECT,
@@ -447,10 +448,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
-                    "max_steps": {
-                        "type": "integer",
-                        "description": "Maximum number of plan steps to return (default 10, max 25).",
-                    },
+                    "max_steps": _bounded(10, MAX_PLAN_STEPS, "Max plan steps"),
                 },
                 "required": ["project_id"],
             },
@@ -471,7 +469,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_OPTIONAL_SINGLE_PROJECT},
-                    "limit": {"type": "integer", "description": "Max findings to return (default 10, max 25)."},
+                    "limit": _bounded(10, MAX_FINDING_ROWS, "Max findings"),
                 },
                 "required": [],
             },
@@ -522,24 +520,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "scan_id_b": {"type": "string", "description": "Optional newer scan."},
                     "severity": {
                         "type": "array",
-                        "items": {
-                            "type": "string",
-                            "enum": ["critical", "high", "medium", "low", "info"],
-                        },
+                        "items": {"type": "string", "enum": _SEVERITIES},
                         "description": "Optional: restrict items to these severities.",
                     },
                     "finding_type": {
                         "type": "array",
-                        "items": {"type": "string"},
+                        "items": {"type": "string", "enum": _FINDING_TYPES},
                         "description": "Optional: restrict items to these finding types.",
                     },
-                    "page_size": {
-                        "type": "integer",
-                        "default": 50,
-                        "minimum": 1,
-                        "maximum": 200,
-                        "description": "Items per page in the returned envelope.",
-                    },
+                    "page_size": _bounded(50, 200, "Items per page in the returned envelope"),
                 },
                 "required": ["project_id"],
             },
@@ -560,7 +549,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_OPTIONAL_SINGLE_PROJECT},
-                    "limit": {"type": "integer", "description": _DESC_MAX_FINDINGS_10_25},
+                    "limit": _bounded(10, MAX_FINDING_ROWS, "Max findings"),
                 },
                 "required": [],
             },
@@ -633,7 +622,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_stale_findings",
             "description": (
-                "Return findings that have been open for longer than N days — useful "
+                "Return unwaived findings that have been open for longer than N days — useful "
                 "for compliance / SLA tracking. A finding is considered stale when the "
                 "same finding_id exists in an older scan (> N days ago) of the same "
                 "project AND is still present in the latest scan. Use when the user "
@@ -642,13 +631,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "days_open": {"type": "integer", "description": "Minimum open age in days (default 30)."},
+                    "days_open": _bounded(30, MAX_DAY_WINDOW, "Minimum open age in days"),
                     "project_id": {"type": "string", "description": "Optional: restrict to one project."},
                     "severity_min": {
                         "type": "string",
                         "description": "Min severity, one of CRITICAL/HIGH/MEDIUM/LOW (default HIGH).",
                     },
-                    "limit": {"type": "integer", "description": _DESC_MAX_FINDINGS_10_25},
+                    "limit": _bounded(10, MAX_FINDING_ROWS, "Max findings"),
                 },
                 "required": [],
             },
@@ -659,7 +648,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_license_violations",
             "description": (
-                "Return license-compliance findings specifically (type=license). Use "
+                "Return unwaived license-compliance findings specifically (type=license). Use "
                 "when the user asks about legal / license issues, e.g. 'do we have GPL "
                 "in proprietary code?' or 'license violations across the org'."
             ),
@@ -667,7 +656,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": "Optional: one project."},
-                    "limit": {"type": "integer", "description": _DESC_MAX_FINDINGS_10_25},
+                    "limit": _bounded(10, MAX_FINDING_ROWS, "Max findings"),
                 },
                 "required": [],
             },
@@ -685,7 +674,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "days": {"type": "integer", "description": "Look-ahead window in days (default 30)."},
+                    "days": _bounded(30, MAX_DAY_WINDOW, "Look-ahead window in days"),
                 },
                 "required": [],
             },
@@ -721,8 +710,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "days": {"type": "integer", "description": "Threshold in days (default 14)."},
-                    "limit": {"type": "integer", "description": "Max projects (default 10, max 50)."},
+                    "days": _bounded(14, MAX_DAY_WINDOW, "Threshold in days"),
+                    "limit": _bounded(10, MAX_SUMMARY_ROWS, "Max projects"),
                 },
                 "required": [],
             },
@@ -766,7 +755,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": "Optional: filter by project"},
-                    "limit": {"type": "integer", "description": "Max results (default 20)"},
+                    "limit": _bounded(20, MAX_SUMMARY_ROWS, "Max archives"),
                 },
                 "required": [],
             },
@@ -832,7 +821,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "primitive": {"type": "string", "description": "Optional filter by primitive (e.g. 'hash')"},
                     "name_search": {"type": "string", "description": "Optional substring filter on asset name"},
                     "skip": {"type": "integer", "description": "Number of items to skip (default 0)"},
-                    "limit": {"type": "integer", "description": "Max results (default 100, max 500)"},
+                    "limit": _bounded(100, MAX_CRYPTO_ASSET_PAGE, "Max assets"),
                 },
                 "required": ["project_id"],
             },
@@ -918,7 +907,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "project_id": {"type": "string"},
                     "group_by": {"type": "string", "enum": list(get_args(GroupBy))},
-                    "limit": {"type": "integer", "default": 20, "maximum": 100},
+                    "limit": _bounded(20, MAX_CRYPTO_HOTSPOT_PAGE, "Max hotspots"),
                 },
                 "required": ["project_id"],
             },
@@ -937,7 +926,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "project_id": {"type": "string"},
                     "metric": {"type": "string", "enum": list(get_args(Metric))},
-                    "days": {"type": "integer", "default": 30, "minimum": 1, "maximum": 365},
+                    "days": _bounded(30, MAX_DAY_WINDOW, "Days to look back"),
                 },
                 "required": ["project_id"],
             },
@@ -961,13 +950,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "project_id": {"type": "string"},
                     "from_scan_id": {"type": "string", "description": "The baseline scan ID"},
                     "to_scan_id": {"type": "string", "description": "The target scan ID"},
-                    "page_size": {
-                        "type": "integer",
-                        "default": 50,
-                        "minimum": 1,
-                        "maximum": 200,
-                        "description": "Items per page in the returned envelope.",
-                    },
+                    "page_size": _bounded(50, 200, "Items per page in the returned envelope"),
                 },
                 "required": ["project_id", "from_scan_id", "to_scan_id"],
             },
@@ -1006,7 +989,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "limit": {"type": "integer", "default": 500, "maximum": 2000},
+                    "limit": _bounded(500, MAX_PQC_PLAN_ITEMS, "Max plan items"),
                 },
                 "required": ["project_id"],
             },
@@ -1022,7 +1005,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "project_id": {"type": "string"},
                     "framework": {"type": "string"},
-                    "limit": {"type": "integer", "default": 10, "maximum": 50},
+                    "limit": _bounded(10, MAX_COMPLIANCE_REPORT_PAGE, "Max reports"),
                 },
             },
         },
@@ -1037,7 +1020,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "properties": {
                     "policy_scope": {"type": "string", "enum": ["system", "project"]},
                     "project_id": {"type": "string"},
-                    "limit": {"type": "integer", "default": 20, "maximum": 100},
+                    "limit": _bounded(20, MAX_POLICY_AUDIT_PAGE, "Max entries"),
                 },
                 "required": ["policy_scope"],
             },

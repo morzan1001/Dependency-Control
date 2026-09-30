@@ -7,6 +7,7 @@ import pytest
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools._arguments import checked_arguments
 from tests.helpers.permission_presets import PRESET_ADMIN
 
 _NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
@@ -72,7 +73,8 @@ def _seed_dependency(db, name, version, direct=True, dep_type="npm"):
 
 
 async def _plan(db, user):
-    result = await ChatToolRegistry()._dispatch("generate_remediation_plan", {"project_id": "proj-1"}, user, db)
+    args = checked_arguments("generate_remediation_plan", {"project_id": "proj-1"})
+    result = await ChatToolRegistry()._dispatch("generate_remediation_plan", args, user, db)
     assert "plan" in result, result
     return result
 

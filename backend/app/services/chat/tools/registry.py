@@ -20,13 +20,9 @@ from app.api.v1.helpers.webhooks import (
     check_webhook_permission,
 )
 from app.core.constants import (
+    ANALYTICS_MAX_SCOPE_PROJECTS,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
-    MAX_COMPLIANCE_REPORT_PAGE,
-    MAX_CRYPTO_ASSET_PAGE,
-    MAX_CRYPTO_HOTSPOT_PAGE,
-    MAX_POLICY_AUDIT_PAGE,
-    MAX_PQC_PLAN_ITEMS,
     SEVERITY_ORDER,
     get_severity_value,
 )
@@ -34,8 +30,8 @@ from app.core.cve import advisory_id, advisory_ids, advisory_match, canonical_cv
 from app.core.epss import bucket_epss
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
-from app.core.risk_scoring import calculate_exploit_maturity, reachability_display_tier
-from app.models.finding import FindingType, Severity
+from app.core.risk_scoring import ACTIVELY_EXPLOITED_MATURITY, calculate_exploit_maturity, reachability_display_tier
+from app.models.finding import Severity
 from app.models.project import Project
 from app.models.user import User
 from app.models.waiver import is_waiver_active
@@ -59,12 +55,7 @@ from app.services.recommendation.common import live_advisories, max_advisory_cvs
 
 from ._arguments import ToolArgumentError, checked_arguments
 from ._helpers import (
-    MAX_DAY_WINDOW,
-    MAX_FINDING_ROWS,
-    MAX_PLAN_STEPS,
-    MAX_SUMMARY_ROWS,
     _breaking_risk,
-    _clamp_limit,
     _clip_value,
     _compare_versions,
     _ensure_list,
@@ -140,6 +131,10 @@ _RANKING_SAMPLED = (
     "Narrow the question — a single project, or a finding type — for an exact answer."
 )
 
+# What counts as open: the scan stats and REST analytics leave waived findings out, so every count and
+# priority list does too.
+_ACTIVE: dict[str, Any] = {"waived": {"$ne": True}}
+
 # How many projects the summary names as the worst; projects tie on their critical count often
 # enough that the id has to break it, or the same estate ranks differently request to request.
 _TOP_RISKY = 3
@@ -159,10 +154,6 @@ _CVE_OCCURRENCE_READ = 25
 _WAIVER_STATE_READ = 50
 _EXPIRING_WAIVER_READ = 25
 _TEAM_RISK_PROJECT_READ = 500
-
-# A breakdown groups over a closed enum, so its read bound is the size of that enum: any smaller
-# number returns some of the buckets under a key that reads as all of them.
-_FINDING_TYPE_BUCKETS = len(FindingType)
 
 # A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
 # aggregates only.
@@ -190,6 +181,10 @@ def _stat(stats: dict[str, Any] | None, severity: str) -> int:
 def _row_project_id(row: dict[str, Any]) -> str:
     """A row's project id as a name-lookup key; the empty string for a row carrying none."""
     return str(row.get("project_id") or "")
+
+
+def _slim_with_project(rows: list[dict[str, Any]], names: dict[str, str]) -> list[dict[str, Any]]:
+    return [{**_serialize_finding_for_llm(f), "project_name": names.get(_row_project_id(f), "")} for f in rows]
 
 
 # How a dependency's directness was established. `direct` alone cannot express it: an
@@ -231,18 +226,6 @@ def _waiver_state(finding: dict[str, Any], vulnerability_id: str) -> dict[str, A
     }
 
 
-def _rank_findings(findings: list[dict[str, Any]]) -> None:
-    """Sort findings in place by severity rank desc, then details.epss_score and the highest advisory CVSS desc."""
-    findings.sort(
-        key=lambda f: (
-            get_severity_value(f.get("severity")),
-            _number((f.get("details") or {}).get("epss_score")),
-            _number(max_advisory_cvss(f.get("details") or {})),
-        ),
-        reverse=True,
-    )
-
-
 def _severity_tiers(requested: Any) -> list[Any]:
     """The `severity` clauses to walk, worst first. A caller's own clause narrows the walk instead
     of being overwritten, so a tool asking for CRITICAL still only ever sees CRITICAL."""
@@ -281,7 +264,13 @@ async def _ranked_findings(
                 total=await db["findings"].count_documents(tier_query),
                 cap=_FINDING_RANK_FETCH_CAP,
             )
-        _rank_findings(candidates)
+        candidates.sort(
+            key=lambda f: (
+                _number((f.get("details") or {}).get("epss_score")),
+                _number(max_advisory_cvss(f.get("details") or {})),
+            ),
+            reverse=True,
+        )
         for finding in candidates:
             if keep is not None and not keep(finding):
                 continue
@@ -350,8 +339,8 @@ class ChatToolRegistry:
         start = time.perf_counter()
         status = "error"
         try:
-            args = checked_arguments(tool_name, arguments)
             begin_limit_ledger()
+            args = checked_arguments(tool_name, arguments)
             result = await self._dispatch(tool_name, args, user, db)
             _inject_urls(result)
             note = clamped_limit_note()
@@ -398,7 +387,7 @@ class ChatToolRegistry:
         search = ctx.args.get("search")
         name_filter = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
         query = and_filters(ctx.user_project_query, name_filter)
-        limit = _clamp_limit(ctx.args.get("limit"), 15, maximum=MAX_SUMMARY_ROWS)
+        limit = ctx.args["limit"]
         cursor = ctx.db["projects"].find(query, sort=[("last_scan_at", -1)], limit=limit)
         projects = await cursor.to_list(length=limit)
         team_names = await resolve_team_names(ctx.db, {tid for p in projects for tid in p.get("team_ids") or []})
@@ -435,7 +424,7 @@ class ChatToolRegistry:
 
     async def _tool_get_scan_history(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
+        limit = ctx.args["limit"]
         # Newest-first across every branch and status, so the first row is a queued run on a
         # branch nobody ships as often as it is the build the project stands on.
         cursor = ctx.db["scans"].find({"project_id": project["_id"]}, sort=[("created_at", -1)], limit=limit)
@@ -469,34 +458,19 @@ class ChatToolRegistry:
         scan_id, build = await self._scan_under_answer(ctx, project)
         query = {"scan_id": scan_id, "project_id": project["_id"]}
         if ctx.args.get("severity"):
-            query["severity"] = ctx.args["severity"].upper()
+            query["severity"] = ctx.args["severity"]
         if ctx.args.get("type"):
             query["type"] = ctx.args["type"]
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
+        limit = ctx.args["limit"]
         findings, ranking_note = await _ranked_findings(ctx.db, query, limit)
         return {
             "findings": [_serialize_finding_for_llm(f) for f in findings],
             "count": len(findings),
-            "scan": build,
-            **({"ranking_note": ranking_note} if ranking_note else {}),
-        }
-
-    async def _tool_get_project_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._require_project(ctx)
-        head_scan_id = await self._head_scan_id(project, ctx.db)
-        if not head_scan_id:
-            return {"findings": [], "count": 0, "message": "No scans found for this project"}
-        query = {"scan_id": head_scan_id}
-        if ctx.args.get("severity"):
-            query["severity"] = ctx.args["severity"].upper()
-        if ctx.args.get("type"):
-            query["type"] = ctx.args["type"]
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
-        findings, ranking_note = await _ranked_findings(ctx.db, query, limit)
-        return {
-            "findings": [_serialize_finding_for_llm(f) for f in findings],
-            "count": len(findings),
+            "findings_total": len(findings)
+            if len(findings) < limit
+            else await ctx.db["findings"].count_documents(query),
             "project_name": project.get("name"),
+            "scan": build,
             **({"ranking_note": ranking_note} if ranking_note else {}),
         }
 
@@ -521,39 +495,36 @@ class ChatToolRegistry:
             "$or": [{"finding_id": pattern}, {"description": pattern}, {"component": pattern}, advisory_match(pattern)],
         }
         if ctx.args.get("severity"):
-            query["severity"] = ctx.args["severity"].upper()
+            query["severity"] = ctx.args["severity"]
         if ctx.args.get("type"):
             query["type"] = ctx.args["type"]
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
-        cursor = ctx.db["findings"].find(query, limit=limit)
-        findings = await cursor.to_list(length=limit)
+        findings, findings_total = await bounded_read(
+            ctx.db["findings"], query, subject="matching findings", limit=ctx.args["limit"]
+        )
         names = await ProjectRepository(ctx.db).names_by_ids(_row_project_id(f) for f in findings)
-        out = []
-        for f in findings:
-            slim = _serialize_finding_for_llm(f)
-            slim["project_name"] = names.get(_row_project_id(f), "")
-            out.append(slim)
-        return {"findings": out, "count": len(out)}
+        return {
+            "findings": _slim_with_project(findings, names),
+            "count": len(findings),
+            "findings_total": findings_total,
+        }
+
+    async def _head_breakdown(self, ctx: _ToolContext, field: str) -> dict[str, Any]:
+        project = await self._require_project(ctx)
+        head_scan_id = await self._head_scan_id(project, ctx.db)
+        if not head_scan_id:
+            return {"error": _ERR_NO_SCAN_DATA}
+        pipeline: list[dict[str, Any]] = [
+            {"$match": {"scan_id": head_scan_id, **_ACTIVE}},
+            {"$group": {"_id": f"${field}", "count": {"$sum": 1}}},
+        ]
+        results = await ctx.db["findings"].aggregate(pipeline).to_list(length=None)
+        return {"breakdown": {r["_id"]: r["count"] for r in results}}
 
     async def _tool_get_findings_by_severity(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._require_project(ctx)
-        head_scan_id = await self._head_scan_id(project, ctx.db)
-        if not head_scan_id:
-            return {"breakdown": {}}
-        breakdown = await FindingRepository(ctx.db).get_severity_distribution([head_scan_id], finding_type=None)
-        return {"breakdown": breakdown}
+        return await self._head_breakdown(ctx, "severity")
 
     async def _tool_get_findings_by_type(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._require_project(ctx)
-        head_scan_id = await self._head_scan_id(project, ctx.db)
-        if not head_scan_id:
-            return {"breakdown": {}}
-        pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": head_scan_id, "waived": {"$ne": True}}},
-            {"$group": {"_id": "$type", "count": {"$sum": 1}}},
-        ]
-        results = await ctx.db["findings"].aggregate(pipeline).to_list(length=_FINDING_TYPE_BUCKETS)
-        return {"breakdown": {r["_id"]: r["count"] for r in results}}
+        return await self._head_breakdown(ctx, "type")
 
     async def _tool_get_analytics_summary(self, ctx: _ToolContext) -> dict[str, Any]:
         head, names = await self._heads_in_scope(ctx)
@@ -586,8 +557,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_risk_trends(self, ctx: _ToolContext) -> dict[str, Any]:
-        days = ctx.args.get("days", 30)
-        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=ctx.args["days"])
         if ctx.args.get("project_id"):
             scope = {"project_id": (await self._require_project(ctx))["_id"]}
         else:
@@ -610,7 +580,7 @@ class ChatToolRegistry:
         project = await self._require_project(ctx)
         head_scan_id = await self._head_scan_id(project, ctx.db)
         if not head_scan_id:
-            return {"dependencies": []}
+            return {"error": _ERR_NO_SCAN_DATA}
         deps, deps_total = await bounded_read(
             ctx.db["dependencies"],
             {"scan_id": head_scan_id},
@@ -623,7 +593,7 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_hotspots(self, ctx: _ToolContext) -> dict[str, Any]:
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
+        limit = ctx.args["limit"]
         head, names = await self._heads_in_scope(ctx)
         stats_by_project = await self._head_scan_stats(ctx.db, head)
         ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:limit]
@@ -766,25 +736,27 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_top_priority_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        limit = _clamp_limit(ctx.args.get("limit"), 5, maximum=MAX_FINDING_ROWS)
+        limit = ctx.args["limit"]
         head, names = await self._heads_in_scope(ctx)
         if not head:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        findings, ranking_note = await _ranked_findings(
-            ctx.db, {"scan_id": {"$in": list(head.values())}, "severity": {"$in": ["CRITICAL", "HIGH"]}}, limit
+        query = {"scan_id": {"$in": list(head.values())}, "severity": {"$in": ["CRITICAL", "HIGH"]}, **_ACTIVE}
+        exploited_maturity = list(ACTIVELY_EXPLOITED_MATURITY)
+        exploited, exploited_note = await _ranked_findings(
+            ctx.db, {**query, "details.exploit_maturity": {"$in": exploited_maturity}}, limit
         )
-        trimmed = []
-        for f in findings:
-            slim = _serialize_finding_for_llm(f)
-            slim["project_name"] = names.get(_row_project_id(f), "")
-            trimmed.append(slim)
+        rest, rest_note = await _ranked_findings(
+            ctx.db, {**query, "details.exploit_maturity": {"$nin": exploited_maturity}}, limit - len(exploited)
+        )
+        findings = _slim_with_project(exploited + rest, names)
+        ranking_note = exploited_note or rest_note
         return {
-            "findings": trimmed,
-            "count": len(trimmed),
+            "findings": findings,
+            "count": len(findings),
             "hint": (
                 "Present these to the user as a short ordered list. For each item "
                 "include project_name, CVE, component@version, severity, and the "
-                "fix_version if present. Do not call further tools unless asked."
+                "fixed_version if present. Do not call further tools unless asked."
             ),
             **({"ranking_note": ranking_note} if ranking_note else {}),
         }
@@ -795,15 +767,11 @@ class ChatToolRegistry:
         if not head_scan_id:
             return {"plan": [], "message": _ERR_NO_SCAN_DATA}
 
-        max_steps = _clamp_limit(ctx.args.get("max_steps"), 10, maximum=MAX_PLAN_STEPS)
+        max_steps = ctx.args["max_steps"]
 
         findings, findings_total = await bounded_read(
             ctx.db["findings"],
-            {
-                "scan_id": head_scan_id,
-                "severity": {"$in": ["CRITICAL", "HIGH"]},
-                "waived": {"$ne": True},
-            },
+            {"scan_id": head_scan_id, "severity": {"$in": ["CRITICAL", "HIGH"]}, **_ACTIVE},
             subject="unwaived CRITICAL/HIGH findings",
             limit=_REMEDIATION_FINDING_READ,
         )
@@ -953,39 +921,37 @@ class ChatToolRegistry:
         latest, names = await self._heads_in_scope(ctx)
         if not latest:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
         rows, ranking_note = await _ranked_findings(
             ctx.db,
             {
                 "scan_id": {"$in": list(latest.values())},
                 "severity": {"$in": ["CRITICAL", "HIGH"]},
-                "waived": {"$ne": True},
+                **_ACTIVE,
                 # The live_fixed_version rule: a live advisory names a fix and no live CRITICAL/HIGH one lacks one.
-                "details.vulnerabilities": {
-                    "$elemMatch": {"fixed_version": {"$nin": [None, ""]}, "waived": {"$ne": True}}
-                },
+                "details.vulnerabilities": {"$elemMatch": {"fixed_version": {"$nin": [None, ""]}, **_ACTIVE}},
                 "$nor": [
                     {
                         "details.vulnerabilities": {
                             "$elemMatch": {
                                 "severity": {"$in": ["CRITICAL", "HIGH"]},
                                 "fixed_version": {"$in": [None, ""]},
-                                "waived": {"$ne": True},
+                                **_ACTIVE,
                             }
                         }
                     }
                 ],
             },
-            limit,
+            ctx.args["limit"],
         )
-        out = []
-        for f in rows:
-            slim = _serialize_finding_for_llm(f)
-            slim["project_name"] = names.get(_row_project_id(f), "")
-            slim["still_open"] = [
-                canonical_cve(v) for v in live_advisories(f.get("details")) if not v.get("fixed_version")
-            ]
-            out.append(slim)
+        out = [
+            {
+                **slim,
+                "still_open": [
+                    canonical_cve(v) for v in live_advisories(f.get("details")) if not v.get("fixed_version")
+                ],
+            }
+            for slim, f in zip(_slim_with_project(rows, names), rows, strict=True)
+        ]
         return {
             "findings": out,
             "count": len(out),
@@ -1082,21 +1048,16 @@ class ChatToolRegistry:
         latest, names = await self._heads_in_scope(ctx)
         if not latest:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
         rows, ranking_note = await _ranked_findings(
             ctx.db,
             {
                 "scan_id": {"$in": list(latest.values())},
-                "details.vulnerabilities": {"$elemMatch": {DETAILS_KEY_IN_KEV: True, "waived": {"$ne": True}}},
-                "waived": {"$ne": True},
+                "details.vulnerabilities": {"$elemMatch": {DETAILS_KEY_IN_KEV: True, **_ACTIVE}},
+                **_ACTIVE,
             },
-            limit,
+            ctx.args["limit"],
         )
-        out = []
-        for f in rows:
-            slim = _serialize_finding_for_llm(f)
-            slim["project_name"] = names.get(_row_project_id(f), "")
-            out.append(slim)
+        out = _slim_with_project(rows, names)
         return {
             "findings": out,
             "count": len(out),
@@ -1209,8 +1170,7 @@ class ChatToolRegistry:
         from datetime import timedelta as _td
         from datetime import timezone as _tz
 
-        days = _clamp_limit(ctx.args.get("days_open"), 30, maximum=MAX_DAY_WINDOW)
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
+        days = ctx.args["days_open"]
         sev_min = (ctx.args.get("severity_min") or "HIGH").upper()
         allowed_sev = [
             s
@@ -1234,23 +1194,16 @@ class ChatToolRegistry:
             return {"findings": [], "message": f"No findings older than {days} days"}
         stale, ranking_note = await _ranked_findings(
             ctx.db,
-            {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
-            limit,
+            {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}, **_ACTIVE},
+            ctx.args["limit"],
             keep=lambda f: any((_row_project_id(f), identity) in old_keys for identity in staleness_identities(f)),
         )
-        out = []
-        for f in stale:
-            slim = _serialize_finding_for_llm(f)
-            slim["project_name"] = names.get(_row_project_id(f), "")
-            out.append(slim)
+        out = _slim_with_project(stale, names)
         return {
             "findings": out,
             "count": len(out),
             "days_open_threshold": days,
-            "hint": (
-                "These findings have lingered for more than the threshold. "
-                "Suggest either fixing, waiving with justification, or escalating."
-            ),
+            "hint": "These findings have lingered for more than the threshold. Suggest either fixing or escalating.",
             **({"ranking_note": ranking_note} if ranking_note else {}),
         }
 
@@ -1258,17 +1211,10 @@ class ChatToolRegistry:
         latest, names = await self._heads_in_scope(ctx)
         if not latest:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
         rows, ranking_note = await _ranked_findings(
-            ctx.db,
-            {"scan_id": {"$in": list(latest.values())}, "type": "license"},
-            limit,
+            ctx.db, {"scan_id": {"$in": list(latest.values())}, "type": "license", **_ACTIVE}, ctx.args["limit"]
         )
-        out = []
-        for f in rows:
-            slim = _serialize_finding_for_llm(f)
-            slim["project_name"] = names.get(_row_project_id(f), "")
-            out.append(slim)
+        out = _slim_with_project(rows, names)
         return {
             "findings": out,
             "count": len(out),
@@ -1280,7 +1226,7 @@ class ChatToolRegistry:
         from datetime import timedelta as _td
         from datetime import timezone as _tz
 
-        days = _clamp_limit(ctx.args.get("days"), 30, maximum=MAX_DAY_WINDOW)
+        days = ctx.args["days"]
         now = _dt.now(_tz.utc)
         cutoff = now + _td(days=days)
         query: dict[str, Any] = {"expiration_date": {"$gte": now, "$lte": cutoff}}
@@ -1352,8 +1298,8 @@ class ChatToolRegistry:
         from datetime import timedelta as _td
         from datetime import timezone as _tz
 
-        days = _clamp_limit(ctx.args.get("days"), 14, maximum=MAX_DAY_WINDOW)
-        limit = _clamp_limit(ctx.args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
+        days = ctx.args["days"]
+        limit = ctx.args["limit"]
         cutoff = _dt.now(_tz.utc) - _td(days=days)
         query = {
             "$or": [
@@ -1416,7 +1362,7 @@ class ChatToolRegistry:
         elif not read_all:
             # Id-listed even for project:read_all: an archive outlives the project it came from.
             query["project_id"] = {"$in": await self._get_authorized_project_ids(ctx)}
-        limit = _clamp_limit(ctx.args.get("limit"), 20, maximum=MAX_SUMMARY_ROWS)
+        limit = ctx.args["limit"]
         cursor = ctx.db["archive_metadata"].find(query, sort=[("archived_at", -1)], limit=limit)
         archives = await cursor.to_list(length=limit)
         return {"archives": [_serialize_doc(a) for a in archives]}
@@ -1501,7 +1447,7 @@ class ChatToolRegistry:
             primitive=ctx.args.get("primitive"),
             name_search=ctx.args.get("name_search"),
             skip=int(ctx.args.get("skip") or 0),
-            limit=_clamp_limit(ctx.args.get("limit"), 100, MAX_CRYPTO_ASSET_PAGE),
+            limit=ctx.args["limit"],
         )
         return {**assets, "scan": build}
 
@@ -1532,7 +1478,7 @@ class ChatToolRegistry:
             ctx.db,
             project_id=project["_id"],
             group_by=ctx.args.get("group_by", "name"),
-            limit=_clamp_limit(ctx.args.get("limit"), 20, MAX_CRYPTO_HOTSPOT_PAGE),
+            limit=ctx.args["limit"],
         )
 
     async def _tool_get_crypto_trends(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1541,7 +1487,7 @@ class ChatToolRegistry:
             ctx.db,
             project_id=project["_id"],
             metric=ctx.args.get("metric", "total_crypto_findings"),
-            days=int(ctx.args.get("days") or 30),
+            days=ctx.args["days"],
         )
 
     async def _tool_get_scan_delta(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1566,7 +1512,7 @@ class ChatToolRegistry:
         return await generate_pqc_migration_plan(
             ctx.db,
             project_id=project["_id"],
-            limit=_clamp_limit(ctx.args.get("limit"), 500, MAX_PQC_PLAN_ITEMS),
+            limit=ctx.args["limit"],
         )
 
     async def _tool_list_compliance_reports(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1580,7 +1526,7 @@ class ChatToolRegistry:
             ctx.db,
             visibility=visibility,
             framework=ctx.args.get("framework"),
-            limit=_clamp_limit(ctx.args.get("limit"), 10, MAX_COMPLIANCE_REPORT_PAGE),
+            limit=ctx.args["limit"],
         )
 
     async def _tool_list_policy_audit_entries(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1595,7 +1541,7 @@ class ChatToolRegistry:
             ctx.db,
             policy_scope=ctx.args["policy_scope"],
             project_id=project_id,
-            limit=_clamp_limit(ctx.args.get("limit"), 20, MAX_POLICY_AUDIT_PAGE),
+            limit=ctx.args["limit"],
         )
 
     async def _tool_get_framework_evaluation_summary(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1619,7 +1565,6 @@ class ChatToolRegistry:
         "get_scan_history": _tool_get_scan_history,
         "get_scan_details": _tool_get_scan_details,
         "get_scan_findings": _tool_get_scan_findings,
-        "get_project_findings": _tool_get_project_findings,
         "get_vulnerability_details": _tool_get_vulnerability_details,
         "search_findings": _tool_search_findings,
         "get_findings_by_severity": _tool_get_findings_by_severity,
@@ -1684,7 +1629,14 @@ class ChatToolRegistry:
         return project
 
     async def _get_authorized_project_ids(self, ctx: _ToolContext) -> list[str]:
-        return [p.id for p in await read_scope_projects(ctx.db, ctx.user_project_query)]
+        rows = await ProjectRepository(ctx.db).find_many_raw(
+            ctx.user_project_query, limit=ANALYTICS_MAX_SCOPE_PROJECTS + 1, projection={"_id": 1}
+        )
+        if len(rows) > ANALYTICS_MAX_SCOPE_PROJECTS:
+            raise ScopeTooLargeError(
+                f"This scope holds more than {ANALYTICS_MAX_SCOPE_PROJECTS} projects; ask about a team or a single project."
+            )
+        return [row["_id"] for row in rows]
 
     async def _in_scope(self, ctx: _ToolContext) -> dict[str, Any]:
         """A `project_id` filter to the caller's projects; none for a caller who reads them all."""

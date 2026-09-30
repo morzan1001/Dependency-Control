@@ -15,7 +15,6 @@ from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from ._helpers import (
     MAX_TOOL_RESULT_BYTES,
     _breaking_risk,
-    _clamp_limit,
     _clip_value,
     _compare_versions,
     _inject_urls,
@@ -53,7 +52,6 @@ __all__ = [
     "ResolvedScope",
     "ScopeResolver",
     "_breaking_risk",
-    "_clamp_limit",
     "_clip_value",
     "_compare_versions",
     "_inject_urls",

@@ -150,7 +150,7 @@ async def test_a_row_names_the_canonical_cve_and_counts_a_ghsa_alias_once(db, da
         )
     )
 
-    row = (await _call(db, "get_project_findings", project_id=_PROJECT))["findings"][0]
+    row = (await _call(db, "get_scan_findings", project_id=_PROJECT))["findings"][0]
 
     assert row["cve"] == "CVE-2024-1"
     assert row["cve_count"] == 1
@@ -165,7 +165,7 @@ async def test_ranking_breaks_severity_ties_on_the_advisories_cvss(db, database)
         ]
     )
 
-    rows = (await _call(db, "get_project_findings", project_id=_PROJECT, limit=1))["findings"]
+    rows = (await _call(db, "get_scan_findings", project_id=_PROJECT, limit=1))["findings"]
 
     assert [r["cve"] for r in rows] == ["CVE-2025-10"]
 
@@ -470,7 +470,7 @@ async def test_a_row_reads_its_threat_fields_off_the_unwaived_advisories(db, dat
         )
     )
 
-    [row] = (await _call(db, "get_project_findings", project_id=_PROJECT))["findings"]
+    [row] = (await _call(db, "get_scan_findings", project_id=_PROJECT))["findings"]
 
     assert "in_kev" not in row
     assert (row["epss_score"], row["epss_percentile"], row["exploit_maturity"]) == (0.001, 0.2, "low")

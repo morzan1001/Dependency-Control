@@ -56,7 +56,7 @@ async def list_crypto_assets(
     items = await repo.list_by_scan(
         project_id,
         scan_id,
-        limit=min(limit, 500),
+        limit=limit,
         skip=skip,
         asset_type=at_enum,
         primitive=pr_enum,
@@ -169,7 +169,6 @@ async def get_crypto_trends(
     pkg = _pkg()
     resolved = pkg.ResolvedScope(scope="project", scope_id=project_id, project_ids=[project_id])
     now = datetime.now(timezone.utc)
-    days = max(1, min(days, 365))
     series = await CryptoTrendService(db).trend(
         resolved=resolved,
         metric=cast(Metric, metric),

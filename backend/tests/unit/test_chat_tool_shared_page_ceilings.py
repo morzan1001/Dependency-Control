@@ -66,7 +66,7 @@ async def _limit_reached_by(tool: str, args: dict[str, Any], target: str, db: An
     """The `limit` the chat tool hands the service when the caller asks for more than it grants."""
     spy = AsyncMock(return_value={})
     with patch(f"app.services.chat.tools.registry.{target}", new=spy):
-        await ChatToolRegistry()._dispatch(tool, {**args, "limit": _OVER_ANY_CEILING}, user, db)
+        await ChatToolRegistry().execute_tool(tool, {**args, "limit": _OVER_ANY_CEILING}, user, db)
     spy.assert_awaited_once()
     limit = spy.await_args.kwargs["limit"]
     assert isinstance(limit, int)

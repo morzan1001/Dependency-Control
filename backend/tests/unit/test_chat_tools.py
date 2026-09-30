@@ -46,7 +46,7 @@ def test_user_with_chat_access_gets_basic_tools():
     available = registry.get_available_tool_names(permissions)
 
     assert "list_projects" in available
-    assert "get_project_findings" in available
+    assert "get_scan_findings" in available
     assert "search_findings" in available
     assert "get_top_priority_findings" in available
     assert "get_kev_findings" in available
@@ -85,7 +85,7 @@ def test_a_project_reader_without_analytics_is_not_offered_the_analytics_tools()
     available = ChatToolRegistry().get_available_tool_names(_PROJECT_READER)
 
     assert available.isdisjoint(_ANALYTICS_GATED_TOOLS)
-    assert {"get_hotspots", "get_dependency_details", "get_project_findings"} <= available
+    assert {"get_hotspots", "get_dependency_details", "get_scan_findings"} <= available
 
 
 @pytest.mark.parametrize(("tool_name", "feature"), sorted(_ANALYTICS_GATED_TOOLS.items()))

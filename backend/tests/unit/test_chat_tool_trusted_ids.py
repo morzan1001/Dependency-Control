@@ -167,13 +167,16 @@ def _stand_in(name: str, schema: dict):
         return _OPERATOR
     if name in _ENUM_STAND_INS:
         return _ENUM_STAND_INS[name]
+    if "default" in schema:
+        return schema["default"]
     if schema.get("enum"):
         return schema["enum"][0]
     return 1 if schema["type"] == "integer" else "x"
 
 
 def _project_scoped_cases() -> list[tuple[str, dict]]:
-    """Every tool taking a project_id, with each of its id arguments set to an operator."""
+    """Every tool taking a project_id, with each of its id arguments set to an operator and each
+    bounded argument at the default the argument check would fill in."""
     cases: list[tuple[str, dict]] = []
     for definition in TOOL_DEFINITIONS:
         function = definition["function"]
@@ -181,7 +184,8 @@ def _project_scoped_cases() -> list[tuple[str, dict]]:
         properties = parameters.get("properties", {})
         if "project_id" not in properties:
             continue
-        wanted = set(parameters.get("required", [])) | (_ID_PARAMETERS & set(properties))
+        defaulted = {name for name, schema in properties.items() if "default" in schema}
+        wanted = set(parameters.get("required", [])) | (_ID_PARAMETERS & set(properties)) | defaulted
         cases.append((function["name"], {name: _stand_in(name, properties[name]) for name in sorted(wanted)}))
     return cases
 

@@ -20,7 +20,7 @@ MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
 # How a bounded answer names the population its list was cut from: "<list key><suffix>".
 _TOTAL_SUFFIX = "_total"
 
-# Ceilings on an LLM-supplied limit, one per row shape, and every tool names the one it uses.
+# Ceilings on an LLM-supplied limit, one per row shape; each tool's schema declares the one it uses.
 # MAX_TOOL_RESULT_BYTES is what finally cuts a list — a serialized finding runs to ~850 bytes, so
 # roughly nine fill the budget — and _truncate_if_too_large says so when it does. These bound
 # what a call may cost before reaching that point.
