@@ -1,9 +1,4 @@
 export type DeltaCategory = "findings" | "components" | "crypto";
-export type DeltaChange =
-  | "added"
-  | "removed"
-  | "version_changed"
-  | "license_changed";
 
 export interface ScanDeltaTotals {
   added: number;
@@ -14,8 +9,9 @@ export interface ScanDeltaTotals {
   by_type: Record<string, number>;
 }
 
+// A "changed" item is a vulnerability record whose version or advisories moved between the scans.
 export interface FindingDeltaItem {
-  change: "added" | "removed";
+  change: "added" | "removed" | "changed";
   finding_id: string;
   finding_type: string;
   severity: string;
@@ -23,7 +19,12 @@ export interface FindingDeltaItem {
   component: string | null;
   cve_id: string | null;
   file_path: string | null;
+  // The earliest detection in the project, not the compared scan's date.
   first_seen: string | null;
+  from_version: string | null;
+  to_version: string | null;
+  added_cves: string[];
+  dropped_cves: string[];
 }
 
 export interface ComponentDeltaItem {
@@ -91,7 +92,7 @@ export interface ScanDeltaResponse {
   // Findings a waiver hides in whole or in part on each side.
   from_waived_excluded: number;
   to_waived_excluded: number;
-  // Added and removed items the comparison would not have produced had no waiver applied.
+  // Items the comparison would not have produced had no waiver applied.
   waiver_only_changes: number;
   // Null means both sides fit under the per-side fetch cap and the totals describe the two scans.
   truncation?: DeltaTruncation | null;
