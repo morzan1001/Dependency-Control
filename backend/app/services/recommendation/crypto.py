@@ -1,12 +1,13 @@
 """Recommendations for crypto findings, grouped by (finding_type, asset_name)."""
 
 from collections import defaultdict
+from typing import NamedTuple
 
-from app.core.constants import get_severity_value
-from app.models.finding import CRYPTO_FINDING_TYPES
+from app.core.constants import max_severity
+from app.models.finding import FindingType
 from app.schemas.finding_details import all_rule_ids
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr, sampled
+from app.services.recommendation.common import ModelOrDict, get_attr, sampled, severity_impact
 
 # Findings quoted verbatim in the action block; `sampled` pairs the sample with its population.
 _EVIDENCE_SAMPLED = 3
@@ -25,20 +26,79 @@ _ALGORITHM_REPLACEMENTS: dict[str, str] = {
     "RC2": _MODERN_BLOCK_CIPHER,
 }
 
-_TYPE_TO_RECTYPE: dict[str, RecommendationType] = {
-    "crypto_weak_algorithm": RecommendationType.REPLACE_WEAK_ALGORITHM,
-    "crypto_weak_key": RecommendationType.INCREASE_KEY_SIZE,
-    "crypto_quantum_vulnerable": RecommendationType.PQC_MIGRATION,
-    "crypto_weak_protocol": RecommendationType.UPGRADE_PROTOCOL,
-    "crypto_cert_expired": RecommendationType.ROTATE_CERTIFICATE,
-    "crypto_cert_expiring_soon": RecommendationType.ROTATE_CERTIFICATE,
-    "crypto_cert_not_yet_valid": RecommendationType.ROTATE_CERTIFICATE,
-    "crypto_cert_weak_signature": RecommendationType.REPLACE_WEAK_ALGORITHM,
-    "crypto_cert_weak_key": RecommendationType.INCREASE_KEY_SIZE,
-    "crypto_cert_self_signed": RecommendationType.ROTATE_CERTIFICATE,
-    "crypto_cert_validity_too_long": RecommendationType.ROTATE_CERTIFICATE,
-    "crypto_key_management": RecommendationType.FIX_CODE_SECURITY,
+
+class _CryptoCard(NamedTuple):
+    rec_type: RecommendationType
+    effort: Effort
+    # Formatted with asset, count and s (the plural suffix).
+    title: str
+    description: str
+
+
+def _certificate_card(rec_type: RecommendationType, effort: Effort) -> _CryptoCard:
+    return _CryptoCard(
+        rec_type,
+        effort,
+        "Rotate or fix certificate: {asset}",
+        "Certificate {asset} has lifecycle/integrity issues ({count} finding{s}). "
+        "Rotate the certificate or correct the issuance parameters.",
+    )
+
+
+_ROTATE_CERTIFICATE = _certificate_card(RecommendationType.ROTATE_CERTIFICATE, Effort.LOW)
+
+_CRYPTO_CARDS: dict[FindingType, _CryptoCard] = {
+    FindingType.CRYPTO_WEAK_ALGORITHM: _CryptoCard(
+        RecommendationType.REPLACE_WEAK_ALGORITHM,
+        Effort.MEDIUM,
+        "Replace weak algorithm: {asset}",
+        "{asset} is broken or disallowed by crypto policy in {count} location{s}. "
+        "Replace it with a modern primitive in the affected components.",
+    ),
+    FindingType.CRYPTO_WEAK_KEY: _CryptoCard(
+        RecommendationType.INCREASE_KEY_SIZE,
+        Effort.MEDIUM,
+        "Increase key size for {asset}",
+        "{asset} keys are below the policy minimum in {count} location{s}. "
+        "Re-issue keys at the policy-mandated size or stronger.",
+    ),
+    FindingType.CRYPTO_QUANTUM_VULNERABLE: _CryptoCard(
+        RecommendationType.PQC_MIGRATION,
+        Effort.HIGH,
+        "Plan PQC migration for {asset}",
+        "{asset} is quantum-vulnerable. Use the PQC migration plan endpoint for a "
+        "per-asset transition target (ML-KEM / ML-DSA / SLH-DSA per use-case).",
+    ),
+    FindingType.CRYPTO_WEAK_PROTOCOL: _CryptoCard(
+        RecommendationType.UPGRADE_PROTOCOL,
+        Effort.LOW,
+        "Upgrade protocol/cipher: {asset}",
+        "{asset} uses a deprecated protocol version or cipher suite ({count} finding{s}). "
+        "Disable the legacy version/suite and require modern equivalents.",
+    ),
+    FindingType.CRYPTO_CERT_EXPIRED: _ROTATE_CERTIFICATE,
+    FindingType.CRYPTO_CERT_EXPIRING_SOON: _ROTATE_CERTIFICATE,
+    FindingType.CRYPTO_CERT_NOT_YET_VALID: _ROTATE_CERTIFICATE,
+    FindingType.CRYPTO_CERT_SELF_SIGNED: _ROTATE_CERTIFICATE,
+    FindingType.CRYPTO_CERT_VALIDITY_TOO_LONG: _ROTATE_CERTIFICATE,
+    FindingType.CRYPTO_CERT_WEAK_SIGNATURE: _certificate_card(RecommendationType.REPLACE_WEAK_ALGORITHM, Effort.MEDIUM),
+    FindingType.CRYPTO_CERT_WEAK_KEY: _certificate_card(RecommendationType.INCREASE_KEY_SIZE, Effort.MEDIUM),
+    FindingType.CRYPTO_KEY_MANAGEMENT: _CryptoCard(
+        RecommendationType.FIX_CODE_SECURITY,
+        Effort.MEDIUM,
+        "Fix key-management hygiene: {asset}",
+        "Crypto-misuse SAST flagged {count} key-management issue{s} for {asset}. "
+        "Review key generation, storage, and rotation paths.",
+    ),
 }
+
+# Key-management cards are code fixes and count with SAST; every other crypto card is a crypto issue.
+CRYPTO_RECOMMENDATION_TYPES = frozenset(card.rec_type for card in _CRYPTO_CARDS.values()) - {
+    RecommendationType.FIX_CODE_SECURITY
+}
+CRYPTO_ISSUE_FINDING_TYPES = frozenset(
+    finding_type.value for finding_type, card in _CRYPTO_CARDS.items() if card.rec_type in CRYPTO_RECOMMENDATION_TYPES
+)
 
 _SEVERITY_TO_PRIORITY: dict[str, Priority] = {
     "CRITICAL": Priority.CRITICAL,
@@ -47,76 +107,26 @@ _SEVERITY_TO_PRIORITY: dict[str, Priority] = {
     "LOW": Priority.LOW,
 }
 
-# Effort defaults to MEDIUM; cert rotation is operational (low), PQC is high.
-_TYPE_TO_EFFORT: dict[str, str] = {
-    "crypto_weak_algorithm": Effort.MEDIUM,
-    "crypto_weak_key": Effort.MEDIUM,
-    "crypto_quantum_vulnerable": Effort.HIGH,
-    "crypto_weak_protocol": Effort.LOW,
-    "crypto_cert_expired": Effort.LOW,
-    "crypto_cert_expiring_soon": Effort.LOW,
-    "crypto_cert_not_yet_valid": Effort.LOW,
-    "crypto_cert_weak_signature": Effort.MEDIUM,
-    "crypto_cert_weak_key": Effort.MEDIUM,
-    "crypto_cert_self_signed": Effort.LOW,
-    "crypto_cert_validity_too_long": Effort.LOW,
-    "crypto_key_management": Effort.MEDIUM,
-}
-
 
 def process_crypto(findings: list[ModelOrDict]) -> list[Recommendation]:
     """Build remediation recommendations for crypto findings."""
-    if not findings:
-        return []
-
     grouped: dict[tuple[str, str], list[ModelOrDict]] = defaultdict(list)
     for f in findings:
-        finding_type = get_attr(f, "type", "")
-        if finding_type not in CRYPTO_FINDING_TYPES:
-            continue
-        details = get_attr(f, "details", {}) or {}
-        asset_name = (
-            (details.get("asset_name") if isinstance(details, dict) else None)
-            or get_attr(f, "component", "unknown")
-            or "unknown"
-        )
-        grouped[(finding_type, asset_name)].append(f)
-
-    out: list[Recommendation] = []
-    for (finding_type, asset_name), group in grouped.items():
-        rec = _build_recommendation(finding_type, asset_name, group)
-        if rec is not None:
-            out.append(rec)
-    return out
+        asset_name = get_attr(f, "details", {}).get("asset_name") or get_attr(f, "component") or "unknown"
+        grouped[(get_attr(f, "type"), asset_name)].append(f)
+    return [
+        _build_recommendation(finding_type, asset_name, group) for (finding_type, asset_name), group in grouped.items()
+    ]
 
 
-def _build_recommendation(
-    finding_type: str,
-    asset_name: str,
-    findings: list[ModelOrDict],
-) -> Recommendation | None:
-    rec_type = _TYPE_TO_RECTYPE.get(finding_type)
-    if rec_type is None:
-        return None
-
+def _build_recommendation(finding_type: str, asset_name: str, findings: list[ModelOrDict]) -> Recommendation:
+    card = _CRYPTO_CARDS[FindingType(finding_type)]
     severities = [str(get_attr(f, "severity", "UNKNOWN")) for f in findings]
-    top_severity = max(severities, key=get_severity_value)
-    priority = _SEVERITY_TO_PRIORITY.get(top_severity, Priority.MEDIUM)
-    effort = _TYPE_TO_EFFORT.get(finding_type, Effort.MEDIUM)
 
     bom_refs = sorted({ref for ref in (_bom_ref(f) for f in findings) if ref})
     rule_ids = sorted({rid for f in findings for rid in all_rule_ids(get_attr(f, "details", {}))})
     descriptions = sorted({str(get_attr(f, "description", "")).strip() for f in findings if get_attr(f, "description")})
-
-    impact: dict[str, int] = {
-        "critical": severities.count("CRITICAL"),
-        "high": severities.count("HIGH"),
-        "medium": severities.count("MEDIUM"),
-        "low": severities.count("LOW"),
-        "total": len(findings),
-    }
-
-    title, description = _title_and_description(finding_type, asset_name, findings)
+    wording = {"asset": asset_name, "count": len(findings), "s": "" if len(findings) == 1 else "s"}
 
     action: dict[str, object] = {
         "asset_name": asset_name,
@@ -130,71 +140,15 @@ def _build_recommendation(
         action["suggested_replacement"] = suggested
 
     return Recommendation(
-        type=rec_type,
-        priority=priority,
-        title=title,
-        description=description,
-        impact=impact,
+        type=card.rec_type,
+        # A policy rule rated INFO or UNKNOWN still flags a breach, so it is not ranked as LOW.
+        priority=_SEVERITY_TO_PRIORITY.get(max_severity(*severities), Priority.MEDIUM),
+        title=card.title.format(**wording),
+        description=card.description.format(**wording),
+        impact=severity_impact(severities),
         affected_components=[asset_name],
         action=action,
-        effort=effort,
-    )
-
-
-def _title_and_description(finding_type: str, asset_name: str, findings: list[ModelOrDict]) -> tuple[str, str]:
-    count = len(findings)
-    plural = "s" if count != 1 else ""
-    if finding_type == "crypto_weak_algorithm":
-        return (
-            f"Replace weak algorithm: {asset_name}",
-            (
-                f"{asset_name} is broken or disallowed by crypto policy in {count} location{plural}. "
-                f"Replace it with a modern primitive in the affected components."
-            ),
-        )
-    if finding_type == "crypto_weak_key":
-        return (
-            f"Increase key size for {asset_name}",
-            (
-                f"{asset_name} keys are below the policy minimum in {count} location{plural}. "
-                f"Re-issue keys at the policy-mandated size or stronger."
-            ),
-        )
-    if finding_type == "crypto_quantum_vulnerable":
-        return (
-            f"Plan PQC migration for {asset_name}",
-            (
-                f"{asset_name} is quantum-vulnerable. Use the PQC migration plan endpoint for a "
-                f"per-asset transition target (ML-KEM / ML-DSA / SLH-DSA per use-case)."
-            ),
-        )
-    if finding_type == "crypto_weak_protocol":
-        return (
-            f"Upgrade protocol/cipher: {asset_name}",
-            (
-                f"{asset_name} uses a deprecated protocol version or cipher suite ({count} finding{plural}). "
-                f"Disable the legacy version/suite and require modern equivalents."
-            ),
-        )
-    if finding_type.startswith("crypto_cert_"):
-        return (
-            f"Rotate or fix certificate: {asset_name}",
-            (
-                f"Certificate {asset_name} has lifecycle/integrity issues ({count} finding{plural}). "
-                f"Rotate the certificate or correct the issuance parameters."
-            ),
-        )
-    if finding_type == "crypto_key_management":
-        return (
-            f"Fix key-management hygiene: {asset_name}",
-            (
-                f"Crypto-misuse SAST flagged {count} key-management issue{plural} for {asset_name}. "
-                f"Review key generation, storage, and rotation paths."
-            ),
-        )
-    return (
-        f"Crypto issue: {asset_name}",
-        f"{count} crypto finding{plural} on {asset_name}",
+        effort=card.effort,
     )
 
 

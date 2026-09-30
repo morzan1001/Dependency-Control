@@ -22,6 +22,7 @@ from app.core.constants import (
 )
 from app.core.cve import entry_cves
 from app.core.permissions import Permissions
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.finding_record import FindingRecord
 from app.repositories.base import find_window
 from app.repositories.dependencies import DependencyRepository
@@ -37,6 +38,7 @@ from app.services.component_identity import component_name_candidates
 from app.services.enrichment.service import apply_enrichments, vulnerability_enrichment_service
 from app.services.recommendation import trends
 from app.services.recommendation.common import live_cves
+from app.services.recommendation.crypto import CRYPTO_ISSUE_FINDING_TYPES, CRYPTO_RECOMMENDATION_TYPES
 from app.services.recommendations import recommendation_engine
 
 from ._shared import SCAN_NOT_IN_PROJECT, resolve_project_scan_id
@@ -75,12 +77,9 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
     RecommendationType.REGRESSION_DETECTED: ("trend_alerts", None),
     RecommendationType.CROSS_PROJECT_PATTERN: (None, "cross_project_issues"),
     RecommendationType.SHARED_VULNERABILITY: (None, "cross_project_issues"),
-    RecommendationType.REPLACE_WEAK_ALGORITHM: (None, "crypto_issues"),
-    RecommendationType.INCREASE_KEY_SIZE: (None, "crypto_issues"),
-    RecommendationType.UPGRADE_PROTOCOL: (None, "crypto_issues"),
-    RecommendationType.PQC_MIGRATION: (None, "crypto_issues"),
-    RecommendationType.ROTATE_CERTIFICATE: (None, "crypto_issues"),
+    **dict.fromkeys(CRYPTO_RECOMMENDATION_TYPES, (None, "crypto_issues")),
 }
+_SAST_FINDING_TYPES = {"sast"} | (CRYPTO_FINDING_TYPES - CRYPTO_ISSUE_FINDING_TYPES)
 
 
 async def _apply_live_threat_intel(findings: list[FindingRecord]) -> dict[str, VulnerabilityEnrichment]:
@@ -217,11 +216,11 @@ def _finding_counts(findings: list[FindingRecord]) -> dict[str, int]:
     return {
         "vulnerabilities": sum(1 for f in findings if f.type == "vulnerability"),
         "secrets": sum(1 for f in findings if f.type == "secret"),
-        "sast": sum(1 for f in findings if f.type == "sast"),
+        "sast": sum(1 for f in findings if f.type in _SAST_FINDING_TYPES),
         "iac": sum(1 for f in findings if f.type == "iac"),
         "license": sum(1 for f in findings if f.type == "license"),
         "quality": sum(1 for f in findings if f.type == "quality"),
-        "crypto": sum(1 for f in findings if isinstance(f.type, str) and f.type.startswith("crypto_")),
+        "crypto": sum(1 for f in findings if f.type in CRYPTO_ISSUE_FINDING_TYPES),
     }
 
 

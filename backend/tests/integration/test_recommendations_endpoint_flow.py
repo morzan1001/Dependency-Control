@@ -260,7 +260,17 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
     client, db, owner_auth_headers_proj, monkeypatch
 ):
     await _insert_scan(db, "s")
-    finding_types = ["vulnerability", "secret", "sast", "iac", "license", "quality", "crypto_weak_key", "malware"]
+    finding_types = [
+        "vulnerability",
+        "secret",
+        "sast",
+        "iac",
+        "license",
+        "quality",
+        "crypto_weak_key",
+        "crypto_key_management",
+        "malware",
+    ]
     for index, finding_type in enumerate(finding_types):
         await db.findings.insert_one(_finding(f"f{index}", finding_type))
     t = RecommendationType
@@ -303,7 +313,7 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
-    assert body["total_findings"] == 8
+    assert body["total_findings"] == 9
     assert body["total_vulnerabilities"] == 1
     assert body["summary"] == {
         "base_image_updates": 2,
@@ -325,7 +335,8 @@ async def test_the_summary_tallies_findings_and_recommendations_into_their_bucke
         "finding_counts": {
             "vulnerabilities": 1,
             "secrets": 1,
-            "sast": 1,
+            # Key-management cards are FIX_CODE_SECURITY and land in sast_issues, so their findings count there too.
+            "sast": 2,
             "iac": 1,
             "license": 1,
             "quality": 1,
