@@ -3,7 +3,7 @@
 import pytest
 
 from app.core.cve import canonical_cve, canonical_cves, display_vulnerability_id
-from app.services.aggregation.merging import dedupe_vulnerability_entries, merge_vulnerability_into_list
+from app.services.aggregation.merging import dedupe_vulnerability_entries
 from app.services.analysis.stats import build_epss_kev_summary
 
 
@@ -33,9 +33,8 @@ def test_one_ghsa_spelled_two_ways_counts_once():
 
 
 def _merged(*entries):
-    target: list = []
-    for entry in entries:
-        merge_vulnerability_into_list(target, entry)
+    target = list(entries)
+    dedupe_vulnerability_entries(target)
     return target
 
 

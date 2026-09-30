@@ -184,11 +184,11 @@ class TestDetailConflictTieBreak:
         }
 
     def test_same_lowest_scanner_resolves_identically_in_both_directions(self):
-        from app.services.aggregation.merging import merge_vulnerability_into_list
+        from app.services.aggregation.merging import dedupe_vulnerability_entries
 
         def _merge(first: dict, second: dict) -> dict:
-            entries: list = [json.loads(json.dumps(first))]
-            merge_vulnerability_into_list(entries, json.loads(json.dumps(second)))
+            entries: list = [json.loads(json.dumps(first)), json.loads(json.dumps(second))]
+            dedupe_vulnerability_entries(entries)
             assert len(entries) == 1
             return entries[0]
 

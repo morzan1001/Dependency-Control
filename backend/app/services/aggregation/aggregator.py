@@ -28,8 +28,8 @@ from app.services.component_identity import (
 from app.services.aggregation.cross_link import cross_link_pair, record_additional_types
 from app.services.aggregation.merging import (
     absorb_header,
+    dedupe_vulnerability_entries,
     merge_findings_data,
-    merge_vulnerability_into_list,
     to_sast_aggregate,
 )
 from app.services.aggregation.quality import update_quality_description
@@ -365,6 +365,7 @@ class ResultAggregator:
         for f in final_findings:
             entries = f.details.get("vulnerabilities")
             if entries:
+                dedupe_vulnerability_entries(entries)
                 entries.sort(key=lambda entry: str(entry.get("id")))
                 f.details["fixed_version"] = aggregate_fixed_version(entries, f.version)
 
@@ -469,9 +470,7 @@ class ResultAggregator:
         """Merge a vulnerability finding into an existing aggregate."""
         absorb_header(existing, finding, source)
         _adopt_smallest_spelling(existing, finding, "")
-        vuln_list: list[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
-        merge_vulnerability_into_list(vuln_list, vuln_entry)
-        existing.details["vulnerabilities"] = vuln_list
+        existing.details["vulnerabilities"].append(vuln_entry)
         existing.description = ""
 
     def _add_vulnerability_finding(self, finding: Finding, source: str | None = None) -> None:

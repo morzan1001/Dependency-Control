@@ -154,38 +154,27 @@ def _absorb_entry(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
 
 
 def dedupe_vulnerability_entries(entries: list[Any]) -> None:
-    """Fold together entries whose id/alias sets intersect, re-running until no pair overlaps."""
-    changed = True
-    while changed:
-        changed = False
-        i = 0
-        while i < len(entries):
-            ids_i = advisory_ids(entries[i])
-            j = i + 1
-            while j < len(entries):
-                if not _same_advisory(ids_i, entries[i], entries[j]):
-                    j += 1
-                    continue
-                _absorb_entry(entries[i], entries.pop(j))
-                ids_i = advisory_ids(entries[i])
-                changed = True
-            i += 1
-
-
-def merge_vulnerability_into_list(target_list: list[Any], source_entry: VulnerabilityEntry) -> None:
-    """Merge a source vuln entry into target list, deduplicating by ID and aliases."""
-    s_ids = advisory_ids(source_entry)
-
-    for tv in target_list:
-        if not _same_advisory(s_ids, source_entry, tv):
-            continue
-
-        _absorb_entry(tv, source_entry)
-        # Aliases gained from the source can newly link tv with other entries in the list.
-        dedupe_vulnerability_entries(target_list)
-        return
-
-    target_list.append(source_entry)
+    """Fold each entry into the earliest kept entry of its advisory; an absorber is re-linked until nothing matches."""
+    kept: list[Any] = []
+    kept_by_id: dict[str, set[int]] = {}
+    for entry in entries:
+        position = len(kept)
+        kept.append(entry)
+        while True:
+            ids = advisory_ids(kept[position])
+            for vuln_id in ids:
+                kept_by_id.setdefault(vuln_id, set()).add(position)
+            sharing = sorted(
+                {at for vuln_id in ids for at in kept_by_id[vuln_id] if at != position and kept[at] is not None}
+            )
+            match = next((at for at in sharing if _same_advisory(ids, kept[position], kept[at])), None)
+            if match is None:
+                break
+            earlier, later = sorted((position, match))
+            _absorb_entry(kept[earlier], kept[later])
+            kept[later] = None
+            position = earlier
+    entries[:] = [entry for entry in kept if entry is not None]
 
 
 def absorb_header(target: Finding, other: Finding, source: str | None = None) -> None:
@@ -200,10 +189,4 @@ def merge_findings_data(target: Finding, source: Finding) -> None:
     absorb_header(target, source)
     target.aliases = sorted(set(target.aliases + source.aliases) | ({source.id} if source.id != target.id else set()))
 
-    t_vulns_list = target.details.get("vulnerabilities", [])
-    s_vulns_list = source.details.get("vulnerabilities", [])
-
-    for sv in s_vulns_list:
-        merge_vulnerability_into_list(t_vulns_list, sv)
-
-    target.details["vulnerabilities"] = t_vulns_list
+    target.details["vulnerabilities"].extend(source.details["vulnerabilities"])
