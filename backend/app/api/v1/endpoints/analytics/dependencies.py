@@ -29,7 +29,7 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
-from app.core.purl import package_identity, package_identity_expr
+from app.core.purl import get_purl_type, package_identity, package_identity_expr
 from app.services.component_identity import (
     artifact_segment,
     build_component_index,
@@ -285,14 +285,14 @@ async def _package_projects_by_version(
             },
         ]
     )
-    # Only a purl names the ecosystem: a purl-less 'library' row joins its 'npm' purl row, npm and pypi stay apart.
+    # Only a non-generic purl names an ecosystem: a pkg:generic row joins its npm row, npm and pypi stay apart.
     by_package: dict[str, dict[str, list[dict[str, Any]]]] = {}
     purl_types: set[str] = set()
     for row in rows:
         package = row["_id"]["package"]
         if wanted is None or package["path"].lower() == wanted:
             by_package.setdefault(package["path"], {}).setdefault(row["_id"].get("version"), []).extend(row["projects"])
-            if row["_id"]["has_purl"]:
+            if row["_id"]["has_purl"] and package["type"] != "generic":
                 purl_types.add(package["type"])
     return next(iter(by_package.items())) if len(by_package) == 1 and len(purl_types) <= 1 else None
 
@@ -363,8 +363,8 @@ async def get_dependency_metadata_endpoint(
     if not dependencies:
         return None
 
-    # A purl row names the package's real type and keys its enrichment.
-    first_dep = next((dep for dep in dependencies if dep.purl), dependencies[0])
+    # A purl row names the package's real type and keys its enrichment; a pkg:generic one names neither.
+    first_dep = min(dependencies, key=lambda dep: (not dep.purl, get_purl_type(dep.purl) == "generic"))
     affected_projects = _affected_projects(projects_by_version, project_name_map)
 
     info = await _get_enrichment_info(enrichment_repo, first_dep.purl)
