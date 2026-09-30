@@ -19,6 +19,7 @@ from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
     sample_components,
+    severity_impact,
 )
 
 # A package held at this many versions is fragmented, at the second count heavily so.
@@ -299,28 +300,19 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
             affected_packages.append(f"{pkg}@{version}")
 
     eol_shown, eol_total = sample_components(affected_packages)
-    critical_count = len([f for f in eol_findings if get_attr(f, "severity") == "CRITICAL"])
-    high_count = len([f for f in eol_findings if get_attr(f, "severity") == "HIGH"])
-
-    priority = Priority.HIGH if critical_count > 0 else Priority.MEDIUM
+    impact = severity_impact(get_attr(f, "severity") for f in eol_findings)
 
     return [
         Recommendation(
             type=RecommendationType.EOL_DEPENDENCY,
-            priority=priority,
+            priority=Priority.HIGH if impact["critical"] else Priority.MEDIUM,
             title="End-of-Life Dependencies",
             description=(
                 f"Found {len(eol_findings)} dependencies that have reached end-of-life. "
                 f"These will no longer receive security updates, leaving your application vulnerable "
                 f"to future CVEs that will never be patched."
             ),
-            impact={
-                "critical": critical_count,
-                "high": high_count,
-                "medium": len([f for f in eol_findings if get_attr(f, "severity") == "MEDIUM"]),
-                "low": len([f for f in eol_findings if get_attr(f, "severity") == "LOW"]),
-                "total": len(eol_findings),
-            },
+            impact=impact,
             affected_components=eol_shown,
             affected_components_total=eol_total,
             action={

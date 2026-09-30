@@ -285,6 +285,14 @@ class TestIdentifyQuickWinsImpactBreakdown:
         assert impact["medium"] == 1
         assert impact["total"] == 3
 
+    def test_a_low_finding_counts_as_low(self):
+        vulns = [
+            _vuln("pkg", severity="CRITICAL", finding_id="CVE-2024-001"),
+            _vuln("pkg", severity="LOW", finding_id="CVE-2024-002"),
+        ]
+        impact = identify_quick_wins(vulns, [_dep("pkg")])[0].impact
+        assert (impact["medium"], impact["low"]) == (0, 1)
+
     def test_kev_count_in_impact(self):
         vulns = [
             _vuln("pkg", is_kev=True, finding_id="CVE-2024-001"),

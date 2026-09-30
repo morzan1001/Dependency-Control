@@ -12,6 +12,7 @@ from app.services.recommendation.common import ModelOrDict, dependency_label, ge
 
 # Chains detailed in the action; paired with the population it was taken from.
 _DEEPEST_CHAINS_SAMPLED = 5
+_CHAIN_ENDS_SHOWN = 2
 
 
 @dataclass(frozen=True)
@@ -161,7 +162,10 @@ def _chain_preview(key: str, via: dict[str, str], edges: DependencyEdges) -> str
     path = [key]
     while path[-1] in via:
         path.append(via[path[-1]])
-    return " → ".join(dependency_label(edges.dep_by_key[node]) for node in reversed(path))
+    labels = [dependency_label(edges.dep_by_key[node]) for node in reversed(path)]
+    if len(labels) > 2 * _CHAIN_ENDS_SHOWN:
+        labels = [*labels[:_CHAIN_ENDS_SHOWN], "...", *labels[-_CHAIN_ENDS_SHOWN:]]
+    return " → ".join(labels)
 
 
 def _deep_chain_recommendation(

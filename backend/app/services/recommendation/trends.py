@@ -1,4 +1,4 @@
-from collections import Counter, defaultdict
+from collections import defaultdict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -22,7 +22,13 @@ from app.services.analytics.findings_delta import (
     advisory_keys,
     finding_identity_key,
 )
-from app.services.recommendation.common import ModelOrDict, get_attr, live_advisories, sample_components
+from app.services.recommendation.common import (
+    ModelOrDict,
+    get_attr,
+    live_advisories,
+    sample_components,
+    severity_impact,
+)
 
 _RECURRING_ROWS_SHOWN = 10
 _NON_SECURITY_TYPES = frozenset({FindingType.OUTDATED.value, FindingType.SYSTEM_WARNING.value})
@@ -76,8 +82,8 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
         elif doc["type"] not in _NON_SECURITY_TYPES and finding_identity_key(doc) not in previous.keys:
             new_count += 1
 
-    by_severity = Counter(new_cves.values())
-    critical, high = by_severity["CRITICAL"], by_severity["HIGH"]
+    impact = severity_impact(new_cves.values())
+    critical, high = impact["critical"], impact["high"]
     if critical or high:
         regression_shown, regression_total = sample_components(sorted(flagged))
         return [
@@ -90,13 +96,7 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
                     "the previous scan. This may indicate dependency updates that "
                     "introduced new vulnerabilities or new code with security issues."
                 ),
-                impact={
-                    "critical": critical,
-                    "high": high,
-                    "medium": by_severity["MEDIUM"],
-                    "low": by_severity["LOW"],
-                    "total": len(new_cves),
-                },
+                impact=impact,
                 affected_components=regression_shown,
                 affected_components_total=regression_total,
                 action={
@@ -149,11 +149,6 @@ async def build_cve_recurrence(vulnerability_findings: AsyncIterator[dict[str, A
     return recurrence
 
 
-def _count_recurring_by_severity(recurring: list[tuple[str, CveRecurrence]], severity: str) -> int:
-    """Count recurring issues matching a given severity."""
-    return len([1 for _cve, row in recurring if row.severity == severity])
-
-
 def analyze_recurring_issues(
     recurrence: dict[str, CveRecurrence],
     window_scans: int,
@@ -173,7 +168,7 @@ def analyze_recurring_issues(
         reverse=True,
     )
 
-    critical_count = _count_recurring_by_severity(recurring, "CRITICAL")
+    impact = severity_impact(row.severity for _, row in recurring)
     recurring_shown, recurring_total = sample_components(
         f"{cve} ({row.component or 'unknown'}) - {len(row.scans)} scans" for cve, row in recurring
     )
@@ -181,20 +176,14 @@ def analyze_recurring_issues(
     return [
         Recommendation(
             type=RecommendationType.RECURRING_VULNERABILITY,
-            priority=Priority.MEDIUM if critical_count > 0 else Priority.LOW,
+            priority=Priority.MEDIUM if impact["critical"] else Priority.LOW,
             title=f"{len(recurring)} vulnerabilities keep recurring across scans",
             description=(
                 f"These vulnerabilities have appeared in {RECURRING_ISSUE_THRESHOLD} "
                 f"or more of the last {window_scans} scans without being fixed. Consider creating "
                 "waivers with justification, or addressing the root cause architecturally."
             ),
-            impact={
-                "critical": critical_count,
-                "high": _count_recurring_by_severity(recurring, "HIGH"),
-                "medium": _count_recurring_by_severity(recurring, "MEDIUM"),
-                "low": _count_recurring_by_severity(recurring, "LOW"),
-                "total": len(recurring),
-            },
+            impact=impact,
             affected_components=recurring_shown,
             affected_components_total=recurring_total,
             action={

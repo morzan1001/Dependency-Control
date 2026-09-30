@@ -4,6 +4,8 @@ Each of these lists is cut to a sample; without the population beside it the sam
 everything the card found, and the card has no chart next to it to disagree with.
 """
 
+import pytest
+
 from app.services.recommendation.common import sampled
 from app.services.recommendation.crypto import _EVIDENCE_SAMPLED, process_crypto
 from app.services.recommendation.dependencies import analyze_version_fragmentation
@@ -40,14 +42,15 @@ def _vulnerability(index):
     }
 
 
-def test_the_update_action_names_how_many_advisories_it_sampled():
+@pytest.mark.parametrize(("direct", "action_type"), [(True, "update_dependency"), (False, "update_transitive")])
+def test_the_update_action_names_how_many_advisories_it_sampled(direct, action_type):
     population = _CVES_SAMPLED + _OVER_THE_SAMPLE
 
-    installed = {"name": "log4j-core", "version": "2.14.1", "direct": True}
+    installed = {"name": "log4j-core", "version": "2.14.1", "direct": direct}
 
     recs = process_vulnerabilities([_vulnerability(index) for index in range(population)], [installed], None)
 
-    action = next(r for r in recs if r.action.get("type") == "update_dependency").action
+    action = next(r for r in recs if r.action.get("type") == action_type).action
     assert len(action["cves"]) == _CVES_SAMPLED
     assert action["cves_total"] == population
 

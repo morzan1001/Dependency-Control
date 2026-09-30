@@ -18,6 +18,7 @@ from app.services.recommendation.common import (
     sampled,
     scorecard_details,
     scorecard_score,
+    severity_impact,
 )
 
 # Advisories named per risky package, and packages detailed in the replace action; each is
@@ -108,11 +109,7 @@ def correlate_scorecard_with_vulnerabilities(
                     "These vulnerabilities may never receive fixes."
                 ),
                 impact={
-                    "critical": sum(1 for v in high_risk_vulns if v["vuln_severity"] == "CRITICAL"),
-                    "high": sum(1 for v in high_risk_vulns if v["vuln_severity"] == "HIGH"),
-                    "medium": 0,
-                    "low": 0,
-                    "total": len(high_risk_vulns),
+                    **severity_impact(v["vuln_severity"] for v in high_risk_vulns),
                     "unmaintained_count": unmaintained_count,
                 },
                 affected_components=risky_shown,

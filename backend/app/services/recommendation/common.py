@@ -59,7 +59,7 @@ _PRIORITY_BY_WORST = (("critical", Priority.CRITICAL), ("high", Priority.HIGH), 
 MIN_FINDINGS_FOR_CARD = 3
 
 
-def severity_impact(severities: Iterable[str]) -> dict[str, int]:
+def severity_impact(severities: Iterable[str | None]) -> dict[str, int]:
     """The impact block calculate_score reads; severities outside the four scored ones count only in total."""
     counts = Counter(severities)
     return {severity.lower(): counts[severity] for severity in _IMPACT_SEVERITIES} | {"total": counts.total()}

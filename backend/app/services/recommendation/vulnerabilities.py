@@ -37,7 +37,6 @@ from app.services.recommendation.common import (
 # Evidence samples inside the update action; each is paired with its population by `sampled`.
 _CVES_SAMPLED = 10
 _MARKED_CVES_SAMPLED = 5
-_TRANSITIVE_CVES_SHOWN = 5
 
 
 def process_vulnerabilities(
@@ -55,10 +54,9 @@ def process_vulnerabilities(
         recommendations.append(base_image_rec)
 
     # One card per installed copy: another version of the package has its own fixes and CVEs.
-    for (component, version), group in _by_installed_version(vulns_by_source.get("application", [])).items():
-        recommendations.append(_build_direct_recommendation(component, version, group))
-    for (component, version), group in _by_installed_version(vulns_by_source.get("transitive", [])).items():
-        recommendations.append(_build_transitive_recommendation(component, version, group))
+    for source, transitive in (("application", False), ("transitive", True)):
+        for (component, version), group in _by_installed_version(vulns_by_source.get(source, [])).items():
+            recommendations.append(_build_update_recommendation(component, version, group, transitive))
 
     no_fix_recs = _analyze_no_fix_vulns(vulns_by_source.get("no_fix", []))
     recommendations.extend(no_fix_recs)
@@ -162,11 +160,20 @@ def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], source_target: str
     )
 
 
-def _build_direct_description(component: str, current_version: str, stats: VulnStats, direct_inferred: bool) -> str:
-    """Build the description string for a direct-dependency update recommendation."""
-    desc_parts = [
-        f"Update {component} from {current_version} to {stats.best_fix} to fix {stats.total} vulnerabilities."
-    ]
+def _build_update_description(
+    component: str, current_version: str, stats: VulnStats, transitive: bool, direct_inferred: bool
+) -> str:
+    if transitive:
+        headline = (
+            f"Transitive dependency {component}@{current_version} has {stats.total} vulnerabilities. "
+            f"Update a parent dependency that includes a fixed version ({stats.best_fix}), "
+            "or override the transitive version directly."
+        )
+    else:
+        headline = (
+            f"Update {component} from {current_version} to {stats.best_fix} to fix {stats.total} vulnerabilities."
+        )
+    desc_parts = [headline]
     if stats.kev > 0:
         desc_parts.append(f"{stats.kev} CVE(s) are in CISA KEV (actively exploited).")
     if stats.kev_ransomware > 0:
@@ -189,22 +196,24 @@ def _marked_cves(vulns: list[VulnerabilityInfo], marked: Callable[[dict[str, Any
     return canonical_cves([{"vulnerabilities": [a for a in v.advisories if marked(a)]} for v in vulns])
 
 
-def _build_direct_recommendation(
-    component: str, current_version: str, component_vulns: list[VulnerabilityInfo]
+def _build_update_recommendation(
+    component: str, current_version: str, component_vulns: list[VulnerabilityInfo], transitive: bool
 ) -> Recommendation:
-    """Build a single direct-dependency recommendation."""
     stats = summarize_vulns(component_vulns)
-    direct_inferred = component_vulns[0].direct_inferred
+    direct_inferred = not transitive and component_vulns[0].direct_inferred
+    label = f"{component}@{current_version}"
 
     return Recommendation(
-        type=RecommendationType.DIRECT_DEPENDENCY_UPDATE,
+        type=RecommendationType.TRANSITIVE_FIX_VIA_PARENT
+        if transitive
+        else RecommendationType.DIRECT_DEPENDENCY_UPDATE,
         priority=vuln_priority(stats),
-        title=f"Update {component}@{current_version}",
-        description=_build_direct_description(component, current_version, stats, direct_inferred),
+        title=f"Update transitive dependency {label}" if transitive else f"Update {label}",
+        description=_build_update_description(component, current_version, stats, transitive, direct_inferred),
         impact=stats.impact(),
-        affected_components=[f"{component}@{current_version}"],
+        affected_components=[label],
         action={
-            "type": "update_dependency",
+            "type": "update_transitive" if transitive else "update_dependency",
             "package": component,
             "current_version": current_version,
             "target_version": stats.best_fix,
@@ -221,50 +230,7 @@ def _build_direct_recommendation(
                 _MARKED_CVES_SAMPLED,
             ),
         },
-        effort="medium" if direct_inferred else "low",
-    )
-
-
-def _build_transitive_description(component: str, current_version: str, stats: VulnStats) -> str:
-    """Build the description for a transitive-dependency recommendation."""
-    desc_parts = [
-        (
-            f"Transitive dependency {component}@{current_version} has "
-            f"{stats.total} vulnerabilities. "
-            f"Update a parent dependency that includes a fixed version ({stats.best_fix}), "
-            f"or override the transitive version directly."
-        )
-    ]
-    if stats.kev > 0:
-        desc_parts.append(f"{stats.kev} are actively exploited (KEV).")
-    if stats.high_epss > 0:
-        desc_parts.append(f"{stats.high_epss} have high EPSS.")
-    if stats.reachable > 0:
-        desc_parts.append(f"{stats.reachable} are reachable.")
-    return " ".join(desc_parts)
-
-
-def _build_transitive_recommendation(
-    component: str, current_version: str, component_vulns: list[VulnerabilityInfo]
-) -> Recommendation:
-    """Build a transitive-dependency recommendation."""
-    stats = summarize_vulns(component_vulns)
-
-    return Recommendation(
-        type=RecommendationType.TRANSITIVE_FIX_VIA_PARENT,
-        priority=vuln_priority(stats),
-        title=f"Update transitive dependency {component}@{current_version}",
-        description=_build_transitive_description(component, current_version, stats),
-        impact=stats.impact(),
-        affected_components=[f"{component}@{current_version}"],
-        action={
-            "type": "update_transitive",
-            "package": component,
-            "current_version": current_version,
-            "target_version": stats.best_fix,
-            "cves": stats.cves[:_TRANSITIVE_CVES_SHOWN],
-        },
-        effort="high",
+        effort="high" if transitive else "medium" if direct_inferred else "low",
     )
 
 

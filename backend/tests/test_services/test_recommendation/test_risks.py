@@ -656,6 +656,22 @@ class TestHotspotNamesEveryInstalledVersionAndOneTarget:
         assert rec.action["target_version"] == "2.12.7.1"
         assert "Available fix: Update to 2.12.7.1" in rec.description
 
+    def test_an_unfixable_hotspot_names_no_target(self):
+        [rec] = _hotspots([_vuln("lib", "CRITICAL", is_kev=True)])
+
+        assert rec.action["target_version"] is None
+
+    def test_the_impact_counts_every_severity(self):
+        findings = [
+            _vuln("lib", "CRITICAL", is_kev=True, finding_id="CVE-1"),
+            _vuln("lib", "MEDIUM", finding_id="CVE-2"),
+            _vuln("lib", "LOW", finding_id="CVE-3"),
+        ]
+
+        [rec] = _hotspots(findings)
+
+        assert [rec.impact[k] for k in ("critical", "high", "medium", "low", "total")] == [1, 0, 1, 1, 3]
+
     def test_the_target_agrees_with_the_quick_win_whatever_the_set_order(self):
         findings = [
             _vuln("lib", "CRITICAL", is_kev=True, fixed_version=fix, finding_id=f"CVE-{fix}")

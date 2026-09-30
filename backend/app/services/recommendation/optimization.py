@@ -13,6 +13,7 @@ from app.services.recommendation.common import (
     VulnStats,
     get_attr,
     sample_components,
+    severity_impact,
     summarize_vulns,
     take_top,
     vuln_info,
@@ -76,26 +77,19 @@ def identify_quick_wins(
 def _quick_win_recommendation(
     pkg: str, stats: VulnStats, is_direct: bool | None, rank: int, ranked_out_of: int
 ) -> Recommendation:
-    critical, high = stats.severity["CRITICAL"], stats.severity["HIGH"]
+    impact = severity_impact(stats.severity.elements())
     versions = stats.versions or ["unknown"]
     components_shown, components_total = sample_components(f"{pkg}@{version}" for version in versions)
     return Recommendation(
         type=(RecommendationType.SINGLE_UPDATE_MULTI_FIX if stats.total >= 3 else RecommendationType.QUICK_WIN),
-        priority=(Priority.HIGH if stats.kev > 0 or critical > 0 else Priority.MEDIUM),
+        priority=(Priority.HIGH if stats.kev > 0 or impact["critical"] > 0 else Priority.MEDIUM),
         title=f"Quick Win: Update {pkg}",
         description=(
             f"Updating this {_DEPENDENCY_KIND[is_direct]} from {', '.join(versions)} to {stats.best_fix} "
             f"will fix {stats.total} vulnerabilities in a single update! "
-            f"({critical} critical, {high} high)"
+            f"({impact['critical']} critical, {impact['high']} high)"
         ),
-        impact={
-            "critical": critical,
-            "high": high,
-            "medium": stats.total - critical - high,
-            "low": 0,
-            "total": stats.total,
-            "kev_count": stats.kev,
-        },
+        impact={**impact, "kev_count": stats.kev},
         affected_components=components_shown,
         affected_components_total=components_total,
         action={

@@ -314,7 +314,7 @@ class TestChainPreviewIsARealPath:
             {
                 "package": "leaf",
                 "depth": 9,
-                "chain_preview": " → ".join([*(f"pkg-{i}@1.0" for i in range(7)), "a@1.0", "leaf@1.0"]),
+                "chain_preview": "pkg-0@1.0 → pkg-1@1.0 → ... → a@1.0 → leaf@1.0",
             }
         ]
 
