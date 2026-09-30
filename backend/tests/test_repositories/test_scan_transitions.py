@@ -165,7 +165,7 @@ def test_the_retry_ceiling_does_not_fail_or_announce_a_scan_another_worker_holds
     with patch("app.core.worker.notify_analysis_failed", AsyncMock()) as notify:
         asyncio.run(manager._handle_rescheduled({"_id": _SCAN, "retry_count": 4}, db, time.time()))
 
-    notify.assert_not_awaited()
+    notify.assert_not_called()
     assert asyncio.run(_stored(db))["status"] == SCAN_STATUS_PROCESSING
 
 

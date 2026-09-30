@@ -140,7 +140,7 @@ async def test_an_error_after_the_scan_left_this_worker_neither_fails_nor_announ
         await _drain_one_job(db, "scan-1", _finalize_then_raise)
 
     assert (await db.scans.find_one({"_id": "scan-1"}))["status"] == SCAN_STATUS_COMPLETED
-    notify.assert_not_awaited()
+    notify.assert_not_called()
     assert _jobs("failed") == failed_before
 
 
@@ -230,7 +230,7 @@ async def test_a_scan_rescheduled_past_the_ceiling_counts_as_a_failed_job():
         await _drain_one_job(db, "scan-1", _rescheduled)
 
     assert (await db.scans.find_one({"_id": "scan-1"}))["status"] == SCAN_STATUS_FAILED
-    notify.assert_awaited_once()
+    notify.assert_called_once()
     assert (_jobs("failed") - failed_before, _durations() - durations_before) == (1, 1)
 
 
