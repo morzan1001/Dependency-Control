@@ -246,3 +246,24 @@ def test_cipher_suite_code_points_are_kept_in_the_catalog_spelling():
     )
     assert proto.cipher_suites == ["A", "B", "C", "D", "E"]
     assert proto.cipher_suite_ids == ["0xC0,0x30", "0xC0,0x30", "0xC0,0x30", None, None]
+
+
+def _rsa_component(**fields) -> dict:
+    rsa = next(c for c in _load("legacy_crypto_mixed.json")["components"] if c["bom-ref"] == "algo-rsa1024")
+    return {**rsa, **fields}
+
+
+def test_a_malformed_property_entry_drops_only_that_entry():
+    comp = _rsa_component(properties=["bad", {"name": "key_size", "value": "2048"}, {"name": "note", "value": ""}])
+
+    [asset] = parse_crypto_components([comp])
+
+    assert asset.properties == {"key_size": "2048"}
+
+
+def test_repeated_occurrence_locations_are_kept_once_in_order():
+    occurrences = [{"location": "b.py"}, {"location": "a.py"}, "bad", {"location": "b.py"}, {"line": 3}]
+
+    [asset] = parse_crypto_components([_rsa_component(evidence={"occurrences": occurrences})])
+
+    assert asset.occurrence_locations == ["b.py", "a.py"]

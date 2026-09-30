@@ -20,7 +20,7 @@ from app.schemas.sbom import UNKNOWN_VERSION, ParsedDependency, ParsedSBOM, SBOM
 from app.core.purl import dependency_node_key, get_purl_type, is_os_package_type, parse_purl
 from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
 from app.services.analyzers.license_compliance.normalizer import extract_license_from_url, normalize_license
-from app.services.cbom_parser import parse_crypto_components
+from app.services.cbom_parser import occurrence_locations, parse_crypto_components
 
 logger = logging.getLogger(__name__)
 
@@ -599,13 +599,7 @@ class SBOMParser:
             if new_location is not None:
                 locations.append(new_location)
 
-        evidence = comp.get("evidence")
-        occurrences = evidence.get("occurrences") if isinstance(evidence, dict) else None
-        for occ in occurrences if isinstance(occurrences, list) else []:
-            loc = occ.get("location") if isinstance(occ, dict) else None
-            if loc:
-                locations.append(loc)
-
+        locations.extend(occurrence_locations(comp))
         return layer_digest, found_by, list(dict.fromkeys(locations)), properties, list(dict.fromkeys(cpes))
 
     @staticmethod
