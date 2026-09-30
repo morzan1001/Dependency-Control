@@ -13,7 +13,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import delta_truncation, paginate
+from app.services.analytics._delta_pagination import by_side, delta_truncation, paginate
 from app.services.analytics._delta_reachability import side_reachability
 
 
@@ -26,14 +26,14 @@ def _key(asset: CryptoAsset) -> tuple[str, str, str]:
     )
 
 
-def _asset_to_envelope_item(asset: CryptoAsset, change: str) -> CryptoDeltaItem:
+def _group_to_envelope_item(group: list[CryptoAsset], change: str) -> CryptoDeltaItem:
     return CryptoDeltaItem(
         change=change,
-        name=asset.name or "",
-        variant=asset.variant,
-        primitive=asset.primitive,
-        locations=list(asset.occurrence_locations or []),
-        asset_count=1,
+        name=group[0].name or "",
+        variant=group[0].variant,
+        primitive=group[0].primitive,
+        locations=sorted({loc for asset in group for loc in asset.occurrence_locations or []}),
+        asset_count=len(group),
     )
 
 
@@ -64,18 +64,15 @@ async def compute_crypto_delta_envelope(
     from_assets, from_total = await _side_assets(repo, project_id, from_scan)
     to_assets, to_total = await _side_assets(repo, project_id, to_scan)
 
-    from_map = {_key(a): a for a in from_assets}
-    to_map = {_key(a): a for a in to_assets}
-
-    added_keys = to_map.keys() - from_map.keys()
-    removed_keys = from_map.keys() - to_map.keys()
-    unchanged = len(to_map.keys() & from_map.keys())
+    groups = list(by_side(_key, from_assets, to_assets).values())
+    added = [new for gone, new in groups if not gone]
+    removed = [gone for gone, new in groups if not new]
 
     items: list[CryptoDeltaItem] = []
     if change in (None, "all", "added"):
-        items.extend(_asset_to_envelope_item(to_map[k], "added") for k in added_keys)
+        items.extend(_group_to_envelope_item(group, "added") for group in added)
     if change in (None, "all", "removed"):
-        items.extend(_asset_to_envelope_item(from_map[k], "removed") for k in removed_keys)
+        items.extend(_group_to_envelope_item(group, "removed") for group in removed)
 
     # Sort with variant/primitive tiebreakers so pagination is deterministic across set-iteration order.
     items.sort(key=lambda i: (i.change, i.name, i.variant or "", i.primitive or ""))
@@ -87,9 +84,9 @@ async def compute_crypto_delta_envelope(
         project_id=project_id,
         category=DeltaCategory.CRYPTO,
         totals=ScanDeltaTotals(
-            added=len(added_keys),
-            removed=len(removed_keys),
-            unchanged=unchanged,
+            added=len(added),
+            removed=len(removed),
+            unchanged=len(groups) - len(added) - len(removed),
         ),
         page=page,
         page_size=page_size,

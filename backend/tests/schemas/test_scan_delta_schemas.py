@@ -48,6 +48,29 @@ def test_response_findings_minimal_payload_validates():
     assert isinstance(parsed.items[0], FindingDeltaItem)
 
 
+def test_a_changed_finding_carries_both_versions_and_the_cves_that_moved():
+    item = FindingDeltaItem.model_validate(
+        {
+            "change": "changed",
+            "finding_id": "lodash:4.17.21",
+            "finding_type": "vulnerability",
+            "severity": "CRITICAL",
+            "title": "",
+            "cve_id": "CVE-2020-8203",
+            "from_version": "4.17.20",
+            "to_version": "4.17.21",
+            "dropped_cves": ["CVE-2020-8203"],
+        }
+    )
+
+    assert (item.from_version, item.to_version, item.added_cves, item.dropped_cves) == (
+        "4.17.20",
+        "4.17.21",
+        [],
+        ["CVE-2020-8203"],
+    )
+
+
 def test_components_changed_total_present():
     totals = ScanDeltaTotals(added=0, removed=0, unchanged=0, changed=3)
     assert totals.changed == 3

@@ -23,7 +23,7 @@ class InvalidDeltaQuery(ValueError):
 _VALID_SEVERITIES = {s.value.lower() for s in Severity}
 _VALID_FINDING_TYPES = {t.value for t in FindingType}
 _VALID_CHANGES_BY_CATEGORY = {
-    "findings": {"added", "removed", "all"},
+    "findings": {"added", "removed", "changed", "all"},
     "components": {"added", "removed", "changed", "all"},
     "crypto": {"added", "removed", "all"},
 }

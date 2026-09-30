@@ -154,12 +154,12 @@ async def test_dispatch_rejects_finding_type_for_non_findings(db):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_change_changed_for_non_components(db):
+async def test_dispatch_rejects_change_changed_for_crypto(db):
     with pytest.raises(InvalidDeltaQuery):
         await compute_scan_delta_dispatch(
             db=db,
             project_id=_PROJECT,
-            category=_FINDINGS,
+            category=_CRYPTO,
             from_scan=_FROM_SCAN,
             to_scan=_TO_SCAN,
             page=_PAGE,
@@ -345,15 +345,19 @@ async def test_dispatch_accepts_the_maximum_page_size(db):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_accepts_change_changed_for_components(db):
+@pytest.mark.parametrize(
+    ("category", "service"),
+    [(DeltaCategory.COMPONENTS, "compute_components_delta"), (DeltaCategory.FINDINGS, "compute_findings_delta")],
+)
+async def test_dispatch_accepts_change_changed_for_components_and_findings(db, category, service):
     with patch(
-        "app.services.analytics.scan_delta.compute_components_delta",
-        new=AsyncMock(return_value=_envelope(DeltaCategory.COMPONENTS)),
+        f"app.services.analytics.scan_delta.{service}",
+        new=AsyncMock(return_value=_envelope(category)),
     ):
         result = await compute_scan_delta_dispatch(
             db=db,
             project_id=_PROJECT,
-            category=_COMPONENTS,
+            category=category.value,
             from_scan=_FROM_SCAN,
             to_scan=_TO_SCAN,
             page=_PAGE,
@@ -363,7 +367,7 @@ async def test_dispatch_accepts_change_changed_for_components(db):
             finding_type=None,
             allow_same_scan=False,
         )
-        assert result.category == DeltaCategory.COMPONENTS
+        assert result.category == category
 
 
 @pytest.mark.asyncio

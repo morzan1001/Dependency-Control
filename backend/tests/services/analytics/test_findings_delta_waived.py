@@ -266,9 +266,69 @@ async def test_waiving_one_cve_of_a_record_is_reported_as_a_waiver_difference(db
 
     result = await _delta(db)
 
+    assert (result.totals.added, result.totals.removed, result.totals.changed) == (_NOTHING, _NOTHING, _ONE)
+    assert result.waiver_only_changes == _ONE
+
+
+@pytest.mark.asyncio
+async def test_a_new_cve_on_a_record_with_a_per_cve_waiver_is_a_code_difference(db):
+    waived_entry = {"id": _WAIVED_CVE, "waived": True}
+    await db.findings.insert_one(_aggregated(_SHARED_FINDING, _FROM_SCAN, [{"id": _LIVE_CVE}, waived_entry]))
+    await db.findings.insert_one(
+        _aggregated(_SHARED_FINDING, _TO_SCAN, [{"id": _LIVE_CVE}, waived_entry, {"id": "CVE-3003"}])
+    )
+
+    result = await _delta(db)
+
+    assert result.totals.changed == _ONE
+    assert result.waiver_only_changes == _NOTHING
+
+
+@pytest.mark.asyncio
+async def test_a_version_change_on_a_record_with_a_per_cve_waiver_is_a_code_difference(db):
+    waived_entry = {"id": _WAIVED_CVE, "waived": True}
+    await db.findings.insert_one(_aggregated(_SHARED_FINDING, _FROM_SCAN, [{"id": _LIVE_CVE}, waived_entry]))
+    bumped = _aggregated(_SHARED_FINDING, _TO_SCAN, [{"id": _LIVE_CVE}, waived_entry])
+    bumped["version"] = "1.0.1"
+    await db.findings.insert_one(bumped)
+
+    result = await _delta(db)
+
+    assert result.totals.changed == _ONE
+    assert result.waiver_only_changes == _NOTHING
+
+
+@pytest.mark.asyncio
+async def test_a_new_record_carrying_a_waived_entry_is_a_code_difference(db):
+    await db.findings.insert_one(
+        _aggregated(_SHARED_FINDING, _TO_SCAN, [{"id": _LIVE_CVE}, {"id": _WAIVED_CVE, "waived": True}])
+    )
+
+    result = await _delta(db)
+
     assert result.totals.added == _ONE
-    assert result.totals.removed == _ONE
-    assert result.waiver_only_changes == _TWO
+    assert result.waiver_only_changes == _NOTHING
+
+
+@pytest.mark.asyncio
+async def test_a_second_version_under_one_license_finding_is_a_code_difference(db):
+    def license_finding(scan_id: str, version: str) -> dict:
+        doc = _finding(_SHARED_FINDING, scan_id, component=_WAIVED_COMPONENT, waived=None)
+        return doc | {
+            "_id": f"{scan_id}:{version}",
+            "type": FindingType.LICENSE.value,
+            "version": version,
+            "details": {"license": "GPL-3.0-only"},
+        }
+
+    await db.findings.insert_many(
+        [license_finding(_FROM_SCAN, "1.0"), license_finding(_TO_SCAN, "1.0"), license_finding(_TO_SCAN, "2.0")]
+    )
+
+    result = await _delta(db)
+
+    assert (result.totals.added, result.totals.unchanged) == (_ONE, _ONE)
+    assert result.waiver_only_changes == _NOTHING
 
 
 @pytest.mark.asyncio

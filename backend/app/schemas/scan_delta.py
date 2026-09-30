@@ -34,7 +34,7 @@ class ScanDeltaTotals(BaseModel):
     added: int = 0
     removed: int = 0
     unchanged: int = 0
-    # Only set for the components category.
+    # Components and findings; crypto never pairs a changed item.
     changed: int = 0
     # Findings-only breakdowns.
     by_severity: dict[str, int] = Field(default_factory=dict)
@@ -42,11 +42,11 @@ class ScanDeltaTotals(BaseModel):
 
 
 class FindingDeltaItem(BaseModel):
-    """A single added/removed finding between two scans."""
+    """A single finding between two scans; 'changed' is a vulnerability record whose version or advisories moved."""
 
     model_config = ConfigDict(extra="forbid")
 
-    change: Literal["added", "removed"]
+    change: Literal["added", "removed", "changed"]
     finding_id: str
     finding_type: str
     severity: str
@@ -54,7 +54,12 @@ class FindingDeltaItem(BaseModel):
     component: str | None = None
     cve_id: str | None = None
     file_path: str | None = None
+    # The earliest detection in the project, not the compared scan's date.
     first_seen: datetime | None = None
+    from_version: str | None = None
+    to_version: str | None = None
+    added_cves: list[str] = Field(default_factory=list)
+    dropped_cves: list[str] = Field(default_factory=list)
 
 
 class ComponentDeltaItem(BaseModel):
@@ -150,7 +155,7 @@ class ScanDeltaResponse(BaseModel):
     # severity filters; the `change` filter only scopes the item list.
     from_waived_excluded: int = 0
     to_waived_excluded: int = 0
-    # Added and removed items the comparison would not have produced had no waiver applied — the
+    # Items the comparison would not have produced had no waiver applied — the
     # only evidence that a change is a waiver difference rather than a code difference, since two
     # sides can hide equal numbers of different findings.
     waiver_only_changes: int = 0
