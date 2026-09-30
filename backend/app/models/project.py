@@ -155,7 +155,6 @@ class Scan(MongoDocument, CreatedAtModel):
 
     # Reachability enrichment
     reachability_pending: bool | None = None
-    reachability_pending_since: datetime | None = None
 
     # Pinned scans are exempt from retention cleanup (housekeeping filters "pinned": {"$ne": True}).
     pinned: bool = False

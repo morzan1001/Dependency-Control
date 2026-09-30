@@ -602,10 +602,7 @@ class TestReachabilityVerdicts:
 
         js_finding = await db.findings.find_one({"_id": "f-CVE-JS"})
         assert js_finding["reachable"] is None, "the python callgraph must not judge an npm package"
-
-        # Production clears the flag with $unset, which the in-process fake ignores; mirror the
-        # cleared state so the second upload faces the same scan the real one would.
-        await db.scans.update_one({"_id": _SCAN_ID}, {"$set": {"reachability_pending": False}})
+        assert not (await db.scans.find_one({"_id": _SCAN_ID})).get("reachability_pending")
 
         await _upload(client, _envelope("madge", "javascript", _MADGE_DATA))
 
@@ -663,6 +660,33 @@ class TestReachabilityVerdicts:
         await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
 
         assert "reachable" not in await db.findings.find_one({"_id": "f-CVE-PY"})
+
+    @pytest.mark.asyncio
+    async def test_a_failed_enrichment_is_reported_and_left_pending(self, client, db, monkeypatch):
+        await _seed_scan_with_findings(db)
+
+        async def _unavailable_inventory(*_args):
+            raise RuntimeError("inventory unavailable")
+
+        monkeypatch.setattr("app.services.reachability_enrichment.build_component_language_map", _unavailable_inventory)
+
+        response = await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert response.status_code == 200, response.text
+        assert response.json()["warnings"] == ["Reachability analysis deferred: inventory unavailable"]
+        assert (await db.scans.find_one({"_id": _SCAN_ID}))["reachability_pending"] is True
+
+    @pytest.mark.asyncio
+    async def test_findings_beyond_the_per_run_cap_are_reported(self, client, db, monkeypatch):
+        await _seed_scan_with_findings(db)
+        monkeypatch.setattr("app.services.reachability_enrichment._MAX_FINDINGS_PER_RUN", 1)
+        monkeypatch.setattr("app.services.reachability_enrichment._FINDINGS_PAGE_SIZE", 1)
+
+        response = await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+
+        assert response.json()["warnings"] == [
+            "1 findings beyond the per-run cap were left without a reachability verdict"
+        ]
 
     @pytest.mark.asyncio
     async def test_analyzed_but_unimported_package_is_unreachable(self, client, db):

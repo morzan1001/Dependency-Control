@@ -4,7 +4,14 @@ from app.models.callgraph import Callgraph
 from app.repositories.base import BaseRepository
 from app.schemas.projections import CallgraphMinimal
 
-_MINIMAL_PROJECTION = {"_id": 1, "module_usage": 1, "analyzed_modules": 1, "language": 1, "created_at": 1}
+_MINIMAL_PROJECTION = {
+    "_id": 1,
+    "module_usage": 1,
+    "analyzed_modules": 1,
+    "language": 1,
+    "total_imports": 1,
+    "created_at": 1,
+}
 
 
 class CallgraphRepository(BaseRepository[Callgraph]):

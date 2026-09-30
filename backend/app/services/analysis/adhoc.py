@@ -702,7 +702,7 @@ async def _enrich_vulnerabilities(
     return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
 
-def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], CallgraphMinimal]:
+def _prepare_posted_callgraph(payload: dict[str, Any]) -> CallgraphMinimal:
     """Turn a posted callgraph into the same in-memory shape the stored one resolves to."""
     from app.api.v1.helpers.callgraph import detect_format, parse_generic_format, parse_madge_format
 
@@ -722,20 +722,13 @@ def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], 
         raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
 
     parsed = parser(data, language)
-    minimal = CallgraphMinimal(
+    return CallgraphMinimal(
         id=_POSTED_CALLGRAPH_ID,
         module_usage={key: usage.model_dump() for key, usage in parsed.module_usage.items()},
         analyzed_modules=parsed.analyzed_modules,
         language=language,
+        total_imports=parsed.total_imports,
     )
-    as_dict = {
-        "language": minimal.language,
-        "module_usage": minimal.module_usage,
-        "analyzed_modules": minimal.analyzed_modules,
-        "total_imports": parsed.total_imports,
-        "created_at": None,
-    }
-    return as_dict, minimal
 
 
 def _run_reachability(
@@ -749,7 +742,7 @@ def _run_reachability(
         return None
 
     try:
-        callgraph_dict, callgraph = _prepare_posted_callgraph(callgraph_payload)
+        callgraph = _prepare_posted_callgraph(callgraph_payload)
     except Exception as exc:
         logger.warning("adhoc: callgraph could not be prepared: %s", exc)
         _record_errored(report, _REACHABILITY, str(exc))
@@ -760,7 +753,7 @@ def _run_reachability(
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
     enrich_findings_with_reachability(vulnerabilities, [callgraph], languages)
     _record_ran(report, _REACHABILITY)
-    return dict(build_reachability_summary(vulnerabilities, [callgraph_dict]))
+    return dict(build_reachability_summary(vulnerabilities, [callgraph]))
 
 
 def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:

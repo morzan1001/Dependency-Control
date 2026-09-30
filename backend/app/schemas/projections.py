@@ -55,6 +55,7 @@ class CallgraphMinimal(BaseModel):
     module_usage: dict | None = None
     analyzed_modules: list[str] = Field(default_factory=list)
     language: str | None = None
+    total_imports: int = 0
     created_at: datetime | None = None
 
     model_config = ConfigDict(populate_by_name=True)

@@ -35,7 +35,6 @@ from app.core.metrics import (
     analysis_gridfs_operations_total,
     analysis_kev_vulnerabilities_total,
     analysis_race_conditions_total,
-    analysis_reachable_vulnerabilities_total,
     analysis_rescan_operations_total,
     analysis_sbom_parse_errors_total,
     analysis_sbom_processed_total,
@@ -65,11 +64,7 @@ from app.services.analysis.registry import (
     analyzer_factories,
     is_crypto_analyzer,
 )
-from app.services.analysis.stats import (
-    build_epss_kev_summary,
-    build_reachability_summary,
-    calculate_comprehensive_stats,
-)
+from app.services.analysis.stats import build_epss_kev_summary, calculate_comprehensive_stats
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
@@ -78,8 +73,7 @@ from app.services.github import is_public_github
 from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs, gridfs_ref_id, load_gridfs_json
 from app.services.reachability_enrichment import (
     ComponentLanguages,
-    build_component_language_map,
-    enrich_findings_with_reachability,
+    apply_reachability,
     fetch_callgraphs,
     run_pending_reachability_for_scan,
 )
@@ -561,43 +555,23 @@ async def _run_reachability_enrichment(
     scan_id: str,
     project_id: str,
     db: Database,
-    result_repo: AnalysisResultRepository,
     scan_repo: ScanRepository,
     results_summary: list[str],
 ) -> ComponentLanguages | None:
     """Run reachability analysis on vulnerability findings; returns the inventory language map it built."""
     callgraphs = await fetch_callgraphs(project_id, scan_id, db)
     if not callgraphs:
-        await scan_repo.update_raw(
-            scan_id,
-            {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
-        )
+        await scan_repo.update_raw(scan_id, {"$set": {"reachability_pending": True}})
         logger.info(f"[reachability] No callgraph available for scan {scan_id}. Marked as pending.")
         return None
 
-    component_languages = None
     try:
-        component_languages = await build_component_language_map(db, scan_id)
-        enriched_count = enrich_findings_with_reachability(vulnerability_findings, callgraphs, component_languages)
-        reachability_summary = build_reachability_summary(
-            vulnerability_findings, [cg.model_dump(by_alias=True) for cg in callgraphs]
-        )
-        await result_repo.save_result(scan_id, "reachability", reachability_summary)
-        results_summary.append(f"reachability: Success ({enriched_count} enriched)")
-        logger.info(f"[reachability] Enriched {enriched_count} findings for scan {scan_id}")
-
-        if analysis_enrichment_total:
-            analysis_enrichment_total.labels(type="reachability").inc(enriched_count)
-
-        if analysis_reachable_vulnerabilities_total:
-            for vf in vulnerability_findings:
-                reachability = vf.get("details", {}).get("reachability", {})
-                if reachability.get("is_reachable") is True:
-                    level = reachability.get("analysis_level") or "unknown"
-                    analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
+        component_languages, enriched_count = await apply_reachability(db, scan_id, vulnerability_findings, callgraphs)
     except Exception as e:
         results_summary.append("reachability: Failed")
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
+        return None
+    results_summary.append(f"reachability: Success ({enriched_count} enriched)")
     return component_languages
 
 
@@ -750,7 +724,7 @@ async def _run_vuln_enrichments(
 
     if "reachability" in active_analyzers and vulnerability_findings and project_id:
         return await _run_reachability_enrichment(
-            vulnerability_findings, scan_id, project_id, db, result_repo, scan_repo, results_summary
+            vulnerability_findings, scan_id, project_id, db, scan_repo, results_summary
         )
     return None
 

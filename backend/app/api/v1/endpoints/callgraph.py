@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException
@@ -19,7 +18,7 @@ from app.api.v1.helpers.callgraph import (
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
-from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR, SCAN_ACTIVE_STATUSES, SCANS_TIP_SORT
+from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR, SCANS_TIP_SORT
 from app.models.callgraph import Callgraph
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.scans import ScanRepository
@@ -191,27 +190,15 @@ async def upload_callgraph(
             "_id", {"project_id": project_id, "original_scan_id": scan_id, "reachability_pending": True}
         )
         for target_scan_id in [scan_id, *pending_rescans]:
-            # A queued or running analysis is about to replace the findings, so it applies the callgraph once final.
-            if await scan_repo.update_raw(
-                target_scan_id,
-                {"$set": {"reachability_pending": True, "reachability_pending_since": datetime.now(timezone.utc)}},
-                guard={"status": {"$in": SCAN_ACTIVE_STATUSES}},
-            ):
-                continue
+            await scan_repo.update_raw(target_scan_id, {"$set": {"reachability_pending": True}})
             try:
-                reachability_result = await run_pending_reachability_for_scan(
-                    scan_id=target_scan_id,
-                    project_id=project_id,
-                    db=db,
-                )
-                if reachability_result["findings_enriched"] > 0:
-                    logger.info(
-                        f"Processed pending reachability for scan {target_scan_id}: "
-                        f"enriched {reachability_result['findings_enriched']} findings"
-                    )
+                dropped = await run_pending_reachability_for_scan(target_scan_id, project_id, db)
             except Exception as e:
-                logger.warning(f"Failed to run pending reachability analysis: {e}")
+                logger.exception("Failed to run pending reachability analysis for scan %s", target_scan_id)
                 warnings.append(f"Reachability analysis deferred: {e!s}")
+                continue
+            if dropped:
+                warnings.append(f"{dropped} findings beyond the per-run cap were left without a reachability verdict")
 
     return CallgraphUploadResponse(
         success=True,

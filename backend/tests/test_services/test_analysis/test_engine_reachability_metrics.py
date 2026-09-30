@@ -1,73 +1,77 @@
-"""The reachability metric must read the persisted tri-state and the persisted level name."""
+"""The reachability metrics count what apply_reachability persisted, on the engine and the upload path alike."""
 
-import asyncio
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+import pytest
+from prometheus_client import REGISTRY
 
-from app.services.analysis.engine import _run_reachability_enrichment
+from app.schemas.projections import CallgraphMinimal
+from app.services.reachability_enrichment import apply_reachability, build_component_language_map
+from tests.mocks.fake_mongo import FakeDatabase
+
+_SCAN_ID = "scan-1"
+_LEVELS = ("import", "symbol", "none", "unknown")
 
 
-def _finding(is_reachable, analysis_level):
+def _finding(component: str) -> dict:
     return {
-        "finding_id": "CVE-1",
-        "component": "requests",
-        "version": "2.0.0",
+        "_id": f"f-{component}",
+        "finding_id": f"CVE-{component}",
+        "type": "vulnerability",
+        "component": component,
+        "version": "1.0.0",
         "severity": "HIGH",
-        "details": {"reachability": {"is_reachable": is_reachable, "analysis_level": analysis_level}},
+        "details": {"risk_score": 40.0},
     }
 
 
-_LANGUAGES = {"requests": [("2.0.0", frozenset({"python"}), False)]}
+def _sample(name: str, labels: dict[str, str]) -> float:
+    return REGISTRY.get_sample_value(name, labels) or 0.0
 
 
-def _run_enrichment(monkeypatch, findings, enrich):
-    monkeypatch.setattr("app.services.analysis.engine.analysis_enrichment_total", None)
-    monkeypatch.setattr("app.services.analysis.engine.enrich_findings_with_reachability", enrich)
-    monkeypatch.setattr("app.services.analysis.engine.build_component_language_map", AsyncMock(return_value=_LANGUAGES))
-    monkeypatch.setattr(
-        "app.services.analysis.engine.fetch_callgraphs",
-        AsyncMock(
-            return_value=[SimpleNamespace(model_dump=lambda by_alias: {"language": "python", "module_usage": {}})]
-        ),
-    )
-
-    return asyncio.run(
-        _run_reachability_enrichment(
-            vulnerability_findings=findings,
-            scan_id="scan-1",
-            project_id="proj-1",
-            db=MagicMock(),
-            result_repo=SimpleNamespace(save_result=AsyncMock()),  # type: ignore[arg-type]
-            scan_repo=SimpleNamespace(update_raw=AsyncMock()),  # type: ignore[arg-type]
-            results_summary=[],
-        )
-    )
+def _counters() -> dict[str, float]:
+    counters = {"enriched": _sample("analysis_enrichment_total", {"type": "reachability"})}
+    for level in _LEVELS:
+        counters[level] = _sample("analysis_reachable_vulnerabilities_total", {"reachability_level": level})
+    return counters
 
 
-def _run(monkeypatch, findings):
-    labels: list[str] = []
-
-    metric = SimpleNamespace(
-        labels=lambda reachability_level: SimpleNamespace(inc=lambda: labels.append(reachability_level))
-    )
-    monkeypatch.setattr("app.services.analysis.engine.analysis_reachable_vulnerabilities_total", metric)
-    _run_enrichment(monkeypatch, findings, MagicMock(return_value=len(findings)))
-    return labels
+async def _seeded_db() -> FakeDatabase:
+    db = FakeDatabase()
+    for name, ecosystem in (("requests", "pypi"), ("urllib3", "pypi"), ("left-pad", "npm")):
+        await db.dependencies.insert_one({"scan_id": _SCAN_ID, "name": name, "purl": f"pkg:{ecosystem}/{name}@1.0.0"})
+    return db
 
 
-def test_reachable_finding_is_labelled_with_its_analysis_level(monkeypatch):
-    assert _run(monkeypatch, [_finding(True, "symbol")]) == ["symbol"]
+_PYTHON_CALLGRAPH = CallgraphMinimal(
+    _id="cg-1",
+    language="python",
+    analyzed_modules=["requests", "urllib3"],
+    module_usage={"requests": {"module": "requests", "import_locations": ["app/client.py"]}},
+)
 
 
-def test_unanalysed_and_unreachable_findings_are_not_counted(monkeypatch):
-    assert _run(monkeypatch, [_finding(None, "none"), _finding(False, "none")]) == []
+@pytest.mark.asyncio
+async def test_only_reachable_verdicts_are_counted_under_their_persisted_level():
+    db = await _seeded_db()
+    findings = [_finding("requests"), _finding("urllib3"), _finding("left-pad")]
+    before = _counters()
+
+    _languages, enriched = await apply_reachability(db, _SCAN_ID, findings, [_PYTHON_CALLGRAPH])
+
+    assert [finding["reachable"] for finding in findings] == [True, False, None]
+    after = _counters()
+    assert {key: after[key] - before[key] for key in before} == {
+        "enriched": enriched,
+        "import": 1,
+        "symbol": 0,
+        "none": 0,
+        "unknown": 0,
+    }
 
 
-def test_the_inventory_map_reachability_built_is_handed_on_for_the_stats(monkeypatch):
-    monkeypatch.setattr("app.services.analysis.engine.analysis_reachable_vulnerabilities_total", None)
-    enrich = MagicMock(return_value=1)
+@pytest.mark.asyncio
+async def test_the_inventory_map_it_built_is_handed_on_for_the_stats():
+    db = await _seeded_db()
 
-    returned = _run_enrichment(monkeypatch, [_finding(True, "import")], enrich)
+    languages, _enriched = await apply_reachability(db, _SCAN_ID, [_finding("requests")], [_PYTHON_CALLGRAPH])
 
-    assert returned is _LANGUAGES
-    assert enrich.call_args.args[2] is _LANGUAGES
+    assert languages == await build_component_language_map(db, _SCAN_ID)

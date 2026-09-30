@@ -552,15 +552,15 @@ def test_a_large_valid_callgraph_prepares_to_the_pinned_result():
     payload = _large_callgraph()
     adhoc._reject_unaffordable_input(AdhocAnalyzeRequest(sboms=[_SBOM], callgraph=payload))
 
-    as_dict, callgraph = adhoc._prepare_posted_callgraph(payload)
+    callgraph = adhoc._prepare_posted_callgraph(payload)
     prepared = _prepare_callgraph(callgraph)
 
     every_file = [f"app/f{file}.py" for file in range(_LARGE_CALLGRAPH_FILES)]
     submodules = [f"{module}.sub{n}" for n in range(3) for module in _LARGE_CALLGRAPH_MODULES]
-    assert as_dict["total_imports"] == _LARGE_CALLGRAPH_FILES * len(_LARGE_CALLGRAPH_MODULES)
-    assert as_dict["analyzed_modules"] == list(_LARGE_CALLGRAPH_MODULES)
-    assert list(as_dict["module_usage"]) == [*submodules, "requests"]
-    assert as_dict["module_usage"]["requests"]["used_symbols"] == ["post", "get"]
+    assert callgraph.total_imports == _LARGE_CALLGRAPH_FILES * len(_LARGE_CALLGRAPH_MODULES)
+    assert callgraph.analyzed_modules == list(_LARGE_CALLGRAPH_MODULES)
+    assert list(callgraph.module_usage or {}) == [*submodules, "requests"]
+    assert (callgraph.module_usage or {})["requests"]["used_symbols"] == ["post", "get"]
     for module in _LARGE_CALLGRAPH_MODULES:
         folded = prepared.usage_index[module]
         extra_symbols = {"post", "get"} if module == "requests" else set()

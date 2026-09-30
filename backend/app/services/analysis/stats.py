@@ -1,6 +1,6 @@
 """Statistics calculation for SBOM analysis (EPSS/KEV and reachability)."""
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any, ClassVar, NamedTuple, cast
 
@@ -35,6 +35,7 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
+from app.schemas.projections import CallgraphMinimal
 from app.services.component_identity import lookup_component
 from app.services.analysis.types import (
     CallgraphInfo,
@@ -53,17 +54,6 @@ from app.services.reachability_enrichment import (
     build_component_language_map,
     is_high_confidence_reachable,
 )
-
-
-def _format_datetime(value: Any | None) -> str | None:
-    """Safely format a datetime value to ISO string."""
-    if value is None:
-        return None
-    if hasattr(value, "isoformat"):
-        return cast(str, value.isoformat())
-    if isinstance(value, str):
-        return value if value else None
-    return str(value)
 
 
 def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> None:
@@ -191,7 +181,7 @@ _VULNERABILITY_SAMPLE_CAP = 30
 
 def build_reachability_summary(
     findings: list[dict[str, Any]],
-    callgraphs: list[dict[str, Any]],
+    callgraphs: Sequence[CallgraphMinimal],
 ) -> ReachabilitySummary:
     """Build a summary of reachability analysis for the raw data view."""
     reachability_levels: ReachabilityLevelCounts = {
@@ -203,11 +193,11 @@ def build_reachability_summary(
 
     callgraph_info: list[CallgraphInfo] = [
         {
-            "language": cg.get("language", "unknown"),
-            "total_modules": len(cg.get("module_usage") or {}),
-            "total_imports": cg.get("total_imports", 0),
-            "coverage_modules": len(cg.get("analyzed_modules") or []),
-            "generated_at": _format_datetime(cg.get("created_at")),
+            "language": cg.language or "unknown",
+            "total_modules": len(cg.module_usage or {}),
+            "total_imports": cg.total_imports,
+            "coverage_modules": len(cg.analyzed_modules),
+            "generated_at": cg.created_at.isoformat() if cg.created_at else None,
         }
         for cg in callgraphs
     ]
@@ -217,7 +207,7 @@ def build_reachability_summary(
         "analyzed": 0,
         "reachability_levels": reachability_levels,
         "callgraph_info": callgraph_info,
-        "languages": [cg.get("language", "unknown") for cg in callgraphs],
+        "languages": [info["language"] for info in callgraph_info],
         "reachable_total": 0,
         "unreachable_total": 0,
         "reachable_vulnerabilities": [],

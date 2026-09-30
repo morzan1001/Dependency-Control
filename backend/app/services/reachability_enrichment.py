@@ -3,11 +3,9 @@
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo import UpdateOne
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
@@ -21,7 +19,14 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
+    SCAN_ACTIVE_STATUSES,
 )
+from app.core.metrics import analysis_enrichment_total, analysis_reachable_vulnerabilities_total
+from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.callgraphs import CallgraphRepository
+from app.repositories.distributed_locks import DistributedLocksRepository, new_lock_holder
+from app.repositories.findings import FindingRepository
+from app.repositories.scans import ScanRepository
 from app.services.component_identity import (
     JVM_LANGUAGES,
     build_component_index,
@@ -37,15 +42,13 @@ from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
 
-# Findings-per-round-trip cap for the bulk reachability persist. Mirrors the
-# analysis engine's dependency bulk-update chunking so a large scan doesn't hold
-# the callgraph-upload request open for thousands of serial Mongo updates.
-_BULK_CHUNK_SIZE = 500
-
 _FINDINGS_PAGE_SIZE = 1000
-# Upper bound on findings held in memory for one enrichment run; whatever it cuts
-# off is logged and reported, never dropped silently.
+# Upper bound on findings held in memory for one enrichment run; the upload reports what it cuts off.
 _MAX_FINDINGS_PER_RUN = 100_000
+# The holder never renews, so this outlasts a pass over _MAX_FINDINGS_PER_RUN findings plus the stats refresh.
+_LOCK_TTL_SECONDS = 600
+# An analysis in flight replaces the findings, so it applies the callgraphs itself once final.
+_REQUESTED = {"reachability_pending": True, "status": {"$nin": SCAN_ACTIVE_STATUSES}}
 
 # Purl type -> the callgraph language(s) that can analyze it. Any other ecosystem
 # (cargo, nuget, rpm, deb, ...) has no callgraph producer.
@@ -227,9 +230,6 @@ async def fetch_callgraphs(
 ) -> list[CallgraphMinimal]:
     """Every callgraph of the scan (one per language): those uploaded under its id, else those of the
     build a rescan re-analyses, else those of its pipeline. May be empty."""
-    from app.repositories.callgraphs import CallgraphRepository
-    from app.repositories.scans import ScanRepository
-
     callgraph_repo = CallgraphRepository(db)
     scan_repo = ScanRepository(db)
     # Bounded, so a cyclic rescan pointer cannot hang the analysis.
@@ -259,6 +259,14 @@ def store_reachability(finding: dict[str, Any], verdict: ReachabilityInfo) -> No
     finding["reachability_level"] = verdict.analysis_level
     finding["reachable_functions"] = verdict.matched_symbols
     _apply_adjusted_risk_score(finding, reachability)
+
+
+def reachability_set_fields(finding: dict[str, Any]) -> dict[str, Any]:
+    """The ``$set`` that persists what store_reachability wrote on the finding."""
+    details = finding["details"]
+    fields = {key: finding[key] for key in ("reachable", "reachability_level", "reachable_functions")}
+    fields.update({f"details.{key}": details[key] for key in ("reachability", "adjusted_risk_score") if key in details})
+    return fields
 
 
 def _unknown_verdict(
@@ -452,7 +460,31 @@ def _match_symbols(vulnerable_symbols: list[str], used_symbols: list[str]) -> li
     return matched
 
 
-async def _load_vulnerability_findings(finding_repo: Any, scan_id: str) -> tuple[list[Any], int]:
+async def apply_reachability(
+    db: AsyncIOMotorDatabase,
+    scan_id: str,
+    findings: list[dict[str, Any]],
+    callgraphs: Sequence[CallgraphMinimal],
+) -> tuple[ComponentLanguages, int]:
+    """Judge the findings in place, persist the scan's summary of that snapshot and count the verdicts;
+    returns the inventory language map and how many findings got a verdict."""
+    from app.services.analysis.stats import build_reachability_summary  # stats imports this module
+
+    component_languages = await build_component_language_map(db, scan_id)
+    enriched = enrich_findings_with_reachability(findings, callgraphs, component_languages)
+    summary = build_reachability_summary(findings, callgraphs)
+    await AnalysisResultRepository(db).save_result(scan_id, "reachability", summary)
+    analysis_enrichment_total.labels(type="reachability").inc(enriched)
+    for finding in findings:
+        reachability = finding.get("details", {}).get("reachability") or {}
+        if reachability.get("is_reachable") is True:
+            level = reachability.get("analysis_level") or "unknown"
+            analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
+    logger.info(f"[reachability] Enriched {enriched} findings for scan {scan_id}")
+    return component_languages, enriched
+
+
+async def _load_vulnerability_findings(finding_repo: FindingRepository, scan_id: str) -> tuple[list[Any], int]:
     """Page through a scan's vulnerability findings; second element is how many the cap left behind."""
     query = {"scan_id": scan_id, "type": "vulnerability"}
     findings: list[Any] = []
@@ -465,105 +497,55 @@ async def _load_vulnerability_findings(finding_repo: Any, scan_id: str) -> tuple
     return findings, max(total - len(findings), 0)
 
 
-async def run_pending_reachability_for_scan(
-    scan_id: str,
-    project_id: str,
-    db: AsyncIOMotorDatabase,
-) -> dict[str, Any]:
-    """Run reachability for a scan after a callgraph is uploaded.
+async def _apply_to_stored_findings(
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, callgraphs: list[CallgraphMinimal]
+) -> int:
+    """Returns how many findings the per-run cap left without a verdict."""
+    from app.services.stats import refresh_scan_stats  # stats imports this module
 
-    Runs on every upload, not just the first: a multi-language repo publishes one
-    callgraph per language and each one recomputes every finding from the full set.
-
-    Returns ``{"findings_enriched": int, "findings_dropped": int, "error": str | None}``.
-    """
-    result: dict[str, Any] = {
-        "findings_enriched": 0,
-        "findings_dropped": 0,
-        "error": None,
-    }
-
-    from app.repositories.analysis_results import AnalysisResultRepository
-    from app.repositories.findings import FindingRepository
-    from app.repositories.scans import ScanRepository
-
-    scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
-    result_repo = AnalysisResultRepository(db)
-
-    if not await scan_repo.get_minimal_by_id(scan_id):
-        logger.debug(f"Scan {scan_id} not found")
-        return result
-
-    finished = {
-        "$unset": {"reachability_pending": "", "reachability_pending_since": ""},
-        "$set": {"reachability_completed_at": datetime.now(timezone.utc)},
-    }
-    try:
-        callgraphs = await fetch_callgraphs(project_id, scan_id, db)
-        if not callgraphs:
-            logger.debug(f"No callgraph for scan {scan_id}; reachability stays pending")
-            return result
-
-        findings, dropped = await _load_vulnerability_findings(finding_repo, scan_id)
-        if dropped:
-            result["findings_dropped"] = dropped
-            logger.warning(
-                "[reachability] Scan %s has more than %d vulnerability findings; %d left unenriched",
-                scan_id,
-                _MAX_FINDINGS_PER_RUN,
-                dropped,
-            )
-
-        if not findings:
-            logger.debug(f"No vulnerability findings for scan {scan_id}")
-            await scan_repo.update_raw(scan_id, finished)
-            return result
-
-        findings_dicts = [f.model_dump(by_alias=True) for f in findings]
-        component_languages = await build_component_language_map(db, scan_id)
-        enriched_count = enrich_findings_with_reachability(findings_dicts, callgraphs, component_languages)
-
-        # Chunked unordered bulk_write instead of one update per finding, so a 10k-finding
-        # scan doesn't fire 10k serial Mongo calls inline in the callgraph-upload request.
-        bulk_ops: list[UpdateOne] = []
-        for finding_dict in findings_dicts:
-            details = finding_dict.get("details", {})
-            reachability_data = details.get("reachability")
-            if reachability_data is None:
-                continue
-            # store_reachability already put every field on the dict; persist exactly those.
-            update_fields: dict[str, Any] = {
-                "reachable": finding_dict["reachable"],
-                "reachability_level": finding_dict["reachability_level"],
-                "reachable_functions": finding_dict["reachable_functions"],
-                "details.reachability": reachability_data,
-            }
-            # Persist the reachability-adjusted risk score when enrichment computed one.
-            if "adjusted_risk_score" in details:
-                update_fields["details.adjusted_risk_score"] = details["adjusted_risk_score"]
-            bulk_ops.append(UpdateOne({"_id": finding_dict["_id"]}, {"$set": update_fields}))
-
-        for i in range(0, len(bulk_ops), _BULK_CHUNK_SIZE):
-            await finding_repo.collection.bulk_write(bulk_ops[i : i + _BULK_CHUNK_SIZE], ordered=False)
-
-        # Lazy imports avoid the stats -> reachability_enrichment import cycle.
-        from app.services.analysis.stats import build_reachability_summary
-        from app.services.stats import refresh_scan_stats
-
-        reachability_summary = build_reachability_summary(
-            findings_dicts, [cg.model_dump(by_alias=True) for cg in callgraphs]
+    findings, dropped = await _load_vulnerability_findings(finding_repo, scan_id)
+    if dropped:
+        logger.warning(
+            "[reachability] Scan %s has more than %d vulnerability findings; %d left unenriched",
+            scan_id,
+            _MAX_FINDINGS_PER_RUN,
+            dropped,
         )
-        await result_repo.save_result(scan_id, "reachability", reachability_summary)
-        await scan_repo.update_raw(scan_id, finished)
+    if findings:
+        findings_dicts = [f.model_dump(by_alias=True) for f in findings]
+        component_languages, _enriched = await apply_reachability(db, scan_id, findings_dicts, callgraphs)
+        judged = {fd["_id"]: reachability_set_fields(fd) for fd in findings_dicts if "reachability" in fd["details"]}
+        await finding_repo.set_fields(scan_id, judged)
         # The scan's stats were frozen at completion, before any reachability verdict existed.
         await refresh_scan_stats(db, project_id, scan_id, component_languages)
+    return dropped
 
-        result["findings_enriched"] = enriched_count
-        logger.info(f"[reachability] Processed scan {scan_id}: enriched {enriched_count} findings")
 
-    except Exception as e:
-        result["error"] = str(e)
-        logger.exception("[reachability] Failed to process scan %s: %s", scan_id, e)
-
-    return result
+async def run_pending_reachability_for_scan(scan_id: str, project_id: str, db: AsyncIOMotorDatabase) -> int:
+    """Apply the scan's callgraphs to its stored findings while it is flagged, one pass per scan at a time;
+    a flag set during a pass runs another. Returns how many findings the per-run cap left without a verdict."""
+    scan_repo = ScanRepository(db)
+    lock_repo = DistributedLocksRepository(db)
+    lock_name, holder_id = f"reachability:{scan_id}", new_lock_holder()
+    dropped = 0
+    while await lock_repo.acquire_lock(lock_name, holder_id, _LOCK_TTL_SECONDS):
+        try:
+            claimed = await scan_repo.update_raw(scan_id, {"$unset": {"reachability_pending": ""}}, guard=_REQUESTED)
+            callgraphs = await fetch_callgraphs(project_id, scan_id, db) if claimed else []
+            if callgraphs:
+                dropped = await _apply_to_stored_findings(db, project_id, scan_id, callgraphs)
+        except Exception:
+            # Stay flagged, so the next upload or analysis retries the scan.
+            await scan_repo.update_raw(scan_id, {"$set": {"reachability_pending": True}})
+            raise
+        finally:
+            await lock_repo.release_lock(lock_name, holder_id)
+        if claimed and not callgraphs:
+            # Keep waiting for a callgraph, unless an upload flagged the scan again after the snapshot.
+            waiting = {"$set": {"reachability_pending": True}}
+            if await scan_repo.update_raw(scan_id, waiting, guard={"reachability_pending": {"$ne": True}}):
+                return dropped
+        elif not await scan_repo.count({"_id": scan_id, **_REQUESTED}, limit=1):
+            return dropped
+    return dropped

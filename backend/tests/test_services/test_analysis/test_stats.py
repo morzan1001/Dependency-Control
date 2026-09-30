@@ -10,7 +10,6 @@ from app.schemas.projections import CallgraphMinimal
 from app.schemas.enrichment import EPSSData, KEVEntry
 from app.services.analysis.stats import (
     _HIGH_RISK_SAMPLE_CAP,
-    _format_datetime,
     _numeric,
     build_epss_kev_summary,
     build_reachability_summary,
@@ -26,30 +25,6 @@ _HIGH_RISK_POPULATION = _HIGH_RISK_SAMPLE_CAP + 5
 
 def _epss(cve, score):
     return EPSSData(cve=cve, epss_score=score, percentile=0.9, date="2024-01-01")
-
-
-# ---------------------------------------------------------------------------
-# _format_datetime
-# ---------------------------------------------------------------------------
-
-
-class TestFormatDatetime:
-    def test_none_returns_none(self):
-        assert _format_datetime(None) is None
-
-    def test_datetime_returns_isoformat(self):
-        dt = datetime(2024, 6, 15, 12, 30, 0, tzinfo=timezone.utc)
-        result = _format_datetime(dt)
-        assert result == dt.isoformat()
-
-    def test_string_passthrough(self):
-        assert _format_datetime("2024-01-01T00:00:00Z") == "2024-01-01T00:00:00Z"
-
-    def test_empty_string_returns_none(self):
-        assert _format_datetime("") is None
-
-    def test_int_returns_str(self):
-        assert _format_datetime(12345) == "12345"
 
 
 # ---------------------------------------------------------------------------
@@ -462,15 +437,14 @@ def _make_reachable_finding(
 
 
 def _make_callgraph(language="python", modules=None, total_imports=0, analyzed_modules=None, created_at=None):
-    cg = {
-        "language": language,
-        "module_usage": modules if modules is not None else {},
-        "analyzed_modules": analyzed_modules if analyzed_modules is not None else [],
-        "total_imports": total_imports,
-    }
-    if created_at is not None:
-        cg["created_at"] = created_at
-    return cg
+    return CallgraphMinimal(
+        _id="cg-1",
+        language=language,
+        module_usage=modules if modules is not None else {},
+        analyzed_modules=analyzed_modules or [],
+        total_imports=total_imports,
+        created_at=created_at,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -553,8 +527,7 @@ class TestBuildReachabilitySummaryCallgraph:
         assert result["callgraph_info"][0]["coverage_modules"] == 0
 
     def test_null_module_usage_is_not_a_crash(self):
-        cg = _make_callgraph()
-        cg["module_usage"] = None
+        cg = _make_callgraph().model_copy(update={"module_usage": None})
         result = build_reachability_summary([], [cg])
         assert result["callgraph_info"][0]["total_modules"] == 0
 
@@ -570,7 +543,7 @@ class TestBuildReachabilitySummaryCallgraph:
         assert result["callgraph_info"][0]["generated_at"] is None
 
     def test_missing_language_defaults_to_unknown(self):
-        result = build_reachability_summary([], [{"module_usage": {}}])
+        result = build_reachability_summary([], [CallgraphMinimal(_id="cg-1")])
         assert result["callgraph_info"][0]["language"] == "unknown"
 
 
@@ -701,7 +674,7 @@ class TestBuildReachabilitySummaryLimits:
         languages = component_language_map([{"name": "requests", "version": "2.31.0", "type": "pypi"}])
         enrich_findings_with_reachability(findings, [callgraph], languages)
 
-        result = build_reachability_summary(findings, [callgraph.model_dump(by_alias=True)])
+        result = build_reachability_summary(findings, [callgraph])
 
         assert result["total_vulnerabilities"] == 2
         assert result["analyzed"] == 1

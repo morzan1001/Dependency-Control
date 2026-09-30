@@ -1,9 +1,12 @@
 """Tests for is_high_confidence_reachable — the gate distinguishing solid 'function actually called' evidence from import-only heuristics."""
 
+import copy
+
 import pytest
 
 from app.api.v1.helpers.callgraph import parse_generic_format
 from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABILITY_LEVEL_IMPORT
+from app.schemas.finding_details import ReachabilityInfo
 from app.schemas.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
@@ -13,6 +16,8 @@ from app.services.reachability_enrichment import (
     build_component_language_map,
     enrich_findings_with_reachability,
     is_high_confidence_reachable,
+    reachability_set_fields,
+    store_reachability,
 )
 
 
@@ -57,7 +62,7 @@ class TestPendingSummaryTiers:
             self._f("b", True, "import"),
             self._f("c", False, "none"),
         ]
-        cg = [{"language": "python", "module_usage": {}}]
+        cg = [_callgraph()]
         summary = build_reachability_summary(findings, cg)
         levels = summary["reachability_levels"]
         assert levels["confirmed"] == 1
@@ -68,7 +73,7 @@ class TestPendingSummaryTiers:
     def test_shared_summary_includes_high_confidence_flag(self):
         # The canonical builder includes is_high_confidence.
         findings = [self._f("a", True, "symbol")]
-        cg = [{"language": "python", "module_usage": {}}]
+        cg = [_callgraph()]
         summary = build_reachability_summary(findings, cg)
         assert "is_high_confidence" in summary["reachable_vulnerabilities"][0]
 
@@ -76,7 +81,7 @@ class TestPendingSummaryTiers:
     def test_a_non_numeric_confidence_is_not_high_confidence(self, confidence):
         finding = self._f("a", True, "symbol")
         finding["details"]["reachability"]["confidence_score"] = confidence
-        cg = [{"language": "python", "module_usage": {}}]
+        cg = [_callgraph()]
         summary = build_reachability_summary([finding], cg)
         assert summary["reachable_vulnerabilities"][0]["is_high_confidence"] is False
 
@@ -397,6 +402,21 @@ class TestPureEnrichmentEntryPoint:
         assert vuln["reachability_level"] == REACHABILITY_LEVEL_IMPORT
 
 
+class TestReachabilitySetFields:
+    @pytest.mark.parametrize("is_reachable", [True, False])
+    def test_names_every_field_store_reachability_writes(self, is_reachable):
+        finding = _vuln_finding()
+        before = copy.deepcopy(finding)
+
+        store_reachability(finding, ReachabilityInfo(is_reachable=is_reachable, analysis_level="import"))
+
+        written = {key for key in finding if key != "details" and finding[key] != before.get(key)}
+        written |= {
+            f"details.{key}" for key, value in finding["details"].items() if value != before["details"].get(key)
+        }
+        assert written == set(reachability_set_fields(finding))
+
+
 class TestRunPendingBulkPersist:
     """run_pending_reachability_for_scan must persist via a chunked bulk_write, not one sequential update per finding."""
 
@@ -452,12 +472,10 @@ class TestRunPendingBulkPersist:
         monkeypatch.setattr(db.findings, "bulk_write", spy_bulk)
         monkeypatch.setattr(db.findings, "update_one", spy_update_one)
 
-        result = await run_pending_reachability_for_scan(sid, pid, db)
+        await run_pending_reachability_for_scan(sid, pid, db)
 
-        assert result["error"] is None
-        assert result["findings_enriched"] == 3
-        assert calls["bulk"] == 1  # single chunk for < _BULK_CHUNK_SIZE findings
-        assert calls["update_one"] == 0  # no sequential per-finding updates
+        assert calls["bulk"] == 1
+        assert calls["update_one"] == 0
 
         # All three findings persisted with reachability data.
         for i in range(3):
@@ -465,12 +483,11 @@ class TestRunPendingBulkPersist:
             assert doc["reachable"] is True
             assert doc["reachability_level"] == "import"
 
-        # Summary written via the shared builder; pending processing completed.
         summary = await db.analysis_results.find_one({"scan_id": sid})
         assert summary is not None
         assert summary["result"]["analyzed"] == 3
         scan = await db.scans.find_one({"_id": sid})
-        assert scan.get("reachability_completed_at") is not None
+        assert scan["stats"]["reachability"]["analyzed_count"] == 3
 
     @pytest.mark.asyncio
     async def test_second_language_callgraph_still_runs(self):
@@ -480,8 +497,8 @@ class TestRunPendingBulkPersist:
 
         db = FakeDatabase()
         pid, sid = "p1", "s1"
-        # No reachability_pending flag: the first upload already cleared it.
-        await db.scans.insert_one({"_id": sid, "project_id": pid, "branch": "main"})
+        # Every upload flags the scan again, even after the first language cleared it.
+        await db.scans.insert_one({"_id": sid, "project_id": pid, "branch": "main", "reachability_pending": True})
         await db.dependencies.insert_one({"scan_id": sid, "name": "left-pad", "type": "npm"})
         await db.callgraphs.insert_one(
             {
@@ -510,10 +527,7 @@ class TestRunPendingBulkPersist:
             }
         )
 
-        result = await run_pending_reachability_for_scan(sid, pid, db)
+        await run_pending_reachability_for_scan(sid, pid, db)
 
-        assert result["error"] is None
-        assert result["findings_enriched"] == 1
-        assert result["findings_dropped"] == 0
         doc = await db.findings.find_one({"_id": "f0"})
         assert doc["reachable"] is True
