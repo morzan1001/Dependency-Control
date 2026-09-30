@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.constants import max_severity
+from app.core.constants import get_severity_value, max_severity
 from app.models.finding import Finding, FindingType
+from app.schemas.finding_details import EolInfo, LicenseInfo, OutdatedInfo, QualityInfo, VulnerabilityContextInfo
 from app.services.aggregation.versions import normalize_version
 
 
@@ -53,11 +54,10 @@ def _same_version(a: str | None, b: str | None) -> bool:
     return not a or not b or normalize_version(a) == normalize_version(b)
 
 
-def _vulnerability_context(entries: list[Any], fallback_severity: str) -> dict[str, int]:
-    severities = [str(e.get("severity")) for e in entries if isinstance(e, dict) and e.get("severity")]
-    severities = severities or [fallback_severity]
+def _vulnerability_context(entries: list[dict[str, Any]]) -> dict[str, int]:
+    severities = [str(e["severity"]) for e in entries]
     return {
-        "vuln_count": len(entries) or 1,
+        "vuln_count": len(entries),
         "critical_count": severities.count("CRITICAL"),
         "high_count": severities.count("HIGH"),
     }
@@ -68,12 +68,8 @@ def _add_vulnerability_context(finding: Finding, vuln_finding: Finding) -> None:
     if finding.type == FindingType.VULNERABILITY or vuln_finding.type != FindingType.VULNERABILITY:
         return
 
-    info = finding.details.setdefault(
-        "vulnerability_info",
-        {"has_vulnerabilities": True, "vuln_count": 0, "critical_count": 0, "high_count": 0},
-    )
-    context = _vulnerability_context(vuln_finding.details.get("vulnerabilities") or [], str(vuln_finding.severity))
-    for key, count in context.items():
+    info = finding.details.setdefault("vulnerability_info", VulnerabilityContextInfo().model_dump())
+    for key, count in _vulnerability_context(vuln_finding.details["vulnerabilities"]).items():
         info[key] += count
 
 
@@ -89,7 +85,7 @@ def refresh_vulnerability_info(records: list[dict[str, Any]]) -> None:
         if not info or any(i not in by_id for i in related):
             continue
         contexts = [
-            _vulnerability_context(vuln["details"].get("vulnerabilities") or [], str(vuln.get("severity")))
+            _vulnerability_context(vuln["details"]["vulnerabilities"])
             for i in related
             for vuln in by_id[i]
             if vuln.get("type") == FindingType.VULNERABILITY
@@ -104,42 +100,38 @@ def add_context_to_vulnerability(vuln_finding: Finding, other_finding: Finding) 
     if vuln_finding.type != FindingType.VULNERABILITY:
         return
 
+    details = vuln_finding.details
+    other_details = other_finding.details
     if other_finding.type == FindingType.OUTDATED:
-        if "outdated_info" not in vuln_finding.details and not is_ahead_of_default(
-            other_finding.type, other_finding.details
-        ):
-            vuln_finding.details["outdated_info"] = {
-                "is_outdated": True,
-                "current_version": other_finding.version,
-                "latest_version": other_finding.details.get("fixed_version"),
-                "message": other_finding.description,
-            }
+        if "outdated_info" not in details and not is_ahead_of_default(other_finding.type, other_details):
+            details["outdated_info"] = OutdatedInfo(
+                current_version=other_finding.version,
+                latest_version=other_details.get("fixed_version"),
+                message=other_finding.description,
+            ).model_dump()
 
     elif other_finding.type == FindingType.QUALITY:
-        if "quality_info" not in vuln_finding.details:
-            quality_issues = other_finding.details.get("quality_issues", [])
-            vuln_finding.details["quality_info"] = {
-                "has_quality_issues": True,
-                "issue_count": len(quality_issues),
-                "overall_score": other_finding.details.get("overall_score"),
-                "has_maintenance_issues": other_finding.details.get("has_maintenance_issues", False),
-                "quality_finding_id": other_finding.id,
-            }
+        if "quality_info" not in details:
+            details["quality_info"] = QualityInfo(
+                issue_count=len(other_details.get("quality_issues", [])),
+                overall_score=other_details.get("overall_score"),
+                has_maintenance_issues=other_details.get("has_maintenance_issues", False),
+            ).model_dump()
 
     elif other_finding.type == FindingType.LICENSE:
-        if "license_info" not in vuln_finding.details:
-            vuln_finding.details["license_info"] = {
-                "has_license_issue": True,
-                "license": other_finding.details.get("license"),
-                "category": other_finding.details.get("category"),
-                "license_finding_id": other_finding.id,
-            }
+        current = details.get("license_info")
+        severity = str(other_finding.severity)
+        # Pairs arrive in get_findings sort order, so a strict comparison leaves a tie to the lower id.
+        if current is None or get_severity_value(severity) > get_severity_value(current["license_severity"]):
+            details["license_info"] = LicenseInfo(
+                license=other_details.get("license"),
+                category=other_details.get("category"),
+                license_severity=severity,
+            ).model_dump()
 
-    elif other_finding.type == FindingType.EOL and "eol_info" not in vuln_finding.details:
-        vuln_finding.details["eol_info"] = {
-            "is_eol": True,
-            "eol_date": other_finding.details.get("eol_date"),
-            "cycle": other_finding.details.get("cycle"),
-            "latest_version": other_finding.details.get("fixed_version"),
-            "eol_finding_id": other_finding.id,
-        }
+    elif other_finding.type == FindingType.EOL and "eol_info" not in details:
+        details["eol_info"] = EolInfo(
+            eol_date=other_details.get("eol_date"),
+            cycle=other_details.get("cycle"),
+            latest_version=other_details.get("fixed_version"),
+        ).model_dump()

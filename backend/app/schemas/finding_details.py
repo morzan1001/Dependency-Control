@@ -63,14 +63,13 @@ class QualityInfo(_DetailsModel):
     issue_count: int | None = None
     overall_score: float | None = None
     has_maintenance_issues: bool = False
-    quality_finding_id: str | None = None
 
 
 class LicenseInfo(_DetailsModel):
     has_license_issue: bool = True
     license: str | None = None
     category: str | None = None
-    license_finding_id: str | None = None
+    license_severity: str | None = None
 
 
 class EolInfo(_DetailsModel):
@@ -78,7 +77,6 @@ class EolInfo(_DetailsModel):
     eol_date: Any = None
     cycle: Any = None
     latest_version: Any = None
-    eol_finding_id: str | None = None
 
 
 class VulnerabilityContextInfo(_DetailsModel):
