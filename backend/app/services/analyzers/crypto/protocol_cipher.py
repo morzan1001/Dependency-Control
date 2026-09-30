@@ -3,7 +3,7 @@ suite at the stricter of its catalog baseline and the enabled match_cipher_weakn
 
 from typing import Any
 
-from app.core.constants import get_severity_value
+from app.core.constants import max_severity
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoAssetType
@@ -60,11 +60,11 @@ def _build_finding(
     proto: CryptoAsset, suite_name: str, entry: CipherSuiteEntry, rules: list[CryptoRule]
 ) -> dict[str, Any]:
     comp_label = f"{proto.protocol_type or proto.name} {proto.version or ''} [bom-ref:{proto.bom_ref}]".strip()
-    severity = max((WEAKNESS_SEVERITY[tag] for tag in entry.weaknesses), key=get_severity_value)
+    severity = max_severity(*(WEAKNESS_SEVERITY[tag] for tag in entry.weaknesses))
     description = f"Cipher suite {suite_name} has weaknesses: {', '.join(entry.weaknesses)}"
     lead = strictest_rule(rules) if rules else None
     if lead is not None:
-        severity = max(severity, Severity(lead.default_severity), key=get_severity_value)
+        severity = max_severity(severity, Severity(lead.default_severity))
         description += f"; flagged by {', '.join(r.rule_id for r in rules)}"
     return {
         "id": f"CRYPTO-{FindingType.CRYPTO_WEAK_PROTOCOL.value}-{proto.bom_ref}-{entry.name}",
