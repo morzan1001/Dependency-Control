@@ -650,8 +650,8 @@ class TestMaintenanceIssueFlag:
 
     def test_an_inactive_repository_alone_is_a_maintenance_issue(self):
         """Outside npm/PyPI the GitHub push date is the only staleness signal."""
-        risks, _ = MaintainerRiskAnalyzer()._assess_all_risks(
-            {"github_info": {"days_since_push": 1200, "pushed_at": "2023-06-01T00:00:00Z"}}, "maven"
+        risks = MaintainerRiskAnalyzer()._assess_github_risks(
+            {"days_since_push": 1200, "pushed_at": "2023-06-01T00:00:00Z"}
         )
         assert [r["type"] for r in risks] == ["inactive_repo"]
 
