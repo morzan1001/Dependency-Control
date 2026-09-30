@@ -1,7 +1,10 @@
 import os
 from typing import Any
 
+import markdown
+import nh3
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from markupsafe import Markup
 
 from app.core.config import settings
 from app.core.constants import EPSS_HIGH_THRESHOLD, PASSWORD_RESET_TOKEN_EXPIRE_HOURS
@@ -95,25 +98,16 @@ def get_analysis_completed_template(
     )
 
 
-def get_advisory_template(
-    project_link: str,
-    project_name_scanned: str,
-    message: str,
-    findings: list,
-) -> str:
-    return render_template(
-        "advisory.html",
-        {
-            "link": project_link,
-            "project_name_scanned": project_name_scanned,
-            "message": message,
-            "findings": findings,
-        },
-    )
+def _markdown_html(text: str) -> Markup:
+    return Markup(nh3.clean(markdown.markdown(text), url_schemes={"http", "https", "mailto"}))
+
+
+def get_advisory_template(message: str, projects: list[dict[str, Any]], link: str) -> str:
+    return render_template("advisory.html", {"message": _markdown_html(message), "projects": projects, "link": link})
 
 
 def get_announcement_template(message: str, link: str = "#") -> str:
-    return render_template("announcement.html", {"message": message, "link": link})
+    return render_template("announcement.html", {"message": _markdown_html(message), "link": link})
 
 
 def get_password_changed_template(username: str, login_link: str) -> str:

@@ -169,31 +169,54 @@ class TestGetAnalysisCompletedTemplate:
         assert "backend-api" in result
 
 
+_ADVISED_PROJECT = {"id": "p1", "name": "billing", "findings": ["log4j-core (2.14.1)"]}
+
+
 class TestGetAdvisoryTemplate:
     def _render(self, **overrides):
-        defaults = {
-            "project_link": "https://example.com/project/1",
-            "project_name_scanned": "frontend-app",
-            "message": "New advisory published",
-            "findings": [{"title": "Advisory-001"}],
-        }
+        defaults = {"message": "Rotate **now**", "projects": [_ADVISED_PROJECT], "link": "https://dc.example.com"}
         defaults.update(overrides)
         return get_advisory_template(**defaults)
 
-    def test_contains_project_link(self):
-        link = "https://example.com/project/42"
-        result = self._render(project_link=link)
-        assert link in result
+    def test_each_project_links_to_its_own_page(self):
+        assert '<a href="https://dc.example.com/projects/p1">billing</a>' in self._render()
 
-    def test_contains_message(self):
-        result = self._render(message="Critical security update")
-        assert "Critical security update" in result
+    def test_the_markdown_message_arrives_formatted(self):
+        assert "Rotate <strong>now</strong>" in self._render()
+
+    def test_the_mail_carries_the_branded_header(self):
+        assert "cid:logo" in self._render()
+
+    def test_the_heading_counts_the_projects_using_the_package(self):
+        assert "Your Projects Using the Package (1)" in self._render()
+
+    def test_a_scanned_project_name_is_escaped(self):
+        result = self._render(projects=[{**_ADVISED_PROJECT, "name": _HTML_INJECTION}])
+
+        assert _HTML_INJECTION not in result
+        assert _ESCAPED_INJECTION in result
 
 
 class TestGetAnnouncementTemplate:
     def test_contains_message(self):
         result = get_announcement_template(message="Platform upgrade complete")
         assert "Platform upgrade complete" in result
+
+    def test_markdown_is_rendered_once_not_shown_as_tags(self):
+        result = get_announcement_template(message="Maintenance **tonight** & tomorrow\n\n- item one")
+
+        assert "<strong>tonight</strong> &amp; tomorrow" in result
+        assert "<li>item one</li>" in result
+        assert "&lt;p&gt;" not in result
+
+    def test_a_version_range_in_a_code_span_reads_as_written(self):
+        assert "<code>&gt;= 2.0, &lt; 2.17.1</code>" in get_announcement_template(message="`>= 2.0, < 2.17.1`")
+
+    def test_a_quote_and_an_autolink_keep_their_markdown_meaning(self):
+        result = get_announcement_template(message="> vendor note\n\n<https://vendor.example/advisory>")
+
+        assert "<blockquote>" in result
+        assert 'href="https://vendor.example/advisory"' in result
 
 
 class TestGetPasswordChangedTemplate:
@@ -282,8 +305,15 @@ class TestTemplateEscaping:
         assert _HTML_INJECTION not in result
         assert _ESCAPED_INJECTION in result
 
-    def test_an_announcement_body_is_escaped(self):
-        result = get_announcement_template(message=_HTML_INJECTION)
+    def test_raw_html_in_an_announcement_is_dropped(self):
+        result = get_announcement_template(message=f"before {_HTML_INJECTION} after")
 
-        assert _HTML_INJECTION not in result
-        assert _ESCAPED_INJECTION in result
+        assert "<script" not in result
+        assert "xss" not in result
+
+    @pytest.mark.parametrize("href", ["javascript:alert(1)", "data:text/html,x"])
+    def test_a_link_outside_http_https_mailto_loses_its_target(self, href):
+        result = get_announcement_template(message=f"[click]({href})")
+
+        assert href not in result
+        assert ">click</a>" in result

@@ -88,6 +88,18 @@ class TestSlackAdvisory:
 
         assert f"+{_FINDINGS_PER_PROJECT - _PROJECT_FINDINGS_SHOWN} more" in texts
 
+    def test_a_version_range_in_the_message_is_not_read_as_a_slack_link(self):
+        blocks = build_advisory_blocks(subject="s", message="affected: <2.17.1 & >=2.0")
+
+        assert "affected: &lt;2.17.1 &amp; &gt;=2.0" in _section_texts(blocks)
+
+    def test_a_project_name_is_not_read_as_a_slack_mention(self):
+        blocks = build_advisory_blocks(
+            subject="s", message="m", affected_projects=[{"name": "<!channel>", "findings": ["a (<1)"]}]
+        )
+
+        assert "*&lt;!channel&gt;*: a (&lt;1)" in "\n".join(_section_texts(blocks))
+
 
 class TestSlackGenericMessage:
     def _long_message(self) -> str:

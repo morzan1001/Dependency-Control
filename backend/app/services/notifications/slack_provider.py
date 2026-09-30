@@ -187,7 +187,7 @@ class SlackProvider(NotificationProvider):
             "Content-Type": "application/json",
         }
 
-        from app.services.notifications.slack_formatter import build_generic_blocks
+        from app.services.notifications.slack_formatter import _escape_mrkdwn, build_generic_blocks
 
         blocks = kwargs.get("blocks")
         if not blocks:
@@ -196,7 +196,7 @@ class SlackProvider(NotificationProvider):
         # text is the fallback for notifications and accessibility
         payload: dict[str, Any] = {
             "channel": destination,
-            "text": f"*{subject}*\n{message}",
+            "text": f"*{_escape_mrkdwn(subject)}*\n{_escape_mrkdwn(message)}",
             "blocks": blocks,
         }
 

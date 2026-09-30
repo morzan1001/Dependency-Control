@@ -14,8 +14,7 @@ from app.services.notifications.slack_provider import SlackProvider
 
 logger = logging.getLogger(__name__)
 
-# A permission fan-out has no response to disclose a cut in, so the ceiling bounds how many
-# recipients are held at once rather than how many are reached.
+# Bounds how many recipients are held in memory at once, never how many are reached.
 _FAN_OUT_BATCH_SIZE = 500
 
 
@@ -135,17 +134,28 @@ class NotificationService:
         event_type: NotificationEvent,
         subject: str,
         message: str,
+    ) -> None:
+        """Notify all active users whose permissions include any of the given permission(s)."""
+        perms = [permission] if isinstance(permission, str) else list(permission)
+        if perms:
+            query = {"permissions": {"$in": perms}, "is_active": True}
+            await self._notify_matching(db, query, event_type=event_type, subject=subject, message=message)
+
+    async def _notify_matching(
+        self,
+        db: Any,
+        query: dict[str, Any],
+        *,
+        event_type: NotificationEvent,
+        subject: str,
+        message: str,
         forced_channels: list[str] | None = None,
         html_message: str | None = None,
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
     ) -> None:
-        """Notify all active users whose permissions include any of the given permission(s)."""
-        perms = [permission] if isinstance(permission, str) else list(permission)
-        if not perms:
-            return
-
-        users = (User(**doc) async for doc in db.users.find({"permissions": {"$in": perms}, "is_active": True}))
+        """Notify every user the query matches, one batch in memory at a time."""
+        users = (User(**doc) async for doc in db.users.find(query))
         async for batch in abatched(users, _FAN_OUT_BATCH_SIZE):
             await self.notify_users(
                 batch,

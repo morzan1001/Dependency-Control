@@ -164,7 +164,7 @@ def build_advisory_props(
                 findings_str += f", +{len(findings) - _PROJECT_FINDINGS_SHOWN} more"
             project_lines.append(f"- **{p['name']}**: {findings_str}")
 
-        text += f"\n\n**Affected Projects ({len(shown)} of {len(affected_projects)})**\n"
+        text += f"\n\n**Your Projects Using the Package ({len(shown)} of {len(affected_projects)})**\n"
         text += "\n".join(project_lines)
 
     if dashboard_link:

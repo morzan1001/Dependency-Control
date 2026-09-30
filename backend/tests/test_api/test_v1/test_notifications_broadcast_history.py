@@ -2,7 +2,6 @@
 
 import asyncio
 from typing import Any
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import BackgroundTasks
@@ -12,17 +11,14 @@ from app.models.user import User
 from app.schemas.notification import BroadcastRequest
 from tests.mocks.fake_mongo import FakeDatabase
 
-MODULE = "app.api.v1.endpoints.notifications"
 
-
-def _send(body: dict[str, Any], handler: str) -> list[dict[str, Any]]:
+def _send(body: dict[str, Any]) -> list[dict[str, Any]]:
     db = FakeDatabase()
     user = User(id="broadcaster-1", username="broadcaster", email="broadcaster@test.com", permissions=[])
-    payload = BroadcastRequest.model_validate({"subject": "s", "message": "m", **body})
+    payload = BroadcastRequest.model_validate({"subject": "s", "message": "m", "channels": ["email"], **body})
 
     async def _run() -> list[dict[str, Any]]:
-        with patch(f"{MODULE}.{handler}", AsyncMock(return_value=(3, 0))):
-            await broadcast_message(payload=payload, background_tasks=BackgroundTasks(), db=db, current_user=user)
+        await broadcast_message(payload=payload, background_tasks=BackgroundTasks(), db=db, current_user=user)
         history: list[dict[str, Any]] = await db.broadcasts.find({}).to_list(None)
         return history
 
@@ -30,13 +26,13 @@ def _send(body: dict[str, Any], handler: str) -> list[dict[str, Any]]:
 
 
 @pytest.mark.parametrize(
-    ("body", "handler"),
+    "body",
     [
-        ({"type": "advisory", "target_type": "global"}, "_handle_global_broadcast"),
-        ({"type": "advisory", "target_type": "teams", "target_teams": ["t1"]}, "_handle_teams_broadcast"),
+        {"type": "advisory", "target_type": "global"},
+        {"type": "advisory", "target_type": "teams", "target_teams": ["t1"]},
     ],
 )
-def test_a_global_or_team_announcement_is_recorded_as_general_whatever_type_the_client_sends(body, handler):
-    [entry] = _send(body, handler)
+def test_a_global_or_team_announcement_is_recorded_as_general_whatever_type_the_client_sends(body):
+    [entry] = _send(body)
 
     assert entry["type"] == "general"

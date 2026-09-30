@@ -15,6 +15,11 @@ _AFFECTED_PROJECTS_SHOWN = 15
 _PROJECT_FINDINGS_SHOWN = 5
 
 
+def _escape_mrkdwn(text: str) -> str:
+    """Slack reads a bare &, < or > as the start of a link, mention or entity."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
 def _fit(text: str) -> str:
     """Section text within Slack's per-block budget, saying so when it did not fit."""
     if len(text) <= _SECTION_TEXT_MAX_LENGTH:
@@ -254,7 +259,7 @@ def build_advisory_blocks(
         {"type": "divider"},
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": _fit(message)},
+            "text": {"type": "mrkdwn", "text": _fit(_escape_mrkdwn(message))},
         },
     ]
 
@@ -266,9 +271,9 @@ def build_advisory_blocks(
             findings_str = ", ".join(findings[:_PROJECT_FINDINGS_SHOWN])
             if len(findings) > _PROJECT_FINDINGS_SHOWN:
                 findings_str += f", +{len(findings) - _PROJECT_FINDINGS_SHOWN} more"
-            project_lines.append(f"\u2022 *{p['name']}*: {findings_str}")
+            project_lines.append(f"\u2022 *{_escape_mrkdwn(p['name'])}*: {_escape_mrkdwn(findings_str)}")
 
-        heading = f"*Affected Projects ({len(shown)} of {len(affected_projects)})*"
+        heading = f"*Your Projects Using the Package ({len(shown)} of {len(affected_projects)})*"
         blocks.append(
             {
                 "type": "section",
