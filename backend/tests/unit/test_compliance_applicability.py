@@ -32,7 +32,6 @@ _RSA_CONTROL = ControlDefinition(
     severity=Severity.HIGH,
     remediation="",
     maps_to_rule_ids=["nist-131a-rsa-min-2048"],
-    maps_to_finding_types=[FindingType.CRYPTO_WEAK_KEY],
 )
 
 
@@ -48,7 +47,7 @@ def _input(assets, *, findings=None):
         scope_description="user 'alice'",
         crypto_assets=assets,
         findings=findings or [],
-        policy_rules=[_RSA_RULE.model_dump()],
+        policy_rules=[_RSA_RULE],
         policy_version=1,
         iana_catalog_version=1,
         scan_ids=["s1"],
@@ -95,8 +94,8 @@ def test_no_assets_is_not_applicable():
     assert _applicability(_RSA_CONTROL, _input([])) is _Applicability.NO_ASSET_IN_SCOPE
 
 
-def test_fallback_to_inventory_when_no_scoping_rules_available():
-    """When the control's rules aren't in the effective policy, fall back to inventory presence."""
+def test_a_control_whose_rules_are_missing_from_the_policy_is_not_evaluated():
+    """The analyzer never ran the missing rule, so no finding can exist and PASSED would be a false attestation."""
     aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER)
     data = EvaluationInput(
         resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
@@ -108,7 +107,10 @@ def test_fallback_to_inventory_when_no_scoping_rules_available():
         iana_catalog_version=1,
         scan_ids=["s1"],
     )
-    assert _applicability(_RSA_CONTROL, data) is _Applicability.APPLICABLE
+    assert _applicability(_RSA_CONTROL, data) is _Applicability.RULES_UNRESOLVED
+    result = default_evaluator(_RSA_CONTROL, data)
+    assert result.status == ControlStatus.NOT_EVALUATED
+    assert "nist-131a-rsa-min-2048" in (result.status_reason or "")
 
 
 # Controls backed only by disabled policy rules must never PASS.
@@ -127,13 +129,13 @@ _DISABLED_RSA_RULE = CryptoRule(
 )
 
 
-def _input_with_rules(assets, rule_dumps, *, findings=None):
+def _input_with_rules(assets, rules, *, findings=None):
     return EvaluationInput(
         resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
         scope_description="user 'alice'",
         crypto_assets=assets,
         findings=findings or [],
-        policy_rules=rule_dumps,
+        policy_rules=rules,
         policy_version=1,
         iana_catalog_version=1,
         scan_ids=["s1"],
@@ -143,13 +145,13 @@ def _input_with_rules(assets, rule_dumps, *, findings=None):
 def test_control_backed_only_by_disabled_rule_is_not_applicable():
     """A disabled rule is never evaluated, so no finding can exist and PASSED would be a false attestation."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
-    data = _input_with_rules([rsa], [_DISABLED_RSA_RULE.model_dump()])
+    data = _input_with_rules([rsa], [_DISABLED_RSA_RULE])
     assert _applicability(_RSA_CONTROL, data) is _Applicability.RULES_DISABLED
 
 
 def test_disabled_rule_control_reports_not_applicable_not_passed():
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
-    data = _input_with_rules([rsa], [_DISABLED_RSA_RULE.model_dump()])
+    data = _input_with_rules([rsa], [_DISABLED_RSA_RULE])
     result = default_evaluator(_RSA_CONTROL, data)
     assert result.status == ControlStatus.NOT_APPLICABLE
 
@@ -157,7 +159,7 @@ def test_disabled_rule_control_reports_not_applicable_not_passed():
 def test_enabled_rule_still_applicable_alongside_disabled_duplicate():
     """If at least one backing rule is enabled the control is still evaluable."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
-    data = _input_with_rules([rsa], [_RSA_RULE.model_dump()])
+    data = _input_with_rules([rsa], [_RSA_RULE])
     assert _applicability(_RSA_CONTROL, data) is _Applicability.APPLICABLE
 
 
@@ -170,7 +172,6 @@ _MD5_CONTROL = ControlDefinition(
     severity=Severity.HIGH,
     remediation="",
     maps_to_rule_ids=["nist-131a-md5"],
-    maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
 )
 
 
@@ -206,5 +207,4 @@ def test_evaluator_ignores_finding_when_no_rule_matches():
     }
     data = _input_with_rules([], [], findings=[finding])
     result = default_evaluator(_MD5_CONTROL, data)
-    # No asset inventory and no matching finding -> NOT_APPLICABLE, never FAILED
     assert result.status != ControlStatus.FAILED

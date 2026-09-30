@@ -10,10 +10,11 @@ from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
+from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
-from app.services.compliance.frameworks.nist_sp_800_131a import NistSp800_131aFramework
+from app.services.crypto_policy.resolver import EffectivePolicy
 
 
 @pytest.fixture(autouse=True)
@@ -308,9 +309,14 @@ def _make_engine_db(*, agg_rows, project_doc=None):
 async def _run_gather(engine, db, resolved, framework, asset_repo_mock=None):
     asset_repo_mock = asset_repo_mock or MagicMock(list_by_scan=AsyncMock(return_value=[]))
     policy_repo_mock = MagicMock(get_system_policy=AsyncMock(return_value=None))
+    no_policy = EffectivePolicy(rules=[], system_rules=[], system_version=0, override_version=None)
     with (
         patch("app.services.compliance.engine.CryptoAssetRepository", return_value=asset_repo_mock),
         patch("app.services.compliance.engine.CryptoPolicyRepository", return_value=policy_repo_mock),
+        patch(
+            "app.services.compliance.engine.CryptoPolicyResolver",
+            return_value=MagicMock(resolve=AsyncMock(return_value=no_policy)),
+        ),
     ):
         result = await engine._gather_inputs(db, resolved, framework)
     return result, asset_repo_mock
@@ -346,7 +352,7 @@ async def test_gather_inputs_keeps_crypto_filter_for_crypto_framework():
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     engine = ComplianceReportEngine()
 
-    await _run_gather(engine, db, resolved, NistSp800_131aFramework())
+    await _run_gather(engine, db, resolved, FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A])
 
     assert captured["findings_query"]["type"] == {"$in": sorted(CRYPTO_FINDING_TYPES)}
 
@@ -417,7 +423,7 @@ async def test_collect_crypto_assets_avoids_per_scan_find_one():
     resolved = ResolvedScope(scope="team", scope_id="t1", project_ids=["p1", "p2"])
     engine = ComplianceReportEngine()
 
-    _, asset_repo_mock = await _run_gather(engine, db, resolved, NistSp800_131aFramework())
+    _, asset_repo_mock = await _run_gather(engine, db, resolved, FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A])
 
     db.scans.find_one.assert_not_called()
     calls = {(c.args[0], c.args[1]) for c in asset_repo_mock.list_by_scan.call_args_list}

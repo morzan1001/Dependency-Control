@@ -6,7 +6,7 @@ from pathlib import Path
 
 import yaml
 
-from app.models.finding import FindingType, Severity
+from app.models.finding import Severity
 from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES, CryptoPrimitive
 from app.schemas.compliance import (
     ControlDefinition,
@@ -89,7 +89,6 @@ def algorithm_conformance_controls(control_id_prefix: str, *, rsa_basis: str) ->
             severity=Severity.HIGH,
             remediation="Rotate any RSA keys shorter than 2048 bits.",
             maps_to_rule_ids=["nist-131a-rsa-min-2048"],
-            maps_to_finding_types=[FindingType.CRYPTO_WEAK_KEY],
         )
     )
     return out

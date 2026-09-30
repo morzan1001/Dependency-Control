@@ -29,6 +29,7 @@ from app.services.analyzers.crypto.catalogs.loader import IANA_WEAKNESS_RULES_VE
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.base import ComplianceFramework, EvaluationInput
 from app.services.compliance.renderers import RENDERER_REGISTRY
+from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +115,15 @@ class ComplianceReportEngine:
         scan_ids = [sid for _, sid in scan_pairs]
         assets, assets_in_scope = await self._collect_crypto_assets(db, scan_pairs)
         findings, findings_in_scope = await self._collect_findings(db, resolved, scan_ids, framework)
-        policy_repo = CryptoPolicyRepository(db)
-        system = await policy_repo.get_system_policy()
-        policy_version = getattr(system, "version", None) if system else None
-        policy_rules = [r.model_dump() for r in system.rules] if system else []
+        project_ids = resolved.project_ids or []
+        if resolved.scope == "project" and len(project_ids) == 1:
+            effective = await CryptoPolicyResolver(db).resolve(project_ids[0])
+            policy_rules, policy_version = effective.rules, effective.system_version or None
+            override_version = effective.override_version
+        else:
+            system = await CryptoPolicyRepository(db).get_system_policy()
+            policy_rules, policy_version = (system.rules, system.version) if system else ([], None)
+            override_version = None
         scope_desc = self._scope_description(resolved)
         return EvaluationInput(
             resolved=resolved,
@@ -127,6 +133,7 @@ class ComplianceReportEngine:
             policy_rules=policy_rules,
             license_policy=await self._resolve_license_policy(db, resolved, framework),
             policy_version=policy_version,
+            override_version=override_version,
             iana_catalog_version=IANA_WEAKNESS_RULES_VERSION,
             scan_ids=scan_ids,
             db=db,

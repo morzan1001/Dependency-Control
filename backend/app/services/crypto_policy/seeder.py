@@ -22,13 +22,15 @@ _SEED_DIR = Path(__file__).parent / "seed"
 
 
 @functools.cache
+def load_seed_file(name: str) -> tuple[CryptoRule, ...]:
+    with open(_SEED_DIR / name) as f:
+        data = yaml.safe_load(f) or {}
+    return tuple(CryptoRule.model_validate(rule_dict) for rule_dict in data.get("rules") or [])
+
+
+@functools.cache
 def load_seed_rules() -> tuple[CryptoRule, ...]:
-    rules: list[CryptoRule] = []
-    for path in sorted(_SEED_DIR.glob("*.yaml")):
-        with open(path) as f:
-            data = yaml.safe_load(f) or {}
-        rules.extend(CryptoRule.model_validate(rule_dict) for rule_dict in data.get("rules") or [])
-    return tuple(rules)
+    return tuple(rule for path in sorted(_SEED_DIR.glob("*.yaml")) for rule in load_seed_file(path.name))
 
 
 async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
