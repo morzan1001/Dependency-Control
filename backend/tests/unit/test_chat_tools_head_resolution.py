@@ -322,6 +322,7 @@ class TestWaivedFindingsAreNotReportedOpen:
         result = await _call(with_open_high, admin_user, "get_stale_findings")
 
         assert {f["finding_id"] for f in result["findings"]} == {_HEAD_CVE, _OPEN_HIGH_CVE}
+        assert "waiv" not in result["hint"]
 
     @pytest.mark.asyncio
     async def test_a_waived_license_finding_is_no_violation(self, with_open_high, admin_user):

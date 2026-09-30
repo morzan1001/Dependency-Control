@@ -1,4 +1,4 @@
-"""Holds every tool argument to the type, vocabulary and range its schema declares before a handler builds a query from it."""
+"""Holds every tool argument to the type, vocabulary and range its schema declares before a handler reads it."""
 
 from typing import Any
 

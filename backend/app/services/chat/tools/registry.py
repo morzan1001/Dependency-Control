@@ -131,8 +131,7 @@ _RANKING_SAMPLED = (
     "Narrow the question — a single project, or a finding type — for an exact answer."
 )
 
-# What counts as open: the scan stats and REST analytics leave waived findings out, so every count and
-# priority list does too.
+# Scan stats and REST analytics leave waived findings out, so every chat count and priority list does too.
 _ACTIVE: dict[str, Any] = {"waived": {"$ne": True}}
 
 # How many projects the summary names as the worst; projects tie on their critical count often
