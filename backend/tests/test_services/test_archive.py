@@ -99,37 +99,13 @@ def _make_mock_db(
     db.dependencies.insert_many = AsyncMock()
     db.analysis_results.find = MagicMock(return_value=_AsyncCursorMock(analysis_results or []))
     db.analysis_results.insert_many = AsyncMock()
+    db.analysis_results.distinct = AsyncMock(return_value=_NO_IDS)
     db.callgraphs.find = MagicMock(return_value=_AsyncCursorMock(callgraphs or []))
     db.callgraphs.insert_many = AsyncMock()
+    db.callgraphs.distinct = AsyncMock(return_value=_NO_IDS)
     db.crypto_assets.find = MagicMock(return_value=_AsyncCursorMock(crypto_assets or []))
     db.crypto_assets.insert_many = AsyncMock()
     return db
-
-
-# ---------------------------------------------------------------------------
-# Archive environment fixture: patches S3 + lock + encryption + bucket settings
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def archive_env(monkeypatch):
-    """Set up S3 fake, lock repo, encryption off, bucket name."""
-    from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
-
-    fake = FakeS3Client()
-
-    monkeypatch.setattr("app.core.s3.get_s3_client", lambda: fake_get_s3_client(fake))
-    monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: True)
-    monkeypatch.setattr("app.services.archive.is_archive_enabled", lambda: True)
-    monkeypatch.setattr("app.services.archive.is_encryption_enabled", lambda: False)
-
-    class _S:
-        S3_BUCKET_NAME = "test-bucket"
-
-    monkeypatch.setattr("app.core.s3.settings", _S)
-    monkeypatch.setattr("app.core.config.settings", _S, raising=False)
-
-    return fake
 
 
 def _patch_repos(lock_acquires: bool = True, existing_metadata=None):

@@ -92,7 +92,6 @@ class BundleFrames:
                         stats.critical_findings += 1
                     elif severity == "HIGH":
                         stats.high_findings += 1
-                # gridfs_sboms has no counter (filenames live on ArchiveMetadata).
                 if hasattr(stats, coll_name):
                     setattr(stats, coll_name, getattr(stats, coll_name) + 1)
 

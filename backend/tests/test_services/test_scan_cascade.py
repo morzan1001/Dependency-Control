@@ -9,7 +9,12 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.constants import ARCHIVE_GRIDFS_FRAME, SCAN_KEYED_COLLECTIONS, SCAN_SCOPED_COLLECTIONS
+from app.core.constants import (
+    ARCHIVE_GRIDFS_CHUNK_FRAME,
+    ARCHIVE_GRIDFS_FRAME,
+    SCAN_KEYED_COLLECTIONS,
+    SCAN_SCOPED_COLLECTIONS,
+)
 from app.services.scan_cascade import delete_scans_and_related_data
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -125,9 +130,9 @@ def test_the_archive_bundle_carries_exactly_what_the_cascade_removes() -> None:
     from app.models.archive import ArchiveMetadata
     from app.services.archive import _RESTORABLE_COLLECTIONS
 
-    assert {*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME} == _RESTORABLE_COLLECTIONS
+    assert {*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME, ARCHIVE_GRIDFS_CHUNK_FRAME} == _RESTORABLE_COLLECTIONS
     assert set(ArchiveMetadata(project_id="p", scan_id="s", s3_key="k", s3_bucket="b").collections_included) == {
         "scans",
         *SCAN_SCOPED_COLLECTIONS,
-        ARCHIVE_GRIDFS_FRAME,
+        ARCHIVE_GRIDFS_CHUNK_FRAME,
     }

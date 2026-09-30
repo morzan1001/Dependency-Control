@@ -1,6 +1,7 @@
 import json
 
 import pytest
+from bson import Binary, ObjectId
 
 
 async def _async_iter(items):
@@ -18,6 +19,7 @@ async def test_write_then_read_roundtrip():
 
     stats = BundleStats()
     scan_doc = {"_id": "scan-1", "project_id": "p1", "branch": "main"}
+    file_id = ObjectId()
 
     async def gen():
         async for chunk in BundleFrames.write(
@@ -25,7 +27,9 @@ async def test_write_then_read_roundtrip():
             collections={
                 "findings": _async_iter([{"_id": "f1", "severity": "CRITICAL"}, {"_id": "f2", "severity": "HIGH"}]),
                 "dependencies": _async_iter([{"_id": "d1", "name": "lib"}]),
-                "gridfs_sboms": _async_iter([{"gridfs_id": "g1", "filename": "sbom.json", "data": {"x": 1}}]),
+                "gridfs_chunks": _async_iter(
+                    [{"_id": file_id, "n": 0, "filename": "sbom.json", "data": Binary(b"\x00\xff")}]
+                ),
             },
             stats=stats,
         ):
@@ -60,7 +64,7 @@ async def test_write_then_read_roundtrip():
     assert parsed_header["version"] == 2
     assert len(rows_by_coll["findings"]) == 2
     assert rows_by_coll["dependencies"][0]["name"] == "lib"
-    assert rows_by_coll["gridfs_sboms"][0]["filename"] == "sbom.json"
+    assert rows_by_coll["gridfs_chunks"] == [{"_id": file_id, "n": 0, "filename": "sbom.json", "data": b"\x00\xff"}]
     assert footer is not None
     assert footer["stats"]["findings"] == 2
     assert "sha256" in footer

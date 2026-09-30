@@ -1103,8 +1103,9 @@ SCAN_SCOPED_COLLECTIONS: tuple[str, ...] = (
 # does not carry them: the restore recomputes them.
 SCAN_KEYED_COLLECTIONS: tuple[str, ...] = ("scan_update_deltas", "scan_outdated_sets")
 
-# The bundle frame holding the scan's GridFS SBOMs, alongside the scan-scoped collections.
+# Bundle sections of the scan's GridFS files: whole SBOMs (older bundles, still restored) and ordered file chunks.
 ARCHIVE_GRIDFS_FRAME = "gridfs_sboms"
+ARCHIVE_GRIDFS_CHUNK_FRAME = "gridfs_chunks"
 
 # BSON int32 is a different type from bool, so a flag written outside the model as 1 satisfies
 # {"$ne": True} and the scan is deleted for good. The retention guards spell out both spellings.

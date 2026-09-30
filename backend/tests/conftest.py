@@ -158,6 +158,20 @@ def fake_gridfs(monkeypatch):
 
 
 @pytest.fixture
+def archive_env(monkeypatch):
+    """Archiving enabled against an in-memory S3, bundles unencrypted."""
+    from tests.helpers.fake_s3 import FakeS3Client, fake_get_s3_client
+
+    fake = FakeS3Client()
+    monkeypatch.setattr("app.core.s3.get_s3_client", lambda: fake_get_s3_client(fake))
+    monkeypatch.setattr("app.core.s3.is_archive_enabled", lambda: True)
+    monkeypatch.setattr("app.services.archive.is_archive_enabled", lambda: True)
+    monkeypatch.setattr("app.services.archive.is_encryption_enabled", lambda: False)
+    monkeypatch.setattr("app.core.s3.settings", SimpleNamespace(S3_BUCKET_NAME="test-bucket"))
+    return fake
+
+
+@pytest.fixture
 def fake_cache():
     """A CacheService backed by an in-memory fakeredis async client."""
     import fakeredis.aioredis

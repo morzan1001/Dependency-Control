@@ -1816,9 +1816,10 @@ class FakeCollection:
     async def distinct(self, field: str, filter: dict | None = None):
         seen: list = []
         for doc in self._docs.values():
-            if filter and not _match_doc(doc, filter):
+            # MongoDB's distinct skips documents that lack the field.
+            if field not in doc or (filter and not _match_doc(doc, filter)):
                 continue
-            val = doc.get(field)
+            val = doc[field]
             if val not in seen:
                 seen.append(val)
         return seen
