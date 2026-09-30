@@ -178,7 +178,7 @@ class TestGitHubTeamSync:
                 [{"login": login, "role": "member"}], UserRepository(await _db(*users))
             )
         assert resolved is not None
-        return [m.user_id for m in resolved.members]
+        return [m.user_id for m in resolved]
 
     @pytest.mark.asyncio
     async def test_a_login_equal_to_the_username_of_an_account_is_not_resolved(self):

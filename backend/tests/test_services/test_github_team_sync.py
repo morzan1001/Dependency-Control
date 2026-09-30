@@ -6,13 +6,15 @@ from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import fakeredis.aioredis
 import pytest
 from pymongo.errors import DuplicateKeyError
 
+from app.core.cache import CacheService
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.team import GitHubTeamBinding, Team, TeamMember
 from app.repositories.teams import MemberSubset
-from app.services.github import GitHubService, GitHubTeamSyncResult, _RepositoryHolder
+from app.services.github import GitHubService, GitHubTeamSyncResult, _HolderBinding
 from tests.mocks.github import make_github_instance
 
 # The organisation listing is the only source of a team's current slug.
@@ -22,7 +24,7 @@ _ENGINEERING = {"id": 500, "slug": "engineering", "name": "Engineering", "parent
 _NESTED = {"id": 900, "slug": "cards", "name": "Cards", "parent": {"id": 500, "slug": "engineering"}}
 _ORG_TEAMS = [_PAYMENTS, _PLATFORM, _ENGINEERING, _NESTED]
 
-_ONE_MAINTAINER = [{"login": "ada", "role": "maintainer"}]
+_ONE_MAINTAINER = [{"login": "ada", "role": "admin"}]
 
 # The subset the service under test replaces: its own instance, and nothing else.
 _INSTANCE = "test-github-instance-id"
@@ -30,6 +32,29 @@ _OWN = team_source(TEAM_SOURCE_GITHUB, _INSTANCE)
 
 # The organisation map, in the shape the walk leaves behind: repository full name -> holding teams.
 _HELD_BY_PLATFORM = {"acme/widgets": [100]}
+
+# GET /repos/{owner}/{repo}, trimmed; GitHub answers the same 404 for a missing and an invisible repository.
+_REPOSITORY = {"id": 987654, "node_id": "R_kgDOBl2Rpw", "name": "widgets", "full_name": "acme/widgets", "private": True}
+_NOT_FOUND = {
+    "message": "Not Found",
+    "documentation_url": "https://docs.github.com/rest/repos/repos#get-a-repository",
+    "status": "404",
+}
+
+
+@pytest.fixture(autouse=True)
+def _empty_cache(monkeypatch):
+    cache = CacheService()
+    cache._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    cache._pool = object()
+    cache._available = True
+    monkeypatch.setattr("app.services.github.cache_service", cache)
+
+
+def _response(status_code: int, payload: dict) -> MagicMock:
+    response = MagicMock(status_code=status_code)
+    response.json = MagicMock(return_value=payload)
+    return response
 
 
 def _service(instance_id: str = _INSTANCE) -> GitHubService:
@@ -107,6 +132,7 @@ def _sync_stubs(
     members=_ONE_MAINTAINER,
     user_repo=None,
     repo_map=_FROM_ACCESS,
+    repository_status=200,
 ):
     """Stub everything the sync reads: the organisation listing and map, the checks and the members.
 
@@ -116,7 +142,7 @@ def _sync_stubs(
     if repo_map is _FROM_ACCESS:
         repo_map = {"acme/widgets": [team["id"] for team in org_teams or [] if team["slug"] in answers]}
 
-    async def _check(_org, team_slug, _team_id, _owner, _repo):
+    async def _check(_org, team_slug, _team_id, _repo):
         return answers.get(team_slug, False)
 
     stubs = SimpleNamespace(
@@ -124,12 +150,16 @@ def _sync_stubs(
         org_teams=AsyncMock(return_value=org_teams),
         members=AsyncMock(return_value=members),
         repo_map=AsyncMock(return_value=repo_map),
+        repository=AsyncMock(
+            return_value=_response(repository_status, _REPOSITORY if repository_status == 200 else _NOT_FOUND)
+        ),
     )
     with (
         patch.object(service, "get_org_teams", new=stubs.org_teams),
         patch.object(service, "team_writes_to_repository", new=stubs.checks),
         patch.object(service, "get_team_members", new=stubs.members),
         patch.object(service, "get_org_repository_map", new=stubs.repo_map),
+        patch.object(service, "_api_get", new=stubs.repository),
         patch("app.services.github.TeamRepository", return_value=team_repo),
         patch("app.services.github.UserRepository", return_value=user_repo or _user_repo({"_id": "u-1"})),
         _public_email(service),
@@ -144,7 +174,7 @@ class TestMemberResolution:
         repo = _user_repo({"_id": "u-2", "email": "ada@corp.com"})
 
         with _public_email(service, "Ada@Corp.com"):
-            members, _ = await service._build_team_members([{"login": "ada-l", "role": "member"}], repo)
+            members = await service._build_team_members([{"login": "ada-l", "role": "member"}], repo)
 
         assert [m.user_id for m in members] == ["u-2"]
         repo.find_raw_by_verified_emails.assert_awaited_once_with(["Ada@Corp.com"])
@@ -155,7 +185,7 @@ class TestMemberResolution:
         repo = _user_repo()
 
         with _public_email(service, None):
-            assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == ([], 1)
+            assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == []
 
         repo.find_raw_by_verified_emails.assert_not_awaited()
 
@@ -166,7 +196,7 @@ class TestMemberResolution:
 
         with _public_email(service, None):
             with caplog.at_level("DEBUG", logger="app.services.github"):
-                members, _ = await service._build_team_members([{"login": "dependabot", "role": "member"}], repo)
+                members = await service._build_team_members([{"login": "dependabot", "role": "member"}], repo)
 
         assert members == []
         repo.create.assert_not_called()
@@ -189,7 +219,7 @@ class TestMemberResolution:
         service = _service()
         repo = _user_repo({"_id": "u-1"})
         with _public_email(service):
-            members, _ = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
+            members = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
         assert members[0].source == _OWN
 
     def test_two_instances_of_one_provider_claim_different_subsets(self):
@@ -201,8 +231,8 @@ class TestMemberResolution:
         repo = _user_repo({"_id": "u-1"})
 
         with _public_email(service):
-            members, _ = await service._build_team_members(
-                [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
+            members = await service._build_team_members(
+                [{"login": "ada", "role": "admin"}, {"login": "ada-work", "role": "member"}], repo
             )
 
         assert members == [TeamMember(user_id="u-1", role="admin", source=_OWN)]
@@ -213,35 +243,14 @@ class TestMemberResolution:
         repo = _user_repo({"_id": "u-1"})
 
         with _public_email(service):
-            members, _ = await service._build_team_members(
-                [{"login": "ada-work", "role": "member"}, {"login": "ada", "role": "maintainer"}], repo
+            members = await service._build_team_members(
+                [{"login": "ada-work", "role": "member"}, {"login": "ada", "role": "admin"}], repo
             )
 
         assert members == [TeamMember(user_id="u-1", role="admin", source=_OWN)]
 
     @pytest.mark.asyncio
-    async def test_a_deduplicated_login_does_not_count_as_unresolved(self):
-        service = _service()
-        repo = _user_repo({"_id": "u-1"})
-
-        with _public_email(service):
-            _, unresolved = await service._build_team_members(
-                [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
-            )
-
-        assert unresolved == 0
-
-    @pytest.mark.asyncio
-    async def test_the_unresolved_count_is_returned_for_the_caller_to_act_on(self):
-        service = _service()
-        repo = _user_repo()
-        github_members = [{"login": f"bot-{index}", "role": "member"} for index in range(3)]
-
-        with _public_email(service, None):
-            assert await service._build_team_members(github_members, repo) == ([], 3)
-
-    @pytest.mark.asyncio
-    async def test_the_bots_every_organisation_has_count_without_costing_the_real_members(self):
+    async def test_the_bots_every_organisation_has_never_cost_the_real_members(self):
         service = _service()
         repo = _user_repo({"_id": "u-1"})
         github_members = [
@@ -251,21 +260,9 @@ class TestMemberResolution:
         ]
 
         with _public_email(service, {"ada": "ada@corp.com"}):
-            members, unresolved = await service._build_team_members(github_members, repo)
+            members = await service._build_team_members(github_members, repo)
 
         assert [m.user_id for m in members] == ["u-1"]
-        assert unresolved == 2
-
-
-class TestRoleMapping:
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(("github_role", "expected"), [("maintainer", "admin"), ("member", "member")])
-    async def test_maintainer_becomes_admin(self, github_role, expected):
-        service = _service()
-        repo = _user_repo({"_id": "u-1"})
-        with _public_email(service):
-            members, _ = await service._build_team_members([{"login": "ada", "role": github_role}], repo)
-        assert members[0].role == expected
 
 
 class TestTeamMemberWrite:
@@ -286,7 +283,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-gh", source=_OWN)]
+            repo, "acme", _HolderBinding(4711, "payments", team), team, [TeamMember(user_id="u-gh", source=_OWN)]
         )
 
         assert "members" not in repo.update_with_binding.await_args.args[1]
@@ -305,7 +302,7 @@ class TestTeamMemberWrite:
         team = _bound("t-1", 4711, members=list(foreign))
         repo = _team_repo(team)
 
-        await service._refresh_team(repo, "acme", _RepositoryHolder(team, 4711, "payments"), [])
+        await service._refresh_team(repo, "acme", _HolderBinding(4711, "payments", team), team, [])
 
         assert _written_subset(repo) == MemberSubset(_OWN, [])
 
@@ -316,7 +313,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)]
+            repo, "acme", _HolderBinding(4711, "payments", team), team, [TeamMember(user_id="u-1", source=_OWN)]
         )
 
         update = repo.update_with_binding.await_args.args[1]
@@ -330,7 +327,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)]
+            repo, "acme", _HolderBinding(4711, "payments", team), team, [TeamMember(user_id="u-1", source=_OWN)]
         )
 
         update = repo.update_with_binding.await_args.args[1]
@@ -344,7 +341,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)]
+            repo, "acme", _HolderBinding(4711, "payments", team), team, [TeamMember(user_id="u-1", source=_OWN)]
         )
 
         assert "name" not in repo.update_with_binding.await_args.args[1]
@@ -356,7 +353,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)]
+            repo, "acme", _HolderBinding(4711, "payments", team), team, [TeamMember(user_id="u-1", source=_OWN)]
         )
 
         assert repo.update_with_binding.await_args.args[3] == {"slug": "payments"}
@@ -368,7 +365,7 @@ class TestTeamMemberWrite:
         team = _bound("t-1", 4711, slug="pay-old", name="GitHub Team: acme/pay-old")
         repo = _team_repo(team)
 
-        await service._refresh_team(repo, "acme", _RepositoryHolder(team, 4711, "payments"), None)
+        await service._refresh_team(repo, "acme", _HolderBinding(4711, "payments", team), team, None)
 
         update = repo.update_with_binding.await_args.args[1]
         assert update["name"] == "GitHub Team: acme/payments"
@@ -380,7 +377,7 @@ class TestTeamMemberWrite:
         team = _bound("t-1", 4711)
         repo = _team_repo(team)
 
-        await service._refresh_team(repo, "acme", _RepositoryHolder(team, 4711, "payments"), None)
+        await service._refresh_team(repo, "acme", _HolderBinding(4711, "payments", team), team, None)
 
         repo.update_with_binding.assert_not_called()
 
@@ -394,9 +391,7 @@ class TestSyncTeamFromGithub:
         team_repo = _team_repo(_bound("t-pay", 4711))
 
         with _sync_stubs(service, team_repo, access={"payments": True}, repo_map=_HELD_BY_PLATFORM) as stubs:
-            result = await service.sync_team_from_github(
-                MagicMock(), "acme", "acme/widgets", current_owner_ids={"t-pay"}
-            )
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids={"t-pay"})
 
         created = team_repo.create.await_args.args[0]
         assert created.name == "GitHub Team: acme/platform"
@@ -412,7 +407,7 @@ class TestSyncTeamFromGithub:
         )
 
         with _sync_stubs(service, team_repo, access={"payments": True}) as stubs:
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-pay"])
         assert stubs.members.await_args.args == ("acme", "payments", 4711)
@@ -428,7 +423,7 @@ class TestSyncTeamFromGithub:
         )
 
         with _sync_stubs(service, team_repo, access={"platform": True, "cards": True}) as stubs:
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-platform", "t-cards"])
         # Ownership grants access through membership, so every attached team's is refreshed.
@@ -448,7 +443,7 @@ class TestSyncTeamFromGithub:
 
         with _sync_stubs(service, team_repo, access={"platform": True, "payments": True}) as stubs:
             stubs.members.side_effect = _members
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-platform", "t-pay"])
         assert [call.args[0] for call in team_repo.update_with_binding.await_args_list] == ["t-pay"]
@@ -465,9 +460,7 @@ class TestSyncTeamFromGithub:
 
         with _sync_stubs(service, team_repo, access=access) as stubs:
             with caplog.at_level("WARNING", logger="app.services.github"):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(None)
         team_repo.update_with_binding.assert_not_called()
@@ -481,9 +474,7 @@ class TestSyncTeamFromGithub:
 
         with _sync_stubs(service, team_repo, org_teams=None, access={"payments": True}) as stubs:
             with caplog.at_level("WARNING", logger="app.services.github"):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(None)
         stubs.checks.assert_not_awaited()
@@ -491,26 +482,37 @@ class TestSyncTeamFromGithub:
         assert any("acme" in record.getMessage() for record in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_the_bound_teams_are_read_for_this_instance_and_this_organisation(self):
+    async def test_the_bound_teams_are_read_for_this_instance_and_the_organisation_the_path_names(self):
         service = _service("gh-1")
         team_repo = _team_repo()
 
         with _sync_stubs(service, team_repo):
-            await service.sync_team_from_github(MagicMock(), "acme", "acme-labs/widgets", current_owner_ids=set())
+            await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert team_repo.find_raw_by_github_org.await_args.args == ("gh-1", "acme")
 
     @pytest.mark.asyncio
-    async def test_the_repository_is_addressed_by_its_own_owner_and_the_team_by_the_organisation(self):
+    async def test_the_team_and_the_repository_are_addressed_through_the_organisation_the_path_names(self):
         service = _service("gh-1")
         team_repo = _team_repo(_bound("t-pay", 4711, instance_id="gh-1"))
 
         with _sync_stubs(service, team_repo, access={"payments": True}) as stubs:
-            await service.sync_team_from_github(MagicMock(), "acme", "acme-labs/widgets", current_owner_ids={"t-pay"})
+            await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids={"t-pay"})
 
-        assert stubs.checks.await_args.args == ("acme", "payments", 4711, "acme-labs", "widgets")
+        assert stubs.checks.await_args.args == ("acme", "payments", 4711, "widgets")
         assert stubs.org_teams.await_args.args == ("acme",)
         assert stubs.members.await_args.args == ("acme", "payments", 4711)
+
+    @pytest.mark.asyncio
+    async def test_a_repository_claim_without_an_owner_leaves_everything_untouched(self):
+        service = _service()
+        team_repo = _team_repo(_bound("t-pay", 4711))
+
+        with _sync_stubs(service, team_repo) as stubs:
+            result = await service.sync_team_from_github(MagicMock(), "widgets", current_owner_ids={"t-pay"})
+
+        assert result == GitHubTeamSyncResult(None)
+        stubs.org_teams.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_a_renamed_team_is_addressed_by_the_slug_the_organisation_reports(self):
@@ -519,7 +521,7 @@ class TestSyncTeamFromGithub:
         team_repo = _team_repo(_bound("t-pay", 4711, slug="pay-old"))
 
         with _sync_stubs(service, team_repo, access={"payments": True}) as stubs:
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-pay"])
         assert stubs.checks.await_args.args[1] == "payments"
@@ -532,9 +534,7 @@ class TestSyncTeamFromGithub:
 
         with _sync_stubs(service, team_repo) as stubs:
             with caplog.at_level("WARNING", logger="app.services.github"):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids={"t-gone"}
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids={"t-gone"})
 
         assert result == GitHubTeamSyncResult(None)
         stubs.checks.assert_not_awaited()
@@ -550,9 +550,7 @@ class TestSyncTeamFromGithub:
 
         with _sync_stubs(service, team_repo, access={"payments": True}, repo_map={"acme/widgets": [4711]}) as stubs:
             with caplog.at_level("WARNING", logger="app.services.github"):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-pay"])
         assert stubs.members.await_args.args == ("acme", "payments", 4711)
@@ -567,7 +565,7 @@ class TestSyncTeamFromGithub:
         access = {"payments": True, "platform": True}
 
         with _sync_stubs(service, team_repo, access=access, repo_map={"acme/widgets": [4711]}) as stubs:
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-pay"])
         assert [call.args[1] for call in stubs.checks.await_args_list] == ["payments"]
@@ -585,9 +583,7 @@ class TestSyncTeamFromGithub:
         access = {"cards": True, "platform": True}
 
         with _sync_stubs(service, team_repo, org_teams=visible_only, access=access):
-            result = await service.sync_team_from_github(
-                MagicMock(), "acme", "acme/widgets", current_owner_ids={"t-hidden"}
-            )
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids={"t-hidden"})
 
         assert result == GitHubTeamSyncResult(None)
         team_repo.update_with_binding.assert_not_called()
@@ -601,9 +597,7 @@ class TestSyncTeamFromGithub:
         team_repo = _team_repo(_bound("t-elsewhere", 4711, instance_id="gh-other"))
 
         with _sync_stubs(service, team_repo, access={"payments": True}) as stubs:
-            result = await service.sync_team_from_github(
-                MagicMock(), "acme", "acme/widgets", current_owner_ids={"t-elsewhere"}
-            )
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids={"t-elsewhere"})
 
         assert result == GitHubTeamSyncResult(None)
         stubs.checks.assert_not_awaited()
@@ -618,9 +612,7 @@ class TestSyncTeamFromGithub:
 
         with _sync_stubs(service, team_repo, access={"payments": True, "platform": True}):
             with caplog.at_level("INFO", logger="app.services.github"):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result.team_ids == ["t-pay", "t-platform"]
         logged = " ".join(record.getMessage() for record in caplog.records)
@@ -633,31 +625,35 @@ class TestSyncTeamFromGithub:
         team_repo = _team_repo(_bound("t-pay", 4711))
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=None):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-pay"])
         team_repo.update_with_binding.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_members_that_all_fail_to_resolve_leave_the_stored_members_untouched(self, caplog):
+    async def test_members_none_of_whom_resolve_empty_the_github_subset(self):
         service = _service()
-        team_repo = _team_repo(_bound("t-pay", 4711, members=[{"user_id": "u-1", "role": "admin", "source": "github"}]))
-        members = [{"login": "ada", "role": "maintainer"}, {"login": "bob", "role": "member"}]
+        team_repo = _team_repo(_bound("t-pay", 4711, members=[{"user_id": "u-1", "role": "admin", "source": _OWN}]))
+        members = [{"login": "ada", "role": "admin"}, {"login": "bob", "role": "member"}]
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=members, user_repo=_user_repo()):
             with _public_email(service, None):
-                with caplog.at_level("WARNING", logger="app.services.github"):
-                    result = await service.sync_team_from_github(
-                        MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                    )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-pay"])
-        team_repo.update_with_binding.assert_not_called()
-        warnings = " ".join(record.getMessage() for record in caplog.records if record.levelname == "WARNING")
-        assert "0 of 2" in warnings
-        # A refused profile lookup and a hidden email are the same None here, so the line reports an
-        # outcome: blaming user provisioning misdirects the operator in exactly the 403 case.
-        assert "no local account" not in warnings
+        assert _written_subset(team_repo) == MemberSubset(_OWN, [])
+
+    @pytest.mark.asyncio
+    async def test_the_last_resolvable_member_leaving_takes_their_membership_with_them(self):
+        """Alice left the GitHub team; the logins still listed are handles no local account matches."""
+        service = _service()
+        team_repo = _team_repo(_bound("t-pay", 4711, members=[{"user_id": "u-alice", "role": "admin", "source": _OWN}]))
+
+        with _sync_stubs(service, team_repo, access={"payments": True}, members=[{"login": "bob", "role": "member"}]):
+            with _public_email(service, None):
+                await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
+
+        assert _written_subset(team_repo) == MemberSubset(_OWN, [])
 
     @pytest.mark.asyncio
     async def test_a_throttled_profile_read_leaves_the_stored_members_untouched(self, caplog):
@@ -667,14 +663,12 @@ class TestSyncTeamFromGithub:
         service = _service()
         team_repo = _team_repo(_bound("t-pay", 4711, members=[{"user_id": "u-1", "role": "admin", "source": _OWN}]))
         user_repo = _user_repo({"_id": "u-2"})
-        members = [{"login": "ada", "role": "maintainer"}, {"login": "bob", "role": "member"}]
+        members = [{"login": "ada", "role": "admin"}, {"login": "bob", "role": "member"}]
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=members, user_repo=user_repo):
             with _refused_profiles(service):
                 with caplog.at_level("WARNING", logger="app.services.github"):
-                    result = await service.sync_team_from_github(
-                        MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                    )
+                    result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-pay"])
         team_repo.update_with_binding.assert_not_called()
@@ -687,13 +681,11 @@ class TestSyncTeamFromGithub:
         service = _service()
         team_repo = _team_repo(_bound("t-pay", 4711))
         user_repo = _user_repo({"_id": "u-1"})
-        members = [{"login": "dependabot", "role": "member"}, {"login": "ada", "role": "maintainer"}]
+        members = [{"login": "dependabot", "role": "member"}, {"login": "ada", "role": "admin"}]
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=members, user_repo=user_repo):
             with _public_email(service, {"ada": "ada@corp.com"}):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-pay"])
         assert _written_subset(team_repo).members == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
@@ -713,7 +705,7 @@ class TestSyncTeamFromGithub:
         )
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=[]):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-pay"])
         # Empty, not absent: the subset is named, so the entries in it go and no others.
@@ -727,7 +719,7 @@ class TestSyncTeamFromGithub:
         )
 
         with _sync_stubs(service, team_repo, access={"payments": True}):
-            await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert _written_subset(team_repo) == MemberSubset(_OWN, [{"user_id": "u-1", "role": "admin", "source": _OWN}])
 
@@ -738,7 +730,7 @@ class TestSyncTeamFromGithub:
         team_repo.find_raw_by_github_org = AsyncMock(side_effect=RuntimeError("boom"))
 
         with patch("app.services.github.TeamRepository", return_value=team_repo):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(None)
 
@@ -757,9 +749,7 @@ class TestTeamCreation:
 
         with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
             with caplog.at_level("INFO", logger="app.services.github"):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         created = self._created(team_repo)
         assert created.name == "GitHub Team: acme/platform"
@@ -772,7 +762,7 @@ class TestTeamCreation:
         team_repo = _team_repo()
 
         with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
-            await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         created = self._created(team_repo)
         assert [binding.model_dump() for binding in created.bindings] == [
@@ -791,9 +781,7 @@ class TestTeamCreation:
             service, team_repo, repo_map=_HELD_BY_PLATFORM, members=_ONE_MAINTAINER, user_repo=_user_repo()
         ):
             with _public_email(service, None):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         created = self._created(team_repo)
         assert created.members == []
@@ -805,7 +793,7 @@ class TestTeamCreation:
         team_repo = _team_repo()
 
         with _sync_stubs(service, team_repo, repo_map={"acme/widgets": [100, 900]}):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         created = [call.args[0] for call in team_repo.create.await_args_list]
         assert [team.name for team in created] == ["GitHub Team: acme/platform", "GitHub Team: acme/cards"]
@@ -818,7 +806,7 @@ class TestTeamCreation:
         team_repo = _team_repo(already_bound=_bound("t-platform", 100, slug="platform", name="Platform"))
 
         with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-platform"])
         team_repo.create.assert_not_called()
@@ -833,7 +821,7 @@ class TestTeamCreation:
         team_repo.create = AsyncMock(side_effect=DuplicateKeyError("teams index"))
 
         with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-raced"])
 
@@ -844,7 +832,7 @@ class TestTeamCreation:
         team_repo = _team_repo(_bound("t-platform", 100, slug="platform", name="Platform"))
 
         with _sync_stubs(service, team_repo, access={"platform": False}, repo_map=_HELD_BY_PLATFORM):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult([])
         team_repo.create.assert_not_called()
@@ -854,11 +842,53 @@ class TestTeamCreation:
         service = _service()
         team_repo = _team_repo()
 
-        with _sync_stubs(service, team_repo, repo_map={"acme/gadgets": [100]}):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+        with _sync_stubs(service, team_repo, repo_map={"acme/gadgets": [100]}) as stubs:
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult([])
         team_repo.create.assert_not_called()
+        stubs.repository.assert_awaited_once_with("/repos/acme/widgets")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [404, 403, 301])
+    async def test_a_repository_the_token_cannot_see_keeps_its_owners(self, status, caplog):
+        """Every check answers 404 and the walk never lists the repository, which reads like nobody holding it."""
+        service = _service()
+        team_repo = _team_repo(_bound("t-pay", 4711))
+
+        with _sync_stubs(
+            service, team_repo, access={"payments": False}, repo_map={}, repository_status=status
+        ) as stubs:
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids={"t-pay"})
+
+        assert result == GitHubTeamSyncResult(None)
+        team_repo.update_with_binding.assert_not_called()
+        team_repo.create.assert_not_called()
+        stubs.repository.assert_awaited_once_with("/repos/acme/widgets")
+        assert any(str(status) in record.getMessage() for record in caplog.records if record.levelname == "WARNING")
+
+    @pytest.mark.asyncio
+    async def test_a_repository_github_would_not_describe_keeps_its_owners(self):
+        service = _service()
+        team_repo = _team_repo(_bound("t-pay", 4711))
+
+        with _sync_stubs(service, team_repo, access={"payments": False}, repo_map={}) as stubs:
+            stubs.repository.return_value = None
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids={"t-pay"})
+
+        assert result == GitHubTeamSyncResult(None)
+
+    @pytest.mark.asyncio
+    async def test_a_repository_some_team_holds_is_not_probed(self):
+        """A team's answer for the repository already proves the token can see it."""
+        service = _service()
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM) as stubs:
+            await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
+
+        stubs.repository.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_an_unfinished_walk_leaves_the_owners_untouched_rather_than_reporting_nobody(self, caplog):
@@ -867,9 +897,7 @@ class TestTeamCreation:
 
         with _sync_stubs(service, team_repo, repo_map=None):
             with caplog.at_level("WARNING", logger="app.services.github"):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(None)
         team_repo.create.assert_not_called()
@@ -883,9 +911,7 @@ class TestTeamCreation:
 
         with _sync_stubs(service, team_repo, repo_map={"acme/widgets": [6666]}):
             with caplog.at_level("WARNING", logger="app.services.github"):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult([])
         team_repo.create.assert_not_called()
@@ -897,7 +923,7 @@ class TestTeamCreation:
         team_repo = _team_repo()
 
         with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "Acme/Widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "Acme/Widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult([str(self._created(team_repo).id)])
 
@@ -907,7 +933,7 @@ class TestTeamCreation:
         team_repo = _team_repo()
 
         with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM) as stubs:
-            await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert stubs.members.await_args.args == ("acme", "platform", 100)
         assert _written_subset(team_repo).members == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
@@ -934,7 +960,7 @@ class TestAGroupNobodyBoundGetsATeamOfItsOwn:
         org_teams = [{"id": 100, "slug": slug, "name": name, "parent": None}]
 
         with _sync_stubs(service, team_repo, org_teams=org_teams, repo_map=_HELD_BY_PLATFORM):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         created = team_repo.create.await_args.args[0]
         assert created.name == f"GitHub Team: acme/{slug}"
@@ -947,7 +973,7 @@ class TestAGroupNobodyBoundGetsATeamOfItsOwn:
         team_repo = _team_repo(already_bound=_bound("t-platform", 100, slug="platform", name="Platform"))
 
         with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets", current_owner_ids=set())
+            result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(["t-platform"])
         team_repo.create.assert_not_called()
@@ -970,7 +996,7 @@ class TestOwnerBudget:
         with _sync_stubs(service, team_repo, org_teams=_SIX_TEAMS, repo_map=_SIX_HOLDERS):
             with caplog.at_level("WARNING", logger="app.services.github"):
                 result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set(), owner_budget=5
+                    MagicMock(), "acme/widgets", current_owner_ids=set(), owner_budget=5
                 )
 
         assert result == GitHubTeamSyncResult(None)
@@ -985,7 +1011,7 @@ class TestOwnerBudget:
 
         with _sync_stubs(service, team_repo, org_teams=_SIX_TEAMS, repo_map=_SIX_HOLDERS):
             result = await service.sync_team_from_github(
-                MagicMock(), "acme", "acme/widgets", current_owner_ids=set(), owner_budget=6
+                MagicMock(), "acme/widgets", current_owner_ids=set(), owner_budget=6
             )
 
         assert team_repo.create.await_count == 6
@@ -999,7 +1025,7 @@ class TestOwnerBudget:
 
         with _sync_stubs(service, team_repo, org_teams=_SIX_TEAMS, repo_map=_SIX_HOLDERS):
             result = await service.sync_team_from_github(
-                MagicMock(), "acme", "acme/widgets", current_owner_ids=set(), owner_budget=0
+                MagicMock(), "acme/widgets", current_owner_ids=set(), owner_budget=0
             )
 
         assert result.team_ids is None
@@ -1019,9 +1045,7 @@ class TestOwnerBudget:
         with _sync_stubs(service, team_repo, org_teams=_SIX_TEAMS, repo_map=_SIX_HOLDERS) as stubs:
             stubs.repo_map.side_effect = _never_answers
             with patch("app.services.github._GITHUB_RESOLUTION_TIMEOUT", 0.05):
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
 
         assert result == GitHubTeamSyncResult(None)
         team_repo.create.assert_not_called()
@@ -1045,7 +1069,7 @@ class TestResolutionCost:
         org_teams, bound = self._many_bound_teams(count)
         service = _service()
 
-        async def _slow_check(_org, _slug, _team_id, _owner, _repo):
+        async def _slow_check(_org, _slug, _team_id, _repo):
             await asyncio.sleep(self._SLOW_CHECK)
             return False
 
@@ -1053,7 +1077,7 @@ class TestResolutionCost:
             stubs.checks.side_effect = _slow_check
             started = time.perf_counter()
             result = await service.sync_team_from_github(
-                MagicMock(), "acme", "acme/widgets", current_owner_ids={team["_id"] for team in bound}
+                MagicMock(), "acme/widgets", current_owner_ids={team["_id"] for team in bound}
             )
             elapsed = time.perf_counter() - started
 
@@ -1076,13 +1100,37 @@ class TestResolutionCost:
                 with caplog.at_level("WARNING", logger="app.services.github"):
                     started = time.perf_counter()
                     result = await service.sync_team_from_github(
-                        MagicMock(), "acme", "acme/widgets", current_owner_ids={team["_id"] for team in bound}
+                        MagicMock(), "acme/widgets", current_owner_ids={team["_id"] for team in bound}
                     )
                     elapsed = time.perf_counter() - started
 
         assert result == GitHubTeamSyncResult(None)
         assert elapsed < 1
         assert any("acme/widgets" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_a_member_read_cut_off_by_the_deadline_still_lets_the_team_follow_its_rename(self):
+        service = _service()
+        team_repo = _team_repo(_bound("t-pay", 4711, slug="pay-old", name="GitHub Team: acme/pay-old"))
+
+        async def _never_answers(*_args, **_kwargs):
+            await asyncio.sleep(60)
+            raise AssertionError("the member listing should have been abandoned")
+
+        with _sync_stubs(service, team_repo, access={"payments": True}) as stubs:
+            stubs.members.side_effect = _never_answers
+            with patch("app.services.github._GITHUB_RESOLUTION_TIMEOUT", 0.05):
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
+
+        assert result == GitHubTeamSyncResult(["t-pay"])
+        team_id, updates, key, binding_fields, subset = team_repo.update_with_binding.await_args.args
+        assert (team_id, updates["name"], key, binding_fields, subset) == (
+            "t-pay",
+            "GitHub Team: acme/payments",
+            f"github:{_INSTANCE}:4711",
+            {"slug": "payments"},
+            None,
+        )
 
     @pytest.mark.asyncio
     async def test_the_member_reads_share_the_budget_the_checks_drew_on(self, caplog):
@@ -1104,13 +1152,11 @@ class TestResolutionCost:
                 caplog.at_level("WARNING", logger="app.services.github"),
             ):
                 started = time.perf_counter()
-                result = await service.sync_team_from_github(
-                    MagicMock(), "acme", "acme/widgets", current_owner_ids=set()
-                )
+                result = await service.sync_team_from_github(MagicMock(), "acme/widgets", current_owner_ids=set())
                 elapsed = time.perf_counter() - started
 
         assert elapsed < 1
         # The teams hold the repository whatever their member lists say, so ownership is determined.
         assert result == GitHubTeamSyncResult(["t-0", "t-1"])
         team_repo.update_with_binding.assert_not_called()
-        assert any("stay as they are" in record.getMessage() for record in caplog.records)
+        assert any("those not read keep their stored members" in record.getMessage() for record in caplog.records)

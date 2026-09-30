@@ -13,7 +13,7 @@ import pytest
 from app.core.constants import TEAM_ROLE_MEMBER, TEAM_SOURCE_GITHUB, team_source
 from app.models.team import GitHubTeamBinding, Team, TeamMember
 from app.repositories.teams import MemberSubset, TeamRepository
-from app.services.github import GitHubService, _RepositoryHolder
+from app.services.github import GitHubService, _HolderBinding
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 
@@ -176,7 +176,7 @@ async def _assert_only_a_change_is_written(db, stored, resolved, name, slug, wri
     before = team["updated_at"]
 
     service = GitHubService(make_github_instance(id="gh-inst-a"))
-    await service._refresh_team(repo, "acme", _RepositoryHolder(team, 4711, "payments"), resolved)
+    await service._refresh_team(repo, "acme", _HolderBinding(4711, "payments", team), team, resolved)
 
     # Every CI job re-resolves the same members, so only a change may touch the document.
     assert ((await repo.get_raw_by_id(_TEAM_ID))["updated_at"] != before) is written

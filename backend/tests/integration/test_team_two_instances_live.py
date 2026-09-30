@@ -40,7 +40,7 @@ def _reads(service: GitHubService, org_teams: list[dict], repo_map: dict[str, li
     return (
         patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams)),
         patch.object(service, "team_writes_to_repository", new=AsyncMock(return_value=True)),
-        patch.object(service, "get_team_members", new=AsyncMock(return_value=[{"login": "ada", "role": "maintainer"}])),
+        patch.object(service, "get_team_members", new=AsyncMock(return_value=[{"login": "ada", "role": "admin"}])),
         patch.object(service, "get_org_repository_map", new=AsyncMock(return_value=repo_map)),
     )
 
@@ -56,7 +56,7 @@ async def _ingest(
     org_reads, check_reads, member_reads, map_reads = _reads(service, org_teams, repo_map)
 
     with org_reads, check_reads, member_reads, map_reads:
-        stages = await _github_team_sync_stages(project, instance_id, "acme", path, service, db)
+        stages = await _github_team_sync_stages(project, instance_id, path, service, db)
 
     if stages:
         await project_repo.update_raw(project_id, stages)

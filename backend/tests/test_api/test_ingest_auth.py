@@ -853,7 +853,7 @@ _TEAM_SYNC_PROJECT = {
 class TestIngestGitHubTeamSync:
     """GitHub OIDC ingest assigns the repository's team when the instance opts in."""
 
-    def _run(self, instance_doc, sync_result, project_doc=None, **payload_overrides):
+    def _run(self, instance_doc, sync_result, project_doc=None):
         from app.api.deps import get_project_for_ingest
         from app.services.github import GitHubTeamSyncResult
 
@@ -872,14 +872,14 @@ class TestIngestGitHubTeamSync:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
             with patch("app.services.github.GitHubService") as MockService:
                 mock_svc = MagicMock()
-                payload = {
-                    "repository_id": "123456",
-                    "repository": "acme/widgets",
-                    "repository_owner": "acme",
-                    "repository_owner_id": "111",
-                }
-                payload.update(payload_overrides)
-                mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
+                mock_svc.validate_oidc_token = AsyncMock(
+                    return_value=make_github_oidc_payload(
+                        repository_id="123456",
+                        repository="acme/widgets",
+                        repository_owner="acme",
+                        repository_owner_id="111",
+                    )
+                )
                 mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(sync_result))
                 mock_svc.resolve_login = AsyncMock(return_value=None)
                 MockService.return_value = mock_svc
@@ -904,24 +904,12 @@ class TestIngestGitHubTeamSync:
         assert inserted["team_ids"] == []
         assert inserted["team_id"] is None
 
-    def test_the_owning_org_comes_from_the_token(self):
+    def test_the_repository_comes_from_the_token(self):
         mock_svc, _, db = self._run(
             {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ["t-9"], project_doc=_TEAM_SYNC_PROJECT
         )
         mock_svc.sync_team_from_github.assert_awaited_once_with(
-            db, "acme", "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
-        )
-
-    def test_the_org_is_the_repository_owner_claim_not_the_path_prefix(self):
-        """Pins which claim sources the org; the two agree in real tokens, so nothing else would catch a swap."""
-        mock_svc, _, db = self._run(
-            {**_TEAM_SYNC_INSTANCE, "sync_teams": True},
-            ["t-9"],
-            project_doc=_TEAM_SYNC_PROJECT,
-            repository_owner="acme-org",
-        )
-        mock_svc.sync_team_from_github.assert_awaited_once_with(
-            db, "acme-org", "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
+            db, "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
         )
 
     def test_every_resolved_owner_is_written_to_the_project(self):
@@ -940,10 +928,9 @@ class TestIngestGitHubTeamSync:
 
     def test_an_auto_created_project_carries_every_synced_team(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
-        mock_svc, projects_coll, db = self._run(instance, ["t-9", "t-4"], repository_owner="acme-org")
-        # The auto-create call site sources the org from the same claim as the existing-project one,
-        # and a project being created has the whole cap to itself.
-        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets", current_owner_ids=set())
+        mock_svc, projects_coll, db = self._run(instance, ["t-9", "t-4"])
+        # A project being created has the whole cap to itself.
+        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme/widgets", current_owner_ids=set())
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == ["t-4", "t-9"]
         expected_source = team_source(TEAM_SOURCE_GITHUB, _TEAM_SYNC_INSTANCE["_id"])

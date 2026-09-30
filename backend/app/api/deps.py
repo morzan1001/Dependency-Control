@@ -255,7 +255,6 @@ async def _gitlab_team_sync_stages(
 async def _github_team_sync_stages(
     project: Project,
     instance_id: str,
-    github_org: str,
     repository_path: str,
     github_service: "GitHubService",
     db: AsyncIOMotorDatabase,
@@ -264,7 +263,6 @@ async def _github_team_sync_stages(
     source = team_source(TEAM_SOURCE_GITHUB, instance_id)
     result = await github_service.sync_team_from_github(
         db,
-        github_org,
         repository_path,
         current_owner_ids=owners_replaced_by(project, source),
         owner_budget=_owner_budget(project, source),
@@ -439,9 +437,7 @@ async def _handle_github_oidc(
         ownership_stages: list[dict] = []
 
         if github_instance.sync_teams:
-            ownership_stages = await _github_team_sync_stages(
-                project, instance_id, gh_payload.repository_owner, repo_path, github_service, db
-            )
+            ownership_stages = await _github_team_sync_stages(project, instance_id, repo_path, github_service, db)
 
         return await _sync_project_name(
             project,
@@ -469,9 +465,7 @@ async def _handle_github_oidc(
     owners: list[str] = []
     github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)
     if github_instance.sync_teams:
-        sync_result = await github_service.sync_team_from_github(
-            db, gh_payload.repository_owner, repo_path, current_owner_ids=set()
-        )
+        sync_result = await github_service.sync_team_from_github(db, repo_path, current_owner_ids=set())
         owners = _new_project_owners(github_source, sync_result.team_ids, repo_path)
 
     new_project = Project(

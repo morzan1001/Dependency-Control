@@ -59,7 +59,7 @@ async def _gitlab_sync(
 async def _github_sync(db, project: Project, resolved: list[str] | None) -> tuple[dict, list[dict]]:
     service = MagicMock()
     service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(resolved))
-    stages = await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme", "acme/widgets", service, db)
+    stages = await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme/widgets", service, db)
     return await _apply(db, project, stages), stages
 
 
@@ -270,10 +270,10 @@ async def test_the_service_is_asked_about_the_repository_the_token_names():
     service = MagicMock()
     service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult([]))
 
-    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme-org", "acme/widgets", service, db)
+    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme/widgets", service, db)
 
     service.sync_team_from_github.assert_awaited_once_with(
-        db, "acme-org", "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
+        db, "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
     )
 
 
@@ -291,7 +291,7 @@ async def test_the_provider_is_told_which_owners_it_replaces_and_how_much_room_i
     service = MagicMock()
     service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(["gh-a"]))
 
-    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme-org", "acme/widgets", service, db)
+    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme/widgets", service, db)
 
     assert service.sync_team_from_github.await_args.kwargs == {
         "current_owner_ids": {"gh-a"},

@@ -57,7 +57,7 @@ async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
     async def _members_while_the_admin_adds_one(_org, _slug, _team_id):
         await asyncio.sleep(_MID_SYNC)
         assert await repo.add_member(_TEAM_ID, added.model_dump(), datetime.now(timezone.utc))
-        return [{"login": "ada", "role": "maintainer"}]
+        return [{"login": "ada", "role": "admin"}]
 
     with (
         patch.object(service, "get_org_teams", new=AsyncMock(return_value=_ORG_TEAMS)),
@@ -66,7 +66,7 @@ async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
         patch.object(service, "get_org_repository_map", new=AsyncMock(return_value={"acme/widgets": [4711]})),
         patch.object(service, "_public_emails", new=AsyncMock(return_value={"ada": "ada@corp.com"})),
     ):
-        await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
+        await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
 
 async def _stored_members(db) -> dict[str, dict]:

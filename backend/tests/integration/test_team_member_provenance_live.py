@@ -82,7 +82,7 @@ async def _github_sync(db, instance_id: str, org_teams: list[dict], logins: list
         ),
         patch.object(service, "_public_emails", new=AsyncMock(side_effect=_public_emails)),
     ):
-        await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
+        await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
 
 async def _gitlab_sync(db, instance_id: str, members: list[GitLabMember] | None) -> None:
@@ -99,7 +99,7 @@ async def _gitlab_sync(db, instance_id: str, members: list[GitLabMember] | None)
 
 async def _run(db, name: str) -> None:
     if name == _GH_A:
-        await _github_sync(db, _GH_A, _ORG_TEAM_A, [{"login": "ada", "role": "maintainer"}])
+        await _github_sync(db, _GH_A, _ORG_TEAM_A, [{"login": "ada", "role": "admin"}])
     elif name == _GH_B:
         await _github_sync(db, _GH_B, _ORG_TEAM_B, [{"login": "bob", "role": "member"}])
     else:

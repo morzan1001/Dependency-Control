@@ -16,6 +16,7 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITLAB,
+    team_binding_key,
     team_source,
 )
 from app.core.http_utils import InstrumentedAsyncClient
@@ -28,9 +29,8 @@ from app.models.gitlab_api import (
 )
 from app.models.gitlab_instance import GitLabInstance
 from app.models.team import GitLabGroupBinding, Team, TeamMember, binding_of
-from app.repositories.teams import TeamRepository
+from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
-from app.repositories.teams import MemberSubset
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
@@ -93,6 +93,11 @@ class GitLabTeamSyncResult(NamedTuple):
     team_ids: list[str] | None
 
 
+class _OwningGroup(NamedTuple):
+    id: int
+    path: str
+
+
 class GitLabSyncTarget(NamedTuple):
     """The GitLab group that should back the team for one project.
 
@@ -100,7 +105,7 @@ class GitLabSyncTarget(NamedTuple):
     ``determined`` holds for a project no group owns at all, which retires the group owner it had.
     """
 
-    group: tuple[int, str] | None
+    group: _OwningGroup | None
     determined: bool = True
 
 
@@ -118,6 +123,7 @@ _NO_OWNING_GROUP = GitLabSyncTarget(None)
 class GitLabService:
     def __init__(self, gitlab_instance: GitLabInstance):
         self.instance = gitlab_instance
+        self._instance_id = str(gitlab_instance.id)
         self.base_url = gitlab_instance.url.rstrip("/")
         self.api_url = f"{self.base_url}/api/v4"
         self._cache_key_prefix = f"instance:{gitlab_instance.id}"
@@ -548,16 +554,16 @@ class GitLabService:
         # depth=2 -> "mo/edge", depth=0 -> full path.
         depth = getattr(self.instance, "team_sync_depth", 1)
         if depth <= 0:
-            return GitLabSyncTarget((group_id, group_path))
+            return GitLabSyncTarget(_OwningGroup(group_id, group_path))
 
         parts = group_path.split("/")
         truncated_path = "/".join(parts[:depth])
         if len(parts) <= depth:
-            return GitLabSyncTarget((group_id, truncated_path))
+            return GitLabSyncTarget(_OwningGroup(group_id, truncated_path))
 
         parent = await self._resolve_group_by_path(truncated_path)
         if parent.group:
-            return GitLabSyncTarget((parent.group["id"], truncated_path))
+            return GitLabSyncTarget(_OwningGroup(parent.group["id"], truncated_path))
 
         # An ancestor of a group this instance carries exists by construction, so a 404 here is a
         # group the token may not see rather than one that is gone. Either way, falling back to the
@@ -576,7 +582,7 @@ class GitLabService:
     @property
     def _member_source(self) -> str:
         """The provenance of a member this instance resolves, and the subset its sync replaces."""
-        return team_source(TEAM_SOURCE_GITLAB, str(self.instance.id))
+        return team_source(TEAM_SOURCE_GITLAB, self._instance_id)
 
     async def _build_team_members(
         self,
@@ -660,7 +666,7 @@ class GitLabService:
         self,
         team_repo: TeamRepository,
         team: dict[str, Any],
-        binding: GitLabGroupBinding,
+        group_id: int,
         group_path: str,
         team_members: list[TeamMember] | None,
     ) -> None:
@@ -678,7 +684,7 @@ class GitLabService:
             if team_members is not None
             else None
         )
-        stored = binding_of(team, binding.instance_id) or {}
+        stored = binding_of(team, self._instance_id) or {}
         # A group that was renamed or moved has to carry the path GitLab reports now, including on
         # a team bound by hand before any sync ran.
         binding_fields = {"path": group_path} if stored.get("path") != group_path else {}
@@ -687,7 +693,7 @@ class GitLabService:
         await team_repo.update_with_binding(
             team["_id"],
             updates,
-            binding.key,
+            team_binding_key(TEAM_SOURCE_GITLAB, self._instance_id, group_id),
             binding_fields,
             subset,
         )
@@ -696,21 +702,19 @@ class GitLabService:
         self,
         team_repo: TeamRepository,
         existing_team: dict[str, Any] | None,
-        instance_id: str,
         group_id: int,
         group_path: str,
         team_members: list[TeamMember] | None,
     ) -> str | None:
         """The team backing the group, refreshed or created; None when there is nothing to create."""
-        binding = GitLabGroupBinding(instance_id=instance_id, external_id=group_id, path=group_path)
         if existing_team:
-            await self._refresh_team(team_repo, existing_team, binding, group_path, team_members)
+            await self._refresh_team(team_repo, existing_team, group_id, group_path, team_members)
             return str(existing_team["_id"])
         if team_members:
             new_team = Team(
                 name=_auto_team_name(group_path),
                 description=_auto_team_description(group_path),
-                bindings=[binding],
+                bindings=[GitLabGroupBinding(instance_id=self._instance_id, external_id=group_id, path=group_path)],
                 members=team_members,
             )
             await team_repo.create(new_team)
@@ -727,7 +731,7 @@ class GitLabService:
         target = await self._resolve_sync_target_group(gitlab_project_id, gitlab_project_path, gitlab_project_data)
         if target.group is None:
             return target, None
-        members = await self.get_group_members(target.group[0])
+        members = await self.get_group_members(target.group.id)
         return target, None if members is None else await self._with_public_emails(members)
 
     async def sync_team_from_gitlab(
@@ -772,7 +776,6 @@ class GitLabService:
 
             group_id, group_path = target.group
             team_name = _auto_team_name(group_path)
-            instance_id = str(self.instance.id)
 
             if members is None:
                 logger.warning(
@@ -781,7 +784,7 @@ class GitLabService:
                 )
                 # Match ONLY by the (instance, group) composite key. A name-based fallback
                 # is unsafe: two instances owning a same-path group would collide cross-tenant.
-                team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, instance_id, group_id)
+                team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, self._instance_id, group_id)
                 if team:
                     return GitLabTeamSyncResult([str(team["_id"])])
                 logger.warning(
@@ -791,11 +794,9 @@ class GitLabService:
                 return GitLabTeamSyncResult(None)
 
             # Match ONLY by the (instance, group) composite key (see the failed-fetch branch above).
-            existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, instance_id, group_id)
+            existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, self._instance_id, group_id)
             team_members = await self._resolve_group_members(members, user_repo, team_name, group_id)
-            team_id = await self._upsert_team_with_members(
-                team_repo, existing_team, instance_id, group_id, group_path, team_members
-            )
+            team_id = await self._upsert_team_with_members(team_repo, existing_team, group_id, group_path, team_members)
             # No team and none creatable is an answer, not a failure: the group's members are all
             # strangers here, so nothing in Dependency Control owns the project.
             return GitLabTeamSyncResult([team_id] if team_id else [])
