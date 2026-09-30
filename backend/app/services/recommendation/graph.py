@@ -147,7 +147,7 @@ def _circular_dependency_recommendation(members: set[str], edges: DependencyEdge
         affected_components_total=cycle_total,
         action={
             "type": "resolve_circular_deps",
-            "suggestions": [
+            "steps": [
                 "Review the dependency graph to identify the cycle",
                 "Consider restructuring to break the circular dependency",
                 "Check if updated versions resolve the cycle",
@@ -195,7 +195,7 @@ def _deep_chain_recommendation(
         affected_components_total=deep_total,
         action={
             "type": "reduce_chain_depth",
-            "suggestions": [
+            "steps": [
                 "Consider using packages with fewer transitive dependencies",
                 "Evaluate if some functionality can be implemented directly",
                 "Look for alternative packages with shallower dependency trees",

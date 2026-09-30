@@ -120,3 +120,14 @@ describe('RecommendationCard CVE rendering', () => {
     expect(screen.getAllByText('CVE-2021-0003')).toHaveLength(1)
   })
 })
+
+describe('RecommendationCard steps', () => {
+  it('numbers the steps of any action type in order', () => {
+    const steps = ['Remove the package', 'Rotate exposed credentials']
+    renderExpanded(makeRecommendation({ type: 'fix_hotspot', steps }))
+
+    const list = screen.getByText(steps[0]).closest('ol')
+    expect(list).not.toBeNull()
+    expect(Array.from(list!.querySelectorAll('li'), (li) => li.textContent)).toEqual(steps)
+  })
+})

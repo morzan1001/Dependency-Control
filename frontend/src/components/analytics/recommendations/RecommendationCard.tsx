@@ -213,13 +213,6 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                     Update <strong>{recommendation.action.package}</strong> to{' '}
                     <span className="text-success">{recommendation.action.target_version}</span>
                   </div>
-                  {recommendation.action.suggestions && (
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                      {recommendation.action.suggestions.map((s) => (
-                        <li key={s}>{s}</li>
-                      ))}
-                    </ul>
-                  )}
                 </div>
               </div>
             )}
@@ -486,13 +479,6 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       </div>
                     </div>
                   )}
-                  {recommendation.action.suggestions && (
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                      {recommendation.action.suggestions.map((s) => (
-                        <li key={s}>{s}</li>
-                      ))}
-                    </ul>
-                  )}
                 </div>
               </div>
             )}
@@ -516,13 +502,6 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       )}
                     </div>
                   ))}
-                  {recommendation.action.suggestions && (
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2">
-                      {recommendation.action.suggestions.map((s) => (
-                        <li key={s}>{s}</li>
-                      ))}
-                    </ul>
-                  )}
                 </div>
               </div>
             )}
@@ -621,14 +600,18 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                       )}
                     </div>
                   ))}
-                  {recommendation.action.suggestions && (
-                    <ul className="list-disc list-inside text-muted-foreground space-y-1 mt-2 text-xs">
-                      {recommendation.action.suggestions.map((s) => (
-                        <li key={s}>{s}</li>
-                      ))}
-                    </ul>
-                  )}
                 </div>
+              </div>
+            )}
+
+            {recommendation.action.steps && recommendation.action.steps.length > 0 && (
+              <div className="space-y-2">
+                <h5 className="text-sm font-medium">Steps</h5>
+                <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1">
+                  {recommendation.action.steps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ol>
               </div>
             )}
 

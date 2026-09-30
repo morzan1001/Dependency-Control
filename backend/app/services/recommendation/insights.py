@@ -130,11 +130,11 @@ def correlate_scorecard_with_vulnerabilities(
                     ],
                     "packages_total": len(high_risk_vulns),
                     "steps": [
-                        "1. PRIORITY: Find and migrate to actively maintained alternatives",
-                        "2. If no alternative exists, evaluate forking the package",
-                        "3. Implement additional security controls around these packages",
-                        "4. Consider removing functionality that depends on these packages",
-                        "5. Monitor for community forks that may have applied security fixes",
+                        "Find and migrate to actively maintained alternatives",
+                        "If no alternative exists, evaluate forking the package",
+                        "Implement additional security controls around these packages",
+                        "Consider removing functionality that depends on these packages",
+                        "Monitor for community forks that may have applied security fixes",
                     ],
                 },
                 effort="high",
@@ -274,7 +274,7 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
                 for p in inconsistent_packages[:_INCONSISTENT_PACKAGES_SAMPLED]
             ],
             "packages_total": len(inconsistent_packages),
-            "suggestions": [
+            "steps": [
                 "Create a shared package.json or requirements.txt template",
                 "Use a monorepo with shared dependencies",
                 "Implement a dependency bot to keep versions aligned",

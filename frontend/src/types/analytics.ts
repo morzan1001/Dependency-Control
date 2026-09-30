@@ -363,7 +363,7 @@ export interface RecommendationAction {
   commands?: string[];
   cves?: Array<string | CrossProjectCve>;
   options?: string[];
-  suggestions?: string[];
+  steps?: string[];
   file_path?: string;
   line_number?: number;
   secret_type?: string;

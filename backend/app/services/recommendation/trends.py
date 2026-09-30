@@ -189,7 +189,7 @@ def analyze_recurring_issues(
             action={
                 "type": "address_recurring",
                 "cves": [cve for cve, _row in recurring[:_RECURRING_ROWS_SHOWN]],
-                "suggestions": [
+                "steps": [
                     "Create waivers with documented justification for accepted risks",
                     "Look for alternative packages without these vulnerabilities",
                     "Consider if the affected functionality can be removed",
