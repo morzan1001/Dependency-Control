@@ -386,7 +386,7 @@ async def test_k8_partial_findings_persistence_is_surfaced(db, _gridfs_patched, 
     async def _drop_all_docs(self, docs):
         return 0
 
-    monkeypatch.setattr(FindingRepository, "create_many_raw", _drop_all_docs)
+    monkeypatch.setattr(FindingRepository, "replace_many_raw", _drop_all_docs)
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 

@@ -1,4 +1,4 @@
-"""W30: finding persistence must be idempotent — a raced double-persist must not double the finding set."""
+"""Finding persistence must be idempotent: a raced double-persist must not double the finding set."""
 
 import pytest
 
@@ -46,15 +46,14 @@ class TestDeterministicIds:
 
 @pytest.mark.asyncio
 async def test_double_persist_of_same_records_does_not_double_findings(db):
-    """Simulates the race path: both workers' deletes land before both inserts."""
+    """Simulates the race path: two workers write the same scan's records."""
     repo = FindingRepository(db)
     findings = [_finding(f"QUALITY:pkg-{i}:1.0", component=f"pkg-{i}", version="1.0") for i in range(3)]
     records, _ = _prepare_finding_records(findings, _SCAN_ID, "proj-1", None)
 
-    first = await repo.create_many_raw([dict(r) for r in records])
-    second = await repo.create_many_raw([dict(r) for r in records])
+    first = await repo.replace_many_raw([dict(r) for r in records])
+    second = await repo.replace_many_raw([dict(r) for r in records])
 
-    assert first == 3
-    assert second == 0, "re-inserting the same records must be a no-op, not a second copy"
+    assert (first, second) == (3, 3), "each write persists the whole set, the second over the first"
     stored = await db.findings.count_documents({"scan_id": _SCAN_ID})
     assert stored == 3, f"raced double-persist must leave exactly one copy, got {stored}"

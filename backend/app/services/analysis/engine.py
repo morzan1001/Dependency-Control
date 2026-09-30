@@ -8,8 +8,10 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+import bson
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateMany
+from pymongo.errors import DocumentTooLarge, OperationFailure
 
 from app.core.constants import (
     ANALYSIS_MAX_RETRIES,
@@ -91,6 +93,9 @@ from app.services.waivers.matching import route_waiver
 logger = logging.getLogger(__name__)
 
 _BULK_CHUNK_SIZE = 500
+_MAX_DOCUMENT_BYTES = 16 * 1024 * 1024
+_BSON_OBJECT_TOO_LARGE = 10334
+_SLIMMED_ADVISORY_FIELDS = frozenset({"description", "references", "details"})
 
 # Run inside the engine (not registered in ``analyzers``); regenerated per run, never carried over.
 _POST_PROCESSOR_ANALYZERS = frozenset({"epss_kev", "reachability"})
@@ -667,8 +672,8 @@ def _prepare_finding_records(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Convert aggregated findings to insertion records, splitting out vulnerabilities.
 
-    ``_id`` is deterministic per (scan, finding identity) so a raced double-persist collides
-    on insert instead of storing the whole finding set twice.
+    ``_id`` is deterministic per (scan, finding identity) so a re-analysis or a raced double-persist
+    writes over the stored copy instead of storing the whole finding set twice.
     """
     findings_to_insert: list[dict[str, Any]] = []
     vulnerability_findings: list[dict[str, Any]] = []
@@ -751,6 +756,27 @@ async def _stamp_first_seen(
         record["first_seen_at"] = min(d for d in detections if d is not None)
 
 
+def _fit_finding(record: dict[str, Any]) -> dict[str, Any]:
+    """The record, with its advisories slimmed when a vulnerability finding outgrows a Mongo document."""
+    size = len(bson.encode(record))
+    if size <= _MAX_DOCUMENT_BYTES or record["type"] != "vulnerability":
+        return record
+    logger.warning("Finding %s exceeds 16 MiB (%d bytes); stored with slim advisories", record["finding_id"], size)
+    details = record["details"]
+    advisories = [{k: v for k, v in e.items() if k not in _SLIMMED_ADVISORY_FIELDS} for e in details["vulnerabilities"]]
+    return {**record, "details": {**details, "vulnerabilities": advisories}}
+
+
+async def _write_findings(finding_repo: FindingRepository, chunk: list[dict[str, Any]]) -> int:
+    try:
+        return await finding_repo.replace_many_raw(chunk)
+    except (DocumentTooLarge, OperationFailure) as exc:
+        # The driver refuses a document past the 48 MB message size; the server refuses a smaller one with its batch.
+        if isinstance(exc, OperationFailure) and exc.code != _BSON_OBJECT_TOO_LARGE:
+            raise
+        return await finding_repo.replace_many_raw([_fit_finding(record) for record in chunk])
+
+
 async def _persist_findings_and_waivers(
     findings_to_insert: list[dict[str, Any]],
     scan_id: str,
@@ -758,13 +784,17 @@ async def _persist_findings_and_waivers(
     finding_repo: FindingRepository,
     db: Database,
 ) -> int:
-    """Insert findings and stamp the waiver set on them and the scan; returns the count."""
-    # Before the delete, so re-analysing a scan still sees the dates its own copies inherited.
+    """Write findings over the scan's stored ones and stamp the waiver set on them and the scan; returns the count."""
+    # Before the write, so re-analysing a scan still sees the dates its own copies inherited.
     await _stamp_first_seen(findings_to_insert, project_id, finding_repo)
-    await finding_repo.delete_many({"scan_id": scan_id})
+    written_at = datetime.now(timezone.utc)
+    for record in findings_to_insert:
+        record["created_at"] = written_at
     persisted_count = 0
     for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
-        persisted_count += await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
+        persisted_count += await _write_findings(finding_repo, findings_to_insert[i : i + _BULK_CHUNK_SIZE])
+    # Only after every chunk is written, so a persist that raises leaves the previous findings in place.
+    await finding_repo.delete_older_writes({"scan_id": scan_id}, written_at)
 
     waivers = await WaiverRepository(db).find_active_for_project(project_id) if project_id else []
     matches = await restamp_waivers(finding_repo, None, scan_id, waivers)

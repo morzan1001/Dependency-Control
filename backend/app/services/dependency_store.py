@@ -63,5 +63,5 @@ async def store_scan_dependencies(
     for start in range(0, len(merged), _DEP_CHUNK_SIZE):
         chunk = merged[start : start + _DEP_CHUNK_SIZE]
         await dep_repo.upsert_many([_parsed_dep_to_dependency(dep, project_id, scan_id, written_at) for dep in chunk])
-    await dep_repo.delete_older_writes(scan_id, written_at)
+    await dep_repo.delete_older_writes({"scan_id": scan_id}, written_at)
     return len(merged)

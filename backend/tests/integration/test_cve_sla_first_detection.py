@@ -248,3 +248,48 @@ async def test_the_first_detection_lookup_reads_index_entries_only(db, monkeypat
         "log4j-core": _days_ago(150),
         "src/app.py": _days_ago(30),
     }
+
+
+def _module_cve(n: int) -> Finding:
+    component = f"github.com/example-org/module-{n:018d}"
+    return Finding(
+        id=f"{component}:1.0.0",
+        type=FindingType.VULNERABILITY,
+        severity=Severity.LOW,
+        component=component,
+        version="1.0.0",
+        description="noise",
+        scanners=["trivy"],
+    )
+
+
+def _module_records(*numbers: int) -> list[dict]:
+    records, _ = _prepare_finding_records([_module_cve(n) for n in numbers], "scan-new", _PROJECT, _NOW)
+    return records
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_first_detection_lookup_answers_for_400000_components(db):
+    await create_indexes(db)
+    await _persist(db, "scan-old", _days_ago(90), _module_cve(399_999))
+
+    earliest = await FindingRepository(db).earliest_detections(_PROJECT, _module_records(*range(400_000)))
+
+    assert {identity[1]: ensure_utc(date) for identity, date in earliest.items()} == {
+        _module_cve(399_999).component: _days_ago(90)
+    }
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.asyncio
+async def test_copies_across_two_lookup_chunks_give_the_single_chunk_dates(db, database):
+    await _persist(db, "scan-a", _days_ago(60), _module_cve(0))
+    await _persist(db, "scan-b", _days_ago(30), _module_cve(1_999))
+    repo = FindingRepository(db)
+
+    single_chunk = await repo.earliest_detections(_PROJECT, _module_records(0, 1_999))
+    two_chunks = await repo.earliest_detections(_PROJECT, _module_records(*range(2_000)))
+
+    assert two_chunks == single_chunk
+    assert sorted(ensure_utc(date) for date in two_chunks.values()) == [_days_ago(60), _days_ago(30)]

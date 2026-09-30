@@ -1744,6 +1744,18 @@ class FakeCollection:
             flt = op._filter
             upd = op._doc
             upsert = op._upsert
+            if type(op).__name__ == "ReplaceOne":
+                key = _matched_key(self._docs, flt)
+                if key is not None:
+                    matched += 1
+                    replacement = _bsonify({**upd, "_id": key})
+                    modified += not _bson_identical(replacement, self._docs[key])
+                    self._docs[key] = replacement
+                elif upsert:
+                    upserted += 1
+                    inserted = _bsonify({"_id": flt.get("_id", ObjectId()), **upd})
+                    self._docs[inserted["_id"]] = inserted
+                continue
             assert_no_path_conflict(upd)
             matched_keys = [key for key, doc in self._docs.items() if _match_doc(doc, flt)]
             if matched_keys:

@@ -249,9 +249,9 @@ class _CleanupAfterBothWrote(DependencyRepository):
         super().__init__(db)
         self._both_written = both_written
 
-    async def delete_older_writes(self, scan_id, written_at):
+    async def delete_older_writes(self, query, written_at):
         await self._both_written.wait()
-        await super().delete_older_writes(scan_id, written_at)
+        await super().delete_older_writes(query, written_at)
 
 
 @pytest.mark.asyncio

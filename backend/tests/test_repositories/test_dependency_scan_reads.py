@@ -20,7 +20,7 @@ async def _seeded() -> DependencyRepository:
 async def test_a_scans_raw_dependencies_are_read_by_its_id_alone():
     repo = await _seeded()
 
-    rows = await repo.find_raw_by_scan("s1", {"version": 1})
+    rows = await repo.find_all_raw({"scan_id": "s1"}, {"version": 1})
 
     assert rows == [{"_id": "d1", "version": "1.0.0"}]
 

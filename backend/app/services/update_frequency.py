@@ -163,7 +163,7 @@ def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
 
 
 async def load_scan_deps(dep_repo: DependencyRepository, scan_id: str) -> dict[str, dict[str, str]]:
-    return fold_scan_deps(await dep_repo.find_raw_by_scan(scan_id, DEP_PROJECTION))
+    return fold_scan_deps(await dep_repo.find_all_raw({"scan_id": scan_id}, DEP_PROJECTION))
 
 
 async def load_outdated_entries(
