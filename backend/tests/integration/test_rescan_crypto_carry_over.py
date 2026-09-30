@@ -10,11 +10,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.api.v1.helpers.ingest import process_findings_ingest
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.core.init_db import create_indexes
 from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project, Scan
-from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analysis import engine
@@ -22,6 +22,7 @@ from app.services.analysis.engine import run_analysis
 from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan
+from app.services.scan_manager import ScanManager
 
 _PROJECT_ID = "cbom-rescan-project"
 _WORKER = "pod-a/worker-0"
@@ -134,11 +135,12 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
 
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
     await seed_crypto_policies(db)
-    await db.projects.insert_one(Project(id=_PROJECT_ID, name="cbom-rescan").model_dump(by_alias=True))
+    project = Project(id=_PROJECT_ID, name="cbom-rescan")
+    await db.projects.insert_one(project.model_dump(by_alias=True))
     original = Scan(project_id=_PROJECT_ID, branch="main", scan_type="cbom", status="processing", worker_id=_WORKER)
     await db.scans.insert_one(original.model_dump(by_alias=True))
     await _ingest_assets(db, original.id)
-    await AnalysisResultRepository(db).insert_result(original.id, "trufflehog", {"findings": []})
+    await process_findings_ingest(ScanManager(db, project), "trufflehog", {"findings": []}, original.id)
     assert await run_analysis(original.id, [], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     source = await db.scans.find_one({"_id": original.id}, RESCAN_SOURCE_PROJECTION)
