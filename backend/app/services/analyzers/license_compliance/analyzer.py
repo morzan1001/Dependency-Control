@@ -13,7 +13,9 @@ from ..base import Analyzer
 from . import compatibility, evaluator, normalizer
 from .constants import (
     CATEGORY_STAT_KEY,
+    INCLUDE_LICENSE_TEXT,
     LICENSE_DATABASE,
+    SHARE_SOURCE_OF_MODIFICATIONS,
 )
 
 
@@ -109,7 +111,14 @@ class LicenseAnalyzer(Analyzer):
                 normalized = normalizer.extract_license_from_url(lic_url) or normalized
             license_info = LICENSE_DATABASE.get(normalized)
             if license_info and " WITH " in member and license_info.category == LicenseCategory.STRONG_COPYLEFT:
-                license_info = replace(license_info, category=LicenseCategory.WEAK_COPYLEFT)
+                license_info = replace(
+                    license_info,
+                    category=LicenseCategory.WEAK_COPYLEFT,
+                    description="The exception lets code that only links to this library keep its own license; "
+                    "changes to the library itself stay under its copyleft.",
+                    obligations=[SHARE_SOURCE_OF_MODIFICATIONS, INCLUDE_LICENSE_TEXT],
+                    risks=[],
+                )
 
             if not license_info:
                 stats["unknown"] += 1
