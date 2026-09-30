@@ -35,7 +35,6 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
 
-
 from app.core.config import settings
 from app.db.mongodb import create_client
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding

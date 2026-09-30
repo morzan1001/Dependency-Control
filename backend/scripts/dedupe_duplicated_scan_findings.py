@@ -27,7 +27,6 @@ import asyncio
 import sys
 from typing import Any
 
-
 from app.core.config import settings
 from app.db.mongodb import create_client
 

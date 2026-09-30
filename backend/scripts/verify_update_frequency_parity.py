@@ -45,7 +45,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-
 from app.api.v1.endpoints.analytics.update_frequency import (
     _DEFAULT_COMPARISON_WINDOW_DAYS,
     _compute_comparison,
