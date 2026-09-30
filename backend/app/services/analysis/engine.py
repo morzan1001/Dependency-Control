@@ -902,21 +902,16 @@ async def _finalize_scan_and_project(
     return status
 
 
-async def _filter_out_waived_findings(aggregated_findings: list[Any], scan_id: str, db: Database) -> list[Any]:
-    """Drop findings waived in this scan so notifications/webhooks match the waiver-aware stats.
+async def _filter_out_waived_findings(
+    findings: list[dict[str, Any]], scan_id: str, db: Database
+) -> list[dict[str, Any]]:
+    """Drop the records waived in this scan so notifications/webhooks match the waiver-aware stats.
 
-    Waivers are applied only as DB updates; in-memory Finding objects are never marked waived,
-    so re-read the persisted waived finding_ids and exclude them before notifying.
+    Waivers are applied only as DB updates, so the persisted waived ``_id``s are re-read.
     """
-    waived_ids = set()
-    async for doc in FindingRepository(db).iterate_raw({"scan_id": scan_id, "waived": True}, {"finding_id": 1}):
-        fid = doc.get("finding_id")
-        if fid is not None:
-            waived_ids.add(fid)
-
-    if not waived_ids:
-        return aggregated_findings
-    return [f for f in aggregated_findings if getattr(f, "id", None) not in waived_ids]
+    finding_repo = FindingRepository(db)
+    waived = {doc["_id"] async for doc in finding_repo.iterate_raw({"scan_id": scan_id, "waived": True}, {"_id": 1})}
+    return [record for record in findings if record["_id"] not in waived]
 
 
 async def _send_integrations_and_notifications(
@@ -927,7 +922,7 @@ async def _send_integrations_and_notifications(
     status: ScanStatus,
     error: str | None,
     failed_analyzers: list[str],
-    aggregated_findings: list[Any],
+    findings: list[dict[str, Any]],
     analyzer_outcomes: dict[str, str],
     db: Database,
 ) -> None:
@@ -941,7 +936,7 @@ async def _send_integrations_and_notifications(
     await send_scan_notifications(
         scan_id,
         project,
-        aggregated_findings,
+        findings,
         stats,
         status,
         failed_analyzers,
@@ -1004,7 +999,7 @@ async def _announce_outcome(
     scan_id: str,
     scan_doc: Scan,
     stats: Stats,
-    aggregated_findings: list[Any],
+    findings: list[dict[str, Any]],
     analyzer_outcomes: dict[str, str],
     db: Database,
 ) -> None:
@@ -1014,7 +1009,7 @@ async def _announce_outcome(
         if status == SCAN_STATUS_FAILED:
             await notify_analysis_failed(db, scan_id, project_id, error or status)
             return
-        notify_findings = await _filter_out_waived_findings(aggregated_findings, scan_id, db)
+        notify_findings = await _filter_out_waived_findings(findings, scan_id, db)
         await _send_integrations_and_notifications(
             project_id,
             scan_id,
@@ -1168,6 +1163,7 @@ async def run_analysis(
     findings_to_insert, vulnerability_findings = _prepare_finding_records(
         aggregated_findings, scan_id, project_id, scan_created_at
     )
+    del aggregated_findings
     total_findings_count = len(findings_to_insert)
 
     component_languages = await _run_vuln_enrichments(
@@ -1248,7 +1244,7 @@ async def run_analysis(
         sbom_generation=sbom_generation,
     )
     if outcome != final_status:
-        del aggregated_findings
+        del findings_to_insert, vulnerability_findings
         _release_memory_to_os()
         return outcome
 
@@ -1260,11 +1256,11 @@ async def run_analysis(
         scan_id,
         scan_doc,
         stats,
-        aggregated_findings,
+        findings_to_insert,
         analyzer_outcomes,
         db,
     )
-    del aggregated_findings
+    del findings_to_insert, vulnerability_findings
 
     # Runs on the released findings: the rollup holds two dependency maps of its own.
     await record_scan_update_delta(db, scan_id)

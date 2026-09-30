@@ -5,7 +5,7 @@ from typing import Any, TypedDict
 
 class ScanPayload(TypedDict):
     id: str
-    url: str | None
+    url: str
 
 
 class ProjectPayload(TypedDict):
@@ -36,6 +36,7 @@ class VulnerabilityInfo(TypedDict):
     high: int
     kev: int
     high_epss: int
+    priority: int
     top: list[dict[str, Any]]
 
 

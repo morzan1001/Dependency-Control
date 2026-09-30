@@ -16,7 +16,7 @@ from typing import Any
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.config import settings
+from app.core.config import scan_link, settings
 from app.core.constants import (
     WEBHOOK_BACKOFF_BASE,
     WEBHOOK_EVENT_ANALYSIS_FAILED,
@@ -117,11 +117,10 @@ class WebhookService:
         scan_id: str,
         project_id: str,
         project_name: str,
-        scan_url: str | None = None,
     ) -> BaseWebhookPayload:
         scan: ScanPayload = {
             "id": scan_id,
-            "url": scan_url,
+            "url": scan_link(project_id, scan_id),
         }
         project: ProjectPayload = {
             "id": project_id,
@@ -201,60 +200,16 @@ class WebhookService:
     ) -> Mapping[str, Any]:
         if webhook_type != "teams":
             return raw_payload
-
-        project_name = raw_payload.get("project", {}).get("name", "Unknown Project")
-        scan_url = raw_payload.get("scan", {}).get("url")
-
         if event_type == WEBHOOK_EVENT_SCAN_COMPLETED:
-            return TeamsFormatter.build_scan_completed_card(
-                project_name=project_name,
-                _scan_id=raw_payload.get("scan", {}).get("id", ""),
-                findings=raw_payload.get("findings", {"total": 0, "stats": {}}),
-                scan_url=scan_url,
-            )
+            return TeamsFormatter.build_scan_completed_card(raw_payload)
         if event_type == WEBHOOK_EVENT_VULNERABILITY_FOUND:
-            return TeamsFormatter.build_vulnerability_found_card(
-                project_name=project_name,
-                _scan_id=raw_payload.get("scan", {}).get("id", ""),
-                vulns=raw_payload.get(
-                    "vulnerabilities", {"critical": 0, "high": 0, "kev": 0, "high_epss": 0, "top": []}
-                ),
-                scan_url=scan_url,
-            )
+            return TeamsFormatter.build_vulnerability_found_card(raw_payload)
         if event_type == WEBHOOK_EVENT_ANALYSIS_FAILED:
-            return TeamsFormatter.build_analysis_failed_card(
-                project_name=project_name,
-                error=str(raw_payload.get("error", "Unknown error")),
-                scan_url=scan_url,
-            )
+            return TeamsFormatter.build_analysis_failed_card(raw_payload)
         if event_type in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
-            return self._build_policy_changed_card(event_type, raw_payload)
-        return TeamsFormatter.build_generic_card(
-            subject=event_type.replace(".", " ").title(),
-            message=f"Event for project **{project_name}**",
-            url=scan_url,
-        )
-
-    @staticmethod
-    def _build_policy_changed_card(
-        normalized_event: str,
-        raw_payload: Mapping[str, Any],
-    ) -> Mapping[str, Any]:
-        """Teams card for policy-changed events, whose payloads are flat (no nested project/scan)."""
-        project_id = raw_payload.get("project_id")
-        policy_scope = raw_payload.get("policy_scope")
-        version = raw_payload.get("version")
-        change_summary = raw_payload.get("change_summary") or "Policy updated"
-        actor = raw_payload.get("actor") or {}
-        actor_name = actor.get("display_name") or "A user"
-
-        subject = normalized_event.replace(".", " ").replace("_", " ").title()
-        scope_text = f"project {project_id}" if project_id else (policy_scope or "system")
-        message = f"{actor_name} updated the {scope_text} policy: {change_summary}"
-        if version is not None:
-            message = f"{message} (version {version})"
-
-        return TeamsFormatter.build_generic_card(subject=subject, message=message, url=None)
+            return TeamsFormatter.build_policy_changed_card(event_type, raw_payload)
+        project_name = raw_payload.get("project", {}).get("name", "Unknown Project")
+        return TeamsFormatter.build_generic_card(event_type, f"Event for project **{project_name}**")
 
     async def _post_bounded(
         self, client_name: str, webhook: Webhook, content: str, headers: Mapping[str, str]
@@ -431,9 +386,8 @@ class WebhookService:
         project_name: str,
         findings_count: int,
         stats: dict[str, Any],
-        scan_url: str | None = None,
-        scan_status: str = "completed",
-        failed_analyzers: list[str] | None = None,
+        scan_status: str,
+        failed_analyzers: list[str],
         *,
         team_ids: Sequence[str] | None = None,
     ) -> None:
@@ -442,7 +396,6 @@ class WebhookService:
             scan_id=scan_id,
             project_id=project_id,
             project_name=project_name,
-            scan_url=scan_url,
         )
         payload: ScanCompletedPayload = {
             **base_payload,
@@ -451,7 +404,7 @@ class WebhookService:
                 "stats": stats,
             },
             "scan_status": scan_status,
-            "failed_analyzers": failed_analyzers or [],
+            "failed_analyzers": failed_analyzers,
         }
 
         await self.safe_trigger_webhooks(
@@ -468,8 +421,8 @@ class WebhookService:
         high_count: int,
         kev_count: int,
         high_epss_count: int,
+        priority_count: int,
         top_vulnerabilities: list[dict[str, Any]],
-        scan_url: str | None = None,
         *,
         team_ids: Sequence[str] | None = None,
     ) -> None:
@@ -478,7 +431,6 @@ class WebhookService:
             scan_id=scan_id,
             project_id=project_id,
             project_name=project_name,
-            scan_url=scan_url,
         )
         payload: VulnerabilityFoundPayload = {
             **base_payload,
@@ -487,6 +439,7 @@ class WebhookService:
                 "high": high_count,
                 "kev": kev_count,
                 "high_epss": high_epss_count,
+                "priority": priority_count,
                 "top": top_vulnerabilities,
             },
         }
@@ -502,14 +455,12 @@ class WebhookService:
         project_id: str,
         project_name: str,
         error_message: str,
-        scan_url: str | None = None,
     ) -> None:
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_ANALYSIS_FAILED,
             scan_id=scan_id,
             project_id=project_id,
             project_name=project_name,
-            scan_url=scan_url,
         )
         payload: AnalysisFailedPayload = {
             **base_payload,

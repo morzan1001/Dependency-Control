@@ -9,8 +9,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from app.core.constants import WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED
+from app.models.policy_audit_entry import PolicyAuditEntry
+from app.models.stats import Stats
 from app.models.webhook import Webhook
+from app.schemas.policy_audit import PolicyAuditAction
+from app.services.audit import history
+from app.services.webhooks import webhook_service
 from app.services.webhooks.webhook_service import WebhookService
+from tests.helpers.webhooks import delivered
 
 
 def make_webhook(webhook_type: str) -> Webhook:
@@ -21,152 +28,79 @@ def make_webhook(webhook_type: str) -> Webhook:
     )
 
 
-def make_scan_payload(project_name="TestProject", total=3):
-    return {
-        "event": "scan.completed",
-        "timestamp": "2026-05-04T10:00:00Z",
-        "scan": {"id": "scan-abc", "url": "https://app.example.com/scans/abc"},
-        "project": {"id": "proj-1", "name": project_name},
-        "findings": {"total": total, "stats": {"critical": 1}},
-    }
+async def _scan_payload() -> dict:
+    _event, payload = await delivered(
+        webhook_service.trigger_scan_completed(
+            MagicMock(), "scan-abc", "proj-1", "TestProject", 3, Stats(critical=1).model_dump(), "completed", []
+        )
+    )
+    return payload
 
 
-def make_vuln_payload():
-    return {
-        "event": "vulnerability.found",
-        "timestamp": "2026-05-04T10:00:00Z",
-        "scan": {"id": "scan-abc", "url": None},
-        "project": {"id": "proj-1", "name": "TestProject"},
-        "vulnerabilities": {"critical": 2, "high": 1, "kev": 0, "high_epss": 0, "top": []},
-    }
-
-
-def make_failed_payload():
-    return {
-        "event": "analysis.failed",
-        "timestamp": "2026-05-04T10:00:00Z",
-        "scan": {"id": "scan-abc", "url": None},
-        "project": {"id": "proj-1", "name": "TestProject"},
-        "error": "SBOM parsing failed",
-    }
-
-
-def make_policy_payload(event="crypto_policy.changed"):
-    """Flat policy payload: top-level project_id/actor/change_summary, no nested project/scan."""
-    return {
-        "event": event,
-        "timestamp": "2026-05-04T10:00:00Z",
+def _policy_entry(**overrides) -> PolicyAuditEntry:
+    fields = {
         "policy_type": "crypto",
         "policy_scope": "project",
         "project_id": "proj-42",
         "version": 7,
-        "action": "update",
-        "actor": {"user_id": "u1", "display_name": "Alice"},
+        "action": PolicyAuditAction.UPDATE,
+        "actor_user_id": "u1",
+        "actor_display_name": "Alice",
+        "snapshot": {},
         "change_summary": "Disallowed MD5",
-        "comment": None,
-        "reverted_from_version": None,
     }
+    return PolicyAuditEntry(**{**fields, **overrides})
+
+
+async def _policy_payload(entry: PolicyAuditEntry, event: str = WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED) -> dict:
+    _event, payload = await delivered(history._dispatch_webhook(MagicMock(), entry, event_type=event))
+    return payload
 
 
 class TestFormatPayloadGenericWebhook:
-    def test_returns_raw_payload_unchanged(self):
-        service = WebhookService()
-        webhook = make_webhook("generic")
-        raw = make_scan_payload()
-        result = service._format_payload(webhook.webhook_type, "scan.completed", raw)
-        assert result is raw
+    @pytest.mark.asyncio
+    async def test_returns_raw_payload_unchanged(self):
+        raw = await _scan_payload()
+        assert WebhookService()._format_payload("generic", "scan.completed", raw) is raw
 
-    def test_returns_raw_for_all_event_types(self):
-        service = WebhookService()
-        webhook = make_webhook("generic")
-        for event in ["vulnerability.found", "analysis.failed", "test", "sbom.ingested"]:
-            raw = {"event": event, "scan": {}, "project": {}}
-            result = service._format_payload(webhook.webhook_type, event, raw)
-            assert result is raw
-
-
-class TestFormatPayloadTeamsWebhook:
-    def test_scan_completed_returns_adaptive_card(self):
-        service = WebhookService()
-        webhook = make_webhook("teams")
-        result = service._format_payload(webhook.webhook_type, "scan.completed", make_scan_payload())
-        assert result["type"] == "message"
-        assert result["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive"
-
-    def test_vulnerability_found_returns_adaptive_card(self):
-        service = WebhookService()
-        webhook = make_webhook("teams")
-        result = service._format_payload(webhook.webhook_type, "vulnerability.found", make_vuln_payload())
-        assert result["type"] == "message"
-        assert result["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive"
-
-    def test_analysis_failed_returns_adaptive_card(self):
-        service = WebhookService()
-        webhook = make_webhook("teams")
-        result = service._format_payload(webhook.webhook_type, "analysis.failed", make_failed_payload())
-        assert result["type"] == "message"
-        card = result["attachments"][0]["content"]
-        container = next(b for b in card["body"] if b["type"] == "Container")
-        assert container["style"] == "attention"
-
-    def test_generic_fallback_for_unknown_event(self):
-        service = WebhookService()
-        webhook = make_webhook("teams")
-        raw = {"event": "sbom.ingested", "scan": {"id": "s1", "url": None}, "project": {"id": "p1", "name": "Proj"}}
-        result = service._format_payload(webhook.webhook_type, "sbom.ingested", raw)
-        assert result["type"] == "message"
+    @pytest.mark.asyncio
+    async def test_returns_raw_policy_payload(self):
+        raw = await _policy_payload(_policy_entry())
+        assert WebhookService()._format_payload("generic", "crypto_policy.changed", raw) is raw
 
 
 class TestFormatPayloadPolicyEvents:
-    """Flat policy payloads must render a detailed Teams card, not the generic 'Unknown Project' fallback."""
+    """Flat policy payloads render a detailed Teams card, not the generic 'Unknown Project' fallback."""
 
-    def _card_text(self, result: dict) -> str:
-        assert result["type"] == "message"
+    async def _card_text(self, entry: PolicyAuditEntry, event: str = WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED) -> str:
+        result = WebhookService()._format_payload("teams", event, await _policy_payload(entry, event))
         card = result["attachments"][0]["content"]
         return " ".join(b.get("text", "") for b in card["body"])
 
-    def test_crypto_policy_changed_card_has_details(self):
-        service = WebhookService()
-        webhook = make_webhook("teams")
-        result = service._format_payload(webhook.webhook_type, "crypto_policy.changed", make_policy_payload())
-        text = self._card_text(result)
-        assert "Crypto Policy Changed" in text
-        assert "Alice" in text
-        assert "Disallowed MD5" in text
-        assert "proj-42" in text
-        assert "version 7" in text
-        assert "Unknown Project" not in text
+    @pytest.mark.asyncio
+    async def test_crypto_policy_changed_card_has_details(self):
+        text = await self._card_text(_policy_entry())
+        assert text == "Crypto Policy Changed Alice updated the project proj-42 policy: Disallowed MD5 (version 7)"
 
-    def test_license_policy_changed_system_scope(self):
-        service = WebhookService()
-        webhook = make_webhook("teams")
-        payload = make_policy_payload("license_policy.changed")
-        payload["policy_type"] = "license"
-        payload["policy_scope"] = "system"
-        payload["project_id"] = None
-        result = service._format_payload(webhook.webhook_type, "license_policy.changed", payload)
-        text = self._card_text(result)
-        assert "License Policy Changed" in text
-        assert "system" in text
-        assert "Unknown Project" not in text
+    @pytest.mark.asyncio
+    async def test_license_policy_changed_system_scope(self):
+        entry = _policy_entry(policy_type="license", policy_scope="system", project_id=None)
+        text = await self._card_text(entry, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED)
+        assert text == "License Policy Changed Alice updated the system policy: Disallowed MD5 (version 7)"
 
-    def test_policy_card_falls_back_when_actor_missing(self):
-        service = WebhookService()
-        webhook = make_webhook("teams")
-        payload = make_policy_payload()
-        payload["actor"] = None
-        payload["change_summary"] = ""
-        result = service._format_payload(webhook.webhook_type, "crypto_policy.changed", payload)
-        text = self._card_text(result)
-        assert "A user" in text
-        assert "Policy updated" in text
-
-    def test_generic_webhook_returns_raw_policy_payload(self):
-        service = WebhookService()
-        webhook = make_webhook("generic")
-        raw = make_policy_payload()
-        result = service._format_payload(webhook.webhook_type, "crypto_policy.changed", raw)
-        assert result is raw
+    @pytest.mark.asyncio
+    async def test_a_seeded_policy_names_no_actor(self):
+        entry = _policy_entry(
+            policy_scope="system",
+            project_id=None,
+            version=0,
+            action=PolicyAuditAction.SEED,
+            actor_user_id=None,
+            actor_display_name=None,
+            change_summary="Seeded defaults",
+        )
+        text = await self._card_text(entry)
+        assert text == "Crypto Policy Changed A user updated the system policy: Seeded defaults (version 0)"
 
 
 class TestLogWebhookDeliveryProjectId:
@@ -187,7 +121,7 @@ class TestLogWebhookDeliveryProjectId:
                 db=MagicMock(),
                 webhook_id="w1",
                 event_type="crypto_policy.changed",
-                payload=make_policy_payload(),
+                payload=await _policy_payload(_policy_entry()),
                 success=True,
             )
 
@@ -211,7 +145,7 @@ class TestLogWebhookDeliveryProjectId:
                 db=MagicMock(),
                 webhook_id="w1",
                 event_type="scan.completed",
-                payload=make_scan_payload(),
+                payload=await _scan_payload(),
                 success=True,
             )
 
@@ -239,9 +173,11 @@ class TestNonBlockingSemantics:
     @pytest.mark.parametrize(
         "fire",
         [
-            pytest.param(lambda s: s.trigger_scan_completed(MagicMock(), "s1", "p1", "P", 0, {}), id="scan"),
             pytest.param(
-                lambda s: s.trigger_vulnerability_found(MagicMock(), "s1", "p1", "P", 1, 0, 0, 0, []), id="vuln"
+                lambda s: s.trigger_scan_completed(MagicMock(), "s1", "p1", "P", 0, {}, "completed", []), id="scan"
+            ),
+            pytest.param(
+                lambda s: s.trigger_vulnerability_found(MagicMock(), "s1", "p1", "P", 1, 0, 0, 0, 1, []), id="vuln"
             ),
             pytest.param(lambda s: s.trigger_analysis_failed(MagicMock(), "s1", "p1", "P", "boom"), id="failed"),
         ],
@@ -379,10 +315,10 @@ class TestDeliverySignature:
             patch.object(service, "_update_webhook_status", new=AsyncMock()),
             patch.object(service, "_log_webhook_delivery", new=AsyncMock()),
         ):
-            delivered = await service._send_webhook(MagicMock(), webhook, make_scan_payload(), "scan.completed")
+            sent = await service._send_webhook(MagicMock(), webhook, await _scan_payload(), "scan.completed")
 
         body = requests[0].content
         expected = hmac.new(b"s3cret", body, hashlib.sha256).hexdigest()
-        assert delivered is True
+        assert sent is True
         assert json.loads(body).get("type", json.loads(body).get("event")) == shape
         assert requests[0].headers["X-Webhook-Signature"] == f"sha256={expected}"

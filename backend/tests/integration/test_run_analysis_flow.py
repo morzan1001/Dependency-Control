@@ -12,13 +12,17 @@ from app.core.constants import (
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
     SCAN_STATUS_PENDING,
+    WEBHOOK_EVENT_VULNERABILITY_FOUND,
 )
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.services import gridfs_maintenance
 from app.services.analysis import engine
 from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.notifications import notification_service
+from app.services.webhooks import webhook_service
 from tests.helpers.analyzers import serve_analyzer
+from tests.helpers.enrichment import Upstreams, serve_enrichment
 
 _PROJECT_ID = "notify-project"
 _T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -558,3 +562,61 @@ async def test_a_failing_hand_over_after_keeping_the_earlier_analysis_still_retu
     assert await engine.run_analysis(scan_id, [ref], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     assert "mongo down" in caplog.text
+
+
+_LOG4SHELL = "CVE-2021-44228"
+_TEXT4SHELL_FINDING = "org.apache.commons:commons-text:1.9"
+
+
+class _TrivyReport:
+    name = "trivy"
+
+    def __init__(self, report: dict) -> None:
+        self.report = report
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        return self.report
+
+
+@pytest.mark.asyncio
+async def test_the_vulnerability_alert_carries_the_enrichment_and_leaves_out_waived_findings(
+    db, monkeypatch, fake_cache
+):
+    await db.projects.insert_one({"_id": _PROJECT_ID, "name": "proj", "default_branch": "main"})
+    await db.waivers.insert_one(
+        {"_id": "w-1", "project_id": _PROJECT_ID, "finding_id": _TEXT4SHELL_FINDING, "reason": "r", "created_by": "u"}
+    )
+    scan_id = await _seed_scan(db)
+    trivy = {
+        "Results": [
+            {
+                "Target": "app",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": _LOG4SHELL,
+                        "PkgName": "org.apache.logging.log4j:log4j-core",
+                        "InstalledVersion": "2.14.1",
+                        "Severity": "CRITICAL",
+                    },
+                    {
+                        "VulnerabilityID": "CVE-2022-42889",
+                        "PkgName": "org.apache.commons:commons-text",
+                        "InstalledVersion": "1.9",
+                        "Severity": "CRITICAL",
+                    },
+                ],
+            }
+        ]
+    }
+    serve_analyzer(monkeypatch, "trivy", _TrivyReport(trivy))
+    serve_enrichment(monkeypatch, fake_cache, Upstreams(kev=(_LOG4SHELL,)))
+    delivered = AsyncMock()
+    monkeypatch.setattr(webhook_service, "trigger_webhooks", delivered)
+    monkeypatch.setattr(notification_service, "notify_project_members", AsyncMock())
+
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}
+    await engine.run_analysis(scan_id, [sbom], ["trivy", "epss_kev"], db, worker_id=_WORKER)
+
+    alerts = {c.kwargs["event_type"]: c.kwargs["payload"] for c in delivered.await_args_list}
+    vulnerabilities = alerts[WEBHOOK_EVENT_VULNERABILITY_FOUND]["vulnerabilities"]
+    assert (vulnerabilities["kev"], [v["id"] for v in vulnerabilities["top"]]) == (1, [_LOG4SHELL])

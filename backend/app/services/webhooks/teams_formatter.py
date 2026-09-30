@@ -1,19 +1,28 @@
 """Teams Adaptive Card formatter for webhook payloads."""
 
-from app.models.finding import Severity
-from app.schemas.notification import AlertVulnerability
+from collections.abc import Mapping
+from typing import Any
 
-_ACTION_OPEN_URL = "Action.OpenUrl"
+from app.core.constants import SCAN_STATUS_COMPLETED
+from app.models.finding import Severity
+from app.schemas.notification import AlertVulnerability, scan_alert_level
+
 _SEVERITY_KEYS = tuple(s.value.lower() for s in Severity)
+_ALERT_STYLE = {"critical": "attention", "warning": "warning", "ok": "good"}
+
+
+def _header(style: str, title: str, *items: dict) -> dict:
+    title_block = {"type": "TextBlock", "size": "ExtraLarge", "weight": "Bolder", "text": title, "wrap": True}
+    return {"type": "Container", "style": style, "items": [title_block, *items]}
+
+
+def _facts(facts: Mapping[str, object]) -> dict:
+    return {"type": "FactSet", "facts": [{"title": title, "value": str(value)} for title, value in facts.items()]}
 
 
 class TeamsFormatter:
     @staticmethod
-    def _wrap_card(
-        body: list[dict],
-        actions: list[dict] | None = None,
-        summary: str = "DependencyControl",
-    ) -> dict:
+    def _wrap_card(body: list[dict], summary: str, link: tuple[str, str] | None = None) -> dict:
         card: dict = {
             "type": "AdaptiveCard",
             # Adaptive Card schema identifier, not fetched at runtime.
@@ -23,8 +32,8 @@ class TeamsFormatter:
             "msteams": {"width": "Full"},
             "body": body,
         }
-        if actions:
-            card["actions"] = actions
+        if link:
+            card["actions"] = [{"type": "Action.OpenUrl", "title": link[0], "url": link[1]}]
         return {
             "type": "message",
             "attachments": [
@@ -38,181 +47,90 @@ class TeamsFormatter:
 
     @staticmethod
     def build_test_card() -> dict:
-        body = [
-            {
-                "type": "Container",
-                "style": "accent",
-                "items": [
-                    {
-                        "type": "TextBlock",
-                        "size": "ExtraLarge",
-                        "weight": "Bolder",
-                        "text": "✅ Test Webhook",
-                        "wrap": True,
-                    },
-                    {
-                        "type": "TextBlock",
-                        "text": "DependencyControl webhook is configured correctly.",
-                        "wrap": True,
-                    },
-                ],
-            }
-        ]
-        return TeamsFormatter._wrap_card(body, summary="DependencyControl test webhook")
+        message = {"type": "TextBlock", "text": "DependencyControl webhook is configured correctly.", "wrap": True}
+        return TeamsFormatter._wrap_card(
+            [_header("accent", "✅ Test Webhook", message)], summary="DependencyControl test webhook"
+        )
 
     @staticmethod
-    def build_generic_card(subject: str, message: str, url: str | None = None) -> dict:
+    def build_generic_card(event: str, message: str) -> dict:
+        title = event.replace(".", " ").replace("_", " ").title()
         body = [
-            {
-                "type": "TextBlock",
-                "size": "ExtraLarge",
-                "weight": "Bolder",
-                "text": subject,
-                "wrap": True,
-            },
-            {
-                "type": "TextBlock",
-                "text": message,
-                "wrap": True,
-            },
+            {"type": "TextBlock", "size": "ExtraLarge", "weight": "Bolder", "text": title, "wrap": True},
+            {"type": "TextBlock", "text": message, "wrap": True},
         ]
-        actions = [{"type": _ACTION_OPEN_URL, "title": "View in DependencyControl", "url": url}] if url else None
-        return TeamsFormatter._wrap_card(body, actions, summary=subject)
+        return TeamsFormatter._wrap_card(body, summary=title)
 
     @staticmethod
-    def build_scan_completed_card(
-        project_name: str,
-        _scan_id: str,
-        findings: dict,
-        scan_url: str | None = None,
-    ) -> dict:
-        total = findings.get("total", 0)
-        stats = findings.get("stats", {})
+    def build_policy_changed_card(event: str, payload: Mapping[str, Any]) -> dict:
+        scope = f"project {payload['project_id']}" if payload["project_id"] else payload["policy_scope"]
+        # SEED entries have no actor.
+        actor = payload["actor"]["display_name"] or "A user"
+        return TeamsFormatter.build_generic_card(
+            event, f"{actor} updated the {scope} policy: {payload['change_summary']} (version {payload['version']})"
+        )
 
-        has_critical = int(stats.get("critical", 0) or 0) > 0
-        if total == 0:
-            container_style = "good"
-        elif has_critical:
-            container_style = "attention"
+    @staticmethod
+    def build_scan_completed_card(payload: Mapping[str, Any]) -> dict:
+        project_name = payload["project"]["name"]
+        stats = payload["findings"]["stats"]
+        style = _ALERT_STYLE[scan_alert_level(stats["critical"], stats["high"])]
+        title = "🔍 Scan Completed"
+        facts = {"Project": project_name, "Total Findings": payload["findings"]["total"]}
+        facts |= {key.title(): stats[key] for key in _SEVERITY_KEYS if stats[key]}
+        if payload["scan_status"] != SCAN_STATUS_COMPLETED:
+            style = "attention" if style == "attention" else "warning"
+            title = "⚠️ Scan Completed with Errors"
+            facts["Failed Analyzers"] = ", ".join(payload["failed_analyzers"])
+
+        return TeamsFormatter._wrap_card(
+            [_header(style, title), _facts(facts)],
+            summary=f"Scan completed for {project_name}",
+            link=("View Scan Results", payload["scan"]["url"]),
+        )
+
+    @staticmethod
+    def build_vulnerability_found_card(payload: Mapping[str, Any]) -> dict:
+        project_name = payload["project"]["name"]
+        vulns = payload["vulnerabilities"]
+        if vulns["critical"]:
+            title = "🚨 Critical Vulnerabilities Found"
+        elif vulns["high"]:
+            title = "⚠️ High Vulnerabilities Found"
+        elif vulns["kev"]:
+            title = "⚠️ Known Exploited Vulnerability Found"
         else:
-            container_style = "warning"
+            title = "⚠️ High-EPSS Vulnerability Found"
 
-        facts = [
-            {"title": "Project", "value": project_name},
-            {"title": "Total Findings", "value": str(total)},
-        ]
-        for severity in _SEVERITY_KEYS:
-            count = stats.get(severity, 0)
-            count_int = int(count) if count else 0
-            if count_int > 0:
-                facts.append({"title": severity.title(), "value": str(count_int)})
+        facts = {"Project": project_name, "Critical": vulns["critical"], "High": vulns["high"]}
+        if vulns["kev"]:
+            facts["Known Exploited (KEV)"] = vulns["kev"]
+        if vulns["high_epss"]:
+            facts["High EPSS"] = vulns["high_epss"]
+        body = [_header("attention" if vulns["critical"] else "warning", title), _facts(facts)]
 
-        body = [
-            {
-                "type": "Container",
-                "style": container_style,
-                "items": [
-                    {
-                        "type": "TextBlock",
-                        "size": "ExtraLarge",
-                        "weight": "Bolder",
-                        "text": "🔍 Scan Completed",
-                        "wrap": True,
-                    }
-                ],
-            },
-            {"type": "FactSet", "facts": facts},
-        ]
-        actions = [{"type": _ACTION_OPEN_URL, "title": "View Scan Results", "url": scan_url}] if scan_url else None
-        return TeamsFormatter._wrap_card(body, actions, summary=f"Scan completed for {project_name}")
-
-    @staticmethod
-    def build_vulnerability_found_card(
-        project_name: str,
-        _scan_id: str,
-        vulns: dict,
-        scan_url: str | None = None,
-    ) -> dict:
-        critical = int(vulns.get("critical", 0) or 0)
-        high = int(vulns.get("high", 0) or 0)
-        kev = int(vulns.get("kev", 0) or 0)
-        high_epss = int(vulns.get("high_epss", 0) or 0)
-        top = vulns.get("top", [])
-
-        container_style = "attention" if critical > 0 else "warning"
-
-        facts = [
-            {"title": "Project", "value": project_name},
-            {"title": "Critical", "value": str(critical)},
-            {"title": "High", "value": str(high)},
-        ]
-        if kev > 0:
-            facts.append({"title": "Known Exploited (KEV)", "value": str(kev)})
-        if high_epss > 0:
-            facts.append({"title": "High EPSS", "value": str(high_epss)})
-
-        title_text = "🚨 Critical Vulnerabilities Found" if critical > 0 else "⚠️ High Vulnerabilities Found"
-
-        body: list[dict] = [
-            {
-                "type": "Container",
-                "style": container_style,
-                "items": [
-                    {
-                        "type": "TextBlock",
-                        "size": "ExtraLarge",
-                        "weight": "Bolder",
-                        "text": title_text,
-                        "wrap": True,
-                    }
-                ],
-            },
-            {"type": "FactSet", "facts": facts},
-        ]
-
+        top = [AlertVulnerability.model_validate(raw) for raw in vulns["top"]]
         if top:
-            top_items: list[dict] = [{"type": "TextBlock", "text": "**Top Vulnerabilities**", "weight": "Bolder"}]
-            for raw in top[:3]:
-                vuln = AlertVulnerability.model_validate(raw)
-                top_items.append(
-                    {
-                        "type": "TextBlock",
-                        "text": f"• **{vuln.id}** ({vuln.severity}) — {vuln.package}",
-                        "wrap": True,
-                    }
-                )
-            body.append({"type": "Container", "items": top_items})
+            heading = f"**Top Priority Vulnerabilities ({len(top)} of {vulns['priority']})**"
+            lines = [
+                f"{i}. **{v.id}** ({v.severity}) — {v.versioned_package}" + "".join(f" [{tag}]" for tag in v.tags)
+                for i, v in enumerate(top, 1)
+            ]
+            items: list[dict] = [{"type": "TextBlock", "text": heading, "weight": "Bolder"}]
+            items += [{"type": "TextBlock", "text": line, "wrap": True} for line in lines]
+            body.append({"type": "Container", "items": items})
 
-        actions = [{"type": _ACTION_OPEN_URL, "title": "View Vulnerabilities", "url": scan_url}] if scan_url else None
-        return TeamsFormatter._wrap_card(body, actions, summary=f"Vulnerabilities found in {project_name}")
+        return TeamsFormatter._wrap_card(
+            body,
+            summary=f"Vulnerabilities found in {project_name}",
+            link=("View Vulnerabilities", payload["scan"]["url"]),
+        )
 
     @staticmethod
-    def build_analysis_failed_card(
-        project_name: str,
-        error: str,
-        scan_url: str | None = None,
-    ) -> dict:
-        body = [
-            {
-                "type": "Container",
-                "style": "attention",
-                "items": [
-                    {
-                        "type": "TextBlock",
-                        "size": "ExtraLarge",
-                        "weight": "Bolder",
-                        "text": "❌ Analysis Failed",
-                        "wrap": True,
-                    }
-                ],
-            },
-            {
-                "type": "FactSet",
-                "facts": [
-                    {"title": "Project", "value": project_name},
-                    {"title": "Error", "value": error},
-                ],
-            },
-        ]
-        actions = [{"type": _ACTION_OPEN_URL, "title": "View Details", "url": scan_url}] if scan_url else None
-        return TeamsFormatter._wrap_card(body, actions, summary=f"Analysis failed for {project_name}")
+    def build_analysis_failed_card(payload: Mapping[str, Any]) -> dict:
+        project_name = payload["project"]["name"]
+        return TeamsFormatter._wrap_card(
+            [_header("attention", "❌ Analysis Failed"), _facts({"Project": project_name, "Error": payload["error"]})],
+            summary=f"Analysis failed for {project_name}",
+            link=("View Details", payload["scan"]["url"]),
+        )

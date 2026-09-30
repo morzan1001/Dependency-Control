@@ -16,7 +16,7 @@ from app.core.constants import (
 from app.models.project import Project, ProjectMember
 from app.models.stats import Stats
 from app.services.aggregation import ResultAggregator
-from app.services.analysis import notifications
+from app.services.analysis import engine, notifications
 from app.services.analysis.notifications import (
     _build_vulnerability_message,
     send_scan_notifications,
@@ -33,6 +33,7 @@ class TestBuildVulnerabilityMessageReportLink:
             kev_vulns=[],
             high_epss_vulns=[],
             priority_vulns=[{"severity": "CRITICAL"}],
+            critical_count=1,
             top_vulns=[],
             link=scan_link,
         )
@@ -42,26 +43,21 @@ class TestBuildVulnerabilityMessageReportLink:
 
 
 def _finding(fid, severity, epss=None, in_kev=False, aliases=None):
+    """An enriched vulnerability record as the engine persists and announces it."""
     details = {"id": fid, "severity": severity, "aliases": aliases or []}
     if epss is not None:
         details["epss_score"] = epss
     if in_kev:
         details["in_kev"] = True
-    return SimpleNamespace(
-        id=fid,
-        type="vulnerability",
-        severity=severity,
-        component="pkg",
-        version="1.0.0",
-        model_dump=lambda details=details, fid=fid, severity=severity: {
-            "type": "vulnerability",
-            "severity": severity,
-            "component": "pkg",
-            "version": "1.0.0",
-            "id": f"pkg:1.0.0:{fid}",
-            "details": {"vulnerabilities": [details]},
-        },
-    )
+    return {
+        "_id": f"rec-{fid}",
+        "type": "vulnerability",
+        "severity": severity,
+        "component": "pkg",
+        "version": "1.0.0",
+        "id": f"pkg:1.0.0:{fid}",
+        "details": {"vulnerabilities": [details]},
+    }
 
 
 def _outcome(**overrides):
@@ -80,7 +76,7 @@ def _outcome(**overrides):
 def _trivy_findings(*vulnerabilities):
     aggregator = ResultAggregator()
     aggregator.aggregate("trivy", {"Results": [{"Target": "app", "Vulnerabilities": list(vulnerabilities)}]})
-    return aggregator.get_findings()
+    return engine._prepare_finding_records(aggregator.get_findings(), "scan-abc-123", "proj-1", None)[0]
 
 
 async def _db_with_scan(scan_id: str = "scan-abc-123") -> FakeDatabase:
@@ -112,7 +108,7 @@ async def _capture_vuln_message(findings):
         await send_scan_notifications(
             scan_id="scan-abc-123",
             project=project,
-            aggregated_findings=findings,
+            findings=findings,
             db=await _db_with_scan(),
             **_outcome(),
         )
@@ -226,6 +222,16 @@ class TestVulnerabilityWebhookCounters:
 
         assert captured["webhook"]["critical_count"] == 2
         assert captured["webhook"]["high_count"] == 1
+        assert captured["webhook"]["priority_count"] == 3
+
+
+class TestAlertWording:
+    @pytest.mark.asyncio
+    async def test_an_alert_without_criticals_is_not_called_critical(self):
+        captured = await _capture_vuln_message([_finding("CVE-1", "HIGH")])
+
+        assert captured["subject"] == "[SECURITY ALERT] High-Priority Vulnerabilities in MyProject"
+        assert captured["message"].startswith("Security scan detected high-priority vulnerabilities in MyProject.")
 
 
 class TestAnalysisCompletedSeverityCounts:
@@ -247,7 +253,7 @@ class TestAnalysisCompletedSeverityCounts:
             await send_scan_notifications(
                 scan_id="scan-abc-123",
                 project=Project(id="proj-1", name="MyProject"),
-                aggregated_findings=findings,
+                findings=findings,
                 db=await _db_with_scan(),
                 **_outcome(stats=Stats(critical=1, low=2)),
             )
@@ -270,7 +276,7 @@ class TestAnalysisCompletedAnalyzers:
             await send_scan_notifications(
                 scan_id="scan-abc-123",
                 project=Project(id="proj-1", name="MyProject"),
-                aggregated_findings=[],
+                findings=[],
                 db=await _db_with_scan(),
                 **_outcome(analyzer_outcomes=outcomes, analyzer_count=2),
             )
@@ -296,7 +302,7 @@ class TestScanCompletedWebhook:
             await send_scan_notifications(
                 scan_id="scan-abc-123",
                 project=Project(id="proj-1", name="MyProject"),
-                aggregated_findings=[],
+                findings=[],
                 db=db,
                 **_outcome(
                     stats=stats,
@@ -348,7 +354,7 @@ class TestAnalysisCompletedReachesSubscribers:
             await send_scan_notifications(
                 scan_id="scan-abc-123",
                 project=project,
-                aggregated_findings=[],
+                findings=[],
                 db=db,
                 **_outcome(),
             )
@@ -359,7 +365,7 @@ class TestAnalysisCompletedReachesSubscribers:
 
 
 def _sast_finding(fid):
-    return SimpleNamespace(id=fid, type="sast", severity="HIGH", component="app.py", version="")
+    return {"_id": f"rec-{fid}", "id": fid, "type": "sast", "severity": "HIGH", "component": "app.py", "version": ""}
 
 
 async def _announce_twice(first, second):
@@ -374,7 +380,7 @@ async def _announce_twice(first, second):
     ):
         for findings in (first, second):
             await send_scan_notifications(
-                scan_id="scan-abc-123", project=project, aggregated_findings=findings, db=db, **_outcome()
+                scan_id="scan-abc-123", project=project, findings=findings, db=db, **_outcome()
             )
     events = [call.kwargs["event_type"] for call in notify.notify_project_members.await_args_list]
     return events, webhooks
@@ -433,7 +439,7 @@ class TestScanWebhookScope:
             await send_scan_notifications(
                 scan_id="scan-abc-123",
                 project=project,
-                aggregated_findings=[_finding("CVE-1", "CRITICAL")],
+                findings=[_finding("CVE-1", "CRITICAL")],
                 db=db,
                 **_outcome(),
             )
