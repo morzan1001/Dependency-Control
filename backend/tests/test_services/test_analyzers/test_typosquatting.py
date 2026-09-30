@@ -301,7 +301,7 @@ class TestOnlyThePypiCorpusIsCached:
 
 
 class TestTheEcosystemComesFromThePurl:
-    """The purl's registry is the ecosystem rule every analyzer shares, so a syft type alone names none."""
+    """The purl's registry is the ecosystem rule every analyzer shares, so a generic purl names none."""
 
     _CORPUS: ClassVar[dict[str, set[str]]] = {"pypi": {"requests"}}
 
@@ -318,12 +318,12 @@ class TestTheEcosystemComesFromThePurl:
         assert [issue["imitated_package"] for issue in await self._issues(component)] == ["requests"]
 
     @pytest.mark.asyncio
-    async def test_a_syft_python_type_without_a_purl_is_not_compared(self):
+    async def test_a_syft_binary_type_without_a_purl_is_not_compared(self):
         component = {
             "type": "library",
             "name": "reqests",
             "version": "1.0",
-            "properties": [{"name": "syft:package:type", "value": "python"}],
+            "properties": [{"name": "syft:package:type", "value": "binary"}],
         }
 
         assert await self._issues(component) == []

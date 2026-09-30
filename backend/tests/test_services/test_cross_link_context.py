@@ -8,7 +8,7 @@ import pytest
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
 from app.services.aggregation.cross_link import cross_link_pair, record_additional_types
-from app.services.analyzers.end_of_life import EndOfLifeAnalyzer
+from app.services.analyzers.end_of_life import EndOfLifeAnalyzer, _check_version, _find_active_cycle
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.analyzers.outdated import OutdatedAnalyzer
 from app.services.sbom_parser import parse_sbom
@@ -240,12 +240,13 @@ class TestContextBlocksOnTheVulnerability:
         }
 
     def test_eol_info(self):
-        analyzer = EndOfLifeAnalyzer()
         cycles = [
             {"cycle": "2", "eol": False, "latest": "2.4.0"},
             {"cycle": "1", "eol": "2020-01-01", "latest": "1.9.0"},
         ]
-        issue = analyzer._create_eol_issue("lib", "1.0.0", "lib", analyzer._check_version("1.0.0", cycles))
+        issue = EndOfLifeAnalyzer()._create_eol_issue(
+            "lib", "1.0.0", "lib", _check_version("1.0.0", cycles), _find_active_cycle(cycles), False
+        )
 
         vuln = _vulnerability_beside("end_of_life", {"eol_issues": [issue]})
 

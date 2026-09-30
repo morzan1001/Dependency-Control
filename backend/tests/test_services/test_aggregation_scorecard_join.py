@@ -13,12 +13,11 @@ def _scorecard_issue(name: str, version: str, failing: tuple[str, ...] = ("Maint
     scorecard = {
         "overallScore": 2.4,
         "date": "2026-08-01",
-        "checks": [{"name": check, "score": 0, "reason": "failing"} for check in failing],
-        "repository": {"name": f"github.com/example/{name}"},
+        "checks": [{"name": check, "score": 0} for check in failing],
+        "repository": f"github.com/example/{name}",
     }
-    return DepsDevAnalyzer()._create_scorecard_issue(
-        name, version, f"pkg:npm/{name}@{version}", f"github.com/example/{name}", scorecard
-    )
+    issue = DepsDevAnalyzer._create_scorecard_issue(f"https://github.com/example/{name}", scorecard)
+    return {**issue, "component": name, "version": version, "purl": f"pkg:npm/{name}@{version}"}
 
 
 def _trivy_vulnerability(package: str, version: str) -> dict:
