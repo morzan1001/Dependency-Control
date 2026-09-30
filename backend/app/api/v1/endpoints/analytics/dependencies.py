@@ -1,5 +1,6 @@
 """Analytics dependency endpoints: dependency-tree, component-findings, dependency-metadata."""
 
+from dataclasses import dataclass, field
 from typing import Annotated, Any
 
 from fastapi import Query
@@ -18,6 +19,7 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
+from app.models.dependency import Dependency
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.findings import FindingRepository
@@ -38,12 +40,42 @@ from app.services.component_identity import (
     normalize_component,
 )
 from app.services.aggregation.versions import newest_first, parse_version_key
-from app.services.recommendation.common import get_attr, live_cves
+from app.services.recommendation.common import live_cves
 from app.services.recommendation.graph import build_dependency_edges
 
-from ._shared import _get_enrichment_info, resolve_project_scan_id
+from ._shared import resolve_project_scan_id
 
 router = CustomAPIRouter()
+
+
+@dataclass(frozen=True)
+class EnrichmentInfo:
+    deps_dev: dict[str, Any] | None = None
+    enrichment_sources: list[str] = field(default_factory=list)
+    license_category: str | None = None
+    license_risks: list[str] = field(default_factory=list)
+    license_obligations: list[str] = field(default_factory=list)
+    description: str | None = None
+    homepage: str | None = None
+    repository_url: str | None = None
+
+
+async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, purl: str | None) -> EnrichmentInfo:
+    enrichment = await enrichment_repo.get_by_purl(purl) if purl else None
+    if not enrichment:
+        return EnrichmentInfo()
+    # Dependency docs only carry parser-declared metadata; deps.dev-derived description/links live solely here.
+    # DependencyEnrichment.to_mongo_dict() stores the license fields top-level, not nested under license_compliance.
+    return EnrichmentInfo(
+        deps_dev=enrichment.get("deps_dev"),
+        enrichment_sources=enrichment.get("enrichment_sources") or [],
+        license_category=enrichment.get("license_category"),
+        license_risks=enrichment.get("license_risks") or [],
+        license_obligations=enrichment.get("license_obligations") or [],
+        description=enrichment.get("description"),
+        homepage=enrichment.get("homepage"),
+        repository_url=enrichment.get("repository_url"),
+    )
 
 
 async def _package_finding_query(
@@ -62,35 +94,33 @@ async def _package_finding_query(
     return {**scope, "component": {"$in": same or [component]}}
 
 
-def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]], *, direct: bool) -> DependencyTreeNode:
+def _build_tree_node(dep: Dependency, findings_map: dict[str, dict[str, int]], *, direct: bool) -> DependencyTreeNode:
     """Build one node without its children; the graph builder fills in child_ids."""
-    name = get_attr(dep, "name", "")
     # The bare-artifact alias keys are lowercased, dependency names are not.
-    finding_info = lookup_component(findings_map, name) or {}
+    finding_info = lookup_component(findings_map, dep.name) or {}
     findings_count = sum(finding_info.values())
 
     return DependencyTreeNode(
-        # The document id (uuid) is unique per dependency; PURL only backstops dict inputs in tests.
-        id=str(get_attr(dep, "id") or get_attr(dep, "purl", "")),
-        name=name,
-        version=get_attr(dep, "version", ""),
-        purl=get_attr(dep, "purl", ""),
-        type=get_attr(dep, "type", "unknown"),
+        id=dep.id,
+        name=dep.name,
+        version=dep.version,
+        purl=dep.purl or "",
+        type=dep.type,
         direct=direct,
-        direct_inferred=get_attr(dep, "direct_inferred", False),
+        direct_inferred=dep.direct_inferred,
         has_findings=findings_count > 0,
         findings_count=findings_count,
         findings_severity=SeverityBreakdown.from_counts(finding_info) if finding_info else None,
-        source_type=get_attr(dep, "source_type"),
-        source_target=get_attr(dep, "source_target"),
-        layer_digest=get_attr(dep, "layer_digest"),
-        locations=get_attr(dep, "locations", []),
+        source_type=dep.source_type,
+        source_target=dep.source_target,
+        layer_digest=dep.layer_digest,
+        locations=dep.locations,
         child_ids=[],
     )
 
 
 def _build_dependency_graph(
-    dependencies: list[Any],
+    dependencies: list[Dependency],
     findings_map: dict[str, dict[str, int]],
     dependencies_total: int,
 ) -> DependencyGraph:
@@ -236,8 +266,8 @@ def _build_dep_query(scan_ids: list[str], component: str, version: str | None, t
 
 async def _package_projects_by_version(
     dep_repo: DependencyRepository, dep_query: dict[str, Any], component: str
-) -> tuple[tuple[str, str], dict[str, list[dict[str, Any]]]] | None:
-    """The one package ``component`` names with its projects per version; None while the name spans several."""
+) -> tuple[str, dict[str, list[dict[str, Any]]]] | None:
+    """The one package path ``component`` names with its projects per version; None while the name spans several."""
     artifact = artifact_segment(component)
     wanted = None if artifact == component else f"{component[: -len(artifact) - 1]}/{artifact}".lower()
     rows = await dep_repo.aggregate(
@@ -251,11 +281,12 @@ async def _package_projects_by_version(
             },
         ]
     )
-    by_package: dict[tuple[str, str], dict[str, list[dict[str, Any]]]] = {}
+    # Keyed on path alone: a purl-less 'library' row and its 'npm' purl row describe one package.
+    by_package: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for row in rows:
-        package = (row["_id"]["package"]["type"], row["_id"]["package"]["path"])
-        if wanted is None or package[1].lower() == wanted:
-            by_package.setdefault(package, {})[row["_id"].get("version")] = row["projects"]
+        path = row["_id"]["package"]["path"]
+        if wanted is None or path.lower() == wanted:
+            by_package.setdefault(path, {}).setdefault(row["_id"].get("version"), []).extend(row["projects"])
     return next(iter(by_package.items())) if len(by_package) == 1 else None
 
 
@@ -275,9 +306,9 @@ def _affected_projects(
     return affected
 
 
-def _first_dep_value(dependencies: list[Any], key: str) -> Any | None:
+def _first_dep_value(dependencies: list[Dependency], key: str) -> Any | None:
     for dep in dependencies:
-        val = get_attr(dep, key)
+        val = getattr(dep, key)
         if val:
             return val
     return None
@@ -311,7 +342,7 @@ async def get_dependency_metadata_endpoint(
     usage = await _package_projects_by_version(dep_repo, dep_query, component)
     if usage is None:
         return None
-    package, projects_by_version = usage
+    path, projects_by_version = usage
     # Without a version, the modal describes the version most projects run.
     shown_version = version or max(
         projects_by_version,
@@ -320,19 +351,16 @@ async def get_dependency_metadata_endpoint(
     dependencies = [
         dep
         for dep in await dep_repo.find_many({**dep_query, "version": shown_version}, limit=100)
-        if package_identity(
-            get_attr(dep, "purl"), get_attr(dep, "name", ""), get_attr(dep, "type"), get_attr(dep, "group")
-        )
-        == package
+        if package_identity(dep.purl, dep.name, dep.type, dep.group)[1] == path
     ]
     if not dependencies:
         return None
 
-    first_dep = dependencies[0]
+    # A purl row names the package's real type and keys its enrichment.
+    first_dep = next((dep for dep in dependencies if dep.purl), dependencies[0])
     affected_projects = _affected_projects(projects_by_version, project_name_map)
 
-    dep_purl = get_attr(first_dep, "purl")
-    enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)
+    info = await _get_enrichment_info(enrichment_repo, first_dep.purl)
 
     finding_query = await _package_finding_query(finding_repo, scan_ids, component, version)
     finding_count = await finding_repo.count(finding_query)
@@ -340,27 +368,27 @@ async def get_dependency_metadata_endpoint(
     vuln_count = len(live_cves([details for per_component in package_details.values() for details in per_component]))
 
     return DependencyMetadata(
-        name=get_attr(first_dep, "name", component),
-        version=get_attr(first_dep, "version", version or "unknown"),
+        name=first_dep.name,
+        version=first_dep.version,
         versions=newest_first(v for v in projects_by_version if v),
-        type=get_attr(first_dep, "type", "unknown"),
-        purl=dep_purl,
-        description=_first_dep_value(dependencies, "description") or enrichment_info["description"],
+        type=first_dep.type,
+        purl=first_dep.purl,
+        description=_first_dep_value(dependencies, "description") or info.description,
         author=_first_dep_value(dependencies, "author"),
         publisher=_first_dep_value(dependencies, "publisher"),
-        homepage=_first_dep_value(dependencies, "homepage") or enrichment_info["homepage"],
-        repository_url=_first_dep_value(dependencies, "repository_url") or enrichment_info["repository_url"],
+        homepage=_first_dep_value(dependencies, "homepage") or info.homepage,
+        repository_url=_first_dep_value(dependencies, "repository_url") or info.repository_url,
         download_url=_first_dep_value(dependencies, "download_url"),
         group=_first_dep_value(dependencies, "group"),
         license=_first_dep_value(dependencies, "license"),
         license_url=_first_dep_value(dependencies, "license_url"),
-        license_category=enrichment_info["license_category"],
-        license_risks=enrichment_info["license_risks"],
-        license_obligations=enrichment_info["license_obligations"],
-        deps_dev=enrichment_info["deps_dev_data"],
+        license_category=info.license_category,
+        license_risks=info.license_risks,
+        license_obligations=info.license_obligations,
+        deps_dev=info.deps_dev,
         project_count=len(affected_projects),
         affected_projects=list(affected_projects.values()),
         total_vulnerability_count=vuln_count,
         total_finding_count=finding_count,
-        enrichment_sources=enrichment_info["enrichment_sources"],
+        enrichment_sources=info.enrichment_sources,
     )

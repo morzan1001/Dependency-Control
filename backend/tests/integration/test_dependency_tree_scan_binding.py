@@ -5,6 +5,10 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+from app.repositories.dependencies import DependencyRepository
+from app.services.dependency_store import store_scan_dependencies
+from app.services.sbom_parser import parse_sbom
+
 _OWN_PROJECT = "p"
 _FOREIGN_PROJECT = "p2"
 _OWN_SCAN = "scan-own"
@@ -124,3 +128,25 @@ async def test_a_caller_outside_the_project_is_refused(client, seeded, owner_aut
 
     assert resp.status_code == 403
     assert _OWN_PACKAGE not in resp.text
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_purl_less_operating_system_component_is_a_tree_node(client, db, seeded):
+    syft_sbom = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "metadata": {
+            "component": {"type": "container", "name": "registry.example/app", "bom-ref": "root"},
+            "tools": [{"name": "syft", "version": "1.18.1"}],
+        },
+        "components": [{"type": "operating-system", "bom-ref": "os-debian", "name": "debian", "version": "12"}],
+        "dependencies": [{"ref": "root", "dependsOn": ["os-debian"]}],
+    }
+    await store_scan_dependencies([parse_sbom(syft_sbom)], _OWN_PROJECT, _OWN_SCAN, DependencyRepository(db))
+
+    resp = await client.get(f"/api/v1/analytics/projects/{_OWN_PROJECT}/dependency-tree", headers=seeded)
+
+    assert resp.status_code == 200, resp.text
+    debian = next(n for n in resp.json()["nodes"] if n["name"] == "debian")
+    assert debian["purl"] == ""

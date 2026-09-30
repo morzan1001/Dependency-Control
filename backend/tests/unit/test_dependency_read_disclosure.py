@@ -10,6 +10,7 @@ through the graph builder against a 2 GiB pod, where 10 000 cost 0.32 s and 52 M
 import pytest
 
 from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
+from app.models.dependency import Dependency
 from app.repositories.dependencies import DependencyRepository
 
 _PROJECT = "p1"
@@ -52,7 +53,10 @@ async def test_an_unsaturated_read_counts_what_it_read(db):
 
 
 def test_the_graph_carries_the_pair_a_reader_needs():
-    deps = [{"purl": f"pkg:pypi/pkg-{i}@1.0.0", "name": f"pkg-{i}", "version": "1.0.0"} for i in range(_CAP)]
+    deps = [
+        Dependency(project_id=_PROJECT, scan_id=_SCAN, name=f"pkg-{i}", version="1.0.0", purl=f"pkg:pypi/pkg-{i}@1.0.0")
+        for i in range(_CAP)
+    ]
 
     graph = _build_dependency_graph(deps, {}, _POPULATION)
 

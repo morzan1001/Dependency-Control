@@ -15,19 +15,19 @@ _DEEPEST_CHAINS_SAMPLED = 5
 
 
 @dataclass(frozen=True)
-class DependencyEdges:
+class DependencyEdges[D: ModelOrDict]:
     """A dependency list as a graph over node keys; documents sharing a key are one node."""
 
     # First document per key, in first-seen order.
-    dep_by_key: dict[str, ModelOrDict]
+    dep_by_key: dict[str, D]
     parents_by_key: dict[str, list[str]]
     children_by_parent: dict[str, list[str]]
     direct_keys: set[str]
 
 
-def build_dependency_edges(dependencies: list[ModelOrDict]) -> DependencyEdges:
+def build_dependency_edges[D: ModelOrDict](dependencies: list[D]) -> DependencyEdges[D]:
     """Merge every document's parents per node key; a node is direct when any of its documents is."""
-    dep_by_key: dict[str, ModelOrDict] = {}
+    dep_by_key: dict[str, D] = {}
     parents_by_key: dict[str, dict[str, None]] = {}
     direct_keys: set[str] = set()
     for dep in dependencies:

@@ -10,6 +10,7 @@ import asyncio
 
 from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
 from app.api.v1.helpers.analytics import severity_counts_from_details
+from app.models.dependency import Dependency
 from app.services.component_identity import build_component_index, component_match_query
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -33,14 +34,15 @@ def build_findings_map(findings):
 
 
 def _dep(name, version="2.20.2", purl=None):
-    return {
-        "purl": purl or f"pkg:maven/com.fasterxml.jackson.core/{name}@{version}?type=jar",
-        "name": name,
-        "version": version,
-        "type": "library",
-        "direct": True,
-        "parent_components": [],
-    }
+    return Dependency(
+        project_id="p",
+        scan_id="s",
+        purl=purl or f"pkg:maven/com.fasterxml.jackson.core/{name}@{version}?type=jar",
+        name=name,
+        version=version,
+        type="library",
+        direct=True,
+    )
 
 
 class TestBareDependencyNameResolvesQualifiedFinding:

@@ -478,6 +478,29 @@ async def test_hotspot_type_matches_the_version_whatever_its_v_prefix(client, db
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_metadata_survives_rows_that_differ_only_in_stored_type(client, db, seeded):
+    lodash = {"group": None, "version": "4.17.21"}
+    await db.dependencies.insert_one(
+        {**_dependency("lodash-cdx", name="lodash"), **lodash, "type": "library", "purl": None}
+    )
+    await db.dependencies.insert_one(
+        {
+            **_dependency("lodash-npm", name="lodash"),
+            **lodash,
+            "type": "npm",
+            "purl": "pkg:npm/lodash@4.17.21",
+            "license": "MIT",
+        }
+    )
+
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="lodash")
+
+    assert metadata is not None
+    assert (metadata["purl"], metadata["type"], metadata["license"]) == ("pkg:npm/lodash@4.17.21", "npm", "MIT")
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_the_vulnerability_filter_tells_a_package_s_versions_apart(client, db, seeded):
     await db.dependencies.insert_one({**_dependency("lodash-old", name="lodash"), "version": "4.17.15", "type": "npm"})
     await db.dependencies.insert_one({**_dependency("lodash-new", name="lodash"), "version": "4.17.21", "type": "npm"})

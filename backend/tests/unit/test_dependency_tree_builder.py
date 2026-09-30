@@ -2,6 +2,7 @@
 
 from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
 from app.api.v1.helpers.analytics import severity_counts_from_details
+from app.models.dependency import Dependency
 
 
 def _graph(dependencies, findings_map):
@@ -10,15 +11,17 @@ def _graph(dependencies, findings_map):
 
 
 def _dep(name, version="1.0.0", direct=False, parents=None, direct_inferred=False):
-    return {
-        "purl": f"pkg:pypi/{name}@{version}",
-        "name": name,
-        "version": version,
-        "type": "pypi",
-        "direct": direct,
-        "direct_inferred": direct_inferred,
-        "parent_components": parents or [],
-    }
+    return Dependency(
+        project_id="p",
+        scan_id="s",
+        purl=f"pkg:pypi/{name}@{version}",
+        name=name,
+        version=version,
+        type="pypi",
+        direct=direct,
+        direct_inferred=direct_inferred,
+        parent_components=parents or [],
+    )
 
 
 def _findings(critical=0, high=0, medium=0, low=0):
@@ -59,7 +62,7 @@ def _reachable_ids(graph):
 class TestDependencyGraphBuilder:
     def test_direct_dep_lists_its_transitive_child(self):
         a = _dep("a", direct=True)
-        b = _dep("b", parents=[a["purl"]])
+        b = _dep("b", parents=[a.purl])
 
         graph = _graph([a, b], {})
 
@@ -70,7 +73,7 @@ class TestDependencyGraphBuilder:
     def test_shared_transitive_is_a_single_node_under_both_parents(self):
         a = _dep("a", direct=True)
         c = _dep("c", direct=True)
-        b = _dep("b", parents=[a["purl"], c["purl"]])
+        b = _dep("b", parents=[a.purl, c.purl])
 
         graph = _graph([a, c, b], {})
 
@@ -82,7 +85,7 @@ class TestDependencyGraphBuilder:
 
     def test_two_node_cycle_is_represented_without_recursion(self):
         a = _dep("a", direct=True, parents=["pkg:pypi/b@1.0.0"])
-        b = _dep("b", parents=[a["purl"]])
+        b = _dep("b", parents=[a.purl])
 
         graph = _graph([a, b], {})
 
@@ -94,8 +97,8 @@ class TestDependencyGraphBuilder:
     def test_fully_disconnected_cycle_stays_reachable(self):
         # a -> b -> c -> a, none direct: no natural root, but nothing may be hidden.
         a = _dep("a", parents=["pkg:pypi/c@1.0.0"])
-        b = _dep("b", parents=[a["purl"]])
-        c = _dep("c", parents=[b["purl"]])
+        b = _dep("b", parents=[a.purl])
+        c = _dep("c", parents=[b.purl])
 
         graph = _graph([a, b, c], {})
 
@@ -143,27 +146,28 @@ class TestDependencyGraphBuilder:
 
     def test_child_ids_sorted_by_findings_count_desc(self):
         a = _dep("a", direct=True)
-        low = _dep("low", parents=[a["purl"]])
-        high = _dep("high", parents=[a["purl"]])
+        low = _dep("low", parents=[a.purl])
+        high = _dep("high", parents=[a.purl])
 
         graph = _graph([a, low, high], {"low": _findings(low=1), "high": _findings(low=9)})
 
         assert _child_names(graph, _by_name(graph)["a"]) == ["high", "low"]
 
     def test_purl_less_deps_get_distinct_ids(self):
-        # SPDX packages without a PURL must still get unique node ids (from the document id).
-        a = {"id": "uuid-a", "name": "a", "version": "1", "type": "pypi", "direct": True, "parent_components": []}
-        b = {"id": "uuid-b", "name": "b", "version": "1", "type": "pypi", "direct": True, "parent_components": []}
+        # CycloneDX operating-system components and SPDX packages often carry no purl.
+        a = Dependency(id="uuid-a", project_id="p", scan_id="s", name="debian", version="12.5", type="operating-system")
+        b = Dependency(id="uuid-b", project_id="p", scan_id="s", name="alpine", version="3.19", type="operating-system")
 
         graph = _graph([a, b], {})
 
         assert sorted(n.id for n in graph.nodes) == ["uuid-a", "uuid-b"]
         assert set(graph.roots) == {"uuid-a", "uuid-b"}
+        assert [n.purl for n in graph.nodes] == ["", ""]
 
     def test_every_node_is_reachable_from_roots(self):
         a = _dep("a", direct=True)
-        b = _dep("b", parents=[a["purl"]])
-        c = _dep("c", parents=[b["purl"]])
+        b = _dep("b", parents=[a.purl])
+        c = _dep("c", parents=[b.purl])
         orphan = _dep("orphan", parents=["pkg:npm/x@9"])
 
         graph = _graph([a, b, c, orphan], {})
@@ -178,8 +182,8 @@ class TestDependencyGraphBuilder:
         # order, d must not be promoted to a top-level root (it is reachable via a).
         d = _dep("d", parents=["pkg:pypi/a@1.0.0"])
         a = _dep("a", parents=["pkg:pypi/c@1.0.0"])
-        b = _dep("b", parents=[a["purl"]])
-        c = _dep("c", parents=[b["purl"]])
+        b = _dep("b", parents=[a.purl])
+        c = _dep("c", parents=[b.purl])
 
         graph = _graph([d, a, b, c], {})
 
@@ -192,8 +196,8 @@ class TestDependencyGraphBuilder:
         # parents; every parent -> child edge must survive the per-purl dedup.
         a = _dep("a", direct=True)
         c = _dep("c", direct=True)
-        x_from_sbom1 = _dep("x", parents=[a["purl"]])
-        x_from_sbom2 = _dep("x", parents=[c["purl"]])
+        x_from_sbom1 = _dep("x", parents=[a.purl])
+        x_from_sbom2 = _dep("x", parents=[c.purl])
 
         graph = _graph([a, c, x_from_sbom1, x_from_sbom2], {})
 
@@ -204,7 +208,7 @@ class TestDependencyGraphBuilder:
 
     def test_a_node_is_a_root_when_any_of_its_documents_is_direct(self):
         a = _dep("a", direct=True)
-        x_transitive = _dep("x", parents=[a["purl"]])
+        x_transitive = _dep("x", parents=[a.purl])
         x_direct = _dep("x", direct=True)
 
         graph = _graph([a, x_transitive, x_direct], {})

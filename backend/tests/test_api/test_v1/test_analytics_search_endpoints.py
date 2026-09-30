@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.permissions import ALL_PERMISSIONS
+from app.models.dependency import Dependency
 from app.models.user import User
 from tests.helpers.analytics_scope import projections
 
@@ -21,31 +22,7 @@ def _admin_user():
 
 
 def _make_dep(project_id="proj-1", name="lodash", version="4.17.11"):
-    return {
-        "project_id": project_id,
-        "name": name,
-        "version": version,
-        "type": "npm",
-        "license": None,
-        "license_url": None,
-        "direct": False,
-        "purl": None,
-        "source_type": None,
-        "source_target": None,
-        "layer_digest": None,
-        "found_by": None,
-        "locations": [],
-        "cpes": [],
-        "description": None,
-        "author": None,
-        "publisher": None,
-        "group": None,
-        "homepage": None,
-        "repository_url": None,
-        "download_url": None,
-        "hashes": {},
-        "properties": {},
-    }
+    return Dependency(project_id=project_id, scan_id="scan-latest", name=name, version=version, type="npm")
 
 
 class TestSearchDependenciesVulnScanScope:
@@ -133,7 +110,7 @@ class TestSearchDependenciesVulnScanScope:
 
     def test_active_scan_vuln_marks_component_as_vulnerable(self):
         dep = _make_dep(name="lodash", project_id="proj-1")
-        agg_results = [{"_id": {"project_id": "proj-1", "component": "lodash"}, "versions": [dep["version"]]}]
+        agg_results = [{"_id": {"project_id": "proj-1", "component": "lodash"}, "versions": [dep.version]}]
         response, _ = self._run_search(
             dep_list=[dep],
             vuln_agg_results=agg_results,
