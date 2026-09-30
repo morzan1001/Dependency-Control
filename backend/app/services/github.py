@@ -9,7 +9,6 @@ from typing import Any, NamedTuple
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo.errors import DuplicateKeyError
 
 from app.core.cache import cache_service
 from app.core.constants import (
@@ -30,7 +29,7 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.core.log_utils import sanitize_for_log
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
-from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of
+from app.models.team import GitHubTeamBinding, Team, TeamMember, TeamSyncResult, binding_of
 from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
@@ -170,16 +169,6 @@ def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[dict[str, An
             }
         )
     return options
-
-
-class GitHubTeamSyncResult(NamedTuple):
-    """Every Dependency Control team GitHub says holds the repository.
-
-    ``team_ids`` is None when GitHub could not be asked, which is not the same answer as the empty
-    list: the first leaves the project's GitHub owners alone, the second retires them.
-    """
-
-    team_ids: list[str] | None
 
 
 class _HolderBinding(NamedTuple):
@@ -768,7 +757,7 @@ class GitHubService:
         org: str,
         team_id: int,
         slug: str,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """The Dependency Control team for a GitHub team: the one bound to it, or a new one.
 
         A binding hands every member of that team project-admin over everything the group holds,
@@ -789,16 +778,10 @@ class GitHubService:
             description=_auto_team_description(org, slug),
             bindings=[GitHubTeamBinding(instance_id=self._instance_id, org=org, external_id=team_id, slug=slug)],
         )
-        try:
-            await team_repo.create(team)
-        except DuplicateKeyError:
-            # Another repository of the same organisation is being ingested and got here first.
-            concurrent = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, self._instance_id, team_id)
-            if concurrent is None:
-                raise
-            return concurrent
-        logger.info("Created team '%s' for GitHub team %s/%s (id=%d).", team.name, org, slug, team_id)
-        return team.model_dump(by_alias=True)
+        created = await team_repo.create_bound(team)
+        if created is not None and created["_id"] == team.id:
+            logger.info("Created team '%s' for GitHub team %s/%s (id=%d).", team.name, org, slug, team_id)
+        return created
 
     def _address_bound_teams(
         self,
@@ -968,7 +951,7 @@ class GitHubService:
         *,
         current_owner_ids: set[str],
         owner_budget: int = MAX_PROJECT_TEAMS,
-    ) -> GitHubTeamSyncResult:
+    ) -> TeamSyncResult:
         """Every team that holds the repository on GitHub, creating one for a group not bound yet.
 
         All of them, not the best of them: each one's members are people who work on the
@@ -992,7 +975,7 @@ class GitHubService:
                 logger.warning(
                     "GitHub repository claim %r names no owner/repo; leaving its owners untouched.", repository_path
                 )
-                return GitHubTeamSyncResult(None)
+                return TeamSyncResult(None)
             org, repo = parts
             team_repo = TeamRepository(db)
             bound_teams = await team_repo.find_raw_by_github_org(self._instance_id, org)
@@ -1007,13 +990,13 @@ class GitHubService:
                     repository_path,
                     _GITHUB_RESOLUTION_TIMEOUT,
                 )
-                return GitHubTeamSyncResult(None)
+                return TeamSyncResult(None)
 
             if holders is None:
                 logger.warning(
                     "GitHub could not say which teams hold repository %s; leaving them untouched.", repository_path
                 )
-                return GitHubTeamSyncResult(None)
+                return TeamSyncResult(None)
 
             if len(holders) > owner_budget:
                 logger.warning(
@@ -1024,7 +1007,7 @@ class GitHubService:
                     [holder.slug for holder in holders],
                     owner_budget,
                 )
-                return GitHubTeamSyncResult(None)
+                return TeamSyncResult(None)
 
             logger.info(
                 "GitHub team sync for %s: %d team(s) hold it %s.",
@@ -1035,10 +1018,12 @@ class GitHubService:
 
             # Local writes, outside the deadline: the ownership answer below is what the ingest is
             # here for, and it needs every holder to have a team.
-            teams = [
-                holder.team or await self._team_for_github_group(team_repo, org, holder.team_id, holder.slug)
-                for holder in holders
-            ]
+            teams: list[dict[str, Any]] = []
+            for holder in holders:
+                team = holder.team or await self._team_for_github_group(team_repo, org, holder.team_id, holder.slug)
+                if team is None:
+                    return TeamSyncResult(None)
+                teams.append(team)
             user_repo = UserRepository(db)
             members: list[list[TeamMember] | None] = [None] * len(holders)
             try:
@@ -1059,7 +1044,7 @@ class GitHubService:
             # Only the reads are bounded: cancelling a write would leave the team half-refreshed.
             for holder, team, team_members in zip(holders, teams, members, strict=True):
                 await self._refresh_team(team_repo, org, holder, team, team_members)
-            return GitHubTeamSyncResult([str(team["_id"]) for team in teams])
+            return TeamSyncResult([str(team["_id"]) for team in teams])
 
         except Exception as e:
             logger.exception(
@@ -1068,7 +1053,7 @@ class GitHubService:
                 type(e).__name__,
                 e,
             )
-            return GitHubTeamSyncResult(None)
+            return TeamSyncResult(None)
 
     async def get_pull_requests_for_commit(self, owner: str, repo: str, commit_sha: str) -> list[GitHubPullRequest]:
         """Pull requests associated with a commit, retrying via the head parent when it is a merge commit."""

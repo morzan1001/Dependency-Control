@@ -101,6 +101,12 @@ def make_project_details(namespace_kind="group", namespace_id=42, namespace_path
     )
 
 
+async def sync_team(service, project_details, **kwargs):
+    """A sync against a GitLab whose project read answers ``project_details``."""
+    with patch.object(service, "get_project_details", new=AsyncMock(return_value=project_details)):
+        return await service.sync_team_from_gitlab(**kwargs)
+
+
 @contextmanager
 def make_repositories(existing_team=None, user_doc=None) -> Iterator[tuple[MagicMock, MagicMock]]:
     """The two repositories a GitLab sync works through, recording what it hands them.
@@ -113,7 +119,7 @@ def make_repositories(existing_team=None, user_doc=None) -> Iterator[tuple[Magic
     team_repo = MagicMock()
     team_repo.get_raw_by_binding = AsyncMock(return_value=existing_team)
     team_repo.update_with_binding = AsyncMock()
-    team_repo.create = AsyncMock()
+    team_repo.create_bound = AsyncMock(side_effect=lambda team: team.model_dump(by_alias=True))
     team_repo.add_binding_if_absent = AsyncMock()
 
     user_repo = MagicMock()

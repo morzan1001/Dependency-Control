@@ -242,12 +242,8 @@ async def _gitlab_team_sync_stages(
     came from.
     """
     source = team_source(TEAM_SOURCE_GITLAB, instance_id)
-    gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
     resolved = await gitlab_service.sync_team_from_gitlab(
-        db,
-        gitlab_project_id,
-        gitlab_project_path,
-        gitlab_project_data=gitlab_project_data,
+        db, gitlab_project_id, gitlab_project_path, owner_budget=_owner_budget(project, source)
     )
     return _team_subset_stages(project, source, resolved.team_ids, gitlab_project_path)
 
@@ -368,13 +364,7 @@ async def _handle_gitlab_oidc(
     owners: list[str] = []
     gitlab_source = team_source(TEAM_SOURCE_GITLAB, instance_id)
     if gitlab_instance.sync_teams:
-        gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
-        resolved = await gitlab_service.sync_team_from_gitlab(
-            db,
-            gitlab_project_id,
-            gitlab_project_path,
-            gitlab_project_data=gitlab_project_data,
-        )
+        resolved = await gitlab_service.sync_team_from_gitlab(db, gitlab_project_id, gitlab_project_path)
         owners = _new_project_owners(gitlab_source, resolved.team_ids, gitlab_project_path)
 
     new_project = Project(

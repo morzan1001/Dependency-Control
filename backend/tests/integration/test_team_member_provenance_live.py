@@ -20,7 +20,7 @@ from app.services.github import GitHubService
 from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
-from tests.mocks.gitlab import make_gitlab_instance, make_project_details
+from tests.mocks.gitlab import make_gitlab_instance, make_project_details, sync_team
 
 _GH_A = "gh-inst-a"
 _GH_B = "gh-inst-b"
@@ -89,11 +89,12 @@ async def _gitlab_sync(db, instance_id: str, members: list[GitLabMember] | None)
     """One CI run of one GitLab instance against a project of the bound group."""
     service = GitLabService(make_gitlab_instance(id=instance_id, sync_teams=True))
     with patch.object(service, "get_group_members", new=AsyncMock(return_value=members)):
-        await service.sync_team_from_gitlab(
+        await sync_team(
+            service,
             db=db,
             gitlab_project_id=100,
             gitlab_project_path="grp/proj",
-            gitlab_project_data=make_project_details(namespace_kind="group", namespace_id=42, namespace_path="grp"),
+            project_details=make_project_details(namespace_kind="group", namespace_id=42, namespace_path="grp"),
         )
 
 

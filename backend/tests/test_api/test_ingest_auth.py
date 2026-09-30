@@ -855,7 +855,7 @@ class TestIngestGitHubTeamSync:
 
     def _run(self, instance_doc, sync_result, project_doc=None):
         from app.api.deps import get_project_for_ingest
-        from app.services.github import GitHubTeamSyncResult
+        from app.models.team import TeamSyncResult
 
         projects_coll = create_mock_collection(find_one=project_doc)
         projects_coll.find_one_and_update = AsyncMock(side_effect=lambda _q, update, **_kw: update["$setOnInsert"])
@@ -880,7 +880,7 @@ class TestIngestGitHubTeamSync:
                         repository_owner_id="111",
                     )
                 )
-                mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(sync_result))
+                mock_svc.sync_team_from_github = AsyncMock(return_value=TeamSyncResult(sync_result))
                 mock_svc.resolve_login = AsyncMock(return_value=None)
                 MockService.return_value = mock_svc
 
@@ -965,7 +965,7 @@ class TestIngestGitLabTeamSync:
 
     def _run(self, instance_doc, team_ids):
         from app.api.deps import get_project_for_ingest
-        from app.services.gitlab import GitLabTeamSyncResult
+        from app.models.team import TeamSyncResult
 
         projects_coll = create_mock_collection(find_one=None)
         projects_coll.find_one_and_update = AsyncMock(side_effect=lambda _q, update, **_kw: update["$setOnInsert"])
@@ -989,8 +989,7 @@ class TestIngestGitLabTeamSync:
                         user_email="dev@test.com",
                     )
                 )
-                mock_svc.get_project_details = AsyncMock(return_value={})
-                mock_svc.sync_team_from_gitlab = AsyncMock(return_value=GitLabTeamSyncResult(team_ids))
+                mock_svc.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(team_ids))
                 MockService.return_value = mock_svc
 
                 asyncio.run(
@@ -1001,7 +1000,7 @@ class TestIngestGitLabTeamSync:
     def test_an_auto_created_project_carries_the_synced_team(self):
         instance = {**_GITLAB_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
         mock_svc, projects_coll, db = self._run(instance, ["t-gl-1"])
-        mock_svc.sync_team_from_gitlab.assert_awaited_once_with(db, 99, "group/new-project", gitlab_project_data={})
+        mock_svc.sync_team_from_gitlab.assert_awaited_once_with(db, 99, "group/new-project")
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == ["t-gl-1"]
         expected_source = team_source(TEAM_SOURCE_GITLAB, _GITLAB_TEAM_SYNC_INSTANCE["_id"])
@@ -1044,7 +1043,7 @@ def _ingest_via_github(
     ``any_user`` answers every users query, so a lookup by the actor's login would find it.
     """
     from app.api.deps import get_project_for_ingest
-    from app.services.github import GitHubTeamSyncResult
+    from app.models.team import TeamSyncResult
 
     projects_coll = create_mock_collection(find_one=project_doc)
     projects_coll.find_one_and_update = AsyncMock(side_effect=lambda _q, update, **_kw: update["$setOnInsert"])
@@ -1067,7 +1066,7 @@ def _ingest_via_github(
         with patch("app.services.github.GitHubService") as MockService:
             mock_svc = MagicMock()
             mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
-            mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult([]))
+            mock_svc.sync_team_from_github = AsyncMock(return_value=TeamSyncResult([]))
             mock_svc.resolve_login = AsyncMock(return_value=actor_resolution)
             MockService.return_value = mock_svc
             try:

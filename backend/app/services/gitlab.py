@@ -13,6 +13,7 @@ from app.core.constants import (
     GITLAB_JWKS_CACHE_TTL,
     GITLAB_JWKS_URI_CACHE_TTL,
     GITLAB_USER_EMAIL_CACHE_TTL,
+    MAX_PROJECT_TEAMS,
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITLAB,
@@ -28,7 +29,7 @@ from app.models.gitlab_api import (
     OIDCPayload,
 )
 from app.models.gitlab_instance import GitLabInstance
-from app.models.team import GitLabGroupBinding, Team, TeamMember, binding_of
+from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult, binding_of
 from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
@@ -37,8 +38,8 @@ logger = logging.getLogger(__name__)
 
 _GITLAB_API_TIMEOUT = 10.0
 
-# The group lookup and the member listing run inside the ingest request, and the listing is
-# uncapped, so a large group is many pages of 10s each. This bounds the reads as a whole.
+# The project read, the group lookup and the member listing run inside the ingest request, and the
+# listing is uncapped, so a large group is many pages of 10s each. This bounds the reads as a whole.
 _GITLAB_RESOLUTION_TIMEOUT = 30.0
 
 _AUTO_TEAM_NAME_PREFIX = "GitLab Group:"
@@ -81,16 +82,6 @@ def build_group_options(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         )
     return options
-
-
-class GitLabTeamSyncResult(NamedTuple):
-    """The Dependency Control teams GitLab says own the project — at most the one group's.
-
-    ``team_ids`` is None when GitLab could not be asked, which is not the empty list: the first
-    leaves the project's GitLab owner alone, the second retires it.
-    """
-
-    team_ids: list[str] | None
 
 
 class _OwningGroup(NamedTuple):
@@ -527,17 +518,17 @@ class GitLabService:
         self,
         gitlab_project_id: int,
         gitlab_project_path: str,
-        gitlab_project_data: GitLabProjectDetails | None,
+        project: GitLabProjectDetails | None,
     ) -> GitLabSyncTarget:
         """Which GitLab group (id, path) should back the team for this project."""
-        if not gitlab_project_data or not gitlab_project_data.namespace:
+        if not project or not project.namespace:
             logger.warning(
                 f"Skipping team sync for project_id={gitlab_project_id} ({gitlab_project_path}): "
                 f"no GitLab project details available (likely access denied or 404 on /projects/{gitlab_project_id})."
             )
             return _UNDETERMINED_TARGET
 
-        if gitlab_project_data.namespace.kind != "group":
+        if project.namespace.kind != "group":
             # Determined, not unknown: GitLab answered, and its answer is that a person owns this
             # project. A group owner it carries from before the move is retired on the strength of it.
             logger.info(
@@ -546,7 +537,7 @@ class GitLabService:
             )
             return _NO_OWNING_GROUP
 
-        namespace = gitlab_project_data.namespace
+        namespace = project.namespace
         group_id = namespace.id
         group_path = namespace.full_path
 
@@ -633,7 +624,7 @@ class GitLabService:
         self,
         members: list[GitLabMember],
         user_repo: UserRepository,
-        team_name: str,
+        group_path: str,
         group_id: int,
     ) -> list[TeamMember] | None:
         """The members to store for a group, or None to leave the stored ones alone."""
@@ -644,7 +635,7 @@ class GitLabService:
             logger.warning(
                 "Resolved 0 of %d members of GitLab group '%s' (group_id=%d); leaving the existing members untouched.",
                 unresolved,
-                team_name,
+                group_path,
                 group_id,
             )
             return None
@@ -705,30 +696,35 @@ class GitLabService:
         group_id: int,
         group_path: str,
         team_members: list[TeamMember] | None,
-    ) -> str | None:
-        """The team backing the group, refreshed or created; None when there is nothing to create."""
+    ) -> TeamSyncResult:
+        """The team backing the group, refreshed or created.
+
+        No team and none creatable is an answer, not a failure: the group's members are all
+        strangers here, so nothing in Dependency Control owns the project.
+        """
         if existing_team:
             await self._refresh_team(team_repo, existing_team, group_id, group_path, team_members)
-            return str(existing_team["_id"])
-        if team_members:
-            new_team = Team(
+            return TeamSyncResult([str(existing_team["_id"])])
+        if not team_members:
+            return TeamSyncResult([])
+        created = await team_repo.create_bound(
+            Team(
                 name=_auto_team_name(group_path),
                 description=_auto_team_description(group_path),
                 bindings=[GitLabGroupBinding(instance_id=self._instance_id, external_id=group_id, path=group_path)],
                 members=team_members,
             )
-            await team_repo.create(new_team)
-            return str(new_team.id)
-        return None
+        )
+        return TeamSyncResult([str(created["_id"])] if created else None)
 
     async def _read_owning_group(
         self,
         gitlab_project_id: int,
         gitlab_project_path: str,
-        gitlab_project_data: GitLabProjectDetails | None,
     ) -> tuple[GitLabSyncTarget, list[GitLabMember] | None]:
         """Everything this sync asks GitLab for: the owning group, and the members it holds."""
-        target = await self._resolve_sync_target_group(gitlab_project_id, gitlab_project_path, gitlab_project_data)
+        project = await self.get_project_details(gitlab_project_id)
+        target = await self._resolve_sync_target_group(gitlab_project_id, gitlab_project_path, project)
         if target.group is None:
             return target, None
         members = await self.get_group_members(target.group.id)
@@ -739,12 +735,16 @@ class GitLabService:
         db: AsyncIOMotorDatabase,
         gitlab_project_id: int,
         gitlab_project_path: str,
-        gitlab_project_data: GitLabProjectDetails | None = None,
-    ) -> GitLabTeamSyncResult:
+        *,
+        owner_budget: int = MAX_PROJECT_TEAMS,
+    ) -> TeamSyncResult:
         """Sync the GitLab group's members to a local Team and report which team owns the project.
 
         Undetermined on any failure: the owning group is what GitLab was asked for, and an
         unanswered question must not read as "this project has no GitLab owner".
+
+        ``owner_budget`` is how many owners the project has room for. Below one no team is created:
+        a team created for an ownership write that is then refused is a team nobody owns anything through.
 
         Never raises.
         """
@@ -756,9 +756,7 @@ class GitLabService:
                 # Only the reads are bounded: cancelling them costs nothing, while cancelling the
                 # write would leave the team half-refreshed for no gain.
                 async with asyncio.timeout(_GITLAB_RESOLUTION_TIMEOUT):
-                    target, members = await self._read_owning_group(
-                        gitlab_project_id, gitlab_project_path, gitlab_project_data
-                    )
+                    target, members = await self._read_owning_group(gitlab_project_id, gitlab_project_path)
             except TimeoutError:
                 logger.warning(
                     "Resolving the owning group of project_id=%s (%s) took longer than %.0fs; "
@@ -767,39 +765,37 @@ class GitLabService:
                     gitlab_project_path,
                     _GITLAB_RESOLUTION_TIMEOUT,
                 )
-                return GitLabTeamSyncResult(None)
+                return TeamSyncResult(None)
 
             if not target.determined:
-                return GitLabTeamSyncResult(None)
+                return TeamSyncResult(None)
             if target.group is None:
-                return GitLabTeamSyncResult([])
+                return TeamSyncResult([])
 
             group_id, group_path = target.group
-            team_name = _auto_team_name(group_path)
+            # Only by the (instance, group) key: two instances can each carry a group of the same path.
+            existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, self._instance_id, group_id)
 
             if members is None:
                 logger.warning(
-                    f"Failed to fetch members for group '{team_name}' (group_id={group_id}) "
-                    f"while syncing project_id={gitlab_project_id}. Skipping member sync."
+                    "Failed to fetch members for GitLab group '%s' (group_id=%d) while syncing project_id=%s; "
+                    "its team keeps its members, and without a team the owner stays undetermined.",
+                    group_path,
+                    group_id,
+                    gitlab_project_id,
                 )
-                # Match ONLY by the (instance, group) composite key. A name-based fallback
-                # is unsafe: two instances owning a same-path group would collide cross-tenant.
-                team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, self._instance_id, group_id)
-                if team:
-                    return GitLabTeamSyncResult([str(team["_id"])])
-                logger.warning(
-                    f"No existing team for group '{team_name}' (group_id={group_id}); "
-                    f"the owner of project_id={gitlab_project_id} stays undetermined."
-                )
-                return GitLabTeamSyncResult(None)
+                return TeamSyncResult([str(existing_team["_id"])] if existing_team else None)
 
-            # Match ONLY by the (instance, group) composite key (see the failed-fetch branch above).
-            existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, self._instance_id, group_id)
-            team_members = await self._resolve_group_members(members, user_repo, team_name, group_id)
-            team_id = await self._upsert_team_with_members(team_repo, existing_team, group_id, group_path, team_members)
-            # No team and none creatable is an answer, not a failure: the group's members are all
-            # strangers here, so nothing in Dependency Control owns the project.
-            return GitLabTeamSyncResult([team_id] if team_id else [])
+            if existing_team is None and owner_budget < 1:
+                logger.warning(
+                    "Project_id=%s has no room for another owner; no team is created for GitLab group '%s'.",
+                    gitlab_project_id,
+                    group_path,
+                )
+                return TeamSyncResult(None)
+
+            team_members = await self._resolve_group_members(members, user_repo, group_path, group_id)
+            return await self._upsert_team_with_members(team_repo, existing_team, group_id, group_path, team_members)
 
         except Exception as e:
             logger.exception(
@@ -809,4 +805,4 @@ class GitLabService:
                 type(e).__name__,
                 e,
             )
-            return GitLabTeamSyncResult(None)
+            return TeamSyncResult(None)

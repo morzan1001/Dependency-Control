@@ -6,6 +6,7 @@ from typing import Any, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, team_binding_key
 from app.models.team import Team
@@ -210,6 +211,15 @@ class TeamRepository:
     async def create(self, team: Team) -> Team:
         await self.collection.insert_one(team.model_dump(by_alias=True))
         return team
+
+    async def create_bound(self, team: Team) -> dict[str, Any] | None:
+        """The team as stored: this one, or the one a concurrent sync created for the same binding first."""
+        document = team.model_dump(by_alias=True)
+        try:
+            await self.collection.insert_one(document)
+        except DuplicateKeyError:
+            return await self.get_raw_by_binding_key(team.bindings[0].key)
+        return document
 
     async def update(self, team_id: str, update_data: dict[str, Any]) -> Team | None:
         await self.collection.update_one({"_id": team_id}, {"$set": update_data})

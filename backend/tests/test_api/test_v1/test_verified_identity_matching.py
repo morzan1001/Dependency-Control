@@ -21,7 +21,7 @@ from app.services.github import GitHubService
 from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
-from tests.mocks.gitlab import make_gitlab_instance, make_project_details
+from tests.mocks.gitlab import make_gitlab_instance, make_project_details, sync_team
 
 _NOT_FOUND = 404
 _TIMESTAMP = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -228,11 +228,12 @@ class TestGitLabTeamSyncWithoutListedEmails:
             patch.object(service, "get_group_members", new=AsyncMock(return_value=listing)),
             patch.object(service, "_api_get", new=profile_read),
         ):
-            result = await service.sync_team_from_gitlab(
+            result = await sync_team(
+                service,
                 db=db,
                 gitlab_project_id=100,
                 gitlab_project_path="corp/proj",
-                gitlab_project_data=make_project_details(namespace_id=42, namespace_path="corp"),
+                project_details=make_project_details(namespace_id=42, namespace_path="corp"),
             )
         return result, profile_read
 

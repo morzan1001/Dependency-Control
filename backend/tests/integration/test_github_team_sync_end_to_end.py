@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.constants import TEAM_SOURCE_GITHUB, team_source
-from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
+from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember, TeamSyncResult
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubService, GitHubTeamSyncResult
+from app.services.github import GitHubService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 
@@ -76,7 +76,7 @@ async def _assert_the_admin_lands_in_the_bound_team(db) -> None:
     with org_reads, check_reads, member_reads, map_reads:
         result = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
-    assert result == GitHubTeamSyncResult(["t-1"])
+    assert result == TeamSyncResult(["t-1"])
     team = await _binding_holder(repo, "gh-1", 4711)
     assert team["name"] == "Payments Guild"
     assert team["bindings"][0]["slug"] == "payments"
@@ -97,7 +97,7 @@ async def _assert_an_unbound_github_group_becomes_a_team(db) -> None:
 
     assert await repo.count({}) == 1
     team = await _binding_holder(repo, "gh-1", 9000)
-    assert result == GitHubTeamSyncResult([team["_id"]])
+    assert result == TeamSyncResult([team["_id"]])
     assert team["name"] == "GitHub Team: acme/platform"
     assert (team["bindings"][0]["org"], team["bindings"][0]["slug"]) == ("acme", "platform")
     assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
@@ -140,7 +140,7 @@ async def _assert_a_team_of_the_same_name_is_left_alone(db) -> None:
     created = await _binding_holder(repo, "gh-1", 9000)
     assert created["_id"] != "t-llama"
     assert created["name"] == "GitHub Team: acme/team-shangri-llama"
-    assert result == GitHubTeamSyncResult([created["_id"]])
+    assert result == TeamSyncResult([created["_id"]])
 
     squatted = await repo.get_raw_by_id("t-llama")
     assert squatted["bindings"] == []
@@ -160,17 +160,17 @@ async def _assert_a_cleared_binding_stays_cleared(db) -> None:
 
     with org_reads, check_reads, member_reads, map_reads:
         owned = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
-        assert owned == GitHubTeamSyncResult(["t-platform"])
+        assert owned == TeamSyncResult(["t-platform"])
         assert await repo.remove_binding_for_instance("t-platform", "gh-1")
         result = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
     assert (await repo.get_raw_by_id("t-platform"))["bindings"] == []
     created = await _binding_holder(repo, "gh-1", 9000)
     assert created["_id"] != "t-platform"
-    assert result == GitHubTeamSyncResult([created["_id"]])
+    assert result == TeamSyncResult([created["_id"]])
 
 
-async def _sync_against_the_existing_team(db, existing: Team) -> tuple[GitHubTeamSyncResult, TeamRepository]:
+async def _sync_against_the_existing_team(db, existing: Team) -> tuple[TeamSyncResult, TeamRepository]:
     repo = TeamRepository(db)
     await repo.create(existing)
     service = _service()
@@ -190,7 +190,7 @@ async def _assert_a_team_bound_to_another_instance_keeps_only_that_binding(db) -
 
     created = await _binding_holder(repo, "gh-1", 9000)
     assert created["_id"] != "t-elsewhere"
-    assert result == GitHubTeamSyncResult([created["_id"]])
+    assert result == TeamSyncResult([created["_id"]])
     assert _binding_keys(await repo.get_raw_by_id("t-elsewhere")) == ["github:gh-2:1234"]
 
 
@@ -202,7 +202,7 @@ async def _assert_a_team_this_instance_already_holds_is_not_stolen(db) -> None:
 
     created = await _binding_holder(repo, "gh-1", 9000)
     assert created["name"] == "GitHub Team: acme/platform"
-    assert result == GitHubTeamSyncResult([created["_id"]])
+    assert result == TeamSyncResult([created["_id"]])
 
     untouched = await repo.get_raw_by_id("t-held")
     assert _binding_keys(untouched) == ["github:gh-1:1234"]
@@ -221,7 +221,7 @@ async def _assert_the_group_gets_one_team_however_many_answer_to_its_name(db) ->
         result = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
     created = await _binding_holder(repo, "gh-1", 9000)
-    assert result == GitHubTeamSyncResult([created["_id"]])
+    assert result == TeamSyncResult([created["_id"]])
     assert await repo.count({}) == 3
     assert (await repo.get_raw_by_id("t-free"))["bindings"] == []
     assert _binding_keys(await repo.get_raw_by_id("t-held")) == ["github:gh-1:1234"]
@@ -235,7 +235,7 @@ async def _assert_a_team_synced_from_gitlab_gains_no_github_binding(db) -> None:
     )
 
     created = await _binding_holder(repo, "gh-1", 9000)
-    assert result == GitHubTeamSyncResult([created["_id"]])
+    assert result == TeamSyncResult([created["_id"]])
     assert _binding_keys(await repo.get_raw_by_id("t-gitlab")) == ["gitlab:gl-1:77"]
 
 
@@ -266,7 +266,7 @@ async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
     with org_reads, check_reads, member_reads, map_reads:
         result = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
-    assert result == GitHubTeamSyncResult(["t-1"])
+    assert result == TeamSyncResult(["t-1"])
     assert await repo.count({}) == 2
 
     team = await _binding_holder(repo, "gh-1", 4711)
@@ -303,7 +303,7 @@ async def _assert_the_last_resolvable_member_leaving_loses_the_team(db) -> None:
     with org_reads, check_reads, member_reads, map_reads:
         result = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
-    assert result == GitHubTeamSyncResult(["t-1"])
+    assert result == TeamSyncResult(["t-1"])
     team = await _binding_holder(repo, "gh-1", 4711)
     assert team["members"] == [{"user_id": "u-manual", "role": "admin", "source": "manual"}]
 
@@ -319,7 +319,7 @@ async def _assert_the_organisation_case_does_not_decide(db) -> None:
     with org_reads, check_reads, member_reads, map_reads:
         result = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
-    assert result == GitHubTeamSyncResult(["t-1"])
+    assert result == TeamSyncResult(["t-1"])
     team = await _binding_holder(repo, "gh-1", 4711)
     assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
 
