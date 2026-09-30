@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from app.core.constants import get_severity_value
+from app.core.constants import max_severity
 from app.core.cve import advisory_ids, entry_cves
 from app.models.finding import Finding
 from app.schemas.finding import VulnerabilityEntry
@@ -45,8 +45,9 @@ def _merge_vuln_ids_and_severity(tv: dict[str, Any], source_entry: Vulnerability
     tv["id"] = _canonical_id(tv["id"], source_entry["id"])
     tv["aliases"] = sorted(all_ids - {tv["id"]})
 
-    if get_severity_value(source_entry.get("severity")) > get_severity_value(tv.get("severity")):
-        tv["severity"] = source_entry["severity"]
+    merged = max_severity(tv.get("severity"), source_entry.get("severity"))
+    if merged is not None:
+        tv["severity"] = merged
 
 
 def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
@@ -187,17 +188,16 @@ def merge_vulnerability_into_list(target_list: list[Any], source_entry: Vulnerab
     target_list.append(source_entry)
 
 
+def absorb_header(target: Finding, other: Finding, source: str | None = None) -> None:
+    """Fold other's scanners, severity and found_in (first-seen order) into target."""
+    target.scanners = sorted(set(target.scanners) | set(other.scanners))
+    target.severity = max_severity(target.severity, other.severity)
+    target.found_in = list(dict.fromkeys([*target.found_in, *other.found_in, *([source] if source else [])]))
+
+
 def merge_findings_data(target: Finding, source: Finding) -> None:
     """Merge data from source finding into target finding."""
-    target.scanners = sorted(set(target.scanners + source.scanners))
-
-    t_sev = get_severity_value(target.severity) or 0
-    s_sev = get_severity_value(source.severity) or 0
-    if s_sev > t_sev:
-        target.severity = source.severity
-
-    target.found_in = sorted(set(target.found_in + source.found_in))
-
+    absorb_header(target, source)
     target.aliases = sorted(set(target.aliases + source.aliases) | ({source.id} if source.id != target.id else set()))
 
     t_vulns_list = target.details.get("vulnerabilities", [])

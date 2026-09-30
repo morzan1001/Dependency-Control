@@ -25,6 +25,11 @@ def get_severity_value(severity: str | None) -> int:
     return SEVERITY_ORDER.get(severity.upper(), 0)
 
 
+def max_severity[S: str | None](*severities: S) -> S:
+    """The most severe label; the first one wins a tie."""
+    return max(severities, key=get_severity_value)
+
+
 def sort_by_severity(items: list, key: str = "severity", reverse: bool = True) -> list:
     """Sort a list of dicts (or objects) by severity, most severe first by default."""
     return sorted(

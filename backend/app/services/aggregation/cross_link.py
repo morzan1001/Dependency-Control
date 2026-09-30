@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.core.constants import get_severity_value
+from app.core.constants import max_severity
 from app.models.finding import Finding, FindingType
 from app.services.aggregation.versions import normalize_version
 
@@ -36,8 +36,7 @@ def _record_additional_type(finding: Finding, other: Finding) -> None:
     types: list[dict[str, str]] = finding.details.setdefault("additional_finding_types", [])
     for entry in types:
         if entry["type"] == other_type:
-            if get_severity_value(severity) > get_severity_value(entry["severity"]):
-                entry["severity"] = severity
+            entry["severity"] = max_severity(entry["severity"], severity)
             return
 
     types.append({"type": other_type, "severity": severity})

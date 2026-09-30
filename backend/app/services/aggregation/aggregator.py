@@ -8,7 +8,6 @@ from app.core.constants import (
     AGG_KEY_VULNERABILITY,
     MAX_CROSS_LINK_GROUP_SIZE,
     UNKNOWN_LICENSE_PATTERNS,
-    get_severity_value,
 )
 from app.models.finding import PACKAGE_FINDING_TYPES, Finding, FindingType, Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS
@@ -27,6 +26,7 @@ from app.services.component_identity import (
 )
 from app.services.aggregation.cross_link import cross_link_pair
 from app.services.aggregation.merging import (
+    absorb_header,
     merge_findings_data,
     merge_vulnerability_into_list,
     to_sast_aggregate,
@@ -78,7 +78,6 @@ def _package_key(finding: Finding) -> tuple[str, str]:
 class ResultAggregator:
     def __init__(self) -> None:
         self.findings: dict[str, Finding] = {}
-        self.alias_map: dict[str, str] = {}
         self._scorecard_cache: dict[str, dict[str, Any]] = {}
         self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
 
@@ -471,18 +470,11 @@ class ResultAggregator:
         self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: str | None
     ) -> None:
         """Merge a vulnerability finding into an existing aggregate."""
-        existing.scanners = sorted(set(existing.scanners + finding.scanners))
-
-        if get_severity_value(finding.severity) > get_severity_value(existing.severity):
-            existing.severity = finding.severity
-
+        absorb_header(existing, finding, source)
         vuln_list: list[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
         merge_vulnerability_into_list(vuln_list, vuln_entry)
         existing.details["vulnerabilities"] = vuln_list
         existing.description = ""
-
-        if source and source not in existing.found_in:
-            existing.found_in.append(source)
 
     def _add_vulnerability_finding(self, finding: Finding, source: str | None = None) -> None:
         comp_key, version_key = _package_key(finding)
@@ -537,11 +529,7 @@ class ResultAggregator:
         source: str | None,
     ) -> None:
         """Merge a quality finding into an existing aggregated finding."""
-        existing.scanners = sorted(set(existing.scanners + finding.scanners))
-
-        if get_severity_value(finding.severity) > get_severity_value(existing.severity):
-            existing.severity = finding.severity
-
+        absorb_header(existing, finding, source)
         quality_list: list[QualityEntry] = existing.details.get("quality_issues", [])
         existing_ids = {q.get("id") for q in quality_list}
         if finding.id not in existing_ids:
@@ -554,9 +542,6 @@ class ResultAggregator:
 
         if has_maintenance:
             existing.details["has_maintenance_issues"] = True
-
-        if source and source not in existing.found_in:
-            existing.found_in.append(source)
 
         update_quality_description(existing)
 
@@ -602,63 +587,26 @@ class ResultAggregator:
             found_in=[source] if source else [],
         )
 
-    def _lookup_existing_key(self, finding: Finding, package: str, lookup_key_id: str) -> str | None:
-        """Resolve an existing aggregate key for the finding via id or aliases."""
-        if lookup_key_id in self.alias_map:
-            return self.alias_map[lookup_key_id]
-        for alias in finding.aliases:
-            lookup_key_alias = f"{finding.type}:{package}:{alias}"
-            if lookup_key_alias in self.alias_map:
-                return self.alias_map[lookup_key_alias]
-        return None
-
     @staticmethod
-    def _merge_generic_into_existing(existing: Finding, finding: Finding, source: str | None) -> None:
+    def _merge_generic_into_existing(existing: Finding, finding: Finding) -> None:
         """Merge order-free: the side whose scanners sort first owns description and conflicting detail keys."""
         incoming_owns = min(finding.scanners, default="") < min(existing.scanners, default="")
-        existing.scanners = sorted(set(existing.scanners + finding.scanners))
-
-        if get_severity_value(finding.severity) > get_severity_value(existing.severity):
-            existing.severity = finding.severity
-
+        absorb_header(existing, finding)
         if incoming_owns:
             existing.details = {**existing.details, **finding.details}
             existing.description = finding.description
         else:
             existing.details = {**finding.details, **existing.details}
-
-        new_aliases = set(existing.aliases)
-        new_aliases.update(finding.aliases)
-        if finding.id != existing.id:
-            new_aliases.add(finding.id)
-        existing.aliases = sorted(new_aliases)
-
-        if source and source not in existing.found_in:
-            existing.found_in.append(source)
-
-    def _record_alias_map(self, finding: Finding, package: str, lookup_key_id: str, target_key: str) -> None:
-        """Record id and alias lookups for a finding pointing to target_key."""
-        self.alias_map[lookup_key_id] = target_key
-        for alias in finding.aliases:
-            k = f"{finding.type}:{package}:{alias}"
-            self.alias_map[k] = target_key
+        existing.aliases = sorted(set(existing.aliases) | set(finding.aliases))
 
     def _add_generic_finding(self, finding: Finding, source: str | None = None) -> None:
-        """Add a finding keyed by ``type:id:component:version``, merging on ID or alias match."""
+        """Add a finding keyed by ``type:id:component:version``, merging on an exact match of that key."""
         if source and source not in finding.found_in:
             finding.found_in.append(source)
 
         comp_key, version_key = _package_key(finding)
-        package = f"{comp_key}:{version_key}"
-        primary_key = f"{finding.type}:{finding.id}:{package}"
-        lookup_key_id = f"{finding.type}:{package}:{finding.id}"
-
-        existing_key = self._lookup_existing_key(finding, package, lookup_key_id)
-
-        if existing_key and existing_key in self.findings:
-            self._merge_generic_into_existing(self.findings[existing_key], finding, source)
-            self._record_alias_map(finding, package, lookup_key_id, existing_key)
-            return
-
-        self.findings[primary_key] = finding
-        self._record_alias_map(finding, package, lookup_key_id, primary_key)
+        key = f"{finding.type}:{finding.id}:{comp_key}:{version_key}"
+        if existing := self.findings.get(key):
+            self._merge_generic_into_existing(existing, finding)
+        else:
+            self.findings[key] = finding

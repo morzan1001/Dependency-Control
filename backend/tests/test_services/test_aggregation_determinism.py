@@ -196,3 +196,65 @@ class TestDetailConflictTieBreak:
         b = self._entry("CVE-2026-2", ["CVE-2026-1"], ["grype", "osv"], "1.0", "2026-02-02")
 
         assert _merge(a, b) == _merge(b, a)
+
+
+MAINTAINER_RISK = {
+    "maintainer_issues": [
+        {
+            "component": "left-pad",
+            "version": "1.0.0",
+            "purl": "pkg:npm/left-pad@1.0.0",
+            "risks": [{"type": "stale_package", "severity": "MEDIUM", "message": "No release in 1200 days"}],
+            "severity": "MEDIUM",
+        }
+    ]
+}
+
+
+def _crypto_result(locations: list[str]) -> dict:
+    from app.models.crypto_asset import CryptoAsset
+    from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+    from app.schemas.crypto_policy import CryptoRule
+    from app.services.analyzers.crypto.base import _build_finding_dedup
+
+    asset = CryptoAsset(
+        project_id="p",
+        scan_id="s",
+        bom_ref="crypto/algorithm/md5",
+        name="MD5",
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.HASH,
+        occurrence_locations=locations,
+    )
+    rule = CryptoRule(
+        rule_id="nist-131a-md5",
+        name="MD5 is disallowed",
+        description="MD5 is broken",
+        finding_type="crypto_weak_algorithm",
+        default_severity="HIGH",
+        source="nist-sp-800-131a",
+    )
+    return {"findings": [_build_finding_dedup(asset, [rule])]}
+
+
+class TestMultiSbomArrivalOrder:
+    @staticmethod
+    def _identity(sources: list[str]) -> tuple[str, str, str]:
+        from app.services.analytics.findings_delta import finding_identity_key
+
+        aggregator = ResultAggregator()
+        for source in sources:
+            aggregator.aggregate("maintainer_risk", MAINTAINER_RISK, source=source)
+        [finding] = aggregator.get_findings()
+        return finding_identity_key(finding.model_dump())
+
+    def test_sbom_order_does_not_change_a_quality_finding_identity(self):
+        assert self._identity(["sbom-a", "sbom-b"]) == self._identity(["sbom-b", "sbom-a"])
+
+    def test_a_merged_crypto_finding_keeps_both_sboms_occurrence_paths(self):
+        aggregator = ResultAggregator()
+        aggregator.aggregate("crypto_weak_algorithm", _crypto_result(["src/a.py"]), source="sbom-a")
+        aggregator.aggregate("crypto_weak_algorithm", _crypto_result(["src/b.py"]), source="sbom-b")
+        [finding] = aggregator.get_findings()
+
+        assert finding.found_in == ["src/a.py", "sbom-a", "src/b.py", "sbom-b"]
