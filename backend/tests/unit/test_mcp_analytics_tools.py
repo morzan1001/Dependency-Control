@@ -92,13 +92,23 @@ async def test_mcp_get_crypto_trends_empty_range(db):
 
 
 @pytest.mark.asyncio
-async def test_a_repeated_trend_question_is_answered_from_the_cache_for_the_rest_of_the_day(db):
+async def test_a_repeated_trend_question_is_answered_from_the_cache_for_the_rest_of_the_day(db, monkeypatch):
+    from app.services.analytics.crypto_trends import CryptoTrendService
     from app.services.chat.tools import get_crypto_trends
 
-    first = await get_crypto_trends(db, project_id="p", metric="total_crypto_findings", days=30)
-    again = await get_crypto_trends(db, project_id="p", metric="total_crypto_findings", days=30)
+    builds = 0
+    build = CryptoTrendService._build
 
-    assert again["cache_hit"] is True
+    async def counting_build(self, *args):
+        nonlocal builds
+        builds += 1
+        return await build(self, *args)
+
+    monkeypatch.setattr(CryptoTrendService, "_build", counting_build)
+    first = await get_crypto_trends(db, project_id="p", metric="total_crypto_findings", days=30)
+    await get_crypto_trends(db, project_id="p", metric="total_crypto_findings", days=30)
+
+    assert builds == 1
     assert first["range_end"] > datetime.now(timezone.utc)
     assert first["range_end"].timetz() == time(0, tzinfo=timezone.utc)
     assert first["range_end"] - first["range_start"] == timedelta(days=30)
