@@ -829,14 +829,16 @@ about the new line the first day; it is not an error state.
 
 ## 9. Teil B — the ad-hoc analyze endpoint
 
-`POST /api/v1/analyze` runs the analysis pipeline in memory and stores nothing. Three facts decide
-whether it works after the rollout.
+`POST /api/v1/analyze` queues an analysis for the analysis workers and answers 202 with a `job_id`;
+`GET /api/v1/analyze/{job_id}` answers 202 until the result is ready. The posted input and the result
+are kept in GridFS for 24 hours. Three facts decide whether it works after the rollout.
 
 ### Nothing has to precede the deploy
 
 Ad-hoc keys live in the unified `api_keys` collection, alongside the MCP ones — a key names the
-surfaces it is good for. Its three indexes are created by startup's `create_indexes`, so unlike §1
-there is no index to pre-build and no migration to run.
+surfaces it is good for. Its three indexes and the `adhoc_jobs` indexes, including the TTL index on
+`expires_at`, are created by startup's `create_indexes`, so unlike §1 there is no index to pre-build
+and no migration to run.
 
 ### `analyze:adhoc` must be granted explicitly, or nobody can use it
 
@@ -860,27 +862,20 @@ db.users.updateMany(
 ```
 
 Verify by minting a key through `POST /api/v1/api-keys/` with `{"surfaces": ["adhoc"], …}` as one of
-them, then calling `POST /api/v1/analyze` with it. Minting is gated on the same permission the
-request is: a holder without `analyze:adhoc` is refused the key at **403**, naming the surface. The
-permission is re-checked on the owner at every request, so removing it later revokes every key that
-identity holds: `POST /analyze` then answers 403, not 401.
-
-### The rate limiter fails open
-
-The 5/min and 60/hour windows live in Redis. On a `RedisError` the endpoint **logs a warning and
-allows the request** — a Redis incident silently removes the limit rather than removing the
-endpoint. That is the deliberate trade (an outage should not stop analyses), but it means a Redis
-alert is also an ad-hoc rate-limit alert. Watch for `adhoc: Redis unavailable for rate limiting`
-in the backend logs.
+them, then calling `POST /api/v1/analyze` with it and polling the `GET` it names. Minting is gated on
+the same permission the request is: a holder without `analyze:adhoc` is refused the key at **403**,
+naming the surface. The permission is re-checked on the owner at every request, so removing it later
+revokes every key that identity holds: `POST /analyze` then answers 403, not 401.
 
 ### Why the ordering with §0 step 10 matters
 
-A CLI scanner started by an ad-hoc request used to outlive the request's 504: `cli_timeout` is
-awaited inside the coroutine the deadline cancels, so cancelling the request cancelled the only
-ceiling the scanner had, and each retry started another one. Measured before the fix: four requests,
-four `sleep`-equivalent scanners still alive and parented to the API process 20 s after the last
-504. The analyzer now kills and reaps its subprocess on cancellation. Granting `analyze:adhoc`
-against an older image hands out that behaviour, which is why step 10 comes after the deploy.
+On an older image a cancelled ad-hoc run leaves its CLI scanner running: `cli_timeout` is awaited
+inside the coroutine the cancellation stops, so cancelling it cancelled the only ceiling the scanner
+had, and each retry started another one. Measured before the fix: four cancelled requests left four
+`sleep`-equivalent scanners alive and parented to the API process 20 s later. The analyzer now kills
+and reaps its subprocess on cancellation, which a worker shutdown still causes. Granting
+`analyze:adhoc` against an older image hands out that behaviour, which is why step 10 comes after
+the deploy.
 
 ---
 

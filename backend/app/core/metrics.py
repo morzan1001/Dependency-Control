@@ -525,13 +525,6 @@ chat_rate_limited_total = Counter(
     "Rate-limited chat requests",
 )
 
-# Its own series rather than a label on the chat counter: the Chat AI Assistant dashboard sums the
-# chat counter unfiltered, so a shared metric would show ad-hoc denials as chat denials.
-adhoc_rate_limited_total = Counter(
-    "dc_adhoc_rate_limited_total",
-    "Rate-limited ad-hoc analysis requests",
-)
-
 uptime_seconds = Gauge(
     "uptime_seconds",
     "Application uptime in seconds",

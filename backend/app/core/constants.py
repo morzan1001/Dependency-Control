@@ -1117,25 +1117,9 @@ RELEASE_FLAG_RECONCILE_BATCH_SIZE = 1000
 # Orphan reaper: only delete S3 objects older than this without metadata
 ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 
-# CBOM / Crypto
-ADHOC_MAX_FINDINGS: int = 5000
-ADHOC_DEADLINE_SECONDS: float = 180.0
-ADHOC_RATE_LIMIT_PER_MINUTE: int = 5
-ADHOC_RATE_LIMIT_PER_HOUR: int = 60
+ADHOC_JOB_TTL_SECONDS: int = 24 * 3600
 
-# Each limit bounds one shape a synchronous stage walks, counted in linear time before it runs:
-# a deadline cannot interrupt those stages.
-ADHOC_MAX_SBOM_COMPONENTS: int = 10_000
-# ``properties``, ``cpes``, ``locations``, ``evidence.occurrences`` and SPDX ``externalRefs``.
-ADHOC_MAX_SBOM_EVIDENCE_ENTRIES: int = 20_000
-# CycloneDX ``dependencies`` with their ``dependsOn`` refs, SPDX ``relationships`` and Syft
-# ``artifactRelationships``: 25 per component at the component limit, and 240 000 over
-# 10 000 components parse in 0.1 s.
-ADHOC_MAX_SBOM_GRAPH_ENTRIES: int = 250_000
-ADHOC_MAX_SCANNER_FINDINGS: int = 5_000
-# Counted by callgraph_entry_count. Each vulnerability the usage index misses scans every
-# import pair: 5 000 such findings over 50 000 pairs take about 20 s.
-ADHOC_MAX_CALLGRAPH_ENTRIES: int = 50_000
+# CBOM / Crypto
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
 # Per process; at ~55 MiB per saturated report, 2 slots x 2 workers stay near 220 MiB of the 2 GiB pod limit.
 COMPLIANCE_REPORT_SLOTS: int = 2

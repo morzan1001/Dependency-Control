@@ -592,7 +592,6 @@ async def _admit_unified_key(
     token: str,
     surface: str,
     permission: str,
-    touch: bool,
 ) -> tuple[User, dict[str, Any]] | None:
     """The (owner, key document) pair behind a unified token, or None when no unified key answers."""
     key_repo = ApiKeyRepository(db)
@@ -613,7 +612,7 @@ async def _admit_unified_key(
     _require_permission(user, surface, permission)
 
     last_used_at = key_doc.get("last_used_at")
-    if touch and (
+    if (
         not isinstance(last_used_at, datetime)
         or (datetime.now(timezone.utc) - last_used_at).total_seconds() >= API_KEY_LAST_USED_RESOLUTION_SECONDS
     ):
@@ -621,11 +620,10 @@ async def _admit_unified_key(
     return user, key_doc
 
 
-def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Awaitable[tuple[User, dict[str, Any]]]]:
+def require_api_key(surface: str) -> Callable[..., Awaitable[tuple[User, dict[str, Any]]]]:
     """Build the dependency guarding one key-authenticated surface: it resolves the Bearer token to
-    its (owner, key document) pair and admits the caller only when the key names the surface and the
-    owner still holds that surface's permission; ``touch`` stamps the key's last use, which a
-    surface promising to persist nothing leaves off."""
+    its (owner, key document) pair, admits the caller only when the key names the surface and the
+    owner still holds that surface's permission, and stamps the key's last use."""
     permission = SURFACE_PERMISSIONS[surface]
 
     async def dependency(
@@ -633,7 +631,7 @@ def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Await
         db: AsyncIOMotorDatabase = Depends(get_database),
     ) -> tuple[User, dict[str, Any]]:
         token = _bearer_token(authorization, surface)
-        admitted = await _admit_unified_key(db, token, surface, permission, touch)
+        admitted = await _admit_unified_key(db, token, surface, permission)
         if admitted is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_MSG_UNRESOLVED_KEY)
         return admitted
@@ -650,7 +648,7 @@ AdhocKeyDep = Annotated[
 ]
 McpKeyDep = Annotated[
     tuple[User, dict[str, Any]],
-    Depends(require_api_key(API_KEY_SURFACE_MCP, touch=True)),
+    Depends(require_api_key(API_KEY_SURFACE_MCP)),
 ]
 ProjectIngestDep = Annotated[Project, Depends(get_project_for_ingest)]
 SystemManagerDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]

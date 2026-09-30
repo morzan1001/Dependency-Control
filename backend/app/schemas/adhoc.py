@@ -1,16 +1,12 @@
-"""Request and response models for the stateless ad-hoc analysis endpoint."""
+"""Request and response models for the ad-hoc analysis endpoint."""
 
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.constants import ScanStatus
 from app.models.stats import Stats
 from app.schemas.project import LicensePolicySchema
-
-MAX_ADHOC_SBOMS: int = 10
-# Above the 18 names in the analyzer registry; a literal because importing it here would
-# construct every analyzer class at schema import time.
-MAX_ADHOC_ANALYZERS: int = 25
 
 
 class AdhocScannerPayloads(BaseModel):
@@ -33,13 +29,12 @@ class AdhocScannerPayloads(BaseModel):
 class AdhocAnalyzeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    sboms: list[dict[str, Any]] = Field(default_factory=list, max_length=MAX_ADHOC_SBOMS)
+    sboms: list[dict[str, Any]] = Field(default_factory=list)
     scanners: AdhocScannerPayloads | None = None
-    analyzers: list[str] | None = Field(default=None, max_length=MAX_ADHOC_ANALYZERS)
+    analyzers: list[str] | None = None
     callgraph: dict[str, Any] | None = None
     apply_global_waivers: bool = True
     license_policy: LicensePolicySchema | None = None
-    format: Literal["json", "html"] = "json"
 
     @model_validator(mode="after")
     def _require_input(self) -> "AdhocAnalyzeRequest":
@@ -61,18 +56,8 @@ class AnalyzerReport(BaseModel):
     # Defects in the posted inputs, keyed by input label rather than analyzer name.
     skipped_inputs: dict[str, str] = Field(default_factory=dict)
     # What a stage did that its findings do not show: where the posted data went, which
-    # policy graded it. Storing nothing is not the same as sending nothing.
+    # policy graded it.
     notes: dict[str, str] = Field(default_factory=dict)
-
-
-class AdhocTruncation(BaseModel):
-    """What the findings ceiling cut. On a security endpoint "something was dropped" is not an
-    answer: a caller has to be able to see whether a CRITICAL or a whole finding type went."""
-
-    limit: int
-    dropped: int
-    dropped_by_type: dict[str, int] = Field(default_factory=dict)
-    dropped_by_severity: dict[str, int] = Field(default_factory=dict)
 
 
 class AdhocAnalyzeResponse(BaseModel):
@@ -85,5 +70,8 @@ class AdhocAnalyzeResponse(BaseModel):
     analyzers: AnalyzerReport = Field(default_factory=AnalyzerReport)
     waivers_applied: Literal["global", "none"] = "none"
     waived_count: int = 0
-    # Null when the whole result is returned, so a caller never has to read a count to find out.
-    truncated: AdhocTruncation | None = None
+
+
+class AdhocJob(BaseModel):
+    job_id: str
+    status: ScanStatus

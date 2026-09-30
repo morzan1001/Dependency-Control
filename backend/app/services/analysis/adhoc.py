@@ -1,8 +1,7 @@
-"""Stateless ad-hoc analysis: the analysis pipeline without a scan, a project or a write."""
+"""Ad-hoc analysis: the analysis pipeline without a scan, a project or a write."""
 
 import asyncio
 import logging
-from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -11,12 +10,6 @@ from pydantic import BaseModel, ValidationError
 
 from app.core.cache import suppress_cache_writes
 from app.core.constants import (
-    ADHOC_MAX_CALLGRAPH_ENTRIES,
-    ADHOC_MAX_FINDINGS,
-    ADHOC_MAX_SBOM_COMPONENTS,
-    ADHOC_MAX_SBOM_EVIDENCE_ENTRIES,
-    ADHOC_MAX_SBOM_GRAPH_ENTRIES,
-    ADHOC_MAX_SCANNER_FINDINGS,
     DEPS_DEV_API_URL,
     EOL_API_URL,
     GITHUB_API_URL,
@@ -26,13 +19,12 @@ from app.core.constants import (
     OSV_VULN_API_URL,
     PYPI_API_URL,
     TOP_PYPI_PACKAGES_URL,
-    get_severity_value,
 )
 from app.models.crypto_asset import CryptoAsset
 from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
-from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
+from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
 from app.schemas.bearer import BearerFinding
 from app.schemas.crypto_policy import RULE_DRIVEN_FINDING_TYPES
 from app.schemas.enrichment import VulnerabilityEnrichment
@@ -59,7 +51,7 @@ from app.services.reachability_enrichment import (
     enrich_findings_with_reachability,
 )
 from app.services.recommendations import recommendation_engine
-from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, merge_duplicate_dependencies, parse_sbom
+from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.waivers.matching import (
     MatchFinding,
     apply_waivers_to_findings,
@@ -73,14 +65,9 @@ from app.services.waivers.matching import (
 
 logger = logging.getLogger(__name__)
 
-# One ad-hoc analysis per pod: the two in-process analysis workers must not be starved.
-ADHOC_SLOTS = asyncio.Semaphore(1)
-
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
 _PARTIAL_COVERAGE = "partial coverage: {reason}"
-# What a record missing the field the cut groups by is counted under.
-_UNKNOWN_BUCKET = "UNKNOWN"
 _ENRICHMENT = "epss_kev"
 _REACHABILITY = "reachability"
 _VULNERABILITY = "vulnerability"
@@ -175,7 +162,7 @@ def _hosts(*urls: str) -> str:
 
 _COORDINATES_SENT = "package coordinates from the posted SBOMs are sent to {hosts}"
 
-# What a stage that ran does not otherwise reveal. Storing nothing is not sending nothing, so
+# What a stage that ran does not otherwise reveal. Keeping a result is not sending it, so
 # every stage that puts something the caller posted on the wire is named here, and the crypto
 # stage says it grades against the shipped seeds because it never reads this installation's policy.
 _STAGE_NOTES: dict[str, str] = {
@@ -224,65 +211,6 @@ _WAIVERS_GLOBAL = "global"
 _WAIVERS_NONE = "none"
 
 
-class AdhocInputTooLarge(Exception):
-    """The request is shaped so that a synchronous stage would run superlinearly over it."""
-
-
-# Where each SBOM dialect keeps its component list.
-_COMPONENT_KEYS: tuple[str, ...] = ("components", "packages", "artifacts")
-# Per-component lists the parser walks; ``externalRefs`` is where SPDX keeps its CPEs.
-_EVIDENCE_LIST_KEYS: tuple[str, ...] = ("properties", "cpes", "locations", "externalRefs")
-# Where each SBOM dialect keeps its dependency graph.
-_GRAPH_KEYS: tuple[str, ...] = ("dependencies", "relationships", "artifactRelationships")
-
-_TOO_MANY_COMPONENTS = "{count} components exceeds the ad-hoc limit of {limit}"
-_TOO_MANY_EVIDENCE = "{count} component evidence entries exceeds the ad-hoc limit of {limit}"
-_TOO_MANY_GRAPH_ENTRIES = "{count} dependency-graph entries exceeds the ad-hoc limit of {limit}"
-_TOO_MANY_SCANNER_FINDINGS = "{count} posted scanner findings exceeds the ad-hoc limit of {limit}"
-_TOO_MANY_CALLGRAPH_ENTRIES = "{count} callgraph entries exceeds the ad-hoc limit of {limit}"
-
-
-def _components_of(sbom: dict[str, Any], depth: int = 0) -> list[dict[str, Any]]:
-    """Every component the parser will flatten, nested ones included.
-
-    Bounded at the parser's own depth, because everything below it the parser counts and drops
-    without ever reaching the stage this ceiling protects. One wrapper component is otherwise
-    enough to walk a document of any size past both counts.
-    """
-    entries: list[dict[str, Any]] = []
-    if depth >= MAX_COMPONENT_NESTING_DEPTH:
-        return entries
-    for key in _COMPONENT_KEYS:
-        value = sbom.get(key)
-        if not isinstance(value, list):
-            continue
-        for entry in value:
-            if not isinstance(entry, dict):
-                continue
-            entries.append(entry)
-            entries.extend(_components_of(entry, depth + 1))
-    return entries
-
-
-def _evidence_entries(component: dict[str, Any]) -> int:
-    total = sum(len(component[key]) for key in _EVIDENCE_LIST_KEYS if isinstance(component.get(key), list))
-    evidence = component.get("evidence")
-    occurrences = evidence.get("occurrences") if isinstance(evidence, dict) else None
-    return total + (len(occurrences) if isinstance(occurrences, list) else 0)
-
-
-def _graph_entries(sbom: dict[str, Any]) -> int:
-    """The graph entries the parser walks, each CycloneDX ``dependsOn`` ref included."""
-    total = sum(len(sbom[key]) for key in _GRAPH_KEYS if isinstance(sbom.get(key), list))
-    dependencies = sbom.get("dependencies")
-    for entry in dependencies if isinstance(dependencies, list) else []:
-        depends_on = entry.get("dependsOn") if isinstance(entry, dict) else None
-        # A string is walked character by character, one edge per character.
-        if isinstance(depends_on, list | str):
-            total += len(depends_on)
-    return total
-
-
 def _posted_entries(name: str, payload: dict[str, Any], key: str) -> list[Any] | None:
     """The entry list under `key`, or None when the payload carries no readable list there.
 
@@ -294,116 +222,6 @@ def _posted_entries(name: str, payload: dict[str, Any], key: str) -> list[Any] |
     if name == _BEARER and isinstance(container, dict):
         return [entry for items in container.values() if isinstance(items, list) for entry in items]
     return None
-
-
-def _posted_finding_count(name: str, payload: dict[str, Any]) -> int:
-    total = 0
-    for key in _SCANNER_RESULT_KEYS[name]:
-        items = _posted_entries(name, payload, key)
-        if items is None:
-            continue
-        total += len(items)
-        # KICS nests one entry per hit inside the query that produced it.
-        total += sum(
-            len(item["files"]) for item in items if isinstance(item, dict) and isinstance(item.get("files"), list)
-        )
-    return total
-
-
-def _posted_scanner_findings(request: AdhocAnalyzeRequest) -> int:
-    if request.scanners is None:
-        return 0
-    return sum(
-        _posted_finding_count(name, payload)
-        for name, payload in request.scanners.model_dump(exclude_none=True).items()
-        if payload
-    )
-
-
-def _posted_callgraph_entries(request: AdhocAnalyzeRequest) -> int:
-    from app.api.v1.helpers.callgraph import callgraph_entry_count
-
-    return callgraph_entry_count(request.callgraph) if request.callgraph else 0
-
-
-def _reject_unaffordable_input(request: AdhocAnalyzeRequest) -> None:
-    """Refuse a request whose shape would make a synchronous stage too expensive to run.
-
-    The parse, the cross-linking and the callgraph lookups run to completion once started, on
-    a worker thread or not, so no deadline can interrupt them. Every count is linear, and it
-    happens before any of them run.
-    """
-    components = [component for sbom in request.sboms for component in _components_of(sbom)]
-    limits = (
-        (len(components), ADHOC_MAX_SBOM_COMPONENTS, _TOO_MANY_COMPONENTS),
-        (sum(map(_evidence_entries, components)), ADHOC_MAX_SBOM_EVIDENCE_ENTRIES, _TOO_MANY_EVIDENCE),
-        (sum(map(_graph_entries, request.sboms)), ADHOC_MAX_SBOM_GRAPH_ENTRIES, _TOO_MANY_GRAPH_ENTRIES),
-        (_posted_scanner_findings(request), ADHOC_MAX_SCANNER_FINDINGS, _TOO_MANY_SCANNER_FINDINGS),
-        (_posted_callgraph_entries(request), ADHOC_MAX_CALLGRAPH_ENTRIES, _TOO_MANY_CALLGRAPH_ENTRIES),
-    )
-    for count, limit, message in limits:
-        if count > limit:
-            raise AdhocInputTooLarge(message.format(count=count, limit=limit))
-
-
-def _by_descending_severity(records: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
-    buckets: dict[str, list[dict[str, Any]]] = {}
-    for record in records:
-        buckets.setdefault(str(record.get("severity") or _UNKNOWN_BUCKET), []).append(record)
-    return sorted(buckets.items(), key=lambda bucket: get_severity_value(bucket[0]), reverse=True)
-
-
-def _fair_share(bucket: list[dict[str, Any]], budget: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Take up to ``budget`` records of one severity, round-robin over the finding types present.
-
-    Equally severe findings are equally worth returning, so the type that posted thousands takes
-    its share rather than the whole ceiling.
-    """
-    by_type: dict[str, deque[dict[str, Any]]] = {}
-    for record in bucket:
-        by_type.setdefault(str(record.get("type")), deque()).append(record)
-
-    kept: list[dict[str, Any]] = []
-    queues = list(by_type.values())
-    while queues and len(kept) < budget:
-        for queue in list(queues):
-            if len(kept) >= budget:
-                break
-            kept.append(queue.popleft())
-            if not queue:
-                queues.remove(queue)
-    return kept, [record for queue in queues for record in queue]
-
-
-def _counted(records: list[dict[str, Any]], field: str) -> dict[str, int]:
-    counts: Counter[str] = Counter(str(record.get(field) or _UNKNOWN_BUCKET) for record in records)
-    return dict(sorted(counts.items()))
-
-
-def _cap_findings(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], AdhocTruncation | None]:
-    """Keep the most severe findings when the set has to be cut, and say what went.
-
-    Severity decides first. Within one severity the aggregator's own order decides nothing: it
-    orders by type name, where ``vulnerability`` sorts last, so a stable sort at the ceiling
-    drops the CVE and keeps five thousand equally severe secrets.
-    """
-    if len(records) <= ADHOC_MAX_FINDINGS:
-        return records, None
-    logger.warning("adhoc: capping %d findings at %d", len(records), ADHOC_MAX_FINDINGS)
-
-    kept: list[dict[str, Any]] = []
-    dropped: list[dict[str, Any]] = []
-    for _severity, bucket in _by_descending_severity(records):
-        taken, left = _fair_share(bucket, ADHOC_MAX_FINDINGS - len(kept))
-        kept.extend(taken)
-        dropped.extend(left)
-
-    return kept, AdhocTruncation(
-        limit=ADHOC_MAX_FINDINGS,
-        dropped=len(dropped),
-        dropped_by_type=_counted(dropped, "type"),
-        dropped_by_severity=_counted(dropped, "severity"),
-    )
 
 
 @dataclass(frozen=True)
@@ -607,7 +425,7 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
 
 def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport) -> list[str]:
     """Pick the analyzers to run and record a reason for every registered one left out."""
-    selected = list(ADHOC_DEFAULT_ANALYZERS) if requested is None else list(requested)
+    selected = list(ADHOC_DEFAULT_ANALYZERS) if requested is None else list(dict.fromkeys(requested))
 
     resolved: list[str] = []
     for name in selected:
@@ -799,8 +617,6 @@ async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> Adho
 
 
 async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
-    _reject_unaffordable_input(request)
-
     report = AnalyzerReport()
     aggregator = ResultAggregator()
 
@@ -831,9 +647,6 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     for record in records:
         # Findings are addressed by ``finding_id`` everywhere the scan-backed API exposes them.
         record["finding_id"] = record["id"]
-
-    # Before enrichment, so waivers, stats and recommendations all describe the returned set.
-    records, truncated = _cap_findings(records)
 
     epss_kev_summary, threat_intel = await _enrich_vulnerabilities(records, report)
 
@@ -878,5 +691,4 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         analyzers=report,
         waivers_applied=waivers_applied,
         waived_count=waived_count,
-        truncated=truncated,
     )

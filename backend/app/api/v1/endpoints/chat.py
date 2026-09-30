@@ -19,7 +19,7 @@ from app.schemas.chat import (
     ConversationResponse,
     MessageCreate,
 )
-from app.services.chat.rate_limiter import CHAT_PREFIX, SURFACE_CHAT, enforce_rate_limit
+from app.services.chat.rate_limiter import CHAT_PREFIX, enforce_rate_limit
 from app.services.chat.service import ChatService
 
 _MSG_CONVERSATION_NOT_FOUND = "Conversation not found"
@@ -148,7 +148,6 @@ async def send_message(
     await enforce_rate_limit(
         str(current_user.id),
         prefix=CHAT_PREFIX,
-        surface=SURFACE_CHAT,
         per_minute=system_settings.chat_rate_limit_per_minute,
         per_hour=system_settings.chat_rate_limit_per_hour,
     )

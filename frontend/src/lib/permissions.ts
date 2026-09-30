@@ -64,7 +64,7 @@ export const Permissions = {
   // MCP — issue API keys for external LLM clients
   MCP_ACCESS: "mcp:access",
 
-  // Ad-hoc analysis — stateless /analyze endpoint via API key
+  // Ad-hoc analysis — /analyze endpoint via API key
   ANALYZE_ADHOC: "analyze:adhoc",
 } as const;
 
@@ -494,7 +494,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     id: "analyze",
     title: "Ad-hoc Analysis",
     description:
-      "Lets a user mint a personal API key opening the ad-hoc analysis surface: POST /api/v1/analyze analyses a posted SBOM in memory and stores nothing.",
+      "Lets a user mint a personal API key opening the ad-hoc analysis surface: POST /api/v1/analyze queues the analysis of a posted SBOM, GET /api/v1/analyze/{job_id} returns the result, and both are kept for 24 hours.",
     permissions: [
       {
         id: Permissions.ANALYZE_ADHOC,

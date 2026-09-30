@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -11,10 +11,13 @@ import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
+from app.core.constants import API_KEY_SURFACE_ADHOC
 from app.core.init_db import create_indexes
+from app.core.permissions import Permissions
 from app.core.security import get_password_hash
 from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.api_keys import ApiKeyRepository
 from app.repositories.callgraphs import CallgraphRepository
 from app.services.gridfs_maintenance import gridfs_ref_id, load_gridfs_json
 
@@ -23,6 +26,9 @@ _OLD_BODY_CAP = 25 * 1024 * 1024
 _PROJECT_ID = "upload-uniformity"
 _API_KEY_SECRET = "uniformity-secret"
 _API_KEY = {"X-API-Key": f"{_PROJECT_ID}.{_API_KEY_SECRET}"}
+_ADHOC_OWNER = "uniformity-adhoc"
+_ADHOC_TOKEN = "dck_" + "u" * 64
+_ADHOC_KEY = {"Authorization": f"Bearer {_ADHOC_TOKEN}"}
 _RUN = {"pipeline_id": 4242, "commit_hash": "c" * 40, "branch": "main"}
 _TRUNCATED_JSON = json.dumps({**_RUN, "findings": []}).encode()[:-3]
 
@@ -136,6 +142,11 @@ async def _stored_sbom_artifacts(db, _response: dict[str, Any]) -> int:
     return len((await load_gridfs_json(AsyncIOMotorGridFSBucket(db), gridfs_ref_id(ref)))["artifacts"])
 
 
+async def _stored_adhoc_artifacts(db, response: dict[str, Any]) -> int:
+    job = await db.adhoc_jobs.find_one({"_id": response["job_id"]})
+    return len((await load_gridfs_json(AsyncIOMotorGridFSBucket(db), job["input_file_id"]))["sboms"][0]["artifacts"])
+
+
 async def _stored_crypto_assets(db, response: dict[str, Any]) -> int:
     return await db.crypto_assets.count_documents({"scan_id": response["scan_id"]})
 
@@ -173,6 +184,7 @@ class _Upload:
     sent: Callable[[dict[str, Any]], int]
     stored: Callable[[Any, dict[str, Any]], Awaitable[int]]
     chunked: bool = False
+    auth: dict[str, str] = field(default_factory=lambda: _API_KEY)
 
 
 _UPLOADS = [
@@ -215,13 +227,24 @@ _UPLOADS = [
         ),
         id="callgraph",
     ),
+    pytest.param(
+        _Upload(
+            "/api/v1/analyze",
+            lambda: {"sboms": _syft_sbom()["sboms"]},
+            lambda body: len(body["sboms"][0]["artifacts"]),
+            _stored_adhoc_artifacts,
+            auth=_ADHOC_KEY,
+        ),
+        id="analyze",
+    ),
 ]
 
 
 @pytest_asyncio.fixture
-async def app_client(db) -> AsyncIterator[AsyncClient]:
+async def app_client(db, monkeypatch) -> AsyncIterator[AsyncClient]:
     """The real app with only the database swapped: every route authenticates for real."""
     from app.api.deps import get_database
+    from app.core.worker import AnalysisWorkerManager
     from app.main import app
 
     async def _test_database():
@@ -230,6 +253,17 @@ async def app_client(db) -> AsyncIterator[AsyncClient]:
     await create_indexes(db)
     project = Project(id=_PROJECT_ID, name="upload-uniformity").model_dump(by_alias=True)
     await db.projects.insert_one({**project, "api_key_hash": get_password_hash(_API_KEY_SECRET)})
+    monkeypatch.setattr("app.repositories.api_keys.generate_plaintext_token", lambda: _ADHOC_TOKEN)
+    await ApiKeyRepository(db).create(_ADHOC_OWNER, "ci", [API_KEY_SURFACE_ADHOC], 30)
+    await db.users.insert_one(
+        {
+            "_id": _ADHOC_OWNER,
+            "username": _ADHOC_OWNER,
+            "email": f"{_ADHOC_OWNER}@example.com",
+            "permissions": [Permissions.ANALYZE_ADHOC],
+        }
+    )
+    monkeypatch.setattr("app.api.v1.endpoints.analyze.worker_manager", AnalysisWorkerManager(num_workers=1))
     saved = dict(app.dependency_overrides)
     app.dependency_overrides.clear()
     app.dependency_overrides[get_database] = _test_database
@@ -258,7 +292,7 @@ async def test_an_upload_past_every_old_limit_is_accepted(app_client, db, upload
     resp = await app_client.post(
         upload.route,
         content=_chunks(raw) if upload.chunked else raw,
-        headers={**_API_KEY, "Content-Type": "application/json"},
+        headers={**upload.auth, "Content-Type": "application/json"},
     )
 
     assert resp.is_success, resp.text[:2000]
@@ -287,7 +321,7 @@ async def test_an_unauthenticated_upload_is_refused_before_its_body_is_read(app_
 @pytest.mark.parametrize("upload", _UPLOADS)
 async def test_malformed_json_is_422(app_client, upload: _Upload):
     resp = await app_client.post(
-        upload.route, content=_TRUNCATED_JSON, headers={**_API_KEY, "Content-Type": "application/json"}
+        upload.route, content=_TRUNCATED_JSON, headers={**upload.auth, "Content-Type": "application/json"}
     )
 
     assert resp.status_code == 422, resp.text

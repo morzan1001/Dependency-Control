@@ -46,19 +46,6 @@ _MSG_OPAQUE_KEY = "Invalid, revoked, or expired API key"
 _USERS_COL = "users"
 _REACHABLE_COLLECTIONS = frozenset({_COL, _USERS_COL})
 
-# Every write create_mock_collection stubs. find_one_and_update is the idiomatic way to write a
-# touch-on-read, so leaving it unchecked would let the write the default must not do slip in.
-_WRITE_METHODS = (
-    "insert_one",
-    "find_one_and_update",
-    "update_one",
-    "update_many",
-    "delete_one",
-    "bulk_write",
-    "create_index",
-)
-
-
 _ABSENT = object()
 _SIBLING = object()
 
@@ -113,8 +100,8 @@ def _active_user(permissions):
     return User(id=_OWNER, username="u", email="u@example.com", permissions=permissions, is_active=True)
 
 
-async def _authenticate(surface, db, *, touch=False, authorization=f"Bearer {_TOKEN}"):
-    return await require_api_key(surface, touch=touch)(authorization=authorization, db=db)
+async def _authenticate(surface, db, *, authorization=f"Bearer {_TOKEN}"):
+    return await require_api_key(surface)(authorization=authorization, db=db)
 
 
 # RFC 7235 makes the auth scheme case-insensitive, and clients do spell it "bearer".
@@ -263,7 +250,7 @@ async def test_a_key_document_carrying_no_id_still_authenticates(monkeypatch):
     _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
     touch = _patch_touch_last_used(monkeypatch)
 
-    user, _ = await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+    user, _ = await _authenticate(API_KEY_SURFACE_MCP, db)
 
     assert user.id == _OWNER
     # The stamp has nothing to address and matches no document; the credential is still good.
@@ -282,30 +269,14 @@ async def test_a_key_naming_both_surfaces_satisfies_either_request(monkeypatch, 
     assert key_doc["_id"] == _KEY_ID
 
 
+@pytest.mark.parametrize("surface", _BOTH_SURFACES)
 @pytest.mark.asyncio
-async def test_the_default_writes_nothing(monkeypatch):
-    db, keys = _db_with_key(_key_doc([API_KEY_SURFACE_ADHOC]))
-    _patch_user(monkeypatch, _active_user([Permissions.ANALYZE_ADHOC]))
-
-    # Built without touch=, because omitting it is the call shape a surface that persists nothing
-    # uses, and the promise belongs to the default rather than to a caller who passes False.
-    await require_api_key(API_KEY_SURFACE_ADHOC)(authorization=f"Bearer {_TOKEN}", db=db)
-
-    for method_name in _WRITE_METHODS:
-        method = getattr(keys, method_name)
-        # A name this collection does not stub would fail the call below with unittest.mock's
-        # "not a valid assertion" AttributeError; asserting first names the offending method.
-        assert isinstance(method, AsyncMock), method_name
-        method.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_touch_stamps_last_used_once_with_the_key_id(monkeypatch):
-    db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
-    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
+async def test_every_surface_stamps_last_used_once_with_the_key_id(monkeypatch, surface):
+    db, _ = _db_with_key(_key_doc([surface]))
+    _patch_user(monkeypatch, _active_user([_SURFACE_PERMISSION[surface]]))
     touch = _patch_touch_last_used(monkeypatch)
 
-    await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+    await _authenticate(surface, db)
 
     touch.assert_awaited_once_with(_KEY_ID)
 
@@ -326,7 +297,7 @@ async def test_a_key_used_within_the_last_minute_is_not_stamped_again(monkeypatc
     _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
     touch = _patch_touch_last_used(monkeypatch)
 
-    await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+    await _authenticate(API_KEY_SURFACE_MCP, db)
 
     assert touch.await_count == int(stamped)
 
@@ -341,7 +312,7 @@ async def test_a_damaged_last_use_still_authenticates_and_is_stamped_afresh(monk
     _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
     touch = _patch_touch_last_used(monkeypatch)
 
-    await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+    await _authenticate(API_KEY_SURFACE_MCP, db)
 
     touch.assert_awaited_once_with(_KEY_ID)
 
@@ -351,7 +322,7 @@ async def test_authentication_reaches_no_collection_beyond_keys_and_users(monkey
     db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
     _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
 
-    await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+    await _authenticate(API_KEY_SURFACE_MCP, db)
 
     by_item = {call.args[0] for call in db.__getitem__.call_args_list}
     assert by_item == _REACHABLE_COLLECTIONS
@@ -375,7 +346,7 @@ async def test_a_rejected_caller_is_never_stamped(monkeypatch, surfaces, permiss
     touch = _patch_touch_last_used(monkeypatch)
 
     with pytest.raises(HTTPException):
-        await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+        await _authenticate(API_KEY_SURFACE_MCP, db)
 
     touch.assert_not_awaited()
     keys.update_one.assert_not_awaited()

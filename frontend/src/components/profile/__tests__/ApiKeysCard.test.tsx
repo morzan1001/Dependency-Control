@@ -21,18 +21,15 @@ const LAPSED_CREATED_AT = "2025-11-12T12:00:00Z";
 const LAPSED_AT = "2026-02-10T12:00:00Z";
 const MCP_KEY_ID = "k-mcp";
 const ADHOC_KEY_ID = "k-adhoc";
-const MIXED_KEY_ID = "k-mixed";
 const REVOKED_KEY_ID = "k-revoked";
 const EXPIRED_KEY_ID = "k-expired";
 const DAMAGED_KEY_ID = "k-damaged";
 const MCP_KEY_NAME = "claude desktop";
 const ADHOC_KEY_NAME = "release pipeline";
-const MIXED_KEY_NAME = "pipeline and desktop";
 const REVOKED_KEY_NAME = "retired laptop";
 const EXPIRED_KEY_NAME = "winter runner";
 const MCP_PREFIX = "dck_abcdefgh";
 const ADHOC_PREFIX = "dck_ijklmnop";
-const MIXED_PREFIX = "dck_qrstuvwx";
 const REVOKED_PREFIX = "dck_yzabcdef";
 const EXPIRED_PREFIX = "dck_ghijklmn";
 const PLAINTEXT_TOKEN = "dck_a-token-shown-exactly-once";
@@ -50,7 +47,6 @@ const UNREACHABLE_KEYS = TOTAL_KEYS - LIST_PAGE;
 const NOT_CALLED = 0;
 const CALLED_ONCE = 1;
 const SHOWN_ONCE = 1;
-const NONE = 0;
 
 const {
   listKeys,
@@ -100,18 +96,6 @@ const adhocKey: ApiKey = {
   name: ADHOC_KEY_NAME,
   prefix: ADHOC_PREFIX,
   surfaces: ["adhoc"],
-  created_at: CREATED_AT,
-  expires_at: EXPIRES_AT,
-  revoked_at: null,
-  last_used_at: null,
-};
-
-/** Both surfaces at once — the shape only the unified key can take. */
-const mixedKey: ApiKey = {
-  id: MIXED_KEY_ID,
-  name: MIXED_KEY_NAME,
-  prefix: MIXED_PREFIX,
-  surfaces: ["mcp", "adhoc"],
   created_at: CREATED_AT,
   expires_at: EXPIRES_AT,
   revoked_at: null,
@@ -376,23 +360,7 @@ describe("ApiKeysCard", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("reports an unstamped ad-hoc-only key as not recorded rather than unused", async () => {
-    renderCard([adhocKey]);
-    await screen.findByText(ADHOC_KEY_NAME);
-
-    expect(screen.getByText("usage not recorded")).toBeInTheDocument();
-    expect(screen.queryAllByText(/never/i)).toHaveLength(NONE);
-  });
-
-  it("reports an unstamped key naming both surfaces as not recorded rather than unused", async () => {
-    renderCard([mixedKey]);
-    await screen.findByText(MIXED_KEY_NAME);
-
-    expect(screen.getByText("usage not recorded")).toBeInTheDocument();
-    expect(screen.queryAllByText(/never used/i)).toHaveLength(NONE);
-  });
-
-  it("reports an unstamped MCP-only key as never used", async () => {
+  it("reports an unstamped key as never used", async () => {
     renderCard([{ ...mcpKey, last_used_at: null }]);
     await screen.findByText(MCP_KEY_NAME);
 
@@ -412,7 +380,7 @@ describe("ApiKeysCard", () => {
 
     expect(screen.getByText("Active")).toBeInTheDocument();
     expect(screen.getByText("Unusable")).toBeInTheDocument();
-    expect(screen.getByText("usage not recorded")).toBeInTheDocument();
+    expect(screen.getByText("never used")).toBeInTheDocument();
   });
 
   it("calls a revoked key revoked and stops offering to revoke it", async () => {
@@ -447,7 +415,7 @@ describe("ApiKeysCard", () => {
     expect(screen.getByText("prefix not recorded")).toBeInTheDocument();
     expect(screen.getByText("creation date not recorded")).toBeInTheDocument();
     expect(screen.getByText("no expiry stored")).toBeInTheDocument();
-    expect(screen.getByText("usage not recorded")).toBeInTheDocument();
+    expect(screen.getByText("never used")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: DAMAGED_REVOKE_LABEL }));
 

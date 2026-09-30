@@ -1,5 +1,6 @@
 """The orphan reaper deletes GridFS files and chunks nothing references once they outlive the safety window."""
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
@@ -10,10 +11,13 @@ import pytest
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
-from app.core.constants import ARCHIVE_BATCH_SIZE
+from app.core.constants import API_KEY_SURFACE_ADHOC, ARCHIVE_BATCH_SIZE
 from app.core.init_db import create_indexes
+from app.core.permissions import Permissions
+from app.core.worker import AnalysisWorkerManager
 from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
+from app.repositories.api_keys import ApiKeyRepository
 from app.services.gridfs_maintenance import reap_orphan_gridfs_files, upload_gridfs_json
 from app.services.scan_cascade import delete_scans_and_related_data
 from tests.helpers.compliance import generated_report
@@ -63,11 +67,50 @@ async def _uploaded_callgraph(client, db, api_key_headers, monkeypatch):
     return row["graph_gridfs_id"], lambda: db.callgraphs.delete_one({"_id": row["_id"]})
 
 
+async def _queued_adhoc_job(client, db, monkeypatch, manager: AnalysisWorkerManager) -> str:
+    owner = "adhoc-user"
+    monkeypatch.setattr("app.api.v1.endpoints.analyze.worker_manager", manager)
+    _, token = await ApiKeyRepository(db).create(owner, "ci", [API_KEY_SURFACE_ADHOC], 30)
+    await db.users.insert_one(
+        {"_id": owner, "username": owner, "email": f"{owner}@example.com", "permissions": [Permissions.ANALYZE_ADHOC]}
+    )
+    resp = await client.post(
+        "/api/v1/analyze",
+        json={"sboms": [_SBOM], "analyzers": ["license_compliance"], "apply_global_waivers": False},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert resp.status_code == 202, resp.text
+    return resp.json()["job_id"]
+
+
+async def _adhoc_input(client, db, api_key_headers, monkeypatch):
+    job_id = await _queued_adhoc_job(client, db, monkeypatch, AnalysisWorkerManager(num_workers=1))
+    job = await db.adhoc_jobs.find_one({"_id": job_id})
+    return job["input_file_id"], lambda: db.adhoc_jobs.delete_one({"_id": job_id})
+
+
+async def _adhoc_result(client, db, api_key_headers, monkeypatch):
+    async def _get_database():
+        return db
+
+    manager = AnalysisWorkerManager(num_workers=1)
+    monkeypatch.setattr("app.core.worker.get_database", _get_database)
+    job_id = await _queued_adhoc_job(client, db, monkeypatch, manager)
+    worker = asyncio.create_task(manager.worker("reaper-test"))
+    await manager.queue.join()
+    worker.cancel()
+    await asyncio.gather(worker, return_exceptions=True)
+    job = await db.adhoc_jobs.find_one({"_id": job_id})
+    return job["result_file_id"], lambda: db.adhoc_jobs.delete_one({"_id": job_id})
+
+
 _WRITERS: dict[tuple[str, str], _Writer] = {
     ("scans", "sbom_refs.gridfs_id"): _ingested_sbom,
     ("analysis_results", "result_gridfs_id"): _saved_result,
     ("compliance_reports", "artifact_gridfs_id"): _generated_artifact,
     ("callgraphs", "graph_gridfs_id"): _uploaded_callgraph,
+    ("adhoc_jobs", "input_file_id"): _adhoc_input,
+    ("adhoc_jobs", "result_file_id"): _adhoc_result,
 }
 
 
@@ -81,7 +124,7 @@ async def _file_ids(db) -> set[str]:
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-@pytest.mark.parametrize(("collection", "field"), _WRITERS, ids=[c for c, _ in _WRITERS])
+@pytest.mark.parametrize(("collection", "field"), _WRITERS, ids=[f"{c}.{f}" for c, f in _WRITERS])
 async def test_each_registry_field_protects_its_file(
     client, db, api_key_headers, owner_auth_headers_proj, monkeypatch, collection, field
 ):
@@ -123,7 +166,7 @@ async def test_the_reaper_walks_more_than_one_batch(db, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-@pytest.mark.parametrize(("collection", "field"), _WRITERS, ids=[c for c, _ in _WRITERS])
+@pytest.mark.parametrize(("collection", "field"), _WRITERS, ids=[f"{c}.{f}" for c, f in _WRITERS])
 async def test_each_registry_lookup_is_an_index_scan(db, collection, field):
     await create_indexes(db)
 

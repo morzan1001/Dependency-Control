@@ -598,6 +598,11 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )
     await database["compliance_reports"].create_index("artifact_gridfs_id", sparse=True)
 
+    await database["adhoc_jobs"].create_index([("expires_at", pymongo.ASCENDING)], expireAfterSeconds=0)
+    await database["adhoc_jobs"].create_index([("status", pymongo.ASCENDING), ("created_at", pymongo.ASCENDING)])
+    await database["adhoc_jobs"].create_index("input_file_id")
+    await database["adhoc_jobs"].create_index("result_file_id", sparse=True)
+
     # Findings: scan_created_at analytics indexes
     await database["findings"].create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
     await database["findings"].create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])

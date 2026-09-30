@@ -4,7 +4,7 @@ import pytest
 from jinja2 import UndefinedError
 from markupsafe import escape
 
-from app.schemas.adhoc import AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
+from app.schemas.adhoc import AdhocAnalyzeResponse, AnalyzerReport
 from app.services.analysis.adhoc import _STAGE_NOTES
 from app.services.analysis.adhoc_report import (
     _DERIVED_FIELDS,
@@ -26,16 +26,6 @@ _PARSE_FAILURE = "could not be parsed: unsupported document"
 _WAIVED_COUNT = 2
 _OVER_THE_CAP = _FINDING_ROW_CAP + 1
 _RECOMMENDATIONS_OVER_THE_CAP = _RECOMMENDATION_ROW_CAP + 3
-
-_DROPPED_SECRETS = 7
-_DROPPED_LOW = 7
-_FINDINGS_LIMIT = 5000
-_TRUNCATION = AdhocTruncation(
-    limit=_FINDINGS_LIMIT,
-    dropped=_DROPPED_SECRETS,
-    dropped_by_type={"secret": _DROPPED_SECRETS},
-    dropped_by_severity={"LOW": _DROPPED_LOW},
-)
 
 
 def _finding(**overrides):
@@ -63,7 +53,6 @@ def _result(**overrides):
         ),
         "waivers_applied": "global",
         "waived_count": _WAIVED_COUNT,
-        "truncated": _TRUNCATION,
     }
     base.update(overrides)
     return AdhocAnalyzeResponse(**base)
@@ -117,27 +106,10 @@ def test_the_report_says_what_left_the_process_and_which_policy_graded_it():
         assert str(escape(note)) in html
 
 
-def test_truncation_and_waivers_are_visible():
+def test_waivers_are_visible():
     html = render_adhoc_html(_result())
 
-    assert "Result truncated:" in html
     assert f"global ({_WAIVED_COUNT} finding(s) waived)" in html
-
-
-def test_the_truncation_notice_says_what_was_dropped():
-    """ "Something was cut" is not an answer on a security report: a reader has to see whether a
-    whole finding type or a severity went."""
-    html = render_adhoc_html(_result())
-
-    assert f"ceiling of {_FINDINGS_LIMIT} findings" in html
-    assert f"<strong>secret:</strong> {_DROPPED_SECRETS}" in html
-    assert f"<strong>LOW:</strong> {_DROPPED_LOW}" in html
-
-
-def test_a_complete_result_carries_no_truncation_notice():
-    html = render_adhoc_html(_result(truncated=None))
-
-    assert "Result truncated:" not in html
 
 
 def test_a_findings_table_cut_to_the_row_cap_says_so():

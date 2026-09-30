@@ -25,6 +25,8 @@ _GRIDFS_REFERENCES = (
     ("analysis_results", "result_gridfs_id"),
     ("compliance_reports", "artifact_gridfs_id"),
     ("callgraphs", "graph_gridfs_id"),
+    ("adhoc_jobs", "input_file_id"),
+    ("adhoc_jobs", "result_file_id"),
 )
 
 
