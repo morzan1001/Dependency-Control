@@ -31,7 +31,7 @@ def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
     if rule.match_primitive is not None and asset.primitive != rule.match_primitive:
         return False
 
-    if rule.match_name_patterns and not _name_or_variant_matches(asset, rule.match_name_patterns):
+    if rule.match_name_patterns and not name_matches(asset, rule.match_name_patterns):
         return False
 
     if rule.match_curves and (not asset.curve or asset.curve not in rule.match_curves):
@@ -48,7 +48,7 @@ def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
     return True
 
 
-def _name_or_variant_matches(asset: CryptoAsset, patterns: list[str]) -> bool:
+def name_matches(asset: CryptoAsset, patterns: list[str]) -> bool:
     candidates = [asset.name]
     if asset.variant:
         candidates.append(asset.variant)
