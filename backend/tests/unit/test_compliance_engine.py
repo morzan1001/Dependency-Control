@@ -1,11 +1,13 @@
+import asyncio
 import gc
 import weakref
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
+from app.core.config import settings
+from app.core.constants import COMPLIANCE_REPORT_SLOTS, SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.core.metrics import compliance_reports_total
 from app.core.permissions import Permissions
 from app.models.compliance_report import ComplianceReport
@@ -13,6 +15,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Project, Scan
 from app.models.user import User
+from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.findings import FindingRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
@@ -22,6 +25,7 @@ from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _prepare_finding_records, _stamp_first_seen
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
 from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
@@ -77,8 +81,9 @@ async def test_engine_marks_report_completed_on_success():
         patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")),
         patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
     ):
-        await engine.generate(report=report, db=db, user=user)
+        outcome = await engine.generate(report=report, db=db, user=user)
 
+    assert outcome == (ReportStatus.COMPLETED, {"total": 0})
     fw.evaluate.assert_awaited_once_with(inputs)
     final_call = update_mock.call_args_list[-1]
     assert final_call.kwargs.get("status") == ReportStatus.COMPLETED
@@ -110,6 +115,53 @@ async def test_engine_marks_failed_on_exception():
     final_call = update_mock.call_args_list[-1]
     assert final_call.kwargs.get("status") == ReportStatus.FAILED
     assert "boom" in (final_call.kwargs.get("error_message") or "")
+
+
+@pytest.mark.asyncio
+async def test_a_failed_report_expires_like_a_completed_one(db):
+    """The requester has no access to the project, so the scope does not resolve."""
+    report = _report(scope="project", scope_id="p")
+    await ComplianceReportRepository(db).create(report)
+    before = datetime.now(timezone.utc).replace(microsecond=0)  # stored datetimes keep milliseconds only
+
+    outcome = await ComplianceReportEngine().generate(
+        report=report, db=db, user=User(id="u1", username="u1", email="u1@corp.com", permissions=[])
+    )
+
+    stored = await ComplianceReportRepository(db).get_by_id(report.id)
+    assert outcome == (ReportStatus.FAILED, {})
+    assert stored.status == ReportStatus.FAILED
+    assert stored.expires_at >= before + timedelta(days=settings.COMPLIANCE_REPORT_RETENTION_DAYS)
+
+
+@pytest.mark.asyncio
+async def test_no_more_reports_evaluate_at_once_than_there_are_slots(monkeypatch):
+    monkeypatch.setattr(engine_module, "_REPORT_SLOTS", asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS))
+    engine = ComplianceReportEngine()
+    framework = MagicMock(evaluate=AsyncMock(return_value=MagicMock()))
+    resolved = ResolvedScope(scope="user", scope_id=None, project_ids=[])
+    in_flight, peak, release = 0, 0, asyncio.Event()
+
+    async def gather(*_):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await release.wait()
+        in_flight -= 1
+        return evaluation_input()
+
+    with patch.object(engine, "_gather_inputs", new=gather):
+        runs = [
+            asyncio.create_task(engine.evaluate(MagicMock(), resolved, framework))
+            for _ in range(COMPLIANCE_REPORT_SLOTS + 1)
+        ]
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert peak == COMPLIANCE_REPORT_SLOTS
+        release.set()
+        await asyncio.gather(*runs)
+
+    assert framework.evaluate.await_count == COMPLIANCE_REPORT_SLOTS + 1
 
 
 def _reports_counted(status: str) -> float:

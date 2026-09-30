@@ -1,5 +1,6 @@
 """Orchestrates compliance report generation: pending -> generating -> completed|failed."""
 
+import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -7,6 +8,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.core.config import settings
+from app.core.constants import COMPLIANCE_REPORT_SLOTS
 from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.models.crypto_asset import CryptoAsset
@@ -37,12 +39,14 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver
 logger = logging.getLogger(__name__)
 
 # Findings held in memory for one report. The widest projection, a crypto finding's, measures 1.7 KiB per
-# document and MAX_CONCURRENT_COMPLIANCE_REPORTS reports can run at once, so this is ~330 MiB at saturation.
+# document, so a report at the cap holds ~33 MiB.
 _FINDINGS_LIMIT = 20000
 
 # Crypto assets held in memory for one report, across every scan in scope. A projected CryptoAsset measures
-# 2.3 KiB validated, so this is ~220 MiB once MAX_CONCURRENT_COMPLIANCE_REPORTS reports saturate it.
+# 2.3 KiB validated, so a report at the cap holds ~22 MiB.
 _CRYPTO_ASSETS_LIMIT = 10000
+
+_REPORT_SLOTS = asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS)
 
 _NON_CRYPTO_FRAMEWORKS = frozenset(
     {ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT, ReportFramework.PQC_MIGRATION_PLAN}
@@ -71,7 +75,7 @@ class ComplianceReportEngine:
         report: ComplianceReport,
         db: AsyncIOMotorDatabase,
         user: User,
-    ) -> None:
+    ) -> tuple[ReportStatus, dict[str, Any]]:
         repo = ComplianceReportRepository(db)
         await repo.update_status(report.id, status=ReportStatus.GENERATING)
         try:
@@ -112,6 +116,7 @@ class ComplianceReportEngine:
             )
             compliance_reports_total.labels(framework=report.framework, status="success").inc()
             logger.info("Compliance report %s completed (%s bytes)", report.id, len(artifact_bytes))
+            return ReportStatus.COMPLETED, evaluation.summary
         except Exception as exc:
             logger.exception("Compliance report %s failed: %s", report.id, exc)
             compliance_reports_total.labels(framework=report.framework, status="error").inc()
@@ -120,7 +125,9 @@ class ComplianceReportEngine:
                 status=ReportStatus.FAILED,
                 error_message=str(exc)[:500],
                 completed_at=datetime.now(timezone.utc),
+                expires_at=datetime.now(timezone.utc) + timedelta(days=settings.COMPLIANCE_REPORT_RETENTION_DAYS),
             )
+            return ReportStatus.FAILED, {}
 
     async def evaluate(
         self,
@@ -128,8 +135,9 @@ class ComplianceReportEngine:
         resolved: ResolvedScope,
         framework: ComplianceFramework,
     ) -> tuple[EvaluationInput, FrameworkEvaluation]:
-        inputs = await self._gather_inputs(db, resolved, framework)
-        return inputs, await framework.evaluate(inputs)
+        async with _REPORT_SLOTS:
+            inputs = await self._gather_inputs(db, resolved, framework)
+            return inputs, await framework.evaluate(inputs)
 
     async def _gather_inputs(
         self,

@@ -3,6 +3,8 @@
 import logging
 from datetime import datetime, timezone
 
+from bson import ObjectId
+from gridfs.errors import NoFile
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.repositories.compliance_report import ComplianceReportRepository
@@ -10,34 +12,25 @@ from app.repositories.compliance_report import ComplianceReportRepository
 logger = logging.getLogger(__name__)
 
 
+async def delete_report_artifact(db: AsyncIOMotorDatabase, gridfs_id: str | None) -> None:
+    """Delete a report's GridFS artifact; one already gone counts as deleted."""
+    if not gridfs_id:
+        return
+    try:
+        await AsyncIOMotorGridFSBucket(db).delete(ObjectId(gridfs_id))
+    except NoFile:
+        pass
+    except Exception:
+        logger.warning("Failed to delete compliance report artifact %s", gridfs_id, exc_info=True)
+
+
 async def sweep_expired_compliance_reports(db: AsyncIOMotorDatabase) -> int:
     """Delete expired compliance reports, removing each GridFS artifact before its metadata to avoid orphaned blobs. Returns the count deleted."""
     now = datetime.now(timezone.utc)
     col = db[ComplianceReportRepository.collection_name]
-    try:
-        bucket = AsyncIOMotorGridFSBucket(db)
-    except Exception:  # pragma: no cover
-        bucket = None
-
-    expired_docs = await col.find({"expires_at": {"$lt": now}}).to_list(length=None)
-    if bucket is not None:
-        for doc in expired_docs:
-            gridfs_id = doc.get("artifact_gridfs_id")
-            if not gridfs_id:
-                continue
-            try:
-                # gridfs_id is stored as a string; GridFS APIs need an ObjectId.
-                from bson import ObjectId
-
-                await bucket.delete(ObjectId(gridfs_id))
-            except Exception as exc:
-                logger.debug(
-                    "Could not delete GridFS artifact %s: %s",
-                    gridfs_id,
-                    exc,
-                )
+    async for doc in col.find({"expires_at": {"$lt": now}}, {"artifact_gridfs_id": 1}):
+        await delete_report_artifact(db, doc.get("artifact_gridfs_id"))
     result = await col.delete_many({"expires_at": {"$lt": now}})
-    deleted = getattr(result, "deleted_count", len(expired_docs))
-    if deleted:
-        logger.info("Compliance retention sweep deleted %d expired reports", deleted)
-    return deleted
+    if result.deleted_count:
+        logger.info("Compliance retention sweep deleted %d expired reports", result.deleted_count)
+    return result.deleted_count

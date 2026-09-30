@@ -1,4 +1,4 @@
-"""One document per compliance-report job; artifact lives in GridFS, metadata persists after it expires."""
+"""One document per compliance-report job with its artifact in GridFS; expiry deletes both together."""
 
 from datetime import datetime
 from typing import Any
