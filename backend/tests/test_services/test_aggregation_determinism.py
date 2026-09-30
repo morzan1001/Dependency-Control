@@ -234,7 +234,7 @@ def _crypto_result(locations: list[str]) -> dict:
         default_severity="HIGH",
         source="nist-sp-800-131a",
     )
-    return {"findings": [_build_finding_dedup(asset, [rule])]}
+    return {"findings": [_build_finding_dedup(asset, [rule], "crypto_weak_algorithm")]}
 
 
 class TestMultiSbomArrivalOrder:

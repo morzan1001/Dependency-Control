@@ -35,6 +35,8 @@ _TEST_PKG = {"name": "test-pkg", "version": "1.0.0", "purl": "pkg:pypi/test-pkg@
 def _parsed_cyclonedx(components: list[dict[str, Any]], transitive_refs: tuple[str, ...] = ()) -> list[dict[str, Any]]:
     sbom: dict[str, Any] = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": components}
     if transitive_refs:
+        # An undeclared node is transparent to the parser, so the hub must be a real package.
+        sbom["components"] = [*components, _library("hub", "MIT")]
         sbom["metadata"] = {"component": {"bom-ref": "app"}}
         sbom["dependencies"] = [
             {"ref": "app", "dependsOn": ["hub"]},

@@ -31,11 +31,14 @@ _MD5_RULE = CryptoRule(
 
 def test_analyzer_findings_become_findings():
     agg = ResultAggregator()
-    agg.aggregate("crypto_weak_algorithm", {"findings": crypto_findings_for_assets([_MD5], [_MD5_RULE])})
+    agg.aggregate(
+        "crypto_weak_algorithm",
+        {"findings": crypto_findings_for_assets([_MD5], [_MD5_RULE], scanner="crypto_weak_algorithm")},
+    )
     assert [(f.id, f.severity) for f in agg.get_findings()] == [("CRYPTO-crypto_weak_algorithm-crypto/md5", "HIGH")]
 
 
 def test_a_finding_our_analyzer_built_wrong_fails_the_result():
-    (finding,) = crypto_findings_for_assets([_MD5], [_MD5_RULE])
+    (finding,) = crypto_findings_for_assets([_MD5], [_MD5_RULE], scanner="crypto_weak_algorithm")
     with pytest.raises(ValidationError):
         ResultAggregator().aggregate("crypto_weak_algorithm", {"findings": [{**finding, "type": "crypto_md5"}]})

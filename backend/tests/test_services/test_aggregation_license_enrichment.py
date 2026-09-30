@@ -105,19 +105,19 @@ class TestEnrichmentDeduplication:
 
 class TestNoPhantomEnrichment:
     def test_compatibility_issue_creates_no_enrichment(self):
-        # check_pair_conflict synthesises component "a + b" / version "va / vb" issues.
+        # check_license_compatibility synthesises one issue per licence pair: component "A / B", empty version.
         agg = ResultAggregator()
         agg.aggregate(
             "license_compliance",
             {
                 "license_issues": [
                     {
-                        "component": "gpl-tool + apache-lib",
-                        "version": "1.0 / 2.0",
-                        "license": "GPL-2.0-only / Apache-2.0",
+                        "component": "Apache-2.0 / GPL-2.0-only",
+                        "version": "",
+                        "license": "Apache-2.0 / GPL-2.0-only",
                         "severity": "HIGH",
                         "category": "license_incompatibility",
-                        "message": "License conflict: GPL-2.0-only and Apache-2.0",
+                        "message": "License conflict: Apache-2.0 and GPL-2.0-only",
                         "purl": "pkg:npm/gpl-tool@1.0",
                     }
                 ],

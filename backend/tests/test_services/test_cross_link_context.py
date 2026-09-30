@@ -212,7 +212,8 @@ def _license_result(*license_ids: str) -> dict:
                 "type": "library",
                 "name": "lib",
                 "version": "1.0.0",
-                "purl": "pkg:npm/lib@1.0.0",
+                # npm and maven list licences to choose from; pypi's all apply, so each yields a finding.
+                "purl": "pkg:pypi/lib@1.0.0",
                 "licenses": [{"license": {"id": license_id}} for license_id in license_ids],
             }
         ],
