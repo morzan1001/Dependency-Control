@@ -21,7 +21,7 @@ from app.core.constants import (
     ProjectRole,
     RetentionAction,
 )
-from app.core.notification_prefs import NotificationPreferences
+from app.core.notification_prefs import StrictNotificationPreferences
 from app.models.finding import FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
 from app.models.project import Project, Scan
@@ -223,7 +223,7 @@ class ProjectMemberUpdate(BaseModel):
 
 
 class ProjectNotificationSettings(BaseModel):
-    notification_preferences: NotificationPreferences = Field(
+    notification_preferences: StrictNotificationPreferences = Field(
         ...,
         description="Map of event types to notification channels",
         examples=[
