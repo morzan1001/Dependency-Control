@@ -190,15 +190,53 @@ async def test_the_stored_result_holds_the_scanner_payload_alone(client, db, api
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-async def test_a_scanner_result_too_large_to_store_is_refused_with_413(client, db, api_key_headers):
-    oversized = {**_OPENGREP_FINDING, "extra": {"message": _OVER_THE_DOCUMENT_LIMIT, "severity": "WARNING"}}
+@pytest.mark.parametrize(
+    ("scanner", "scanner_fields"),
+    [
+        pytest.param("trufflehog", {"findings": [{**_SECRET, "Redacted": _OVER_THE_DOCUMENT_LIMIT}]}, id="trufflehog"),
+        pytest.param(
+            "opengrep",
+            {
+                "findings": [
+                    {**_OPENGREP_FINDING, "extra": {"message": _OVER_THE_DOCUMENT_LIMIT, "severity": "WARNING"}}
+                ]
+            },
+            id="opengrep",
+        ),
+        pytest.param("kics", {"queries": [{**_KICS_QUERY, "description": _OVER_THE_DOCUMENT_LIMIT}]}, id="kics"),
+        pytest.param(
+            "bearer",
+            {"findings": {"high": [{**_BEARER_FINDINGS["high"][0], "description": _OVER_THE_DOCUMENT_LIMIT}]}},
+            id="bearer",
+        ),
+    ],
+)
+async def test_a_refused_release_upload_writes_no_scan_and_no_release(
+    client, db, api_key_headers, scanner, scanner_fields
+):
+    release = {**_RUN, "is_release": True, "release_version": "v9.9.9"}
 
-    resp = await client.post("/api/v1/ingest/opengrep", json={**_RUN, "findings": [oversized]}, headers=api_key_headers)
+    resp = await client.post(f"/api/v1/ingest/{scanner}", json={**release, **scanner_fields}, headers=api_key_headers)
 
     assert resp.status_code == 413, resp.text
     assert await db.analysis_results.count_documents({}) == 0
-    scan = await db.scans.find_one({})
-    assert "opengrep" not in scan.get("received_results", [])
+    assert await db.scans.count_documents({}) == 0
+    assert await db.releases.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_run_without_a_pipeline_stores_its_result_under_its_own_scan(client, db, api_key_headers):
+    resp = await client.post(
+        "/api/v1/ingest/kics",
+        json={**_RUN, "pipeline_id": 0, "queries": [_KICS_QUERY]},
+        headers=api_key_headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    [row] = await _rows(db, resp.json()["scan_id"])
+    scan = await db.scans.find_one({"_id": row["scan_id"]})
+    assert scan["received_results"] == ["kics"]
 
 
 @pytest.mark.asyncio

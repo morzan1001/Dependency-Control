@@ -17,6 +17,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project, Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.schemas.trufflehog import TruffleHogIngest
 from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
 from app.services.analysis.registry import CRYPTO_ANALYZERS
@@ -137,10 +138,19 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
     await seed_crypto_policies(db)
     project = Project(id=_PROJECT_ID, name="cbom-rescan")
     await db.projects.insert_one(project.model_dump(by_alias=True))
-    original = Scan(project_id=_PROJECT_ID, branch="main", scan_type="cbom", status="processing", worker_id=_WORKER)
+    manager = ScanManager(db, project)
+    trufflehog = TruffleHogIngest(pipeline_id=7001, commit_hash="c" * 40, branch="main", findings=[])
+    original = Scan(
+        id=manager.run_scan_id(trufflehog),
+        project_id=_PROJECT_ID,
+        branch="main",
+        scan_type="cbom",
+        status="processing",
+        worker_id=_WORKER,
+    )
     await db.scans.insert_one(original.model_dump(by_alias=True))
     await _ingest_assets(db, original.id)
-    await process_findings_ingest(ScanManager(db, project), "trufflehog", {"findings": []}, original.id)
+    await process_findings_ingest(manager, "trufflehog", trufflehog)
     assert await run_analysis(original.id, [], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     source = await db.scans.find_one({"_id": original.id}, RESCAN_SOURCE_PROJECTION)
