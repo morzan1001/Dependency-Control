@@ -65,7 +65,12 @@ from app.schemas.project import license_policy_from_settings
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.versions import aggregate_fixed_version, parse_version_key, split_fixed_versions
-from app.services.component_identity import artifact_segment, build_component_index, lookup_component
+from app.services.component_identity import (
+    artifact_segment,
+    build_component_index,
+    canonical_callgraph_language,
+    lookup_component,
+)
 from app.services.analytics.crypto_trends import auto_bucket
 from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
@@ -196,16 +201,16 @@ _WAIVER_STATE_READ = 50
 _EXPIRING_WAIVER_READ = 25
 _TEAM_RISK_PROJECT_READ = 500
 
-# A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
-# aggregates only.
+# Stored graphs can carry megabyte `imports`/`calls` edge lists; the tool answers from the aggregates only.
 _CALLGRAPH_SUMMARY_PROJECTION = {
     "_id": 1,
     "module_usage": 1,
     "analyzed_modules": 1,
     "language": 1,
-    "created_at": 1,
+    "updated_at": 1,
     "scan_id": 1,
     "pipeline_id": 1,
+    "branch": 1,
     "total_imports": 1,
     "total_calls": 1,
 }
@@ -1408,15 +1413,23 @@ class ChatToolRegistry:
 
     async def _tool_get_callgraph(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        # The newest graph the project has, not head's: uploading one is a separate opt-in
-        # CI step, so scoping to head would blank the tool out for most projects. The
-        # response carries scan_id and created_at so the answer can say which build it is.
-        doc = await ctx.db["callgraphs"].find_one(
-            {"project_id": project["_id"]},
-            _CALLGRAPH_SUMMARY_PROJECTION,
-            sort=[("created_at", -1)],
-        )
-        return {"callgraph": _serialize_doc(doc) if doc else None}
+        match: dict[str, Any] = {"project_id": project["_id"]}
+        if ctx.args.get("language"):
+            try:
+                match["language"] = canonical_callgraph_language(ctx.args["language"])
+            except ValueError as exc:
+                raise _ToolRefusal(str(exc)) from exc
+        # Any build's graph, not head's: uploading one is an opt-in CI step most builds skip.
+        pipeline = [
+            {"$match": match},
+            {"$project": _CALLGRAPH_SUMMARY_PROJECTION},
+            {"$sort": {"updated_at": -1}},
+            {"$group": {"_id": "$language", "newest": {"$first": "$$ROOT"}}},
+            {"$replaceRoot": {"newRoot": "$newest"}},
+            {"$sort": {"language": 1}},
+        ]
+        newest = await ctx.db["callgraphs"].aggregate(pipeline).to_list(length=None)
+        return {"callgraphs": [_serialize_doc(doc) for doc in newest]}
 
     async def _tool_check_reachability(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)

@@ -169,11 +169,12 @@ async def upload_callgraph(
     upsert_filter, match_context = _build_upsert_filter(project_id, language, scan_id)
 
     callgraph_data = callgraph.model_dump(by_alias=True)
-    insert_only = {"_id": callgraph_data.pop("_id"), "created_at": callgraph_data.pop("created_at")}
+    uploaded_at = callgraph_data.pop("created_at")
+    insert_only = {"_id": callgraph_data.pop("_id"), "created_at": uploaded_at}
     with refuse_oversized_document("The callgraph"):
         await callgraph_repo.collection.update_one(
             upsert_filter,
-            {"$set": callgraph_data, "$setOnInsert": insert_only},
+            {"$set": {**callgraph_data, "updated_at": uploaded_at}, "$setOnInsert": insert_only},
             upsert=True,
         )
 

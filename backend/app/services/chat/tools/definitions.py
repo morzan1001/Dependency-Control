@@ -744,11 +744,21 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_callgraph",
-            "description": "Get the call graph / reachability analysis for a project.",
+            "description": (
+                "Summarise a project's most recently uploaded call graph per language: module usage "
+                "(import and call counts per module) and totals. A graph comes from whichever build "
+                "last uploaded one, which can be another branch or an older build than head; its branch, "
+                "scan_id and updated_at name that build, so state them. For whether a specific finding "
+                "is reachable, use check_reachability."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
+                    "language": {
+                        "type": "string",
+                        "description": "Optional: only this language's graph, e.g. python, typescript, go, java.",
+                    },
                 },
                 "required": ["project_id"],
             },
