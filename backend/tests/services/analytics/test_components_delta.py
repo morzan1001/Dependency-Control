@@ -1,6 +1,7 @@
 import pytest
 
-from app.services.analytics.components_delta import compute_components_delta
+from app.services.analytics._delta_pagination import page_of
+from app.services.analytics.components_delta import compare_components
 
 
 @pytest.mark.asyncio
@@ -19,9 +20,7 @@ async def test_a_package_respelled_by_another_producer_is_a_version_change(db):
         ]
     )
 
-    resp = await compute_components_delta(
-        db, project_id="p1", from_scan="sa", to_scan="sb", page=1, page_size=50, change=None
-    )
+    resp = await compare_components(db, project_id="p1", from_scan="sa", to_scan="sb")
 
     assert (resp.totals.added, resp.totals.removed, resp.totals.changed) == (0, 0, 2)
 
@@ -72,15 +71,7 @@ async def test_components_added_removed_changed(db):
             },
         ]
     )
-    resp = await compute_components_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-    )
+    resp = await compare_components(db, project_id="p1", from_scan="sa", to_scan="sb")
     assert resp.totals.added == 1
     assert resp.totals.removed == 1
     assert resp.totals.changed == 1
@@ -118,15 +109,7 @@ async def test_components_license_change_only(db):
             },
         ]
     )
-    resp = await compute_components_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-    )
+    resp = await compare_components(db, project_id="p1", from_scan="sa", to_scan="sb")
     items = [i for i in resp.items if i.change == "license_changed"]
     assert len(items) == 1
     assert items[0].from_license == "MIT"
@@ -159,15 +142,7 @@ async def test_components_version_and_license_change_is_one_entry(db):
             },
         ]
     )
-    resp = await compute_components_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-    )
+    resp = await compare_components(db, project_id="p1", from_scan="sa", to_scan="sb")
     # One item, counted under version_changed (per spec)
     matched = [i for i in resp.items if i.name == "axios"]
     assert len(matched) == 1
@@ -201,15 +176,7 @@ async def test_components_change_filter_only_added(db):
             },
         ]
     )
-    resp = await compute_components_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change="added",
-    )
+    resp = page_of(await compare_components(db, project_id="p1", from_scan="sa", to_scan="sb"), "added", 1, 50)
     assert all(i.change == "added" for i in resp.items)
     assert len(resp.items) == 1
 
@@ -233,9 +200,7 @@ async def test_a_respelled_package_is_one_version_change(db, before, after, chan
         ]
     )
 
-    resp = await compute_components_delta(
-        db, project_id="p1", from_scan="sa", to_scan="sb", page=1, page_size=50, change=None
-    )
+    resp = await compare_components(db, project_id="p1", from_scan="sa", to_scan="sb")
 
     assert sorted(item.change for item in resp.items) == changes
 
@@ -269,9 +234,7 @@ async def test_every_version_of_a_package_is_compared(db, before, after, totals,
         ]
     )
 
-    resp = await compute_components_delta(
-        db, project_id="p1", from_scan="sa", to_scan="sb", page=1, page_size=50, change=None
-    )
+    resp = await compare_components(db, project_id="p1", from_scan="sa", to_scan="sb")
 
     assert (resp.totals.added, resp.totals.removed, resp.totals.changed, resp.totals.unchanged) == totals
     assert [(i.change, i.version) for i in resp.items] == items

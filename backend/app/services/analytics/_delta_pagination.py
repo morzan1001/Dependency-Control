@@ -1,4 +1,4 @@
-"""Shared in-memory pagination, side grouping, version pairing and per-scan fetch cap for scan-delta services."""
+"""Shared paging, side grouping, version pairing and per-scan fetch cap for scan-delta services."""
 
 from __future__ import annotations
 
@@ -6,22 +6,31 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable
 from typing import TypeVar
 
-from app.schemas.scan_delta import DeltaTruncation
+from app.schemas.scan_delta import DeltaTruncation, ScanDeltaResponse
 
 # Per-scan cap on documents loaded into memory, bounding worker memory. The findings projection
 # measures 2.14 KiB per document, and a findings delta holds four of these fetches at once.
 MAX_FETCH = 50_000
 
+# Component items split `changed` into two kinds; the filter vocabulary keeps one.
+_FILTER_OF = {"version_changed": "changed", "license_changed": "changed"}
+
 T = TypeVar("T")
 K = TypeVar("K")
 
 
-def paginate(items: list[T], page: int, page_size: int) -> tuple[list[T], int]:
-    """Slice ``items`` for the 1-indexed ``page``; returns (slice, total_pages >= 1). Assumes page/page_size >= 1."""
-    total = len(items)
-    total_pages = max(1, (total + page_size - 1) // page_size)
+def page_of(comparison: ScanDeltaResponse, change: str | None, page: int, page_size: int) -> ScanDeltaResponse:
+    """One 1-indexed page of a sorted comparison's items of the ``change`` kind; assumes page/page_size >= 1."""
+    items = [i for i in comparison.items if change in (None, "all", _FILTER_OF.get(i.change, i.change))]
     start = (page - 1) * page_size
-    return items[start : start + page_size], total_pages
+    return comparison.model_copy(
+        update={
+            "items": items[start : start + page_size],
+            "page": page,
+            "page_size": page_size,
+            "total_pages": max(1, -(-len(items) // page_size)),
+        }
+    )
 
 
 def delta_truncation(

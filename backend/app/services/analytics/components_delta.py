@@ -5,6 +5,8 @@ added+removed, and a license-only change reads as ``license_changed``.
 
 from __future__ import annotations
 
+import asyncio
+
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.purl import package_identity
@@ -15,8 +17,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import MAX_FETCH, by_side, delta_truncation, paginate, pair_versions
-from app.services.analytics._delta_reachability import side_reachability
+from app.services.analytics._delta_pagination import MAX_FETCH, by_side, delta_truncation, pair_versions
 
 # Served by the {scan_id, name, version} index, so a capped side is cut at the same point in the
 # component namespace on both sides instead of at two arbitrary points in natural order.
@@ -59,19 +60,13 @@ def _to_changed(from_doc: dict, to_doc: dict, change: str) -> ComponentDeltaItem
     )
 
 
-async def compute_components_delta(
-    db: AsyncIOMotorDatabase,
-    *,
-    project_id: str,
-    from_scan: str,
-    to_scan: str,
-    page: int,
-    page_size: int,
-    change: str | None,
+async def compare_components(
+    db: AsyncIOMotorDatabase, *, project_id: str, from_scan: str, to_scan: str
 ) -> ScanDeltaResponse:
-    """Compute the delta between two scans' components as a paginated envelope."""
-    from_docs, from_total = await _fetch_components(db, project_id, from_scan)
-    to_docs, to_total = await _fetch_components(db, project_id, to_scan)
+    """Every component change between two scans, sorted, with totals and coverage."""
+    (from_docs, from_total), (to_docs, to_total) = await asyncio.gather(
+        _fetch_components(db, project_id, from_scan), _fetch_components(db, project_id, to_scan)
+    )
 
     groups = by_side(
         lambda d: package_identity(d.get("purl"), d.get("name") or "", d.get("type"), d.get("group")),
@@ -94,18 +89,9 @@ async def compute_components_delta(
             else:
                 unchanged += 1
 
-    items: list[ComponentDeltaItem] = []
-    if change in (None, "all", "added"):
-        items.extend(added)
-    if change in (None, "all", "removed"):
-        items.extend(removed)
-    if change in (None, "all", "changed"):
-        items.extend(changed)
-
+    items = [*added, *removed, *changed]
     # Sort with purl and version tiebreakers so pagination does not depend on fetch order.
     items.sort(key=lambda i: (i.change, i.name, i.purl or "", i.version or ""))
-
-    paged, total_pages = paginate(items, page, page_size)
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,
@@ -118,12 +104,7 @@ async def compute_components_delta(
             changed=len(changed),
             unchanged=unchanged,
         ),
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-        items=paged,
-        from_reachability=await side_reachability(db, from_scan),
-        to_reachability=await side_reachability(db, to_scan),
+        items=items,
         truncation=delta_truncation(
             MAX_FETCH,
             from_compared=len(from_docs),

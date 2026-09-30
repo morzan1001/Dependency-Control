@@ -6,7 +6,6 @@ from app.schemas.scan_delta import (
     ComponentDeltaItem,
     CryptoDeltaItem,
     DeltaCategory,
-    DeltaChange,
     FindingDeltaItem,
     ScanDeltaReachability,
     ScanDeltaResponse,
@@ -44,7 +43,7 @@ def test_response_findings_minimal_payload_validates():
     }
     parsed = ScanDeltaResponse.model_validate(payload)
     assert parsed.totals.added == 1
-    assert parsed.items[0].change == DeltaChange.ADDED
+    assert parsed.items[0].change == "added"
     assert isinstance(parsed.items[0], FindingDeltaItem)
 
 
@@ -76,8 +75,8 @@ def test_components_changed_total_present():
     assert totals.changed == 3
     comp = ComponentDeltaItem(change="version_changed", name="left-pad")
     crypto = CryptoDeltaItem(change="added", name="RSA-1024")
-    assert comp.change == DeltaChange.VERSION_CHANGED
-    assert crypto.change == DeltaChange.ADDED
+    assert comp.change == "version_changed"
+    assert crypto.change == "added"
     assert DeltaCategory.COMPONENTS.value == "components"
 
 

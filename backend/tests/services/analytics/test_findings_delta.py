@@ -368,6 +368,31 @@ async def test_findings_delta_severity_filter(db):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("severity", "unchanged"), [(["high"], 1), (["critical"], 1), (["low"], 0)])
+async def test_a_rescored_finding_stays_unchanged_under_a_severity_filter(db, severity, unchanged):
+    """Severity is not part of the identity, so the filter narrows the result instead of splitting the pair."""
+    await db["findings"].insert_many(
+        [
+            _agg_vuln_doc("r1", "sa", "x", "1", ["CVE-1"], severity="HIGH"),
+            _agg_vuln_doc("r2", "sb", "x", "1", ["CVE-1"], severity="CRITICAL"),
+        ]
+    )
+    resp = await compute_findings_delta(
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=severity,
+        finding_type=None,
+    )
+    assert (resp.totals.added, resp.totals.removed, resp.totals.unchanged) == (0, 0, unchanged)
+    assert resp.items == []
+
+
+@pytest.mark.asyncio
 async def test_findings_delta_pagination(db):
     docs = [_agg_vuln_doc(f"y{i}", "sb", "c", str(i), [f"CVE-{i}"], severity="LOW") for i in range(120)]
     await db["findings"].insert_many(docs)

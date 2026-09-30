@@ -50,8 +50,8 @@ from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.versions import split_fixed_versions
 from app.services.component_identity import artifact_segment, build_component_index, lookup_component
-from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
-from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
+from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION
+from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
 from app.core.purl import canonical_purl
 from app.services.compliance.visibility import report_visibility_filter
@@ -1065,17 +1065,22 @@ class ChatToolRegistry:
         if not scan_a or not scan_b:
             return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
 
-        findings_response = await compute_findings_delta(
-            ctx.db,
-            project_id=project["_id"],
-            from_scan=scan_a["_id"],
-            to_scan=scan_b["_id"],
-            page=1,
-            page_size=int(ctx.args.get("page_size") or 50),
-            change=None,
-            severity=_ensure_list(ctx.args.get("severity")),
-            finding_type=_ensure_list(ctx.args.get("finding_type")),
-        )
+        try:
+            findings_response = await compute_scan_delta_dispatch(
+                db=ctx.db,
+                project_id=project["_id"],
+                category="findings",
+                from_scan=scan_a["_id"],
+                to_scan=scan_b["_id"],
+                page=1,
+                page_size=int(ctx.args.get("page_size") or 50),
+                change=None,
+                severity=_ensure_list(ctx.args.get("severity")),
+                finding_type=_ensure_list(ctx.args.get("finding_type")),
+                allow_same_scan=False,
+            )
+        except InvalidDeltaQuery as invalid:
+            return {"error": str(invalid)}
         return findings_response.model_dump(mode="json")
 
     async def _tool_get_kev_findings(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1550,15 +1555,22 @@ class ChatToolRegistry:
         scan_b = await ctx.db["scans"].find_one({"_id": ctx.args["to_scan_id"], "project_id": project["_id"]})
         if not scan_a or not scan_b:
             return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
-        crypto_response = await compute_crypto_delta_envelope(
-            ctx.db,
-            project_id=project["_id"],
-            from_scan=scan_a["_id"],
-            to_scan=scan_b["_id"],
-            page=1,
-            page_size=int(ctx.args.get("page_size") or 50),
-            change=None,
-        )
+        try:
+            crypto_response = await compute_scan_delta_dispatch(
+                db=ctx.db,
+                project_id=project["_id"],
+                category="crypto",
+                from_scan=scan_a["_id"],
+                to_scan=scan_b["_id"],
+                page=1,
+                page_size=int(ctx.args.get("page_size") or 50),
+                change=None,
+                severity=None,
+                finding_type=None,
+                allow_same_scan=False,
+            )
+        except InvalidDeltaQuery as invalid:
+            return {"error": str(invalid)}
         return crypto_response.model_dump(mode="json")
 
     async def _tool_generate_pqc_migration_plan(self, ctx: _ToolContext) -> dict[str, Any]:

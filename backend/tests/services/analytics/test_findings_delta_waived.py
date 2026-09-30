@@ -35,6 +35,7 @@ _VERSION = "1.0.0"
 _NOTHING = 0
 _ONE = 1
 _TWO = 2
+_THREE = 3
 
 _LIVE_CVE = "CVE-3001"
 _WAIVED_CVE = "CVE-3002"
@@ -178,15 +179,8 @@ async def test_a_side_with_no_waivers_reports_nothing_excluded(db):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "filters",
-    [
-        {"finding_type": [FindingType.SECRET.value]},
-        {"severity": [Severity.LOW.value]},
-    ],
-)
-async def test_the_counts_cover_the_same_item_set_as_the_delta(db, filters):
-    """Counting outside the caller's filters would describe findings the delta never looked at."""
+async def test_the_counts_cover_the_findings_the_delta_read(db):
+    """The type filter narrows what is read; severity only narrows the reported items, after matching."""
     await db.findings.insert_one(_finding(_WAIVED_FINDING, _FROM_SCAN, component=_WAIVED_COMPONENT, waived=True))
     await db.findings.insert_one(
         _finding(
@@ -207,9 +201,11 @@ async def test_the_counts_cover_the_same_item_set_as_the_delta(db, filters):
         )
     )
 
-    result = await _delta(db, **filters)
+    by_type = await _delta(db, finding_type=[FindingType.SECRET.value])
+    by_severity = await _delta(db, severity=[Severity.LOW.value])
 
-    assert result.from_waived_excluded == _ONE
+    assert by_type.from_waived_excluded == _ONE
+    assert by_severity.from_waived_excluded == _THREE
 
 
 def _aggregated(fid: str, scan_id: str, entries: list[dict], *, waived: bool = False) -> dict:

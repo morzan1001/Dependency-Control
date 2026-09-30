@@ -1,9 +1,17 @@
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.schemas.scan_delta import DeltaCategory, ScanDeltaResponse, ScanDeltaSide, ScanDeltaTotals
+from app.schemas.scan_delta import (
+    CryptoDeltaItem,
+    DeltaCategory,
+    FindingDeltaItem,
+    ScanDeltaResponse,
+    ScanDeltaSide,
+    ScanDeltaTotals,
+)
+from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scan_delta import _MAX_PAGE_SIZE, InvalidDeltaQuery, compute_scan_delta_dispatch
 
 _PROJECT = "p1"
@@ -37,6 +45,30 @@ _RELEASED_AT = datetime(2026, 8, 1, tzinfo=timezone.utc)
 _BUILT_AT = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
 
+async def _dispatch(db, **overrides) -> ScanDeltaResponse:
+    query = {
+        "project_id": _PROJECT,
+        "category": _FINDINGS,
+        "from_scan": _FROM_SCAN,
+        "to_scan": _TO_SCAN,
+        "page": _PAGE,
+        "page_size": _PAGE_SIZE,
+        "change": None,
+        "severity": None,
+        "finding_type": None,
+        "allow_same_scan": False,
+    }
+    return await compute_scan_delta_dispatch(db=db, **(query | overrides))
+
+
+def _findings_comparison(*changes: str) -> ScanDeltaResponse:
+    items = [
+        FindingDeltaItem(change=change, finding_id=f"f{n}", finding_type="vulnerability", severity="HIGH", title="")
+        for n, change in enumerate(changes)
+    ]
+    return _envelope(DeltaCategory.FINDINGS).model_copy(update={"items": items})
+
+
 def _envelope(category: DeltaCategory) -> ScanDeltaResponse:
     """A per-category sentinel the dispatcher must hand back untouched."""
     return ScanDeltaResponse(
@@ -51,7 +83,7 @@ def _envelope(category: DeltaCategory) -> ScanDeltaResponse:
 @pytest.mark.asyncio
 async def test_dispatch_findings(db):
     with patch(
-        "app.services.analytics.scan_delta.compute_findings_delta",
+        "app.services.analytics.scan_delta.compare_findings",
         new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
     ) as mock:
         result = await compute_scan_delta_dispatch(
@@ -74,7 +106,7 @@ async def test_dispatch_findings(db):
 @pytest.mark.asyncio
 async def test_dispatch_components(db):
     with patch(
-        "app.services.analytics.scan_delta.compute_components_delta",
+        "app.services.analytics.scan_delta.compare_components",
         new=AsyncMock(return_value=_envelope(DeltaCategory.COMPONENTS)),
     ) as mock:
         result = await compute_scan_delta_dispatch(
@@ -97,7 +129,7 @@ async def test_dispatch_components(db):
 @pytest.mark.asyncio
 async def test_dispatch_crypto(db):
     with patch(
-        "app.services.analytics.scan_delta.compute_crypto_delta_envelope",
+        "app.services.analytics.scan_delta.compare_crypto",
         new=AsyncMock(return_value=_envelope(DeltaCategory.CRYPTO)),
     ) as mock:
         result = await compute_scan_delta_dispatch(
@@ -154,21 +186,16 @@ async def test_dispatch_rejects_finding_type_for_non_findings(db):
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_change_changed_for_crypto(db):
-    with pytest.raises(InvalidDeltaQuery):
-        await compute_scan_delta_dispatch(
-            db=db,
-            project_id=_PROJECT,
-            category=_CRYPTO,
-            from_scan=_FROM_SCAN,
-            to_scan=_TO_SCAN,
-            page=_PAGE,
-            page_size=_PAGE_SIZE,
-            change=_CHANGED,
-            severity=None,
-            finding_type=None,
-            allow_same_scan=False,
-        )
+async def test_crypto_answers_the_shared_change_vocabulary(db):
+    """Crypto pairs no changed items, so asking for them is an empty page rather than an error."""
+    added = CryptoDeltaItem(change="added", name="MD5")
+    with patch(
+        "app.services.analytics.scan_delta.compare_crypto",
+        new=AsyncMock(return_value=_envelope(DeltaCategory.CRYPTO).model_copy(update={"items": [added]})),
+    ):
+        result = await _dispatch(db, category=_CRYPTO, change=_CHANGED)
+
+    assert result.items == []
 
 
 @pytest.mark.asyncio
@@ -229,7 +256,7 @@ async def test_dispatch_rejects_unknown_severity_preserves_user_casing(db):
 @pytest.mark.asyncio
 async def test_dispatch_accepts_uppercase_severity(db):
     with patch(
-        "app.services.analytics.scan_delta.compute_findings_delta",
+        "app.services.analytics.scan_delta.compare_findings",
         new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
     ):
         result = await compute_scan_delta_dispatch(
@@ -268,7 +295,7 @@ async def test_dispatch_rejects_unknown_finding_type(db):
 
 @pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_change_for_findings(db):
-    with pytest.raises(InvalidDeltaQuery, match=f"change={_UNKNOWN_CHANGE}"):
+    with pytest.raises(InvalidDeltaQuery, match=f"unknown change values: {_UNKNOWN_CHANGE}"):
         await compute_scan_delta_dispatch(
             db=db,
             project_id=_PROJECT,
@@ -324,7 +351,7 @@ async def test_dispatch_rejects_page_size_above_max(db):
 async def test_dispatch_accepts_the_maximum_page_size(db):
     """The advertised maximum is inclusive: the largest page a caller may ask for is answered."""
     with patch(
-        "app.services.analytics.scan_delta.compute_findings_delta",
+        "app.services.analytics.scan_delta.compare_findings",
         new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
     ) as mock:
         result = await compute_scan_delta_dispatch(
@@ -341,13 +368,14 @@ async def test_dispatch_accepts_the_maximum_page_size(db):
             allow_same_scan=False,
         )
         assert result.category == DeltaCategory.FINDINGS
-        assert mock.await_args.kwargs["page_size"] == _PAGE_SIZE_AT_MAXIMUM
+        assert result.page_size == _PAGE_SIZE_AT_MAXIMUM
+        mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("category", "service"),
-    [(DeltaCategory.COMPONENTS, "compute_components_delta"), (DeltaCategory.FINDINGS, "compute_findings_delta")],
+    [(DeltaCategory.COMPONENTS, "compare_components"), (DeltaCategory.FINDINGS, "compare_findings")],
 )
 async def test_dispatch_accepts_change_changed_for_components_and_findings(db, category, service):
     with patch(
@@ -381,7 +409,7 @@ async def test_the_envelope_names_the_build_each_side_resolved_to(db):
     )
 
     with patch(
-        "app.services.analytics.scan_delta.compute_findings_delta",
+        "app.services.analytics.scan_delta.compare_findings",
         new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
     ):
         result = await compute_scan_delta_dispatch(
@@ -409,7 +437,7 @@ async def test_the_envelope_names_the_build_each_side_resolved_to(db):
 @pytest.mark.asyncio
 async def test_a_side_whose_scan_is_gone_still_names_its_id(db):
     with patch(
-        "app.services.analytics.scan_delta.compute_findings_delta",
+        "app.services.analytics.scan_delta.compare_findings",
         new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
     ):
         result = await compute_scan_delta_dispatch(
@@ -427,3 +455,57 @@ async def test_a_side_whose_scan_is_gone_still_names_its_id(db):
         )
 
     assert result.to_side == ScanDeltaSide(scan_id=_TO_SCAN)
+
+
+@pytest.mark.asyncio
+async def test_pages_and_change_filters_slice_one_comparison(db):
+    with patch(
+        "app.services.analytics.scan_delta.compare_findings",
+        new=AsyncMock(return_value=_findings_comparison("added", "added", "changed", "removed")),
+    ) as mock:
+        second_page = await _dispatch(db, page=2, page_size=1)
+        added = await _dispatch(db, change="added")
+        changed = await _dispatch(db, change=_CHANGED)
+
+    mock.assert_awaited_once()
+    assert (second_page.page, second_page.total_pages, [i.finding_id for i in second_page.items]) == (2, 4, ["f1"])
+    assert [i.finding_id for i in added.items] == ["f0", "f1"]
+    assert [i.finding_id for i in changed.items] == ["f2"]
+
+
+@pytest.mark.asyncio
+async def test_the_comparison_is_keyed_on_the_filter_set_not_its_spelling(db):
+    with patch(
+        "app.services.analytics.scan_delta.compare_findings",
+        new=AsyncMock(return_value=_findings_comparison("added")),
+    ) as mock:
+        await _dispatch(db, severity=["critical", "high"])
+        await _dispatch(db, severity=["HIGH", "critical"])
+        assert mock.await_count == 1
+        await _dispatch(db, severity=["critical", "high"], finding_type=_SECRET)
+        assert mock.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_waiver_edit_drops_the_cached_comparison(db):
+    """Waiver writes clear the shared analytics cache; the delta must live in that cache to follow."""
+    with patch(
+        "app.services.analytics.scan_delta.compare_findings",
+        new=AsyncMock(return_value=_findings_comparison("added")),
+    ) as mock:
+        await _dispatch(db)
+        get_analytics_cache().clear()
+        await _dispatch(db)
+
+    assert mock.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_a_pair_resolved_onto_one_scan_is_answered_without_a_read():
+    db = MagicMock()
+
+    result = await _dispatch(db, from_scan=_SAME_SCAN, to_scan=_SAME_SCAN, allow_same_scan=True)
+
+    assert (result.totals, result.items) == (ScanDeltaTotals(), [])
+    assert result.from_side == result.to_side == ScanDeltaSide(scan_id=_SAME_SCAN)
+    assert db.mock_calls == []
