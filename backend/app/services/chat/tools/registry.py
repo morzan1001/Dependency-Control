@@ -976,14 +976,24 @@ class ChatToolRegistry:
         out = []
         for slim, f in zip(_slim_with_project(rows, names), rows, strict=True):
             advisories, version = live_advisories(f.get("details")), f.get("version")
-            fix = _fix_target([v["fixed_version"] for v in advisories if v.get("fixed_version")], version)
+            urgent = [
+                v["fixed_version"]
+                for v in advisories
+                if v.get("fixed_version") and v.get("severity") in ("CRITICAL", "HIGH")
+            ]
+            fix = _fix_target(urgent, version)
             if fix and parse_version_key(fix) > parse_version_key(version or ""):
                 out.append(
                     {
                         **slim,
                         "quick_fix_version": fix,
                         "breaking_change_risk": _breaking_risk(version, fix),
-                        "still_open": [canonical_cve(v) for v in advisories if not v.get("fixed_version")],
+                        # The bump fixes an advisory exactly when adding its fix leaves the target unchanged.
+                        "still_open": [
+                            canonical_cve(v)
+                            for v in advisories
+                            if not v.get("fixed_version") or _fix_target([*urgent, v["fixed_version"]], version) != fix
+                        ],
                     }
                 )
         return {
@@ -991,8 +1001,8 @@ class ChatToolRegistry:
             "count": len(out),
             "hint": (
                 "Upgrading to quick_fix_version fixes every CRITICAL/HIGH advisory of these findings. A row with "
-                "breaking_change_risk 'high' needs a major upgrade: list it apart from the quick wins. Advisories "
-                "under still_open have no fix yet and stay after the upgrade: call that a partial fix."
+                "breaking_change_risk 'high' needs a major upgrade: list it apart from the quick wins. The "
+                "lower-severity advisories under still_open stay after the upgrade: call that a partial fix."
             ),
             **({"ranking_note": ranking_note} if ranking_note else {}),
         }

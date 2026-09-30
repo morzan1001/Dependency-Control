@@ -60,7 +60,7 @@ def _seeded() -> FakeDatabase:
                 "version": "1.0",
                 "created_at": _NOW - timedelta(days=90),
                 "details": {
-                    "vulnerabilities": [{"id": _CVE, "in_kev": True, "fixed_version": "1.0.1"}],
+                    "vulnerabilities": [{"id": _CVE, "severity": "CRITICAL", "in_kev": True, "fixed_version": "1.0.1"}],
                     "exploit_maturity": "active",
                     "fixed_version": "1.0.1",
                 },

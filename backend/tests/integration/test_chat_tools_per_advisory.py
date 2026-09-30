@@ -677,6 +677,24 @@ async def test_auto_fixable_names_the_patch_on_the_installed_major_and_flags_maj
     }
 
 
+async def test_auto_fixable_targets_the_critical_and_high_fixes_and_lists_what_the_bump_leaves_open(db, database):
+    await _seed_head(db)
+    advisories = [
+        _advisory("CVE-2024-0201", "1.2.6, 2.0.1"),
+        _advisory("CVE-2024-0202", "2.0.1", "MEDIUM"),
+        _advisory("CVE-2024-0203", "1.2.3", "LOW"),
+    ]
+    await db.findings.insert_one(_finding("f-mixed", "HIGH", "lib-mixed", advisories, version="1.2.0"))
+
+    (row,) = (await _call(db, "get_auto_fixable_findings"))["findings"]
+
+    assert (row["quick_fix_version"], row["breaking_change_risk"], row["still_open"]) == (
+        "1.2.6",
+        "low",
+        ["CVE-2024-0202"],
+    )
+
+
 @pytest.mark.parametrize(
     ("severity", "fixed", "epss", "reachability", "recommend", "expiry", "tier"),
     [
