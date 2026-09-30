@@ -187,10 +187,10 @@ class CacheKeys:
         return f"releases:{system}:{package}"
 
     @staticmethod
-    def update_frequency_comparison(scope_hash: str, team_id: str = "all") -> str:
+    def update_frequency_comparison(scope_hash: str, team_id: str | None) -> str:
         # Keying on the scope digest rather than the user shares one entry between
         # callers that see the same projects, without crossing access boundaries.
-        return f"update_freq_cmp:{scope_hash}:{team_id}"
+        return f"update_freq_cmp:{scope_hash}:" + (f"team={team_id}" if team_id else "all-teams")
 
     @staticmethod
     def recommendations(project_id: str, scan_id: str, scope_hash: str) -> str:
