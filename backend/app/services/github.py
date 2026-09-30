@@ -30,6 +30,7 @@ from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
 from app.models.team import GitHubTeamBinding, Team, TeamMember, TeamSyncResult, binding_of
 from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
+from app.schemas.github_instance import GitHubOrgTeam
 from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -155,7 +156,7 @@ def build_team_slug_map(org_teams: list[dict[str, Any]]) -> dict[int, str]:
     }
 
 
-def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[GitHubOrgTeam]:
     """The teams of an organisation a human can bind to, with the parent that tells two same-named
     nested teams apart. An entry that cannot address a team is left out, as it is everywhere else."""
     options = []
@@ -166,12 +167,12 @@ def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[dict[str, An
             continue
         parent = team.get("parent") or {}
         options.append(
-            {
-                "id": team_id,
-                "slug": slug,
-                "name": str(team.get("name") or slug),
-                "parent_name": str(parent["name"]) if parent.get("name") else None,
-            }
+            GitHubOrgTeam(
+                id=team_id,
+                slug=slug,
+                name=str(team.get("name") or slug),
+                parent_name=str(parent["name"]) if parent.get("name") else None,
+            )
         )
     return options
 

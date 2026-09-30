@@ -247,7 +247,7 @@ async def list_organisation_teams(
             f"the teams of organisation '{org}'",
             "The token needs read:org there.",
         )
-    return [GitHubOrgTeam(**option) for option in build_org_team_options(org_teams)]
+    return build_org_team_options(org_teams)
 
 
 def _failed_test(instance: GitHubInstance, message: str) -> GitHubInstanceTestConnectionResponse:

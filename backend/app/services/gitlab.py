@@ -32,6 +32,7 @@ from app.models.gitlab_instance import GitLabInstance
 from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult, binding_of
 from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
+from app.schemas.gitlab_instance import GitLabGroupOption
 from app.services.github import response_ok
 from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
@@ -70,7 +71,7 @@ def group_full_path(group: dict[str, Any], fallback: str = "") -> str:
     return str(group.get("full_path") or group.get("path") or fallback)
 
 
-def build_group_options(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_group_options(groups: list[dict[str, Any]]) -> list[GitLabGroupOption]:
     """The groups a human can bind to. An entry that cannot address a group is left out, as it is
     everywhere else."""
     options = []
@@ -79,7 +80,7 @@ def build_group_options(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
         full_path = group_full_path(group)
         if not isinstance(group_id, int) or not full_path:
             continue
-        options.append({"id": group_id, "full_path": full_path, "name": str(group.get("name") or full_path)})
+        options.append(GitLabGroupOption(id=group_id, full_path=full_path, name=str(group.get("name") or full_path)))
     return options
 
 
