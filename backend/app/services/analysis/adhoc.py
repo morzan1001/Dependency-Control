@@ -43,7 +43,7 @@ from app.schemas.opengrep import OpenGrepFinding
 from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
-from app.services.aggregation import ResultAggregator
+from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories, post_processor_factories
@@ -460,8 +460,7 @@ async def _run_one_analyzer(
     """
     try:
         result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
-        # The aggregator guards on membership, not truthiness, so ``{"error": ""}`` would reach it.
-        if "error" in result:
+        if is_error_result(result):
             _record_errored(report, name, f"{fallback_source}: {result['error']}")
             return
         aggregator.aggregate(name, result, source=_sbom_source(sbom, fallback_source))
@@ -545,7 +544,7 @@ def _aggregate_posted_scanners(
         if not payload:
             report.skipped[name] = _EMPTY_PAYLOAD
             continue
-        if "error" in payload:
+        if is_error_result(payload):
             _record_errored(report, name, str(payload["error"]))
             continue
         expected_keys = _SCANNER_RESULT_KEYS[name]

@@ -115,6 +115,13 @@ class _CliTimeoutAnalyzer:
         return {"error": "grype analysis failed", "details": "grype timed out after 300 seconds"}
 
 
+class _EmptyMessageCryptoAnalyzer:
+    """Crypto analyzers return ``{"error": str(e), "findings": []}``; asyncio.TimeoutError() has no message."""
+
+    async def analyze(self, sbom, settings=None, parsed_components=None, *, project_id, scan_id, db):
+        return {"error": str(TimeoutError()), "findings": []}
+
+
 class _GrypeVulnAnalyzer:
     """Grype's native result shape, so the run produces a vulnerability finding to enrich."""
 
@@ -286,6 +293,22 @@ async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, 
     assert scan["failed_analyzers"] == ["osv"]
     error_findings = [d async for d in db.findings.find({"scan_id": scan_id, "finding_id": "SCAN-ERROR-osv"})]
     assert len(error_findings) == 1, "partial coverage must be visible in the findings list"
+    assert error_findings[0]["description"].startswith("Scanner 'osv' returned partial results: ")
+
+
+@pytest.mark.asyncio
+async def test_an_error_result_with_an_empty_message_still_counts_as_failed(db, _gridfs_patched, monkeypatch):
+    serve_analyzer(monkeypatch, "crypto_weak_key", _EmptyMessageCryptoAnalyzer())
+    await _seed_project(db)
+    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)], scan_type="cbom")
+
+    assert (
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["crypto_weak_key"], db, worker_id=_WORKER)
+        == SCAN_STATUS_COMPLETED_WITH_ERRORS
+    )
+
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert scan["failed_analyzers"] == ["crypto_weak_key"]
 
 
 @pytest.mark.asyncio

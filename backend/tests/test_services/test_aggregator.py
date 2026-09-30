@@ -958,6 +958,24 @@ class TestAggregateDispatch:
         assert f.type == "system_warning"
         assert "trivy" in f.description
 
+    @pytest.mark.parametrize("order", [(0, 1), (1, 0)])
+    def test_every_failure_of_one_analyzer_stays_in_the_description(self, order):
+        # cli_base shapes: a timeout on one SBOM, an exception on another.
+        failures = [
+            ({"error": "osv analysis failed", "details": "osv timed out after 300 seconds"}, "sbom-a"),
+            ({"error": "Exception during osv analysis: 503 Service Unavailable"}, "sbom-b"),
+        ]
+        for i in order:
+            result, source = failures[i]
+            self.agg.aggregate("osv", result, source=source)
+
+        [f] = self.agg.get_findings()
+        assert f.description == (
+            "Scanner 'osv' failed: Exception during osv analysis: 503 Service Unavailable; "
+            "Scanner 'osv' failed: osv analysis failed"
+        )
+        assert {e["source"] for e in f.details["errors"]} == {"sbom-a", "sbom-b"}
+
 
 class TestStoredEntryShape:
     """Each advisory entry stores a field once, at the level its readers use."""

@@ -75,6 +75,11 @@ def _package_key(finding: Finding) -> tuple[str, str]:
     return normalize_component(finding.component), normalize_version(finding.version)
 
 
+def is_error_result(result: Any) -> bool:
+    """Only failure paths set ``error``, so an empty message still marks a failure."""
+    return isinstance(result, dict) and "error" in result
+
+
 def _adopt_smallest_spelling(existing: Finding, finding: Finding, id_prefix: str) -> None:
     """Keep the smallest raw (component, version) spelling so arrival order cannot pick the finding id."""
     existing.component, existing.version = min(
@@ -273,22 +278,9 @@ class ResultAggregator:
         if not result:
             return
 
-        if "error" in result:
-            self.add_finding(
-                Finding(
-                    id=f"SCAN-ERROR-{analyzer_name}",
-                    type=FindingType.SYSTEM_WARNING,
-                    severity=Severity.HIGH,
-                    component="Scanner System",
-                    version="",
-                    description=f"Scanner '{analyzer_name}' failed: {result.get('error')}",
-                    scanners=[analyzer_name],
-                    details=SystemWarningDetails(
-                        error_details=result.get("details", result.get("output", "No details provided"))
-                    ).model_dump(exclude_none=True),
-                ),
-                source=source,
-            )
+        if is_error_result(result):
+            error_details = result.get("details", result.get("output"))
+            self.add_scan_error(analyzer_name, str(result["error"]), error_details=error_details, source=source)
             return
 
         normalizers = {
@@ -316,6 +308,42 @@ class ResultAggregator:
 
         if analyzer_name in normalizers:
             normalizers[analyzer_name](self, result, source=source)
+
+    def add_scan_error(
+        self,
+        analyzer_name: str,
+        message: str,
+        *,
+        partial: bool = False,
+        error_details: Any = None,
+        source: str | None = None,
+    ) -> None:
+        """Record an analyzer failure; every distinct failure stays listed in the description."""
+        outcome = "returned partial results" if partial else "failed"
+        error = {"source": source, "message": f"Scanner '{analyzer_name}' {outcome}: {message}"}
+        if error_details is not None:
+            error["error_details"] = error_details
+        finding_id = f"SCAN-ERROR-{analyzer_name}"
+        existing = self.findings.get(finding_id)
+        if existing is None:
+            self.findings[finding_id] = Finding(
+                id=finding_id,
+                type=FindingType.SYSTEM_WARNING,
+                severity=Severity.HIGH,
+                component="Scanner System",
+                version="",
+                description=error["message"],
+                scanners=[analyzer_name],
+                details=SystemWarningDetails(error_details=error_details, errors=[error]).model_dump(exclude_none=True),
+                found_in=[source] if source else [],
+            )
+            return
+        errors = existing.details["errors"]
+        if error not in errors:
+            errors.append(error)
+        existing.description = "; ".join(sorted({e["message"] for e in errors}))
+        if source and source not in existing.found_in:
+            existing.found_in.append(source)
 
     @staticmethod
     def _merge_cluster(cluster: list[Finding], representative: str) -> Finding:

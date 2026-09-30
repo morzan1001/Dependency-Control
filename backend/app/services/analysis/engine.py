@@ -41,7 +41,6 @@ from app.core.metrics import (
     analysis_scans_total,
     analysis_waivers_applied_total,
 )
-from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Scan
 from app.models.stats import Stats
 from app.repositories.analysis_results import AnalysisResultRepository
@@ -52,9 +51,9 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.repositories.system_settings import SystemSettingsRepository
-from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
+from app.schemas.finding_details import VulnerabilitySummaryDetails
 from app.schemas.sbom import ParsedSBOM
-from app.services.aggregation import ResultAggregator
+from app.services.aggregation import ResultAggregator, is_error_result
 from app.services.aggregation.cross_link import refresh_vulnerability_info
 from app.services.analysis.integrations import decorate_github_pr, decorate_gitlab_mr
 from app.services.analysis.notifications import notify_analysis_failed, send_scan_notifications
@@ -209,7 +208,7 @@ async def process_analyzer(
             logger.exception("Storing the raw %s result of %s failed: %s", analyzer_name, scan_id, e)
 
         # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts instead of raising.
-        if isinstance(result, dict) and result.get("error"):
+        if is_error_result(result):
             if analysis_errors_total:
                 analysis_errors_total.labels(analyzer=analyzer_name).inc()
             logger.warning(f"Analysis {analyzer_name} returned an error result for {scan_id}: {result.get('error')}")
@@ -218,11 +217,7 @@ async def process_analyzer(
         partial_reason = _partial_result_reason(result)
         if partial_reason:
             # Surface the coverage gap as a finding and flag the analyzer as partial.
-            aggregator.aggregate(
-                analyzer_name,
-                {"error": f"partial result: {partial_reason}"},
-                source=f"System: {analyzer_name}",
-            )
+            aggregator.add_scan_error(analyzer_name, partial_reason, partial=True, source=f"System: {analyzer_name}")
             logger.warning(f"Analysis {analyzer_name} returned a partial result for {scan_id}: {partial_reason}")
             return f"{analyzer_name}: Partial ({partial_reason})"
 
@@ -234,7 +229,7 @@ async def process_analyzer(
         if analysis_errors_total:
             analysis_errors_total.labels(analyzer=analyzer_name).inc()
         # Surface the failure as a finding.
-        aggregator.aggregate(analyzer_name, {"error": str(e)}, source=f"System: {analyzer_name}")
+        aggregator.add_scan_error(analyzer_name, str(e), source=f"System: {analyzer_name}")
         return f"{analyzer_name}: Failed"
 
 
@@ -291,7 +286,7 @@ async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: Res
             logger.exception("Failed to fetch SBOM from GridFS %s: %s", gridfs_id, gridfs_err)
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
-            aggregator.aggregate("system", {"error": f"{_SBOM_GRIDFS_LOAD_ERROR}: {gridfs_err}"})
+            aggregator.add_scan_error("system", f"{_SBOM_GRIDFS_LOAD_ERROR}: {gridfs_err}")
             return None
     result: dict[str, Any] | None = item
     return result
@@ -611,7 +606,7 @@ async def _aggregate_external_results(
         try:
             result = row["result"]
             aggregator.aggregate(analyzer_name, result)
-            if isinstance(result, dict) and result.get("error"):
+            if is_error_result(result):
                 # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
                 results_summary.append(f"{analyzer_name}: Failed")
             else:
@@ -623,17 +618,8 @@ async def _aggregate_external_results(
                 scan_id,
                 exc,
             )
-            aggregator.add_finding(
-                Finding(
-                    id=f"SCAN-ERROR-{analyzer_name}",
-                    type=FindingType.SYSTEM_WARNING,
-                    severity=Severity.HIGH,
-                    component="Scanner System",
-                    version="",
-                    description=f"External result for '{analyzer_name}' could not be aggregated: {exc}",
-                    scanners=[analyzer_name],
-                    details=SystemWarningDetails(error_details=str(exc)).model_dump(exclude_none=True),
-                )
+            aggregator.add_scan_error(
+                analyzer_name, f"external result could not be aggregated: {exc}", error_details=str(exc)
             )
             results_summary.append(f"{analyzer_name}: Failed")
 

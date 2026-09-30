@@ -385,6 +385,7 @@ class HashVerificationDetails(_DetailsModel):
 class SystemWarningDetails(_DetailsModel):
     # Failed analyzers report strings; malformed external results can carry structured blobs.
     error_details: Any = None
+    errors: list[dict[str, Any]] = []
 
 
 class MatchedRuleEntry(_DetailsModel):
