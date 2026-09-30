@@ -32,6 +32,7 @@ async def test_put_system_policy_writes_audit_entry(
 
     entries = await PolicyAuditRepository(db).list(
         policy_scope="system",
+        policy_type="crypto",
         limit=10,
     )
     assert any(e.version == version for e in entries)
@@ -55,6 +56,7 @@ async def test_put_project_policy_writes_audit_entry(
 
     entries = await PolicyAuditRepository(db).list(
         policy_scope="project",
+        policy_type="crypto",
         project_id="p",
         limit=10,
     )
@@ -81,6 +83,7 @@ async def test_delete_project_policy_writes_audit_entry(
 
     entries = await PolicyAuditRepository(db).list(
         policy_scope="project",
+        policy_type="crypto",
         project_id="p2",
         limit=10,
     )

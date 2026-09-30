@@ -61,8 +61,17 @@ async def write_policy(
                 return None
         else:
             current = await repo.get_project_policy(project_id)
+    if (
+        current is not None
+        and rules is not None
+        and action != PolicyAuditAction.SEED
+        and [r.model_dump() for r in current.rules] == [r.model_dump() for r in rules]
+    ):
+        return current
     # The audit history outlives a deleted override, so a recreated one continues its numbering.
-    audited = await PolicyAuditRepository(db).max_version(policy_scope=scope, project_id=project_id)
+    audited = await PolicyAuditRepository(db).max_version(
+        policy_scope=scope, project_id=project_id, policy_type="crypto"
+    )
     policy = CryptoPolicy(
         scope=scope,
         project_id=project_id,
@@ -99,7 +108,7 @@ async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
     editor = existing.updated_by if existing else None
     if existing is not None and existing.seed_version is None and editor is None:
         # A policy without seed_version can lack updated_by after a person reverted it; the audit history names them.
-        newest = await PolicyAuditRepository(db).list(policy_scope="system", limit=1)
+        newest = await PolicyAuditRepository(db).list(policy_scope="system", policy_type="crypto", limit=1)
         editor = newest[0].actor_user_id if newest else None
     if existing is not None and editor is not None:
         # A person edited this policy, so their rules stand and only seed rule_ids it lacks are added.

@@ -1,13 +1,17 @@
 """Tests for GitLabService multi-instance support."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from functools import partial
+from typing import ClassVar
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from app.models.gitlab_api import OIDCPayload
 from app.models.gitlab_instance import GitLabInstance
-from app.services.gitlab import GitLabService
+from app.services.gitlab import GitLabGroupLookup, GitLabService
+from tests.mocks.gitlab import make_gitlab_instance
 
 
 class TestGitLabServiceInitialization:
@@ -133,7 +137,7 @@ class TestGitLabServiceOIDC:
 
         with patch.object(service, "get_jwks", new_callable=AsyncMock) as mock_jwks:
             mock_jwks.return_value = {"keys": [{"kid": "other-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-            with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock):
+            with patch.object(service, "refresh_jwks", new_callable=AsyncMock, return_value=None):
                 with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
                     mock_header.return_value = {"kid": "missing-key"}
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
@@ -180,70 +184,157 @@ class TestGitLabServiceOIDC:
                     assert call_kwargs["issuer"] == "https://gitlab.com"
 
     def test_key_rotation_refreshes_jwks(self, gitlab_instance_a):
-        """When key is not in cached JWKS, should invalidate and retry."""
+        """A kid missing from the cached set is looked up in a refetched one."""
+        service = GitLabService(gitlab_instance_a)
+        jwks_old = {"keys": [{"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+        jwks_new = {"keys": [*jwks_old["keys"], {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"}]}
+
+        with (
+            patch.object(service, "get_jwks", new_callable=AsyncMock, return_value=jwks_old),
+            patch.object(service, "refresh_jwks", new_callable=AsyncMock, return_value=jwks_new) as refresh,
+            patch("app.services.oidc_utils.jwt.get_unverified_header", return_value={"kid": "new-key"}),
+            patch("app.services.oidc_utils.jwt.decode", return_value={"project_id": "42", "project_path": "g/p"}),
+        ):
+            result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
+
+        assert isinstance(result, OIDCPayload)
+        assert result.project_id == "42"
+        refresh.assert_awaited_once()
+
+
+_JWKS = {"keys": [{"kid": "k1", "kty": "RSA", "n": "n", "e": "AQAB"}]}
+
+
+@pytest.fixture
+def jwks_cache(fake_cache, monkeypatch):
+    monkeypatch.setattr("app.services.oidc_utils.cache_service", fake_cache)
+    monkeypatch.setattr("app.services.gitlab.cache_service", fake_cache)
+    return fake_cache
+
+
+def _serve_idp(monkeypatch, handler):
+    requested: list[str] = []
+
+    async def recording(request):
+        requested.append(str(request.url))
+        return handler(request)
+
+    monkeypatch.setattr(httpx, "AsyncClient", partial(httpx.AsyncClient, transport=httpx.MockTransport(recording)))
+    return requested
+
+
+@pytest.mark.asyncio
+class TestGitLabJwksSource:
+    async def test_a_dead_instance_is_asked_once_per_known_location(self, monkeypatch, jwks_cache, gitlab_instance_a):
+        requested = _serve_idp(monkeypatch, lambda request: httpx.Response(502))
         service = GitLabService(gitlab_instance_a)
 
-        jwks_old = {"keys": [{"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"}]}
-        jwks_new = {
-            "keys": [
-                {"kid": "old-key", "kty": "RSA", "n": "n", "e": "AQAB"},
-                {"kid": "new-key", "kty": "RSA", "n": "n2", "e": "AQAB"},
-            ]
-        }
+        assert await service.get_jwks() is None
+        assert await service.get_jwks() is None
+        assert requested == [
+            "https://gitlab-a.com/.well-known/openid-configuration",
+            "https://gitlab-a.com/oauth/discovery/keys",
+            "https://gitlab-a.com/-/jwks",
+        ]
 
-        call_count = 0
+    async def test_a_new_issuer_url_is_not_served_the_old_instances_keys(self, monkeypatch, jwks_cache):
+        moved = {"keys": [{"kid": "k2", "kty": "RSA", "n": "n2", "e": "AQAB"}]}
 
-        async def get_jwks_side_effect():
-            nonlocal call_count
-            call_count += 1
-            return jwks_old if call_count == 1 else jwks_new
+        def handler(request):
+            if request.url.path == "/.well-known/openid-configuration":
+                return httpx.Response(404)
+            return httpx.Response(200, json=_JWKS if request.url.host == "gitlab-old.com" else moved)
 
-        with patch.object(service, "get_jwks", side_effect=get_jwks_side_effect):
-            with patch.object(service, "_invalidate_jwks_cache", new_callable=AsyncMock) as mock_invalidate:
-                with patch("app.services.oidc_utils.jwt.get_unverified_header") as mock_header:
-                    mock_header.return_value = {"kid": "new-key"}
-                    with patch("app.services.oidc_utils.jwt.decode") as mock_decode:
-                        mock_decode.return_value = {"project_id": "42", "project_path": "g/p"}
+        _serve_idp(monkeypatch, handler)
 
-                        result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
+        assert await GitLabService(make_gitlab_instance(id="same", url="https://gitlab-old.com")).get_jwks() == _JWKS
+        assert await GitLabService(make_gitlab_instance(id="same", url="https://gitlab-new.com")).get_jwks() == moved
 
-                        assert isinstance(result, OIDCPayload)
-                        assert result.project_id == "42"
-                        mock_invalidate.assert_called_once()
-                        assert call_count == 2
+    async def test_a_failed_refresh_keeps_the_cached_keys(self, monkeypatch, jwks_cache, gitlab_instance_a):
+        status = {"code": 200}
+
+        def handler(request):
+            if request.url.path == "/.well-known/openid-configuration":
+                return httpx.Response(200, json={"jwks_uri": "https://gitlab-a.com/oauth/discovery/keys"})
+            return httpx.Response(status["code"], json=_JWKS)
+
+        _serve_idp(monkeypatch, handler)
+        service = GitLabService(gitlab_instance_a)
+        assert await service.get_jwks() == _JWKS
+
+        status["code"] = 503
+        assert await service.refresh_jwks() is None
+        assert await service.get_jwks() == _JWKS
+
+
+_GROUP = {
+    "id": 77,
+    "web_url": "https://gitlab-a.com/groups/mo/edge",
+    "name": "edge",
+    "path": "edge",
+    "full_path": "mo/edge",
+    "full_name": "mo / edge",
+    "visibility": "private",
+    "parent_id": 5,
+}
 
 
 class TestGroupLookup:
-    """A binding to a group the instance cannot resolve would silently own nothing, so the
-    lookup has to separate "no such group" from "the instance did not answer"."""
+    """An unresolvable group would silently own nothing, so "no such group" must differ from "no answer"."""
 
-    @staticmethod
-    def _lookup(service, response):
-        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
-            return asyncio.run(service.get_group(77))
+    _REFS: ClassVar = {
+        "by id": (lambda service: service.get_group(77), "/groups/77"),
+        "by path": (lambda service: service._lookup_group("mo/edge"), "/groups/mo%2Fedge"),
+    }
 
-    def test_a_group_the_instance_carries_is_returned(self, gitlab_instance_a):
-        response = MagicMock(status_code=200)
-        response.json.return_value = {"id": 77, "full_path": "mo/edge"}
+    @pytest.mark.parametrize("ref", ["by id", "by path"])
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            (httpx.Response(200, json=_GROUP), GitLabGroupLookup(reachable=True, group=_GROUP)),
+            (
+                httpx.Response(404, json={"message": "404 Group Not Found"}),
+                GitLabGroupLookup(reachable=True, group=None),
+            ),
+            (httpx.Response(403, json={"message": "403 Forbidden"}), GitLabGroupLookup(reachable=False, group=None)),
+            (None, GitLabGroupLookup(reachable=False, group=None)),
+        ],
+        ids=["carried", "absent", "refused", "unanswered"],
+    )
+    def test_absent_and_unreachable_stay_apart(self, gitlab_instance_a, ref, response, expected):
+        lookup, endpoint = self._REFS[ref]
+        service = GitLabService(gitlab_instance_a)
 
-        lookup = self._lookup(GitLabService(gitlab_instance_a), response)
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)) as api_get:
+            assert asyncio.run(lookup(service)) == expected
 
-        assert (lookup.reachable, lookup.group["full_path"]) == (True, "mo/edge")
+        # Without the flag GitLab embeds up to 200 of the group's projects in the answer.
+        api_get.assert_awaited_once_with(endpoint, params={"with_projects": "false"})
 
-    def test_a_group_the_instance_does_not_carry_is_reachable_and_absent(self, gitlab_instance_a):
-        lookup = self._lookup(GitLabService(gitlab_instance_a), MagicMock(status_code=404))
 
-        assert (lookup.reachable, lookup.group) == (True, None)
+class TestARejectedReadIsLogged:
+    """An expired token or a missing scope must not read like a project with no merge requests."""
 
-    def test_an_unanswered_request_is_not_an_absent_group(self, gitlab_instance_a):
-        lookup = self._lookup(GitLabService(gitlab_instance_a), None)
+    @pytest.mark.parametrize(
+        ("read", "endpoint", "unanswered"),
+        [
+            (lambda service: service.get_project_details(100), "/projects/100", None),
+            (
+                lambda service: service.get_merge_requests_for_commit(100, "9c1d2e3f"),
+                "/projects/100/repository/commits/9c1d2e3f/merge_requests",
+                [],
+            ),
+        ],
+        ids=["project details", "merge requests of a commit"],
+    )
+    def test_the_status_is_logged(self, gitlab_instance_a, caplog, read, endpoint, unanswered):
+        service = GitLabService(gitlab_instance_a)
+        response = httpx.Response(401, json={"message": "401 Unauthorized"})
 
-        assert (lookup.reachable, lookup.group) == (False, None)
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)), caplog.at_level("WARNING"):
+            assert asyncio.run(read(service)) == unanswered
 
-    def test_a_refused_request_is_not_an_absent_group(self, gitlab_instance_a):
-        lookup = self._lookup(GitLabService(gitlab_instance_a), MagicMock(status_code=403))
-
-        assert (lookup.reachable, lookup.group) == (False, None)
+        assert f"GitLab API GET {endpoint} returned HTTP 401" in [r.getMessage() for r in caplog.records]
 
 
 class TestGroupListing:
@@ -264,3 +355,25 @@ class TestGroupListing:
             asyncio.run(service.get_groups())
 
         assert "search" not in paginated.await_args[1]["params"]
+
+
+class TestGetCurrentUserId:
+    @staticmethod
+    def _resolve(service, response):
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)) as api_get:
+            return asyncio.run(service.get_current_user_id()), api_get
+
+    def test_the_tokens_own_account_id(self, gitlab_instance_a):
+        # Shape of GET /user for the account the token belongs to.
+        response = httpx.Response(
+            200, json={"id": 4242, "username": "dc-bot", "name": "DC Bot", "state": "active", "bot": True}
+        )
+
+        user_id, api_get = self._resolve(GitLabService(gitlab_instance_a), response)
+
+        assert user_id == 4242
+        api_get.assert_awaited_once_with("/user")
+
+    @pytest.mark.parametrize("response", [None, httpx.Response(401, json={"message": "401 Unauthorized"})])
+    def test_an_unanswered_or_refused_lookup_resolves_no_one(self, gitlab_instance_a, response):
+        assert self._resolve(GitLabService(gitlab_instance_a), response)[0] is None

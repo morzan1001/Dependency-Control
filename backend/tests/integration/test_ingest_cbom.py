@@ -51,23 +51,17 @@ async def test_ingest_cbom_rejects_empty_cbom(client, db, api_key_headers):
 async def test_ingest_cbom_rejects_unauthenticated(db):
     from httpx import ASGITransport, AsyncClient
 
-    from app.api.deps import get_system_settings
     from app.db.mongodb import get_database
     from app.main import app
-    from app.models.system import SystemSettings
 
-    # Override only the DB and system-settings deps; leave the auth dep real so it enforces credential checking.
+    # Override only the DB dep; leave the auth dep real so it enforces credential checking.
     saved = dict(app.dependency_overrides)
     app.dependency_overrides.clear()
 
     async def _fake_get_database():
         return db
 
-    def _fake_system_settings():
-        return SystemSettings()
-
     app.dependency_overrides[get_database] = _fake_get_database
-    app.dependency_overrides[get_system_settings] = _fake_system_settings
 
     try:
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:

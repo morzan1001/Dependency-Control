@@ -8,52 +8,63 @@ Before the rollout, resolve each gate before the first new pod starts:
 2. Check partial restores made by a pre-release 1.9.41 build.
 3. Resolve email addresses that differ only in case, then add the case-insensitive unique index.
 4. Check what each team-syncing GitLab token can see, and decide per instance.
-5. Check SMTP in the database settings.
+5. Check SMTP in the database settings, including its encryption mode.
 6. Set the base URL of GitHub Enterprise Server instances that have none.
 7. Fix an empty or `local` OIDC provider name, and accounts with an empty provider.
-8. Clean stored values that the stricter write schemas refuse.
-9. Prepare stored waivers for the new matching rules, and set the expiry-sweep watermark.
-10. Move stored licence policies into the analyzer settings.
-11. Review synced team members and active accounts that are not verified (a review, not a gate).
-12. Review accounts that hold only one of `project:update` and `project:delete` (a review).
-13. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 15 re-creates the listed waivers from it).
-14. Check projects that run `os_malware` without an API key (a review).
+8. Check that the identity provider marks the email of existing SSO users verified.
+9. Clean stored values that the stricter write schemas refuse.
+10. Prepare stored waivers for the new matching rules, and set the expiry-sweep watermark.
+11. Move stored licence policies into the analyzer settings.
+12. Canonicalise stored webhook event names, and mark Teams webhooks as `teams`.
+13. Review synced team members and active accounts that are not verified (a review, not a gate).
+14. Review accounts that hold only one of `project:update` and `project:delete` (a review).
+15. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 18 re-creates the listed waivers from it).
+16. Check projects that run `os_malware` without an API key (a review).
+17. Review stored webhook headers that deliveries now refuse (a review).
+18. Check that the tokens behind merge and pull request comments can read their own user (a review).
 
 Deploy blocker, also before the rollout: fill the allowlists of the github.com and gitlab.com instances, or switch their auto-create off.
+
+Roll out the backend before the frontend, whose recurring-vulnerability recommendations read the new backend's shape. SSO logins fail while the frontend and backend images differ, because the session now reaches the browser through `POST /login/oidc/exchange`, so keep that window short. SSO now needs HTTPS: its state and handoff cookies are `Secure`. No Redis flush is needed; changed cache keys miss once.
 
 Last, right before the rollout starts: rotate `SECRET_KEY` (recommended), or end every session. Either way, snapshot the accounts.
 
 After the rollout, once the last pod on the previous image has terminated:
 
 1. End every session and review what was created during the rollout. Mandatory on every installation.
-2. Remove duplicate scanner results, before the next housekeeping rescan cycle. Mandatory on every installation.
-3. Rewrite licence-conflict waivers to the sorted-pair finding id, before the next scan.
-4. Remove TruffleHog plaintext secrets from `analysis_results`.
-5. Rewrite archive bundles that still hold TruffleHog plaintext.
-6. Name stored secret findings after their detector.
-7. Backfill `first_seen_at`.
-8. Purge leaked chat tool results, then rotate the exposed secrets.
-9. Rotate GitHub Enterprise tokens that reached github.com.
-10. Review GitLab bindings set through the old unchecked path.
-11. Review the retention of projects created in the dialog.
-12. Restamp every project under the new waiver rules. Mandatory on every installation.
-13. Clean up callgraph languages.
-14. Rewrite stored dependency type aliases.
-15. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
-16. Remove memberships of deleted users and leftovers of deleted projects.
-17. Watch the primary's load, and remove the Helm values the chart does not read.
-18. Review the crypto system policy after its seed bump (a review).
+2. Store the enforced notification preferences of projects that enforce them. Mandatory on every installation.
+3. Remove duplicate scanner results, before the next housekeeping rescan cycle. Mandatory on every installation.
+4. Rewrite licence-conflict waivers to the sorted-pair finding id, before the next scan.
+5. Remove TruffleHog plaintext secrets from `analysis_results`.
+6. Rewrite archive bundles that still hold TruffleHog plaintext.
+7. Name stored secret findings after their detector.
+8. Backfill `first_seen_at`.
+9. Purge leaked chat tool results, then rotate the exposed secrets.
+10. Rotate GitHub Enterprise tokens that reached github.com.
+11. Review GitLab bindings set through the old unchecked path.
+12. Review the retention of projects created in the dialog.
+13. Restamp every project under the new waiver rules. Mandatory on every installation.
+14. Copy each scan's stats into its latest-run summary.
+15. Remove pending scans and releases that refused scanner results left behind.
+16. Clean up callgraph languages, and give old callgraphs an `updated_at`.
+17. Rewrite stored dependency type aliases.
+18. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
+19. Remove memberships of deleted users and leftovers of deleted projects.
+20. Remove stored chat images.
+21. Watch the primary's load, and remove the Helm values and environment variables the backend does not read.
+22. Review the crypto system policy after its seed bump (a review).
 
 Once 1.9.41 is confirmed stable, drop the old indexes. Four optional checks look for abuse of the fixed gaps from before the upgrade, and optional repairs clean up data older code left behind. The behaviour changes that users and operators will notice are listed at the end.
 
 ## Before the rollout (gate): build the new indexes
 
-The `(project_id, component, type)` findings index grows into a covering index for the first-detection lookup, and `(scan_id, severity)` grows into the key the CSV export streams from. The per-scan enrichment copy gets a `(scan_id, purl)` dependencies index, and the branch-tip lookup a scans index. Startup's `create_index` would build each in-line on a large collection and block pod start until the build finishes. Build them in-pod with mongosh before rolling out the new image, with the exact keys, so startup finds them and does nothing. The old image does not read them, so building them early is harmless.
+The `(project_id, component, type)` findings index grows into a covering index for the first-detection lookup, and `(scan_id, severity)` grows into the key the CSV export streams from. The per-scan enrichment copy gets a `(scan_id, purl)` dependencies index, the scan-findings dependency join a `(scan_id, version)` one, and the branch-tip lookup a scans index. Startup's `create_index` would build each in-line on a large collection and block pod start until the build finishes. Build them in-pod with mongosh before rolling out the new image, with the exact keys, so startup finds them and does nothing. The old image does not read them, so building them early is harmless.
 
 ```js
 db.findings.createIndex({ project_id: 1, component: 1, type: 1, finding_id: 1, version: 1, first_seen_at: 1, scan_created_at: 1 })
 db.findings.createIndex({ scan_id: 1, severity: 1, type: 1, finding_id: 1 })
 db.dependencies.createIndex({ scan_id: 1, purl: 1 })
+db.dependencies.createIndex({ scan_id: 1, version: 1 })
 db.scans.createIndex({ project_id: 1, branch: 1, is_rescan: 1, created_at: -1, _id: 1 })
 ```
 
@@ -206,13 +217,20 @@ Decide per instance before the rollout: switch to an administrator's token, have
 
 ## Before the rollout (gate): check SMTP in the database settings
 
-Admin password reset (`POST /users/{id}/reset-password`) now only sends mail. It no longer returns a manual link, and it answers 501 "Email server not configured" when `system_settings` has no `smtp_host`. Self-service email changes need the same setting. Accounts verify their email through the mailed link, and adding a member by email now needs a verified account. The environment variable `SMTP_HOST` does not count. Check:
+Admin password reset (`POST /users/{id}/reset-password`) now only sends mail. It no longer returns a manual link, and it answers 501 "Email server not configured" when `system_settings` has no `smtp_host`. Self-service email changes need the same setting. Accounts verify their email through the mailed link, and adding a member by email now needs a verified account. Security alerts (password changed, 2FA switched on or off) go out whenever the stored settings can send. The backend reads SMTP only from the database settings: a `.env` file that still holds `SMTP_*` or `CHAT_MAX_TOKEN_BUDGET` stops the backend from starting, and environment variables of those names are ignored. Check:
 
 ```js
 db.system_settings.findOne({ _id: "current" }, { smtp_host: 1 })
 ```
 
 If it is empty and admins reset passwords, configure SMTP in System Settings before the rollout.
+
+The encryption mode must be `starttls`, `ssl` or `none`. Any other stored value sends mail unencrypted and makes every save of System Settings answer 422; `none` means plaintext without STARTTLS. Find and fix it:
+
+```js
+db.system_settings.find({ _id: "current", smtp_encryption: { $exists: true, $nin: ["starttls", "ssl", "none"] } }, { smtp_encryption: 1 })
+db.system_settings.updateOne({ _id: "current" }, { $set: { smtp_encryption: "starttls" } })
+```
 
 ## Before the rollout (gate): set the base URL of GitHub Enterprise Server instances
 
@@ -251,6 +269,10 @@ db.users.updateMany({auth_provider: "", hashed_password: {$in: [null, ""]}}, {$s
 ```
 
 Accounts with `""` and a password keep password login. Set `auth_provider` by `_id` only for one known to sign in through SSO. If the settings check returned exactly `local`, the OIDC accounts created while it was set carry `auth_provider: "local"` and were refused SSO before too. List them with `db.users.find({auth_provider: "local", hashed_password: {$in: [null, ""]}}, {email: 1, created_at: 1})` and convert confirmed SSO users by `_id` only. Running the find with `auth_provider: ""` again then lists only accounts with a password.
+
+## Before the rollout (gate): check that the identity provider marks existing SSO users' email verified
+
+The OIDC login now checks the `email_verified` claim before it looks up the account, so it applies to existing SSO accounts too. A claim of `false` (any case, with or without padding), `"0"` or `0` refuses the login with a redirect to `#error=email_unverified`; an absent claim logs in. Ask the identity provider's admin whether existing users are marked verified (Keycloak: the user's "Email verified" switch), or decode the ID token or userinfo response of one real login. Mark the users verified in the identity provider before the rollout.
 
 ## Before the rollout (gate): clean stored values that the stricter write schemas refuse
 
@@ -490,6 +512,23 @@ db.projects.countDocuments({"analyzer_settings.license_compliance.license_policy
 
 The old image still accepts `license_policy` in `PUT /api/v1/projects/{id}`, so repeat the verify right before the rollout and re-run the script if a count grew.
 
+## Before the rollout (gate): canonicalise webhook event names and mark Teams webhooks
+
+Webhooks now fire only for the exact stored event name, and format and sign by the stored `webhook_type`. A subscription stored as `scan_completed`, `vulnerability_found` or `analysis_failed` stops firing, and a Teams URL stored as `generic` receives raw JSON, which Teams rejects. The old image matches both spellings and already formats Teams URLs as cards, so both fixes are safe before the rollout. The count must be 0 afterwards:
+
+```js
+const alias = {scan_completed: "scan.completed", vulnerability_found: "vulnerability.found", analysis_failed: "analysis.failed"};
+db.webhooks.find({events: {$in: Object.keys(alias)}}, {events: 1}).forEach(d =>
+  db.webhooks.updateOne({_id: d._id}, {$set: {events: [...new Set(d.events.map(e => alias[e] ?? e))]}}));
+db.webhooks.countDocuments({events: {$in: Object.keys(alias)}})
+const teamsUrl = u => { try { const {hostname, pathname} = new URL(u); const h = hostname.toLowerCase(); const under = d => h === d || h.endsWith("." + d);
+  return under("webhook.office.com") || ((under("logic.azure.com") || under("api.powerplatform.com")) && pathname.includes("/workflows/")); } catch (e) { return false; } };
+const ids = db.webhooks.find({webhook_type: {$ne: "teams"}}, {url: 1}).toArray().filter(w => teamsUrl(w.url)).map(w => w._id);
+db.webhooks.updateMany({_id: {$in: ids}}, {$set: {webhook_type: "teams"}})
+```
+
+Old pods still store the snake_case names, so run the count again once the last old pod has terminated, and the loop if it is not 0.
+
 ## Before the rollout (review): synced members and accounts that are not verified
 
 Identity matching now uses verified accounts only. These read-only reviews show who is affected; they do not block the rollout.
@@ -513,6 +552,12 @@ Active unverified accounts are no longer found by team member add, project invit
 
 ```js
 db.users.find({is_active: {$ne: false}, is_verified: {$ne: true}}, {username: 1, email: 1, auth_provider: 1})
+```
+
+With `enforce_email_verification` on, unverified local accounts can neither log in nor refresh their session (401 "Email not verified"). Accounts an admin creates, and the bootstrap admin, are now stored verified; those created before are not. This lists the local accounts that are locked out once enforcement is on; verify them by `_id` only:
+
+```js
+db.users.find({auth_provider: {$in: ["local", "", null]}, is_verified: {$ne: true}}, {username: 1, email: 1})
 ```
 
 ## Before the rollout (review): accounts that hold only one of `project:update` and `project:delete`
@@ -562,6 +607,44 @@ If no key is set and either count is not 0, set the key under System Settings, o
 ```js
 db.projects.updateMany({active_analyzers: "os_malware"}, {$pull: {active_analyzers: "os_malware"}})
 db.system_settings.updateOne({_id: "current"}, {$pull: {default_active_analyzers: "os_malware"}})
+```
+
+## Before the rollout (review): stored webhook headers that deliveries refuse
+
+Custom webhook headers must now be valid HTTP header names and latin-1 values without surrounding spaces, and must not name a protocol header or start with `X-Webhook-`. A stored value outside latin-1 fails every delivery with "Invalid header value", without retry, and a save that sends a refused header again answers 422. This lists the refused headers per webhook:
+
+```js
+const reserved = ["content-type", "content-length", "transfer-encoding", "host", "user-agent", "accept-encoding"];
+db.webhooks.aggregate([
+  {$match: {headers: {$type: "object", $ne: {}}}},
+  {$project: {url: 1, project_id: 1, team_id: 1, refused: {$filter: {input: {$objectToArray: "$headers"}, cond: {$or: [
+    {$not: [{$regexMatch: {input: "$$this.k", regex: "^[!#$%&'*+.^_`|~0-9A-Za-z-]+\\z"}}]},
+    {$in: [{$toLower: "$$this.k"}, reserved]},
+    {$regexMatch: {input: "$$this.k", regex: "^x-webhook-", options: "i"}},
+    {$not: [{$regexMatch: {input: {$toString: "$$this.v"}, regex: "^[\\x20-\\x7e\\xa0-\\xff]*\\z"}}]},
+    {$regexMatch: {input: {$toString: "$$this.v"}, regex: "^ | \\z"}}]}}}}},
+  {$match: {refused: {$ne: []}}}
+])
+```
+
+Agree each hit with the webhook's owner, then remove or fix the header, for example `db.webhooks.updateOne({_id: "<id>"}, {$unset: {"headers.<name>": ""}})`.
+
+## Before the rollout (review): tokens behind merge and pull request comments
+
+Decoration now reads `GET /user` once per run and edits only the comment written by the token's own user. When that read fails, the run decorates nothing and logs "GitLab token user unresolved; skipping MR decoration" (or the GitHub equivalent). List the instances whose tokens decorate:
+
+```js
+db.projects.aggregate([{$match: {gitlab_mr_comments_enabled: true}}, {$group: {_id: "$gitlab_instance_id", projects: {$sum: 1}}},
+  {$lookup: {from: "gitlab_instances", localField: "_id", foreignField: "_id", as: "i"}}, {$project: {projects: 1, url: {$first: "$i.url"}}}])
+db.projects.aggregate([{$match: {github_pr_comments_enabled: true}}, {$group: {_id: "$github_instance_id", projects: {$sum: 1}}},
+  {$lookup: {from: "github_instances", localField: "_id", foreignField: "_id", as: "i"}}, {$project: {projects: 1, url: {$first: "$i.github_url"}}}])
+```
+
+Each token must answer an id:
+
+```bash
+curl -sH "PRIVATE-TOKEN: <token>" <url>/api/v4/user | jq .id
+curl -sH "Authorization: Bearer <token>" https://api.github.com/user | jq .id   # GHES: <github_url>/api/v3/user
 ```
 
 ## Deploy blocker: fill the allowlists of the github.com and gitlab.com instances
@@ -704,6 +787,24 @@ Changes made through the account's roles persist too, such as team or project me
 ```js
 db.tmp_account_snapshot.drop()
 ```
+
+## After the rollout (mandatory): store the enforced notification preferences
+
+A project that enforces notification settings now notifies every member from its stored `enforced_notification_preferences`, which the enforcing admin's save writes. Projects that switched enforcement on before have none stored and send no member notifications until they do. Run this right after the last old pod has terminated. It stores what the old image enforced: the preferences of the first project member with the admin role whose preferences name a known event and channel. For a dry run, replace the `updateOne` with `print(p._id, JSON.stringify(admin.notification_preferences))`:
+
+```js
+const EVENTS = ["analysis_completed", "vulnerability_found", "analysis_failed", "sbom_ingested", "crypto_asset_ingested",
+  "crypto_policy_changed", "license_policy_changed", "compliance_report_generated", "pqc_migration_plan_generated"];
+const sends = prefs => Object.entries(prefs || {}).some(([e, cs]) =>
+  EVENTS.includes(e) && Array.isArray(cs) && cs.some(c => ["email", "slack", "mattermost"].includes(c)));
+db.projects.find({enforce_notification_settings: true, enforced_notification_preferences: {$exists: false}}).forEach(p => {
+  const admin = (p.members || []).find(m => m.role === "admin" && sends(m.notification_preferences));
+  if (admin) db.projects.updateOne({_id: p._id}, {$set: {enforced_notification_preferences: admin.notification_preferences}});
+  else print(`nothing to enforce for ${p._id} (${p.name})`);
+});
+```
+
+A printed project had nothing to enforce, and its members received their own preferences. Keep that with `db.projects.updateOne({_id: "<id>"}, {$set: {enforce_notification_settings: false}})`, or have an admin save the enforced settings on the project.
 
 ## After the rollout (mandatory): remove duplicate scanner results
 
@@ -1074,7 +1175,48 @@ db.projects.find({}, {_id: 1}).forEach(p => db.waiver_recalc.insertOne({waiver: 
 
 The next waiver request or housekeeping tick (every 5 minutes) works the queue off, one project at a time, in one pod. Follow it with `db.waiver_recalc.countDocuments({waiver: {$exists: true}})`; the restamp is done at 0. Older branch tips and other non-head scans keep their flags until they are analysed again.
 
-## After the rollout: clean up callgraph languages
+## After the rollout: copy each scan's stats into its latest-run summary
+
+The Overview, the release tile and the Pipelines badges read the `latest_run.stats` summary, which every stats rewrite now updates for the scan and for its root. Older images left it stale after waiver and reachability refreshes. Run this once every pod runs the new image. The count shows how many own runs the first update fixes; the loop fixes roots whose latest run is a rescan and prints their number:
+
+```js
+const own = { stats: { $type: "object" },
+  $expr: { $and: [ { $eq: ["$latest_run.scan_id", "$_id"] }, { $ne: ["$latest_run.stats", "$stats"] } ] } };
+db.scans.countDocuments(own);
+db.scans.updateMany(own, [ { $set: { "latest_run.stats": "$stats" } } ]);
+let fixed = 0;
+db.scans.find(
+  { is_rescan: { $ne: true }, "latest_run.scan_id": { $exists: true }, $expr: { $ne: ["$latest_run.scan_id", "$_id"] } },
+  { "latest_run.scan_id": 1 }
+).forEach(root => {
+  const run = db.scans.findOne({ _id: root.latest_run.scan_id, original_scan_id: root._id }, { stats: 1 });
+  if (run && run.stats) {
+    fixed += db.scans.updateOne(
+      { _id: root._id, "latest_run.scan_id": run._id }, { $set: { "latest_run.stats": run.stats } }
+    ).modifiedCount;
+  }
+});
+print(fixed);
+```
+
+Both filters scan the collection once, which is fine for a one-off.
+
+## After the rollout: remove pending scans and releases that refused scanner results left behind
+
+A scanner result too large to store now writes nothing. Older images created a pending scan without results for it and, for a release upload, a release row. This lists those scans older than a day that hold no analysis result, then deletes them with their release rows:
+
+```js
+const orphans = db.scans.find({status: "pending", created_at: {$lt: new Date(Date.now() - 24 * 3600 * 1000)}, sbom_refs: {$size: 0},
+  $or: [{received_results: {$exists: false}}, {received_results: {$size: 0}}]}, {_id: 1}).toArray().map(s => s._id)
+  .filter(id => !db.analysis_results.findOne({scan_id: id}, {_id: 1}));
+printjson(orphans);
+db.releases.deleteMany({scan_id: {$in: orphans}});
+db.scans.deleteMany({_id: {$in: orphans}});
+```
+
+Stop after `printjson` for a dry run. Scans the restart recovery already completed as empty release scans (completed, `is_release`, no `sbom_refs`, no analysis result) look like legitimate ones; review those by hand before deleting any.
+
+## After the rollout: clean up callgraph languages, and give old callgraphs an `updated_at`
 
 Callgraph languages are now stored in canonical form, and an upload of any language outside python, go, javascript, typescript, java, kotlin, scala and groovy answers 400. A Go callgraph stored as `golang` or with padding was keyed by host (`github.com`) and cannot be repaired, so it is deleted; the pipeline's next upload replaces it. Every other alias or case variant is renamed, unless a canonical twin for the same project, scan and language exists, in which case the variant is deleted. Unsupported languages are deleted. Run this once every pod runs the new image. Save it as `cleanup.js`, copy it to the MongoDB pod, dry-run it with `mongosh --quiet <db> cleanup.js`, then run `mongosh --quiet <db> --eval 'var execute = true' cleanup.js`:
 
@@ -1097,6 +1239,12 @@ db.callgraphs.find({language: {$nin: supported}}, {project_id: 1, scan_id: 1, la
 ```
 
 The dry run prints one line per callgraph it would touch; no output means every stored language is canonical. When two variants of one project and scan map to the same language, such as `JS` and `js`, the dry run prints a rename for both, but the real run renames the first and deletes the other as its twin. A Python callgraph keeps first-segment keys until its next upload, and dotted distributions read "unknown" until then.
+
+Every upload now stamps `updated_at`, and the chat's callgraph tool shows the newest graph per language by it. Older uploads carry none, so give them their creation time:
+
+```js
+db.callgraphs.updateMany({updated_at: {$exists: false}}, [{$set: {updated_at: "$created_at"}}])
+```
 
 ## After the rollout: rewrite stored dependency type aliases
 
@@ -1183,9 +1331,18 @@ db.crypto_policies.deleteMany({scope: "project", project_id: {$nin: pids}});
 
 Zero counts mean there is nothing to remove. Afterwards, check for teams and projects left without an admin before telling anyone.
 
-## After the rollout: watch the primary's load, and remove unused Helm values
+## After the rollout: remove stored chat images
 
-Every MongoDB read now goes to the primary; a `readPreference` in the URI is overridden. Watch the primary's CPU and connection count on the replica set after the rollout, and during the first restamp, whose reads all go there. The chart no longer reads `backend.env.mongodbReadPreference`, and no template ever read `chat.rateLimitPerMinute` or `chat.rateLimitPerHour`; remove all three from the deployment values. Leaving them is harmless but misleading. The updated Grafana dashboard `chat-ai-assistant.json` ships with the chart and shows the new `dc_chat_tool_calls_total` statuses on its "Tool Error Rate" panel.
+Chat no longer takes, stores or returns image attachments. Messages from older images still carry an `images` array, most of them empty, which history reads load for nothing. Count the messages with images, then remove the field from every message:
+
+```js
+db.chat_messages.countDocuments({"images.0": {$exists: true}})
+db.chat_messages.updateMany({images: {$exists: true}}, {$unset: {images: ""}})
+```
+
+## After the rollout: watch the primary's load, and remove unused Helm values and environment variables
+
+Every MongoDB read now goes to the primary; a `readPreference` in the URI is overridden. Watch the primary's CPU and connection count on the replica set after the rollout, and during the first restamp, whose reads all go there. The chart no longer reads `backend.env.mongodbReadPreference`, and no template ever read `chat.rateLimitPerMinute` or `chat.rateLimitPerHour`; remove all three from the deployment values. The backend no longer reads `CHAT_MAX_TOKEN_BUDGET` (the chat budget follows `OLLAMA_NUM_CTX`) or any `SMTP_*` variable; remove them from the backend's environment. Leaving these is harmless but misleading, except in a `.env` file, where they stop the backend from starting. The updated Grafana dashboard `chat-ai-assistant.json` ships with the chart and shows the new `dc_chat_tool_calls_total` statuses on its "Tool Error Rate" panel.
 
 ## After the rollout (review): the crypto system policy after its seed bump
 
@@ -1204,13 +1361,19 @@ A customised policy that took the full seed: the seeder tells an edited policy b
 
 ## Once 1.9.41 is confirmed stable: drop the old indexes
 
-The new findings indexes start with the old `(project_id, component, type)` and `(scan_id, severity)` keys, and nothing reads the webhook deliveries' `(success, webhook_id)` index, so the old indexes only cost writes now. Drop them only once a rollback is no longer expected: 1.9.40 recreates them at startup, in-line on the large findings collection, and pods do not start until that build finishes.
+The new findings indexes start with the old `(project_id, component, type)` and `(scan_id, severity)` keys, and the dependencies `(scan_id, version)` index replaces `(scan_id, name)`, whose key the unique `(scan_id, name, version, purl)` index already leads with. Nothing reads the webhook deliveries' `(success, webhook_id)` index, the findings `created_at` and `(component, version, type, scan_created_at)` indexes, or the GitLab instances' `is_default` index. The old indexes only cost writes now. Drop them only once a rollback is no longer expected: 1.9.40 recreates them at startup, in-line on the large findings and dependencies collections, and pods do not start until that build finishes.
 
 ```js
 db.findings.dropIndex("project_id_1_component_1_type_1")
 db.findings.dropIndex("scan_id_1_severity_-1")
 db.webhook_deliveries.dropIndex("success_1_webhook_id_1")
+db.dependencies.dropIndex("scan_id_1_name_1")
+db.findings.dropIndex("created_at_-1")
+db.findings.dropIndex("component_1_version_1_type_1_scan_created_at_1")
+db.gitlab_instances.dropIndex("is_default_1")
 ```
+
+A drop that reports "index not found" has nothing to do.
 
 ## Optional after the rollout: look for abuse from before the fix
 
@@ -1316,20 +1479,6 @@ asyncio.run(main())
 PY
 ```
 
-Webhooks subscribed under the snake_case event names still receive their events. To store the canonical names, run the following; afterwards `db.webhooks.countDocuments({events: {$in: ["scan_completed", "vulnerability_found", "analysis_failed"]}})` must be 0:
-
-```js
-db.webhooks.updateMany(
-  { events: { $in: ["scan_completed", "vulnerability_found", "analysis_failed"] } },
-  [{ $set: { events: { $setUnion: [{ $map: { input: "$events", as: "e", in: { $switch: {
-      branches: [
-        { case: { $eq: ["$$e", "scan_completed"] }, then: "scan.completed" },
-        { case: { $eq: ["$$e", "vulnerability_found"] }, then: "vulnerability.found" },
-        { case: { $eq: ["$$e", "analysis_failed"] }, then: "analysis.failed" }
-      ], default: "$$e" } } } }] } } }]
-)
-```
-
 Nothing reads the Redis keys `popular:npm` and `iana:tls_cipher_suites:v1` any more, stored as `dc:popular:npm` and `dc:iana:tls_cipher_suites:v1` under the default `CACHE_PREFIX`. They expire within 24 hours and 7 days; to drop them now, run `DEL dc:popular:npm dc:iana:tls_cipher_suites:v1` in `redis-cli`.
 
 A stored `dependency_enrichments.enrichment_sources` holds only the last writer's list until its purl is enriched again. This derives the union now:
@@ -1398,6 +1547,58 @@ db.findings.countDocuments({type: "sast", "details.sast_findings.1": {$exists: t
 db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 ```
 
+Chat messages no longer store `token_count`, GitLab instances no longer have an `is_default` flag, and failed compliance reports now expire after the retention period like completed ones. This drops the stale keys and gives failed reports stored before an expiry date; use your `COMPLIANCE_REPORT_RETENTION_DAYS` in place of the default 90:
+
+```js
+db.chat_messages.updateMany({token_count: {$exists: true}}, {$unset: {token_count: ""}})
+db.gitlab_instances.updateMany({is_default: {$exists: true}}, {$unset: {is_default: ""}})
+db.compliance_reports.updateMany({status: "failed", expires_at: null}, {$set: {expires_at: new Date(Date.now() + 90 * 24 * 3600 * 1000)}})
+```
+
+Deleting a CI instance or clearing a team binding now removes the members that sync brought in through it. Members that earlier deletions and binding clears left behind stay. This lists the teams holding members whose source no binding of the team names, and removes those members; for a dry run, drop the `updateOne` line:
+
+```js
+db.teams.find({"members.source": /^(gitlab|github):/}).forEach(t => {
+  const bound = new Set((t.bindings || []).map(b => `${b.provider}:${b.instance_id}`));
+  const stale = [...new Set((t.members || []).map(m => m.source).filter(s => /^(gitlab|github):/.test(s || "") && !bound.has(s)))];
+  if (!stale.length) return;
+  print(t._id, t.name, JSON.stringify(stale));
+  db.teams.updateOne({_id: t._id}, {$pull: {members: {source: {$in: stale}}}, $set: {updated_at: new Date()}});
+});
+```
+
+The IaC card now expects every IaC finding to carry `details.title` and `details.platform`. Older rows can lack them, and a latest scan holding one shows no IaC cards until it is rescanned. This count should be 0:
+
+```js
+const latest = db.projects.distinct("latest_scan_id", {latest_scan_id: {$ne: null}});
+db.findings.countDocuments({type: "iac", scan_id: {$in: latest}, $or: [{"details.title": null}, {"details.platform": null}]})
+```
+
+The finding view now shows an advisory that a per-CVE waiver covers as waived; its Waive button stored one more identical waiver per click. Those copies change no verdict and only clutter the waiver lists. This lists them read-only; which copy to keep is the owner's call, because reasons and expiry dates can differ:
+
+```js
+db.waivers.aggregate([
+  { $match: { vulnerability_id: { $ne: null } } },
+  { $group: { _id: { p: "$project_id", v: "$vulnerability_id", n: "$package_name", pv: "$package_version" }, ids: { $push: "$_id" }, n: { $sum: 1 } } },
+  { $match: { n: { $gt: 1 } } }
+])
+```
+
+Crypto assets are now keyed by string ids. Where `db.crypto_assets.countDocuments({_id: {$type: "objectId"}})` is not 0, re-key them in a backend pod; each is deleted before its copy is inserted, because of the unique `(project_id, scan_id, bom_ref)` index. The script prints 0 when it is done:
+
+```bash
+python - <<'PY'
+import uuid
+from pymongo import MongoClient
+from app.core.config import settings
+db = MongoClient(settings.MONGODB_URL)[settings.DATABASE_NAME]
+for d in db.crypto_assets.find({"_id": {"$type": "objectId"}}):
+    db.crypto_assets.delete_one({"_id": d["_id"]})
+    db.crypto_assets.insert_one({**d, "_id": str(uuid.uuid4())})
+print(db.crypto_assets.count_documents({"_id": {"$type": "objectId"}}))
+PY
+```
+
 ## Behaviour changes
 
 ### Sign-in, sessions and accounts
@@ -1409,10 +1610,15 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - Local accounts change their email through a confirmation link. `POST /api/v1/users/me/email` stores `pending_email` and mails a link to the new address; `POST /api/v1/confirm-email-change` (frontend route `/confirm-email`) swaps it in and marks it verified. It needs SMTP in the database settings (501 without it). User responses carry `pending_email`.
 - An admin can no longer change the email of an account from an identity provider (400). On a local account the new address is stored lowercased and marks the account unverified; with `enforce_email_verification` on, the user must verify again. A blank username and a null username or email answer 422.
 - Email lookups ignore case everywhere, and uniqueness checks refuse every case variant of a registered address. New signups and admin-created users are stored lowercased.
-- An OIDC login whose `email_verified` claim is false in any case or padding, or `"0"` or `0`, is refused with 400 "The identity provider has not verified this email address". An absent claim still logs in.
-- Admin password reset (`POST /users/{id}/reset-password`) never returns a link. It sends the mail and answers `{"message": "Password reset email sent"}`, or 501 "Email server not configured" without SMTP in the database settings. The user dialog no longer shows a manual link.
+- An OIDC login whose `email_verified` claim is false in any case or padding, or `"0"` or `0`, is refused before the account lookup, so existing SSO accounts are refused too. An absent claim still logs in. See the identity provider gate above.
+- Every failed SSO login redirects to `/login/callback#error=<code>`, and the login page names the reason: `state_expired`, `idp_error`, `provider_unreachable`, `token_error`, `userinfo_error`, `no_email`, `email_unverified`, `local_user_blocked`, `inactive_user`, `not_provisioned`, `not_configured` or `unavailable`. The session reaches the browser through a one-time `Secure` cookie that `POST /login/oidc/exchange` trades for the tokens.
+- Settings > Security has "Create Accounts on First SSO Login", on by default. Off, an SSO user without an account gets `not_provisioned`.
+- A refresh token works once; replaying it answers 403 "Could not validate credentials". With `enforce_email_verification` on, an unverified local account can no longer refresh its session either.
+- A password reset link works once and dies with any password change, including links mailed before the rollout; a spent link answers 400 "Invalid or expired reset token". A 2FA code works once per account.
+- Public signup answers 503 "Registration is temporarily unavailable." while `enforce_email_verification` is on and SMTP is not configured. `/resend-verification` answers 429 after 10 requests per IP in 10 minutes, and it and `/forgot-password` send at most 3 mails per address per hour, answering as usual beyond that.
+- Admin password reset (`POST /users/{id}/reset-password`) never returns a link. It queues the mail and answers `{"message": "Password reset email queued", "email_queued": <bool>}`, where `email_queued` says whether the mail was queued, or 501 "Email server not configured" without SMTP in the database settings. The user dialog no longer shows a manual link.
 - User management (`PUT /users/{id}` on another user, `POST /users/{id}/migrate`, `/reset-password`, `/2fa/disable`, `DELETE /users/{id}`) answers 403 "Cannot manage a user who holds permissions you don't hold" when the target holds a permission the caller lacks, unless the caller holds `system:manage`. A permission edit can no longer revoke a permission the caller lacks, and no longer fails because the target keeps one.
-- An account stored with `auth_provider: ""` counts as local on every path. It signs in only with a password, and OIDC login answers 400 "This account uses local authentication". `PUT /system/settings` answers 422 for an empty or `local` `oidc_provider_name`, so while such a name is stored, every settings save fails. See the OIDC provider gate above.
+- An account stored with `auth_provider: ""` counts as local on every path. It signs in only with a password, and OIDC login redirects with `#error=local_user_blocked`. `PUT /system/settings` answers 422 for an empty or `local` `oidc_provider_name`, so while such a name is stored, every settings save fails. See the OIDC provider gate above.
 - An SSO account that also has a password can no longer reset it by email; migrate it to local first.
 - `POST /users` answers 422 for `auth_provider`, unknown fields, `is_active: null` or a missing password. `PUT /users/{id}` needs `user:update` and answers 422 for a `password` field or a null `is_active` or `permissions`; self-service uses `PATCH /users/me`.
 - A taken identity answers 400 "Email already registered" or "Username already taken" on every path, concurrent writes included, which used to get 500.
@@ -1427,7 +1633,7 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - `project:read_all` no longer writes project webhooks. Creating, updating, deleting and test-firing a project's webhooks with `webhook:create`, `webhook:update` or `webhook:delete` now also needs membership of the project, direct or through an owning team, or `project:update` or `project:delete`. Accounts that combine `project:read_all` with a webhook permission, such as automation or auditor accounts, now get 403 on projects they are not a member of, and the frontend no longer offers them the webhook controls there. `project:read_all` with `webhook:read` still lists and reads every project's webhooks.
 - `GET /api/v1/analytics/projects/{project_id}/dependency-tree` answers 404 "No scan found for this project" for a `scan_id` of another project, which it used to serve, and 404 "Project not found" instead of 403 for an unknown project.
 - New projects keep the retention action and analyzer settings chosen at creation. They used to be stored with `retention_action: "delete"` and no analyzer settings. When the system retention mode is `global`, the global retention settings still apply. Projects created before 1.9.41 with Archive or None are still stored as Delete, and housekeeping keeps deleting their scans until an owner corrects the setting. See "review the retention of projects created in the dialog" above.
-- Team member add and project invite by email find only accounts with a verified email, in any case, and otherwise answer 404 "No user has verified this email address". Accounts created by an admin, or by a signup whose link was never clicked, are not verified.
+- Team member add and project invite by email find only accounts with a verified email, in any case, and otherwise answer 404 "No user has verified this email address". Accounts from a signup whose link was never clicked are not verified, and neither are accounts an admin created before 1.9.41; new admin-created accounts are stored verified.
 - GitLab binding changes need an admin. Setting or changing `gitlab_instance_id` or `gitlab_project_id` through `PUT /api/v1/projects/{id}` needs `system:manage`, `project:update` or `project:delete`; project admins get 403. Clearing both stays open to project admins, and resending the stored values is unaffected. A half binding answers 400, an unknown instance 404, and a GitLab project bound to another project 409 instead of 500. When the instance answers, the stored path is GitLab's `path_with_namespace`.
 - Project settings show other users a bound project's GitLab link read-only, with a "Remove GitLab link" action. Choosing "None" as the GitLab instance clears the project id and path too.
 - `project:update` and `project:delete` are separate grants. `project:update` no longer deletes projects. `project:delete` no longer edits projects, rotates keys, manages members, writes callgraphs or webhooks, binds GitLab or grants teams. See the review of accounts holding only one of them above.
@@ -1437,7 +1643,8 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - A provider sync no longer takes over an owner that the project holds by hand, through another instance or with a bare provider value. The owner picker removes such owners.
 - Write superusers may create a project for any team; an unknown team answers 404. `GET /projects/{id}` returns `notification_overrides`, and each member carries `effective_role`. `PUT /projects/{id}/members/{user_id}` requires `role` and takes nothing else, and an empty role answers 422. Write superusers may remove or demote the last direct project admin. Team-granted members can save project notification preferences, and team admins can enforce them.
 - Deleting a project also deletes its webhooks and its project crypto policy.
-- `POST` and `PUT /projects` answer 422 for a name that is blank or over 200 characters, `retention_days` above 36500 or an unknown analyzer. `PUT` also answers 422 for an explicit null on the name, analyzers, retention, comment toggles or `enforce_notification_settings`. Names are stored trimmed. `PUT /teams/{id}` with a null name answers 422. A project created in the UI without touching the analyzers gets the server defaults.
+- `POST` and `PUT /projects` answer 422 for a name that is blank or over 200 characters, `retention_days` above 36500 or an unknown analyzer. `PUT` also answers 422 for an explicit null on the name, analyzers, retention or comment toggles. Names are stored trimmed.
+- `PUT /projects/{id}` ignores `enforce_notification_settings`. `PUT /projects/{id}/notifications` switches enforcement, and switching it on stores the sent preferences as the project's enforced ones. `PUT /teams/{id}` with a null name answers 422. A project created in the UI without touching the analyzers gets the server defaults.
 - The 403 on callgraph routes reads "Not enough permissions" instead of "Access denied", and archive and chat 403s name the missing permission. With chat disabled, a caller who lacks the chat permission gets that 403.
 
 ### CI integrations
@@ -1445,10 +1652,14 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - Allowlists gate OIDC auto-create. A github.com or gitlab.com instance with auto-create on and an empty `allowed_owner_ids` or `allowed_namespaces` no longer auto-creates (403). Once a list is set on any instance, tokens from other owners or namespaces get 403 even for projects already bound, and so does a GitHub token without `repository_owner_id`. Each refusal logs a warning with the repository path and owner id.
 - The instance admin API answers 422 on create and 400 on update for a shared issuer with auto-create on and an empty list. It refuses an explicit `null` list, non-numeric owner ids and namespaces with a `/`. Settings > CI/CD Instances has the new inputs.
 - CI auto-create makes the GitLab job's `user_email` project admin only if a verified account holds it, and the GitHub `actor` only if its public GitHub email belongs to a verified account. That costs one GitHub API read per auto-created project.
-- Team sync (GitLab and GitHub) matches members only by their provider email against verified accounts, never by username. Members matched by username so far drop out at the next sync, with the project roles the team gave them. GitHub sync reads `GET /users/{login}` for every member (cached 5 minutes).
+- Team sync (GitLab and GitHub) matches members only by their provider email against verified accounts, never by username. Members matched by username so far drop out at the next sync, with the project roles the team gave them. GitHub sync reads `GET /users/{login}` for every member (cached 6 hours).
 - GitLab team sync with a non-admin token looks up each member's public email with `GET /users/:id`, which GitLab rate-limits. On 429 the group's stored members stay as they are until the next window, logged as WARNING "GitLab API GET /users/<id> answered 429". Answers are cached for 24 hours, so a member who sets or changes a public email is matched up to a day later. Jobs that read the same group concurrently split the budget. When the distinct members of one token's synced groups, times the jobs reading them concurrently, exceed the daily budget (about 43,200 at the default limit), cached answers expire before the rest are filled and the affected groups stay frozen for good; the 429 WARNING is the only signal. A group where no member resolves freezes, logged as WARNING "Resolved 0 of N members of GitLab group ...".
 - GitHub tokens are sent only to github.com, so a GHES token never reaches api.github.com. Without `system_settings.github_token`, GHSA enrichment takes the token of the oldest active github.com instance, and an installation with only GHES instances runs GHSA unauthenticated (60 requests per hour). Removing or deactivating a token takes effect on the next scan.
 - A GHES instance without a base URL makes no GitHub API calls: team sync, PR decoration, branch listing and pickers get no answer, as with no token. The settings field is now "GitHub Base URL".
+- GitLab team sync adds only active members with at least Reporter access; blocked members, pending invitations, Guests and Minimal Access members are left out.
+- GitHub instance responses carry `token_configured` instead of `has_access_token`. GitLab instances have no `is_default` flag, and create and update ignore it.
+- Deleting a GitLab or GitHub instance ignores `force` and answers 400 while any project links to it. Deleting it, or clearing a team binding, also removes the members its sync brought in.
+- Callgraph uploads and release marking with CI credentials no longer create or rename a project. A token whose repository is bound to no project or to another one answers 403 "CI credentials do not match the target project".
 
 ### Archives
 
@@ -1491,7 +1702,7 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - Callgraph uploads ignore a `scan_id` in the request body. The scan is always derived from the project in the path together with `pipeline_id` and the commit. Clients that still send `scan_id` keep working, and the field is dropped.
 - New ad-hoc and callgraph size limits answer 413 before any parsing. Ad-hoc `/api/v1/analyze` refuses more than 50 000 callgraph entries and more than 250 000 SBOM dependency-graph entries, and SPDX `externalRefs` now count against the 20 000 component-evidence budget.
 - A callgraph upload's 200 000-entry limit now also counts symbols, madge dependencies and analyzed modules, and an oversized upload with a bad format gets 413 instead of 400. A `callee_function` that is a JSON object or array fails the parse (400 on upload).
-- A scanner result or callgraph too large for one MongoDB document answers 413 ("... exceeds the 16 MB document limit") instead of 500. The scanner 413 comes before waiver matching, so the scan can exist without that result. The callgraph entry limit stays at 200 000; a graph under it that does not fit one document gets the 413. An analyzer result too large to store is skipped with a log line, and its findings are kept.
+- A scanner result or callgraph too large for one MongoDB document answers 413 ("... exceeds the 16 MB document limit") instead of 500. A refused scanner result writes nothing: no analysis result, no scan and no release row, so it does not move the production release. The callgraph entry limit stays at 200 000; a graph under it that does not fit one document gets the 413. An analyzer result too large to store is skipped with a log line, and its findings are kept.
 - Results of trufflehog, opengrep, kics and bearer are stored once per scan and scanner. A re-submission replaces the stored result, and parallel jobs of one scanner in one pipeline replace each other's: only the last job to post is kept. KICS and Bearer results keep only the scanner payload, without the pipeline, commit, branch and project fields.
 - `GET /callgraph` no longer returns `imports` or `calls`. In the generic callgraph format a non-string `file`, symbol, `callee_module`, `callee_function` or `caller_file` answers 400, and `line` is no longer checked.
 - OSV malicious-package (MAL-) matches now produce a CRITICAL malware finding; they used to be dropped. Expect new malware findings, and the notifications they trigger, on the next scan of affected projects; a rescan surfaces them sooner. OSV findings now carry `published` and `modified`.
@@ -1572,20 +1783,24 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - Findings-delta severity keys are uppercase, as stored. Scan delta answers 404 for an unknown project and 404 "No scan found for this project" for a scan of another project. An empty `?scan_id=` on the dependency tree and on recommendations answers the same 404 instead of falling back to head.
 - Analytics search reports `page: 1` for an empty result. Vulnerability search filters CVE rows, not documents, and each CVE row shows only its own KEV, EPSS and fix.
 - The inventory licence tile counts `unknown`, and a component without an ecosystem counts as `unknown`. The three scorecard "severity below" settings are gone.
-- The inputs fingerprint of every crypto compliance report except the PQC migration plan changes once, for unchanged inputs too.
+- The inputs fingerprint of every compliance report changes once, for unchanged inputs too. The License Audit fingerprint also covers the licence policy, and the PQC migration plan's the mappings version.
 - Chat and MCP finding tools answer per advisory. `get_vulnerability_details` returns `advisories`, and `get_cve_details` returns `in_kev` and `scanners`.
 
 ### Webhooks, notifications and chat
 
 - Webhook response bodies are capped and bound by a deadline. A delivery attempt or `POST /webhooks/{id}/test` fails as a timeout when the attempt as a whole takes longer than `WEBHOOK_TIMEOUT_SECONDS` (default 30 s). On 2xx the body is not read; on other statuses at most 64 KiB is read, decoded as UTF-8. Requests send `Accept-Encoding: identity`. The test's `response_time_ms` and the webhook duration histogram measure time to response headers.
-- Deactivated users get no project notifications on any channel, whether they are direct or team members. Enforced notification settings come from the first active admin member with preferences.
+- Deactivated users get no project notifications on any channel, whether they are direct or team members. A project that enforces notification settings notifies every member from its stored `enforced_notification_preferences`, which the enforcing save writes; without them it sends no member notifications, see the mandatory step above. An event saved with no channels in a project's notification settings mutes it there instead of falling back to the account's preferences.
 - Chat and MCP tool arguments are type-checked. A wrong JSON type answers `{"error": "Argument '<name>' must be of type <type>"}` (`isError: true` over MCP), arguments that are not a JSON object answer "Tool arguments must be a JSON object", and undeclared keys are dropped.
 - Chat and MCP tool results follow the REST response schemas. `get_system_settings` returns `*_configured` booleans instead of secrets, `get_project_details` no longer returns `api_key_hash`, and `list_project_webhooks` no longer returns `secret`, `headers` or the delivery counters. It also returns the webhooks of owning teams whose webhooks the caller may list, and for `system:manage` the global ones, each with a `scope` field. Members without `webhook:read` who are not project admins are refused the webhook tools, as in REST, and `get_webhook_deliveries` answers "Webhook not found or access denied" to every refusal.
-- Webhook create, update and test store the canonical event names `scan.completed`, `vulnerability.found` and `analysis.failed`; the snake_case names are still accepted and matched. A webhook stored under older URL rules is listed, readable and deletable again. When its URL breaks today's rules, its delivery and test answer "Blocked target: ...".
-- Deliveries to a Teams URL stored as a generic webhook get the Teams card, and every delivery is signed over the body actually sent.
+- Webhook create, update and test accept the snake_case event names and store the canonical `scan.completed`, `vulnerability.found` and `analysis.failed`. Delivery matches the stored name exactly, so a webhook stored under a snake_case name receives nothing until the webhook gate above has run. A webhook stored under older URL rules is listed, readable and deletable again. When its URL breaks today's rules, its delivery and test answer "Target is not an allowed webhook destination", and the server log names the reason.
+- Delivery and test format by the stored `webhook_type`, so a Teams URL stored as `generic` gets the plain JSON payload until the webhook gate above marks it `teams`. Every delivery is signed over the body actually sent.
+- Every delivery carries a fresh `X-Webhook-Delivery` id. A webhook with a secret also sends `X-Webhook-Signature-V2: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">` beside `X-Webhook-Signature`.
+- Custom headers answer 422 on create and update unless the name is a valid header name that neither names a protocol header nor starts with `X-Webhook-`, and the value is printable latin-1 without surrounding spaces. A stored value outside latin-1 fails its delivery with "Invalid header value".
+- `WEBHOOK_MAX_RETRIES` counts attempts, and a delivery makes at least one. 3xx and 4xx answers other than 408 and 429 end the delivery without retry, and so does a `Retry-After` above 10 seconds. `PATCH /webhooks/{id}` answers 422 for an explicit null `url`, `events`, `is_active` or `webhook_type`.
 - The email channel is offered whenever `smtp_host` and `emails_from_email` are set, an unauthenticated relay included.
 - Chat and MCP finding search, CVE and component tools need `analytics:read` or `analytics:search`. The remediation plan needs `analytics:read` or `analytics:recommendations`, and the analytics summary `analytics:read` or `analytics:summary`. Users with only `project:read` lose them. `archive:read_all` alone opens the archive tools. A project the caller cannot see answers "Project not found or access denied".
 - MR/PR decorations and scan notifications report the stats of the analysed pipeline, where they used to report head's. Advisory broadcasts also reach the admins of owning teams.
+- Chat messages are text only: a request's `images` is ignored, and message responses no longer carry `images` or `token_count`. The chat history budget follows `OLLAMA_NUM_CTX`; `CHAT_MAX_TOKEN_BUDGET` is gone.
 - `analysis_failed`, as a webhook and as a member notification, fires on every failure path: the engine's verdict, the worker's retry ceiling, a worker exception and the stuck-scan give-up. It fires once, from the pod whose write landed. A project-lookup error in the worker now fails the scan and sends it; the scan used to stay `processing` until the stale-scan check.
 
 ### API and database
@@ -1620,6 +1835,9 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - `analysis_waivers_applied_total` counts the waivers that matched, labelled `type` as `query`, `vulnerability` or `signature`.
 - `worker_jobs_processed_total` counts an engine failure as `failed` and skips rescheduled or claim-lost runs. Reschedules caused by a re-ingest count in `analysis_race_conditions_total`.
 - `analysis_enrichment_total{type="reachability"}` and `analysis_reachable_vulnerabilities_total` also count reachability passes run for a callgraph uploaded after the analysis.
+- `dc_chat_messages_total` counts each chat turn once, with the new status `empty_response`; `interrupted` counts turns the client left. `dc_chat_rate_limit_remaining` and `dc_adhoc_rate_limit_remaining` are gone.
+- `auth_oidc_logins_total` gains the statuses `not_configured`, `state_expired`, `idp_error`, `provider_unreachable`, `email_unverified`, `not_provisioned` and `unavailable`.
+- `external_api_errors_total` also counts answers with 5xx, 401, 403 or 429, and `external_api_rate_limit_hits_total` counts every 429 and exhausted GitHub quota of the instrumented clients. httpx no longer logs each request at INFO.
 
 
 

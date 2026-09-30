@@ -1,4 +1,6 @@
+import asyncio
 from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 
 import pytest
 
@@ -188,46 +190,61 @@ async def test_a_second_bucket_over_the_same_range_is_not_served_the_first_bucke
     monthly = await svc.trend(bucket="month", **query)
     daily = await svc.trend(bucket="day", **query)
 
-    assert daily.cache_hit is False
     assert daily.bucket == "day"
     assert len(monthly.points) == 2
     assert len(daily.points) == 3
 
 
-def test_cache_key_distinguishes_users_under_user_scope(db):
-    """User-scope keys must differ by project_ids so the shared cache can't leak across tenants."""
-    svc = CryptoTrendService(db)
+@pytest.mark.asyncio
+async def test_two_users_under_user_scope_are_not_served_each_others_series(db):
+    """scope="user" carries no scope_id, so only the project set keeps the shared cache from leaking across tenants."""
     now = datetime.now(timezone.utc)
-    rs, re = now - timedelta(days=30), now
-    user_a = ResolvedScope(scope="user", scope_id=None, project_ids=["p1", "p2"])
-    user_b = ResolvedScope(scope="user", scope_id=None, project_ids=["p3", "p4"])
-    key_a = svc._cache_key(user_a, "total_crypto_findings", "week", rs, re)
-    key_b = svc._cache_key(user_b, "total_crypto_findings", "week", rs, re)
-    assert key_a != key_b
-
-
-def test_cache_key_stable_regardless_of_project_order(db):
-    """The project fingerprint is order-independent so an equivalent set still hits the cache."""
-    svc = CryptoTrendService(db)
-    now = datetime.now(timezone.utc)
-    rs, re = now - timedelta(days=30), now
-    a = ResolvedScope(scope="user", scope_id=None, project_ids=["p1", "p2"])
-    b = ResolvedScope(scope="user", scope_id=None, project_ids=["p2", "p1"])
-    assert svc._cache_key(a, "total_crypto_findings", "week", rs, re) == svc._cache_key(
-        b, "total_crypto_findings", "week", rs, re
+    await _seed_findings(
+        db,
+        [
+            _crypto_finding("a1", "sa", now - timedelta(days=1), project_id="pa"),
+            _crypto_finding("b1", "sb", now - timedelta(days=1), project_id="pb"),
+            _crypto_finding("b2", "sb", now - timedelta(days=1), project_id="pb"),
+        ],
     )
-
-
-def test_cache_key_global_none_distinct_from_empty(db):
-    """Global scope (project_ids=None) must not alias an empty project set."""
     svc = CryptoTrendService(db)
+    query = {
+        "metric": "total_crypto_findings",
+        "bucket": "week",
+        "range_start": now - timedelta(days=7),
+        "range_end": now,
+    }
+
+    user_a = await svc.trend(resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["pa"]), **query)
+    user_b = await svc.trend(resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["pb"]), **query)
+
+    assert sum(p.value for p in user_a.points) == 1
+    assert sum(p.value for p in user_b.points) == 2
+
+
+@pytest.mark.asyncio
+async def test_concurrent_callers_of_one_series_share_one_computation(db):
+    runs = 0
+
+    async def _finding_buckets(*_args):
+        nonlocal runs
+        runs += 1
+        await asyncio.sleep(0)
+        return []
+
+    resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
     now = datetime.now(timezone.utc)
-    rs, re = now - timedelta(days=30), now
-    glob = ResolvedScope(scope="global", scope_id=None, project_ids=None)
-    empty = ResolvedScope(scope="user", scope_id=None, project_ids=[])
-    assert svc._cache_key(glob, "total_crypto_findings", "week", rs, re) != svc._cache_key(
-        empty, "total_crypto_findings", "week", rs, re
-    )
+    svc = CryptoTrendService(db)
+    query = {
+        "metric": "total_crypto_findings",
+        "bucket": "week",
+        "range_start": now - timedelta(days=7),
+        "range_end": now,
+    }
+    with patch.object(svc, "_finding_buckets", new=_finding_buckets):
+        await asyncio.gather(*(svc.trend(resolved=resolved, **query) for _ in range(3)))
+
+    assert runs == 1
 
 
 @pytest.mark.asyncio

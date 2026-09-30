@@ -21,7 +21,6 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     url: str = Field(..., description="Base URL of the GitLab instance (e.g. 'https://gitlab.com')")
     description: str | None = Field(None, description="Optional description of this instance")
     is_active: bool = Field(True, description="Whether this instance is currently active")
-    is_default: bool = Field(False, description="Whether this is the default instance for new projects")
 
     # Authentication
     access_token: str | None = Field(

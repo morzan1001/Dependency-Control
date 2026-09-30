@@ -10,6 +10,7 @@ from app.api.deps import get_current_active_user, get_database
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_403
 from app.core.constants import (
+    DEFAULT_PQC_PLAN_ITEMS,
     MAX_PQC_PLAN_ITEMS,
     NOTIFICATION_EVENT_PQC_MIGRATION_PLAN_GENERATED,
     WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
@@ -19,8 +20,10 @@ from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
+from app.services.notifications.service import safe_notify_project_event
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from app.services.pqc_migration.mappings_loader import CURRENT_MAPPINGS_VERSION
+from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,7 @@ async def get_pqc_migration_plan(
     background_tasks: BackgroundTasks,
     scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
-    limit: int = Query(500, ge=1, le=MAX_PQC_PLAN_ITEMS),
+    limit: int = Query(DEFAULT_PQC_PLAN_ITEMS, ge=1, le=MAX_PQC_PLAN_ITEMS),
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> MigrationPlanResponse:
@@ -72,8 +75,6 @@ async def _fire_pqc_webhook(
     resolved: ResolvedScope,
 ) -> None:
     """Best-effort webhook dispatch for the PQC migration plan; exceptions are logged, never raised."""
-    from app.services.webhooks import webhook_service
-
     payload = {
         "event": WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -91,9 +92,7 @@ async def _fire_pqc_webhook(
         context="pqc_migration",
     )
 
-    if resolved.scope == "project" and resolved.scope_id:
-        from app.services.notifications.service import safe_notify_project_event
-
+    if resolved.scope == "project":
         await safe_notify_project_event(
             db,
             project_id=resolved.scope_id,

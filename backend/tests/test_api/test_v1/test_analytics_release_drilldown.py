@@ -20,7 +20,6 @@ from app.core.permissions import Permissions
 from app.models.release import Release
 from app.models.user import User
 from app.repositories.releases import ReleaseRepository
-from app.services.analytics.cache import reset_analytics_cache_for_tests
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.helpers.analytics_scope import projections
 
@@ -131,13 +130,6 @@ async def _seed(db: FakeDatabase) -> None:
     await db.findings.insert_one(_finding(_HEAD_SCAN, _HEAD_VERSION, _HEAD_CVE, "MEDIUM"))
     await db.dependencies.insert_one(_dependency(_RELEASE_SCAN, _RELEASED_VERSION))
     await db.dependencies.insert_one(_dependency(_HEAD_SCAN, _HEAD_VERSION))
-
-
-@pytest.fixture(autouse=True)
-def _fresh_cache():
-    reset_analytics_cache_for_tests()
-    yield
-    reset_analytics_cache_for_tests()
 
 
 @pytest.mark.asyncio

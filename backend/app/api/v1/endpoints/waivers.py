@@ -1,4 +1,3 @@
-import contextlib
 import re
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -29,16 +28,9 @@ from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository, non_expired_waiver_filter
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
-from app.services.analytics.cache import get_analytics_cache
 from app.services.normalizers.utils import FindingIdPrefix
 from app.services.stats import request_waiver_recalc, run_waiver_recalc
 from app.services.waivers.matching import finding_rule_id, waiver_query
-
-
-def _invalidate_analytics_cache() -> None:
-    """Best-effort flush of the analytics TTL cache; waiver mutations change waived-derived counts."""
-    with contextlib.suppress(Exception):
-        get_analytics_cache().clear()
 
 
 _MSG_NO_CRITERIA = "A waiver names a finding, package, type, rule or vulnerability to match."
@@ -165,7 +157,6 @@ async def create_waiver(
         waiver.match = MatchSignature(**matched_finding["match"])
 
     await waiver_repo.create(waiver)
-    _invalidate_analytics_cache()
 
     await request_waiver_recalc(db, waiver, restamp=[scan_id] if scan_id else [])
     background_tasks.add_task(run_waiver_recalc, db)
@@ -286,7 +277,6 @@ async def update_waiver(
     updated = await waiver_repo.update(waiver_id, update_data)
     if not updated:
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
-    _invalidate_analytics_cache()
 
     await request_waiver_recalc(db, updated)
     background_tasks.add_task(run_waiver_recalc, db)
@@ -315,7 +305,6 @@ async def delete_waiver(
             raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     await waiver_repo.delete(waiver_id)
-    _invalidate_analytics_cache()
 
     await request_waiver_recalc(db, waiver)
     background_tasks.add_task(run_waiver_recalc, db)

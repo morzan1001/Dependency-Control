@@ -4,7 +4,6 @@ export interface GitLabInstance {
   url: string;
   description?: string;
   is_active: boolean;
-  is_default: boolean;
   oidc_audience?: string;
   auto_create_projects: boolean;
   sync_teams: boolean;
@@ -21,7 +20,6 @@ export interface GitLabInstanceCreate {
   url: string;
   description?: string;
   is_active?: boolean;
-  is_default?: boolean;
   access_token?: string;
   oidc_audience?: string;
   auto_create_projects?: boolean;
@@ -35,7 +33,6 @@ export interface GitLabInstanceUpdate {
   url?: string;
   description?: string;
   is_active?: boolean;
-  is_default?: boolean;
   access_token?: string;
   oidc_audience?: string;
   auto_create_projects?: boolean;

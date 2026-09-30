@@ -454,7 +454,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 <span className="text-xs text-muted-foreground">
                                                                     Fixed in: <span className="font-medium text-foreground">{vuln.fixed_version || "None"}</span>
                                                                 </span>
-                                                                {canCreateWaiver && (
+                                                                {vuln.waived ? (
+                                                                    <Badge variant="secondary" title={vuln.waiver_reason ?? undefined}>Waived</Badge>
+                                                                ) : canCreateWaiver && (
                                                                     <Button variant="ghost" size="sm" className="h-6 px-2" onClick={() => handleWaive(vuln.id || getFindingId(finding))}>
                                                                         <ShieldAlert className="h-3 w-3 mr-1" />
                                                                         Waive

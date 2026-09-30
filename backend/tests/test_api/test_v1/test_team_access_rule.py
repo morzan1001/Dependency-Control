@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.v1.endpoints import teams
-from app.core.constants import TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER, team_source
+from app.core.constants import SCAN_STATUS_COMPLETED, TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER, team_source
 from app.core.permissions import Permissions
 from app.models.user import User
 from app.schemas.team import TeamMemberUpdate
@@ -51,6 +51,17 @@ async def _db(members=_A_MEMBER, bindings=()) -> FakeDatabase:
                 "name": project_id,
                 "team_ids": ["t-1"],
                 "members": members_of,
+                "default_branch": "main",
+                "latest_scan_id": f"scan-{project_id}",
+            }
+        )
+        await db.scans.insert_one(
+            {
+                "_id": f"scan-{project_id}",
+                "project_id": project_id,
+                "branch": "main",
+                "status": SCAN_STATUS_COMPLETED,
+                "created_at": _NOW,
                 "stats": {"critical": critical},
             }
         )
@@ -75,6 +86,20 @@ class TestChatTeamTools:
     async def test_team_details_follow_rests_read_rule(self, caller, readable):
         result = await ChatToolRegistry().execute_tool("get_team_details", {"team_id": "t-1"}, caller, await _db())
         assert ("team" in result) is readable
+
+    @pytest.mark.asyncio
+    async def test_team_details_name_every_member(self):
+        db = await _db(members=(_member("u-1", TEAM_ROLE_ADMIN), _member("u-gone")))
+        await db.users.insert_one({"_id": "u-1", "username": "alice", "email": "alice@corp.com"})
+
+        result = await ChatToolRegistry().execute_tool(
+            "get_team_details", {"team_id": "t-1"}, _user(Permissions.TEAM_READ), db
+        )
+
+        assert [(m["user_id"], m["username"], m["role"]) for m in result["team"]["members"]] == [
+            ("u-1", "alice", TEAM_ROLE_ADMIN),
+            ("u-gone", None, TEAM_ROLE_MEMBER),
+        ]
 
     @pytest.mark.asyncio
     async def test_a_read_all_holder_lists_every_team(self):

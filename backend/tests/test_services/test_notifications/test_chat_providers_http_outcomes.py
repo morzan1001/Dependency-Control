@@ -97,3 +97,16 @@ async def test_slack_send_succeeds_only_on_an_ok_answer(monkeypatch, status, pay
 
     assert sent is expected
     assert [payload["channel"] for _url, payload in client.posted] == ["#alerts"]
+
+
+@pytest.mark.asyncio
+async def test_the_slack_fallback_text_keeps_a_version_range_out_of_slacks_control_syntax(monkeypatch):
+    client = _Client({"https://slack.com/api/chat.postMessage": _Response(200, {"ok": True})})
+    _use_client(monkeypatch, slack_provider, client)
+
+    await SlackProvider().send(
+        "#alerts", "a < b", "affected: <2.17.1 & >=2.0", system_settings=SystemSettings(slack_bot_token="xoxb")
+    )
+
+    [(_url, payload)] = client.posted
+    assert payload["text"] == "*a &lt; b*\naffected: &lt;2.17.1 &amp; &gt;=2.0"

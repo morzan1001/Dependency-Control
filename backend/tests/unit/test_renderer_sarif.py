@@ -1,6 +1,7 @@
 import json
 
 from app.services.compliance.renderers.sarif_renderer import SarifRenderer
+from tests.helpers.compliance import full_coverage
 from tests.unit.test_renderer_json import _evaluation, _report
 
 
@@ -75,6 +76,7 @@ def test_sarif_passed_control_emits_pass_result():
         summary={"passed": 1, "failed": 0, "waived": 0, "not_applicable": 0, "total": 1},
         residual_risks=[],
         inputs_fingerprint="sha256:z",
+        coverage=full_coverage(),
     )
     r = SarifRenderer()
     out, _, _ = r.render(eval_, _report())

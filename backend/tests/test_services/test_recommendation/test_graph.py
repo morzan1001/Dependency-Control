@@ -1,6 +1,6 @@
 """Tests for app.services.recommendation.graph."""
 
-from app.core.constants import DEEP_CHAIN_MEDIUM_IMPACT_DEPTH, MAX_DEPENDENCY_DEPTH
+from app.core.constants import MAX_DEPENDENCY_DEPTH
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.graph import (
     analyze_deep_dependency_chains,
@@ -175,7 +175,8 @@ class TestAnalyzeDeepDependencyChainsCycleSegment:
         assert any("pkg-b" in c for c in components)
         assert any("pkg-c" in c for c in components)
         assert not any("pkg-a" in c for c in components)
-        assert circular_recs[0].impact["total"] == 2
+        assert circular_recs[0].impact == {"total": 0}
+        assert circular_recs[0].affected_components_total == 2
 
 
 class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
@@ -285,7 +286,7 @@ class TestDepthIsTheShortestNestingFromADirectDependency:
 
         result = analyze_deep_dependency_chains([*chain, *chain], max_dependency_depth=2)
 
-        assert result[0].impact["total"] == 2
+        assert result[0].action["deepest_chains_total"] == 2
         assert result[0].affected_components == ["pkg-3@1.0 (depth: 4)", "pkg-2@1.0 (depth: 3)"]
 
     def test_the_default_threshold_is_the_production_one(self):
@@ -293,13 +294,11 @@ class TestDepthIsTheShortestNestingFromADirectDependency:
             f"Deep dependency chains detected (max depth: {MAX_DEPENDENCY_DEPTH + 1})"
         ]
 
-    def test_impact_splits_at_the_named_medium_depth(self):
-        threshold = DEEP_CHAIN_MEDIUM_IMPACT_DEPTH - 3
-        rec = analyze_deep_dependency_chains(
-            _chain(DEEP_CHAIN_MEDIUM_IMPACT_DEPTH + 1), max_dependency_depth=threshold
-        )[0]
+    def test_the_card_counts_dependencies_rather_than_findings(self):
+        [rec] = analyze_deep_dependency_chains(_chain(9), max_dependency_depth=5)
 
-        assert rec.impact == {"critical": 0, "high": 0, "medium": 2, "low": 2, "total": 4}
+        assert rec.impact == {"total": 0}
+        assert rec.action["deepest_chains_total"] == 4
 
 
 class TestChainPreviewIsARealPath:
@@ -314,7 +313,7 @@ class TestChainPreviewIsARealPath:
             {
                 "package": "leaf",
                 "depth": 9,
-                "chain_preview": " → ".join([*(f"pkg-{i}@1.0" for i in range(7)), "a@1.0", "leaf@1.0"]),
+                "chain_preview": "pkg-0@1.0 → pkg-1@1.0 → ... → a@1.0 → leaf@1.0",
             }
         ]
 
@@ -338,7 +337,7 @@ class TestCycleMembershipIsEveryNodeOnACycle:
         [rec] = analyze_deep_dependency_chains([a, b, dict(b)], max_dependency_depth=50)
 
         assert rec.title == "Circular dependencies detected (2 packages)"
-        assert rec.impact["total"] == rec.affected_components_total == 2
+        assert rec.affected_components_total == 2
 
     def test_a_self_parent_is_a_cycle(self):
         assert _cycle_members([_dep("a", direct=True, parent_components=["pkg:npm/a@1.0"])]) == ["a@1.0"]
@@ -382,7 +381,8 @@ class TestAnalyzeDuplicatePackagesFound:
             _dep("got", version="12.0", direct=True),
         ]
         rec = analyze_duplicate_packages(deps)[0]
-        assert any("HTTP Clients" in c for c in rec.affected_components)
+        assert sorted(rec.affected_components) == ["axios", "got"]
+        assert rec.action["duplicates"][0]["category"] == "HTTP Clients"
 
     def test_date_libraries_duplicate(self):
         deps = [
@@ -418,7 +418,8 @@ class TestAnalyzeDuplicatePackagesMultipleCategories:
         ]
         result = analyze_duplicate_packages(deps)
         assert len(result) == 1
-        assert result[0].impact["total"] == 2
+        assert result[0].impact == {"total": 0}
+        assert len(result[0].action["duplicates"]) == 2
 
     def test_multiple_categories_all_listed(self):
         deps = [
@@ -428,9 +429,8 @@ class TestAnalyzeDuplicatePackagesMultipleCategories:
             _dep("dayjs", version="1.11.0", direct=True),
         ]
         rec = analyze_duplicate_packages(deps)[0]
-        components = " ".join(rec.affected_components)
-        assert "HTTP Clients" in components
-        assert "Date/Time Libraries" in components
+        assert sorted(rec.affected_components) == ["axios", "dayjs", "got", "moment"]
+        assert {d["category"] for d in rec.action["duplicates"]} == {"HTTP Clients", "Date/Time Libraries"}
 
 
 class TestDuplicatePackagesMatchTheQualifiedName:

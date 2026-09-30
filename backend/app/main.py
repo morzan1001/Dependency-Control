@@ -18,7 +18,6 @@ from app.api.v1.endpoints import (
     chat,
     compliance_reports,
     crypto_analytics,
-    crypto_assets,
     crypto_policies,
     github_instances,
     gitlab_instances,
@@ -207,7 +206,6 @@ app.include_router(archives.router, prefix=f"{settings.API_V1_STR}/projects", ta
 app.include_router(archives.admin_router, prefix=f"{settings.API_V1_STR}/archives", tags=["archives-admin"])
 app.include_router(releases.router, prefix=f"{settings.API_V1_STR}/projects", tags=["releases"])
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
-app.include_router(crypto_assets.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-assets"])
 app.include_router(inventory.router, prefix=f"{settings.API_V1_STR}", tags=["inventory"])
 app.include_router(crypto_policies.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-policies"])
 app.include_router(policy_audit.router, prefix=f"{settings.API_V1_STR}", tags=["policy-audit"])

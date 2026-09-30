@@ -1,9 +1,10 @@
 """Slack Block Kit message formatting."""
 
+from collections.abc import Callable
 from typing import Any
 
 from app.core.epss import HIGH_EPSS_LABEL
-from app.schemas.notification import PRIORITY_VULNS_LABEL
+from app.schemas.notification import PRIORITY_VULNS_LABEL, AlertVulnerability
 
 # Slack Block Kit limits: a payload past any of these is rejected outright.
 _HEADER_MAX_LENGTH = 150
@@ -11,8 +12,13 @@ _SECTION_TEXT_MAX_LENGTH = 3000
 _MAX_BLOCKS = 50
 
 _CUT_MARKER = "… [cut]"
-_AFFECTED_PROJECTS_SHOWN = 15
-_PROJECT_FINDINGS_SHOWN = 5
+AFFECTED_PROJECTS_SHOWN = 15
+PROJECT_FINDINGS_SHOWN = 5
+
+
+def _escape_mrkdwn(text: str) -> str:
+    """Slack reads a bare &, < or > as the start of a link, mention or entity."""
+    return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def _fit(text: str) -> str:
@@ -22,7 +28,7 @@ def _fit(text: str) -> str:
     return text[: _SECTION_TEXT_MAX_LENGTH - len(_CUT_MARKER)] + _CUT_MARKER
 
 
-_SEVERITY_EMOJI = {
+SEVERITY_EMOJI = {
     "CRITICAL": "\U0001f534",  # red circle
     "HIGH": "\U0001f7e0",  # orange circle
     "MEDIUM": "\U0001f7e1",  # yellow circle
@@ -30,9 +36,41 @@ _SEVERITY_EMOJI = {
 }
 
 
+# Escapes show literally inside a code span, so these are dropped from the id instead.
+_CODE_SPAN_UNSAFE = str.maketrans("", "", "`<>&")
+
+
+def format_vuln_line(index: int, vuln: AlertVulnerability, emphasis: str, escape: Callable[[str], str]) -> str:
+    """One alert line, with ``escape`` applied to the SBOM-sourced package and version."""
+    emoji = SEVERITY_EMOJI.get(vuln.severity, "\u26aa")
+    line = f"{index}. `{vuln.id.translate(_CODE_SPAN_UNSAFE)}` {emoji} {vuln.severity} \u2014 "
+    line += escape(vuln.versioned_package)
+    if vuln.tags:
+        line += f"  {emphasis}[{', '.join(vuln.tags)}]{emphasis}"
+    return line
+
+
+def project_findings_summary(findings: list[str]) -> str:
+    hidden = len(findings) - PROJECT_FINDINGS_SHOWN
+    shown = ", ".join(findings[:PROJECT_FINDINGS_SHOWN])
+    return f"{shown}, +{hidden} more" if hidden > 0 else shown
+
+
+def _section_blocks(text: str, slots: int) -> list[dict[str, Any]]:
+    """``text`` in at most ``slots`` sections, the last one saying how much did not fit."""
+    remaining = text.strip()
+    chunks: list[str] = []
+    while remaining and len(chunks) < slots - 1:
+        chunks.append(remaining[:_SECTION_TEXT_MAX_LENGTH])
+        remaining = remaining[_SECTION_TEXT_MAX_LENGTH:]
+    if remaining:
+        chunks.append(f"_{len(remaining)} more characters did not fit in this message._")
+    return [{"type": "section", "text": {"type": "mrkdwn", "text": chunk}} for chunk in chunks]
+
+
 def build_generic_blocks(subject: str, message: str) -> list[dict[str, Any]]:
     """Default Block Kit layout built from subject + message."""
-    blocks: list[dict[str, Any]] = [
+    return [
         {
             "type": "header",
             "text": {
@@ -42,30 +80,8 @@ def build_generic_blocks(subject: str, message: str) -> list[dict[str, Any]]:
             },
         },
         {"type": "divider"},
+        *_section_blocks(_escape_mrkdwn(message), _MAX_BLOCKS - 2),
     ]
-
-    remaining = message.strip()
-    while remaining and len(blocks) < _MAX_BLOCKS - 1:
-        chunk = remaining[:_SECTION_TEXT_MAX_LENGTH]
-        remaining = remaining[_SECTION_TEXT_MAX_LENGTH:]
-        blocks.append(
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": chunk},
-            }
-        )
-
-    # The loop leaves the last block slot free precisely so a message too long for Slack
-    # can end by saying how much of it is missing.
-    if remaining:
-        blocks.append(
-            {
-                "type": "section",
-                "text": {"type": "mrkdwn", "text": f"_{len(remaining)} more characters did not fit in this message._"},
-            }
-        )
-
-    return blocks
 
 
 def build_analysis_completed_blocks(
@@ -74,6 +90,7 @@ def build_analysis_completed_blocks(
     total_findings: int,
     severity_counts: dict[str, int],
     results_summary: list[str],
+    analyzer_count: int,
     scan_link: str,
 ) -> list[dict[str, Any]]:
     """Build rich Block Kit layout for analysis completed notification."""
@@ -90,7 +107,7 @@ def build_analysis_completed_blocks(
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"Scan `{scan_id[:12]}` completed for *{project_name}*.",
+                "text": f"Scan `{scan_id[:12]}` completed for *{_escape_mrkdwn(project_name)}*.",
             },
         },
         {"type": "divider"},
@@ -100,19 +117,19 @@ def build_analysis_completed_blocks(
             "fields": [
                 {
                     "type": "mrkdwn",
-                    "text": f"{_SEVERITY_EMOJI['CRITICAL']} *Critical:* {severity_counts.get('CRITICAL', 0)}",
+                    "text": f"{SEVERITY_EMOJI['CRITICAL']} *Critical:* {severity_counts.get('CRITICAL', 0)}",
                 },
                 {
                     "type": "mrkdwn",
-                    "text": f"{_SEVERITY_EMOJI['HIGH']} *High:* {severity_counts.get('HIGH', 0)}",
+                    "text": f"{SEVERITY_EMOJI['HIGH']} *High:* {severity_counts.get('HIGH', 0)}",
                 },
                 {
                     "type": "mrkdwn",
-                    "text": f"{_SEVERITY_EMOJI['MEDIUM']} *Medium:* {severity_counts.get('MEDIUM', 0)}",
+                    "text": f"{SEVERITY_EMOJI['MEDIUM']} *Medium:* {severity_counts.get('MEDIUM', 0)}",
                 },
                 {
                     "type": "mrkdwn",
-                    "text": f"{_SEVERITY_EMOJI['LOW']} *Low:* {severity_counts.get('LOW', 0)}",
+                    "text": f"{SEVERITY_EMOJI['LOW']} *Low:* {severity_counts.get('LOW', 0)}",
                 },
                 {
                     "type": "mrkdwn",
@@ -123,13 +140,13 @@ def build_analysis_completed_blocks(
     ]
 
     if results_summary:
-        results_text = "\n".join(f"\u2022 {r}" for r in results_summary)
+        results_text = "\n".join(f"\u2022 {_escape_mrkdwn(r)}" for r in results_summary)
         blocks.append(
             {
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": _fit(f"*Analyzers ({len(results_summary)})*\n{results_text}"),
+                    "text": _fit(f"*Analyzers ({analyzer_count})*\n{results_text}"),
                 },
             }
         )
@@ -151,30 +168,13 @@ def build_analysis_completed_blocks(
     return blocks
 
 
-def _format_vuln_line(index: int, vuln: dict[str, Any]) -> str:
-    """Format a single vulnerability line for Block Kit."""
-    emoji = _SEVERITY_EMOJI.get(vuln.get("severity", ""), "\u26aa")
-    line = f"{index}. `{vuln['id']}` {emoji} {vuln['severity']} \u2014 {vuln['package']}"
-    if vuln.get("version"):
-        line += f"@{vuln['version']}"
-
-    tags = []
-    if vuln.get("in_kev"):
-        tags.append("KEV")
-    if vuln.get("epss_score"):
-        tags.append(f"EPSS: {vuln['epss_score'] * 100:.1f}%")
-    if tags:
-        line += f"  _[{', '.join(tags)}]_"
-
-    return line
-
-
 def build_vulnerability_found_blocks(
     project_name: str,
     kev_count: int,
     high_epss_count: int,
     priority_count: int,
-    top_vulns: list[dict[str, Any]],
+    critical_count: int,
+    top_vulns: list[AlertVulnerability],
     scan_link: str,
 ) -> list[dict[str, Any]]:
     """Build rich Block Kit layout for vulnerability found notification."""
@@ -191,7 +191,8 @@ def build_vulnerability_found_blocks(
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"Security scan detected critical vulnerabilities in *{project_name}*.",
+                "text": f"Security scan detected {'critical' if critical_count else 'high-priority'} "
+                f"vulnerabilities in *{_escape_mrkdwn(project_name)}*.",
             },
         },
         {"type": "divider"},
@@ -203,13 +204,13 @@ def build_vulnerability_found_blocks(
     if high_epss_count:
         fields.append({"type": "mrkdwn", "text": f"\U0001f4c8 *High EPSS ({HIGH_EPSS_LABEL}):* {high_epss_count}"})
     fields.append(
-        {"type": "mrkdwn", "text": f"{_SEVERITY_EMOJI['CRITICAL']} *{PRIORITY_VULNS_LABEL}:* {priority_count}"}
+        {"type": "mrkdwn", "text": f"{SEVERITY_EMOJI['CRITICAL']} *{PRIORITY_VULNS_LABEL}:* {priority_count}"}
     )
 
     blocks.append({"type": "section", "fields": fields})
 
     if top_vulns:
-        vuln_lines = [_format_vuln_line(i, v) for i, v in enumerate(top_vulns, 1)]
+        vuln_lines = [format_vuln_line(i, v, "_", _escape_mrkdwn) for i, v in enumerate(top_vulns, 1)]
         heading = f"*Top Priority Vulnerabilities ({len(top_vulns)} of {priority_count})*"
         blocks.append(
             {
@@ -242,6 +243,7 @@ def build_advisory_blocks(
     dashboard_link: str | None = None,
 ) -> list[dict[str, Any]]:
     """Build Block Kit layout for advisory / broadcast notifications."""
+    body_slots = _MAX_BLOCKS - 2 - bool(affected_projects) - bool(dashboard_link)
     blocks: list[dict[str, Any]] = [
         {
             "type": "header",
@@ -252,23 +254,17 @@ def build_advisory_blocks(
             },
         },
         {"type": "divider"},
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": _fit(message)},
-        },
+        *_section_blocks(_escape_mrkdwn(message), body_slots),
     ]
 
     if affected_projects:
-        shown = affected_projects[:_AFFECTED_PROJECTS_SHOWN]
-        project_lines = []
-        for p in shown:
-            findings = p.get("findings", [])
-            findings_str = ", ".join(findings[:_PROJECT_FINDINGS_SHOWN])
-            if len(findings) > _PROJECT_FINDINGS_SHOWN:
-                findings_str += f", +{len(findings) - _PROJECT_FINDINGS_SHOWN} more"
-            project_lines.append(f"\u2022 *{p['name']}*: {findings_str}")
+        shown = affected_projects[:AFFECTED_PROJECTS_SHOWN]
+        project_lines = [
+            f"\u2022 *{_escape_mrkdwn(p['name'])}*: {_escape_mrkdwn(project_findings_summary(p['findings']))}"
+            for p in shown
+        ]
 
-        heading = f"*Affected Projects ({len(shown)} of {len(affected_projects)})*"
+        heading = f"*Your Projects Using the Package ({len(shown)} of {len(affected_projects)})*"
         blocks.append(
             {
                 "type": "section",

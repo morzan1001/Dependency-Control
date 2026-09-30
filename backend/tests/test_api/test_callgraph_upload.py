@@ -172,7 +172,7 @@ async def client(db):
 def _ci_credentials(resolved_project_id: str = _PROJECT_ID):
     """Stand in for the Job-Token exchange, resolving to ``resolved_project_id``."""
     return patch(
-        f"{DEPS}.get_project_for_ingest",
+        f"{DEPS}._authenticate_ci",
         new_callable=AsyncMock,
         return_value=Project(id=resolved_project_id, name="cg-project"),
     )
@@ -441,7 +441,7 @@ class TestReupload:
     @pytest.mark.asyncio
     async def test_reupload_of_the_same_scan_keeps_created_at(self, client, db):
         await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
-        first = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        first = dict(await db.callgraphs.find_one({"project_id": _PROJECT_ID}))
 
         grown = {
             "imports": [*_PYTHON_DATA["imports"], {"module": "boto3", "file": "app/s3.py", "line": 1, "symbols": []}],
@@ -454,6 +454,19 @@ class TestReupload:
         assert second["created_at"] == first["created_at"]
         assert second["_id"] == first["_id"]
         assert "boto3" in second["module_usage"]
+
+    @pytest.mark.asyncio
+    async def test_a_project_level_reupload_moves_updated_at_forward(self, client, db):
+        project_level = {k: v for k, v in _envelope("generic", "python", _PYTHON_DATA).items() if k != "pipeline_id"}
+        await _upload(client, project_level)
+        first = dict(await db.callgraphs.find_one({"project_id": _PROJECT_ID}))
+
+        await _upload(client, project_level)
+
+        second = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        assert first["updated_at"] == first["created_at"]
+        assert second["updated_at"] > first["updated_at"]
+        assert second["created_at"] == first["created_at"]
 
 
 class TestModuleUsageEndpoint:

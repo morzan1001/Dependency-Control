@@ -1,3 +1,5 @@
+from unittest.mock import AsyncMock
+
 import pytest
 
 from app.models.crypto_policy import CryptoPolicy
@@ -276,8 +278,62 @@ async def test_a_revert_refuses_a_snapshot_holding_a_rule_a_write_would_refuse(c
     )
 
     assert resp.status_code == 422
-    assert resp.json()["detail"].startswith("Version 1 holds rules a write would refuse: rule 'fires-on-everything'")
+    assert resp.json()["detail"].startswith(
+        "Version 1 holds rules a write would refuse: rules.0: rule 'fires-on-everything'"
+    )
     assert (await CryptoPolicyRepository(db).get_system_policy()).version == 2
+
+
+@pytest.mark.asyncio
+async def test_a_revert_refusal_names_the_field_it_refuses(client, db, admin_auth_headers):
+    """A snapshot keeps a key the rule model has since dropped."""
+    from app.models.policy_audit_entry import PolicyAuditEntry
+    from app.repositories.policy_audit_entry import PolicyAuditRepository
+    from app.schemas.policy_audit import PolicyAuditAction
+
+    await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=2, rules=[]))
+    dropped_key = {**_rule_dict("old-shape"), "match_name_pattern": ["md5"]}
+    await PolicyAuditRepository(db).create(
+        PolicyAuditEntry(
+            policy_scope="system",
+            version=1,
+            action=PolicyAuditAction.UPDATE,
+            snapshot={"rules": [dropped_key]},
+            change_summary="",
+        )
+    )
+
+    resp = await client.post(
+        "/api/v1/crypto-policies/system/revert", json={"target_version": 1}, headers=admin_auth_headers
+    )
+
+    assert resp.status_code == 422
+    assert resp.json()["detail"] == (
+        "Version 1 holds rules a write would refuse: rules.0.match_name_pattern: Extra inputs are not permitted"
+    )
+
+
+@pytest.mark.asyncio
+async def test_saving_the_stored_rules_again_writes_no_version_and_announces_nothing(
+    client, db, admin_auth_headers, monkeypatch
+):
+    from app.services.notifications.service import notification_service
+    from app.services.webhooks import webhook_service
+
+    body = {"rules": [_rule_dict("keep-me")], "comment": "no change"}
+    first = await client.put("/api/v1/crypto-policies/system", json=body, headers=admin_auth_headers)
+    webhooks, notifications = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(webhook_service, "trigger_webhooks", webhooks)
+    monkeypatch.setattr(notification_service, "notify_users_with_permission", notifications)
+
+    again = await client.put("/api/v1/crypto-policies/system", json=body, headers=admin_auth_headers)
+
+    assert again.status_code == 200, again.text
+    assert again.json()["version"] == first.json()["version"] == 1
+    assert (await CryptoPolicyRepository(db).get_system_policy()).version == 1
+    assert await db.crypto_policy_history.count_documents({}) == 1
+    webhooks.assert_not_awaited()
+    notifications.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -311,7 +367,7 @@ async def test_an_override_recreated_after_a_delete_continues_the_version_count(
     recreated = await client.put(path, json={"rules": [_rule_dict("second")]}, headers=owner_auth_headers_proj)
 
     assert recreated.json()["version"] == 3
-    entries = await PolicyAuditRepository(db).list(policy_scope="project", project_id="p")
+    entries = await PolicyAuditRepository(db).list(policy_scope="project", policy_type="crypto", project_id="p")
     assert [(e.version, e.action) for e in entries] == [(3, "create"), (2, "delete"), (1, "create")]
 
 

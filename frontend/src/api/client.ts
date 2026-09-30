@@ -94,6 +94,10 @@ export const refreshAccessToken = async (): Promise<string | null> => {
       const status = axios.isAxiosError(err) ? err.response?.status : undefined;
       // 4xx: refresh token is dead — clear tokens and signal logout via null.
       if (status !== undefined && status >= 400 && status < 500) {
+        // Another tab already exchanged this refresh token and stored the pair it got back.
+        if (localStorage.getItem('refresh_token') !== refreshToken) {
+          return localStorage.getItem('token');
+        }
         localStorage.removeItem('token');
         localStorage.removeItem('refresh_token');
         return null;
@@ -148,8 +152,8 @@ export function createInstanceApi<
       const response = await api.put<TInstance>(`${basePath}/${instanceId}`, data);
       return response.data;
     },
-    delete: async (instanceId: string, force = false): Promise<void> => {
-      await api.delete(`${basePath}/${instanceId}`, { params: { force } });
+    delete: async (instanceId: string): Promise<void> => {
+      await api.delete(`${basePath}/${instanceId}`);
     },
     testConnection: async (instanceId: string): Promise<TTestResponse> => {
       const response = await api.post<TTestResponse>(`${basePath}/${instanceId}/test-connection`);

@@ -45,7 +45,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, cast
 
-
 from app.api.v1.endpoints.analytics.update_frequency import (
     _DEFAULT_COMPARISON_WINDOW_DAYS,
     _compute_comparison,
@@ -62,6 +61,7 @@ from app.repositories.update_frequency import WINDOW_HARD_LIMIT, ScanUpdateDelta
 from app.schemas.analytics import UpdateFrequencyMetrics
 from app.services.update_frequency import (
     compute_update_frequency,
+    elect_primary_branch,
     window_cutoff,
 )
 from app.services.update_frequency_fold import select_window
@@ -314,16 +314,17 @@ async def scan_set_diff(db: Any, project_id: str, branch: str, since: datetime) 
     )
 
 
-async def _live_metrics(db: Any, project: dict[str, Any], window_days: int) -> UpdateFrequencyMetrics:
+async def _live_metrics(
+    db: Any, project: dict[str, Any], branch: str | None, window_days: int
+) -> UpdateFrequencyMetrics:
     return await compute_update_frequency(
         project_id=str(project["_id"]),
         project_name=project.get("name", ""),
         scan_repo=ScanRepository(db),
         dep_repo=DependencyRepository(db),
         analysis_repo=AnalysisResultRepository(db),
+        branch=branch,
         window_days=window_days,
-        deleted_branches=project.get("deleted_branches"),
-        default_branch=project.get("default_branch"),
     )
 
 
@@ -342,9 +343,12 @@ async def verify_project(db: Any, project: dict[str, Any], window_days: int) -> 
     project_id = str(project["_id"])
     project_name = project.get("name", "")
     since = cast(datetime, window_cutoff(window_days))
+    branch, by_branch = await elect_primary_branch(
+        ScanRepository(db), project_id, since, project.get("default_branch"), project.get("deleted_branches")
+    )
 
-    live = await _live_metrics(db, project, window_days)
-    rollup = await _rollup_project_metrics(db, Project(**project), window_days)
+    live = await _live_metrics(db, project, branch, window_days)
+    rollup = await _rollup_project_metrics(db, Project(**project), window_days, branch, by_branch)
     if rollup is None:
         return ProjectReport(
             project_id=project_id,

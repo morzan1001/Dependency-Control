@@ -3,6 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 from fastapi import HTTPException
 
@@ -18,11 +19,14 @@ class TestGitLabInstanceModelDefaults:
             created_by="admin",
         )
         assert instance.is_active is True
-        assert instance.is_default is False
         assert instance.auto_create_projects is False
         assert instance.sync_teams is False
         assert instance.access_token is None
         assert instance.oidc_audience is None
+
+    def test_a_stored_document_with_the_retired_default_flag_loads_without_it(self):
+        instance = GitLabInstance(name="Test", url="https://gitlab.com", created_by="admin", is_default=True)
+        assert "is_default" not in instance.model_dump()
 
     def test_id_auto_generated(self):
         instance = GitLabInstance(
@@ -69,28 +73,6 @@ def _make_repo_mock(**method_returns):
     for method_name, return_value in method_returns.items():
         setattr(mock_repo, method_name, AsyncMock(return_value=return_value))
     return mock_repo
-
-
-def _patch_response():
-    """Inject a mock Response into the module under test, which lacks the import."""
-    import contextlib
-
-    import app.api.v1.endpoints.gitlab_instances as mod
-
-    @contextlib.contextmanager
-    def _ctx():
-        mock_response_cls = MagicMock()
-        original = getattr(mod, "Response", None)
-        mod.Response = mock_response_cls
-        try:
-            yield mock_response_cls
-        finally:
-            if original is None:
-                delattr(mod, "Response")
-            else:
-                mod.Response = original
-
-    return _ctx()
 
 
 _ONE_GROUP = [{"id": 1, "full_path": "mo", "name": "MO"}]
@@ -320,25 +302,6 @@ class TestCreateInstance:
         assert exc_info.value.status_code == 400
         assert "name" in exc_info.value.detail
 
-    def test_raises_400_on_connection_failure(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import create_instance
-
-        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
-        mock_response = MagicMock(status_code=401)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.GitLabService", return_value=_make_gitlab_service_mock(mock_response)):
-                with pytest.raises(HTTPException) as exc_info:
-                    asyncio.run(
-                        create_instance(
-                            instance_data=self._make_create_data(),
-                            db=MagicMock(),
-                            current_user=admin_user,
-                        )
-                    )
-        assert exc_info.value.status_code == 400
-        assert "Failed to connect" in exc_info.value.detail
-
     def test_a_rejected_token_reports_the_gitlab_status_exactly_once(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import create_instance
 
@@ -357,12 +320,17 @@ class TestCreateInstance:
         assert exc_info.value.detail == "Failed to connect to GitLab instance: HTTP 401"
         mock_repo.create.assert_not_called()
 
-    def test_an_unreachable_instance_reports_the_transport_error(self, admin_user):
+    @pytest.mark.parametrize(
+        "error",
+        [httpx.ConnectError("connection refused"), httpx.InvalidURL("connection refused")],
+        ids=["unreachable", "malformed-url"],
+    )
+    def test_an_unreachable_instance_reports_the_transport_error(self, admin_user, error):
         from app.api.v1.endpoints.gitlab_instances import create_instance
 
         mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
         mock_svc = _make_gitlab_service_mock(MagicMock(status_code=200))
-        mock_svc._api_client.return_value.get = AsyncMock(side_effect=OSError("connection refused"))
+        mock_svc._api_client.return_value.get = AsyncMock(side_effect=error)
 
         with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
             with patch(f"{MODULE}.GitLabService", return_value=mock_svc):
@@ -377,6 +345,27 @@ class TestCreateInstance:
         assert exc_info.value.status_code == 400
         assert exc_info.value.detail == "Failed to connect to GitLab instance: connection refused"
         mock_repo.create.assert_not_called()
+
+    def test_a_fault_outside_the_transport_is_not_reported_as_a_connection_failure(self, admin_user):
+        """Blaming the instance for a server-side bug sends the admin checking a GitLab that is fine."""
+        from app.api.v1.endpoints.gitlab_instances import create_instance
+
+        mock_svc = _make_gitlab_service_mock(MagicMock(status_code=200))
+        mock_svc._api_client.return_value.get = AsyncMock(side_effect=KeyError("api_url"))
+
+        with patch(
+            f"{MODULE}.GitLabInstanceRepository",
+            return_value=_make_repo_mock(exists_by_url=False, exists_by_name=False),
+        ):
+            with patch(f"{MODULE}.GitLabService", return_value=mock_svc):
+                with pytest.raises(KeyError):
+                    asyncio.run(
+                        create_instance(
+                            instance_data=self._make_create_data(),
+                            db=MagicMock(),
+                            current_user=admin_user,
+                        )
+                    )
 
     def test_success_creates_and_returns_instance(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import create_instance
@@ -420,46 +409,6 @@ class TestCreateInstance:
         persisted = mock_repo.create.call_args.args[0]
         assert persisted.url == "https://new-gitlab.com"
         assert result.url == "https://new-gitlab.com"
-
-    def test_creating_a_default_instance_demotes_the_previous_default(self, admin_user):
-        """set_as_default is what clears the flag elsewhere; without it get_default() picks
-        arbitrarily between two flagged rows."""
-        from app.api.v1.endpoints.gitlab_instances import create_instance
-
-        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False, set_as_default=True)
-        mock_repo.create = AsyncMock(side_effect=lambda inst: inst)
-        mock_response = MagicMock(status_code=200)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.GitLabService", return_value=_make_gitlab_service_mock(mock_response)):
-                result = asyncio.run(
-                    create_instance(
-                        instance_data=self._make_create_data(is_default=True),
-                        db=MagicMock(),
-                        current_user=admin_user,
-                    )
-                )
-
-        mock_repo.set_as_default.assert_called_once_with(result.id)
-
-    def test_creating_a_non_default_instance_leaves_the_current_default_alone(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import create_instance
-
-        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False, set_as_default=True)
-        mock_repo.create = AsyncMock(side_effect=lambda inst: inst)
-        mock_response = MagicMock(status_code=200)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.GitLabService", return_value=_make_gitlab_service_mock(mock_response)):
-                asyncio.run(
-                    create_instance(
-                        instance_data=self._make_create_data(is_default=False),
-                        db=MagicMock(),
-                        current_user=admin_user,
-                    )
-                )
-
-        mock_repo.set_as_default.assert_not_called()
 
     def test_create_persists_and_returns_team_sync_depth(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import create_instance
@@ -569,28 +518,6 @@ class TestUpdateInstance:
         assert result.name == "New Name"
         mock_repo.update.assert_called_once()
 
-    def test_set_as_default_calls_repo(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import update_instance
-
-        existing = make_gitlab_instance(id="inst-1", is_default=False)
-        updated = make_gitlab_instance(id="inst-1", is_default=True)
-        mock_repo = _make_repo_mock(set_as_default=True)
-        mock_repo.get_by_id = AsyncMock(return_value=existing)
-        mock_repo.update = AsyncMock(return_value=updated)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            result = asyncio.run(
-                update_instance(
-                    instance_id="inst-1",
-                    update_data=self._make_update_data(is_default=True),
-                    db=MagicMock(),
-                    current_user=admin_user,
-                )
-            )
-
-        assert result.is_default is True
-        mock_repo.set_as_default.assert_called_once_with("inst-1")
-
     def test_update_applies_and_returns_team_sync_depth(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import update_instance
 
@@ -613,117 +540,6 @@ class TestUpdateInstance:
         update_dict = mock_repo.update.call_args.args[1]
         assert update_dict["team_sync_depth"] == 2
         assert result.team_sync_depth == 2
-
-
-class TestDeleteInstance:
-    def test_raises_404_when_not_found(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import delete_instance
-
-        mock_repo = _make_repo_mock(get_by_id=None)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.ProjectRepository"):
-                with pytest.raises(HTTPException) as exc_info:
-                    asyncio.run(
-                        delete_instance(
-                            instance_id="missing",
-                            force=False,
-                            db=MagicMock(),
-                            current_user=admin_user,
-                        )
-                    )
-        assert exc_info.value.status_code == 404
-
-    def test_raises_400_when_projects_linked(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import delete_instance
-
-        existing = make_gitlab_instance(id="inst-1", name="GL")
-        mock_repo = _make_repo_mock(get_by_id=existing)
-
-        mock_proj_repo = MagicMock()
-        mock_proj_repo.count = AsyncMock(return_value=3)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
-                with pytest.raises(HTTPException) as exc_info:
-                    asyncio.run(
-                        delete_instance(
-                            instance_id="inst-1",
-                            force=False,
-                            db=MagicMock(),
-                            current_user=admin_user,
-                        )
-                    )
-        assert exc_info.value.status_code == 400
-        assert "3 projects" in exc_info.value.detail
-
-    def test_a_single_linked_project_still_blocks_the_delete(self, admin_user):
-        """The boundary of the guard: deleting past it leaves that project with a dangling
-        gitlab_instance_id."""
-        from app.api.v1.endpoints.gitlab_instances import delete_instance
-
-        mock_repo = _make_repo_mock(get_by_id=make_gitlab_instance(id="inst-1", name="GL"), delete=True)
-
-        mock_proj_repo = MagicMock()
-        mock_proj_repo.count = AsyncMock(return_value=1)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
-                with pytest.raises(HTTPException) as exc_info:
-                    asyncio.run(
-                        delete_instance(
-                            instance_id="inst-1",
-                            force=False,
-                            db=MagicMock(),
-                            current_user=admin_user,
-                        )
-                    )
-
-        assert exc_info.value.status_code == 400
-        assert "1 projects" in exc_info.value.detail
-        mock_repo.delete.assert_not_called()
-
-    def test_force_deletes_despite_linked_projects(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import delete_instance
-
-        existing = make_gitlab_instance(id="inst-1", name="GL")
-        mock_repo = _make_repo_mock(get_by_id=existing, delete=True)
-
-        mock_proj_repo = MagicMock()
-        mock_proj_repo.count = AsyncMock(return_value=3)
-
-        with _patch_response(), patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
-                asyncio.run(
-                    delete_instance(
-                        instance_id="inst-1",
-                        force=True,
-                        db=MagicMock(),
-                        current_user=admin_user,
-                    )
-                )
-        mock_repo.delete.assert_called_once_with("inst-1")
-
-    def test_success_deletes_instance(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import delete_instance
-
-        existing = make_gitlab_instance(id="inst-1", name="GL")
-        mock_repo = _make_repo_mock(get_by_id=existing, delete=True)
-
-        mock_proj_repo = MagicMock()
-        mock_proj_repo.count = AsyncMock(return_value=0)
-
-        with _patch_response(), patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
-                asyncio.run(
-                    delete_instance(
-                        instance_id="inst-1",
-                        force=False,
-                        db=MagicMock(),
-                        current_user=admin_user,
-                    )
-                )
-        mock_repo.delete.assert_called_once_with("inst-1")
 
 
 class TestTestConnection:

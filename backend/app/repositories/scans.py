@@ -35,6 +35,7 @@ from app.core.constants import (
     ScanStatus,
 )
 from app.models.project import Scan
+from app.models.stats import Stats
 from app.schemas.projections import ScanMinimal, ScanWithStats
 
 logger = logging.getLogger(__name__)
@@ -188,6 +189,17 @@ class ScanRepository:
         """False when ``guard`` no longer held, so nothing was written."""
         result = await self.collection.update_one({"_id": scan_id, **(guard or {})}, update_ops)
         return bool(result.matched_count)
+
+    async def set_stats(self, scan_id: str, stats: Stats, extra: dict[str, Any] | None = None) -> None:
+        """Rewrite a scan's stats, and the copy in every ``latest_run`` reporting it: its own and its root's."""
+        dumped = stats.model_dump()
+        scan = await self.collection.find_one_and_update(
+            {"_id": scan_id}, {"$set": {"stats": dumped, **(extra or {})}}, projection={"original_scan_id": 1}
+        )
+        root_id = (scan or {}).get("original_scan_id") or scan_id
+        await self.collection.update_many(
+            {"_id": {"$in": [scan_id, root_id]}, "latest_run.scan_id": scan_id}, {"$set": {"latest_run.stats": dumped}}
+        )
 
     async def claim_pending(self, scan_id: str, worker_id: str) -> dict[str, Any] | None:
         """Hand a pending scan to one worker; None when another worker took it first."""

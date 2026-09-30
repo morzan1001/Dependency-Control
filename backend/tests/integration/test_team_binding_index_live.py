@@ -80,7 +80,7 @@ async def test_a_team_cleared_of_a_binding_leaves_the_group_free(db):
     binding = GitLabGroupBinding(instance_id="gl-1", external_id=77)
 
     await repo.create(Team(id="t-1", name="Edge Guild", bindings=[binding]))
-    assert await repo.remove_binding_for_instance("t-1", "gl-1")
+    assert await repo.remove_binding_for_instance("t-1", "gl-1", "gitlab:gl-1")
     await repo.create(Team(id="t-2", name="Edge Again", bindings=[binding]))
 
     assert (await repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, "gl-1", 77))["_id"] == "t-2"

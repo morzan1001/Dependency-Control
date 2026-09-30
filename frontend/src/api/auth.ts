@@ -14,6 +14,11 @@ export const authApi = {
     return response.data;
   },
 
+  exchangeOidcLogin: async (): Promise<Token> => {
+    const response = await api.post<Token>('/login/oidc/exchange');
+    return response.data;
+  },
+
   signup: async (data: UserCreate): Promise<User> => {
     const response = await api.post<User>('/signup', data);
     return response.data;

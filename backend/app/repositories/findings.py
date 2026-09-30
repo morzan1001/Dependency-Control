@@ -71,9 +71,8 @@ class FindingRepository(BaseRepository[FindingRecord]):
         return await self.collection.find_one({"scan_id": {"$in": scan_ids}, **query}, {"_id": 1}) is not None
 
     async def find_by_scan(self, scan_id: str, limit: int) -> tuple[list[FindingRecord], int]:
-        """The scan's findings up to ``limit``, and how many it holds. ``limit`` is required: a default
-        here is a cap the caller never chose and cannot see."""
-        rows, total = await find_window(self.collection, {"scan_id": scan_id}, limit)
+        """Unwaived findings up to ``limit`` and their total; no default ``limit``, so no caller gets a hidden cap."""
+        rows, total = await find_window(self.collection, {"scan_id": scan_id, "waived": {"$ne": True}}, limit)
         return self._to_model_list(rows), total
 
     async def iter_vulnerability_identities(self, scan_ids: Sequence[str]) -> AsyncGenerator[dict[str, Any], None]:

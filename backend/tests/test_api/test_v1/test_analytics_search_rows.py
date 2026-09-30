@@ -1,14 +1,14 @@
 """Each vulnerability search row describes its own advisory, not the document it sits in."""
 
-from types import SimpleNamespace
-
 from app.api.v1.endpoints.analytics.search import _row_matches, _vuln_results_for_finding
+from app.models.finding_record import FindingRecord
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.services.enrichment.service import apply_enrichments
 
 
 def _finding(details):
-    return SimpleNamespace(
+    return FindingRecord(
+        id="libssl3:3.0.9-1",
         finding_id="libssl3:3.0.9-1",
         aliases=[],
         severity="CRITICAL",
@@ -20,6 +20,7 @@ def _finding(details):
         description="",
         waived=False,
         waiver_reason=None,
+        scanners=["trivy"],
         details=details,
     )
 

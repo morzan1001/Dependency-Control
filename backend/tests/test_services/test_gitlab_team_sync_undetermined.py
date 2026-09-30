@@ -14,7 +14,7 @@ from app.core.constants import TEAM_SOURCE_GITLAB, team_source
 from app.models.gitlab_api import GitLabMember
 from app.repositories.teams import MemberSubset
 from app.services.gitlab import GitLabGroupLookup, GitLabService
-from tests.mocks.gitlab import make_gitlab_instance, make_project_details, make_repositories
+from tests.mocks.gitlab import make_gitlab_instance, make_project_details, make_repositories, sync_team
 
 _OWN = team_source(TEAM_SOURCE_GITLAB, "instance-a-id")
 _MANUAL = {"user_id": "u-manual", "role": "member", "source": "manual"}
@@ -35,13 +35,15 @@ def _existing_team(members):
     }
 
 
-def _run(service):
+def _run(service, **kwargs):
     return asyncio.run(
-        service.sync_team_from_gitlab(
+        sync_team(
+            service,
+            make_project_details(namespace_kind="group", namespace_id=42, namespace_path="grp"),
             db=MagicMock(),
             gitlab_project_id=100,
             gitlab_project_path="grp/proj",
-            gitlab_project_data=make_project_details(namespace_kind="group", namespace_id=42, namespace_path="grp"),
+            **kwargs,
         )
     )
 
@@ -89,7 +91,7 @@ class TestAnEmptyGroupRetiresItsMembers:
             result = _run(service)
 
         assert result.team_ids == []
-        team_repo.create.assert_not_called()
+        team_repo.create_bound.assert_not_awaited()
 
 
 class TestAnUnreachableGroupChangesNothing:
@@ -115,7 +117,7 @@ class TestAnUnreachableGroupChangesNothing:
             result = _run(service)
 
         assert result.team_ids is None
-        team_repo.create.assert_not_called()
+        team_repo.create_bound.assert_not_awaited()
 
     def test_an_unanswered_group_lookup_leaves_the_owner_undetermined(self):
         """A transient failure must not quietly re-bind the project to a deeper group."""
@@ -126,16 +128,17 @@ class TestAnUnreachableGroupChangesNothing:
             patch.object(service, "get_group_members", new=AsyncMock()) as members,
             patch.object(
                 service,
-                "_resolve_group_by_path",
+                "_lookup_group",
                 new=AsyncMock(return_value=GitLabGroupLookup(reachable=False, group=None)),
             ),
         ):
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=MagicMock(),
                     gitlab_project_id=100,
                     gitlab_project_path="org/subgroup/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="group", namespace_id=42, namespace_path="org/subgroup"
                     ),
                 )
@@ -143,7 +146,7 @@ class TestAnUnreachableGroupChangesNothing:
 
         assert result.team_ids is None
         members.assert_not_awaited()
-        team_repo.create.assert_not_called()
+        team_repo.create_bound.assert_not_awaited()
 
     def test_a_parent_path_the_token_cannot_see_leaves_the_owner_undetermined(self):
         """A 404 on an ancestor is a group the token may not see; binding the deepest namespace
@@ -155,16 +158,17 @@ class TestAnUnreachableGroupChangesNothing:
             patch.object(service, "get_group_members", new=AsyncMock()) as members,
             patch.object(
                 service,
-                "_resolve_group_by_path",
+                "_lookup_group",
                 new=AsyncMock(return_value=GitLabGroupLookup(reachable=True, group=None)),
             ),
         ):
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=MagicMock(),
                     gitlab_project_id=100,
                     gitlab_project_path="org/subgroup/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="group", namespace_id=42, namespace_path="org/subgroup"
                     ),
                 )
@@ -172,7 +176,7 @@ class TestAnUnreachableGroupChangesNothing:
 
         assert result.team_ids is None
         members.assert_not_awaited()
-        team_repo.create.assert_not_called()
+        team_repo.create_bound.assert_not_awaited()
 
     def test_members_that_all_fail_to_resolve_leave_the_stored_members_untouched(self, caplog):
         """A token that lost profile access resolves nobody, which is not a group everyone left."""
@@ -194,6 +198,56 @@ class TestAnUnreachableGroupChangesNothing:
         assert "0 of 2" in " ".join(r.getMessage() for r in caplog.records)
 
 
+def _api_member(member_id, username, access_level, *, state="active", membership_state="active"):
+    """One entry of GET /groups/:id/members/all as an administrator's token receives it."""
+    return {
+        "id": member_id,
+        "username": username,
+        "name": username.title(),
+        "state": state,
+        "avatar_url": f"https://gitlab-a.com/uploads/-/system/user/avatar/{member_id}/avatar.png",
+        "web_url": f"https://gitlab-a.com/{username}",
+        "access_level": access_level,
+        "created_at": "2024-03-01T09:00:00.000Z",
+        "expires_at": None,
+        "membership_state": membership_state,
+        "email": f"{username}@test.com",
+    }
+
+
+class TestOnlyActiveMembersWithAccessAreOwners:
+    _USERS: ClassVar = {f"{name}@test.com": {"_id": f"u-{name}"} for name in ("ada", "bob", "cy")}
+
+    def _written(self, api_members):
+        service = _service()
+        with (
+            make_repositories(existing_team=_existing_team([_SYNCED, _MANUAL])) as (team_repo, user_repo),
+            patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=api_members)),
+        ):
+            user_repo.get_raw_by_verified_email.side_effect = self._USERS.get
+            _run(service)
+        return _written_subset(team_repo)
+
+    def test_a_blocked_maintainer_beside_an_unresolvable_member_leaves_nobody(self):
+        written = self._written(
+            [_api_member(1, "ada", 40, state="blocked"), _api_member(2, "ghost", 30)],
+        )
+
+        assert written == MemberSubset(_OWN, [])
+
+    def test_minimal_and_guest_members_beside_an_unresolvable_developer_leave_nobody(self):
+        written = self._written([_api_member(1, "ada", 5), _api_member(2, "bob", 10), _api_member(3, "ghost", 30)])
+
+        assert written == MemberSubset(_OWN, [])
+
+    def test_an_invitation_not_yet_accepted_owns_nothing_while_a_reporter_does(self):
+        written = self._written(
+            [_api_member(1, "ada", 30, membership_state="awaiting"), _api_member(2, "bob", 20)],
+        )
+
+        assert written == MemberSubset(_OWN, [{"user_id": "u-bob", "role": "member", "source": _OWN}])
+
+
 class TestNoGroupOwnsTheProject:
     def test_a_user_namespace_retires_the_group_owner_the_project_carried(self):
         """GitLab answered, and its answer is that a person owns this project: determined, not unknown."""
@@ -201,18 +255,17 @@ class TestNoGroupOwnsTheProject:
 
         with make_repositories() as (team_repo, _):
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=MagicMock(),
                     gitlab_project_id=100,
                     gitlab_project_path="john/proj",
-                    gitlab_project_data=make_project_details(
-                        namespace_kind="user", namespace_id=1, namespace_path="john"
-                    ),
+                    project_details=make_project_details(namespace_kind="user", namespace_id=1, namespace_path="john"),
                 )
             )
 
         assert result.team_ids == []
-        team_repo.create.assert_not_called()
+        team_repo.create_bound.assert_not_awaited()
         team_repo.update_with_binding.assert_not_called()
 
 
@@ -251,6 +304,7 @@ class TestATeamNothingChangedAboutIsNotWritten:
         service = _service()
         stored = _existing_team([_MANUAL])
         stored["name"] = "GitLab Group: old"
+        stored["bindings"][0]["path"] = "old"
 
         with (
             make_repositories(existing_team=stored) as (team_repo, _),
@@ -263,6 +317,38 @@ class TestATeamNothingChangedAboutIsNotWritten:
         # The description names the group as well, and left behind it goes on naming the one the
         # team was moved out of.
         assert update["description"] == "Imported from GitLab Group grp"
+
+    def test_a_name_generated_for_another_instances_binding_is_left_alone(self):
+        """Bound on two instances, the team would otherwise take the name of whichever pipeline ran last."""
+        service = _service()
+        stored = _existing_team([_MANUAL])
+        stored["name"] = "GitLab Group: zahlungen"
+        stored["bindings"].append(
+            {"provider": "gitlab", "instance_id": "instance-b", "external_id": 77, "path": "zahlungen"}
+        )
+
+        with (
+            make_repositories(existing_team=stored) as (team_repo, _),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=self._UNRESOLVABLE)),
+        ):
+            _run(service)
+
+        team_repo.update_with_binding.assert_not_called()
+
+    def test_a_binding_without_a_stored_path_is_restamped_but_not_renamed(self):
+        service = _service()
+        stored = _existing_team([_MANUAL])
+        stored["name"] = "GitLab Group: old"
+        stored["bindings"][0]["path"] = None
+
+        with (
+            make_repositories(existing_team=stored) as (team_repo, _),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=self._UNRESOLVABLE)),
+        ):
+            _run(service)
+
+        assert team_repo.update_with_binding.await_args.args[1] == {}
+        assert team_repo.update_with_binding.await_args.args[3] == {"path": "grp"}
 
     def test_a_team_its_owner_renamed_keeps_that_name(self):
         service = _service()
@@ -302,27 +388,50 @@ class TestTheMemberFetchKeepsEmptyAndFailureApart:
             assert asyncio.run(service.get_project_members(42)) == expected
 
 
-class TestTheGroupLookupKeepsAbsentAndUnreachableApart:
-    @staticmethod
-    def _lookup(response):
+class TestTheOwnerBudget:
+    """A team created for an ownership write the cap then refuses is a team nobody owns anything through."""
+
+    _MEMBERS: ClassVar = [GitLabMember(username="ada", email="ada@test.com", access_level=40)]
+
+    def test_a_project_without_room_gets_no_new_team(self):
         service = _service()
-        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
-            return asyncio.run(service._resolve_group_by_path("org/edge"))
 
-    def test_a_group_the_instance_carries_is_returned(self):
-        response = MagicMock(status_code=200)
-        response.json.return_value = {"id": 10, "full_path": "org/edge"}
+        with (
+            make_repositories(user_doc={"_id": "u-ada"}) as (team_repo, user_repo),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=self._MEMBERS)),
+        ):
+            result = _run(service, owner_budget=0)
 
-        assert self._lookup(response) == GitLabGroupLookup(reachable=True, group={"id": 10, "full_path": "org/edge"})
+        assert result.team_ids is None
+        team_repo.create_bound.assert_not_awaited()
+        user_repo.get_raw_by_verified_email.assert_not_awaited()
 
-    def test_a_path_the_instance_does_not_carry_is_reachable_and_absent(self):
-        assert self._lookup(MagicMock(status_code=404)) == GitLabGroupLookup(reachable=True, group=None)
+    def test_a_bound_team_still_answers_without_room(self):
+        service = _service()
 
-    def test_an_unanswered_request_is_not_an_absent_group(self):
-        assert self._lookup(None) == GitLabGroupLookup(reachable=False, group=None)
+        with (
+            make_repositories(existing_team=_existing_team([_SYNCED]), user_doc={"_id": "u-1"}),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=self._MEMBERS)),
+        ):
+            result = _run(service, owner_budget=0)
 
-    def test_a_refused_request_is_not_an_absent_group(self):
-        assert self._lookup(MagicMock(status_code=403)) == GitLabGroupLookup(reachable=False, group=None)
+        assert result.team_ids == ["existing-team-id"]
+
+
+class TestAConcurrentCreate:
+    def test_the_team_a_concurrent_ingest_created_first_is_adopted(self):
+        service = _service()
+        members = [GitLabMember(username="ada", email="ada@test.com", access_level=40)]
+
+        with (
+            make_repositories(user_doc={"_id": "u-ada"}) as (team_repo, _),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=members)),
+        ):
+            team_repo.create_bound.side_effect = None
+            team_repo.create_bound.return_value = _existing_team([_SYNCED])
+            result = _run(service)
+
+        assert result.team_ids == ["existing-team-id"]
 
 
 class TestTheSyncNeverRaises:
@@ -352,4 +461,23 @@ class TestTheSyncNeverRaises:
 
         assert result.team_ids is None
         team_repo.update_with_binding.assert_not_called()
+        assert "longer than" in " ".join(r.getMessage() for r in caplog.records)
+
+    def test_the_project_read_shares_the_resolution_budget(self, caplog):
+        service = _service()
+
+        async def _never_answers(_project_id):
+            await asyncio.sleep(3600)
+
+        with (
+            make_repositories(),
+            patch("app.services.gitlab._GITLAB_RESOLUTION_TIMEOUT", 0.01),
+            patch.object(service, "get_project_details", new=_never_answers),
+            caplog.at_level("WARNING", logger="app.services.gitlab"),
+        ):
+            result = asyncio.run(
+                service.sync_team_from_gitlab(db=MagicMock(), gitlab_project_id=100, gitlab_project_path="grp/proj")
+            )
+
+        assert result.team_ids is None
         assert "longer than" in " ".join(r.getMessage() for r in caplog.records)

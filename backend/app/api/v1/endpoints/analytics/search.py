@@ -21,6 +21,8 @@ from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
 from app.core.cve import canonical_cve
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
 from app.core.permissions import Permissions
+from app.models.dependency import Dependency
+from app.models.finding_record import FindingRecord
 from app.models.user import User
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
@@ -32,7 +34,7 @@ from app.schemas.analytics import (
 )
 from app.services.aggregation.versions import normalize_version
 from app.services.component_identity import build_component_index, lookup_component
-from app.services.recommendation.common import get_attr, max_advisory_cvss
+from app.services.recommendation.common import max_advisory_cvss
 
 router = CustomAPIRouter()
 
@@ -52,48 +54,47 @@ async def _resolve_search_scope(
 
 
 def _passes_vuln_filter(
-    dep: Any, has_vulnerabilities: bool | None, vuln_versions: dict[str, dict[str, set[str]]]
+    dep: Dependency, has_vulnerabilities: bool | None, vuln_versions: dict[str, dict[str, set[str]]]
 ) -> bool:
     if has_vulnerabilities is None:
         return True
-    versions = lookup_component(vuln_versions.get(get_attr(dep, "project_id"), {}), get_attr(dep, "name")) or set()
+    versions = lookup_component(vuln_versions.get(dep.project_id, {}), dep.name) or set()
     # A finding without a version cannot tell the package's versions apart, so it covers them all.
-    has_vulns = "unknown" in versions or normalize_version(get_attr(dep, "version")) in versions
+    has_vulns = "unknown" in versions or normalize_version(dep.version) in versions
     return has_vulnerabilities == has_vulns
 
 
-def _dep_to_search_result(dep: Any, project_name_map: dict[str, str]) -> DependencySearchResult:
-    dep_project_id = get_attr(dep, "project_id")
+def _dep_to_search_result(dep: Dependency, project_name_map: dict[str, str]) -> DependencySearchResult:
     return DependencySearchResult(
-        project_id=dep_project_id,
-        project_name=project_name_map.get(dep_project_id, "Unknown"),
-        package=get_attr(dep, "name"),
-        version=get_attr(dep, "version"),
-        type=get_attr(dep, "type", "unknown"),
-        license=get_attr(dep, "license"),
-        license_url=get_attr(dep, "license_url"),
-        direct=get_attr(dep, "direct", False),
-        purl=get_attr(dep, "purl"),
-        source_type=get_attr(dep, "source_type"),
-        source_target=get_attr(dep, "source_target"),
-        layer_digest=get_attr(dep, "layer_digest"),
-        found_by=get_attr(dep, "found_by"),
-        locations=get_attr(dep, "locations", []),
-        cpes=get_attr(dep, "cpes", []),
-        description=get_attr(dep, "description"),
-        author=get_attr(dep, "author"),
-        publisher=get_attr(dep, "publisher"),
-        group=get_attr(dep, "group"),
-        homepage=get_attr(dep, "homepage"),
-        repository_url=get_attr(dep, "repository_url"),
-        download_url=get_attr(dep, "download_url"),
-        hashes=get_attr(dep, "hashes", {}),
-        properties=get_attr(dep, "properties", {}),
+        project_id=dep.project_id,
+        project_name=project_name_map.get(dep.project_id, "Unknown"),
+        package=dep.name,
+        version=dep.version,
+        type=dep.type,
+        license=dep.license,
+        license_url=dep.license_url,
+        direct=dep.direct,
+        purl=dep.purl,
+        source_type=dep.source_type,
+        source_target=dep.source_target,
+        layer_digest=dep.layer_digest,
+        found_by=dep.found_by,
+        locations=dep.locations,
+        cpes=dep.cpes,
+        description=dep.description,
+        author=dep.author,
+        publisher=dep.publisher,
+        group=dep.group,
+        homepage=dep.homepage,
+        repository_url=dep.repository_url,
+        download_url=dep.download_url,
+        hashes=dep.hashes,
+        properties=dep.properties,
     )
 
 
 def _build_search_results(
-    dependencies: list[Any],
+    dependencies: list[Dependency],
     has_vulnerabilities: bool | None,
     vuln_versions: dict[str, dict[str, set[str]]],
     project_name_map: dict[str, str],
@@ -166,7 +167,7 @@ async def search_dependencies_advanced(
 
     vuln_versions: dict[str, dict[str, set[str]]] = {}
     if has_vulnerabilities is not None and dependencies:
-        dep_keys = list({(get_attr(dep, "project_id"), get_attr(dep, "name")) for dep in dependencies})
+        dep_keys = list({(dep.project_id, dep.name) for dep in dependencies})
 
         # No component filter: a finding's component can be a qualified form of the
         # dependency name, which no $in list over inventory names can express.
@@ -198,75 +199,61 @@ async def search_dependencies_advanced(
     return DependencySearchResponse(items=results, **page_meta(total_count, skip, limit), **counts)
 
 
-def _get_description(vuln: dict, finding: Any) -> str | None:
-    if vuln.get("description"):
-        desc_text: str = vuln["description"][:200]
-        return desc_text
-    desc = getattr(finding, "description", None)
-    if desc:
-        return str(desc)[:200]
-    return None
+_DESCRIPTION_CHARS = 200
+
+
+def _finding_fields(finding: FindingRecord, project_name_map: dict[str, str]) -> dict[str, Any]:
+    return {
+        "component": finding.component,
+        "version": finding.version or "",
+        "project_id": finding.project_id,
+        "project_name": project_name_map.get(finding.project_id, "Unknown"),
+        "scan_id": finding.scan_id,
+        "finding_id": finding.finding_id,
+        "finding_type": finding.type,
+    }
 
 
 def _build_direct_vuln_result(
-    finding: Any, details: dict[str, Any], project_name_map: dict[str, str]
+    finding: FindingRecord, details: dict[str, Any], project_name_map: dict[str, str]
 ) -> VulnerabilitySearchResult:
     return VulnerabilitySearchResult(
+        **_finding_fields(finding, project_name_map),
         vulnerability_id=finding.finding_id,
-        aliases=finding.aliases or [],
-        severity=finding.severity or "UNKNOWN",
+        aliases=finding.aliases,
+        severity=finding.severity,
         cvss_score=max_advisory_cvss(details),
         epss_score=details.get("epss_score"),
         epss_percentile=details.get("epss_percentile"),
         in_kev=bool(details.get(DETAILS_KEY_IN_KEV)),
         kev_ransomware=bool(details.get(DETAILS_KEY_KEV_RANSOMWARE)),
         kev_due_date=details.get("kev_due_date"),
-        component=finding.component or "",
-        version=finding.version or "",
-        project_id=finding.project_id or "",
-        project_name=project_name_map.get(finding.project_id or "", "Unknown"),
-        scan_id=finding.scan_id,
-        finding_id=finding.finding_id,
-        finding_type=finding.type or "vulnerability",
-        description=(finding.description[:200] if finding.description else None),
+        description=finding.description[:_DESCRIPTION_CHARS] or None,
         fixed_version=details.get("fixed_version"),
-        waived=finding.waived if finding.waived is not None else False,
+        waived=finding.waived,
         waiver_reason=finding.waiver_reason,
     )
 
 
-def _nested_vuln_waived(vuln: dict[str, Any], finding: Any) -> bool:
-    if vuln.get("waived", False):
-        return True
-    return finding.waived if finding.waived is not None else False
-
-
 def _build_nested_vuln_result(
-    vuln: dict[str, Any], finding: Any, project_name_map: dict[str, str]
+    vuln: dict[str, Any], finding: FindingRecord, project_name_map: dict[str, str]
 ) -> VulnerabilitySearchResult:
-    project_id = finding.project_id or ""
     vulnerability_id = canonical_cve(vuln) or finding.finding_id
     return VulnerabilitySearchResult(
+        **_finding_fields(finding, project_name_map),
         vulnerability_id=vulnerability_id,
         aliases=sorted({vuln.get("id"), *(vuln.get("aliases") or [])} - {vulnerability_id, None}),
-        severity=(vuln.get("severity") or finding.severity or "UNKNOWN"),
+        severity=vuln.get("severity") or finding.severity,
         cvss_score=vuln.get("cvss_score"),
         epss_score=vuln.get("epss_score"),
         epss_percentile=vuln.get("epss_percentile"),
         in_kev=bool(vuln.get(DETAILS_KEY_IN_KEV)),
         kev_ransomware=bool(vuln.get(DETAILS_KEY_KEV_RANSOMWARE)),
         kev_due_date=vuln.get("kev_due_date"),
-        component=finding.component or "",
-        version=finding.version or "",
-        project_id=project_id,
-        project_name=project_name_map.get(project_id, "Unknown"),
-        scan_id=finding.scan_id,
-        finding_id=finding.finding_id,
-        finding_type=finding.type or "vulnerability",
-        description=_get_description(vuln, finding),
+        description=(vuln.get("description") or finding.description)[:_DESCRIPTION_CHARS] or None,
         fixed_version=vuln.get("fixed_version"),
-        waived=_nested_vuln_waived(vuln, finding),
-        waiver_reason=(vuln.get("waiver_reason") or finding.waiver_reason),
+        waived=bool(vuln.get("waived")) or finding.waived,
+        waiver_reason=vuln.get("waiver_reason") or finding.waiver_reason,
     )
 
 
@@ -312,7 +299,7 @@ _VULN_SORT_FIELD_MAP = {
 
 
 def _vuln_results_for_finding(
-    finding: Any, query_lower: str, project_name_map: dict[str, str]
+    finding: FindingRecord, query_lower: str, project_name_map: dict[str, str]
 ) -> list[VulnerabilitySearchResult]:
     """One row per advisory the query names, else one row for the whole finding."""
     details = finding.details

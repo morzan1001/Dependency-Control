@@ -26,10 +26,9 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-
 from app.core.config import settings
-from app.db.mongodb import create_client
 from app.core.constants import MAX_RESCAN_HOPS
+from app.db.mongodb import create_client
 
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50

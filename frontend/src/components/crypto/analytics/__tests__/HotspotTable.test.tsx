@@ -25,7 +25,6 @@ vi.mock("@/api/cryptoAnalytics", () => ({
     ],
     total: 1,
     generated_at: "2026-04-20",
-    cache_hit: false,
   }),
 }));
 

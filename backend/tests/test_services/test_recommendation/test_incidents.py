@@ -3,9 +3,11 @@
 from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.aggregation import ResultAggregator
 from app.services.recommendation import incidents
 from app.services.recommendation.incidents import (
     detect_known_exploits,
+    process_hash_mismatch,
     process_malware,
     process_typosquatting,
 )
@@ -126,6 +128,60 @@ class TestProcessMalwareDeduplicate:
         assert result[0].affected_components.count("evil-pkg") == 1
 
 
+def _produced(analyzer, result):
+    aggregator = ResultAggregator()
+    aggregator.aggregate(analyzer, result)
+    return [f.model_dump() for f in aggregator.get_findings()]
+
+
+def _os_malware_issue(version):
+    return {
+        "component": "evil-pkg",
+        "version": version,
+        "severity": "CRITICAL",
+        "malware_info": {"malicious": True, "threats": ["credential-theft"], "description": "Exfiltrates npm tokens"},
+    }
+
+
+class TestProcessMalwareCountsPackages:
+    def test_two_installed_versions_are_one_package(self):
+        findings = _produced("os_malware", {"malware_issues": [_os_malware_issue("1.0.0"), _os_malware_issue("1.0.1")]})
+        assert len(findings) == 2
+
+        [rec] = process_malware(findings)
+
+        assert rec.description.startswith("Found 1 ")
+        assert rec.impact["critical"] == rec.impact["total"] == 1
+
+
+class TestProcessHashMismatch:
+    def test_one_package_failing_two_algorithms_is_one_integrity_card(self):
+        issue = {
+            "component": "left-pad",
+            "version": "1.3.0",
+            "registry": "npm",
+            "sbom_hash": "3f1a",
+            "expected_hashes": ["9c2e"],
+            "severity": "CRITICAL",
+            "message": "Hash mismatch detected! Package may be tampered.",
+        }
+        findings = _produced(
+            "hash_verification",
+            {"hash_issues": [{**issue, "algorithm": "SHA-1"}, {**issue, "algorithm": "SHA-512"}]},
+        )
+
+        [rec] = process_hash_mismatch(findings)
+
+        assert rec.type == RecommendationType.HASH_MISMATCH
+        assert rec.priority == Priority.HIGH
+        assert rec.affected_components == ["left-pad"]
+        assert rec.impact["total"] == 1
+        assert rec.action["steps"][-1] == "Escalate as tampering only if the mismatch persists"
+
+    def test_no_findings_no_card(self):
+        assert process_hash_mismatch([]) == []
+
+
 class TestProcessTyposquattingEmpty:
     def test_empty_returns_empty(self):
         result = process_typosquatting([])
@@ -146,16 +202,6 @@ class TestProcessTyposquattingWithImitatedPackage:
         rec = result[0]
         assert rec.type == RecommendationType.TYPOSQUAT_DETECTED
         assert rec.priority == Priority.HIGH
-
-
-class TestProcessTyposquattingWithoutImitatedPackage:
-    def test_package_name_only(self):
-        findings = [_typosquat_finding("suspic-pkg")]
-        result = process_typosquatting(findings)
-        assert len(result) == 1
-        rec = result[0]
-        assert "suspic-pkg" in rec.affected_components
-        assert not any("looks like" in c for c in rec.affected_components)
 
 
 class TestProcessTyposquattingMultiple:
@@ -188,19 +234,9 @@ class TestProcessTyposquattingAction:
         assert len(result[0].action["steps"]) > 0
 
     def test_effort_is_low(self):
-        findings = [_typosquat_finding("loadsh")]
+        findings = [_typosquat_finding("loadsh", imitated_package="lodash")]
         result = process_typosquatting(findings)
         assert result[0].effort == "low"
-
-
-class TestProcessTyposquattingEmptyComponent:
-    def test_empty_component_excluded(self):
-        findings = [
-            {"type": "malware", "severity": "HIGH", "component": "", "details": {}},
-        ]
-        result = process_typosquatting(findings)
-        if result:
-            assert "" not in result[0].affected_components
 
 
 class TestDetectKnownExploitsEmpty:
@@ -226,6 +262,10 @@ class TestDetectKnownExploitsKEV:
         assert rec.action["type"] == "fix_kev_vulns"
         assert "CVE-2024-100" in rec.action["cves"]
         assert "pkg" in rec.action["packages"]
+
+    def test_kev_impact_counts_low_severity_findings(self):
+        [rec] = detect_known_exploits([_vuln("pkg", severity="LOW", is_kev=True, cve_id=_KEV_ONLY_CVE)])
+        assert rec.impact["low"] == rec.impact["total"] == 1
 
 
 class TestDetectKnownExploitsRansomware:

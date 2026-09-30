@@ -6,6 +6,7 @@ from app.schemas.recommendation import Priority, RecommendationType
 from app.services.aggregation import ResultAggregator
 from app.services.analyzers.license_compliance import LicenseAnalyzer
 from app.services.analyzers.license_compliance.constants import UNDETERMINED_LICENSE_ID
+from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN
 from app.services.recommendation.licenses import _LICENSES_NAMED, detect_license_drift, process_licenses
 
 
@@ -324,6 +325,15 @@ class TestDetectLicenseDrift:
         ]
 
         assert await _drift([package], [package]) == []
+
+    @pytest.mark.asyncio
+    async def test_the_action_names_how_many_drifted_components_it_sampled(self):
+        names = [f"lib-{i:02d}" for i in range(AFFECTED_COMPONENTS_SHOWN + 2)]
+
+        [rec] = await _drift([_component(n, "MIT") for n in names], [_component(n, "GPL-3.0-only") for n in names])
+
+        assert len(rec.action["drifted_components"]) == AFFECTED_COMPONENTS_SHOWN
+        assert rec.action["drifted_components_total"] == len(names)
 
     @pytest.mark.asyncio
     async def test_drift_to_weak_copyleft_is_medium(self):

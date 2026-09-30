@@ -84,6 +84,17 @@ async def test_read_all_is_unfiltered():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "permissions", [(Permissions.PROJECT_UPDATE,), (Permissions.PROJECT_UPDATE, Permissions.PROJECT_READ)]
+)
+async def test_a_project_write_superuser_is_unfiltered(permissions):
+    """check_project_access admits project:update to every project, so the listing does too."""
+    db = await _seeded_db()
+
+    assert await build_user_project_query(_user(*permissions), TeamRepository(db)) == {}
+
+
+@pytest.mark.asyncio
 async def test_a_member_holding_no_project_read_permission_sees_nothing():
     """The second half of the rule ``check_project_access`` composes. This user is a direct member
     of one project and in a team owning two more; membership is not what settles a read."""
@@ -122,7 +133,7 @@ async def test_the_analytics_scope_refuses_a_member_holding_no_project_read_perm
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("permissions", [(), ("auth:setup_2fa",), (Permissions.TEAM_READ,)])
+@pytest.mark.parametrize("permissions", [(), (Permissions.AUTH_SETUP_2FA,), (Permissions.TEAM_READ,)])
 async def test_the_analytics_team_scope_refuses_a_member_holding_no_project_read_permission(permissions):
     db = await _seeded_db()
 

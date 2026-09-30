@@ -7,7 +7,6 @@ import pytest
 from fastapi import BackgroundTasks, HTTPException
 
 from app.api.v1.endpoints import users
-from app.core.config import settings
 from app.core.permissions import Permissions
 from app.models.system import SystemSettings
 from app.models.user import User
@@ -62,6 +61,7 @@ def _mock_repo(target):
     repo.exists_by_email = AsyncMock(return_value=False)
     repo.exists_by_username = AsyncMock(return_value=False)
     repo.update = AsyncMock()
+    repo.update_raw = AsyncMock()
     repo.delete = AsyncMock()
     return repo
 
@@ -79,7 +79,6 @@ def _call(run, target, smtp_host="smtp.test"):
         patch(f"{MODULE}.fetch_updated_user", new=AsyncMock(return_value=target)),
         patch(f"{MODULE}.UserRepository", return_value=repo),
         patch(f"{MODULE}.deps.get_system_settings", new=AsyncMock(return_value=SystemSettings(smtp_host=smtp_host))),
-        patch.object(settings, "SMTP_HOST", None),
     ):
         try:
             result = asyncio.run(run(background_tasks))
@@ -91,7 +90,9 @@ def _call(run, target, smtp_host="smtp.test"):
 def _act(action, caller, target_permissions):
     target = _target(target_permissions, auth_provider="oidc" if action == "migrate" else "local")
     error, _, repo, background_tasks = _call(lambda bg: ACTIONS[action](caller, bg), target)
-    acted = bool(repo.update.await_count or repo.delete.await_count or background_tasks.tasks)
+    acted = bool(
+        repo.update.await_count or repo.update_raw.await_count or repo.delete.await_count or background_tasks.tasks
+    )
     return error, acted
 
 

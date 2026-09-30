@@ -99,8 +99,7 @@ class TestScanFindingsPipelineKeepsId:
         pre_sort_projects = [st["$project"] for st in pipeline[:sort_idx] if "$project" in st]
         assert all(p.get("_id") != 0 for p in pre_sort_projects)
         facet = next(st["$facet"] for st in pipeline if "$facet" in st)
-        data_stages = facet["data"]
-        data_project = next(st["$project"] for st in data_stages if "$project" in st)
+        data_project = facet["data"][-1]["$project"]
         assert data_project.get("_id") == 0
         # first_scanner sort-helper must not leak into the response
         assert data_project.get("first_scanner") == 0
@@ -118,7 +117,7 @@ class TestScanFindingsDirectOnly:
 
     def test_direct_only_adds_direct_match_after_addfields(self):
         pipeline = self._pipeline(True)
-        addfields_idx = next(i for i, st in enumerate(pipeline) if "$addFields" in st)
+        addfields_idx = next(i for i, st in enumerate(pipeline) if "direct" in st.get("$addFields", {}))
         direct_matches = [i for i, st in enumerate(pipeline) if st.get("$match", {}).get("direct") == {"$ne": False}]
         assert direct_matches, "expected a $match on direct when direct_only is set"
         # Must run after direct is computed and before pagination.

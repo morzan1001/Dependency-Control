@@ -91,10 +91,12 @@ class ScanManager:
         # pipeline_id 0 derives nothing and still needs a scan of its own.
         return deterministic_scan_id(str(self.project.id), data.pipeline_id, data.commit_hash) or str(uuid.uuid4())
 
-    async def find_or_create_scan(self, data: BaseIngest, scan_type: str | None = None) -> str:
+    async def find_or_create_scan(
+        self, data: BaseIngest, scan_type: str | None = None, scan_id: str | None = None
+    ) -> str:
         """The run's scan id; the upsert lets concurrent scanners of one run share it across pods.
         ``scan_type`` is only ever set, never cleared, since the run's other scanners pass none."""
-        scan_id = self.run_scan_id(data)
+        scan_id = scan_id or self.run_scan_id(data)
         update = await self.record_release_and_build_scan_upsert(data, scan_id, datetime.now(timezone.utc))
         update["$setOnInsert"]["sbom_refs"] = []
         if scan_type is not None:

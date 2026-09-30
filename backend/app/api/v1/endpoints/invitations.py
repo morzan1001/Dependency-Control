@@ -64,11 +64,10 @@ async def create_system_invitation(
         await invitation_repo.create_system_invitation(invitation)
 
     link = f"{settings.FRONTEND_BASE_URL}/accept-invite?token={token}"
-    email_sent = True
 
     try:
         system_config = await deps.get_system_settings(db)
-        await send_system_invitation_email(
+        email_sent = send_system_invitation_email(
             background_tasks=background_tasks,
             email=email,
             invitation_link=link,

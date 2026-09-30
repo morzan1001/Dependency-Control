@@ -56,13 +56,14 @@ TEST_PURL_REQUESTS = "pkg:pypi/requests@2.31.0"
 
 @pytest.fixture(autouse=True)
 def _isolate_analytics_cache():
-    """The analytics endpoints share a process-level TTL cache; clear it around every test
-    so one test's memoized aggregation can't leak into the next."""
-    from app.services.analytics.cache import get_analytics_cache
+    """Clear the process-level analytics TTL caches so one test's memoized aggregation can't leak into the next."""
+    from app.services.analytics.cache import get_analytics_cache, get_delta_cache
 
     get_analytics_cache().clear()
+    get_delta_cache().clear()
     yield
     get_analytics_cache().clear()
+    get_delta_cache().clear()
 
 
 @pytest.fixture
@@ -125,6 +126,38 @@ def sample_purls():
         "with_qualifiers": "pkg:pypi/requests@2.31.0?repository_url=https://pypi.org",
         "with_subpath": "pkg:npm/lodash@4.17.21#dist/lodash.min.js",
     }
+
+
+@pytest.fixture
+def fake_cache():
+    """A CacheService backed by an in-memory fakeredis async client."""
+    import fakeredis.aioredis
+
+    from app.core.cache import CacheService
+
+    svc = CacheService()
+    svc._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    svc._pool = object()  # non-None so get_client() short-circuits to the fake
+    svc._available = True
+    return svc
+
+
+@pytest.fixture
+def tcp_redis(monkeypatch):
+    """A Redis speaking RESP over a real socket, so the service builds its own connection pool."""
+    import threading
+
+    from fakeredis import TcpFakeServer
+
+    from app.core.config import settings
+
+    server = TcpFakeServer(("127.0.0.1", 0), server_type="redis")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address[:2]
+    monkeypatch.setattr(settings, "REDIS_URL", f"redis://{host}:{port}/0")
+    yield
+    server.shutdown()
+    server.server_close()
 
 
 @pytest.fixture

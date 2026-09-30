@@ -1,16 +1,17 @@
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Annotated, Any
+from datetime import datetime, timezone
+from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import ValidationError
 
 from app.core import security
 from app.core.config import settings
 from app.core.constants import (
+    API_KEY_LAST_USED_RESOLUTION_SECONDS,
     API_KEY_SURFACE_ADHOC,
     API_KEY_SURFACE_MCP,
     MAX_PROJECT_TEAMS,
@@ -22,12 +23,14 @@ from app.core.constants import (
 )
 from app.core.log_utils import sanitize_for_log
 from app.core.metrics import auth_token_validations_total
-from app.core.permissions import Permissions, has_permission
+from app.core.permissions import Permissions, has_permission, is_setup_2fa_scope
 from app.db.mongodb import get_database
-from app.models.project import Project
+from app.models.project import Project, ProjectMember
 from app.models.system import SystemSettings
 from app.models.user import User
 from app.repositories.api_keys import ApiKeyRepository
+from app.repositories.github_instances import GitHubInstanceRepository
+from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.projects import (
     ProjectRepository,
     owners_replaced_by,
@@ -35,16 +38,16 @@ from app.repositories.projects import (
     replace_team_subset_pipeline,
 )
 from app.repositories.system_settings import SystemSettingsRepository
+from app.repositories.token_blacklist import TokenBlacklistRepository
 from app.repositories.users import UserRepository
 from app.schemas.token import TokenPayload
+from app.services.github import GitHubService
 from app.services.gitlab import GitLabService
-
-if TYPE_CHECKING:
-    from app.services.github import GitHubService
 
 logger = logging.getLogger(__name__)
 
 _MSG_INVALID_API_KEY = "Invalid API Key"
+_MSG_CI_PROJECT_MISMATCH = "CI credentials do not match the target project"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token", auto_error=False)
@@ -62,49 +65,23 @@ class TokenRejected(Exception):
         self.result = result
 
 
-async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabase) -> None:
-    if not jti:
-        return
-    from app.repositories.token_blacklist import TokenBlacklistRepository
-
-    blacklist_repo = TokenBlacklistRepository(db)
-    if await blacklist_repo.is_blacklisted(jti):
-        raise TokenRejected("blacklisted")
-
-
-def _check_logout_invalidation(user: dict, payload: dict) -> None:
-    """Raise TokenRejected if the token was issued before the user's last logout."""
-    last_logout_at = user.get("last_logout_at")
-    if not last_logout_at:
-        return
-    iat = payload.get("iat")
-    if not iat:
-        return
-    if iat < last_logout_at.timestamp():
-        raise TokenRejected("revoked")
-
-
 async def decode_token(token: str, expected_type: str, db: AsyncIOMotorDatabase) -> tuple[TokenPayload, dict | None]:
     """A valid ``expected_type`` JWT's claims and the raw user they name (None if absent); raises TokenRejected."""
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        token_data = TokenPayload(**payload)
-    except (JWTError, ValidationError) as exc:
-        raise TokenRejected("invalid") from exc
-    if token_data.type != expected_type or not token_data.sub:
+    claims = security.decode_session_token(token, expected_type)
+    if claims is None:
         raise TokenRejected("invalid")
+    if await TokenBlacklistRepository(db).is_blacklisted(claims.jti):
+        raise TokenRejected("blacklisted")
 
-    await _ensure_token_not_blacklisted(payload.get("jti"), db)
-
-    user = await UserRepository(db).get_raw_by_id(token_data.sub)
-    if user is not None:
-        _check_logout_invalidation(user, payload)
-    return token_data, user
+    user = await UserRepository(db).get_raw_by_id(claims.sub)
+    last_logout_at = user.get("last_logout_at") if user else None
+    if last_logout_at and claims.iat < last_logout_at.timestamp():
+        raise TokenRejected("revoked")
+    return claims, user
 
 
 def _count_validation(result: str) -> None:
-    if auth_token_validations_total:
-        auth_token_validations_total.labels(result=result).inc()
+    auth_token_validations_total.labels(result=result).inc()
 
 
 async def get_current_user(
@@ -129,11 +106,8 @@ async def get_current_user(
     _count_validation("valid")
 
     user_obj = User(**user)
-
-    # A single-scope setup_2fa token grants only that permission.
-    if token_data.permissions and "auth:setup_2fa" in token_data.permissions and len(token_data.permissions) == 1:
+    if is_setup_2fa_scope(token_data.permissions):
         user_obj.permissions = token_data.permissions
-
     return user_obj
 
 
@@ -232,7 +206,7 @@ async def _gitlab_team_sync_stages(
     instance_id: str,
     gitlab_project_id: int,
     gitlab_project_path: str,
-    gitlab_service: "GitLabService",
+    gitlab_service: GitLabService,
     db: AsyncIOMotorDatabase,
 ) -> list[dict]:
     """The ownership stages GitLab sync contributes to this ingest's update.
@@ -242,12 +216,8 @@ async def _gitlab_team_sync_stages(
     came from.
     """
     source = team_source(TEAM_SOURCE_GITLAB, instance_id)
-    gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
     resolved = await gitlab_service.sync_team_from_gitlab(
-        db,
-        gitlab_project_id,
-        gitlab_project_path,
-        gitlab_project_data=gitlab_project_data,
+        db, gitlab_project_id, gitlab_project_path, owner_budget=_owner_budget(project, source)
     )
     return _team_subset_stages(project, source, resolved.team_ids, gitlab_project_path)
 
@@ -255,25 +225,28 @@ async def _gitlab_team_sync_stages(
 async def _github_team_sync_stages(
     project: Project,
     instance_id: str,
-    github_org: str,
     repository_path: str,
-    github_service: "GitHubService",
+    github_service: GitHubService,
     db: AsyncIOMotorDatabase,
 ) -> list[dict]:
     """The ownership stages GitHub sync contributes to this ingest's update."""
     source = team_source(TEAM_SOURCE_GITHUB, instance_id)
     result = await github_service.sync_team_from_github(
-        db, github_org, repository_path, owner_budget=_owner_budget(project, source)
+        db,
+        repository_path,
+        current_owner_ids=owners_replaced_by(project, source),
+        owner_budget=_owner_budget(project, source),
     )
     return _team_subset_stages(project, source, result.team_ids, repository_path)
 
 
-async def _sync_project_name(
+async def _apply_ingest_project_update(
     project: Project,
     new_path: str,
     project_repo: ProjectRepository,
-    path_field: str = "gitlab_project_path",
-    ownership_stages: list[dict] | None = None,
+    *,
+    path_field: str,
+    ownership_stages: list[dict],
 ) -> Project:
     """Apply the rename and the resolved ownership as one update.
 
@@ -289,7 +262,7 @@ async def _sync_project_name(
 
     if not renamed and not ownership_stages:
         return project
-    await project_repo.update_fields_and_owners(project.id, renamed, ownership_stages or [])
+    await project_repo.update_fields_and_owners(project.id, renamed, ownership_stages)
     # The owners are computed server-side, so the caller is handed what was stored, not a guess.
     return await project_repo.get_by_id(project.id) or project
 
@@ -299,12 +272,10 @@ async def _handle_gitlab_oidc(
     gitlab_instance: Any,
     db: AsyncIOMotorDatabase,
     project_repo: ProjectRepository,
-    user_repo: UserRepository,
-    default_analyzers: list,
+    *,
+    create_missing: bool,
 ) -> Project:
-    """Handle GitLab OIDC authentication and project resolution."""
-    from app.models.project import Project, ProjectMember
-
+    """Resolve the project a GitLab CI token belongs to; ``create_missing`` also creates, renames and syncs it."""
     if not gitlab_instance.is_active:
         raise HTTPException(status_code=403, detail=f"GitLab instance '{gitlab_instance.name}' is not active")
 
@@ -330,6 +301,10 @@ async def _handle_gitlab_oidc(
         )
 
     project_data = await project_repo.get_raw_by_gitlab_composite_key(instance_id, gitlab_project_id)
+    if not create_missing:
+        if not project_data:
+            raise HTTPException(status_code=403, detail=_MSG_CI_PROJECT_MISMATCH)
+        return Project(**project_data)
 
     if project_data:
         project = Project(**project_data)
@@ -340,7 +315,7 @@ async def _handle_gitlab_oidc(
                 project, instance_id, gitlab_project_id, gitlab_project_path, gitlab_service, db
             )
 
-        return await _sync_project_name(
+        return await _apply_ingest_project_update(
             project,
             gitlab_project_path,
             project_repo,
@@ -360,19 +335,13 @@ async def _handle_gitlab_oidc(
             "an allowed namespace list",
         )
 
-    initial_member_id = await _resolve_initial_member_id(user_repo, payload.user_email)
+    initial_member_id = await _resolve_initial_member_id(UserRepository(db), payload.user_email)
     members = [ProjectMember(user_id=initial_member_id, role=PROJECT_ROLE_ADMIN)] if initial_member_id else []
 
     owners: list[str] = []
     gitlab_source = team_source(TEAM_SOURCE_GITLAB, instance_id)
     if gitlab_instance.sync_teams:
-        gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
-        resolved = await gitlab_service.sync_team_from_gitlab(
-            db,
-            gitlab_project_id,
-            gitlab_project_path,
-            gitlab_project_data=gitlab_project_data,
-        )
+        resolved = await gitlab_service.sync_team_from_gitlab(db, gitlab_project_id, gitlab_project_path)
         owners = _new_project_owners(gitlab_source, resolved.team_ids, gitlab_project_path)
 
     new_project = Project(
@@ -381,8 +350,7 @@ async def _handle_gitlab_oidc(
         gitlab_instance_id=instance_id,
         gitlab_project_id=gitlab_project_id,
         gitlab_project_path=gitlab_project_path,
-        default_branch=None,
-        active_analyzers=default_analyzers,
+        active_analyzers=(await SystemSettingsRepository(db).get()).default_active_analyzers,
         **ownership_fields(owners, gitlab_source),
     )
 
@@ -397,13 +365,10 @@ async def _handle_github_oidc(
     github_instance: Any,
     db: AsyncIOMotorDatabase,
     project_repo: ProjectRepository,
-    user_repo: UserRepository,
-    default_analyzers: list,
+    *,
+    create_missing: bool,
 ) -> Project:
-    """Handle GitHub OIDC authentication and project resolution."""
-    from app.models.project import Project, ProjectMember
-    from app.services.github import GitHubService
-
+    """Resolve the project a GitHub Actions token belongs to; ``create_missing`` also creates, renames and syncs it."""
     if not github_instance.is_active:
         raise HTTPException(status_code=403, detail=f"GitHub instance '{github_instance.name}' is not active")
 
@@ -430,16 +395,19 @@ async def _handle_github_oidc(
         )
 
     project_data = await project_repo.get_raw_by_github_composite_key(instance_id, repo_id)
+    if not create_missing:
+        if not project_data:
+            raise HTTPException(status_code=403, detail=_MSG_CI_PROJECT_MISMATCH)
+        return Project(**project_data)
+
     if project_data:
         project = Project(**project_data)
         ownership_stages: list[dict] = []
 
         if github_instance.sync_teams:
-            ownership_stages = await _github_team_sync_stages(
-                project, instance_id, gh_payload.repository_owner, repo_path, github_service, db
-            )
+            ownership_stages = await _github_team_sync_stages(project, instance_id, repo_path, github_service, db)
 
-        return await _sync_project_name(
+        return await _apply_ingest_project_update(
             project,
             repo_path,
             project_repo,
@@ -459,13 +427,13 @@ async def _handle_github_oidc(
             "github.com issuer needs an allowed owner list",
         )
 
-    actor = (await github_service.resolve_login(gh_payload.actor, user_repo)).user
+    actor = await github_service.resolve_login(gh_payload.actor, UserRepository(db))
     members = [ProjectMember(user_id=str(actor["_id"]), role=PROJECT_ROLE_ADMIN)] if actor else []
 
     owners: list[str] = []
     github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)
     if github_instance.sync_teams:
-        sync_result = await github_service.sync_team_from_github(db, gh_payload.repository_owner, repo_path)
+        sync_result = await github_service.sync_team_from_github(db, repo_path, current_owner_ids=set())
         owners = _new_project_owners(github_source, sync_result.team_ids, repo_path)
 
     new_project = Project(
@@ -474,8 +442,7 @@ async def _handle_github_oidc(
         github_instance_id=instance_id,
         github_repository_id=repo_id,
         github_repository_path=repo_path,
-        default_branch=None,
-        active_analyzers=default_analyzers,
+        active_analyzers=(await SystemSettingsRepository(db).get()).default_active_analyzers,
         **ownership_fields(owners, github_source),
     )
 
@@ -503,13 +470,10 @@ def _extract_oidc_issuer(oidc_token: str) -> str:
     if len(oidc_token.split(".")) != 3:
         raise HTTPException(status_code=403, detail="Invalid Token format. Expected a JWT (OIDC) token.")
 
-    from jose import jwt as jose_jwt
-
     try:
-        unverified_payload = jose_jwt.get_unverified_claims(oidc_token)
-        issuer = unverified_payload.get("iss")
-    except Exception as e:
-        logger.exception("Failed to decode OIDC token: %s", e)
+        issuer = jwt.get_unverified_claims(oidc_token).get("iss")
+    except JWTError as e:
+        logger.warning("Undecodable OIDC token: %s", e)
         raise HTTPException(status_code=403, detail="Invalid OIDC token format") from e
 
     if not issuer:
@@ -518,38 +482,17 @@ def _extract_oidc_issuer(oidc_token: str) -> str:
 
 
 async def _authenticate_via_oidc(
-    oidc_token: str,
-    db: AsyncIOMotorDatabase,
-    project_repo: ProjectRepository,
-    user_repo: UserRepository,
-    default_active_analyzers: list[str],
-) -> "Project":
-    from app.repositories.github_instances import GitHubInstanceRepository
-    from app.repositories.gitlab_instances import GitLabInstanceRepository
-
+    oidc_token: str, db: AsyncIOMotorDatabase, project_repo: ProjectRepository, *, create_missing: bool
+) -> Project:
     issuer = _extract_oidc_issuer(oidc_token)
 
     gitlab_instance = await GitLabInstanceRepository(db).get_by_url(issuer)
     if gitlab_instance:
-        return await _handle_gitlab_oidc(
-            oidc_token,
-            gitlab_instance,
-            db,
-            project_repo,
-            user_repo,
-            default_active_analyzers,
-        )
+        return await _handle_gitlab_oidc(oidc_token, gitlab_instance, db, project_repo, create_missing=create_missing)
 
     github_instance = await GitHubInstanceRepository(db).get_by_url(issuer)
     if github_instance:
-        return await _handle_github_oidc(
-            oidc_token,
-            github_instance,
-            db,
-            project_repo,
-            user_repo,
-            default_active_analyzers,
-        )
+        return await _handle_github_oidc(oidc_token, github_instance, db, project_repo, create_missing=create_missing)
 
     raise HTTPException(
         status_code=403,
@@ -558,21 +501,25 @@ async def _authenticate_via_oidc(
     )
 
 
+async def _authenticate_ci(
+    x_api_key: str | None, oidc_token: str | None, db: AsyncIOMotorDatabase, *, create_missing: bool
+) -> Project | None:
+    """The project the CI credentials belong to; None when the request carries none."""
+    project_repo = ProjectRepository(db)
+    if x_api_key:
+        return await _authenticate_via_api_key(x_api_key, project_repo)
+    if oidc_token:
+        return await _authenticate_via_oidc(oidc_token, db, project_repo, create_missing=create_missing)
+    return None
+
+
 async def get_project_for_ingest(
     x_api_key: str | None = Header(None, alias="X-API-Key"),
     oidc_token: str | None = Header(None, alias="Job-Token"),
     db: AsyncIOMotorDatabase = Depends(get_database),
-    settings: SystemSettings = Depends(get_system_settings),
 ) -> Project:
-    project_repo = ProjectRepository(db)
-    user_repo = UserRepository(db)
-
-    if x_api_key:
-        return await _authenticate_via_api_key(x_api_key, project_repo)
-
-    if oidc_token:
-        return await _authenticate_via_oidc(oidc_token, db, project_repo, user_repo, settings.default_active_analyzers)
-
+    if project := await _authenticate_ci(x_api_key, oidc_token, db, create_missing=True):
+        return project
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
 
 
@@ -582,15 +529,13 @@ async def authorize_project_write(
     oidc_token: str | None = Header(None, alias="Job-Token"),
     token: str | None = Depends(optional_oauth2_scheme),
     db: AsyncIOMotorDatabase = Depends(get_database),
-    settings_: SystemSettings = Depends(get_system_settings),
 ) -> str:
     """Authorize a project write for the project's CI credentials or a logged-in editor; returns the project id."""
     from app.api.v1.helpers.projects import check_project_access
 
-    if x_api_key or oidc_token:
-        project = await get_project_for_ingest(x_api_key=x_api_key, oidc_token=oidc_token, db=db, settings=settings_)
+    if project := await _authenticate_ci(x_api_key, oidc_token, db, create_missing=False):
         if str(project.id) != project_id:
-            raise HTTPException(status_code=403, detail="CI credentials do not match the target project")
+            raise HTTPException(status_code=403, detail=_MSG_CI_PROJECT_MISMATCH)
         return project_id
 
     if token:
@@ -667,7 +612,11 @@ async def _admit_unified_key(
     # Answered second: a key that never named the surface must not learn what its owner holds.
     _require_permission(user, surface, permission)
 
-    if touch:
+    last_used_at = key_doc.get("last_used_at")
+    if touch and (
+        not isinstance(last_used_at, datetime)
+        or (datetime.now(timezone.utc) - last_used_at).total_seconds() >= API_KEY_LAST_USED_RESOLUTION_SECONDS
+    ):
         await key_repo.touch_last_used(key_doc.get("_id", ""))
     return user, key_doc
 

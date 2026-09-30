@@ -63,7 +63,7 @@ class TestGitHubInstancePagination:
 
 
 class TestTokenConfiguredFlag:
-    """The Settings UI reads has_access_token to tell a configured instance from an unconfigured one."""
+    """The Settings UI reads token_configured, under the name GitLab uses too, to tell a configured instance apart."""
 
     def _get(self, admin_user, instance):
         from app.api.v1.endpoints.github_instances import get_instance
@@ -75,11 +75,11 @@ class TestTokenConfiguredFlag:
     def test_an_instance_holding_a_token_reads_as_configured(self, admin_user):
         result = self._get(admin_user, make_github_instance(access_token="ghp-secret"))
 
-        assert result.has_access_token is True
+        assert result.token_configured is True
         assert "ghp-secret" not in result.model_dump_json()
 
     def test_an_instance_without_a_token_reads_as_unconfigured(self, admin_user):
-        assert self._get(admin_user, make_github_instance()).has_access_token is False
+        assert self._get(admin_user, make_github_instance()).token_configured is False
 
 
 class TestGitHubInstanceSyncTeams:
@@ -112,6 +112,30 @@ class TestGitHubInstanceSyncTeams:
 
         assert created[0].sync_teams is True
         assert response.sync_teams is True
+
+
+class TestCreateChecksTheIssuerServesKeys:
+    def test_an_issuer_without_keys_is_refused_and_not_saved(self, admin_user):
+        from app.api.v1.endpoints.github_instances import create_instance
+        from app.schemas.github_instance import GitHubInstanceCreate
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False, create=None)
+        service = MagicMock()
+        service.get_jwks = AsyncMock(return_value=None)
+        payload = GitHubInstanceCreate(
+            name="GHES", url="https://github.corp.example.com/_services/token", oidc_audience="dependency-control"
+        )
+
+        with (
+            patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo),
+            patch(f"{MODULE}.GitHubService", return_value=service),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            asyncio.run(create_instance(instance_data=payload, db=MagicMock(), current_user=admin_user))
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "OIDC endpoint unreachable or returned no signing keys. Verify the issuer URL."
+        mock_repo.create.assert_not_called()
 
 
 class TestGitHubInstanceUpdateTokenGuard:

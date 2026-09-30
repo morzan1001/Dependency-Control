@@ -143,12 +143,14 @@ class PackageSuggestions(BaseModel):
 PRIORITY_VULNS_LABEL = "Priority (Critical/High/KEV/High EPSS)"
 
 
-class AlertVulnerability(BaseModel):
-    """One vulnerability line in a "vulnerabilities found" alert.
+def scan_alert_level(critical: int, high: int) -> Literal["critical", "warning", "ok"]:
+    if critical:
+        return "critical"
+    return "warning" if high else "ok"
 
-    Declares the field names every channel formatter reads. Defaults are tolerant because the
-    Teams card is built from a webhook payload that has been through JSON.
-    """
+
+class AlertVulnerability(BaseModel):
+    """One vulnerability line of an alert; lenient defaults because the Teams card reads the untyped webhook payload."""
 
     id: str = Field("Unknown", description="CVE or advisory identifier")
     severity: str = Field("UNKNOWN", description="Severity of the vulnerability")
@@ -158,3 +160,14 @@ class AlertVulnerability(BaseModel):
     epss_score: float | None = None
     kev_due_date: str | None = None
     kev_ransomware_use: bool = False
+
+    @property
+    def versioned_package(self) -> str:
+        return f"{self.package}@{self.version}" if self.version else self.package
+
+    @property
+    def tags(self) -> list[str]:
+        tags = ["KEV"] if self.in_kev else []
+        if self.epss_score:
+            tags.append(f"EPSS: {self.epss_score:.1%}")
+        return tags

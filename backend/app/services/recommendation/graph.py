@@ -1,33 +1,35 @@
 from collections import deque
 from dataclasses import dataclass
 
-from app.core.constants import DEEP_CHAIN_MEDIUM_IMPACT_DEPTH, MAX_DEPENDENCY_DEPTH, SIMILAR_PACKAGE_GROUPS
+from app.core.constants import MAX_DEPENDENCY_DEPTH, SIMILAR_PACKAGE_GROUPS
 from app.core.purl import dependency_node_key, package_identity
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import ModelOrDict, dependency_label, get_attr, sample_components
+from app.services.recommendation.common import ModelOrDict, dependency_label, get_attr, sample_components, sampled
 
 # Chains detailed in the action; paired with the population it was taken from.
 _DEEPEST_CHAINS_SAMPLED = 5
+_CHAIN_ENDS_SHOWN = 2
 
 
 @dataclass(frozen=True)
-class DependencyEdges:
+class DependencyEdges[D: ModelOrDict]:
     """A dependency list as a graph over node keys; documents sharing a key are one node."""
 
     # First document per key, in first-seen order.
-    dep_by_key: dict[str, ModelOrDict]
+    dep_by_key: dict[str, D]
     parents_by_key: dict[str, list[str]]
     children_by_parent: dict[str, list[str]]
     direct_keys: set[str]
 
 
-def build_dependency_edges(dependencies: list[ModelOrDict]) -> DependencyEdges:
+def build_dependency_edges[D: ModelOrDict](dependencies: list[D]) -> DependencyEdges[D]:
     """Merge every document's parents per node key; a node is direct when any of its documents is."""
-    dep_by_key: dict[str, ModelOrDict] = {}
+    dep_by_key: dict[str, D] = {}
     parents_by_key: dict[str, dict[str, None]] = {}
     direct_keys: set[str] = set()
     for dep in dependencies:
@@ -135,24 +137,18 @@ def _circular_dependency_recommendation(members: set[str], edges: DependencyEdge
             "Circular dependencies were detected in your dependency graph. "
             "This can cause issues with builds, updates, and increases complexity."
         ),
-        impact={
-            "critical": 0,
-            "high": 0,
-            "medium": cycle_total,
-            "low": 0,
-            "total": cycle_total,
-        },
+        impact={"total": 0},
         affected_components=cycle_shown,
         affected_components_total=cycle_total,
         action={
             "type": "resolve_circular_deps",
-            "suggestions": [
+            "steps": [
                 "Review the dependency graph to identify the cycle",
                 "Consider restructuring to break the circular dependency",
                 "Check if updated versions resolve the cycle",
             ],
         },
-        effort="high",
+        effort=Effort.HIGH,
     )
 
 
@@ -161,7 +157,10 @@ def _chain_preview(key: str, via: dict[str, str], edges: DependencyEdges) -> str
     path = [key]
     while path[-1] in via:
         path.append(via[path[-1]])
-    return " → ".join(dependency_label(edges.dep_by_key[node]) for node in reversed(path))
+    labels = [dependency_label(edges.dep_by_key[node]) for node in reversed(path)]
+    if len(labels) > 2 * _CHAIN_ENDS_SHOWN:
+        labels = [*labels[:_CHAIN_ENDS_SHOWN], "...", *labels[-_CHAIN_ENDS_SHOWN:]]
+    return " → ".join(labels)
 
 
 def _deep_chain_recommendation(
@@ -170,7 +169,6 @@ def _deep_chain_recommendation(
     deep_shown, deep_total = sample_components(
         f"{dependency_label(edges.dep_by_key[key])} (depth: {depth})" for key, depth in deep
     )
-    medium = sum(1 for _, depth in deep if depth >= DEEP_CHAIN_MEDIUM_IMPACT_DEPTH)
     return Recommendation(
         type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
         priority=Priority.LOW,
@@ -180,33 +178,30 @@ def _deep_chain_recommendation(
             "even along their shortest chain from a direct dependency. Deep chains increase "
             "supply chain attack surface and make dependency updates more complex."
         ),
-        impact={
-            "critical": 0,
-            "high": 0,
-            "medium": medium,
-            "low": len(deep) - medium,
-            "total": len(deep),
-        },
+        impact={"total": 0},
         affected_components=deep_shown,
         affected_components_total=deep_total,
         action={
             "type": "reduce_chain_depth",
-            "suggestions": [
+            "steps": [
                 "Consider using packages with fewer transitive dependencies",
                 "Evaluate if some functionality can be implemented directly",
                 "Look for alternative packages with shallower dependency trees",
             ],
-            "deepest_chains": [
-                {
-                    "package": get_attr(edges.dep_by_key[key], "name"),
-                    "depth": depth,
-                    "chain_preview": _chain_preview(key, via, edges),
-                }
-                for key, depth in deep[:_DEEPEST_CHAINS_SAMPLED]
-            ],
-            "deepest_chains_total": len(deep),
+            **sampled(
+                "deepest_chains",
+                [
+                    {
+                        "package": get_attr(edges.dep_by_key[key], "name"),
+                        "depth": depth,
+                        "chain_preview": _chain_preview(key, via, edges),
+                    }
+                    for key, depth in deep
+                ],
+                _DEEPEST_CHAINS_SAMPLED,
+            ),
         },
-        effort="high",
+        effort=Effort.HIGH,
     )
 
 
@@ -237,6 +232,7 @@ def analyze_duplicate_packages(
             )
 
     if duplicates_found:
+        duplicates_shown, duplicates_total = sample_components(p for d in duplicates_found for p in d["found"])
         recommendations.append(
             Recommendation(
                 type=RecommendationType.DUPLICATE_FUNCTIONALITY,
@@ -247,19 +243,14 @@ def analyze_duplicate_packages(
                     "Consolidating to one package per category can reduce bundle size "
                     "and maintenance burden."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": len(duplicates_found),
-                    "total": len(duplicates_found),
-                },
-                affected_components=[f"{d['category']}: {', '.join(d['found'])}" for d in duplicates_found],
+                impact={"total": 0},
+                affected_components=duplicates_shown,
+                affected_components_total=duplicates_total,
                 action={
                     "type": "consolidate_packages",
                     "duplicates": duplicates_found,
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 

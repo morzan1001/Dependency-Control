@@ -12,7 +12,6 @@ from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools.registry import (
     _CVE_OCCURRENCE_READ,
-    _DEPENDENCY_TREE_READ,
     _EXPIRING_WAIVER_READ,
     _REMEDIATION_FINDING_READ,
     _TEAM_PROJECT_READ,
@@ -33,6 +32,7 @@ _OVER_THE_CEILING = 7
 _INSIDE_THE_CEILING = 3
 _ESTATE_SIZE = 8
 _PROJECT_PAGE = 5
+_DEPENDENCY_PAGE = 40
 
 
 @pytest.fixture
@@ -73,7 +73,7 @@ def _fill(collection, count, doc_for):
 
 @pytest.mark.asyncio
 async def test_a_dependency_tree_cut_at_its_ceiling_names_the_whole_tree(seeded, admin_user):
-    population = _DEPENDENCY_TREE_READ + _OVER_THE_CEILING
+    population = _DEPENDENCY_PAGE + _OVER_THE_CEILING
     _fill(
         seeded.dependencies,
         population,
@@ -84,7 +84,7 @@ async def test_a_dependency_tree_cut_at_its_ceiling_names_the_whole_tree(seeded,
 
     assert result["dependencies_total"] == population
     assert result["_bounded_read"] is True
-    assert f"{_DEPENDENCY_TREE_READ} of {population} dependencies" in result["_bounded_read_note"]
+    assert f"{_DEPENDENCY_PAGE} of {population} dependencies" in result["_bounded_read_note"]
 
 
 @pytest.mark.asyncio
@@ -103,19 +103,16 @@ async def test_a_dependency_tree_inside_its_ceiling_carries_no_caveat(seeded, ad
 
 @pytest.mark.asyncio
 async def test_the_byte_cap_note_names_the_population_not_the_page(seeded, admin_user):
-    """The read ceiling cuts first and the byte cap cuts what is left; naming the page as what
-    the byte cap cut from understates the tree by the read ceiling's worth."""
-    population = _DEPENDENCY_TREE_READ + _OVER_THE_CEILING
+    """The page cuts first, so naming it as the byte cap's base would understate the tree by everything past it."""
+    population = _DEPENDENCY_PAGE + _OVER_THE_CEILING
     _fill(
         seeded.dependencies,
         population,
         lambda i: {
             "_id": f"row-{i}",
             "scan_id": _SCAN,
-            "name": f"pkg-{i}",
+            "name": f"pkg-{i}-" + "x" * 200,
             "version": "1.0.0",
-            "purl": f"pkg:npm/pkg-{i}@1.0.0",
-            "description": "x" * 200,
         },
     )
 
@@ -220,7 +217,7 @@ async def test_a_delivery_history_cut_at_the_ceiling_names_every_delivery(seeded
 
 @pytest.mark.asyncio
 async def test_one_call_does_not_inherit_the_previous_call_s_saturated_read(seeded, admin_user):
-    population = _DEPENDENCY_TREE_READ + _OVER_THE_CEILING
+    population = _DEPENDENCY_PAGE + _OVER_THE_CEILING
     _fill(
         seeded.dependencies,
         population,
@@ -270,10 +267,11 @@ async def test_a_remediation_plan_names_the_finding_set_it_was_built_over(seeded
             "_id": f"row-{i}",
             "scan_id": _SCAN,
             "project_id": _PROJECT,
+            "type": "vulnerability",
             "severity": "HIGH",
             "component": f"pkg-{i}",
             "version": "1.0.0",
-            "details": {"fixed_version": "2.0.0"},
+            "details": {"fixed_version": "2.0.0", "vulnerabilities": [{"id": _CVE, "fixed_version": "2.0.0"}]},
         },
     )
 

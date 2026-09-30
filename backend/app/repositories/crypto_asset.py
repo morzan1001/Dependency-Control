@@ -51,7 +51,7 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
                         "scan_id": scan_id,
                         "bom_ref": a.bom_ref,
                     },
-                    {"$set": a.model_dump(by_alias=True, exclude={"id"})},
+                    {"$set": a.model_dump(by_alias=True, exclude={"id"}), "$setOnInsert": {"_id": a.id}},
                     upsert=True,
                 )
                 for a in chunk
@@ -73,7 +73,8 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         Upserts on (project_id, scan_id, bom_ref), so an asset the rescan does re-derive from an
         embedded CBOM overwrites the carried copy rather than duplicating it.
         """
-        cursor = self.collection.find({"project_id": project_id, "scan_id": from_scan_id}).limit(limit)
+        # Without the source _id each copy gets a fresh one, which bulk_upsert inserts under the new scan.
+        cursor = self.collection.find({"project_id": project_id, "scan_id": from_scan_id}, {"_id": 0}).limit(limit)
         docs = await cursor.to_list(length=limit)
         assets = [CryptoAsset.model_validate({**doc, "scan_id": to_scan_id}) for doc in docs]
         return await self.bulk_upsert(project_id, to_scan_id, assets)

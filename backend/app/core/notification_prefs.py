@@ -1,13 +1,7 @@
-"""Validation helper for per-user notification preferences.
-
-Both the User model and the ProjectNotificationSettings schema accept the same
-{event_type: [channels]} structure, so validation is shared here. Unknown
-events or channels are dropped with a warning rather than raising — this keeps
-old persisted data readable after we add or remove valid events.
-"""
+"""The {event: [channels]} preference types: requests reject unknown names, stored documents drop them."""
 
 import logging
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import AfterValidator
 
@@ -18,33 +12,33 @@ logger = logging.getLogger(__name__)
 _VALID_CHANNELS = set(NOTIFICATION_CHANNELS)
 
 
-def sanitize_notification_preferences(value: Any) -> dict[str, list[str]]:
-    """Drop unknown events/channels, return a normalized dict."""
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        logger.warning("Invalid notification_preferences type: %s. Using empty dict.", type(value))
-        return {}
-
+def sanitize_notification_preferences(value: dict[str, list[str]] | None) -> dict[str, list[str]]:
+    """Drop unknown events and channels; an event stored with no channels stays, as a mute."""
     cleaned: dict[str, list[str]] = {}
-    for event, channels in value.items():
-        if event not in NOTIFICATION_EVENTS:
-            logger.warning("Unknown notification event '%s' (valid: %s). Dropping.", event, NOTIFICATION_EVENTS)
-            continue
-        if not isinstance(channels, list):
-            logger.warning("Channels for event '%s' must be a list, got %s. Dropping.", event, type(channels))
-            continue
+    for event, channels in (value or {}).items():
         kept = [c for c in channels if c in _VALID_CHANNELS]
-        if len(kept) != len(channels):
-            logger.warning("Dropped invalid channels for '%s': %s", event, set(channels) - _VALID_CHANNELS)
-        if kept:
+        if event not in NOTIFICATION_EVENTS or len(kept) != len(channels):
+            logger.warning("Dropped unknown notification preference %s: %s", event, channels)
+        # Only a list stored empty is a mute; one that named nothing but retired channels is dropped.
+        if event in NOTIFICATION_EVENTS and (kept or not channels):
             cleaned[event] = kept
     return cleaned
 
 
-# Every declaration of the {event: [channels]} structure uses this, so a preference cannot be
-# accepted and echoed back by a request schema only to be dropped when the model reads it.
+def validate_notification_preferences(value: dict[str, list[str]] | None) -> dict[str, list[str]]:
+    value = value or {}
+    events = set(value) - NOTIFICATION_EVENTS
+    channels = {c for cs in value.values() for c in cs} - _VALID_CHANNELS
+    if events or channels:
+        raise ValueError(f"Unknown notification events {sorted(events)} or channels {sorted(channels)}")
+    return value
+
+
 NotificationPreferences = Annotated[
     dict[str, list[str]] | None,
     AfterValidator(sanitize_notification_preferences),
+]
+StrictNotificationPreferences = Annotated[
+    dict[str, list[str]] | None,
+    AfterValidator(validate_notification_preferences),
 ]

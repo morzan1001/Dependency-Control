@@ -2,6 +2,7 @@
 
 from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.recommendation import quality
 from app.services.recommendation.quality import process_quality
 
 
@@ -102,7 +103,8 @@ class TestProcessQualityUnmaintained:
         ]
         recs = process_quality(findings)
         unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
-        assert unmaintained_rec.impact["total"] == 3
+        assert unmaintained_rec.impact == {"total": 0}
+        assert unmaintained_rec.affected_components_total == 3
 
     def test_effort_is_high(self):
         finding = _quality(critical_issues=["Maintained"])
@@ -199,15 +201,6 @@ class TestProcessQualityLowScorecard:
         recs = process_quality([finding])
         low_recs = [r for r in recs if "Low-Quality" in r.title]
         assert str(SCORECARD_POOR_QUALITY_THRESHOLD) in low_recs[0].description
-
-    def test_impact_contains_average_score(self):
-        findings = [
-            _quality(component="lib-a", overall_score=2.0, finding_id="q1"),
-            _quality(component="lib-b", overall_score=3.0, finding_id="q2"),
-        ]
-        recs = process_quality(findings)
-        low_recs = [r for r in recs if "Low-Quality" in r.title]
-        assert low_recs[0].impact["average_score"] == 2.5
 
 
 class TestProcessQualityLowScoreWithUnmaintained:
@@ -307,7 +300,8 @@ class TestProcessQualityCodeReview:
         ]
         recs = process_quality(findings)
         cr_recs = [r for r in recs if "Code Review" in r.title]
-        assert cr_recs[0].impact["total"] == 3
+        assert cr_recs[0].impact == {"total": 0}
+        assert cr_recs[0].affected_components_total == 3
 
 
 class TestProcessQualityHighScore:
@@ -363,16 +357,6 @@ class TestProcessQualityCombinedScenarios:
         assert "Review Low-Quality Dependencies" in titles
         assert "Address Packages with Known Vulnerability Issues" in titles
         assert "Dependencies with Limited Code Review" in titles
-
-    def test_failed_check_as_string(self):
-        """Failed checks can be plain strings instead of dicts."""
-        finding = _quality(
-            overall_score=5.0,
-            failed_checks=["Code-Review"],
-        )
-        recs = process_quality([finding])
-        cr_recs = [r for r in recs if "Code Review" in r.title]
-        assert len(cr_recs) == 1
 
     def test_multiple_findings_mixed(self):
         findings = [
@@ -459,6 +443,30 @@ class TestProcessQualityActionStructure:
         assert cr_rec.action["type"] == "code_review_concern"
 
 
+class TestQualityActionsNameHowManyPackagesTheySampled:
+    def _action(self, action_type, **kwargs):
+        population = quality._PACKAGES_SAMPLED + 2
+        findings = [
+            _quality(component=f"lib-{i:02d}", overall_score=float(i % 4), finding_id=f"q{i}", **kwargs)
+            for i in range(population)
+        ]
+        action = next(r for r in process_quality(findings) if r.action["type"] == action_type).action
+        return action, population
+
+    def test_the_unmaintained_action(self):
+        action, population = self._action("replace_unmaintained", critical_issues=["Maintained"])
+
+        assert len(action["packages"]) == quality._PACKAGES_SAMPLED
+        assert action["packages_total"] == population
+
+    def test_the_low_score_action(self):
+        action, population = self._action("review_quality")
+
+        assert len(action["packages"]) == quality._PACKAGES_SAMPLED
+        assert action["packages_total"] == population
+        assert action["packages"][0]["score"] == 0.0
+
+
 class TestUnmaintainedFromMaintenanceRollup:
     def test_has_maintenance_issues_alone_triggers_unmaintained(self):
         """maintainer_risk aggregates carry no scorecard entry, only the has_maintenance_issues roll-up."""
@@ -498,7 +506,7 @@ class TestQualityCardsCountPackagesNotVersions:
         ]
 
         assert rec.description.startswith("Found 1 potentially unmaintained packages.")
-        assert rec.impact["total"] == 1
+        assert rec.affected_components_total == 1
         assert rec.action["packages"] == [
             {"name": "old-lib", "score": 2.0, "url": "https://github.com/example/old-lib"}
         ]
@@ -507,7 +515,8 @@ class TestQualityCardsCountPackagesNotVersions:
         [rec] = [r for r in process_quality(self._versions()) if "Low-Quality" in r.title]
 
         assert rec.description.startswith("Found 1 packages with OpenSSF Scorecard")
-        assert rec.impact == {"total": 1, "average_score": 2.0}
+        assert rec.impact == {"total": 0}
+        assert rec.affected_components_total == 1
         assert rec.action["packages"] == [{"name": "old-lib", "score": 2.0, "issues": []}]
 
     def test_a_vulnerable_package_at_three_versions_is_one_package(self):
@@ -518,7 +527,8 @@ class TestQualityCardsCountPackagesNotVersions:
         ]
 
         assert rec.description.startswith("1 packages have unaddressed security vulnerabilities")
-        assert rec.impact["total"] == 1
+        assert rec.impact == {"total": 0}
+        assert rec.affected_components_total == 1
 
     def test_an_unmaintained_package_keeps_its_score_beside_an_unscored_version(self):
         findings = [

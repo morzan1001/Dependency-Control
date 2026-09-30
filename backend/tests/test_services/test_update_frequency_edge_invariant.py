@@ -30,8 +30,10 @@ from app.repositories.update_frequency import BranchWindowActivity
 from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
 from app.services.update_frequency import (
     compute_update_frequency,
+    elect_primary_branch,
     fold_runs_into_bars,
     same_commit_runs,
+    window_cutoff,
 )
 from app.services.update_frequency_fold import commit_coverage, fold_window, select_window, window_bars
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -109,19 +111,26 @@ async def _build_ledger(db: FakeDatabase) -> None:
         await record_scan_update_delta(db, scan["_id"])
 
 
+async def _elected(db: FakeDatabase) -> tuple[str | None, dict[str, BranchWindowActivity]]:
+    return await elect_primary_branch(ScanRepository(db), PROJECT, window_cutoff(WINDOW_DAYS), None, None)
+
+
 async def _live(db: FakeDatabase) -> UpdateFrequencyMetrics:
+    branch, _activity = await _elected(db)
     return await compute_update_frequency(
         project_id=PROJECT,
         project_name="Project One",
         scan_repo=ScanRepository(db),
         dep_repo=DependencyRepository(db),
         analysis_repo=AnalysisResultRepository(db),
+        branch=branch,
         window_days=WINDOW_DAYS,
     )
 
 
 async def _rollup(db: FakeDatabase) -> UpdateFrequencyMetrics | None:
-    return await _rollup_project_metrics(db, Project(id=PROJECT, name="Project One"), WINDOW_DAYS)
+    project = Project(id=PROJECT, name="Project One")
+    return await _rollup_project_metrics(db, project, WINDOW_DAYS, *await _elected(db))
 
 
 async def _both(db: FakeDatabase) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics]:
@@ -650,6 +659,7 @@ class TestWindowCapCutsMidRun:
             scan_repo=ScanRepository(db),
             dep_repo=DependencyRepository(db),
             analysis_repo=AnalysisResultRepository(db),
+            branch=BRANCH,
             window_days=WINDOW_DAYS,
             hard_limit=hard_limit,
         )

@@ -108,7 +108,9 @@ class GitHubInstanceResponse(GitHubInstanceBase):
     )
 
     id: str = Field(..., description="Unique identifier")
-    has_access_token: bool = Field(False, description="Whether an API access token is configured")
+    token_configured: bool = Field(
+        False, description="Whether an access token is configured (without exposing the token)"
+    )
     created_at: datetime = Field(..., description="Creation timestamp")
     created_by: str = Field(..., description="User ID who created this instance")
     last_modified_at: datetime | None = Field(None, description="Last modification timestamp")

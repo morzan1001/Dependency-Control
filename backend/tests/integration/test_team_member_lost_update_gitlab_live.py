@@ -21,7 +21,7 @@ from app.models.team import GitLabGroupBinding, Team, TeamMember
 from app.repositories.users import UserRepository
 from app.repositories.teams import TeamRepository
 from app.services.gitlab import GitLabService
-from tests.mocks.gitlab import make_gitlab_instance, make_project_details
+from tests.mocks.gitlab import make_gitlab_instance, make_project_details, sync_team
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
 
@@ -78,13 +78,12 @@ async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
             new=AsyncMock(return_value=[GitLabMember(username="ada", email="ada@corp.com", access_level=50)]),
         ),
     ):
-        await service.sync_team_from_gitlab(
+        await sync_team(
+            service,
             db=db,
             gitlab_project_id=100,
             gitlab_project_path="mo/proj",
-            gitlab_project_data=make_project_details(
-                namespace_kind="group", namespace_id=_GROUP_ID, namespace_path="mo"
-            ),
+            project_details=make_project_details(namespace_kind="group", namespace_id=_GROUP_ID, namespace_path="mo"),
         )
 
 

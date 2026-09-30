@@ -1,13 +1,12 @@
 """POST /api/v1/analyze: a unified key gets in, and its budget is the owner's rather than the key's."""
 
-import fakeredis
 import fakeredis.aioredis
 import pytest
-import redis.asyncio as redis
 
 from app.core.constants import API_KEY_SURFACE_ADHOC
 from app.core.permissions import Permissions
 from app.repositories.api_keys import ApiKeyRepository
+from app.services.chat import rate_limiter
 
 _ANALYZE = "/api/v1/analyze"
 _OWNER = "analyze-user"
@@ -40,8 +39,8 @@ _BODY = {"sboms": [_SBOM], "analyzers": [_LICENSE_COMPLIANCE], "apply_global_wai
 @pytest.fixture(autouse=True)
 def _shared_window(monkeypatch):
     """The real limiter over one in-process Redis: every request of a test spends the same window."""
-    server = fakeredis.FakeServer()
-    monkeypatch.setattr(redis, "from_url", lambda *_a, **_k: fakeredis.aioredis.FakeRedis(server=server))
+    client = fakeredis.aioredis.FakeRedis()
+    monkeypatch.setattr(rate_limiter, "_client", lambda: client)
 
 
 async def _issue_key(db, name="ci", owner=_OWNER, permissions=(Permissions.ANALYZE_ADHOC,)):

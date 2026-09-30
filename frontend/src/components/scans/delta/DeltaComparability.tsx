@@ -18,8 +18,7 @@ const truncationText = (truncation: DeltaTruncation) =>
   + `rows on the From side and ${truncation.to_compared.toLocaleString()} of ${truncation.to_total.toLocaleString()} `
   + `on the To side, a per-side cap of ${truncation.limit.toLocaleString()}. Both sides were read in the same order, `
   + 'so the totals below describe that window rather than the two scans: an item just past the cap on one side and '
-  + 'inside it on the other is reported as added or removed. Filter by finding type or severity to bring a side '
-  + 'under the cap.'
+  + 'inside it on the other is reported as added or removed. Filter by finding type to bring a side under the cap.'
 
 function reachabilityText(side: ScanDeltaReachability | null | undefined): string {
   if (!side) return NO_REACHABILITY

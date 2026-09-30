@@ -18,7 +18,12 @@ from app.models.license import (
 from app.schemas.project import LicensePolicySchema
 from app.services.analyzers.license_compliance import LicenseAnalyzer
 from app.services.analyzers.license_compliance.compatibility import partition_or_groups
-from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITY_CATEGORY
+from app.services.analyzers.license_compliance.constants import (
+    LICENSE_DATABASE,
+    LICENSE_INCOMPATIBILITY_CATEGORY,
+    SHARE_COMPLETE_SOURCE_CODE,
+    USE_GPL_FOR_DERIVATIVE_WORK,
+)
 from app.services.analyzers.license_compliance.evaluator import (
     apply_transitive_adjustment,
     evaluate_license,
@@ -453,6 +458,48 @@ class TestOrResolution:
         result = await self._analyze(expression)
         verdicts = [(issue["license"], issue["severity"]) for issue in result["license_issues"]]
         assert verdicts == [(lic, sev.value) for lic, sev in expected]
+
+
+class TestLicenseException:
+    @staticmethod
+    async def _analyze(expression):
+        components = _parsed_cyclonedx([_library("lib", expression)])
+        return await LicenseAnalyzer().analyze({}, parsed_components=components)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("expression", "severity", "category"),
+        [
+            pytest.param("GPL-2.0-only WITH Classpath-exception-2.0", Severity.INFO, "weak_copyleft", id="classpath"),
+            pytest.param("GPL-3.0-or-later WITH GCC-exception-3.1", Severity.INFO, "weak_copyleft", id="gcc"),
+            pytest.param("GPL-2.0-only", Severity.HIGH, "strong_copyleft", id="no-exception"),
+        ],
+    )
+    async def test_an_exception_lifts_strong_copyleft_to_weak(self, expression, severity, category):
+        result = await self._analyze(expression)
+        assert [(i["severity"], i["category"]) for i in result["license_issues"]] == [(severity.value, category)]
+        assert [entry["category"] for entry in result["component_licenses"]] == [category]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "expression",
+        ["GPL-2.0-only WITH Classpath-exception-2.0", "GPL-3.0-or-later WITH GCC-exception-3.1"],
+    )
+    async def test_an_excepted_licence_does_not_state_strong_copyleft_terms(self, expression):
+        base = LICENSE_DATABASE[expression.partition(" WITH ")[0]]
+        result = await self._analyze(expression)
+        records = [*result["license_issues"], *result["component_licenses"]]
+        assert len(records) == 2
+        for record in records:
+            assert record["explanation"] != base.description
+            assert "link" in record["explanation"]
+            assert not {SHARE_COMPLETE_SOURCE_CODE, USE_GPL_FOR_DERIVATIVE_WORK} & set(record["obligations"])
+            assert not [risk for risk in record["risks"] if "proprietary" in risk]
+
+    @pytest.mark.asyncio
+    async def test_an_excepted_member_of_a_conjunction_is_weak_copyleft(self):
+        result = await self._analyze("LicenseRef-Fedora-Public-Domain AND (GPL-2.0-only WITH ClassPath-exception-2.0)")
+        assert [entry["category"] for entry in result["component_licenses"]] == ["weak_copyleft"]
 
 
 class TestTransitiveDependencySeverity:

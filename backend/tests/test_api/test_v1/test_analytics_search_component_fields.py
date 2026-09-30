@@ -5,14 +5,14 @@ carries them on 0 of the vulnerability findings of every latest scan, so the sea
 shipped two permanently-null keys.
 """
 
-from types import SimpleNamespace
-
 from app.api.v1.endpoints.analytics.search import _vuln_results_for_finding
+from app.models.finding_record import FindingRecord
 
 
 def _prod_shaped_vuln_finding():
     """An aggregated vulnerability document as the engine persists it: no purl, no type."""
-    return SimpleNamespace(
+    return FindingRecord(
+        id="spring-boot-starter-web:3.4.5",
         finding_id="spring-boot-starter-web:3.4.5",
         aliases=["CVE-2026-41852"],
         severity="CRITICAL",
@@ -24,6 +24,7 @@ def _prod_shaped_vuln_finding():
         description="Spring Boot vulnerability",
         waived=False,
         waiver_reason=None,
+        scanners=["osv"],
         details={
             "epss_score": 0.00177,
             "risk_score": 40.0,

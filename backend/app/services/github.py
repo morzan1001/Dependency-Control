@@ -2,36 +2,36 @@ import asyncio
 import logging
 import urllib.parse
 import weakref
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
+from contextlib import aclosing, asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pymongo.errors import DuplicateKeyError
 
 from app.core.cache import cache_service
 from app.core.constants import (
     GITHUB_API_URL,
-    GITHUB_JWKS_CACHE_TTL,
-    GITHUB_JWKS_URI_CACHE_TTL,
     GITHUB_ORG_REPO_MAP_CACHE_TTL,
     GITHUB_TEAM_SYNC_CACHE_TTL,
+    GITHUB_USER_EMAIL_CACHE_TTL,
     MAX_PROJECT_TEAMS,
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITHUB,
+    team_binding_key,
     team_source,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.log_utils import sanitize_for_log
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GITHUB_SHARED_OIDC_ISSUER, GitHubInstance
-from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of
-from app.repositories.teams import TeamRepository
+from app.models.team import GitHubTeamBinding, Team, TeamMember, TeamSyncResult, binding_of
+from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
-from app.repositories.teams import MemberSubset
+from app.schemas.github_instance import GitHubOrgTeam
+from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
@@ -58,25 +58,21 @@ _REPOSITORY_ACCEPT = "application/vnd.github.v3.repository+json"
 # inside it and stays far below the hundred concurrent requests GitHub tolerates.
 _GITHUB_ORG_WALK_CONCURRENCY = 16
 
-# The walk's own share of the resolution budget. Exceeding it is recorded rather than abandoned, so
-# the next ingest reads the failure from the cache instead of paying the whole walk again.
+# The walk's share of the resolution budget, from its first gated listing; a timeout is cached as a failure.
 _GITHUB_ORG_WALK_TIMEOUT = 15.0
 
-# A waiter has to outlast the walk it is waiting for, or it gives up and walks as well — which is
-# the stampede the lock exists to prevent.
-_GITHUB_ORG_WALK_LOCK_WAIT = 18.0
-
-# The walk is cached under a field of its own: the locking helper stores a bare {} for a fetch that
-# failed, and an empty map read back from that would say the organisation's teams hold nothing.
-_ORG_REPO_MAP_FIELD = "repositories"
+# A failed fetch is cached as a bare {} for an hour; the wrapper keeps a real None answer distinct.
+_CACHED_FIELD = "value"
 
 # Write access or better. Read access is not ownership: a group holding every repository of the
 # organisation on pull would otherwise own the whole estate.
 _WRITE_PERMISSIONS = ("push", "maintain", "admin")
 
-_AUTO_TEAM_NAME_PREFIX = "GitHub Team:"
+_GITHUB_TEAM_ROLES = (("maintainer", TEAM_ROLE_ADMIN), ("member", TEAM_ROLE_MEMBER))
 
-_org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = weakref.WeakKeyDictionary()
+_org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Semaphore]]" = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def split_repo_path(path: str | None) -> tuple[str, str] | None:
@@ -85,18 +81,18 @@ def split_repo_path(path: str | None) -> tuple[str, str] | None:
     return (owner, repo) if owner and repo else None
 
 
-def _org_walk_gate() -> asyncio.Semaphore:
-    """The walk's concurrency limit, shared by every walk running in this process.
+def _org_walk_gate(instance_id: str) -> asyncio.Semaphore:
+    """Per instance, as GitHub limits concurrency per token; process-wide, as one run's ingests put 112 in flight."""
+    gates = _org_walk_gates.setdefault(asyncio.get_running_loop(), {})
+    return gates.setdefault(instance_id, asyncio.Semaphore(_GITHUB_ORG_WALK_CONCURRENCY))
 
-    One workflow run fans out into many ingests, so a gate held by a single walk bounds nothing:
-    eight concurrent ingests measured a peak of 112 requests in flight against a limit of 16.
-    """
-    loop = asyncio.get_running_loop()
-    gate = _org_walk_gates.get(loop)
-    if gate is None:
-        gate = asyncio.Semaphore(_GITHUB_ORG_WALK_CONCURRENCY)
-        _org_walk_gates[loop] = gate
-    return gate
+
+def response_ok(provider: str, endpoint: str, response: httpx.Response) -> bool:
+    """True for 200. A rejected read must not be mistaken for an empty one, so a non-200 is logged here."""
+    if response.status_code == 200:
+        return True
+    logger.warning("%s API GET %s returned HTTP %d", provider, sanitize_for_log(endpoint), response.status_code)
+    return False
 
 
 def _json_document(response: httpx.Response) -> dict[str, Any]:
@@ -118,8 +114,8 @@ def _team_writes_to(repository: dict[str, Any]) -> bool | None:
 
 
 def _auto_team_name(org: str, slug: str) -> str:
-    """The name a team gets while nobody has renamed it; the prefix is what marks it as ours to set."""
-    return f"{_AUTO_TEAM_NAME_PREFIX} {org}/{slug}"
+    """The name a team gets while nobody has renamed it."""
+    return f"GitHub Team: {org}/{slug}"
 
 
 def _auto_team_description(org: str, slug: str) -> str:
@@ -153,7 +149,7 @@ def build_team_slug_map(org_teams: list[dict[str, Any]]) -> dict[int, str]:
     }
 
 
-def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[GitHubOrgTeam]:
     """The teams of an organisation a human can bind to, with the parent that tells two same-named
     nested teams apart. An entry that cannot address a team is left out, as it is everywhere else."""
     options = []
@@ -164,24 +160,14 @@ def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[dict[str, An
             continue
         parent = team.get("parent") or {}
         options.append(
-            {
-                "id": team_id,
-                "slug": slug,
-                "name": str(team.get("name") or slug),
-                "parent_name": str(parent["name"]) if parent.get("name") else None,
-            }
+            GitHubOrgTeam(
+                id=team_id,
+                slug=slug,
+                name=str(team.get("name") or slug),
+                parent_name=str(parent["name"]) if parent.get("name") else None,
+            )
         )
     return options
-
-
-class GitHubTeamSyncResult(NamedTuple):
-    """Every Dependency Control team GitHub says holds the repository.
-
-    ``team_ids`` is None when GitHub could not be asked, which is not the same answer as the empty
-    list: the first leaves the project's GitHub owners alone, the second retires them.
-    """
-
-    team_ids: list[str] | None
 
 
 class _HolderBinding(NamedTuple):
@@ -194,45 +180,6 @@ class _HolderBinding(NamedTuple):
     team_id: int
     slug: str
     team: dict[str, Any] | None
-
-
-class _RepositoryHolder(NamedTuple):
-    """A team holding the repository: its Dependency Control document and how to address it."""
-
-    team: dict[str, Any]
-    team_id: int
-    slug: str
-
-
-class GitHubEmailLookup(NamedTuple):
-    """A login's public profile email.
-
-    ``determined`` is False for a GitHub that would not answer — throttled, refused or timed out —
-    which is not the same as a profile that hides its email.
-    """
-
-    email: str | None
-    determined: bool = True
-
-
-class _MemberResolution(NamedTuple):
-    """The local user one GitHub login names.
-
-    ``undetermined`` is a lookup GitHub refused. A member counted as resolving to nobody is retired
-    from the team and loses their role on every project it owns, so a throttled read must not say
-    that: it is the same undetermined-versus-empty distinction the rest of this sync draws.
-    """
-
-    user: dict[str, Any] | None
-    undetermined: bool = False
-
-
-class _ResolvedMembers(NamedTuple):
-    """One team's members as this instance resolves them, with what went unanswered beside them."""
-
-    members: list[TeamMember]
-    unresolved: int
-    undetermined: int
 
 
 class GitHubCoreRateLimit(NamedTuple):
@@ -267,6 +214,7 @@ class GitHubService:
 
     def __init__(self, github_instance: GitHubInstance):
         self.instance = github_instance
+        self._instance_id = str(github_instance.id)
         self.base_url = github_instance.url.rstrip("/")
         self._cache_key_prefix = f"gh_instance:{github_instance.id}"
 
@@ -344,57 +292,64 @@ class GitHubService:
             logger.exception("GitHub API PATCH %s failed: %s", endpoint, e)
             return None
 
+    async def _iter_pages(
+        self,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        max_pages: int | None = 10,
+    ) -> AsyncGenerator[list[dict[str, Any]] | None]:
+        """Each page of a Link-header-paginated GET, then a final None if one failed; a hit ``max_pages`` warns."""
+        if not self.instance.access_token or self.api_url is None:
+            yield None
+            return
+
+        failed = False
+        page = 1
+        item_count = 0
+        try:
+            async with self._api_client() as client:
+                while max_pages is None or page <= max_pages:
+                    response = await client.get(
+                        f"{self.api_url}{endpoint}",
+                        headers=self._get_auth_headers(),
+                        params={**(params or {}), "page": page, "per_page": 100},
+                    )
+                    if response.status_code != 200:
+                        logger.error(
+                            f"GitHub API GET {sanitize_for_log(endpoint)} page {page} failed: {response.status_code}"
+                        )
+                        failed = True
+                        break
+
+                    items = response.json()
+                    if not items:
+                        break
+                    item_count += len(items)
+                    yield items
+
+                    if 'rel="next"' not in response.headers.get("link", ""):
+                        break
+                    if self._cap_reached(endpoint, page, max_pages, item_count):
+                        break
+                    page += 1
+        except Exception as e:
+            logger.exception("GitHub API paginated GET %s failed: %s", sanitize_for_log(endpoint), e)
+            failed = True
+        if failed:
+            yield None
+
     async def _api_get_paginated(
         self,
         endpoint: str,
         params: dict[str, Any] | None = None,
         max_pages: int | None = 10,
     ) -> list[dict[str, Any]] | None:
-        """Paginated GET via GitHub's Link header; returns all items or None on failure.
-
-        ``max_pages=None`` fetches all pages uncapped; a hit finite cap logs a
-        truncation WARNING.
-        """
-        if not self.instance.access_token or self.api_url is None:
-            return None
-
+        """Every item of a paginated GET, or None when a page failed."""
         all_items: list[dict[str, Any]] = []
-        page = 1
-        per_page = 100
-
-        try:
-            async with self._api_client() as client:
-                while max_pages is None or page <= max_pages:
-                    request_params = {**(params or {}), "page": page, "per_page": per_page}
-                    response = await client.get(
-                        f"{self.api_url}{endpoint}",
-                        headers=self._get_auth_headers(),
-                        params=request_params,
-                    )
-
-                    if response.status_code != 200:
-                        logger.error(
-                            f"GitHub API GET {sanitize_for_log(endpoint)} page {page} failed: {response.status_code}"
-                        )
-                        return None
-
-                    items = response.json()
-                    if not items:
-                        break
-
-                    all_items.extend(items)
-
-                    if 'rel="next"' not in response.headers.get("link", ""):
-                        break
-                    if self._cap_reached(endpoint, page, max_pages, len(all_items)):
-                        break
-
-                    page += 1
-
-        except Exception as e:
-            logger.exception("GitHub API paginated GET %s failed: %s", sanitize_for_log(endpoint), e)
-            return None
-
+        async for items in self._iter_pages(endpoint, params, max_pages):
+            if items is None:
+                return None
+            all_items.extend(items)
         return all_items
 
     @staticmethod
@@ -420,42 +375,48 @@ class GitHubService:
 
     async def get_default_branch(self, owner: str, repo: str) -> str | None:
         """The repository's default branch. Returns None on API failure."""
-        response = await self._api_get(f"/repos/{owner}/{repo}")
-        if response and response.status_code == 200:
-            branch = response.json().get("default_branch")
-            return str(branch) if branch else None
-        return None
-
-    async def _get_cached_list(self, cache_key: str) -> list[dict[str, Any]] | None:
-        cached: list[dict[str, Any]] | None = await cache_service.get(cache_key)
-        return cached
-
-    async def _get_cached_all_pages(self, cache_key: str, endpoint: str) -> list[dict[str, Any]] | None:
-        cached = await self._get_cached_list(cache_key)
-        if cached is not None:
-            return cached
-
-        items = await self._api_get_paginated(endpoint, max_pages=None)
-        if items is None:
+        endpoint = f"/repos/{owner}/{repo}"
+        response = await self._api_get(endpoint)
+        if response is None or not response_ok("GitHub", endpoint, response):
             return None
-        await cache_service.set(cache_key, items, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
-        return items
+        branch = response.json().get("default_branch")
+        return str(branch) if branch else None
 
-    async def get_team_repository(self, org: str, team_slug: str, owner: str, repo: str) -> bool | None:
+    async def _cached(
+        self,
+        suffix: str,
+        fetch: Callable[[], Awaitable[Any]],
+        expected_type: type,
+        *,
+        ttl_seconds: int = GITHUB_TEAM_SYNC_CACHE_TTL,
+        max_wait_seconds: float = 5.0,
+    ) -> Any:
+        """One fetch per key and TTL across every pod, its None cached for the TTL as well."""
+
+        async def wrapped() -> dict[str, Any]:
+            return {_CACHED_FIELD: await fetch()}
+
+        cached = await cache_service.get_or_fetch_with_lock(
+            self._get_cache_key(suffix), wrapped, ttl_seconds=ttl_seconds, max_wait_seconds=max_wait_seconds
+        )
+        value = cached.get(_CACHED_FIELD) if isinstance(cached, dict) else None
+        return value if isinstance(value, expected_type) else None
+
+    async def team_writes_to_repository(self, org: str, team_slug: str, team_id: int, repo: str) -> bool | None:
         """Whether one team holds one repository with write access or better; None when GitHub did
         not answer.
 
         Answers on a read-only organisation token, which asking the repository for its teams
         cannot: that requires the admin role on every single repository.
         """
-        cache_key = self._get_cache_key(f"team_repo:{org}/{team_slug}:{owner}/{repo}")
-        # Wrapped in a document because a bare cached False is indistinguishable from a miss.
-        cached: dict[str, Any] | None = await cache_service.get(cache_key)
+        cache_key = self._get_cache_key(f"team_write:{org}/{team_id}:{org}/{repo}")
+        cached: bool | None = await cache_service.get(cache_key)
         if cached is not None:
-            return bool(cached["has_repo"])
+            return cached
 
-        endpoint = f"/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}"
-        response = await self._api_get(endpoint, accept=_REPOSITORY_ACCEPT)
+        endpoint = f"/orgs/{org}/teams/{team_slug}/repos/{org}/{repo}"
+        async with _org_walk_gate(self._instance_id):
+            response = await self._api_get(endpoint, accept=_REPOSITORY_ACCEPT)
         if response is None:
             return None
 
@@ -470,94 +431,120 @@ class GitHubService:
                     "is; the holder stays undetermined.",
                     org,
                     team_slug,
-                    owner,
+                    org,
                     repo,
                 )
                 return None
-            has_repo = writes
         elif response.status_code == 404:
-            has_repo = False
+            writes = False
         else:
             # A refusal read as "this team does not hold the repository" would retire the team
             # from every project it owns.
             logger.warning("GitHub API GET %s returned HTTP %d", endpoint, response.status_code)
             return None
 
-        await cache_service.set(cache_key, {"has_repo": has_repo}, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
-        return has_repo
+        await cache_service.set(cache_key, writes, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
+        return writes
+
+    async def _repository_visible(self, org: str, repo: str) -> bool | None:
+        """Whether the token can see the repository at all; None when GitHub did not answer."""
+
+        async def fetch() -> bool | None:
+            endpoint = f"/repos/{org}/{repo}"
+            async with _org_walk_gate(self._instance_id):
+                response = await self._api_get(endpoint)
+            if response is None:
+                return None
+            if response.status_code != 200:
+                logger.warning(
+                    "GitHub API GET %s returned HTTP %d; the token cannot see the repository.",
+                    endpoint,
+                    response.status_code,
+                )
+                return False
+            return True
+
+        visible: bool | None = await self._cached(f"repository_visible:{org}/{repo}", fetch, bool)
+        return visible
 
     async def get_org_teams(self, org: str) -> list[dict[str, Any]] | None:
         """Every team of an organisation, with the parent that tells two same-named ones apart."""
-        return await self._get_cached_all_pages(self._get_cache_key(f"org_teams:{org}"), f"/orgs/{org}/teams")
 
-    async def _list_team_repositories(self, org: str, slug: str) -> list[str] | None:
+        async def fetch() -> list[dict[str, Any]] | None:
+            async with _org_walk_gate(self._instance_id):
+                teams = await self._api_get_paginated(f"/orgs/{org}/teams", max_pages=None)
+            if teams is None:
+                return None
+            return [
+                {
+                    "id": team.get("id"),
+                    "slug": team.get("slug"),
+                    "name": team.get("name"),
+                    "parent": {"name": parent["name"]}
+                    if (parent := team.get("parent")) and parent.get("name")
+                    else None,
+                }
+                for team in teams
+            ]
+
+        teams: list[dict[str, Any]] | None = await self._cached(f"org_team_list:{org}", fetch, list)
+        return teams
+
+    async def _list_team_repositories(self, org: str, slug: str, budget: asyncio.Timeout) -> list[str] | None:
         """The full names one team may write to, lower-cased; None when a page went unanswered or
         did not say what the team's access is.
 
         A team with mere read access is not an owner: the people who can change the code are.
         """
-        async with _org_walk_gate():
-            repos = await self._api_get_paginated(f"/orgs/{org}/teams/{slug}/repos", max_pages=None)
-        if repos is None:
-            return None
-
         written: list[str] = []
-        for repository in repos:
-            writes = _team_writes_to(repository)
-            if writes is None:
-                logger.warning(
-                    "GitHub listed a repository of team %s/%s without the team's permissions; the "
-                    "organisation's holders stay undetermined.",
-                    org,
-                    slug,
-                )
-                return None
-            if writes and (full_name := repository.get("full_name")):
-                written.append(str(full_name).lower())
+        async with _org_walk_gate(self._instance_id):
+            if budget.when() is None:
+                budget.reschedule(asyncio.get_running_loop().time() + _GITHUB_ORG_WALK_TIMEOUT)
+            async with aclosing(self._iter_pages(f"/orgs/{org}/teams/{slug}/repos", max_pages=None)) as pages:
+                async for repositories in pages:
+                    if repositories is None:
+                        return None
+                    for repository in repositories:
+                        writes = _team_writes_to(repository)
+                        if writes is None:
+                            logger.warning(
+                                "GitHub listed a repository of team %s/%s without the team's permissions; "
+                                "the organisation's holders stay undetermined.",
+                                org,
+                                slug,
+                            )
+                            return None
+                        if writes and (full_name := repository.get("full_name")):
+                            written.append(str(full_name).lower())
         return written
 
-    async def _fetch_org_repository_map(self, org: str, org_teams: list[dict[str, Any]]) -> dict[str, list[int]] | None:
-        """Walk every team of the organisation. None when one of them went unanswered.
-
-        Half a walk names the wrong holders rather than fewer of them: the teams it did not reach
-        would read as teams that hold nothing, so a partial result is no result.
-        """
-        addressed = [
-            (team_id, slug)
-            for team in org_teams
-            if (team_id := _team_id(team)) is not None and (slug := _team_slug(team)) is not None
-        ]
-        listings = await asyncio.gather(*(self._list_team_repositories(org, slug) for _id, slug in addressed))
+    async def _walk_org_repository_map(self, org: str, slug_map: dict[int, str]) -> dict[str, list[int]] | None:
+        """None unless every team answered within budget: an unreached team would read as holding nothing."""
+        try:
+            async with asyncio.timeout(None) as budget:
+                listings = await asyncio.gather(
+                    *(self._list_team_repositories(org, slug, budget) for slug in slug_map.values())
+                )
+        except TimeoutError:
+            logger.warning(
+                "Walking the %d team(s) of GitHub organisation %s took longer than %.0fs; the "
+                "organisation stays undetermined until the entry expires, rather than being walked "
+                "again by every ingest.",
+                len(slug_map),
+                org,
+                _GITHUB_ORG_WALK_TIMEOUT,
+            )
+            return None
 
         repo_map: dict[str, list[int]] = {}
-        for (team_id, _slug), repositories in zip(addressed, listings, strict=True):
+        for team_id, repositories in zip(slug_map, listings, strict=True):
             if repositories is None:
                 return None
             for full_name in repositories:
                 repo_map.setdefault(full_name, []).append(team_id)
         return repo_map
 
-    async def _walk_org_repository_map(self, org: str, org_teams: list[dict[str, Any]]) -> dict[str, Any] | None:
-        """The walk wrapped for the cache; None when it failed or outlasted its own budget.
-
-        Wrapped in a field rather than cached bare because the locking helper stores a failed fetch
-        as ``{}``, and that unwrapped would read as an organisation whose teams hold nothing.
-        """
-        try:
-            repo_map = await asyncio.wait_for(self._fetch_org_repository_map(org, org_teams), _GITHUB_ORG_WALK_TIMEOUT)
-        except TimeoutError:
-            logger.warning(
-                "Walking the %d team(s) of GitHub organisation %s took longer than %.0fs; the "
-                "organisation stays undetermined until the entry expires, rather than being walked "
-                "again by every ingest.",
-                len(org_teams),
-                org,
-                _GITHUB_ORG_WALK_TIMEOUT,
-            )
-            return None
-        return None if repo_map is None else {_ORG_REPO_MAP_FIELD: repo_map}
-
-    async def get_org_repository_map(self, org: str, org_teams: list[dict[str, Any]]) -> dict[str, list[int]] | None:
+    async def get_org_repository_map(self, org: str, slug_map: dict[int, str]) -> dict[str, list[int]] | None:
         """Repository full name -> the teams of ``org`` holding it; None when the walk did not finish.
 
         Asking the repository which teams hold it needs the admin role on that repository, so the
@@ -565,15 +552,15 @@ class GitHubService:
         organisation and TTL, behind the stampede lock: the jobs of one workflow run arrive
         together, and eight of them walking a 204-team organisation is 1632 of 5000 hourly requests.
         """
-        cache_key = self._get_cache_key(f"org_repo_map:{org}")
-        cached = await cache_service.get_or_fetch_with_lock(
-            cache_key,
-            lambda: self._walk_org_repository_map(org, org_teams),
+        repo_map: dict[str, list[int]] | None = await self._cached(
+            f"org_repository_map:{org}",
+            lambda: self._walk_org_repository_map(org, slug_map),
+            dict,
             ttl_seconds=GITHUB_ORG_REPO_MAP_CACHE_TTL,
-            max_wait_seconds=_GITHUB_ORG_WALK_LOCK_WAIT,
+            # The walk's budget starts at the gate, so only deadlines bound it; a waiter's own ends its wait first.
+            max_wait_seconds=_GITHUB_RESOLUTION_TIMEOUT,
         )
-        repositories = cached.get(_ORG_REPO_MAP_FIELD) if isinstance(cached, dict) else None
-        return repositories if isinstance(repositories, dict) else None
+        return repo_map
 
     async def count_org_teams(self, org: str) -> int | None:
         """How many teams the token can read in an organisation; None when the API refuses.
@@ -586,21 +573,20 @@ class GitHubService:
 
     async def get_team_members(self, org: str, team_slug: str, team_id: int) -> list[dict[str, Any]] | None:
         """Logins tagged with their role. Cached on the numeric id: the slug is renameable."""
-        cache_key = self._get_cache_key(f"team_members:{org}/{team_id}")
-        cached = await self._get_cached_list(cache_key)
-        if cached is not None:
-            return cached
 
-        endpoint = f"/orgs/{org}/teams/{team_slug}/members"
-        members: list[dict[str, Any]] = []
-        # The endpoint returns plain user objects, so the role can only come from the query.
-        for role in ("maintainer", "member"):
-            page = await self._api_get_paginated(endpoint, params={"role": role}, max_pages=None)
-            if page is None:
-                return None
-            members.extend({"login": user["login"], "role": role} for user in page if user.get("login"))
+        async def fetch() -> list[dict[str, Any]] | None:
+            endpoint = f"/orgs/{org}/teams/{team_slug}/members"
+            members: list[dict[str, Any]] = []
+            # The endpoint returns plain user objects, so the role can only come from the query.
+            for github_role, role in _GITHUB_TEAM_ROLES:
+                async with _org_walk_gate(self._instance_id):
+                    page = await self._api_get_paginated(endpoint, params={"role": github_role}, max_pages=None)
+                if page is None:
+                    return None
+                members.extend({"login": user["login"], "role": role} for user in page if user.get("login"))
+            return members
 
-        await cache_service.set(cache_key, members, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
+        members: list[dict[str, Any]] | None = await self._cached(f"team_member_roles:{org}/{team_id}", fetch, list)
         return members
 
     async def get_viewer_organisations(self) -> list[dict[str, Any]] | None:
@@ -627,96 +613,107 @@ class GitHubService:
             logger.warning("GitHub rate limit response could not be read: %s", e)
             return None
 
-    async def get_user_public_email(self, login: str) -> GitHubEmailLookup:
-        """The public profile email. Cached per login: this is the one per-member call of a sync,
-        and the jobs of one workflow run must not repeat it."""
-        cache_key = self._get_cache_key(f"user_email:{login}")
-        # "" is the stored "no public email": a cached None reads back as a miss, and the bots that
-        # never resolve are exactly the logins not worth asking about twice.
-        cached: str | None = await cache_service.get(cache_key)
-        if cached is not None:
-            return GitHubEmailLookup(cached or None)
-
+    async def _fetch_public_email(self, login: str) -> str | None:
+        """The profile's public email, "" when it shows none; None when GitHub would not answer."""
         response = await self._api_get(f"/users/{login}")
         if response is None:
-            return GitHubEmailLookup(None, determined=False)
-        if response.status_code == 200:
-            profile_email = _json_document(response).get("email")
-            email = str(profile_email) if profile_email else ""
-        elif response.status_code == 404:
-            email = ""
-        else:
-            # A refusal read as "no public email" would silently disable email matching for every
-            # member; caching it would extend that to every later job of the run.
+            return None
+        if response.status_code == 404:
+            return ""
+        if response.status_code != 200:
             logger.warning("GitHub API GET /users/%s failed: %s", login, response.status_code)
-            return GitHubEmailLookup(None, determined=False)
+            return None
+        return str(_json_document(response).get("email") or "")
 
-        await cache_service.set(cache_key, email, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
-        return GitHubEmailLookup(email or None)
+    async def _public_emails(self, logins: list[str]) -> dict[str, str] | None:
+        """Login -> public email ("" for none); None once GitHub refused one, which cancels the reads still queued."""
+        keys = {login: self._get_cache_key(f"user_email:{login}") for login in logins}
+        cached = await cache_service.mget(list(keys.values()))
+        emails = {login: value for login, key in keys.items() if isinstance(value := cached.get(key), str)}
+        refused = False
 
-    async def resolve_login(self, login: str, user_repo: UserRepository) -> _MemberResolution:
-        """The EXISTING local user that verified the login's public email; a matching username proves nothing."""
-        lookup = await self.get_user_public_email(login)
-        if not lookup.determined:
-            return _MemberResolution(None, undetermined=True)
-        if lookup.email:
-            return _MemberResolution(await user_repo.get_raw_by_verified_email(lookup.email))
-        return _MemberResolution(None)
+        async def fetch(login: str) -> str | None:
+            nonlocal refused
+            async with _org_walk_gate(self._instance_id):
+                if refused:
+                    return None
+                email = await self._fetch_public_email(login)
+            refused = refused or email is None
+            return email
+
+        missing = [login for login in logins if login not in emails]
+        fetched = dict(zip(missing, await asyncio.gather(*(fetch(login) for login in missing)), strict=True))
+        answered = {login: email for login, email in fetched.items() if email is not None}
+        await cache_service.mset({keys[login]: email for login, email in answered.items()}, GITHUB_USER_EMAIL_CACHE_TTL)
+        return None if refused else {**emails, **answered}
+
+    async def _resolve_logins(self, logins: list[str], user_repo: UserRepository) -> dict[str, dict[str, Any]] | None:
+        """Login -> existing local user by verified public email, never by username; None when GitHub won't say."""
+        emails = await self._public_emails(logins)
+        if emails is None:
+            return None
+        wanted = sorted({email for email in emails.values() if email})
+        users = await user_repo.find_raw_by_verified_emails(wanted) if wanted else []
+        by_email = {str(user.get("email", "")).lower(): user for user in users}
+        return {login: user for login, email in emails.items() if email and (user := by_email.get(email.lower()))}
+
+    async def resolve_login(self, login: str, user_repo: UserRepository) -> dict[str, Any] | None:
+        """The EXISTING local user that verified the login's public email, if GitHub names one."""
+        return (await self._resolve_logins([login], user_repo) or {}).get(login)
 
     @property
     def _member_source(self) -> str:
         """The provenance of a member this instance resolves, and the subset its sync replaces."""
-        return team_source(TEAM_SOURCE_GITHUB, str(self.instance.id))
+        return team_source(TEAM_SOURCE_GITHUB, self._instance_id)
 
     async def _build_team_members(
         self,
         members: list[dict[str, Any]],
         user_repo: UserRepository,
-    ) -> _ResolvedMembers:
-        """Map GitHub members onto existing local users, tagged with this instance, plus how many
-        resolved to nobody and how many GitHub would not answer for."""
+    ) -> list[TeamMember] | None:
+        """GitHub members as existing local users tagged with this instance; None when GitHub won't answer for one."""
+        users = await self._resolve_logins([member["login"] for member in members], user_repo)
+        if users is None:
+            return None
         resolved: dict[str, TeamMember] = {}
-        unresolved = 0
-        undetermined = 0
         for member in members:
             login = member["login"]
-            resolution = await self.resolve_login(login, user_repo)
-            if resolution.undetermined:
-                undetermined += 1
-                continue
-            if resolution.user is None:
+            user = users.get(login)
+            if user is None:
                 # Sync never creates users; a real member is added on their next sync after
                 # logging in via OIDC.
-                unresolved += 1
                 logger.debug("Skipping GitHub member that resolved to no local user (login=%s).", login)
                 continue
-            role = TEAM_ROLE_ADMIN if member.get("role") == "maintainer" else TEAM_ROLE_MEMBER
-            user_id = str(resolution.user.get("_id", resolution.user.get("id")))
+            role = member["role"]
+            user_id = str(user["_id"])
             # Two logins can resolve to one local user. A duplicate entry breaks add_member's $ne
             # guard, and the next sync's last-wins merge would silently demote the admin entry.
             previous = resolved.get(user_id)
             if previous is not None and previous.role == TEAM_ROLE_ADMIN:
                 continue
             resolved[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
-        return _ResolvedMembers(list(resolved.values()), unresolved, undetermined)
+        return list(resolved.values())
 
     @staticmethod
-    def _renamed_fields(team: dict[str, Any], org: str, team_slug: str) -> dict[str, Any]:
-        """The name to follow GitHub with, while the team still carries the generated one.
-
-        A team its owner renamed keeps that name for good: only the prefix marks a name as ours.
-        """
-        current = str(team.get("name") or "")
-        generated = _auto_team_name(org, team_slug)
-        if not current.startswith(_AUTO_TEAM_NAME_PREFIX) or current == generated:
+    def _renamed_fields(team: dict[str, Any], binding: dict[str, Any], org: str, team_slug: str) -> dict[str, Any]:
+        """Rename only a team still named by this binding; another binding's name would flip back and forth."""
+        stored_org, stored_slug = binding.get("org"), binding.get("slug")
+        # Organisations are stored in whatever case they were first written in.
+        if (
+            not stored_org
+            or not stored_slug
+            or (stored_org.casefold(), stored_slug) == (org.casefold(), team_slug)
+            or str(team.get("name") or "").casefold() != _auto_team_name(stored_org, stored_slug).casefold()
+        ):
             return {}
-        return {"name": generated, "description": _auto_team_description(org, team_slug)}
+        return {"name": _auto_team_name(org, team_slug), "description": _auto_team_description(org, team_slug)}
 
     async def _refresh_team(
         self,
         team_repo: TeamRepository,
         org: str,
-        holder: "_RepositoryHolder",
+        holder: _HolderBinding,
+        team: dict[str, Any],
         team_members: list[TeamMember] | None,
     ) -> None:
         """Write what GitHub has since changed about a holding team.
@@ -724,8 +721,8 @@ class GitHubService:
         ``team_members`` is None to leave the stored members alone, which the rename must not hang
         on: barely a login resolves here, so a name would otherwise never follow a renamed team.
         """
-        team = holder.team
-        updates: dict[str, Any] = self._renamed_fields(team, org, holder.slug)
+        binding = binding_of(team, self._instance_id) or {}
+        updates: dict[str, Any] = self._renamed_fields(team, binding, org, holder.slug)
         # Handed to the server as the subset to replace rather than merged here: the snapshot is
         # several round trips old, and a member added in between would be written back out of the
         # team after the add had already reported success.
@@ -734,21 +731,17 @@ class GitHubService:
             if team_members is not None
             else None
         )
-        binding = binding_of(team, str(self.instance.id)) or {}
         # The binding is the numeric team id, so a renamed slug has to follow it.
         binding_fields = {"slug": holder.slug} if binding.get("slug") != holder.slug else {}
         if not updates and not binding_fields and subset is None:
             return
         await team_repo.update_with_binding(
             team["_id"],
-            {**updates, "updated_at": datetime.now(timezone.utc)},
-            self._binding(org, holder.team_id, holder.slug).key,
+            updates,
+            team_binding_key(TEAM_SOURCE_GITHUB, self._instance_id, holder.team_id),
             binding_fields,
             subset,
         )
-
-    def _binding(self, org: str, team_id: int, slug: str) -> GitHubTeamBinding:
-        return GitHubTeamBinding(instance_id=str(self.instance.id), org=org, external_id=team_id, slug=slug)
 
     async def _team_for_github_group(
         self,
@@ -756,7 +749,7 @@ class GitHubService:
         org: str,
         team_id: int,
         slug: str,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """The Dependency Control team for a GitHub team: the one bound to it, or a new one.
 
         A binding hands every member of that team project-admin over everything the group holds,
@@ -768,115 +761,76 @@ class GitHubService:
         sync does — would mean never creating anything. An empty team its owner fills by hand is
         worth more than a group that never appears.
         """
-        instance_id = str(self.instance.id)
-        existing = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, instance_id, team_id)
+        existing = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, self._instance_id, team_id)
         if existing:
             return existing
 
         team = Team(
             name=_auto_team_name(org, slug),
             description=_auto_team_description(org, slug),
-            bindings=[self._binding(org, team_id, slug)],
+            bindings=[GitHubTeamBinding(instance_id=self._instance_id, org=org, external_id=team_id, slug=slug)],
         )
-        try:
-            await team_repo.create(team)
-        except DuplicateKeyError:
-            # Another repository of the same organisation is being ingested and got here first.
-            concurrent = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, instance_id, team_id)
-            if concurrent is None:
-                raise
-            return concurrent
-        logger.info("Created team '%s' for GitHub team %s/%s (id=%d).", team.name, org, slug, team_id)
-        return team.model_dump(by_alias=True)
+        created = await team_repo.create_bound(team)
+        if created is not None and created["_id"] == team.id:
+            logger.info("Created team '%s' for GitHub team %s/%s (id=%d).", team.name, org, slug, team_id)
+        return created
 
     def _address_bound_teams(
         self,
         org: str,
-        owner: str,
         repo: str,
         bound_teams: list[dict[str, Any]],
         slug_map: dict[int, str],
-    ) -> list[tuple[dict[str, Any], int, str]] | None:
-        """Each bound team with the slug to ask about it, or None when one of them cannot be asked.
-
-        The organisation listing omits the teams the token cannot see, secret ones above all. Skipping
-        such a binding would hand the repository to whichever team did answer and report that as a
-        determined result, which is the very failure the per-team check exists to avoid.
-        """
+        holder_ids: list[int],
+        current_owner_ids: set[str],
+    ) -> list[_HolderBinding] | None:
+        """Mapped holders plus current owners, whom the listing can omit; None when an owner cannot be asked."""
         addressed = []
         for team in bound_teams:
-            team_id = (binding_of(team, str(self.instance.id)) or {}).get("external_id")
+            owns = str(team["_id"]) in current_owner_ids
+            team_id = (binding_of(team, self._instance_id) or {}).get("external_id")
             if not isinstance(team_id, int) or (slug := slug_map.get(team_id)) is None:
                 logger.warning(
-                    "Team %s is bound to GitHub team %s of %s, which the organisation listing does not "
-                    "show; the owner of %s/%s stays undetermined until the binding is corrected.",
+                    "Team %s is bound to GitHub team %s of %s, which the organisation listing does not show; %s.",
                     team.get("_id"),
                     team_id,
                     org,
-                    owner,
-                    repo,
+                    f"the owner of {org}/{repo} stays undetermined until the binding is corrected"
+                    if owns
+                    else f"leaving it out of {org}/{repo}",
                 )
-                return None
-            addressed.append((team, team_id, slug))
+                if owns:
+                    return None
+                continue
+            if owns or team_id in holder_ids:
+                addressed.append(_HolderBinding(team_id, slug, team))
         return addressed
 
     async def _collect_repository_candidates(
-        self,
-        org: str,
-        owner: str,
-        repo: str,
-        bound_teams: list[dict[str, Any]],
-        slug_map: dict[int, str],
+        self, org: str, repo: str, addressed: list[_HolderBinding]
     ) -> list[_HolderBinding] | None:
-        """The bound teams that hold the repository. None when a single check went unanswered:
-        an incomplete set would retire the owners whose answers are the ones missing.
-        """
-        addressed = self._address_bound_teams(org, owner, repo, bound_teams, slug_map)
-        if addressed is None:
-            return None
-
+        """The addressed teams holding the repository; None on any unanswered check, which would retire its owner."""
         accesses = await asyncio.gather(
-            *(self.get_team_repository(org, slug, owner, repo) for _team, _team_id, slug in addressed)
+            *(self.team_writes_to_repository(org, holder.slug, holder.team_id, repo) for holder in addressed)
         )
+        if None in accesses:
+            return None
+        return [holder for holder, writes in zip(addressed, accesses, strict=True) if writes]
 
-        holders: list[_HolderBinding] = []
-        for (team, team_id, slug), has_repo in zip(addressed, accesses, strict=True):
-            if has_repo is None:
-                return None
-            if has_repo:
-                holders.append(_HolderBinding(team_id, slug, team))
-        return holders
-
-    async def _discover_bindings(
+    def _discover_bindings(
         self,
         org: str,
-        owner: str,
         repo: str,
-        org_teams: list[dict[str, Any]],
-        bound_teams: list[dict[str, Any]],
+        holder_ids: list[int],
+        addressed: list[_HolderBinding],
         slug_map: dict[int, str],
-    ) -> list[_HolderBinding] | None:
-        """The organisation's own groups holding the repository, addressed but not yet created.
-
-        Asked on every sync rather than only when nothing bound holds the repository: a group
-        granted access after the first owner was found would otherwise never be seen. The walk it
-        reads is cached per organisation, so an ingest pays for it once a TTL.
-        """
-        repo_map = await self.get_org_repository_map(org, org_teams)
-        if repo_map is None:
-            logger.warning(
-                "Could not map the teams of GitHub organisation %s onto its repositories; leaving %s/%s untouched.",
-                org,
-                owner,
-                repo,
-            )
-            return None
-
-        bound_ids = {(binding_of(team, str(self.instance.id)) or {}).get("external_id") for team in bound_teams}
+    ) -> list[_HolderBinding]:
+        """Unbound groups holding the repository, read every sync so a group granted access later is found."""
+        # Already asked about this repository directly, and that answer is the fresher one.
+        asked = {holder.team_id for holder in addressed}
         bindings: list[_HolderBinding] = []
-        for team_id in repo_map.get(f"{owner}/{repo}".lower(), []):
-            if team_id in bound_ids:
-                # Already asked about this repository directly, and that answer is the fresher one.
+        for team_id in holder_ids:
+            if team_id in asked:
                 continue
             slug = slug_map.get(team_id)
             if slug is None:
@@ -885,7 +839,7 @@ class GitHubService:
                     "GitHub team %d holds %s/%s in the cached map of %s but the organisation no longer "
                     "lists it; leaving it out.",
                     team_id,
-                    owner,
+                    org,
                     repo,
                     org,
                 )
@@ -896,187 +850,165 @@ class GitHubService:
     async def _resolve_repository_holders(
         self,
         org: str,
-        owner: str,
         repo: str,
         bound_teams: list[dict[str, Any]],
+        current_owner_ids: set[str],
     ) -> list[_HolderBinding] | None:
         """Every GitHub team holding the repository, or None when GitHub could not answer for all
         of them. Reads only: nothing is written before the whole set is known."""
         org_teams = await self.get_org_teams(org)
         if org_teams is None:
             logger.warning(
-                "Could not list the teams of GitHub organisation %s; leaving %s/%s untouched.", org, owner, repo
+                "Could not list the teams of GitHub organisation %s; leaving %s/%s untouched.", org, org, repo
             )
             return None
 
         slug_map = build_team_slug_map(org_teams)
-        bound = await self._collect_repository_candidates(org, owner, repo, bound_teams, slug_map)
+        repo_map = await self.get_org_repository_map(org, slug_map)
+        if repo_map is None:
+            logger.warning(
+                "Could not map the teams of GitHub organisation %s onto its repositories; leaving %s/%s untouched.",
+                org,
+                org,
+                repo,
+            )
+            return None
+
+        holder_ids = repo_map.get(f"{org}/{repo}".lower(), [])
+        addressed = self._address_bound_teams(org, repo, bound_teams, slug_map, holder_ids, current_owner_ids)
+        if addressed is None:
+            return None
+        bound = await self._collect_repository_candidates(org, repo, addressed)
         if bound is None:
             return None
-        discovered = await self._discover_bindings(org, owner, repo, org_teams, bound_teams, slug_map)
-        if discovered is None:
-            return None
-        return [*bound, *discovered]
-
-    async def _materialise_holders(
-        self,
-        team_repo: TeamRepository,
-        org: str,
-        bindings: list[_HolderBinding],
-    ) -> list[_RepositoryHolder]:
-        """Each holding group as the team that owns the project, adopted or created where needed."""
-        holders = []
-        for binding in bindings:
-            team = binding.team or await self._team_for_github_group(team_repo, org, binding.team_id, binding.slug)
-            holders.append(_RepositoryHolder(team, binding.team_id, binding.slug))
-        return holders
+        holders = [*bound, *self._discover_bindings(org, repo, holder_ids, addressed, slug_map)]
+        # GitHub answers 404 for a repository the token cannot see exactly as for a team without access to it.
+        if holders or await self._repository_visible(org, repo):
+            return holders
+        return None
 
     async def _resolve_holder_members(
         self,
         user_repo: UserRepository,
         org: str,
-        holder: _RepositoryHolder,
-        repository_path: str,
+        repo: str,
+        holder: _HolderBinding,
     ) -> list[TeamMember] | None:
         """The members to store for a holding team, or None to leave the stored ones alone."""
         # An empty list is a team nobody is left in, and its members must go; only None is a failure.
         members = await self.get_team_members(org, holder.slug, holder.team_id)
         if members is None:
             logger.warning(
-                "Failed to fetch members for GitHub team %s/%s (id=%d) while syncing %s. Skipping member sync.",
+                "Failed to fetch members for GitHub team %s/%s (id=%d) while syncing %s/%s. Skipping member sync.",
                 org,
                 holder.slug,
                 holder.team_id,
-                repository_path,
+                org,
+                repo,
             )
             return None
 
-        team_members, unresolved, undetermined = await self._build_team_members(members, user_repo)
-        if undetermined:
+        team_members = await self._build_team_members(members, user_repo)
+        if team_members is None:
             # Whoever GitHub would not answer for is absent from the resolved set, and writing it
             # would retire them from the team along with the role it gives them on its projects.
             logger.warning(
-                "GitHub would not say who %d of the %d members of team %s/%s (id=%d) are while "
-                "syncing %s; leaving the existing members untouched.",
-                undetermined,
+                "GitHub would not say who the %d members of team %s/%s (id=%d) are while syncing %s/%s; "
+                "leaving the existing members untouched.",
                 len(members),
                 org,
                 holder.slug,
                 holder.team_id,
-                repository_path,
-            )
-            return None
-        if unresolved and not team_members:
-            # A token that lost profile access resolves nobody; writing that would strip the
-            # whole github subset and read as a team everyone left.
-            logger.warning(
-                "Resolved 0 of %d members of GitHub team %s/%s (id=%d) while syncing %s; "
-                "leaving the existing members untouched.",
-                unresolved,
                 org,
-                holder.slug,
-                holder.team_id,
-                repository_path,
+                repo,
             )
-            return None
         return team_members
-
-    async def _sync_holder(
-        self,
-        team_repo: TeamRepository,
-        user_repo: UserRepository,
-        org: str,
-        holder: _RepositoryHolder,
-        repository_path: str,
-    ) -> None:
-        """Refresh one holding team. Best effort: the team owns the project either way."""
-        members = await self._resolve_holder_members(user_repo, org, holder, repository_path)
-        await self._refresh_team(team_repo, org, holder, members)
 
     async def sync_team_from_github(
         self,
         db: AsyncIOMotorDatabase,
-        org: str,
         repository_path: str,
         *,
+        current_owner_ids: set[str],
         owner_budget: int = MAX_PROJECT_TEAMS,
-    ) -> GitHubTeamSyncResult:
-        """Every team that holds the repository on GitHub, creating one for a group not bound yet.
-
-        All of them, not the best of them: each one's members are people who work on the
-        repository, and ranking them would hand the project to one team and hide it from the rest.
-
-        ``owner_budget`` is how many owners the project has room for, which is the whole cap for one
-        that has no others. Past it nothing is created and nothing is written: a team created for an
-        ownership write that is then refused is a team nobody owns anything through.
-
-        Both ingest paths call this only for an instance whose ``sync_teams`` is on, so the switch
-        is not read again here.
-
-        Never raises.
-        """
+    ) -> TeamSyncResult:
+        """All teams holding the repository, creating unbound ones only within ``owner_budget``; never raises."""
         try:
-            owner, _, repo = repository_path.partition("/")
+            parts = split_repo_path(repository_path)
+            if parts is None:
+                logger.warning(
+                    "GitHub repository claim %r names no owner/repo; leaving its owners untouched.", repository_path
+                )
+                return TeamSyncResult(None)
+            org, repo = parts
             team_repo = TeamRepository(db)
-            bound_teams = await team_repo.find_raw_by_github_org(str(self.instance.id), org)
+            bound_teams = await team_repo.find_raw_by_github_org(self._instance_id, org)
 
             deadline = asyncio.get_running_loop().time() + _GITHUB_RESOLUTION_TIMEOUT
             try:
                 async with asyncio.timeout_at(deadline):
-                    bindings = await self._resolve_repository_holders(org, owner, repo, bound_teams)
+                    holders = await self._resolve_repository_holders(org, repo, bound_teams, current_owner_ids)
             except TimeoutError:
                 logger.warning(
                     "Resolving the owning teams of %s took longer than %.0fs; leaving them untouched.",
                     repository_path,
                     _GITHUB_RESOLUTION_TIMEOUT,
                 )
-                return GitHubTeamSyncResult(None)
+                return TeamSyncResult(None)
 
-            if bindings is None:
+            if holders is None:
                 logger.warning(
                     "GitHub could not say which teams hold repository %s; leaving them untouched.", repository_path
                 )
-                return GitHubTeamSyncResult(None)
+                return TeamSyncResult(None)
 
-            if len(bindings) > owner_budget:
+            if len(holders) > owner_budget:
                 logger.warning(
                     "GitHub names %d team(s) holding %s %s but the project has room for %d owner(s); "
                     "leaving its owners untouched rather than creating teams it cannot own through.",
-                    len(bindings),
+                    len(holders),
                     repository_path,
-                    [binding.slug for binding in bindings],
+                    [holder.slug for holder in holders],
                     owner_budget,
                 )
-                return GitHubTeamSyncResult(None)
+                return TeamSyncResult(None)
 
             logger.info(
                 "GitHub team sync for %s: %d team(s) hold it %s.",
                 repository_path,
-                len(bindings),
-                [binding.slug for binding in bindings],
+                len(holders),
+                [holder.slug for holder in holders],
             )
 
             # Local writes, outside the deadline: the ownership answer below is what the ingest is
             # here for, and it needs every holder to have a team.
-            holders = await self._materialise_holders(team_repo, org, bindings)
+            teams: list[dict[str, Any]] = []
+            for holder in holders:
+                team = holder.team or await self._team_for_github_group(team_repo, org, holder.team_id, holder.slug)
+                if team is None:
+                    return TeamSyncResult(None)
+                teams.append(team)
             user_repo = UserRepository(db)
+            members: list[list[TeamMember] | None] = [None] * len(holders)
             try:
                 # The same deadline, so the reads and the member listing and profile read per team
                 # share one budget instead of each getting a whole one.
                 async with asyncio.timeout_at(deadline):
-                    for holder in holders:
-                        await self._sync_holder(team_repo, user_repo, org, holder, repository_path)
+                    for index, holder in enumerate(holders):
+                        members[index] = await self._resolve_holder_members(user_repo, org, repo, holder)
             except TimeoutError:
-                # The teams hold the repository either way, which is what the ingest asked; only
-                # their member lists stay as stored until a sync finishes inside the budget.
                 logger.warning(
-                    "Refreshing the members of the %d team(s) holding %s did not finish inside the "
-                    "%.0fs resolution budget; they still own it and their stored members stay as they are.",
+                    "Reading the members of the %d team(s) holding %s did not finish inside the %.0fs "
+                    "resolution budget; those not read keep their stored members, and every team still "
+                    "follows its GitHub name and slug.",
                     len(holders),
                     repository_path,
                     _GITHUB_RESOLUTION_TIMEOUT,
                 )
-            return GitHubTeamSyncResult([str(holder.team["_id"]) for holder in holders])
+            # Only the reads are bounded: cancelling a write would leave the team half-refreshed.
+            for holder, team, team_members in zip(holders, teams, members, strict=True):
+                await self._refresh_team(team_repo, org, holder, team, team_members)
+            return TeamSyncResult([str(team["_id"]) for team in teams])
 
         except Exception as e:
             logger.exception(
@@ -1085,13 +1017,15 @@ class GitHubService:
                 type(e).__name__,
                 e,
             )
-            return GitHubTeamSyncResult(None)
+            return TeamSyncResult(None)
 
-    async def get_pull_requests_for_commit(self, owner: str, repo: str, commit_sha: str) -> list[GitHubPullRequest]:
-        """Pull requests associated with a commit, retrying via the head parent when it is a merge commit."""
+    async def get_pull_requests_for_commit(
+        self, owner: str, repo: str, commit_sha: str
+    ) -> tuple[str, list[GitHubPullRequest]]:
+        """The sha that matched and its pull requests, retrying via the head parent when it is a merge commit."""
         pull_requests = await self._pull_requests_for_sha(owner, repo, commit_sha)
         if pull_requests:
-            return pull_requests
+            return commit_sha, pull_requests
 
         # A `pull_request` workflow checks out an ephemeral test-merge commit that GitHub associates with
         # no pull request (HTTP 200 and an empty list, never a 404); its parents[1] is the PR head.
@@ -1107,7 +1041,7 @@ class GitHubService:
                     [pr.number for pr in pull_requests],
                     head_sha,
                 )
-                return pull_requests
+                return head_sha, pull_requests
 
         logger.info(
             "No pull request found for %s/%s commit %s (head parent tried: %s)",
@@ -1116,12 +1050,12 @@ class GitHubService:
             commit_sha,
             head_sha or "none",
         )
-        return []
+        return commit_sha, []
 
     async def _pull_requests_for_sha(self, owner: str, repo: str, sha: str) -> list[GitHubPullRequest]:
         endpoint = f"/repos/{owner}/{repo}/commits/{sha}/pulls"
         response = await self._api_get(endpoint)
-        if response is None or not self._ok(endpoint, response):
+        if response is None or not response_ok("GitHub", endpoint, response):
             return []
         return [GitHubPullRequest(**pr) for pr in response.json()]
 
@@ -1129,21 +1063,13 @@ class GitHubService:
         """Second parent of a two-parent merge commit. Parent order is a git convention, not an API guarantee."""
         endpoint = f"/repos/{owner}/{repo}/commits/{commit_sha}"
         response = await self._api_get(endpoint)
-        if response is None or not self._ok(endpoint, response):
+        if response is None or not response_ok("GitHub", endpoint, response):
             return None
         parents = response.json().get("parents") or []
         if len(parents) != 2:
             return None
         head_sha = parents[1].get("sha")
         return str(head_sha) if head_sha else None
-
-    @staticmethod
-    def _ok(endpoint: str, response: httpx.Response) -> bool:
-        """True for 200. A rejected read must not be mistaken for an empty one, so a non-200 is logged here."""
-        if response.status_code == 200:
-            return True
-        logger.warning("GitHub API GET %s returned HTTP %d", endpoint, response.status_code)
-        return False
 
     async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment]:
         """Issue comments on a pull request, uncapped so an old scan comment is never missed and duplicated."""
@@ -1174,74 +1100,36 @@ class GitHubService:
             logger.error(f"Failed to update PR comment: {response.status_code} - {response.text}")
         return False
 
-    async def _get_jwks_uri(self) -> str | None:
-        """Resolve the JWKS URI: well-known endpoint for github.com, OIDC discovery for GHES."""
-        cache_key = self._get_cache_key("jwks_uri")
-
-        cached_uri = await cache_service.get(cache_key)
-        if cached_uri:
-            result: str = cached_uri
-            return result
-
+    async def _jwks_uris(self) -> list[str]:
         if "token.actions.githubusercontent.com" in self.base_url:
-            await cache_service.set(cache_key, _GITHUB_COM_JWKS_URI, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
-            return _GITHUB_COM_JWKS_URI
+            return [_GITHUB_COM_JWKS_URI]
+        discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
+        return [discovered or f"{self.base_url}/.well-known/jwks"]
 
-        async with InstrumentedAsyncClient("GitHub OIDC", timeout=10.0) as client:
-            try:
-                response = await client.get(f"{self.base_url}/.well-known/openid-configuration")
-                if response.status_code == 200:
-                    config = response.json()
-                    jwks_uri: str | None = config.get("jwks_uri")
-                    if jwks_uri:
-                        await cache_service.set(cache_key, jwks_uri, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
-                        return jwks_uri
-            except Exception as e:
-                logger.warning(f"Error fetching GitHub OIDC discovery: {e}")
-
-        fallback_uri = f"{self.base_url}/.well-known/jwks"
-        await cache_service.set(cache_key, fallback_uri, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
-        return fallback_uri
+    async def refresh_jwks(self) -> dict | None:
+        return await fetch_jwks(self._get_cache_key(f"jwks:{self.base_url}"), self._jwks_uris, "GitHub")
 
     async def get_jwks(self) -> dict | None:
-        """Fetch and Redis-cache the JWKS from GitHub."""
-        cache_key = self._get_cache_key("jwks")
-
-        cached_jwks = await cache_service.get(cache_key)
-        if cached_jwks:
-            result_jwks: dict[Any, Any] = cached_jwks
-            return result_jwks
-
-        async with InstrumentedAsyncClient("GitHub JWKS", timeout=10.0) as client:
-            try:
-                jwks_uri = await self._get_jwks_uri()
-
-                if jwks_uri:
-                    response = await client.get(jwks_uri)
-                    if response.status_code == 200:
-                        jwks: dict[Any, Any] = response.json()
-                        await cache_service.set(cache_key, jwks, ttl_seconds=GITHUB_JWKS_CACHE_TTL)
-                        return jwks
-
-                logger.error("Failed to fetch GitHub JWKS")
-            except Exception as e:
-                logger.exception("Error fetching GitHub JWKS: %s", e)
-        return {}
-
-    async def _invalidate_jwks_cache(self) -> None:
-        """Invalidate the JWKS cache to force a refresh on next request."""
-        cache_key = self._get_cache_key("jwks")
-        await cache_service.delete(cache_key)
+        """The instance's cached key set, fetched on a miss; None while the issuer serves none."""
+        cached: dict | None = await cache_service.get(self._get_cache_key(f"jwks:{self.base_url}"))
+        return cached or await self.refresh_jwks()
 
     async def validate_oidc_token(self, token: str) -> GitHubOIDCPayload | None:
         """Validate a GitHub Actions OIDC JWT, refreshing JWKS on key rotation."""
         return await _validate_oidc_token(
             token=token,
             get_jwks=self.get_jwks,
-            invalidate_cache=self._invalidate_jwks_cache,
+            refresh_jwks=self.refresh_jwks,
             issuer=self.base_url,
-            # `or None` normalizes "" -> None so unconfigured instances fail the audience check closed.
-            audience=self.instance.oidc_audience or None,
+            audience=self.instance.oidc_audience,
             payload_model=GitHubOIDCPayload,
             provider_name="GitHub",
         )
+
+    async def get_current_user_id(self) -> int | None:
+        """The id of the account the token belongs to; None when GET /user does not answer it."""
+        response = await self._api_get("/user")
+        if response is None or not response_ok("GitHub", "/user", response):
+            return None
+        user_id = _json_document(response).get("id")
+        return user_id if isinstance(user_id, int) else None

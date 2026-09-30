@@ -12,6 +12,10 @@ from datetime import datetime, timezone
 import pytest
 import pytest_asyncio
 
+from app.repositories.dependencies import DependencyRepository
+from app.services.dependency_store import store_scan_dependencies
+from app.services.sbom_parser import parse_sbom
+
 SCAN_ID = "scan-join"
 QUALIFIED = "com.fasterxml.jackson.core:jackson-databind"
 BARE = "jackson-databind"
@@ -311,10 +315,35 @@ async def test_declared_direct_still_outranks_inferred_direct_in_the_plan(db, se
     assert [s["direct_confidence"] for s in plan["plan"]] == ["declared", "inferred"]
 
 
+@pytest.mark.asyncio
+async def test_a_declared_direct_row_outranks_a_later_inferred_row_of_the_package(db, seeded):
+    from app.core.permissions import Permissions
+    from app.models.user import User
+    from app.services.chat.tools.registry import ChatToolRegistry
+
+    inferred = _dependency("d-inferred")
+    inferred.update(version="2.8.0", direct_inferred=True, purl=f"pkg:maven/com.fasterxml.jackson.core/{BARE}@2.8.0")
+    await db.dependencies.insert_one(inferred)
+    user = User(
+        id="ownerp",
+        username="ownerp",
+        email="o@example.com",
+        permissions=[Permissions.PROJECT_READ, Permissions.ANALYTICS_READ],
+    )
+    plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
+
+    assert plan["plan"][0]["direct_confidence"] == "declared"
+
+
 async def _analytics(client, path: str, headers: dict, **params):
     resp = await client.get(f"/api/v1/analytics/{path}", params=params, headers=headers)
     assert resp.status_code == 200, resp.text
     return resp.json()
+
+
+async def _store_cyclonedx(db, *components: dict) -> None:
+    sbom = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": list(components)}
+    await store_scan_dependencies([parse_sbom(sbom)], "p", SCAN_ID, DependencyRepository(db))
 
 
 @pytest.mark.asyncio
@@ -446,6 +475,64 @@ async def test_hotspot_type_comes_from_the_hotspot_s_own_scans_and_version(clien
 
     assert types["openssl"] == "deb"
     assert types["zlib"] == "apk/deb"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_hotspot_type_matches_the_version_whatever_its_v_prefix(client, db, seeded):
+    await db.dependencies.insert_one(
+        {
+            **_dependency("net-old", name="golang.org/x/net"),
+            "group": None,
+            "version": "v0.17.0",
+            "type": "golang",
+            "purl": "pkg:golang/golang.org/x/net@v0.17.0",
+        }
+    )
+    await db.dependencies.insert_one(
+        {
+            **_dependency("net-new", name="golang.org/x/net"),
+            "group": None,
+            "version": "v0.23.0",
+            "type": "library",
+            "purl": None,
+        }
+    )
+    await db.findings.insert_one({**_finding("f-net", "golang.org/x/net"), "version": "0.17.0"})
+
+    types = {row["component"]: row["type"] for row in await _analytics(client, "hotspots", seeded)}
+
+    assert types["golang.org/x/net"] == "golang"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_metadata_survives_rows_that_differ_only_in_stored_type(client, db, seeded):
+    lodash = {"type": "library", "name": "lodash", "version": "4.17.21"}
+    await _store_cyclonedx(
+        db,
+        lodash,
+        {**lodash, "purl": "pkg:npm/lodash@4.17.21", "licenses": [{"license": {"id": "MIT"}}]},
+    )
+
+    metadata = await _analytics(client, "dependency-metadata", seeded, component="lodash")
+
+    assert metadata is not None
+    assert (metadata["purl"], metadata["type"], metadata["license"]) == ("pkg:npm/lodash@4.17.21", "npm", "MIT")
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_metadata_does_not_merge_two_ecosystems_that_share_a_path(client, db, seeded):
+    debug = {"type": "library", "name": "debug", "version": "1.0.0"}
+    await _store_cyclonedx(
+        db,
+        {**debug, "purl": "pkg:npm/debug@1.0.0"},
+        {**debug, "purl": "pkg:pypi/debug@1.0.0"},
+        debug,
+    )
+
+    assert await _analytics(client, "dependency-metadata", seeded, component="debug") is None
 
 
 @pytest.mark.live_mongo

@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FindingsDeltaTab } from "../tabs/FindingsDeltaTab";
 import * as api from "@/api/scanDelta";
 import type { ScanDeltaResponse } from "@/types/scanDelta";
+import { formatDate } from "@/lib/utils";
 
 vi.mock("@/api/scanDelta");
 
@@ -87,6 +88,59 @@ describe("FindingsDeltaTab", () => {
       const calls = (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mock.calls;
       const lastCall = calls[calls.length - 1][0];
       expect(lastCall.severity).toEqual(["critical"]);
+    });
+  });
+
+  it("shows a changed record with both versions and the CVEs that moved", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ...sampleResponse,
+      totals: { ...sampleResponse.totals, changed: 1 },
+      items: [
+        {
+          change: "changed",
+          finding_id: "lodash:4.17.21",
+          finding_type: "vulnerability",
+          severity: "CRITICAL",
+          title: "",
+          component: "lodash",
+          cve_id: "CVE-2020-8203",
+          file_path: null,
+          first_seen: "2026-01-05T00:00:00Z",
+          from_version: "4.17.20",
+          to_version: "4.17.21",
+          added_cves: [],
+          dropped_cves: ["CVE-2020-8203"],
+        },
+      ],
+    });
+    renderTab();
+
+    const table = await screen.findByRole("table");
+    await waitFor(() => expect(within(table).getByText("↻ changed")).toBeInTheDocument());
+    expect(within(table).getByText("4.17.20 → 4.17.21")).toBeInTheDocument();
+    expect(within(table).getByText("−CVE-2020-8203")).toBeInTheDocument();
+    expect(screen.getByText("↻1")).toBeInTheDocument();
+  });
+
+  it("shows when a finding was first detected", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(sampleResponse);
+    renderTab();
+
+    const table = await screen.findByRole("table");
+    expect(within(table).getByRole("columnheader", { name: "First seen" })).toBeInTheDocument();
+    await waitFor(() => expect(within(table).getByText(formatDate("2026-05-11T08:00:00Z"))).toBeInTheDocument());
+  });
+
+  it("filters to changed records", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(sampleResponse);
+    renderTab();
+    await waitFor(() => expect(api.getScanDelta).toHaveBeenCalledTimes(1));
+
+    fireEvent.click(screen.getByRole("button", { name: /^changed$/i }));
+
+    await waitFor(() => {
+      const calls = (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls[calls.length - 1][0].change).toBe("changed");
     });
   });
 });

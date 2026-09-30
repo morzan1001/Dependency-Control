@@ -25,10 +25,9 @@ import asyncio
 import sys
 from typing import Any
 
-
 from app.core.config import settings
-from app.db.mongodb import create_client
 from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
+from app.db.mongodb import create_client
 
 DEFAULT_BATCH_SIZE = 200
 DEFAULT_SLEEP_MS = 50

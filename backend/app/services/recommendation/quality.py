@@ -1,15 +1,17 @@
-from collections import defaultdict
 from typing import Any
 
 from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
-from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
     sample_components,
+    sampled,
     scorecard_details,
     scorecard_score,
 )
+
+_PACKAGES_SAMPLED = 10
 
 
 def _keep_lowest(entries: dict[str, dict[str, Any]], entry: dict[str, Any]) -> None:
@@ -26,7 +28,8 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         return []
 
     recommendations = []
-    components_by_issue: dict[str, list[Any]] = defaultdict(list)
+    scorecard_vuln_components: set[str] = set()
+    code_review_components: set[str] = set()
     low_score_by_component: dict[str, dict[str, Any]] = {}
     unmaintained_by_component: dict[str, dict[str, Any]] = {}
 
@@ -40,7 +43,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         critical_issues = sc_details.get("critical_issues") or []
         failed_checks = sc_details.get("failed_checks") or []
         project_url = sc_details.get("project_url") or ""
-        has_maintenance = bool(details.get("has_maintenance_issues")) if isinstance(details, dict) else False
+        has_maintenance = bool(details.get("has_maintenance_issues"))
 
         if overall_score is not None and overall_score < SCORECARD_POOR_QUALITY_THRESHOLD:
             _keep_lowest(
@@ -48,7 +51,6 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 {
                     "component": component,
                     "score": overall_score,
-                    "project_url": project_url,
                     "critical_issues": critical_issues,
                 },
             )
@@ -59,12 +61,10 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 {"component": component, "score": overall_score, "project_url": project_url},
             )
 
-        for issue in critical_issues:
-            components_by_issue[issue].append(component)
-
-        for check in failed_checks:
-            check_name = check.get("name", "") if isinstance(check, dict) else check
-            components_by_issue[f"check:{check_name}"].append(component)
+        if "Vulnerabilities" in critical_issues:
+            scorecard_vuln_components.add(component)
+        if any(check.get("name") == "Code-Review" for check in failed_checks):
+            code_review_components.add(component)
 
     unmaintained_packages = list(unmaintained_by_component.values())
     unmaintained_shown, unmaintained_total = sample_components(unmaintained_by_component)
@@ -78,10 +78,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"Found {unmaintained_total} potentially unmaintained packages. "
                     "These packages may not receive security updates, putting your application at risk."
                 ),
-                impact={
-                    "total": unmaintained_total,
-                    "packages": unmaintained_shown,
-                },
+                impact={"total": 0},
                 affected_components=unmaintained_shown,
                 affected_components_total=unmaintained_total,
                 action={
@@ -93,22 +90,21 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         "Create a migration plan for each unmaintained dependency",
                         "Monitor OpenSSF Scorecard for updates to maintenance status",
                     ],
-                    "packages": [
-                        {
-                            "name": p["component"],
-                            "score": p["score"],
-                            "url": p.get("project_url"),
-                        }
-                        for p in unmaintained_packages[:10]
-                    ],
+                    **sampled(
+                        "packages",
+                        [
+                            {"name": p["component"], "score": p["score"], "url": p["project_url"]}
+                            for p in unmaintained_packages
+                        ],
+                        _PACKAGES_SAMPLED,
+                    ),
                 },
-                effort="high",
+                effort=Effort.HIGH,
             )
         )
 
-    vuln_packages = components_by_issue.get("Vulnerabilities", [])
-    vuln_shown, vuln_total = sample_components(sorted(set(vuln_packages)))
-    if vuln_packages:
+    vuln_shown, vuln_total = sample_components(sorted(scorecard_vuln_components))
+    if scorecard_vuln_components:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.SUPPLY_CHAIN_RISK,
@@ -118,9 +114,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"{vuln_total} packages have unaddressed security vulnerabilities "
                     "according to OpenSSF Scorecard. These need immediate attention."
                 ),
-                impact={
-                    "total": vuln_total,
-                },
+                impact={"total": 0},
                 affected_components=vuln_shown,
                 affected_components_total=vuln_total,
                 action={
@@ -132,7 +126,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         "If no fix is available, consider alternatives",
                     ],
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 
@@ -150,10 +144,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"scores below {SCORECARD_POOR_QUALITY_THRESHOLD}/10. "
                     "These packages may have quality, security, or maintenance concerns."
                 ),
-                impact={
-                    "total": low_score_total,
-                    "average_score": sum(p["score"] for p in low_score_packages) / low_score_total,
-                },
+                impact={"total": 0},
                 affected_components=low_score_shown,
                 affected_components_total=low_score_total,
                 action={
@@ -164,22 +155,21 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         "Consider alternatives with higher scorecard ratings",
                         "For critical packages, contribute to improving their security practices",
                     ],
-                    "packages": [
-                        {
-                            "name": p["component"],
-                            "score": p["score"],
-                            "issues": p.get("critical_issues", []),
-                        }
-                        for p in sorted(low_score_packages, key=lambda x: x["score"])[:10]
-                    ],
+                    **sampled(
+                        "packages",
+                        [
+                            {"name": p["component"], "score": p["score"], "issues": p["critical_issues"]}
+                            for p in sorted(low_score_packages, key=lambda x: x["score"])
+                        ],
+                        _PACKAGES_SAMPLED,
+                    ),
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 
-    code_review_issues = components_by_issue.get("check:Code-Review", [])
-    review_shown, review_total = sample_components(sorted(set(code_review_issues)))
-    if code_review_issues:
+    review_shown, review_total = sample_components(sorted(code_review_components))
+    if code_review_components:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.SUPPLY_CHAIN_RISK,
@@ -189,7 +179,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     f"{review_total} packages have limited or no code review processes. "
                     "This increases the risk of unreviewed malicious or buggy changes."
                 ),
-                impact={"total": review_total},
+                impact={"total": 0},
                 affected_components=review_shown,
                 affected_components_total=review_total,
                 action={
@@ -200,7 +190,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         "Consider pinning versions and manually reviewing changes",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 

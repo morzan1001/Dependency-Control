@@ -22,7 +22,6 @@ def make_gitlab_instance(
     access_token="glpat-test-token",
     oidc_audience="https://app.example.com",
     is_active=True,
-    is_default=False,
     auto_create_projects=True,
     sync_teams=True,
     created_by="admin",
@@ -36,7 +35,6 @@ def make_gitlab_instance(
         access_token=access_token,
         oidc_audience=oidc_audience,
         is_active=is_active,
-        is_default=is_default,
         auto_create_projects=auto_create_projects,
         sync_teams=sync_teams,
         created_by=created_by,
@@ -73,18 +71,22 @@ def make_oidc_payload(**kwargs):
     return OIDCPayload(**defaults)
 
 
+# The user GET /user resolves the instance token to.
+BOT_USER_ID = 4242
+
+
 def make_merge_request(**kwargs):
-    """Create a GitLabMergeRequest with sensible defaults."""
-    defaults = {"iid": 1, "state": "opened", "draft": False, "work_in_progress": False}
+    """A GitLabMergeRequest parsed from a GET /projects/:id/repository/commits/:sha/merge_requests item."""
+    defaults = {"iid": 1, "state": "opened", "draft": False, "work_in_progress": False, "sha": "abc"}
     defaults.update(kwargs)
-    return GitLabMergeRequest(**defaults)
+    return GitLabMergeRequest.model_validate(defaults)
 
 
-def make_note(**kwargs):
-    """Create a GitLabNote with sensible defaults."""
-    defaults = {"id": 1, "body": ""}
+def make_note(author_id=BOT_USER_ID, **kwargs):
+    """A GitLabNote parsed from a GET /projects/:id/merge_requests/:iid/notes item."""
+    defaults = {"id": 1, "body": "", "system": False, "author": {"id": author_id, "username": f"user{author_id}"}}
     defaults.update(kwargs)
-    return GitLabNote(**defaults)
+    return GitLabNote.model_validate(defaults)
 
 
 def make_member(**kwargs):
@@ -101,6 +103,12 @@ def make_project_details(namespace_kind="group", namespace_id=42, namespace_path
     )
 
 
+async def sync_team(service, project_details, **kwargs):
+    """A sync against a GitLab whose project read answers ``project_details``."""
+    with patch.object(service, "get_project_details", new=AsyncMock(return_value=project_details)):
+        return await service.sync_team_from_gitlab(**kwargs)
+
+
 @contextmanager
 def make_repositories(existing_team=None, user_doc=None) -> Iterator[tuple[MagicMock, MagicMock]]:
     """The two repositories a GitLab sync works through, recording what it hands them.
@@ -113,7 +121,7 @@ def make_repositories(existing_team=None, user_doc=None) -> Iterator[tuple[Magic
     team_repo = MagicMock()
     team_repo.get_raw_by_binding = AsyncMock(return_value=existing_team)
     team_repo.update_with_binding = AsyncMock()
-    team_repo.create = AsyncMock()
+    team_repo.create_bound = AsyncMock(side_effect=lambda team: team.model_dump(by_alias=True))
     team_repo.add_binding_if_absent = AsyncMock()
 
     user_repo = MagicMock()

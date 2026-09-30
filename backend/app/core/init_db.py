@@ -266,7 +266,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         sparse=True,  # null purl is permitted, won't conflict on uniqueness
     )
     await database["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
-    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
+    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
     # Bounds the anchored purl-prefix match of the per-scan enrichment copy to one scan's range.
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("purl", pymongo.ASCENDING)])
@@ -373,7 +373,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )  # The upsert key: without uniqueness two concurrent marks of one scan both insert.
     await database["releases"].create_index("scan_id")
 
-    await database["findings"].create_index([("created_at", pymongo.DESCENDING)])
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
     # _STATS_CURSOR_HINT hints this exact key pattern; an unsatisfiable hint errors, so without
     # this index every stats read fails rather than falling back to a scan.
@@ -433,7 +432,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["gitlab_instances"].create_index("url", unique=True)
     await database["gitlab_instances"].create_index("name", unique=True)
     await database["gitlab_instances"].create_index("is_active")
-    await database["gitlab_instances"].create_index("is_default")
 
     # GitHub Instances
     await database["github_instances"].create_index("url", unique=True)
@@ -600,17 +598,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["findings"].create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
     await database["findings"].create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
 
-    # Serves historical_first_seen (days_known): (component, version, type) prefix locates a vuln's
-    # rows, trailing scan_created_at lets $group take the earliest with an index min ($first).
-    await database["findings"].create_index(
-        [
-            ("component", pymongo.ASCENDING),
-            ("version", pymongo.ASCENDING),
-            ("type", pymongo.ASCENDING),
-            ("scan_created_at", pymongo.ASCENDING),
-        ]
-    )
-
     logger.info("Database indexes created successfully.")
 
 
@@ -633,6 +620,8 @@ async def init_db() -> None:
             email="admin@example.com",
             hashed_password=hashed_password,
             permissions=list(ALL_PERMISSIONS),
+            # admin@example.com can never receive a verification mail.
+            is_verified=True,
         )
 
         await user_collection.insert_one(user.model_dump(by_alias=True))

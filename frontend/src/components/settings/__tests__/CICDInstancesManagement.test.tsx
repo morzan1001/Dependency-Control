@@ -50,7 +50,7 @@ function githubInstance(overrides: Partial<GitHubInstance> = {}) {
           auto_create_projects: false,
           sync_teams: false,
           allowed_owner_ids: [],
-          has_access_token: true,
+          token_configured: true,
           created_at: '2026-09-01T00:00:00Z',
           created_by: 'admin',
           ...overrides,
@@ -70,7 +70,6 @@ function gitlabInstance(overrides: Partial<GitLabInstance> = {}) {
           name: 'Internal GitLab',
           url: 'https://gitlab.example.com',
           is_active: true,
-          is_default: true,
           auto_create_projects: false,
           sync_teams: true,
           team_sync_depth: 1,
@@ -140,6 +139,27 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     renderManagement()
 
     expect(within(screen.getByRole('table')).getByText('Sync Teams')).toBeInTheDocument()
+  })
+
+  it('badges each provider whose instance holds no token', () => {
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance({ token_configured: false }))
+    mockUseGitHubInstances.mockReturnValue(githubInstance({ token_configured: false }))
+
+    renderManagement()
+
+    const table = within(screen.getByRole('table'))
+    expect(table.getByText('No Token')).toBeInTheDocument()
+    expect(table.getByText('No PAT')).toBeInTheDocument()
+  })
+
+  it('badges no instance that holds a token', () => {
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+
+    renderManagement()
+
+    const table = within(screen.getByRole('table'))
+    expect(table.queryByText('No Token')).toBeNull()
+    expect(table.queryByText('No PAT')).toBeNull()
   })
 
   // Spec §8: GHES has no IdP team sync, so its teams may be hand-maintained and less
@@ -323,5 +343,37 @@ describe('CICDInstancesManagement owner and namespace allowlists', () => {
 
     await waitFor(() => expect(mockGitLabUpdate).toHaveBeenCalled())
     expect(mockGitLabUpdate.mock.calls[0][1]).toMatchObject({ allowed_namespaces: ['acme', 'acme-labs'] })
+  })
+
+  it('offers no default-instance flag on a GitLab instance', async () => {
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+    mockUseGitHubInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    renderManagement()
+
+    expect(within(screen.getByRole('table')).queryByText('Default')).toBeNull()
+    const dialog = openEditDialog(/Internal GitLab/)
+    expect(within(dialog).queryByLabelText('Default Instance')).toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Instance' }))
+
+    await waitFor(() => expect(mockGitLabUpdate).toHaveBeenCalled())
+    expect(mockGitLabUpdate.mock.calls[0][1]).not.toHaveProperty('is_default')
+  })
+})
+
+describe('CICDInstancesManagement delete confirmation', () => {
+  it('states that linked instances are refused and what a delete takes from teams', () => {
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+    mockUseGitHubInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    renderManagement()
+
+    const row = screen.getByRole('row', { name: /Internal GitLab/ })
+    fireEvent.click(within(row).getAllByRole('button')[2])
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveTextContent('its team bindings and every team membership its sync added')
+    expect(dialog).toHaveTextContent('A team whose only admin came from this sync is left without one')
+    expect(dialog).toHaveTextContent('An instance that projects still link to is refused')
+    expect(dialog).not.toHaveTextContent('lose their CI/CD integration')
   })
 })

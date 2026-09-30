@@ -172,6 +172,7 @@ async def test_a_release_that_is_also_head_reports_an_empty_delta(client, db, me
     assert body["totals"]["changed"] == _NOTHING
     assert body["totals"]["unchanged"] == _ONE_SEEDED
     assert body["items"] == _NO_ITEMS
+    assert body["from_side"]["branch"] == body["to_side"]["branch"] == _BRANCH
 
 
 @pytest.mark.asyncio

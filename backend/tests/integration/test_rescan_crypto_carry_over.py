@@ -17,6 +17,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.project import Project, Scan
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.schemas.trufflehog import TruffleHogIngest
 from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
 from app.services.analysis.registry import CRYPTO_ANALYZERS
@@ -127,20 +128,29 @@ async def test_rescan_keeps_the_ingested_crypto_assets_on_a_real_server(db, _gri
 
 
 async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], list[str]]:
-    """The rescan's analysis_results rows and results_summary after the original ran its crypto analyzers."""
-    summaries: list[list[str]] = []
+    """The rescan's analysis_results rows and announced analyzers after the original ran its crypto analyzers."""
+    announced: list[list[str]] = []
 
-    async def _capture(project_id, scan_id, scan_doc, stats, findings, results_summary, db):
-        summaries.append(list(results_summary))
+    async def _capture(project_id, scan_id, scan_doc, stats, status, error, failed, findings, analyzer_outcomes, db):
+        announced.append(sorted(analyzer_outcomes))
 
     monkeypatch.setattr(engine, "_send_integrations_and_notifications", _capture)
     await seed_crypto_policies(db)
     project = Project(id=_PROJECT_ID, name="cbom-rescan")
     await db.projects.insert_one(project.model_dump(by_alias=True))
-    original = Scan(project_id=_PROJECT_ID, branch="main", scan_type="cbom", status="processing", worker_id=_WORKER)
+    manager = ScanManager(db, project)
+    trufflehog = TruffleHogIngest(pipeline_id=7001, commit_hash="c" * 40, branch="main", findings=[])
+    original = Scan(
+        id=manager.run_scan_id(trufflehog),
+        project_id=_PROJECT_ID,
+        branch="main",
+        scan_type="cbom",
+        status="processing",
+        worker_id=_WORKER,
+    )
     await db.scans.insert_one(original.model_dump(by_alias=True))
     await _ingest_assets(db, original.id)
-    await process_findings_ingest(ScanManager(db, project), "trufflehog", {"findings": []}, original.id)
+    await process_findings_ingest(manager, "trufflehog", trufflehog)
     assert await run_analysis(original.id, [], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     source = await db.scans.find_one({"_id": original.id}, RESCAN_SOURCE_PROJECTION)
@@ -149,13 +159,12 @@ async def _rescan_an_analysed_cbom_scan(db, monkeypatch) -> tuple[list[str], lis
     assert await run_analysis(rescan.id, [], _NO_ANALYZERS, db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
     rows = await db.analysis_results.find({"scan_id": rescan.id}).to_list(None)
-    return sorted(row["analyzer_name"] for row in rows), summaries[-1]
+    return sorted(row["analyzer_name"] for row in rows), announced[-1]
 
 
-def _assert_crypto_rows_are_regenerated_not_carried(rows: list[str], summary: list[str]) -> None:
+def _assert_crypto_rows_are_regenerated_not_carried(rows: list[str], announced: list[str]) -> None:
     assert rows == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
-    reported = sorted(line.split(":")[0] for line in summary)
-    assert reported == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
+    assert announced == sorted([*CRYPTO_ANALYZERS, "trufflehog"])
 
 
 @pytest.mark.asyncio

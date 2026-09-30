@@ -28,11 +28,10 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-
 from app.core import ensure_utc
 from app.core.config import settings
-from app.db.mongodb import create_client
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, SCAN_USABLE_STATUSES
+from app.db.mongodb import create_client
 from app.models.release import Release
 from app.repositories.releases import ReleaseRepository
 

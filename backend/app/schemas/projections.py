@@ -9,18 +9,18 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
 from app.models.stats import Stats
 from app.models.types import PyObjectId
 
 
 class ProjectWithScanId(BaseModel):
-    """Project with ID, name, latest scan ID, and the branch fields head resolution reads."""
-
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
     name: str
     latest_scan_id: str | None = None
     deleted_branches: list[str] = Field(default_factory=list)
     default_branch: str | None = None
+    active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
 
     model_config = ConfigDict(populate_by_name=True)
 

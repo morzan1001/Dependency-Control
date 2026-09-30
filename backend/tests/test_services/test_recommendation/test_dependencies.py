@@ -1,9 +1,13 @@
 """Tests for app.services.recommendation.dependencies."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from app.core.constants import NON_RUNTIME_SCOPES
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.aggregation import ResultAggregator
+from app.services.analyzers.end_of_life import EndOfLifeAnalyzer
 from app.services.recommendation.dependencies import (
     analyze_dev_in_production,
     analyze_end_of_life,
@@ -29,7 +33,6 @@ def _dep(name="requests", version="2.28.0", latest_version=None, direct=True, sc
 def _eol_finding(
     component="node",
     version="16.0.0",
-    severity="HIGH",
     eol_date="2023-09-11",
     finding_id="eol1",
 ):
@@ -38,7 +41,7 @@ def _eol_finding(
         details["eol_date"] = eol_date
     return {
         "type": "eol",
-        "severity": severity,
+        "severity": "HIGH",
         "component": component,
         "version": version,
         "details": details,
@@ -78,7 +81,8 @@ class TestAnalyzeOutdatedDependenciesDirectOutdated:
             _dep(name="flask", version="2.0.0", latest_version="3.0.0", direct=True),
         ]
         rec = analyze_outdated_dependencies(deps)[0]
-        assert rec.impact["total"] == 2
+        assert rec.impact == {"total": 0}
+        assert rec.affected_components_total == 2
 
 
 class TestAnalyzeOutdatedDependenciesTransitive:
@@ -150,10 +154,11 @@ class TestAnalyzeVersionFragmentationSignificant:
         rec = analyze_version_fragmentation(deps)[0]
         assert rec.type == RecommendationType.VERSION_FRAGMENTATION
 
-    def test_affected_components_show_version_count(self):
+    def test_affected_components_name_the_package_and_the_action_counts_its_versions(self):
         deps = [_dep(name="lodash", version=f"4.17.{15 + i}") for i in range(3)]
         rec = analyze_version_fragmentation(deps)[0]
-        assert any("lodash" in c and "3 versions" in c for c in rec.affected_components)
+        assert rec.affected_components == ["lodash"]
+        assert rec.action["packages"][0]["version_count"] == 3
 
 
 class TestAnalyzeVersionFragmentationCuts:
@@ -166,10 +171,10 @@ class TestAnalyzeVersionFragmentationCuts:
         (rec,) = analyze_version_fragmentation(self._fragmented(packages, 3))
         assert rec.priority == priority
 
-    @pytest.mark.parametrize(("versions", "high", "medium"), [(4, 0, 1), (5, 1, 0)])
-    def test_five_versions_count_as_heavy_fragmentation(self, versions, high, medium):
-        (rec,) = analyze_version_fragmentation(self._fragmented(1, versions))
-        assert (rec.impact["high"], rec.impact["medium"]) == (high, medium)
+    def test_the_card_counts_packages_rather_than_findings(self):
+        (rec,) = analyze_version_fragmentation(self._fragmented(2, 5))
+        assert rec.impact == {"total": 0}
+        assert rec.action["packages_total"] == 2
 
 
 class TestAnalyzeVersionFragmentationBelowThreshold:
@@ -238,7 +243,8 @@ class TestAnalyzeDevInProductionFlagged:
         ]
         result = analyze_dev_in_production(deps)
         assert len(result) == 1
-        assert result[0].impact["total"] == 2
+        assert result[0].impact == {"total": 0}
+        assert result[0].affected_components_total == 2
 
     def test_a_scoped_package_split_into_group_and_name_is_flagged(self):
         # cdxgen writes @types/node as group "@types", name "node".
@@ -272,7 +278,7 @@ class TestAnalyzeDevInProductionNotFlagged:
         assert analyze_dev_in_production([_dep(name="pytest-mocha", version="1.0.0", type="pypi")]) == []
 
     def test_a_runtime_package_is_not_flagged(self):
-        assert analyze_dev_in_production([_dep(name="express", version="4.18.0")]) == []
+        assert analyze_dev_in_production([_dep(name="express", version="4.18.0", type="npm")]) == []
 
 
 class TestAnalyzeEndOfLifeEmpty:
@@ -280,33 +286,35 @@ class TestAnalyzeEndOfLifeEmpty:
         assert analyze_end_of_life([]) == []
 
 
-class TestAnalyzeEndOfLifeCriticalSeverity:
-    def test_critical_eol_produces_recommendation(self):
-        findings = [_eol_finding(severity="CRITICAL")]
-        result = analyze_end_of_life(findings)
-        assert len(result) == 1
+def _graded_eol_findings(*days_past_eol):
+    """EOL findings as the analyzer grades them by days past the cycle's EOL date, and the aggregator stores them."""
+    analyzer = EndOfLifeAnalyzer()
+    issues = [
+        analyzer._create_eol_issue(
+            f"runtime-{i}",
+            "1.0.0",
+            f"runtime-{i}",
+            {"cycle": "1", "eol": (datetime.now(timezone.utc) - timedelta(days=days)).date().isoformat()},
+            None,
+            False,
+        )
+        for i, days in enumerate(days_past_eol)
+    ]
+    aggregator = ResultAggregator()
+    aggregator.aggregate("end_of_life", {"eol_issues": issues})
+    return [f.model_dump() for f in aggregator.get_findings()]
 
-    def test_critical_eol_priority_high(self):
-        findings = [_eol_finding(severity="CRITICAL")]
-        rec = analyze_end_of_life(findings)[0]
+
+class TestAnalyzeEndOfLifePriority:
+    def test_a_runtime_long_past_eol_ranks_the_card_high(self):
+        rec = analyze_end_of_life(_graded_eol_findings(800))[0]
+        assert rec.type == RecommendationType.EOL_DEPENDENCY
+        assert rec.impact["high"] == 1
         assert rec.priority == Priority.HIGH
 
-    def test_critical_eol_type(self):
-        findings = [_eol_finding(severity="CRITICAL")]
-        rec = analyze_end_of_life(findings)[0]
-        assert rec.type == RecommendationType.EOL_DEPENDENCY
-
-    def test_critical_eol_impact_count(self):
-        findings = [_eol_finding(severity="CRITICAL")]
-        rec = analyze_end_of_life(findings)[0]
-        assert rec.impact["critical"] == 1
-
-
-class TestAnalyzeEndOfLifeNonCritical:
-    @pytest.mark.parametrize("severity", ["HIGH", "MEDIUM"])
-    def test_non_critical_severity_gives_medium_priority(self, severity):
-        findings = [_eol_finding(severity=severity)]
-        rec = analyze_end_of_life(findings)[0]
+    @pytest.mark.parametrize("days_past_eol", [pytest.param(200, id="medium"), pytest.param(30, id="low")])
+    def test_without_a_high_eol_finding_the_card_ranks_medium(self, days_past_eol):
+        rec = analyze_end_of_life(_graded_eol_findings(days_past_eol))[0]
         assert rec.priority == Priority.MEDIUM
 
 
@@ -339,12 +347,8 @@ class TestAnalyzeEndOfLifeMultiple:
         rec = analyze_end_of_life(findings)[0]
         assert rec.impact["total"] == 2
 
-    def test_mixed_severities_highest_wins(self):
-        findings = [
-            _eol_finding(severity="CRITICAL", finding_id="eol1"),
-            _eol_finding(severity="HIGH", finding_id="eol2"),
-        ]
-        rec = analyze_end_of_life(findings)[0]
+    def test_one_high_finding_among_lower_ones_ranks_the_card_high(self):
+        rec = analyze_end_of_life(_graded_eol_findings(30, 200, 800))[0]
         assert rec.priority == Priority.HIGH
 
 

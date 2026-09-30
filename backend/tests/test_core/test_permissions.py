@@ -51,6 +51,9 @@ class TestPresets:
     def test_admin_has_all_permissions(self):
         assert set(PRESET_ADMIN) == set(ALL_PERMISSIONS)
 
+    def test_setup_2fa_scope_is_never_grantable(self):
+        assert Permissions.AUTH_SETUP_2FA not in ALL_PERMISSIONS
+
     def test_admin_is_superset_of_user(self):
         assert all(p in PRESET_ADMIN for p in PRESET_USER)
 

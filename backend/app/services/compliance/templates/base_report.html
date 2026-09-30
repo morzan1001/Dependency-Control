@@ -22,16 +22,14 @@
     <strong>Disclaimer:</strong> {{ disclaimer }}
   </div>
   {% endif %}
-  {% if coverage_statement %}
   <div class="{{ 'coverage' if coverage_complete else 'coverage-partial' }}">
     <strong>Coverage:</strong> {{ coverage_statement }}
   </div>
-  {% endif %}
 </section>
 
 <section class="summary">
   <h2>Executive Summary</h2>
-  {% if coverage_statement and not coverage_complete %}
+  {% if not coverage_complete %}
   <div class="coverage-partial">{{ coverage_statement }}</div>
   {% endif %}
   <div class="summary-grid">
@@ -43,18 +41,15 @@
       <div class="label">Not Evaluated</div></div>
     <div class="card total"><div class="count">{{ summary.total }}</div><div class="label">Total Controls</div></div>
   </div>
+  {% if summary.total %}
   <div class="bar">
-    {% set pct_failed = (summary.failed / summary.total * 100) if summary.total else 0 %}
-    {% set pct_waived = (summary.waived / summary.total * 100) if summary.total else 0 %}
-    {% set pct_na = (summary.not_applicable / summary.total * 100) if summary.total else 0 %}
-    {% set pct_withheld = (summary.not_evaluated / summary.total * 100) if summary.total else 0 %}
-    {% set pct_passed = 100 - pct_failed - pct_waived - pct_na - pct_withheld %}
-    <div class="seg passed" style="width: {{ pct_passed }}%"></div>
-    <div class="seg failed" style="width: {{ pct_failed }}%"></div>
-    <div class="seg waived" style="width: {{ pct_waived }}%"></div>
-    <div class="seg na" style="width: {{ pct_na }}%"></div>
-    <div class="seg not-evaluated" style="width: {{ pct_withheld }}%"></div>
+    {% for key, css in [("passed", "passed"), ("failed", "failed"), ("waived", "waived"), ("not_applicable", "na"), ("not_evaluated", "not-evaluated")] %}
+    <div class="seg {{ css }}" style="width: {{ summary[key] / summary.total * 100 }}%"></div>
+    {% endfor %}
   </div>
+  {% else %}
+  <p>No controls were evaluated for this scope.</p>
+  {% endif %}
 </section>
 
 <section class="controls">

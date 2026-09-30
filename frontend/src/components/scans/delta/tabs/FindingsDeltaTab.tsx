@@ -11,6 +11,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { SeverityBadge } from "@/components/findings/SeverityBadge";
+import { formatDate } from "@/lib/utils";
 import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
 import { DeltaPagination } from "../shared/DeltaPagination";
@@ -19,8 +20,18 @@ import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery
 
 const SEVERITIES = ["critical", "high", "medium", "low"] as const;
 const TYPES = ["vulnerability", "secret", "sast", "iac", "license", "malware", "eol"] as const;
-const CHANGES = ["all", "added", "removed"] as const;
+const CHANGES = ["all", "added", "removed", "changed"] as const;
 type FindingsChangeFilter = (typeof CHANGES)[number];
+
+function ChangedDetail({ item }: { readonly item: FindingDeltaItem }) {
+  return (
+    <div className="flex flex-wrap gap-x-2 font-mono text-xs">
+      {item.from_version !== item.to_version && <span>{`${item.from_version} → ${item.to_version}`}</span>}
+      {item.added_cves.map((cve) => <span key={cve} className="text-red-600">{`+${cve}`}</span>)}
+      {item.dropped_cves.map((cve) => <span key={cve} className="text-green-600">{`−${cve}`}</span>)}
+    </div>
+  );
+}
 
 function toggle<T extends string>(list: readonly T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -62,6 +73,7 @@ export function FindingsDeltaTab({
         added={data?.totals.added ?? 0}
         removed={data?.totals.removed ?? 0}
         unchanged={data?.totals.unchanged ?? 0}
+        changed={data?.totals.changed ?? 0}
         bySeverity={data?.totals.by_severity}
       />
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border bg-muted/30 p-2 text-xs">
@@ -123,13 +135,14 @@ export function FindingsDeltaTab({
               <TableHead className="w-[120px]">Type</TableHead>
               <TableHead>Title</TableHead>
               <TableHead>Component</TableHead>
+              <TableHead className="w-[120px]">First seen</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {isLoading &&
               ["s1", "s2", "s3"].map((id) => (
                 <TableRow key={id}>
-                  {["c1", "c2", "c3", "c4", "c5"].map((c) => (
+                  {["c1", "c2", "c3", "c4", "c5", "c6"].map((c) => (
                     <TableCell key={c}>
                       <Skeleton className="h-5 w-20" />
                     </TableCell>
@@ -142,12 +155,18 @@ export function FindingsDeltaTab({
                 <TableCell><SeverityBadge severity={item.severity} /></TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">{item.finding_type}</TableCell>
                 <TableCell>{item.title}</TableCell>
-                <TableCell className="text-muted-foreground">{item.component ?? ""}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  {item.component ?? ""}
+                  {item.change === "changed" && <ChangedDetail item={item} />}
+                </TableCell>
+                <TableCell className="text-xs text-muted-foreground">
+                  {item.first_seen ? formatDate(item.first_seen) : ""}
+                </TableCell>
               </TableRow>
             ))}
             {!isLoading && (data?.items.length ?? 0) === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="py-8 text-center text-muted-foreground">
+                <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                   No findings changes
                 </TableCell>
               </TableRow>

@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from app.models.compliance_report import ComplianceReport
-from app.schemas.compliance import FrameworkEvaluation, ReportFormat
+from app.schemas.compliance import FrameworkEvaluation
 from app.services.compliance.renderers.base import build_filename, coverage_statement
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -18,7 +18,6 @@ def build_template_context(
     """Every name `base_report.html` reads. Importable without WeasyPrint's native stack, so a
     test can render the page the renderer renders instead of a hand-built stand-in that drifts."""
     return {
-        "framework_key": evaluation.framework_key,
         "framework_name": evaluation.framework_name,
         "framework_version": evaluation.framework_version,
         "generated_at": evaluation.generated_at.isoformat(),
@@ -27,7 +26,7 @@ def build_template_context(
         "requested_by": report.requested_by,
         "disclaimer": disclaimer,
         "coverage_statement": coverage_statement(evaluation.coverage),
-        "coverage_complete": evaluation.coverage is None or evaluation.coverage.complete,
+        "coverage_complete": evaluation.coverage.complete,
         "summary": evaluation.summary,
         "controls": [
             {
@@ -56,7 +55,6 @@ def build_template_context(
 
 
 class PdfRenderer:
-    format = ReportFormat.PDF
     mime_type = "application/pdf"
     extension = "pdf"
 

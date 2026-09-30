@@ -6,6 +6,7 @@ from typing import Any, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, team_binding_key
 from app.models.team import Team
@@ -13,6 +14,7 @@ from app.models.team import Team
 _USER_ID = "user_id"
 _MEMBERS = "members"
 _MEMBERS_USER_ID = f"{_MEMBERS}.{_USER_ID}"
+_MEMBERS_SOURCE = f"{_MEMBERS}.source"
 _BINDINGS = "bindings"
 _BINDING_KEY = f"{_BINDINGS}.key"
 _BINDING_INSTANCE = f"{_BINDINGS}.instance_id"
@@ -27,15 +29,8 @@ class MemberSubset(NamedTuple):
     members: list[dict[str, Any]]
 
 
-def _member_subset_stage(subset: MemberSubset) -> dict[str, Any]:
-    """Replace exactly the entries ``subset.source`` established, against the array as stored now.
-
-    Merging a snapshot in Python and writing the whole array back loses a member added between
-    that read and the write, and the add has already been reported as done to whoever made it.
-    Everything the sync does not own is carried over untouched and wins over a resolved entry for
-    the same user, so a hand-added member keeps the role an admin gave them and stays when they
-    leave the group.
-    """
+def _subset_members(subset: MemberSubset) -> dict[str, Any]:
+    """Server-side swap of the ``subset.source`` entries: a concurrent add survives and a hand-added member wins."""
     kept = {
         "$filter": {
             "input": {"$ifNull": [f"${_MEMBERS}", []]},
@@ -51,7 +46,15 @@ def _member_subset_stage(subset: MemberSubset) -> dict[str, Any]:
             "cond": {"$not": [{"$in": [f"$$resolved.{_USER_ID}", kept_ids]}]},
         }
     }
-    return {"$set": {_MEMBERS: {"$let": {"vars": {"kept": kept}, "in": {"$concatArrays": ["$$kept", added]}}}}}
+    return {"$let": {"vars": {"kept": kept}, "in": {"$concatArrays": ["$$kept", added]}}}
+
+
+def _detach_instance(instance_id: str, source: str) -> dict[str, Any]:
+    """Pull the instance's binding and the members its sync added, which no sync would retire any more."""
+    return {
+        "$pull": {_BINDINGS: {"instance_id": instance_id}, _MEMBERS: {"source": source}},
+        "$set": {"updated_at": datetime.now(timezone.utc)},
+    }
 
 
 def _binding_restamp_stage(key: str, binding_fields: dict[str, Any]) -> dict[str, Any]:
@@ -132,16 +135,19 @@ class TeamRepository:
         )
         return bool(result.matched_count)
 
-    async def remove_binding_for_instance(self, team_id: str, instance_id: str) -> bool:
+    async def remove_binding_for_instance(self, team_id: str, instance_id: str, source: str) -> bool:
         """False when the team holds no binding for that instance."""
         result = await self.collection.update_one(
-            {"_id": team_id, _BINDING_INSTANCE: instance_id},
-            {
-                "$pull": {_BINDINGS: {"instance_id": instance_id}},
-                "$set": {"updated_at": datetime.now(timezone.utc)},
-            },
+            {"_id": team_id, _BINDING_INSTANCE: instance_id}, _detach_instance(instance_id, source)
         )
         return bool(result.matched_count)
+
+    async def remove_instance(self, instance_id: str, source: str) -> int:
+        result = await self.collection.update_many(
+            {"$or": [{_BINDING_INSTANCE: instance_id}, {_MEMBERS_SOURCE: source}]},
+            _detach_instance(instance_id, source),
+        )
+        return result.modified_count
 
     async def update_with_binding(
         self,
@@ -160,16 +166,26 @@ class TeamRepository:
         a pipeline — the only form that can read the stored array — and the restamp travels as a
         ``$map`` because a classic modifier cannot be combined with one.
         """
+        now = datetime.now(timezone.utc)
         if member_subset is not None:
-            stages: list[dict[str, Any]] = [_member_subset_stage(member_subset)]
+            members = _subset_members(member_subset)
+            query: dict[str, Any] = {"_id": team_id}
+            if not update_data and not binding_fields:
+                # An unchanged subset must not bump updated_at, or every ingest rewrites every holder.
+                # As sets: each sync appends its entries last, so two sources would reorder forever.
+                query["$expr"] = {"$not": [{"$setEquals": [members, {"$ifNull": [f"${_MEMBERS}", []]}]}]}
+            stages: list[dict[str, Any]] = [{"$set": {_MEMBERS: members}}]
             if binding_fields:
                 stages.append(_binding_restamp_stage(key, binding_fields))
-            if update_data:
-                stages.append({"$set": update_data})
-            await self.collection.update_one({"_id": team_id}, stages)
+            stages.append({"$set": {**update_data, "updated_at": now}})
+            await self.collection.update_one(query, stages)
             return
 
-        updates = {**update_data, **{f"{_BINDINGS}.$[{_ENTRY}].{name}": v for name, v in binding_fields.items()}}
+        updates = {
+            **update_data,
+            "updated_at": now,
+            **{f"{_BINDINGS}.$[{_ENTRY}].{name}": v for name, v in binding_fields.items()},
+        }
         await self.collection.update_one(
             {"_id": team_id},
             {"$set": updates},
@@ -192,13 +208,23 @@ class TeamRepository:
                         "org": {"$regex": f"^{re.escape(github_org)}$", "$options": "i"},
                     }
                 }
-            }
+            },
+            {"name": 1, _BINDINGS: 1},
         )
         return await cursor.to_list(None)
 
     async def create(self, team: Team) -> Team:
         await self.collection.insert_one(team.model_dump(by_alias=True))
         return team
+
+    async def create_bound(self, team: Team) -> dict[str, Any] | None:
+        """The team as stored: this one, or the one a concurrent sync created for the same binding first."""
+        document = team.model_dump(by_alias=True)
+        try:
+            await self.collection.insert_one(document)
+        except DuplicateKeyError:
+            return await self.get_raw_by_binding_key(team.bindings[0].key)
+        return document
 
     async def update(self, team_id: str, update_data: dict[str, Any]) -> Team | None:
         await self.collection.update_one({"_id": team_id}, {"$set": update_data})

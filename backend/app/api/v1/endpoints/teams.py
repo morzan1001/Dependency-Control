@@ -25,10 +25,10 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
 )
 from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
-from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_SEPARATOR
+from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_SEPARATOR, team_source
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions
-from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
+from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember, binding_of
 from app.models.user import User
 from app.repositories.base import and_filters
 from app.repositories.github_instances import GitHubInstanceRepository
@@ -48,7 +48,7 @@ from app.schemas.team import (
     TeamUpdate,
 )
 from app.services.github import GitHubService, build_team_slug_map
-from app.services.gitlab import GitLabService
+from app.services.gitlab import GitLabService, group_full_path
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ async def _gitlab_binding(request: TeamGitLabBindingRequest, db: AsyncIOMotorDat
             status_code=400,
             detail=f"GitLab instance '{instance.name}' has no group with id {request.external_id} that it can see.",
         )
-    path = str(lookup.group.get("full_path") or lookup.group.get("path") or request.external_id)
+    path = group_full_path(lookup.group, str(request.external_id))
     return GitLabGroupBinding(instance_id=request.instance_id, external_id=request.external_id, path=path)
 
 
@@ -296,17 +296,16 @@ async def clear_team_binding(
     current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> TeamResponse:
-    """Remove a team's binding for one instance, leaving the ones it holds on the others. Its
-    projects keep the team they have; no later ingest from that instance resolves to it.
-
-    It stays cleared because no sync ever binds an existing team: a group left without one gets a
-    team of its own, and only this endpoint's system:manage grants a team a group's projects.
-    """
+    """Remove the team's binding for one instance and the members that sync added; the team keeps its projects."""
     team_repo = TeamRepository(db)
-    if not await team_repo.get_raw_by_id(team_id):
+    team = await team_repo.get_raw_by_id(team_id)
+    if not team:
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
-    if not await team_repo.remove_binding_for_instance(team_id, instance_id):
+    binding = binding_of(team, instance_id)
+    if binding is None or not await team_repo.remove_binding_for_instance(
+        team_id, instance_id, team_source(binding["provider"], instance_id)
+    ):
         raise HTTPException(status_code=404, detail=f"This team holds no binding for instance {instance_id}.")
 
     logger.info(

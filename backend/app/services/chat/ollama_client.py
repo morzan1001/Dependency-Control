@@ -14,15 +14,10 @@ logger = logging.getLogger(__name__)
 
 
 class OllamaClient:
-    def __init__(
-        self,
-        base_url: str = "",
-        model: str = "",
-        timeout: int = 0,
-    ):
-        self.base_url = base_url or settings.OLLAMA_BASE_URL
-        self.model = model or settings.OLLAMA_MODEL
-        self.timeout = timeout or settings.OLLAMA_TIMEOUT_SECONDS
+    def __init__(self) -> None:
+        self.base_url = settings.OLLAMA_BASE_URL
+        self.model = settings.OLLAMA_MODEL
+        self.timeout = settings.OLLAMA_TIMEOUT_SECONDS
 
     async def chat_stream(
         self,
@@ -55,10 +50,11 @@ class OllamaClient:
                 if response.status_code != 200:
                     body = await response.aread()
                     chat_ollama_requests_total.labels(status="error").inc()
-                    yield {"type": "error", "message": f"Ollama returned {response.status_code}: {body.decode()}"}
+                    yield {
+                        "type": "error",
+                        "message": f"Ollama returned {response.status_code}: {body.decode(errors='replace')}",
+                    }
                     return
-
-                chat_ollama_requests_total.labels(status="success").inc()
 
                 async for line in response.aiter_lines():
                     if not line.strip():
@@ -68,7 +64,21 @@ class OllamaClient:
                     except json.JSONDecodeError:
                         continue
 
+                    # Once the 200 is sent, Ollama reports a failed runner as an error line.
+                    if "error" in chunk:
+                        chat_ollama_requests_total.labels(status="error").inc()
+                        yield {"type": "error", "message": f"Ollama error: {chunk['error']}"}
+                        return
+
+                    # The done chunk can carry the last text and a tool call the parser held back.
+                    message = chunk.get("message", {})
+                    for tc in message.get("tool_calls") or []:
+                        yield {"type": "tool_call", "function": tc.get("function", {})}
+                    if content := message.get("content", ""):
+                        yield {"type": "token", "content": content}
+
                     if chunk.get("done", False):
+                        chat_ollama_requests_total.labels(status="success").inc()
                         yield {
                             "type": "done",
                             "total_tokens": chunk.get("eval_count", 0),
@@ -76,24 +86,15 @@ class OllamaClient:
                         }
                         return
 
-                    message = chunk.get("message", {})
-
-                    if message.get("tool_calls"):
-                        for tc in message["tool_calls"]:
-                            yield {
-                                "type": "tool_call",
-                                "function": tc.get("function", {}),
-                            }
-
-                    content = message.get("content", "")
-                    if content:
-                        yield {"type": "token", "content": content}
+                chat_ollama_requests_total.labels(status="error").inc()
+                yield {"type": "error", "message": "Ollama stream ended before the answer was complete"}
 
         except httpx.TimeoutException:
             chat_ollama_requests_total.labels(status="timeout").inc()
             yield {"type": "error", "message": "Ollama request timed out"}
-        except httpx.ConnectError:
+        except httpx.HTTPError as exc:
+            logger.warning("Ollama request failed: %s: %s", type(exc).__name__, exc)
             chat_ollama_requests_total.labels(status="error").inc()
-            yield {"type": "error", "message": "Could not connect to Ollama"}
+            yield {"type": "error", "message": "Connection to Ollama failed"}
         finally:
             chat_ollama_queue_depth.dec()

@@ -60,19 +60,15 @@ class ChatRepository:
         conversation_id: str,
         role: str,
         content: str = "",
-        images: list[str] | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
-        token_count: int = 0,
-    ) -> int:
-        """Store the message and return the conversation's message count including it."""
+    ) -> int | None:
+        """Store the message and return the conversation's message count, or None if the conversation is gone."""
         doc = {
             "_id": str(uuid.uuid4()),
             "conversation_id": conversation_id,
             "role": role,
             "content": content,
-            "images": images or [],
             "tool_calls": tool_calls or [],
-            "token_count": token_count,
             "created_at": datetime.now(timezone.utc),
         }
         await self.messages.insert_one(doc)
@@ -85,7 +81,11 @@ class ChatRepository:
             projection={"message_count": 1},
             return_document=ReturnDocument.AFTER,
         )
-        return int(conversation["message_count"]) if conversation else 0
+        if conversation is None:
+            # delete_conversation drops the conversation before its messages, so undoing here leaves no orphan.
+            await self.messages.delete_one({"_id": doc["_id"]})
+            return None
+        return int(conversation["message_count"])
 
     async def get_messages(self, conversation_id: str, limit: int = 100, skip: int = 0) -> list[dict[str, Any]]:
         cursor = self.messages.find(

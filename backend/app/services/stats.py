@@ -17,6 +17,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
 from app.services.analysis.stats import calculate_comprehensive_stats
+from app.services.analytics.cache import get_analytics_cache
 from app.services.reachability_enrichment import ComponentLanguages
 from app.services.releases import released_scan_ids
 from app.services.waivers.apply import restamp_waivers, waiver_fingerprint
@@ -48,15 +49,8 @@ async def _restamp_scan(
     """Restamp one scan and rewrite its stats; ``waiver_repo`` also records each waiver's outcome."""
     await restamp_waivers(finding_repo, waiver_repo, scan_id, waivers)
     tally = await calculate_comprehensive_stats(db, scan_id)
-    await ScanRepository(db).update_raw(
-        scan_id,
-        {
-            "$set": {
-                "stats": tally.stats.model_dump(),
-                "ignored_count": tally.ignored_count,
-                "waiver_fingerprint": fingerprint,
-            }
-        },
+    await ScanRepository(db).set_stats(
+        scan_id, tally.stats, {"ignored_count": tally.ignored_count, "waiver_fingerprint": fingerprint}
     )
     return tally.stats
 
@@ -176,7 +170,7 @@ async def refresh_scan_stats(
     try:
         scan_repo = ScanRepository(db)
         tally = await calculate_comprehensive_stats(db, scan_id, component_languages)
-        await scan_repo.update_raw(scan_id, {"$set": {"stats": tally.stats.model_dump()}})
+        await scan_repo.set_stats(scan_id, tally.stats)
         await scan_repo.sync_project_head(project_id)
     finally:
         await lock_repo.release_lock(lock_name, holder_id)
@@ -198,6 +192,8 @@ async def run_waiver_recalc(db: AsyncIOMotorDatabase) -> None:
                 if not await _recalculate_changed(db, queued, lock_repo, holder_id):
                     return
                 await db.waiver_recalc.delete_many({"_id": {"$in": [doc["_id"] for doc in queued]}})
+                # Reads during the pass may have cached the flags it replaced.
+                get_analytics_cache().clear()
         finally:
             await lock_repo.release_lock(_RECALC_LOCK, holder_id)
         # A change queued as this run finished found the lock still taken and was left to it.

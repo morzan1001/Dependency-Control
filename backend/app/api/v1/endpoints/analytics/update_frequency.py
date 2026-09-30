@@ -2,7 +2,6 @@
 
 import asyncio
 import contextlib
-import hashlib
 import logging
 from collections import Counter
 from collections.abc import Coroutine, Mapping, Sequence
@@ -22,16 +21,16 @@ from app.api.v1.helpers.analytics import (
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers.teams import resolve_team_names, team_refs
-from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.config import settings
-from app.core.constants import SCAN_USABLE_STATUSES, SLOWEST_PACKAGES_LIMIT
+from app.core.constants import SLOWEST_PACKAGES_LIMIT
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
 from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.projects import ProjectRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import USABLE_BUILD_MATCH, ScanRepository
 from app.repositories.update_frequency import (
     WINDOW_HARD_LIMIT,
     BranchWindowActivity,
@@ -53,6 +52,7 @@ from app.services.release_history import (
 from app.services.update_frequency import (
     compute_update_frequency,
     compute_update_frequency_comparison,
+    elect_primary_branch,
     load_scan_deps,
     load_outdated_entries,
     rank_summaries,
@@ -83,7 +83,7 @@ _LIVE_COMPARISON_BUDGET_SECONDS = 240.0
 _ROLLUP_COMPARISON_BUDGET_SECONDS = 30.0
 
 
-def _comparison_lock_timings(use_rollup: bool) -> tuple[float, int]:
+def _lock_timings(use_rollup: bool) -> tuple[float, int]:
     """Waiter and lock lifetimes for the path that is about to run.
 
     A waiter must outlast the recompute or it starts a duplicate one; the lock
@@ -121,21 +121,17 @@ def _project_cache_key(
     version_token: str,
     use_rollup: bool,
 ) -> str:
-    """Cache key carrying a completion-monotonic token so a finished scan misses the cache."""
+    """Cache key versioned by the analysed branch's scans, so a scan finishing there misses the cache."""
+    branch_tag = "b" if branch is None else f"b={branch}"
     return (
         f"{CacheKeys.update_frequency(project_id)}"
-        f":m{max_scans}:w{window_days or 0}:b{branch or 'auto'}:r{int(use_rollup)}:v{version_token}"
+        f":m{max_scans}:w{window_days or 0}:{branch_tag}:r{int(use_rollup)}:v{version_token}"
     )
-
-
-def _scope_hash(project_ids: list[str]) -> str:
-    """Digest of the caller's visible projects: the authorization boundary, shared by equal scopes."""
-    return hashlib.md5(",".join(sorted(project_ids)).encode(), usedforsecurity=False).hexdigest()[:16]
 
 
 def _comparison_cache_key(
     scope_hash: str,
-    team_id: str,
+    team_id: str | None,
     *,
     window_days: int,
     use_rollup: bool,
@@ -150,10 +146,15 @@ def _comparison_cache_key(
     return f"{base}:w{window_days}:r{int(use_rollup)}"
 
 
-async def _project_scan_version(db: DatabaseDep, project_id: str) -> str:
-    """Completed-scan count: a cache token monotonic per completion, unlike max(created_at) on out-of-order finishes."""
-    count = await db.scans.count_documents({"project_id": project_id, "status": {"$in": SCAN_USABLE_STATUSES}})
-    return str(count)
+async def _branch_scan_token(db: DatabaseDep, project_id: str, branch: str | None, since: datetime | None) -> str:
+    """Count and newest completion of the scans the walk reads; the latter catches a re-finalised scan."""
+    match: dict[str, Any] = {**USABLE_BUILD_MATCH, "project_id": project_id, "branch": branch}
+    if since is not None:
+        match["created_at"] = {"$gte": since}
+    rows = await ScanRepository(db).aggregate(
+        [{"$match": match}, {"$group": {"_id": None, "scans": {"$sum": 1}, "completed_at": {"$max": "$completed_at"}}}]
+    )
+    return f"{rows[0]['scans']}@{rows[0]['completed_at']}" if rows else "0"
 
 
 def _build_release_fetcher() -> ReleaseHistoryFetcher:
@@ -196,7 +197,7 @@ async def get_project_update_frequency(
     db: DatabaseDep,
     max_scans: Annotated[int, Query(ge=2, le=500)] = 20,
     window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
-    branch: Annotated[str | None, Query(max_length=512)] = None,
+    branch: Annotated[str | None, Query(min_length=1, max_length=512)] = None,
 ) -> UpdateFrequencyMetrics:
     """Update-frequency metrics from version diffs; window_days scopes by time, else max_scans.
 
@@ -210,27 +211,28 @@ async def get_project_update_frequency(
     # max_scans mode still needs the live walk over the scan history.
     rollup_window_days = window_days if settings.UPDATE_FREQUENCY_USE_ROLLUP and branch is None else None
 
-    version_token = await _project_scan_version(db, project_id)
+    since = window_cutoff(window_days)
+    analyzed_branch = branch
+    by_branch: dict[str, BranchWindowActivity] = {}
+    if analyzed_branch is None:
+        analyzed_branch, by_branch = await elect_primary_branch(
+            ScanRepository(db), project_id, since, project.default_branch, project.deleted_branches
+        )
     cache_key = _project_cache_key(
         project_id,
         max_scans=max_scans,
         window_days=window_days,
-        branch=branch,
-        version_token=version_token,
+        branch=analyzed_branch,
+        version_token=await _branch_scan_token(db, project_id, analyzed_branch, since),
         use_rollup=rollup_window_days is not None,
     )
-    cached = await cache_service.get(cache_key)
-    if cached:
-        return UpdateFrequencyMetrics(**cached)
 
-    metrics = None
-    if rollup_window_days is not None:
-        metrics = await _await_or_abort(request, _rollup_project_metrics(db, project, rollup_window_days))
-
-    if metrics is None:
-        metrics = await _await_or_abort(
-            request,
-            compute_update_frequency(
+    async def _fetch() -> dict[str, Any]:
+        metrics = None
+        if rollup_window_days is not None:
+            metrics = await _rollup_project_metrics(db, project, rollup_window_days, analyzed_branch, by_branch)
+        if metrics is None:
+            metrics = await compute_update_frequency(
                 project_id=project_id,
                 project_name=project.name,
                 scan_repo=ScanRepository(db),
@@ -239,14 +241,24 @@ async def get_project_update_frequency(
                 max_scans=max_scans,
                 window_days=window_days,
                 release_fetcher=_build_release_fetcher(),
-                branch=branch,
-                deleted_branches=project.deleted_branches,
-                default_branch=project.default_branch,
-            ),
-        )
+                branch=analyzed_branch,
+            )
+        return metrics.model_dump()
 
-    await cache_service.set(cache_key, metrics.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
-    return metrics
+    # A rollup miss falls back to the live walk, so the lock is sized for the walk.
+    lock_wait_seconds, lock_ttl_seconds = _lock_timings(use_rollup=False)
+    payload = await _await_or_abort(
+        request,
+        cache_service.get_or_fetch_with_lock(
+            cache_key,
+            _fetch,
+            ttl_seconds=CacheTTL.UPDATE_FREQUENCY,
+            lock_ttl_seconds=lock_ttl_seconds,
+            max_wait_seconds=lock_wait_seconds,
+            reraise_fetch_errors=True,
+        ),
+    )
+    return UpdateFrequencyMetrics.model_validate(payload)
 
 
 async def _scoped_projects(
@@ -467,22 +479,24 @@ async def _rollup_slowest_packages(
     ], len(counts)
 
 
-async def _rollup_project_metrics(db: DatabaseDep, project: Project, window_days: int) -> UpdateFrequencyMetrics | None:
+async def _rollup_project_metrics(
+    db: DatabaseDep,
+    project: Project,
+    window_days: int,
+    branch: str | None,
+    by_branch: Mapping[str, BranchWindowActivity],
+) -> UpdateFrequencyMetrics | None:
     """Metrics folded from the delta ledger, or None when it cannot answer for this project.
 
     A partial fold falls back to the live walk rather than being served: one
     project's walk is affordable, and it reads the scans the ledger has not
     reached yet.
     """
-    project_id = project.id
-    since = cast(datetime, window_cutoff(window_days))
-    activity = await window_scans_by_branch(ScanRepository(db), [project_id], since)
-    by_branch = {branch: seen for (_project_id, branch), seen in activity.items()}
-    branch = select_primary_branch(by_branch, project.default_branch, project.deleted_branches)
     if branch is None:
         return None
 
-    deltas = await ScanUpdateDeltaRepository(db).find_project_window(project_id, branch, since, WINDOW_HARD_LIMIT)
+    since = cast(datetime, window_cutoff(window_days))
+    deltas = await ScanUpdateDeltaRepository(db).find_project_window(project.id, branch, since, WINDOW_HARD_LIMIT)
     resolved = _fold_branch(branch, deltas, by_branch[branch])
     if resolved.status != "ready":
         return None
@@ -492,7 +506,7 @@ async def _rollup_project_metrics(db: DatabaseDep, project: Project, window_days
     folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
     slowest_packages, outdated_backlog = await _rollup_slowest_packages(db, resolved.bars)
     return folded.to_metrics(
-        project_id,
+        project.id,
         project.name,
         branch=resolved.branch,
         slowest_packages=slowest_packages,
@@ -503,7 +517,6 @@ async def _rollup_project_metrics(db: DatabaseDep, project: Project, window_days
 
 @router.get("/update-frequency/comparison", responses=RESP_AUTH)
 async def get_update_frequency_comparison(
-    request: Request,
     current_user: CurrentUserDep,
     db: DatabaseDep,
     team_id: str | None = None,
@@ -522,34 +535,27 @@ async def get_update_frequency_comparison(
         return UpdateFrequencyComparison(projects=[])
 
     use_rollup = settings.UPDATE_FREQUENCY_USE_ROLLUP
-    cache_key = _comparison_cache_key(
-        _scope_hash(user_project_ids),
-        team_id or "all",
-        window_days=window_days,
-        use_rollup=use_rollup,
+    scope = scope_digest(user_project_ids)
+    if team_id:
+        # A row does not depend on the filter, so a cached estate ranking answers any team in it.
+        everyone = await cache_service.get(
+            _comparison_cache_key(scope, None, window_days=window_days, use_rollup=use_rollup)
+        )
+        if everyone is not None:
+            team_project_ids = {str(p["_id"]) for p in await _scoped_projects(db, user_project_ids, team_id)}
+            return rank_summaries(
+                [ProjectUpdateSummary(**row) for row in everyone["projects"] if row["project_id"] in team_project_ids]
+            )
+
+    compute = _compute_comparison_from_rollup if use_rollup else _compute_comparison
+    lock_wait_seconds, lock_ttl_seconds = _lock_timings(use_rollup)
+    # Not tied to the caller's connection: other requests wait on this fetch to publish.
+    payload = await cache_service.get_or_fetch_with_lock(
+        _comparison_cache_key(scope, team_id, window_days=window_days, use_rollup=use_rollup),
+        lambda: compute(db, user_project_ids, team_id, window_days=window_days),
+        ttl_seconds=CacheTTL.UPDATE_FREQUENCY,
+        lock_ttl_seconds=lock_ttl_seconds,
+        max_wait_seconds=lock_wait_seconds,
+        reraise_fetch_errors=True,
     )
-    lock_wait_seconds, lock_ttl_seconds = _comparison_lock_timings(use_rollup)
-
-    if use_rollup:
-
-        def _fetch() -> Coroutine[Any, Any, dict[str, Any]]:
-            return _compute_comparison_from_rollup(db, user_project_ids, team_id, window_days=window_days)
-    else:
-
-        def _fetch() -> Coroutine[Any, Any, dict[str, Any]]:
-            return _compute_comparison(db, user_project_ids, team_id, window_days=window_days)
-
-    payload = await _await_or_abort(
-        request,
-        cache_service.get_or_fetch_with_lock(
-            cache_key,
-            _fetch,
-            ttl_seconds=CacheTTL.UPDATE_FREQUENCY,
-            lock_ttl_seconds=lock_ttl_seconds,
-            max_wait_seconds=lock_wait_seconds,
-            reraise_fetch_errors=True,
-        ),
-    )
-    if not payload:
-        raise HTTPException(status_code=503, detail="Update-frequency comparison is temporarily unavailable")
-    return UpdateFrequencyComparison(**payload)
+    return UpdateFrequencyComparison.model_validate(payload)

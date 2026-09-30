@@ -20,6 +20,7 @@ export interface SystemSettings {
   oidc_token_endpoint?: string;
   oidc_userinfo_endpoint?: string;
   oidc_scopes?: string;
+  oidc_auto_provision?: boolean;
   retention_mode: 'global' | 'project';
   global_retention_days: number;
   global_retention_action: 'delete' | 'archive' | 'none';

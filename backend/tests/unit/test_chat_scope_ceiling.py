@@ -9,6 +9,7 @@ import pytest
 from app.models.user import User
 from app.services.analytics import scopes
 from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools import registry as registry_module
 from tests.helpers.permission_presets import PRESET_USER
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -22,6 +23,7 @@ _SEARCH_TERM = "openssl"
 @pytest.fixture
 def small_ceiling(monkeypatch):
     monkeypatch.setattr(scopes, "ANALYTICS_MAX_SCOPE_PROJECTS", _CEILING)
+    monkeypatch.setattr(registry_module, "ANALYTICS_MAX_SCOPE_PROJECTS", _CEILING)
 
 
 def _seed_projects(db: FakeDatabase, count: int) -> None:
@@ -71,3 +73,15 @@ async def test_the_refusal_names_the_ceiling_instead_of_a_generic_failure(small_
     result = await ChatToolRegistry().execute_tool(_ESTATE_TOOL, {"query": _SEARCH_TERM}, _caller(), db)
 
     assert "Tool execution failed" not in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_project_document_does_not_fail_the_search():
+    """Narrowing to the caller's projects needs their ids alone, so a document missing another field answers."""
+    db = FakeDatabase()
+    _seed_projects(db, _CEILING)
+    del db.projects._docs["p0"]["name"]
+
+    result = await ChatToolRegistry().execute_tool(_ESTATE_TOOL, {"query": _SEARCH_TERM}, _caller(), db)
+
+    assert "error" not in result

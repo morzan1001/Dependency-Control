@@ -238,6 +238,8 @@ ApiKeySurface = Literal["mcp", "adhoc"]
 API_KEY_SURFACE_MCP: ApiKeySurface = "mcp"
 API_KEY_SURFACE_ADHOC: ApiKeySurface = "adhoc"
 API_KEY_SURFACES: frozenset[str] = frozenset(get_args(ApiKeySurface))
+# The UI shows a key's last use to the minute, so stamping it more often only adds primary writes.
+API_KEY_LAST_USED_RESOLUTION_SECONDS = 60
 
 # Per-finding base of the impact pre-score, before reach and threat-intel boosts.
 IMPACT_SEVERITY_WEIGHTS: dict[str, float] = {
@@ -321,6 +323,7 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "actively_exploited": 2500,
     "critical_hotspot": 2000,
     "rotate_secrets": 2000,
+    "hash_mismatch": 1800,
     "typosquat_detected": 1500,
     "critical_risk": 1500,
     # High impact updates
@@ -349,6 +352,13 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "deep_dependency_chain": 15,
     "duplicate_functionality": 10,
     "dev_in_production": 10,
+    # No type bonus: these rank on priority, impact and effort alone.
+    "license_drift": 0,
+    "replace_weak_algorithm": 0,
+    "increase_key_size": 0,
+    "upgrade_protocol": 0,
+    "pqc_migration": 0,
+    "rotate_certificate": 0,
 }
 
 # Effort-based bonuses (lower effort = higher bonus)
@@ -360,8 +370,6 @@ EFFORT_BONUSES: dict[str, int] = {
 
 # Dependencies nested deeper than this below their nearest direct dependency are reported.
 MAX_DEPENDENCY_DEPTH: int = 5
-# Reported chains at least this deep count as medium impact, shallower ones as low.
-DEEP_CHAIN_MEDIUM_IMPACT_DEPTH: int = 8
 
 # Thresholds for recommendation analysis
 RECURRING_ISSUE_THRESHOLD: int = 3  # Min scans a CVE appears in to be "recurring"
@@ -477,9 +485,9 @@ ANALYTICS_MAX_SCOPE_PROJECTS: int = 100_000
 
 # Page ceilings for services reachable both through their REST endpoint and through a chat tool.
 # One name per concept, so the two entry points cannot bound the same read at different numbers.
-MAX_CRYPTO_ASSET_PAGE: int = 500
 MAX_CRYPTO_HOTSPOT_PAGE: int = 500
 MAX_PQC_PLAN_ITEMS: int = 2000
+DEFAULT_PQC_PLAN_ITEMS: int = 500
 MAX_COMPLIANCE_REPORT_PAGE: int = 200
 MAX_POLICY_AUDIT_PAGE: int = 200
 
@@ -768,6 +776,7 @@ PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = 1
 
 # OIDC State TTL in seconds (5 minutes for authorization flow)
 OIDC_STATE_TTL_SECONDS = 300
+OIDC_HANDOFF_TTL_SECONDS = 60
 
 # TOTP (2FA) settings
 TOTP_VALID_WINDOW: int = 1  # Accept codes from 1 interval before/after current
@@ -791,8 +800,7 @@ WEBHOOK_EVENT_LICENSE_POLICY_CHANGED = "license_policy.changed"
 WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report.generated"
 WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan.generated"
 
-# snake_case event names clients may still send; validation stores their canonical form, and
-# dispatch also matches subscriptions stored before it did.
+# snake_case event names clients may still send; validation stores their canonical form.
 WEBHOOK_EVENT_ALIASES: dict[str, str] = {
     "scan_completed": WEBHOOK_EVENT_SCAN_COMPLETED,
     "vulnerability_found": WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -813,6 +821,8 @@ WEBHOOK_VALID_EVENTS = [
 
 WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.keys()]
 
+WebhookType = Literal["generic", "teams"]
+
 # Webhook HTTP headers
 WEBHOOK_HEADER_CONTENT_TYPE = "Content-Type"
 WEBHOOK_HEADER_USER_AGENT = "User-Agent"
@@ -820,7 +830,8 @@ WEBHOOK_HEADER_EVENT = "X-Webhook-Event"
 WEBHOOK_HEADER_TIMESTAMP = "X-Webhook-Timestamp"
 WEBHOOK_HEADER_ID = "X-Webhook-ID"
 WEBHOOK_HEADER_SIGNATURE = "X-Webhook-Signature"
-WebhookType = Literal["generic", "teams"]
+WEBHOOK_HEADER_SIGNATURE_V2 = "X-Webhook-Signature-V2"
+WEBHOOK_HEADER_DELIVERY = "X-Webhook-Delivery"
 WEBHOOK_HEADER_TEST = "X-Webhook-Test"
 WEBHOOK_USER_AGENT_VALUE = "DependencyControl-Webhook/1.0"
 
@@ -941,6 +952,8 @@ GITLAB_ACCESS_OWNER = 50
 
 # Minimum access level for admin role in DependencyControl
 GITLAB_ADMIN_MIN_ACCESS = GITLAB_ACCESS_MAINTAINER
+# Guest and Minimal Access members cannot read a group's code, so they own none of its projects.
+GITLAB_TEAM_MEMBER_MIN_ACCESS = GITLAB_ACCESS_REPORTER
 
 # Aggregation key prefixes for finding deduplication
 AGG_KEY_VULNERABILITY = "AGG:VULN"
@@ -983,20 +996,18 @@ SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
 }
 # Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, NEGLIGIBLE/INFO=0.0, UNKNOWN=20.0
 
-# GitLab JWKS cache TTLs (in seconds)
-GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour
-GITLAB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
+JWKS_CACHE_TTL = 3600
+JWKS_URI_CACHE_TTL = 86400
 
 # GitLab answers a non-admin token's GET /users/:id at most 300 times per 10 minutes by default, and
 # public emails rarely change: at a day one token keeps ~43,000 members answered, at an hour ~1,800.
 GITLAB_USER_EMAIL_CACHE_TTL = 86400  # 24 hours
 
-# GitHub JWKS cache TTLs (in seconds)
-GITHUB_JWKS_CACHE_TTL = 3600  # 1 hour
-GITHUB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
-
 # One workflow run fans out into many jobs; without this every job refetches the same three lists.
 GITHUB_TEAM_SYNC_CACHE_TTL = 300  # 5 minutes
+
+# Profile emails rarely change, and each is a request per member of every holding team.
+GITHUB_USER_EMAIL_CACHE_TTL = 21600  # 6 hours
 
 # Building the map costs one request per team of the organisation, and the largest one here has 204.
 # At this TTL the three configured organisations together spend ~313 of the token's 5000 requests per
@@ -1136,6 +1147,8 @@ ADHOC_MAX_SCANNER_FINDINGS: int = 5_000
 # import pair: 5 000 such findings over 50 000 pairs take about 20 s.
 ADHOC_MAX_CALLGRAPH_ENTRIES: int = 50_000
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
+# Per process; at ~55 MiB per saturated report, 2 slots x 2 workers stay near 220 MiB of the 2 GiB pod limit.
+COMPLIANCE_REPORT_SLOTS: int = 2
 POLICY_AUDIT_DEFAULT_MIN_PRUNE_DAYS: int = 90
 CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500
 

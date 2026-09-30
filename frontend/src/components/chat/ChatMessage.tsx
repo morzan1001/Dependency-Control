@@ -117,14 +117,6 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
     return (
       <div className="flex justify-end gap-3">
         <div className="max-w-[78%] rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-primary-foreground">
-          {message.images?.map((img) => (
-            <img
-              key={img.slice(0, 32)}
-              src={`data:image/png;base64,${img}`}
-              alt="Attached"
-              className="my-2 max-w-sm rounded"
-            />
-          ))}
           <MessageBody content={message.content} className="prose-invert" />
         </div>
         <AvatarChip role="user" />
@@ -136,14 +128,6 @@ function ChatMessageImpl({ message }: ChatMessageProps) {
     <div className="flex gap-3">
       <AvatarChip role="assistant" />
       <Card className="max-w-[85%] flex-1 border-muted/60 bg-card px-4 py-3 shadow-none">
-        {message.images?.map((img) => (
-          <img
-            key={img.slice(0, 32)}
-            src={`data:image/png;base64,${img}`}
-            alt="Attached"
-            className="my-2 max-w-sm rounded"
-          />
-        ))}
         {message.tool_calls?.map((tc, i) => (
           <ToolCallBlock key={`${message.id}-tc-${i}-${tc.tool_name}`} toolCall={tc} />
         ))}

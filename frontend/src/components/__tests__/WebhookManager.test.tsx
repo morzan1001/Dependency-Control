@@ -1,4 +1,4 @@
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi } from "vitest";
 
 import { WebhookManager } from "../WebhookManager";
@@ -39,5 +39,25 @@ describe("WebhookManager", () => {
     expect(
       screen.getByLabelText(/PQC migration plan generated/i),
     ).toBeInTheDocument();
+  });
+
+  it.each([
+    [false, undefined],
+    [true, "generic"],
+  ])("sends webhook_type generic for a workflow URL only when the JSON opt-out is ticked (%s)", async (optOut, expected) => {
+    const onCreate = vi.fn().mockResolvedValue({ id: "w1" });
+    render(
+      <WebhookManager webhooks={[]} isLoading={false} onCreate={onCreate} onDelete={vi.fn()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
+    fireEvent.change(screen.getByPlaceholderText("https://example.com/webhook"), {
+      target: { value: "https://prod-1.westeurope.logic.azure.com/workflows/abc/triggers/manual" },
+    });
+    if (optOut) fireEvent.click(screen.getByLabelText(/event JSON instead/i));
+    fireEvent.click(screen.getByLabelText(/Scan completed/i));
+    fireEvent.click(screen.getByRole("button", { name: /Create Webhook/i }));
+
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate.mock.calls[0][0].webhook_type).toBe(expected);
   });
 });

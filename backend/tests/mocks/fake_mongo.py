@@ -676,6 +676,9 @@ def _eval_expr(doc: dict, expr):
                 return None
             concatenated.extend(value)
         return concatenated
+    if "$setEquals" in expr:
+        first, second = (_eval_expr(doc, operand) for operand in expr["$setEquals"])
+        return all(element in second for element in first) and all(element in first for element in second)
     if "$mergeObjects" in expr:
         merged: dict = {}
         for operand in expr["$mergeObjects"]:
@@ -1756,14 +1759,7 @@ class FakeCollection:
                 upserted += 1
                 doc: dict = dict(upd.get(_SET_ON_INSERT, {}))
                 self._apply_update(doc, upd, skip_set_on_insert=True)
-                if "_id" not in doc:
-                    # Fall back to a deterministic composite key from filter fields
-                    # (matches the unique-index strategy in crypto-asset upserts).
-                    if "_id" in upd.get("$set", {}):
-                        doc["_id"] = upd["$set"]["_id"]
-                    else:
-                        ident_parts = [str(flt.get(f, "")) for f in ("project_id", "scan_id", "bom_ref")]
-                        doc["_id"] = ":".join(p for p in ident_parts if p) or str(len(self._docs))
+                doc.setdefault("_id", ObjectId())
                 self._docs[doc["_id"]] = _bsonify(doc)
         result = MagicMock()
         result.modified_count = modified

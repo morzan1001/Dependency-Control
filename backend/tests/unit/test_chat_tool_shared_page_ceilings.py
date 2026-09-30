@@ -14,7 +14,6 @@ import pytest
 
 from app.api.v1.endpoints.compliance_reports import list_reports
 from app.api.v1.endpoints.crypto_analytics import get_hotspots
-from app.api.v1.endpoints.crypto_assets import list_crypto_assets as list_crypto_assets_endpoint
 from app.api.v1.endpoints.policy_audit import list_system_audit
 from app.api.v1.endpoints.pqc_migration import get_pqc_migration_plan
 from app.core.constants import SCAN_STATUS_COMPLETED
@@ -66,19 +65,11 @@ async def _limit_reached_by(tool: str, args: dict[str, Any], target: str, db: An
     """The `limit` the chat tool hands the service when the caller asks for more than it grants."""
     spy = AsyncMock(return_value={})
     with patch(f"app.services.chat.tools.registry.{target}", new=spy):
-        await ChatToolRegistry()._dispatch(tool, {**args, "limit": _OVER_ANY_CEILING}, user, db)
+        await ChatToolRegistry().execute_tool(tool, {**args, "limit": _OVER_ANY_CEILING}, user, db)
     spy.assert_awaited_once()
     limit = spy.await_args.kwargs["limit"]
     assert isinstance(limit, int)
     return limit
-
-
-@pytest.mark.asyncio
-async def test_crypto_assets(seeded, admin_user):
-    reached = await _limit_reached_by(
-        "list_crypto_assets", {"project_id": _PROJECT}, "list_crypto_assets", seeded, admin_user
-    )
-    assert reached == _endpoint_ceiling(list_crypto_assets_endpoint)
 
 
 @pytest.mark.asyncio
@@ -95,6 +86,17 @@ async def test_pqc_migration_plan(seeded, admin_user):
         "generate_pqc_migration_plan", {"project_id": _PROJECT}, "generate_pqc_migration_plan", seeded, admin_user
     )
     assert reached == _endpoint_ceiling(get_pqc_migration_plan)
+
+
+@pytest.mark.asyncio
+async def test_pqc_migration_plan_default_size(seeded, admin_user):
+    spy = AsyncMock(return_value={})
+    with patch("app.services.chat.tools.registry.generate_pqc_migration_plan", new=spy):
+        await ChatToolRegistry().execute_tool(
+            "generate_pqc_migration_plan", {"project_id": _PROJECT}, admin_user, seeded
+        )
+    rest_default = inspect.signature(get_pqc_migration_plan).parameters["limit"].default.default
+    assert spy.await_args.kwargs["limit"] == rest_default
 
 
 @pytest.mark.asyncio

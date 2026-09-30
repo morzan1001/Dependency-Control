@@ -16,8 +16,8 @@ from app.schemas.compliance import ControlStatus
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
-from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
+from tests.helpers.compliance import evaluation_input
 
 _PROJECT = "sla-project"
 _OTHER_PROJECT = "other-project"
@@ -68,6 +68,19 @@ async def _persist(db, scan_id: str, scan_created_at: datetime, *findings: Findi
 async def _store_legacy_copy(db, scan_created_at: datetime) -> None:
     legacy, _ = _prepare_finding_records([_critical_cve()], "legacy-scan", _PROJECT, scan_created_at)
     await db.findings.insert_many(legacy)
+
+
+async def _critical_control(db, scan_id: str):
+    """The CVE-SLA-CRITICAL verdict over the findings the engine reads for ``scan_id``."""
+    engine = ComplianceReportEngine()
+    framework = CveRemediationSlaFramework()
+    resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
+    clause, fields, _ = engine._finding_type_filter(framework)
+    findings, _ = await engine._collect_findings(db, resolved, [scan_id], clause, fields)
+    evaluation = await framework.evaluate(
+        evaluation_input(resolved=resolved, findings=findings, scan_ids=[scan_id], db=db)
+    )
+    return next(c for c in evaluation.controls if c.control_id == "CVE-SLA-CRITICAL")
 
 
 def _first_seen(docs: list[dict]) -> list[datetime | None]:
@@ -175,26 +188,21 @@ async def test_a_scan_persisted_after_a_newer_one_keeps_its_own_earlier_detectio
 async def test_a_critical_cve_first_seen_200_days_ago_fails_its_sla(db, database):
     await _persist(db, "scan-1", _days_ago(200), _critical_cve())
     current = await _persist(db, "scan-2", _NOW, _critical_cve())
-    framework = CveRemediationSlaFramework()
-    resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
-    findings, _ = await ComplianceReportEngine()._collect_findings(db, resolved, ["scan-2"], framework)
 
-    evaluation = await framework.evaluate_async(
-        EvaluationInput(
-            resolved=resolved,
-            scope_description=f"project '{_PROJECT}'",
-            crypto_assets=[],
-            findings=findings,
-            policy_rules=[],
-            policy_version=None,
-            iana_catalog_version=None,
-            scan_ids=["scan-2"],
-        )
-    )
+    critical = await _critical_control(db, "scan-2")
 
-    critical = next(c for c in evaluation.controls if c.control_id == "CVE-SLA-CRITICAL")
     assert critical.status == ControlStatus.FAILED.value
     assert critical.evidence_finding_ids == [current[0]["_id"]]
+
+
+@pytest.mark.parametrize("database", _DATABASES)
+@pytest.mark.asyncio
+async def test_a_critical_cve_in_a_copy_predating_first_seen_at_fails_its_sla_from_its_scan_date(db, database):
+    await _store_legacy_copy(db, _days_ago(400))
+
+    critical = await _critical_control(db, "legacy-scan")
+
+    assert critical.status == ControlStatus.FAILED.value
 
 
 @pytest.mark.live_mongo

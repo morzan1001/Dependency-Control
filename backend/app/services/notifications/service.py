@@ -1,25 +1,40 @@
 import asyncio
 import logging
-import os
 from typing import Any
 
 from app.core import abatched
-from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_ROLE_ADMIN, NotificationEvent
+from app.core.constants import (
+    NOTIFICATION_CHANNEL_EMAIL,
+    NOTIFICATION_CHANNEL_MATTERMOST,
+    NOTIFICATION_CHANNEL_SLACK,
+    NotificationEvent,
+)
 from app.models.project import Project
-from app.models.system import SystemSettings
 from app.models.user import User
+from app.repositories.projects import ProjectRepository
 from app.repositories.system_settings import SystemSettingsRepository
+from app.repositories.teams import TeamRepository
+from app.repositories.users import UserRepository
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.mattermost_provider import MattermostProvider
 from app.services.notifications.slack_provider import SlackProvider
 
 logger = logging.getLogger(__name__)
 
-_LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "static", "logo.png")
-
-# A permission fan-out has no response to disclose a cut in, so the ceiling bounds how many
-# recipients are held at once rather than how many are reached.
+# Bounds how many recipients are held in memory at once, never how many are reached.
 _FAN_OUT_BATCH_SIZE = 500
+
+_PROJECT_RECIPIENT_FIELDS = dict.fromkeys(
+    (
+        "name",
+        "members",
+        "team_ids",
+        "enforce_notification_settings",
+        "enforced_notification_preferences",
+        "notification_overrides",
+    ),
+    1,
+)
 
 
 class NotificationService:
@@ -28,64 +43,54 @@ class NotificationService:
         self.slack_provider = SlackProvider()
         self.mattermost_provider = MattermostProvider()
 
-    async def _send_based_on_prefs(
+    async def _deliver(
         self,
-        user: User,
-        prefs: dict[str, list[str]],
-        event_type: NotificationEvent,
+        db: Any,
+        recipients: list[tuple[User, list[str]]],
         subject: str,
         message: str,
-        system_settings: SystemSettings | None = None,
+        *,
         html_message: str | None = None,
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
     ) -> None:
-        channels = prefs.get(event_type, [])
-        tasks = []
-
-        if "email" in channels and user.email:
-            tasks.append(
-                self.email_provider.send(
-                    user.email,
-                    subject,
-                    message,
-                    system_settings=system_settings,
-                    html_message=html_message,
-                    logo_path=_LOGO_PATH,
+        """Send each recipient the message on their channels; one failed send never cancels the others."""
+        if not any(channels for _, channels in recipients):
+            return
+        system_settings = await SystemSettingsRepository(db).get()
+        sends = []
+        for user, channels in recipients:
+            if NOTIFICATION_CHANNEL_EMAIL in channels and user.email:
+                sends.append(
+                    self.email_provider.send(
+                        user.email, subject, message, system_settings=system_settings, html_message=html_message
+                    )
                 )
-            )
-
-        if "slack" in channels and user.slack_username:
-            tasks.append(
-                self.slack_provider.send(
-                    user.slack_username,
-                    subject,
-                    message,
-                    system_settings=system_settings,
-                    blocks=slack_blocks,
+            if NOTIFICATION_CHANNEL_SLACK in channels and user.slack_username:
+                # A member ID, for which chat.postMessage finds no channel once it carries a leading '@'.
+                sends.append(
+                    self.slack_provider.send(
+                        user.slack_username.lstrip("@"),
+                        subject,
+                        message,
+                        system_settings=system_settings,
+                        blocks=slack_blocks,
+                    )
                 )
-            )
-
-        if "mattermost" in channels and user.mattermost_username:
-            mm_dest = user.mattermost_username
-            if not mm_dest.startswith("@"):
-                mm_dest = f"@{mm_dest}"
-            tasks.append(
-                self.mattermost_provider.send(
-                    mm_dest,
-                    subject,
-                    message,
-                    system_settings=system_settings,
-                    props=mattermost_props,
+            if NOTIFICATION_CHANNEL_MATTERMOST in channels and user.mattermost_username:
+                # A username, which the provider resolves to the direct-message channel only with a leading '@'.
+                sends.append(
+                    self.mattermost_provider.send(
+                        "@" + user.mattermost_username.lstrip("@"),
+                        subject,
+                        message,
+                        system_settings=system_settings,
+                        props=mattermost_props,
+                    )
                 )
-            )
-
-        if tasks:
-            # return_exceptions so one failure doesn't cancel the others.
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.error(f"Notification task failed: {result}")
+        for result in await asyncio.gather(*sends, return_exceptions=True):
+            if isinstance(result, Exception):
+                logger.error("Notification send failed: %s", result)
 
     async def notify_users(
         self,
@@ -93,49 +98,42 @@ class NotificationService:
         event_type: NotificationEvent,
         subject: str,
         message: str,
-        db: Any = None,
+        *,
+        db: Any,
         forced_channels: list[str] | None = None,
         html_message: str | None = None,
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
     ) -> None:
-        """Send a notification to multiple users."""
-        system_settings = None
-        if db is not None:
-            repo = SystemSettingsRepository(db)
-            system_settings = await repo.get()
-
-        tasks = []
-        for user in users:
-            prefs: dict[str, list[str]] = (
-                {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
-            )
-
-            tasks.append(
-                self._send_based_on_prefs(
-                    user,
-                    prefs,
-                    event_type,
-                    subject,
-                    message,
-                    system_settings,
-                    html_message=html_message,
-                    slack_blocks=slack_blocks,
-                    mattermost_props=mattermost_props,
-                )
-            )
-
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.error(f"Notification task failed: {result}")
+        """Send each user the event on the forced channels, else on their own preferences."""
+        await self._deliver(
+            db,
+            [(user, forced_channels or (user.notification_preferences or {}).get(event_type, [])) for user in users],
+            subject,
+            message,
+            html_message=html_message,
+            slack_blocks=slack_blocks,
+            mattermost_props=mattermost_props,
+        )
 
     async def notify_users_with_permission(
         self,
         db: Any,
         *,
-        permission: str | list[str],
+        permission: list[str],
+        event_type: NotificationEvent,
+        subject: str,
+        message: str,
+    ) -> None:
+        """Notify all active users whose permissions include any of the given ones."""
+        query = {"permissions": {"$in": permission}, "is_active": True}
+        await self._notify_matching(db, query, event_type=event_type, subject=subject, message=message)
+
+    async def _notify_matching(
+        self,
+        db: Any,
+        query: dict[str, Any],
+        *,
         event_type: NotificationEvent,
         subject: str,
         message: str,
@@ -144,13 +142,8 @@ class NotificationService:
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
     ) -> None:
-        """Notify all active users whose permissions include any of the given permission(s)."""
-        perms = [permission] if isinstance(permission, str) else list(permission)
-        if not perms:
-            return
-
-        users = (User(**doc) async for doc in db.users.find({"permissions": {"$in": perms}, "is_active": True}))
-        async for batch in abatched(users, _FAN_OUT_BATCH_SIZE):
+        """Notify every user the query matches, one batch in memory at a time."""
+        async for batch in abatched(UserRepository(db).iterate(query), _FAN_OUT_BATCH_SIZE):
             await self.notify_users(
                 batch,
                 event_type=event_type,
@@ -170,87 +163,35 @@ class NotificationService:
         subject: str,
         message: str,
         db: Any,
-        forced_channels: list[str] | None = None,
         html_message: str | None = None,
         slack_blocks: list[dict[str, Any]] | None = None,
         mattermost_props: dict[str, Any] | None = None,
     ) -> None:
-        """Send notifications to project members."""
-        repo = SystemSettingsRepository(db)
-        system_settings = await repo.get()
-
-        # user_id -> project-specific prefs (or None if no override)
-        targets: dict[str, dict[str, list[str]] | None] = {}
-        for member in project.members:
-            if targets.get(member.user_id) is None:
-                targets[member.user_id] = member.notification_preferences or None
-
-        team_admins: list[str] = []
-        if project.team_ids:
-            async for team_data in db.teams.find({"_id": {"$in": project.team_ids}}).sort("_id", 1):
-                for tm in team_data.get("members", []):
-                    uid = tm["user_id"]
-                    targets.setdefault(uid, project.notification_overrides.get(uid) or None)
-                    if tm.get("role") == TEAM_ROLE_ADMIN:
-                        team_admins.append(uid)
-
-        user_ids = list(targets.keys())
-        if not user_ids:
+        """Notify the active direct and owning-team members; enforced, then project, then account preferences."""
+        enforced = (project.enforced_notification_preferences or {}) if project.enforce_notification_settings else None
+        if enforced is not None and not enforced.get(event_type):
             return
 
-        users_cursor = db.users.find({"_id": {"$in": user_ids}, "is_active": True})
-        users_list = await users_cursor.to_list(length=len(user_ids))
-        users_map = {str(u["_id"]): User(**u) for u in users_list}
+        project_prefs = {m.user_id: m.notification_preferences for m in project.members}
+        for team_members in (await TeamRepository(db).members_by_team(project.team_ids)).values():
+            for member in team_members:
+                project_prefs.setdefault(member["user_id"], project.notification_overrides.get(member["user_id"]))
 
-        enforced_prefs = None
-        if project.enforce_notification_settings:
-            # Direct admins before team-granted ones, the order the project page lists them in.
-            candidates = [
-                (m.user_id, m.notification_preferences)
-                for m in project.members
-                if m.role == PROJECT_ROLE_ADMIN or m.user_id in team_admins
-            ] + [(uid, project.notification_overrides.get(uid)) for uid in team_admins]
-            enforced_prefs = next((prefs for uid, prefs in candidates if prefs and uid in users_map), None)
-
-        tasks = []
-        for user_id, specific_prefs in targets.items():
-            user = users_map.get(user_id)
-            if not user:
-                continue
-
-            effective_prefs: dict[str, list[str]] = {}
-            if forced_channels:
-                effective_prefs = {event_type: forced_channels}
-            else:
-                effective_prefs = user.notification_preferences or {}
-
-                if enforced_prefs:
-                    effective_prefs = enforced_prefs
-                elif specific_prefs:
-                    effective_prefs = specific_prefs
-
-            if not effective_prefs:
-                continue
-
-            tasks.append(
-                self._send_based_on_prefs(
-                    user,
-                    effective_prefs,
-                    event_type,
-                    subject,
-                    message,
-                    system_settings,
-                    html_message=html_message,
-                    slack_blocks=slack_blocks,
-                    mattermost_props=mattermost_props,
-                )
-            )
-
-        if tasks:
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-            for result in results:
-                if isinstance(result, Exception):
-                    logger.error(f"Notification task failed: {result}")
+        recipients = []
+        for doc in await UserRepository(db).find_by_ids(list(project_prefs)):
+            user = User(**doc)
+            if user.is_active:
+                prefs = enforced or project_prefs[user.id] or user.notification_preferences or {}
+                recipients.append((user, prefs.get(event_type, [])))
+        await self._deliver(
+            db,
+            recipients,
+            subject,
+            message,
+            html_message=html_message,
+            slack_blocks=slack_blocks,
+            mattermost_props=mattermost_props,
+        )
 
 
 notification_service = NotificationService()
@@ -270,18 +211,11 @@ async def safe_notify_project_event(
     if not project_id:
         return
     try:
-        from app.repositories.projects import ProjectRepository  # late import: circular
-
-        project = await ProjectRepository(db).get_by_id(project_id)
-        if project is None:
+        doc = await ProjectRepository(db).find_one_raw({"_id": project_id}, _PROJECT_RECIPIENT_FIELDS)
+        if doc is None:
             return
         await notification_service.notify_project_members(
-            project=project,
-            event_type=event_type,
-            subject=subject,
-            message=message,
-            db=db,
-            html_message=html_message,
+            Project(**doc), event_type, subject, message, db, html_message=html_message
         )
     except Exception:
         logger.exception("%s: notification dispatch for %s failed (non-blocking)", context, event_type)

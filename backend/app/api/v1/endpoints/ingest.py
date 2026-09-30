@@ -25,7 +25,6 @@ from app.repositories.distributed_locks import DistributedLocksRepository, new_l
 from app.repositories.scans import ScanRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
-    BaseIngest,
     FindingsIngestResponse,
     ProjectConfigResponse,
     SBOMIngest,
@@ -49,10 +48,6 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
-def _scanner_payload(data: BaseIngest) -> dict[str, Any]:
-    return data.model_dump(exclude=set(BaseIngest.model_fields))
-
-
 @router.post(
     "/ingest/trufflehog",
     summary="Ingest TruffleHog Results",
@@ -65,10 +60,7 @@ async def ingest_trufflehog(
     db: DatabaseDep,
 ) -> SecretScanResponse:
     """Ingest TruffleHog secret scan results; returns findings summary and pipeline failure status."""
-    manager = ScanManager(db, project)
-    scan_id = await manager.find_or_create_scan(data)
-
-    response = await process_findings_ingest(manager, "trufflehog", _scanner_payload(data), scan_id)
+    response = await process_findings_ingest(ScanManager(db, project), "trufflehog", data)
 
     # Any secret found fails the pipeline.
     failed = response["findings_count"] > 0
@@ -94,10 +86,7 @@ async def ingest_opengrep(
     db: DatabaseDep,
 ) -> FindingsIngestResponse:
     """Ingest OpenGrep SAST scan results; returns a findings summary."""
-    manager = ScanManager(db, project)
-    scan_id = await manager.find_or_create_scan(data)
-
-    response = await process_findings_ingest(manager, "opengrep", _scanner_payload(data), scan_id)
+    response = await process_findings_ingest(ScanManager(db, project), "opengrep", data)
     return FindingsIngestResponse(**response)
 
 
@@ -113,10 +102,7 @@ async def ingest_kics(
     db: DatabaseDep,
 ) -> FindingsIngestResponse:
     """Ingest KICS IaC scan results."""
-    manager = ScanManager(db, project)
-    scan_id = await manager.find_or_create_scan(data)
-
-    response = await process_findings_ingest(manager, "kics", _scanner_payload(data), scan_id)
+    response = await process_findings_ingest(ScanManager(db, project), "kics", data)
     return FindingsIngestResponse(**response)
 
 
@@ -132,10 +118,7 @@ async def ingest_bearer(
     db: DatabaseDep,
 ) -> FindingsIngestResponse:
     """Ingest Bearer SAST/Data Security scan results."""
-    manager = ScanManager(db, project)
-    scan_id = await manager.find_or_create_scan(data)
-
-    response = await process_findings_ingest(manager, "bearer", _scanner_payload(data), scan_id)
+    response = await process_findings_ingest(ScanManager(db, project), "bearer", data)
     return FindingsIngestResponse(**response)
 
 

@@ -3,12 +3,11 @@
 import json
 
 from app.models.compliance_report import ComplianceReport
-from app.schemas.compliance import FrameworkEvaluation, ReportFormat
+from app.schemas.compliance import FrameworkEvaluation
 from app.services.compliance.renderers.base import build_filename, coverage_statement
 
 
 class JsonRenderer:
-    format = ReportFormat.JSON
     mime_type = "application/json"
     extension = "json"
 
@@ -30,13 +29,12 @@ class JsonRenderer:
             "controls": [c.model_dump() for c in evaluation.controls],
             "residual_risks": [r.model_dump() for r in evaluation.residual_risks],
             "inputs_fingerprint": evaluation.inputs_fingerprint,
-        }
-        if evaluation.coverage is not None:
-            payload["coverage"] = {
+            "coverage": {
                 **evaluation.coverage.model_dump(),
                 "complete": evaluation.coverage.complete,
                 "statement": coverage_statement(evaluation.coverage),
-            }
+            },
+        }
         if disclaimer:
             payload["disclaimer"] = disclaimer
         body = json.dumps(payload, indent=2, default=str).encode("utf-8")

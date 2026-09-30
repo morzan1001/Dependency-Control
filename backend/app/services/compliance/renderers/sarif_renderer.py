@@ -7,7 +7,6 @@ from app.models.finding import Severity
 from app.schemas.compliance import (
     ControlStatus,
     FrameworkEvaluation,
-    ReportFormat,
 )
 from app.services.compliance.renderers.base import build_filename, coverage_statement
 
@@ -32,7 +31,6 @@ _STATUS_TO_RESULT: dict[str, dict[str, str]] = {
 
 
 class SarifRenderer:
-    format = ReportFormat.SARIF
     mime_type = "application/sarif+json"
     extension = "sarif.json"
 
@@ -96,11 +94,7 @@ class SarifRenderer:
                     "properties": {
                         "generated_at": evaluation.generated_at.isoformat(),
                         "scope_description": evaluation.scope_description,
-                        **(
-                            {"coverage": coverage_statement(evaluation.coverage)}
-                            if evaluation.coverage is not None
-                            else {}
-                        ),
+                        "coverage": coverage_statement(evaluation.coverage),
                     },
                 },
             ],

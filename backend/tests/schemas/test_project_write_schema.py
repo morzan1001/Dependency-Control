@@ -13,7 +13,6 @@ _REQUIRED_IN_STORAGE = (
     "retention_action",
     "gitlab_mr_comments_enabled",
     "github_pr_comments_enabled",
-    "enforce_notification_settings",
 )
 _CLEARABLE = ("default_branch", "rescan_enabled", "rescan_interval", "gitlab_instance_id", "gitlab_project_id")
 

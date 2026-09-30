@@ -10,7 +10,7 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, TypeVar, cast
@@ -100,12 +100,18 @@ class CacheTTL:
     # Update frequency analysis (changes only on new scan completion)
     UPDATE_FREQUENCY = 30 * 60  # 30 minutes
 
-    # Keyed by scan_id (auto-invalidates on new scan); TTL only bounds staleness
-    # of the cross-project signal woven in.
+    # Keyed by the scan's completion, so the TTL only bounds staleness of the cross-project signal.
     RECOMMENDATIONS = 10 * 60  # 10 minutes
 
     # Long TTL: version histories almost never change retroactively; new releases append.
     RELEASE_HISTORY = 24 * 3600  # 24 hours
+
+
+def scope_digest(ids: Iterable[str] | None) -> str:
+    """Digest of an id set for cache keys; None (global scope) gets a sentinel no set can equal."""
+    if ids is None:
+        return "*"
+    return hashlib.sha256(",".join(sorted(ids)).encode()).hexdigest()[:16]
 
 
 class CacheKeys:
@@ -180,16 +186,16 @@ class CacheKeys:
         return f"releases:{system}:{package}"
 
     @staticmethod
-    def update_frequency_comparison(scope_hash: str, team_id: str = "all") -> str:
+    def update_frequency_comparison(scope_hash: str, team_id: str | None) -> str:
         # Keying on the scope digest rather than the user shares one entry between
         # callers that see the same projects, without crossing access boundaries.
-        return f"update_freq_cmp:{scope_hash}:{team_id}"
+        return f"update_freq_cmp:{scope_hash}:" + (f"team={team_id}" if team_id else "all-teams")
 
     @staticmethod
-    def recommendations(project_id: str, scan_id: str, scope_hash: str) -> str:
+    def recommendations(project_id: str, scan_id: str, analysis_stamp: str, scope_hash: str) -> str:
         # scope_hash (digest of caller's accessible project ids) prevents cross-project
         # recommendation data leaking across users with different project access.
-        return f"recommendations:{project_id}:{scan_id}:{scope_hash}"
+        return f"recommendations:{project_id}:{scan_id}:{analysis_stamp}:{scope_hash}"
 
 
 class CacheService:
@@ -435,6 +441,59 @@ class CacheService:
             if cache_operation_duration_seconds:
                 cache_operation_duration_seconds.labels(operation="mset").observe(time.time() - _start)
         return success
+
+    async def incr(self, key: str, ttl_seconds: int) -> int | None:
+        """Count one hit atomically in a window the first hit opens; None while Redis is unreachable."""
+        if not await self._ensure_available():
+            return None
+
+        _start = time.time()
+        try:
+            client = await self.get_client()
+            full_key = self._make_key(key)
+            pipe = client.pipeline(transaction=True)
+            pipe.incr(full_key)
+            pipe.expire(full_key, ttl_seconds, nx=True)
+            count, _ = await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
+            return int(count)
+        except (redis.ConnectionError, asyncio.TimeoutError):
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
+            self._mark_unavailable()
+            return None
+        except Exception as e:
+            logger.warning(f"Cache incr error: {e}")
+            return None
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="incr").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="incr").observe(time.time() - _start)
+
+    async def pop(self, key: str) -> Any | None:
+        """Read and delete in one step, so only one caller receives the value; None if absent or unreachable."""
+        if not await self._ensure_available():
+            return None
+
+        _start = time.time()
+        try:
+            client = await self.get_client()
+            data = await asyncio.wait_for(
+                client.getdel(self._make_key(key)),
+                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            )
+            return json.loads(data) if data else None
+        except (redis.ConnectionError, asyncio.TimeoutError):
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
+            self._mark_unavailable()
+            return None
+        except Exception as e:
+            logger.warning(f"Cache pop error: {e}")
+            return None
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="pop").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="pop").observe(time.time() - _start)
 
     async def get_or_fetch_with_lock(
         self,

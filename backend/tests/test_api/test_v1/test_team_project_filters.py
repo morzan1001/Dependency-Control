@@ -11,6 +11,7 @@ import pytest
 from app.api.v1.endpoints.projects import read_projects
 from app.core.permissions import Permissions
 from app.models.user import User
+from app.services.chat.tools._arguments import checked_arguments
 from app.services.chat.tools.registry import ChatToolRegistry
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -93,7 +94,9 @@ async def test_the_project_list_names_every_team_that_owns_a_project():
 
 @pytest.mark.asyncio
 async def test_the_chat_project_list_names_every_team_that_owns_a_project():
-    result = await ChatToolRegistry()._dispatch("list_projects", {}, _user(), await _seed())
+    result = await ChatToolRegistry()._dispatch(
+        "list_projects", checked_arguments("list_projects", {}), _user(), await _seed()
+    )
 
     named = {project["id"]: [team["name"] for team in project["teams"]] for project in result["projects"]}
 

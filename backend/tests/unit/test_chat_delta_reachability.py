@@ -1,5 +1,4 @@
-"""The chat and MCP delta tools return the per-category envelope directly. An unlabelled envelope
-would tell the model that a reachability-enriched scan reports no reachability at all."""
+"""The delta tool labels its envelope, else a reachability-enriched scan reads as reporting no reachability."""
 
 import pytest
 
@@ -43,23 +42,8 @@ async def _seed_one_enriched_side(db) -> None:
 async def test_compare_scans_payload_labels_both_sides(db, admin_user):
     await _seed_one_enriched_side(db)
 
-    result = await ChatToolRegistry()._dispatch(
+    result = await ChatToolRegistry().execute_tool(
         "compare_scans",
-        {"project_id": _PROJECT, "scan_id_a": _ENRICHED_SCAN, "scan_id_b": _RESCANNED_SCAN},
-        admin_user,
-        db,
-    )
-
-    assert result["from_reachability"] == {"coverable_count": _COVERABLE, "analyzed_count": _ANALYSED}
-    assert result["to_reachability"] is None
-
-
-@pytest.mark.asyncio
-async def test_get_scan_delta_payload_labels_both_sides(db, admin_user):
-    await _seed_one_enriched_side(db)
-
-    result = await ChatToolRegistry()._dispatch(
-        "get_scan_delta",
         {"project_id": _PROJECT, "from_scan_id": _ENRICHED_SCAN, "to_scan_id": _RESCANNED_SCAN},
         admin_user,
         db,

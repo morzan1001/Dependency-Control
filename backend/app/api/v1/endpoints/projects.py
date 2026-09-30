@@ -36,9 +36,8 @@ from app.api.v1.helpers.auth import send_project_member_added_email
 from app.api.v1.helpers.projects import (
     direct_member_role,
     effective_project_role,
-    max_project_role,
+    load_project_with_members,
     reject_unknown_analyzers,
-    team_grant_role,
 )
 from app.api.v1.helpers.sorting import SortOrderQuery
 from app.api.v1.helpers.responses import (
@@ -54,11 +53,9 @@ from app.core.constants import (
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
-    PROJECT_ROLE_VIEWER,
     SCAN_ACTIVE_STATUSES,
     SEVERITY_ORDER,
     TEAM_SOURCE_MANUAL,
-    ProjectRole,
 )
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions, has_permission
@@ -420,52 +417,6 @@ async def read_all_scans(
     return await ScanRepository(db).aggregate(pipeline, limit)
 
 
-# Every owning team's member ids as one flat list. A field path across two array levels answers
-# an array per team, which the $in below can never match an id against.
-_OWNING_TEAM_MEMBER_IDS = {
-    "$reduce": {
-        "input": {"$ifNull": ["$team_data", []]},
-        "initialValue": [],
-        "in": {
-            "$setUnion": [
-                "$$value",
-                {"$map": {"input": {"$ifNull": ["$$this.members", []]}, "as": "m", "in": "$$m.user_id"}},
-            ]
-        },
-    }
-}
-
-
-def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
-    """Add the owning teams' members, named with each owner, and set every row's ``effective_role``; direct rows win."""
-    team_roles: dict[str, ProjectRole | None] = {}
-    owners: dict[str, set[str]] = {}
-
-    # Sorted, so the answer does not depend on the order the join returned the teams in.
-    for team in sorted(data.get("team_data") or [], key=lambda team: str(team.get("_id"))):
-        for tm in team.get("members", []):
-            uid = tm["user_id"]
-            team_roles[uid] = max_project_role(team_roles.get(uid), team_grant_role(tm.get("role")))
-            owners.setdefault(uid, set()).add(str(team.get("name")))
-
-    for member in data["members"]:
-        direct_role = member.get("role", PROJECT_ROLE_VIEWER)
-        member["effective_role"] = max_project_role(direct_role, team_roles.pop(member["user_id"], None))
-
-    overrides = data.get("notification_overrides") or {}
-    data["members"].extend(
-        {
-            "user_id": uid,
-            "role": role,
-            "effective_role": role,
-            "username": t_users.get(uid),
-            "inherited_from": "Team: " + ", ".join(sorted(owners[uid])),
-            "notification_preferences": overrides.get(uid) or {},
-        }
-        for uid, role in team_roles.items()
-    )
-
-
 @router.get("/{project_id}", summary="Get project details", responses=RESP_AUTH_404)
 async def read_project(
     project_id: str,
@@ -474,62 +425,9 @@ async def read_project(
 ) -> Project:
     """Get a specific project by ID."""
     await check_project_access(project_id, current_user, db)
-    project_repo = ProjectRepository(db)
-
-    # Single aggregation to avoid N+1 team/user lookups. The owning teams stay an array: an array
-    # localField joins many, and unwinding them would answer one copy of the project per owner.
-    pipeline: list[dict[str, Any]] = [
-        {"$match": {"_id": project_id}},
-        {
-            "$lookup": {
-                "from": "teams",
-                "localField": "team_ids",
-                "foreignField": "_id",
-                "as": "team_data",
-            }
-        },
-        {
-            "$lookup": {
-                "from": "users",
-                "let": {"member_ids": "$members.user_id"},
-                "pipeline": [
-                    {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$member_ids"]}}},
-                    {"$project": {"_id": 1, "username": 1}},
-                ],
-                "as": "project_users",
-            }
-        },
-        {
-            "$lookup": {
-                "from": "users",
-                "let": {"team_member_ids": _OWNING_TEAM_MEMBER_IDS},
-                "pipeline": [
-                    {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$team_member_ids"]}}},
-                    {"$project": {"_id": 1, "username": 1}},
-                ],
-                "as": "team_users",
-            }
-        },
-    ]
-
-    result = await project_repo.aggregate(pipeline)
-    if not result:
+    data = await load_project_with_members(db, project_id)
+    if data is None:
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-
-    data = result[0]
-
-    p_users = {str(u["_id"]): u["username"] for u in data.get("project_users", [])}
-    t_users = {str(u["_id"]): u["username"] for u in data.get("team_users", [])}
-
-    for m in data.get("members", []):
-        m["username"] = p_users.get(m["user_id"])
-
-    _merge_team_members(data, t_users)
-
-    data.pop("team_data", None)
-    data.pop("project_users", None)
-    data.pop("team_users", None)
-
     return Project(**data)
 
 
@@ -954,9 +852,10 @@ async def update_notification_settings(
     may_enforce = role == PROJECT_ROLE_ADMIN or is_write_superuser(current_user)
 
     if settings.enforce_notification_settings is not None and may_enforce:
-        await project_repo.update_raw(
-            project_id, {"$set": {"enforce_notification_settings": settings.enforce_notification_settings}}
-        )
+        fields: dict[str, Any] = {"enforce_notification_settings": settings.enforce_notification_settings}
+        if settings.enforce_notification_settings:
+            fields["enforced_notification_preferences"] = settings.notification_preferences
+        await project_repo.update_raw(project_id, {"$set": fields})
     elif project.enforce_notification_settings and not may_enforce:
         raise HTTPException(status_code=403, detail="Notification settings are enforced by the project admin")
 
@@ -1115,9 +1014,18 @@ def _build_scan_findings_match(
     return query
 
 
-def _scan_findings_lookup_stage() -> dict[str, Any]:
-    """The ``$lookup`` stage that pulls dependency info into each finding."""
-    return {
+def _scan_findings_dependency_join() -> list[dict[str, Any]]:
+    fields = (
+        "source_type",
+        "source_target",
+        "layer_digest",
+        "found_by",
+        "locations",
+        "purl",
+        "direct",
+        "direct_inferred",
+    )
+    lookup = {
         "$lookup": {
             "from": "dependencies",
             "let": {
@@ -1142,26 +1050,16 @@ def _scan_findings_lookup_stage() -> dict[str, Any]:
                 {"$addFields": {"_exact": {"$eq": ["$name", "$$component"]}}},
                 {"$sort": {"_exact": -1}},
                 {"$limit": 1},
-                {
-                    "$project": {
-                        "source_type": 1,
-                        "source_target": 1,
-                        "layer_digest": 1,
-                        "found_by": 1,
-                        "locations": 1,
-                        "purl": 1,
-                        "direct": 1,
-                        "direct_inferred": 1,
-                    }
-                },
+                {"$project": dict.fromkeys(fields, 1)},
             ],
             "as": "dependency_info",
         }
     }
+    flatten = {"$addFields": {field: {"$arrayElemAt": [f"$dependency_info.{field}", 0]} for field in fields}}
+    return [lookup, flatten, {"$project": {"dependency_info": 0}}]
 
 
 def _scan_findings_add_fields_stage() -> dict[str, Any]:
-    """The ``$addFields`` stage that ranks severity and flattens dependency info."""
     return {
         "$addFields": {
             "severity_rank": {
@@ -1178,14 +1076,6 @@ def _scan_findings_add_fields_stage() -> dict[str, Any]:
             "id": "$finding_id",
             # Deterministic scalar for sorting by scanner (scanners is a list).
             "first_scanner": {"$arrayElemAt": ["$scanners", 0]},
-            "source_type": {"$arrayElemAt": ["$dependency_info.source_type", 0]},
-            "source_target": {"$arrayElemAt": ["$dependency_info.source_target", 0]},
-            "layer_digest": {"$arrayElemAt": ["$dependency_info.layer_digest", 0]},
-            "found_by": {"$arrayElemAt": ["$dependency_info.found_by", 0]},
-            "locations": {"$arrayElemAt": ["$dependency_info.locations", 0]},
-            "purl": {"$arrayElemAt": ["$dependency_info.purl", 0]},
-            "direct": {"$arrayElemAt": ["$dependency_info.direct", 0]},
-            "direct_inferred": {"$arrayElemAt": ["$dependency_info.direct_inferred", 0]},
         }
     }
 
@@ -1221,23 +1111,24 @@ def _build_scan_findings_pipeline(
     direct_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Compose the full aggregation pipeline used by ``read_scan_findings``."""
-    stages: list[dict[str, Any]] = [
-        {"$match": query},
-        _scan_findings_lookup_stage(),
-        _scan_findings_add_fields_stage(),
-    ]
+    join = _scan_findings_dependency_join()
+    # The join runs one dependency query per finding, so only the page is joined unless the filter or sort reads it.
+    early_join, page_join = (join, []) if direct_only or sort_by == "source_type" else ([], join)
+    stages: list[dict[str, Any]] = [{"$match": query}, _scan_findings_add_fields_stage(), *early_join]
     if direct_only:
         # Drop known-transitive findings; direct=null (code findings / unmatched packages) stays visible.
         stages.append({"$match": {"direct": {"$ne": False}}})
     stages += [
-        # Keep _id through the $sort as the unique tiebreaker; it's dropped from output in the $facet below.
-        {"$project": {"dependency_info": 0}},
         _scan_findings_sort_stage(sort_by, sort_dir),
         {
             "$facet": {
                 "metadata": [{"$count": "total"}],
-                # Drop the _id tiebreaker and first_scanner sort-helper from the output.
-                "data": [{"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 0, "first_scanner": 0}}],
+                "data": [
+                    {"$skip": skip},
+                    {"$limit": limit},
+                    *page_join,
+                    {"$project": {"_id": 0, "first_scanner": 0}},
+                ],
             }
         },
     ]

@@ -38,7 +38,7 @@ async def test_prune_deletes_only_older(client, db, admin_auth_headers):
     assert resp.status_code == 200
     assert resp.json()["deleted"] == 1
 
-    remaining = await repo.list(policy_scope="system", limit=10)
+    remaining = await repo.list(policy_scope="system", policy_type="crypto", limit=10)
     assert {e.version for e in remaining} == {2, 3}
 
 

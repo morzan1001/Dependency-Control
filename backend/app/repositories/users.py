@@ -53,6 +53,12 @@ class UserRepository(BaseRepository[User]):
         with _unique_index_as_identity_taken():
             return await super().update(id, update_data)
 
+    async def claim_totp_step(self, user_id: str, step: int) -> bool:
+        """Spend ``step``; False when it or a later step was already spent."""
+        return await self.update_raw(
+            user_id, {"$set": {"totp_last_step": step}}, guard={"totp_last_step": {"$not": {"$gte": step}}}
+        )
+
     async def get_raw_by_username(self, username: str) -> dict[str, Any] | None:
         return await self.find_one_raw({"username": username})
 
@@ -62,6 +68,12 @@ class UserRepository(BaseRepository[User]):
     async def get_raw_by_verified_email(self, email: str) -> dict[str, Any] | None:
         """The lookup identity matching must use: an unverified address names whoever typed it."""
         return await self.find_one_raw({**_email_query(email), "is_verified": True})
+
+    async def find_raw_by_verified_emails(self, emails: list[str]) -> list[dict[str, Any]]:
+        """Every verified account one of ``emails`` names, matched as ``get_raw_by_verified_email`` does."""
+        patterns = [re.compile(f"^{re.escape(email)}$", re.IGNORECASE) for email in emails]
+        cursor = self.collection.find({"email": {"$in": patterns}, "is_verified": True})
+        return await cursor.to_list(None)
 
     async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
         cursor = self.collection.find({"_id": {"$in": user_ids}})

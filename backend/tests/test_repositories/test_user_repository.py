@@ -64,3 +64,14 @@ async def test_the_verified_email_lookup_skips_an_account_that_has_not_proven_th
     await repo.update("u1", {"is_verified": True})
 
     assert (await repo.get_raw_by_verified_email("ALICE@corp.com"))["_id"] == "u1"
+
+
+@pytest.mark.asyncio
+async def test_the_batched_verified_email_lookup_matches_as_the_single_one_does(repo):
+    await repo.update("u1", {"is_verified": True})
+    await repo.create_raw({"_id": "u2", "username": "bob", "email": "bob@corp.com", "permissions": []})
+    await repo.create_raw({"_id": "u3", "username": "carl", "email": "carl@corp.com", "is_verified": True})
+
+    found = await repo.find_raw_by_verified_emails(["ALICE@corp.com", "bob@corp.com", "c.rl@corp.com"])
+
+    assert [user["_id"] for user in found] == ["u1"]

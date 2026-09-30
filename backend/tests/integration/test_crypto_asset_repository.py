@@ -98,3 +98,26 @@ async def test_paging_a_scan_walks_its_assets_name_ascending(db):
     second = await repo.list_by_scan("p1", "s1", limit=2, skip=2)
 
     assert [a.name for a in first + second] == ["AES-128", "RSA-2048", "SHA-512"]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_asset_is_found_by_the_id_its_listing_names_and_so_is_its_rescan_copy(db):
+    repo = CryptoAssetRepository(db)
+    ingested = _asset("p1", "s1", "ref-a", "AES-128")
+    await repo.bulk_upsert("p1", "s1", [ingested])
+
+    (listed,) = await repo.list_by_scan("p1", "s1", limit=10)
+    fetched = await repo.get("p1", listed.id)
+
+    assert fetched is not None
+    assert fetched.name == "AES-128"
+    assert listed.id == ingested.id
+
+    await repo.carry_over_to_scan("p1", "s1", "s2")
+    (carried,) = await repo.list_by_scan("p1", "s2", limit=10)
+    fetched_copy = await repo.get("p1", carried.id)
+
+    assert carried.id != listed.id
+    assert fetched_copy is not None
+    assert fetched_copy.scan_id == "s2"

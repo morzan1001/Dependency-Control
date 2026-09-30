@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, computed_field, field_validator
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, validate_release_environment
 from app.models.release import release_identity
@@ -53,12 +53,18 @@ class SBOMIngest(BaseIngest):
 class ScanStatsResponse(BaseModel):
     """Statistics from scan analysis."""
 
-    total: int = 0
     critical: int = 0
     high: int = 0
     medium: int = 0
     low: int = 0
+    negligible: int = 0
     info: int = 0
+    unknown: int = 0
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def total(self) -> int:
+        return self.critical + self.high + self.medium + self.low + self.negligible + self.info + self.unknown
 
 
 class FindingsIngestResponse(BaseModel):

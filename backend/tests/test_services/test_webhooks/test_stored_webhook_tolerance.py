@@ -22,6 +22,4 @@ def test_a_document_stored_under_older_rules_still_loads():
 async def test_delivery_refuses_a_target_the_current_rules_reject():
     result = await webhook_service.test_webhook(_legacy_webhook())
 
-    assert result["success"] is False
-    assert result["error"].startswith("Blocked target:")
-    assert "not an allowed target" in result["error"]
+    assert (result["success"], result["error"]) == (False, "Target is not an allowed webhook destination")

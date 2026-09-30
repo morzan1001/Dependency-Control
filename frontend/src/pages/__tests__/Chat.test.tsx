@@ -108,7 +108,6 @@ describe('Chat error handling', () => {
     await waitFor(() => {
       expect(sendMessage).toHaveBeenCalledWith(
         'Give me a short summary of my overall security posture.',
-        [],
         'conv-1',
       );
     });

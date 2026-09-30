@@ -1,29 +1,49 @@
-"""Redis sliding-window rate limiter for chat requests.
+"""Redis sliding-window rate limiter for chat and ad-hoc analysis requests."""
 
-Callers should pass the runtime SystemSettings (MongoDB) values, not the startup config defaults.
-"""
-
+import functools
+import logging
 import time
 
 import redis.asyncio as redis
-from prometheus_client import Counter, Gauge
+from fastapi import HTTPException, status
+from prometheus_client import Counter
 
-from app.core.metrics import (
-    adhoc_rate_limit_remaining,
-    adhoc_rate_limited_total,
-    chat_rate_limit_remaining,
-    chat_rate_limited_total,
-)
+from app.core.config import settings
+from app.core.metrics import adhoc_rate_limited_total, chat_rate_limited_total
+
+logger = logging.getLogger(__name__)
 
 SURFACE_CHAT = "chat"
 SURFACE_ADHOC = "adhoc"
+CHAT_PREFIX = "dc:chat:rl:"
 
-# One metric pair per surface: the two are read by different dashboards, so a denial on one
+# One counter per surface: the two are read by different dashboards, so a denial on one
 # must not move the other's series.
-_SURFACE_METRICS: dict[str, tuple[Counter, Gauge]] = {
-    SURFACE_CHAT: (chat_rate_limited_total, chat_rate_limit_remaining),
-    SURFACE_ADHOC: (adhoc_rate_limited_total, adhoc_rate_limit_remaining),
+_SURFACE_METRICS: dict[str, Counter] = {
+    SURFACE_CHAT: chat_rate_limited_total,
+    SURFACE_ADHOC: adhoc_rate_limited_total,
 }
+
+
+@functools.cache
+def _client() -> redis.Redis:
+    return redis.from_url(settings.REDIS_URL)
+
+
+async def enforce_rate_limit(owner_id: str, *, prefix: str, surface: str, per_minute: int, per_hour: int) -> None:
+    """Raise 429 with Retry-After once the owner's window is spent; a Redis outage admits the request."""
+    limiter = ChatRateLimiter(_client(), prefix=prefix, surface=surface)
+    try:
+        allowed, retry_after = await limiter.check_rate_limit(owner_id, per_minute=per_minute, per_hour=per_hour)
+    except redis.RedisError:
+        logger.warning("Redis unavailable for %s rate limiting, allowing request", surface)
+        return
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded",
+            headers={"Retry-After": str(retry_after)},
+        )
 
 
 class ChatRateLimiter:
@@ -60,10 +80,10 @@ redis.call('EXPIRE', KEYS[1], math.floor(window * 2))
 return {1, max_reqs - count - 1}
 """
 
-    def __init__(self, redis_client: redis.Redis, prefix: str = "dc:chat:rl:", surface: str = SURFACE_CHAT):
+    def __init__(self, redis_client: redis.Redis, prefix: str = CHAT_PREFIX, surface: str = SURFACE_CHAT):
         self.redis = redis_client
         self.prefix = prefix
-        self._denied, self._remaining = _SURFACE_METRICS[surface]
+        self._denied = _SURFACE_METRICS[surface]
 
     async def check_rate_limit(self, user_id: str, per_minute: int, per_hour: int) -> tuple[bool, int]:
         """Return (allowed, retry_after_seconds).
@@ -81,7 +101,6 @@ return {1, max_reqs - count - 1}
         if not allowed:
             self._denied.inc()
             return False, retry_or_remaining
-        self._remaining.labels(user_id=user_id, window="minute").set(retry_or_remaining)
 
         hour_key = f"{self.prefix}{user_id}:hour"
         result = await self.redis.eval(self._WINDOW_LUA, 1, hour_key, str(now), "3600", str(per_hour), member)  # type: ignore[misc]
@@ -89,6 +108,5 @@ return {1, max_reqs - count - 1}
         if not allowed:
             self._denied.inc()
             return False, retry_or_remaining
-        self._remaining.labels(user_id=user_id, window="hour").set(retry_or_remaining)
 
         return True, 0

@@ -52,7 +52,6 @@ from collections.abc import AsyncIterator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-
 from app.core.config import settings
 from app.db.mongodb import create_client
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION

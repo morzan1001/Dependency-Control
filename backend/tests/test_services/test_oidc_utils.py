@@ -1,11 +1,15 @@
 """Tests for shared OIDC token validation, exercising the real RS256 decode/claim-verification path (no jwt.decode mocking)."""
 
 import asyncio
+import logging
+import time
 from datetime import datetime, timezone
+from functools import partial
 from types import SimpleNamespace
 from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
@@ -13,6 +17,8 @@ from jose import jwk, jwt
 from jose.constants import ALGORITHMS
 from pydantic import ValidationError
 
+from app.core.constants import JWKS_CACHE_TTL, JWKS_URI_CACHE_TTL
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.gitlab_api import OIDCPayload
 from app.schemas.github_instance import (
     GitHubInstanceCreate,
@@ -24,7 +30,8 @@ from app.schemas.gitlab_instance import (
     GitLabInstanceResponse,
     GitLabInstanceUpdate,
 )
-from app.services.oidc_utils import find_jwks_key, validate_oidc_token
+from app.services import oidc_utils
+from app.services.oidc_utils import discover_jwks_uri, fetch_jwks, find_jwks_key, validate_oidc_token
 
 ISSUER = "https://gitlab.example.com"
 KID = "test-signing-key"
@@ -59,27 +66,26 @@ def jwks(rsa_keypair):
     return {"keys": [public_jwk]}
 
 
-def _make_token(private_pem: str, aud) -> str:
+def _make_token(private_pem: str, aud, **claims) -> str:
     """Sign a real RS256 OIDC token with the given audience."""
     claims = {
         "iss": ISSUER,
         "project_id": "123",
         "project_path": "group/project",
+        **claims,
     }
     if aud is not None:
         claims["aud"] = aud
     return jwt.encode(claims, private_pem, algorithm="RS256", headers={"kid": KID})
 
 
-def _validate(token: str, audience, jwks):
+def _validate(token: str, audience, jwks, get_jwks=None):
     """Run validate_oidc_token with the real decode path and a stubbed JWKS source."""
-    get_jwks = AsyncMock(return_value=jwks)
-    invalidate = AsyncMock()
     return asyncio.run(
         validate_oidc_token(
             token=token,
-            get_jwks=get_jwks,
-            invalidate_cache=invalidate,
+            get_jwks=get_jwks or AsyncMock(return_value=jwks),
+            refresh_jwks=AsyncMock(return_value=jwks),
             issuer=ISSUER,
             audience=audience,
             payload_model=OIDCPayload,
@@ -144,78 +150,226 @@ class TestOIDCAudienceFailClosed:
         assert result is None
 
 
-class _FakeCooldownCache:
-    """In-memory stand-in for the Redis-backed cache_service (TTL ignored)."""
+class TestOIDCRejectionLogging:
+    """An expected rejection is one warning line; a defect is not dressed up as a bad token."""
 
-    def __init__(self):
-        self.store = {}
+    def test_an_expired_token_is_one_warning_without_a_traceback(self, rsa_keypair, jwks, caplog):
+        private_pem, _ = rsa_keypair
+        token = _make_token(private_pem, aud="dependency-control", exp=int(time.time()) - 60)
 
-    async def get(self, key):
-        return self.store.get(key)
+        with caplog.at_level(logging.WARNING, logger="app.services.oidc_utils"):
+            result = _validate(token, audience="dependency-control", jwks=jwks)
 
-    async def set(self, key, value, ttl_seconds=None):
-        self.store[key] = value
-        return True
+        assert result is None
+        assert [(r.levelno, r.exc_info) for r in caplog.records] == [(logging.WARNING, None)]
+        assert "expired" in caplog.records[0].getMessage().lower()
+
+    def test_claims_the_payload_model_rejects_are_one_warning_without_a_traceback(self, rsa_keypair, jwks, caplog):
+        private_pem, _ = rsa_keypair
+        token = jwt.encode(
+            {"iss": ISSUER, "aud": "dependency-control", "project_path": "group/project"},
+            private_pem,
+            algorithm="RS256",
+            headers={"kid": KID},
+        )
+
+        with caplog.at_level(logging.WARNING, logger="app.services.oidc_utils"):
+            result = _validate(token, audience="dependency-control", jwks=jwks)
+
+        assert result is None
+        assert [(r.levelno, r.exc_info) for r in caplog.records] == [(logging.WARNING, None)]
+
+    def test_an_unexpected_error_propagates(self, rsa_keypair, jwks):
+        private_pem, _ = rsa_keypair
+        token = _make_token(private_pem, aud="dependency-control")
+
+        with pytest.raises(RuntimeError, match="broken key source"):
+            _validate(
+                token,
+                audience="dependency-control",
+                jwks=jwks,
+                get_jwks=AsyncMock(side_effect=RuntimeError("broken key source")),
+            )
 
 
+@pytest.fixture
+def oidc_cache(fake_cache, monkeypatch):
+    monkeypatch.setattr(oidc_utils, "cache_service", fake_cache)
+    return fake_cache
+
+
+async def _ttl(cache, key):
+    return await cache._client.ttl(cache._make_key(key))
+
+
+async def _stored_keys(cache):
+    return await cache._client.keys("*")
+
+
+def _serve(monkeypatch, handler):
+    """Route the module's HTTP client through ``handler`` and record every requested URL."""
+    requested: list[str] = []
+
+    async def recording(request: httpx.Request) -> httpx.Response:
+        requested.append(str(request.url))
+        return await handler(request)
+
+    transport = httpx.MockTransport(recording)
+    monkeypatch.setattr(oidc_utils, "InstrumentedAsyncClient", partial(InstrumentedAsyncClient, transport=transport))
+    return requested
+
+
+def _uris(*uris):
+    return AsyncMock(return_value=list(uris))
+
+
+_JWKS_A = "https://gitlab.example.com/oauth/discovery/keys"
+_JWKS_B = "https://gitlab.example.com/-/jwks"
+
+
+@pytest.mark.asyncio
+class TestFetchJwks:
+    async def test_a_dead_idp_is_asked_once_per_candidate_and_then_left_alone(self, monkeypatch, oidc_cache):
+        async def unreachable(request):
+            raise httpx.ConnectTimeout("timed out", request=request)
+
+        requested = _serve(monkeypatch, unreachable)
+
+        assert await fetch_jwks("jwks-key", _uris(_JWKS_A, _JWKS_B), "GitLab") is None
+        assert requested == [_JWKS_A, _JWKS_B]
+        assert await oidc_cache.get("jwks-key") is None
+        assert await _ttl(oidc_cache, "jwks-key:fetch_failed") == 30
+
+        candidates = _uris(_JWKS_A, _JWKS_B)
+        assert await fetch_jwks("jwks-key", candidates, "GitLab") is None
+        candidates.assert_not_awaited()
+        assert requested == [_JWKS_A, _JWKS_B]
+
+    async def test_the_first_candidate_serving_a_key_set_wins_and_is_cached(self, monkeypatch, oidc_cache, jwks):
+        async def handler(request):
+            if str(request.url) == _JWKS_A:
+                return httpx.Response(200, text="<html>sign in</html>")
+            return httpx.Response(200, json=jwks)
+
+        requested = _serve(monkeypatch, handler)
+
+        assert await fetch_jwks("jwks-key", _uris(_JWKS_A, _JWKS_B), "GitLab") == jwks
+        assert requested == [_JWKS_A, _JWKS_B]
+        assert await oidc_cache.get("jwks-key") == jwks
+        assert await _ttl(oidc_cache, "jwks-key") == JWKS_CACHE_TTL
+
+    async def test_a_body_without_a_key_list_is_not_a_key_set(self, monkeypatch, oidc_cache):
+        async def handler(request):
+            return httpx.Response(200, json={"error": "not found"})
+
+        _serve(monkeypatch, handler)
+
+        assert await fetch_jwks("jwks-key", _uris(_JWKS_A), "GitLab") is None
+        assert await oidc_cache.get("jwks-key") is None
+
+    async def test_a_failed_refresh_leaves_the_cached_set_readable(self, monkeypatch, oidc_cache, jwks):
+        await oidc_cache.set("jwks-key", jwks)
+
+        async def handler(request):
+            return httpx.Response(503)
+
+        _serve(monkeypatch, handler)
+
+        assert await fetch_jwks("jwks-key", _uris(_JWKS_A), "GitLab") is None
+        assert await oidc_cache.get("jwks-key") == jwks
+
+    async def test_a_hanging_idp_is_cut_off_by_one_deadline(self, monkeypatch, oidc_cache):
+        monkeypatch.setattr(oidc_utils, "_JWKS_FETCH_TIMEOUT_SECONDS", 0.05)
+
+        async def hanging(request):
+            await asyncio.sleep(5)
+            return httpx.Response(200, json={"keys": []})
+
+        _serve(monkeypatch, hanging)
+
+        started = time.monotonic()
+        assert await fetch_jwks("jwks-key", _uris(_JWKS_A, _JWKS_B), "GitLab") is None
+        assert time.monotonic() - started < 1
+        assert await _ttl(oidc_cache, "jwks-key:fetch_failed") == 30
+
+
+@pytest.mark.asyncio
+class TestDiscoverJwksUri:
+    async def test_a_discovered_uri_is_cached(self, monkeypatch, oidc_cache):
+        async def handler(request):
+            return httpx.Response(200, json={"issuer": ISSUER, "jwks_uri": _JWKS_A})
+
+        requested = _serve(monkeypatch, handler)
+
+        assert await discover_jwks_uri(ISSUER, "uri-key") == _JWKS_A
+        assert requested == [f"{ISSUER}/.well-known/openid-configuration"]
+        assert await oidc_cache.get("uri-key") == _JWKS_A
+        assert await _ttl(oidc_cache, "uri-key") == JWKS_URI_CACHE_TTL
+
+    async def test_a_failed_discovery_caches_no_guess(self, monkeypatch, oidc_cache):
+        async def handler(request):
+            return httpx.Response(404)
+
+        _serve(monkeypatch, handler)
+
+        assert await discover_jwks_uri(ISSUER, "uri-key") is None
+        assert await _stored_keys(oidc_cache) == []
+
+
+@pytest.mark.asyncio
 class TestJwksForcedRefreshCooldown:
-    """An unknown kid must not force unbounded JWKS invalidations/refetches: after one forced refresh, further unknown-kid lookups within the cooldown fail fast."""
+    """After one forced refresh, further unknown-kid lookups on the same instance within the cooldown fail fast."""
 
     _KNOWN_KEY: ClassVar[dict[str, str]] = {"kid": "known", "kty": "RSA", "n": "n", "e": "AQAB"}
 
-    def test_unknown_kid_forces_refresh_only_once_within_cooldown(self):
-        """Repeated unknown kids trigger at most ONE forced refresh per provider within the cooldown window."""
-        jwks_without_target = {"keys": [self._KNOWN_KEY]}
-        get_jwks = AsyncMock(return_value=jwks_without_target)
-        invalidate = AsyncMock()
-        fake_cache = _FakeCooldownCache()
+    async def test_unknown_kid_forces_refresh_only_once_within_cooldown(self, oidc_cache):
+        get_jwks = AsyncMock(return_value={"keys": [self._KNOWN_KEY]})
+        refresh = AsyncMock(return_value={"keys": [self._KNOWN_KEY]})
 
-        with patch("app.services.oidc_utils.cache_service", fake_cache):
-            # First attacker request with an unknown kid: one forced refresh.
-            r1 = asyncio.run(find_jwks_key("attacker-kid-1", get_jwks, invalidate, "GitLab"))
-            assert r1 is None
-            assert invalidate.await_count == 1
-            # Initial lookup + one refetch after invalidate == 2 get_jwks calls.
-            assert get_jwks.await_count == 2
+        assert await find_jwks_key("attacker-kid-1", get_jwks, refresh, "GitLab", ISSUER) is None
+        assert refresh.await_count == 1
 
-            # Second attacker request (different unknown kid) inside the cooldown:
-            # must fail fast — NO extra invalidate, NO forced refetch.
-            r2 = asyncio.run(find_jwks_key("attacker-kid-2", get_jwks, invalidate, "GitLab"))
-            assert r2 is None
-            assert invalidate.await_count == 1  # unchanged: no second invalidation
-            # Only the initial lookup ran (2 + 1), no post-invalidate refetch.
-            assert get_jwks.await_count == 3
-
-    def test_legitimate_rotation_still_refreshes_when_cooldown_clear(self):
-        """With the cooldown clear, a genuine key rotation is still resolved by invalidating and refetching the JWKS."""
-        rotated_key = {"kid": "rotated", "kty": "RSA", "n": "n2", "e": "AQAB"}
-        jwks_old = {"keys": [self._KNOWN_KEY]}
-        jwks_new = {"keys": [self._KNOWN_KEY, rotated_key]}
-        get_jwks = AsyncMock(side_effect=[jwks_old, jwks_new])
-        invalidate = AsyncMock()
-        fake_cache = _FakeCooldownCache()
-
-        with patch("app.services.oidc_utils.cache_service", fake_cache):
-            result = asyncio.run(find_jwks_key("rotated", get_jwks, invalidate, "GitHub"))
-
-        assert result == rotated_key
-        invalidate.assert_awaited_once()
+        assert await find_jwks_key("attacker-kid-2", get_jwks, refresh, "GitLab", ISSUER) is None
+        assert refresh.await_count == 1
         assert get_jwks.await_count == 2
 
-    def test_cooldown_is_per_provider(self):
-        """A cooldown set by one provider must not throttle a different provider's legitimate forced refresh."""
-        jwks_without_target = {"keys": [self._KNOWN_KEY]}
-        get_jwks = AsyncMock(return_value=jwks_without_target)
-        invalidate = AsyncMock()
-        fake_cache = _FakeCooldownCache()
+    async def test_legitimate_rotation_is_resolved_from_the_refreshed_set(self, oidc_cache):
+        rotated_key = {"kid": "rotated", "kty": "RSA", "n": "n2", "e": "AQAB"}
+        get_jwks = AsyncMock(return_value={"keys": [self._KNOWN_KEY]})
+        refresh = AsyncMock(return_value={"keys": [self._KNOWN_KEY, rotated_key]})
 
-        with patch("app.services.oidc_utils.cache_service", fake_cache):
-            # Trip the cooldown for GitLab.
-            asyncio.run(find_jwks_key("x", get_jwks, invalidate, "GitLab"))
-            assert invalidate.await_count == 1
-            # GitHub is a different key -> still allowed to force one refresh.
-            asyncio.run(find_jwks_key("y", get_jwks, invalidate, "GitHub"))
-            assert invalidate.await_count == 2
+        assert await find_jwks_key("rotated", get_jwks, refresh, "GitHub", ISSUER) == rotated_key
+        get_jwks.assert_awaited_once()
+        refresh.assert_awaited_once()
+
+    async def test_cooldown_is_per_instance(self, oidc_cache):
+        """Two instances of one provider must not throttle each other's forced refresh."""
+        get_jwks = AsyncMock(return_value={"keys": [self._KNOWN_KEY]})
+        refresh = AsyncMock(return_value={"keys": [self._KNOWN_KEY]})
+
+        await find_jwks_key("x", get_jwks, refresh, "GitLab", "https://gitlab-a.example.com")
+        await find_jwks_key("y", get_jwks, refresh, "GitLab", "https://gitlab-b.example.com")
+        assert refresh.await_count == 2
+
+        await find_jwks_key("z", get_jwks, refresh, "GitLab", "https://gitlab-a.example.com")
+        assert refresh.await_count == 2
+
+    async def test_a_failed_refresh_is_a_miss(self, oidc_cache):
+        refresh = AsyncMock(return_value=None)
+
+        assert (
+            await find_jwks_key("k", AsyncMock(return_value={"keys": [self._KNOWN_KEY]}), refresh, "GitLab", ISSUER)
+            is None
+        )
+        refresh.assert_awaited_once()
+
+    async def test_no_key_set_at_all_forces_no_refresh(self, oidc_cache):
+        """An unreachable IdP is not an unknown kid: the refresh would only repeat the failed fetch."""
+        refresh = AsyncMock(return_value=None)
+
+        assert await find_jwks_key("k", AsyncMock(return_value=None), refresh, "GitLab", ISSUER) is None
+        refresh.assert_not_awaited()
+        assert await _stored_keys(oidc_cache) == []
 
 
 class TestGitLabInstanceSchemaRequiresAudience:
@@ -333,7 +487,6 @@ class TestInstanceResponseAllowsNullAudience:
             url="https://gitlab.com",
             description=None,
             is_active=True,
-            is_default=False,
             oidc_audience=None,
             auto_create_projects=False,
             sync_teams=False,

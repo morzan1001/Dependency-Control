@@ -8,6 +8,7 @@ from app.core.constants import (
 )
 from app.core.purl import package_identity
 from app.schemas.recommendation import (
+    Effort,
     Priority,
     Recommendation,
     RecommendationType,
@@ -19,11 +20,12 @@ from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
     sample_components,
+    sampled,
+    severity_impact,
 )
 
-# A package held at this many versions is fragmented, at the second count heavily so.
+# A package held at this many versions is fragmented.
 _FRAGMENTATION_MIN_VERSIONS = 3
-_FRAGMENTATION_HIGH_VERSIONS = 5
 # Counts that must be exceeded: fragmented packages for a MEDIUM card, outdated transitives for a card at all.
 _FRAGMENTED_PACKAGES_FOR_MEDIUM = 3
 _OUTDATED_TRANSITIVE_CARD_MIN = 3
@@ -73,28 +75,26 @@ def analyze_outdated_dependencies(
                     "versions. Upgrading can improve security, performance, and "
                     "maintainability."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": len(direct_outdated),
-                    "low": 0,
-                    "total": len(direct_outdated),
-                },
+                impact={"total": 0},
                 affected_components=direct_shown,
                 affected_components_total=direct_total,
                 action={
                     "type": "upgrade_outdated",
-                    "packages": [
-                        {
-                            "name": d["name"],
-                            "current": d["version"],
-                            "recommended_major": d["recommended_major"],
-                            "reason": d["message"],
-                        }
-                        for d in direct_outdated
-                    ],
+                    **sampled(
+                        "packages",
+                        [
+                            {
+                                "name": d["name"],
+                                "current": d["version"],
+                                "recommended_major": d["recommended_major"],
+                                "reason": d["message"],
+                            }
+                            for d in direct_outdated
+                        ],
+                        AFFECTED_COMPONENTS_SHOWN,
+                    ),
                 },
-                effort="medium",
+                effort=Effort.MEDIUM,
             )
         )
 
@@ -108,20 +108,14 @@ def analyze_outdated_dependencies(
                     "Several transitive dependencies use old major versions. "
                     "Updating parent packages may resolve these."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": len(transitive_outdated),
-                    "total": len(transitive_outdated),
-                },
+                impact={"total": 0},
                 affected_components=transitive_shown,
                 affected_components_total=transitive_total,
                 action={
                     "type": "review_transitive",
                     "suggestion": "Update direct dependencies to pull in newer transitive versions",
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
@@ -134,39 +128,27 @@ def analyze_version_fragmentation(
     """Detect multiple versions of the same package in the dependency tree."""
     recommendations = []
 
-    deps_by_package: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    versions_by_package: dict[tuple[str, str], set[str]] = defaultdict(set)
     for dep in dependencies:
         identity = package_identity(
             get_attr(dep, "purl"), get_attr(dep, "name"), get_attr(dep, "type"), get_attr(dep, "group")
         )
-        deps_by_package[identity].append(
-            {"version": get_attr(dep, "version"), "direct": get_attr(dep, "direct", False)}
-        )
+        versions_by_package[identity].add(get_attr(dep, "version"))
 
-    fragmented: list[dict[str, Any]] = []
-    for (_, name), versions in deps_by_package.items():
-        unique_versions = {v["version"] for v in versions}
-        if len(unique_versions) > 1:
-            fragmented.append(
-                {
-                    "name": name,
-                    "versions": list(unique_versions),
-                    "count": len(unique_versions),
-                    "has_direct": any(v["direct"] for v in versions),
-                }
-            )
-
-    fragmented.sort(key=lambda x: x["count"], reverse=True)
-
-    significant_fragmented = [f for f in fragmented if f["count"] >= _FRAGMENTATION_MIN_VERSIONS]
+    significant_fragmented: list[dict[str, Any]] = sorted(
+        (
+            {"name": name, "versions": list(versions), "count": len(versions)}
+            for (_, name), versions in versions_by_package.items()
+            if len(versions) >= _FRAGMENTATION_MIN_VERSIONS
+        ),
+        key=lambda x: x["count"],
+        reverse=True,
+    )
 
     if significant_fragmented:
         priority = Priority.MEDIUM if len(significant_fragmented) > _FRAGMENTED_PACKAGES_FOR_MEDIUM else Priority.LOW
 
-        fragmented_shown, fragmented_total = sample_components(
-            f"{f['name']} ({f['count']} versions)" for f in significant_fragmented
-        )
-        top_fragmented = significant_fragmented[:AFFECTED_COMPONENTS_SHOWN]
+        fragmented_shown, fragmented_total = sample_components(f["name"] for f in significant_fragmented)
 
         recommendations.append(
             Recommendation(
@@ -182,42 +164,32 @@ def analyze_version_fragmentation(
                     "and cause subtle bugs. Consider deduplication or pinning to a "
                     "single version."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": len([f for f in significant_fragmented if f["count"] >= _FRAGMENTATION_HIGH_VERSIONS]),
-                    "medium": len(
-                        [
-                            f
-                            for f in significant_fragmented
-                            if _FRAGMENTATION_MIN_VERSIONS <= f["count"] < _FRAGMENTATION_HIGH_VERSIONS
-                        ]
-                    ),
-                    "low": 0,
-                    "total": len(significant_fragmented),
-                },
+                impact={"total": 0},
                 affected_components=fragmented_shown,
                 affected_components_total=fragmented_total,
                 action={
                     "type": "deduplicate_versions",
-                    "packages": [
-                        {
-                            "name": f["name"],
-                            # A set has no order, so rank before sampling: the newest versions are
-                            # what a reader pinning to one needs to see.
-                            "versions": newest_first(f["versions"])[:ACTION_VERSION_SAMPLE],
-                            "version_count": f["count"],
-                            "suggestion": f"Pin to {newest_first(f['versions'])[0]}",
-                        }
-                        for f in top_fragmented
-                    ],
-                    "packages_total": len(significant_fragmented),
+                    **sampled(
+                        "packages",
+                        [
+                            {
+                                "name": f["name"],
+                                # Sets are unordered; rank first so the sample shows the newest versions.
+                                "versions": newest_first(f["versions"])[:ACTION_VERSION_SAMPLE],
+                                "version_count": f["count"],
+                                "suggestion": f"Pin to {newest_first(f['versions'])[0]}",
+                            }
+                            for f in significant_fragmented
+                        ],
+                        AFFECTED_COMPONENTS_SHOWN,
+                    ),
                     "commands": [
                         "# For npm: npm dedupe",
                         "# For yarn: yarn dedupe",
                         "# For pnpm: pnpm dedupe",
                     ],
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
@@ -261,21 +233,19 @@ def analyze_dev_in_production(
                     "in your build. If these are in your production bundle, consider "
                     "moving them to devDependencies."
                 ),
-                impact={
-                    "critical": 0,
-                    "high": 0,
-                    "medium": 0,
-                    "low": len(potential_dev_deps),
-                    "total": len(potential_dev_deps),
-                },
+                impact={"total": 0},
                 affected_components=dev_deps_shown,
                 affected_components_total=dev_deps_total,
                 action={
                     "type": "review_dev_deps",
-                    "packages": [d["name"] for d in potential_dev_deps],
+                    **sampled(
+                        "packages",
+                        list(dict.fromkeys(d["name"] for d in potential_dev_deps)),
+                        AFFECTED_COMPONENTS_SHOWN,
+                    ),
                     "suggestion": "Review if these packages should be moved to devDependencies",
                 },
-                effort="low",
+                effort=Effort.LOW,
             )
         )
 
@@ -292,48 +262,39 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
         pkg = get_attr(f, "component", "")
         version = get_attr(f, "version", "")
         details = get_attr(f, "details", {})
-        eol_date = details.get("eol_date", "") if isinstance(details, dict) else ""
+        eol_date = details.get("eol_date", "")
         if eol_date:
             affected_packages.append(f"{pkg}@{version} (EOL: {eol_date})")
         else:
             affected_packages.append(f"{pkg}@{version}")
 
     eol_shown, eol_total = sample_components(affected_packages)
-    critical_count = len([f for f in eol_findings if get_attr(f, "severity") == "CRITICAL"])
-    high_count = len([f for f in eol_findings if get_attr(f, "severity") == "HIGH"])
-
-    priority = Priority.HIGH if critical_count > 0 else Priority.MEDIUM
+    impact = severity_impact(get_attr(f, "severity") for f in eol_findings)
 
     return [
         Recommendation(
             type=RecommendationType.EOL_DEPENDENCY,
-            priority=priority,
+            priority=Priority.HIGH if impact["high"] else Priority.MEDIUM,
             title="End-of-Life Dependencies",
             description=(
                 f"Found {len(eol_findings)} dependencies that have reached end-of-life. "
                 f"These will no longer receive security updates, leaving your application vulnerable "
                 f"to future CVEs that will never be patched."
             ),
-            impact={
-                "critical": critical_count,
-                "high": high_count,
-                "medium": len([f for f in eol_findings if get_attr(f, "severity") == "MEDIUM"]),
-                "low": len([f for f in eol_findings if get_attr(f, "severity") == "LOW"]),
-                "total": len(eol_findings),
-            },
+            impact=impact,
             affected_components=eol_shown,
             affected_components_total=eol_total,
             action={
                 "type": "upgrade_eol",
-                "packages": affected_packages,
+                **sampled("packages", affected_packages, AFFECTED_COMPONENTS_SHOWN),
                 "steps": [
-                    "1. Identify supported versions for each EOL dependency",
-                    "2. Review migration guides for major version upgrades",
-                    "3. Plan and execute upgrades",
-                    "4. For frameworks (Node.js, Python, Java), plan runtime upgrades",
-                    "5. Update CI/CD pipelines for new versions",
+                    "Identify supported versions for each EOL dependency",
+                    "Review migration guides for major version upgrades",
+                    "Plan and execute upgrades",
+                    "For frameworks (Node.js, Python, Java), plan runtime upgrades",
+                    "Update CI/CD pipelines for new versions",
                 ],
             },
-            effort="high",
+            effort=Effort.HIGH,
         )
     ]

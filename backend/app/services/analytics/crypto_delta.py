@@ -5,81 +5,62 @@
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
-from app.models.crypto_asset import CryptoAsset
-from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.base import find_window
+from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
 from app.schemas.scan_delta import (
     CryptoDeltaItem,
     DeltaCategory,
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import delta_truncation, paginate
-from app.services.analytics._delta_reachability import side_reachability
+from app.services.analytics._delta_pagination import both_sides, by_side, delta_truncation
+
+# Name-ascending like the asset list, so a capped side is cut at the same alphabetical point on both sides.
+_SIDE_SORT: list[tuple[str, int]] = [("name", 1), ("bom_ref", 1)]
+_PROJECTION = dict.fromkeys(("name", "variant", "primitive", "occurrence_locations"), 1)
 
 
-def _key(asset: CryptoAsset) -> tuple[str, str, str]:
+def _key(asset: dict) -> tuple[str, str, str]:
     """Semantic identity used for cross-scan matching."""
-    return (
-        asset.name or "",
-        asset.variant or "",
-        asset.primitive or "",
-    )
+    return (asset.get("name") or "", asset.get("variant") or "", asset.get("primitive") or "")
 
 
-def _asset_to_envelope_item(asset: CryptoAsset, change: str) -> CryptoDeltaItem:
+def _group_to_envelope_item(group: list[dict], change: str) -> CryptoDeltaItem:
     return CryptoDeltaItem(
         change=change,
-        name=asset.name or "",
-        variant=asset.variant,
-        primitive=asset.primitive,
-        locations=list(asset.occurrence_locations or []),
-        asset_count=1,
+        name=group[0].get("name") or "",
+        variant=group[0].get("variant"),
+        primitive=group[0].get("primitive"),
+        locations=sorted({loc for asset in group for loc in asset.get("occurrence_locations") or []}),
+        asset_count=len(group),
     )
 
 
-async def _side_assets(
-    repo: CryptoAssetRepository,
-    project_id: str,
-    scan_id: str,
-) -> tuple[list[CryptoAsset], int]:
-    """The side's assets and how many it holds. ``list_by_scan`` orders by name, so a capped side
-    is cut at the same alphabetical point on both sides."""
-    assets = await repo.list_by_scan(project_id, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
-    if len(assets) < MAX_CRYPTO_ASSETS_PER_SCAN:
-        return assets, len(assets)
-    return assets, await repo.count_by_scan(project_id, scan_id)
+async def _side_assets(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> tuple[list[dict], int]:
+    return await find_window(
+        db[CryptoAssetRepository.collection_name],
+        scan_query(project_id, scan_id),
+        MAX_CRYPTO_ASSETS_PER_SCAN,
+        projection=_PROJECTION,
+        sort=_SIDE_SORT,
+    )
 
 
-async def compute_crypto_delta_envelope(
-    db: AsyncIOMotorDatabase,
-    *,
-    project_id: str,
-    from_scan: str,
-    to_scan: str,
-    page: int,
-    page_size: int,
-    change: str | None,
+async def compare_crypto(
+    db: AsyncIOMotorDatabase, *, project_id: str, from_scan: str, to_scan: str
 ) -> ScanDeltaResponse:
-    repo = CryptoAssetRepository(db)
-    from_assets, from_total = await _side_assets(repo, project_id, from_scan)
-    to_assets, to_total = await _side_assets(repo, project_id, to_scan)
+    (from_assets, from_total), (to_assets, to_total) = await both_sides(
+        lambda scan_id: _side_assets(db, project_id, scan_id), from_scan, to_scan
+    )
 
-    from_map = {_key(a): a for a in from_assets}
-    to_map = {_key(a): a for a in to_assets}
+    groups = list(by_side(_key, from_assets, to_assets).values())
+    added = [new for gone, new in groups if not gone]
+    removed = [gone for gone, new in groups if not new]
 
-    added_keys = to_map.keys() - from_map.keys()
-    removed_keys = from_map.keys() - to_map.keys()
-    unchanged = len(to_map.keys() & from_map.keys())
-
-    items: list[CryptoDeltaItem] = []
-    if change in (None, "all", "added"):
-        items.extend(_asset_to_envelope_item(to_map[k], "added") for k in added_keys)
-    if change in (None, "all", "removed"):
-        items.extend(_asset_to_envelope_item(from_map[k], "removed") for k in removed_keys)
-
-    # Sort with variant/primitive tiebreakers so pagination is deterministic across set-iteration order.
+    items = [_group_to_envelope_item(group, "added") for group in added]
+    items += (_group_to_envelope_item(group, "removed") for group in removed)
+    # Sort with variant/primitive tiebreakers so pagination does not depend on fetch order.
     items.sort(key=lambda i: (i.change, i.name, i.variant or "", i.primitive or ""))
-    paged, total_pages = paginate(items, page, page_size)
 
     return ScanDeltaResponse(
         from_scan_id=from_scan,
@@ -87,16 +68,11 @@ async def compute_crypto_delta_envelope(
         project_id=project_id,
         category=DeltaCategory.CRYPTO,
         totals=ScanDeltaTotals(
-            added=len(added_keys),
-            removed=len(removed_keys),
-            unchanged=unchanged,
+            added=len(added),
+            removed=len(removed),
+            unchanged=len(groups) - len(added) - len(removed),
         ),
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-        items=paged,
-        from_reachability=await side_reachability(db, from_scan),
-        to_reachability=await side_reachability(db, to_scan),
+        items=items,
         truncation=delta_truncation(
             MAX_CRYPTO_ASSETS_PER_SCAN,
             from_compared=len(from_assets),

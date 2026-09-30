@@ -17,11 +17,11 @@ from app.models.gitlab_api import GitLabMember
 from app.models.team import GitLabGroupBinding, Team, TeamMember
 from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
-from app.services.github import GitHubEmailLookup, GitHubService
+from app.services.github import GitHubService
 from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
-from tests.mocks.gitlab import make_gitlab_instance, make_project_details
+from tests.mocks.gitlab import make_gitlab_instance, make_project_details, sync_team
 
 _NOT_FOUND = 404
 _TIMESTAMP = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -146,7 +146,7 @@ class TestGitLabTeamSync:
     @staticmethod
     async def _resolved(member: GitLabMember, *users: dict) -> list[str]:
         service = GitLabService(make_gitlab_instance())
-        members, _ = await service._build_team_members([member], UserRepository(await _db(*users)))
+        members, _, _ = await service._build_team_members([member], UserRepository(await _db(*users)))
         return [m.user_id for m in members]
 
     @pytest.mark.asyncio
@@ -172,12 +172,13 @@ class TestGitHubTeamSync:
     @staticmethod
     async def _resolved(login: str, public_email: str | None, *users: dict) -> list[str]:
         service = GitHubService(make_github_instance(access_token="ghp-secret", sync_teams=True))
-        lookup = AsyncMock(return_value=GitHubEmailLookup(public_email))
-        with patch.object(service, "get_user_public_email", new=lookup):
-            members, _, _ = await service._build_team_members(
+        emails = AsyncMock(return_value={login: public_email or ""})
+        with patch.object(service, "_public_emails", new=emails):
+            resolved = await service._build_team_members(
                 [{"login": login, "role": "member"}], UserRepository(await _db(*users))
             )
-        return [m.user_id for m in members]
+        assert resolved is not None
+        return [m.user_id for m in resolved]
 
     @pytest.mark.asyncio
     async def test_a_login_equal_to_the_username_of_an_account_is_not_resolved(self):
@@ -227,11 +228,12 @@ class TestGitLabTeamSyncWithoutListedEmails:
             patch.object(service, "get_group_members", new=AsyncMock(return_value=listing)),
             patch.object(service, "_api_get", new=profile_read),
         ):
-            result = await service.sync_team_from_gitlab(
+            result = await sync_team(
+                service,
                 db=db,
                 gitlab_project_id=100,
                 gitlab_project_path="corp/proj",
-                gitlab_project_data=make_project_details(namespace_id=42, namespace_path="corp"),
+                project_details=make_project_details(namespace_id=42, namespace_path="corp"),
             )
         return result, profile_read
 

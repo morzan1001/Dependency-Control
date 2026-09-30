@@ -161,8 +161,55 @@ class TestTeamMembersNotificationSettings:
 
         stored = _stored(db)
         assert stored["enforce_notification_settings"] is True
+        assert stored["enforced_notification_preferences"] == prefs
         assert stored["notification_overrides"] == {"u-team-admin": prefs}
         assert [m["user_id"] for m in stored["members"]] == ["u-direct-admin"]
+
+    @pytest.mark.asyncio
+    async def test_a_write_superuser_outside_the_project_enforces_what_they_save(self):
+        db = await _db()
+        prefs = {"analysis_completed": ["email"]}
+
+        await projects.update_notification_settings(
+            _PROJECT,
+            ProjectNotificationSettings(notification_preferences=prefs, enforce_notification_settings=True),
+            _user("u-su", Permissions.PROJECT_READ_ALL, Permissions.PROJECT_UPDATE),
+            db,
+        )
+
+        assert _stored(db)["enforced_notification_preferences"] == prefs
+
+    @pytest.mark.asyncio
+    async def test_members_are_sent_what_the_enforcing_admin_saved_not_the_first_admins_own(self):
+        db = await _db(team_members=(("u-team-admin", "admin"), ("u-team-member", "member")))
+        _stored(db)["members"][0]["notification_preferences"] = {"analysis_completed": ["email"]}
+        await projects.update_notification_settings(
+            _PROJECT,
+            ProjectNotificationSettings(
+                notification_preferences={"analysis_completed": ["slack"]}, enforce_notification_settings=True
+            ),
+            _ADMIN_BY_TEAM,
+            db,
+        )
+
+        sent = await _sent_channels(db)
+
+        assert sent == {uid: ["slack"] for uid in ("u-direct-admin", "u-team-admin", "u-team-member")}
+
+    @pytest.mark.asyncio
+    async def test_enforcing_every_event_off_silences_the_project(self):
+        db = await _db(team_members=(("u-team-admin", "admin"), ("u-team-member", "member")))
+        await db.users.update_many({}, {"$set": {"notification_preferences": {"analysis_completed": ["email"]}}})
+        await projects.update_notification_settings(
+            _PROJECT,
+            ProjectNotificationSettings(
+                notification_preferences={"analysis_completed": []}, enforce_notification_settings=True
+            ),
+            _ADMIN_BY_TEAM,
+            db,
+        )
+
+        assert await _sent_channels(db) == {}
 
     @pytest.mark.asyncio
     async def test_a_team_members_override_reaches_the_notifier(self):
@@ -172,13 +219,13 @@ class TestTeamMembersNotificationSettings:
             _PROJECT, ProjectNotificationSettings(notification_preferences=prefs), _MEMBER_BY_TEAM, db
         )
 
-        with patch.object(notification_service, "_send_based_on_prefs", AsyncMock()) as notified:
-            await notification_service.notify_project_members(
-                Project(**_stored(db)), "analysis_completed", "s", "m", db
-            )
+        assert (await _sent_channels(db))["u-team-member"] == ["slack"]
 
-        sent = {call.args[0].id: call.args[1] for call in notified.await_args_list}
-        assert sent["u-team-member"] == prefs
+
+async def _sent_channels(db) -> dict[str, list[str]]:
+    with patch.object(notification_service, "_deliver", AsyncMock()) as delivered:
+        await notification_service.notify_project_members(Project(**_stored(db)), "analysis_completed", "s", "m", db)
+    return {user.id: channels for call in delivered.await_args_list for user, channels in call.args[1]}
 
 
 @pytest.mark.asyncio

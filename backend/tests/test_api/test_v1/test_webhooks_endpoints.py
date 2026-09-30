@@ -2,12 +2,14 @@
 
 import asyncio
 import json
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
 from app.models.webhook import Webhook
+from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.webhooks"
 
@@ -19,178 +21,91 @@ def _make_webhook(id="wh-1", project_id="proj-1", url="https://example.com/hook"
     return Webhook(id=id, project_id=project_id, url=url, events=events, **kwargs)
 
 
+_TEAMS_URL = "https://contoso.webhook.office.com/webhookb2/abc/IncomingWebhook/xyz"
+_POWER_PLATFORM_URL = (
+    "https://default123.environment.api.powerplatform.com"
+    "/powerautomate/automations/direct/workflows/abc/triggers/manual/paths/invoke"
+)
+_PLAIN_URL = "https://my-server.example.com/webhook"
+_SCOPE_IDS = {"project": ("proj-1", None), "team": (None, "team-1"), "global": (None, None)}
+_SECRET = "hmac-signing-key"
+
+
+def _create(scope, db, user, webhook_in):
+    from app.api.v1.endpoints import webhooks as endpoints
+
+    if scope == "project":
+        return endpoints.create_webhook(project_id="proj-1", webhook_in=webhook_in, current_user=user, db=db)
+    if scope == "team":
+        return endpoints.create_team_webhook(team_id="team-1", webhook_in=webhook_in, current_user=user, db=db)
+    return endpoints.create_global_webhook(webhook_in=webhook_in, current_user=user, db=db)
+
+
+def _list(scope, db, user):
+    from app.api.v1.endpoints import webhooks as endpoints
+
+    if scope == "project":
+        return endpoints.list_webhooks(project_id="proj-1", skip=0, limit=50, current_user=user, db=db)
+    if scope == "team":
+        return endpoints.list_team_webhooks(team_id="team-1", skip=0, limit=50, current_user=user, db=db)
+    return endpoints.list_global_webhooks(skip=0, limit=50, current_user=user, db=db)
+
+
 class TestCreateWebhook:
-    def test_success_creates_project_webhook(self, regular_user):
-        from app.api.v1.endpoints.webhooks import create_webhook
+    @pytest.mark.parametrize("scope", list(_SCOPE_IDS))
+    @pytest.mark.parametrize(
+        ("url", "webhook_type", "stored"),
+        [
+            pytest.param(_TEAMS_URL, None, "teams", id="teams-url-detected"),
+            pytest.param(_POWER_PLATFORM_URL, None, "teams", id="power-platform-detected"),
+            pytest.param(_PLAIN_URL, None, "generic", id="plain-url-detected"),
+            pytest.param(_TEAMS_URL, "generic", "generic", id="explicit-generic-wins"),
+            pytest.param(_PLAIN_URL, "teams", "teams", id="explicit-teams-wins"),
+        ],
+    )
+    def test_stores_the_explicit_type_or_the_one_detected_from_the_url(
+        self, admin_user, scope, url, webhook_type, stored
+    ):
         from app.schemas.webhook import WebhookCreate
 
-        webhook = _make_webhook()
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock(return_value=webhook)
+        db = FakeDatabase()
+        webhook_in = WebhookCreate(url=url, events=["scan.completed"], webhook_type=webhook_type)
 
-        with patch(f"{MODULE}.check_webhook_create_permission", new_callable=AsyncMock):
-            with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
-                result = asyncio.run(
-                    create_webhook(
-                        project_id="proj-1",
-                        webhook_in=WebhookCreate(url="https://example.com/hook", events=["scan_completed"]),
-                        current_user=regular_user,
-                        db=MagicMock(),
-                    )
-                )
+        with patch(f"{MODULE}.check_webhook_permission", new_callable=AsyncMock):
+            created = asyncio.run(_create(scope, db, admin_user, webhook_in))
 
-        assert result.url == "https://example.com/hook"
-        mock_repo.create.assert_called_once()
-
-    def test_explicit_webhook_type_wins_over_url_detection(self, regular_user):
-        """A Teams relay behind a vanity URL is only reachable if the caller's explicit type survives."""
-        from app.api.v1.endpoints.webhooks import create_webhook
-        from app.schemas.webhook import WebhookCreate
-
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock(side_effect=lambda webhook: webhook)
-
-        with patch(f"{MODULE}.check_webhook_create_permission", new_callable=AsyncMock):
-            with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
-                result = asyncio.run(
-                    create_webhook(
-                        project_id="proj-1",
-                        webhook_in=WebhookCreate(
-                            url="https://my-server.example.com/webhook",
-                            events=["scan_completed"],
-                            webhook_type="teams",
-                        ),
-                        current_user=regular_user,
-                        db=MagicMock(),
-                    )
-                )
-
-        assert result.webhook_type == "teams"
-
-
-class TestCreateGlobalWebhook:
-    def test_success_creates_global_webhook(self, admin_user):
-        from app.api.v1.endpoints.webhooks import create_global_webhook
-        from app.schemas.webhook import WebhookCreate
-
-        webhook = _make_webhook(project_id=None)
-        mock_repo = MagicMock()
-        mock_repo.create = AsyncMock(return_value=webhook)
-
-        with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
-            result = asyncio.run(
-                create_global_webhook(
-                    webhook_in=WebhookCreate(url="https://example.com/hook", events=["scan_completed"]),
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert result.project_id is None
-        mock_repo.create.assert_called_once()
+        doc = db.webhooks._docs[created.id]
+        assert (doc["webhook_type"], doc["project_id"], doc["team_id"]) == (stored, *_SCOPE_IDS[scope])
 
 
 class TestListWebhooks:
-    def test_returns_paginated_project_webhooks(self, regular_user):
-        from app.api.v1.endpoints.webhooks import list_webhooks
-
-        webhooks = [_make_webhook(id="wh-1"), _make_webhook(id="wh-2")]
-        mock_repo = MagicMock()
-        mock_repo.count = AsyncMock(return_value=2)
-        mock_repo.list_scope = AsyncMock(return_value=webhooks)
-
-        with patch(f"{MODULE}.check_webhook_list_permission", new_callable=AsyncMock):
-            with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
-                result = asyncio.run(
-                    list_webhooks(
-                        project_id="proj-1",
-                        skip=0,
-                        limit=50,
-                        current_user=regular_user,
-                        db=MagicMock(),
+    @pytest.mark.parametrize("scope", list(_SCOPE_IDS))
+    def test_lists_only_its_scope_newest_first_and_withholds_the_secret(self, admin_user, scope):
+        db = FakeDatabase()
+        for name, (project_id, team_id) in _SCOPE_IDS.items():
+            for age, created_at in (
+                ("old", datetime(2026, 1, 1, tzinfo=timezone.utc)),
+                ("new", datetime(2026, 2, 1, tzinfo=timezone.utc)),
+            ):
+                asyncio.run(
+                    db.webhooks.insert_one(
+                        {
+                            "_id": f"{name}-{age}",
+                            "url": "https://example.com/hook",
+                            "events": ["scan.completed"],
+                            "project_id": project_id,
+                            "team_id": team_id,
+                            "secret": _SECRET,
+                            "created_at": created_at,
+                        }
                     )
                 )
 
-        assert result["total"] == 2
-        assert len(result["items"]) == 2
+        with patch(f"{MODULE}.check_webhook_permission", new_callable=AsyncMock):
+            result = asyncio.run(_list(scope, db, admin_user))
 
-
-class TestListGlobalWebhooks:
-    def test_returns_paginated_global_webhooks(self, admin_user):
-        from app.api.v1.endpoints.webhooks import list_global_webhooks
-
-        webhooks = [_make_webhook(project_id=None)]
-        mock_repo = MagicMock()
-        mock_repo.count = AsyncMock(return_value=1)
-        mock_repo.list_scope = AsyncMock(return_value=webhooks)
-
-        with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
-            result = asyncio.run(
-                list_global_webhooks(
-                    skip=0,
-                    limit=50,
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-
-        assert result["total"] == 1
-
-
-class TestListRoutesWithholdSecret:
-    """The HMAC signing secret is stored in plaintext, so no list route may echo it back."""
-
-    SECRET = "hmac-signing-key"
-
-    def _assert_withheld(self, result):
-        assert result["items"], "vacuous: the route returned no items to inspect"
-        for item in result["items"]:
-            assert "secret" not in item
-        assert self.SECRET not in json.dumps(result, default=str)
-
-    def test_project_list(self, regular_user):
-        from app.api.v1.endpoints.webhooks import list_webhooks
-
-        mock_repo = MagicMock()
-        mock_repo.count = AsyncMock(return_value=1)
-        mock_repo.list_scope = AsyncMock(return_value=[_make_webhook(secret=self.SECRET)])
-
-        with patch(f"{MODULE}.check_webhook_list_permission", new_callable=AsyncMock):
-            with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
-                result = asyncio.run(
-                    list_webhooks(project_id="proj-1", skip=0, limit=50, current_user=regular_user, db=MagicMock())
-                )
-
-        self._assert_withheld(result)
-
-    def test_global_list(self, admin_user):
-        from app.api.v1.endpoints.webhooks import list_global_webhooks
-
-        mock_repo = MagicMock()
-        mock_repo.count = AsyncMock(return_value=1)
-        mock_repo.list_scope = AsyncMock(return_value=[_make_webhook(project_id=None, secret=self.SECRET)])
-
-        with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
-            result = asyncio.run(list_global_webhooks(skip=0, limit=50, current_user=admin_user, db=MagicMock()))
-
-        self._assert_withheld(result)
-
-    def test_team_list(self, regular_user):
-        from app.api.v1.endpoints.webhooks import list_team_webhooks
-
-        mock_repo = MagicMock()
-        mock_repo.count = AsyncMock(return_value=1)
-        mock_repo.list_scope = AsyncMock(
-            return_value=[_make_webhook(project_id=None, team_id="team-1", secret=self.SECRET)]
-        )
-
-        with patch(f"{MODULE}.check_team_webhook_list_permission", new_callable=AsyncMock):
-            with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
-                result = asyncio.run(
-                    list_team_webhooks(team_id="team-1", skip=0, limit=50, current_user=regular_user, db=MagicMock())
-                )
-
-        self._assert_withheld(result)
+        assert (result["total"], [item["id"] for item in result["items"]]) == (2, [f"{scope}-new", f"{scope}-old"])
+        assert _SECRET not in json.dumps(result, default=str)
 
 
 class TestGetWebhook:
@@ -219,7 +134,6 @@ class TestGetWebhook:
         from app.core.permissions import Permissions
         from app.models.project import Project, ProjectMember
         from app.models.user import User
-        from tests.mocks.fake_mongo import FakeDatabase
 
         reader = User(
             id="reader-1",
@@ -315,6 +229,36 @@ class TestUpdateWebhook:
                         )
         assert exc_info.value.status_code == 400
         assert "No fields" in exc_info.value.detail
+
+    @pytest.mark.parametrize(
+        ("stored", "update", "expected"),
+        [
+            pytest.param("generic", {"url": _TEAMS_URL}, "teams", id="to-teams"),
+            pytest.param("generic", {"url": _POWER_PLATFORM_URL}, "teams", id="to-power-platform"),
+            pytest.param("teams", {"url": _PLAIN_URL}, "generic", id="to-generic"),
+            pytest.param("generic", {"url": _TEAMS_URL, "webhook_type": "generic"}, "generic", id="explicit-wins"),
+            pytest.param("teams", {"events": ["vulnerability.found"]}, "teams", id="no-url-keeps-type"),
+        ],
+    )
+    def test_a_new_url_redetects_the_type_unless_the_caller_names_it(self, admin_user, stored, update, expected):
+        from app.api.v1.endpoints.webhooks import update_webhook
+        from app.schemas.webhook import WebhookUpdate
+
+        db = FakeDatabase()
+        asyncio.run(
+            db.webhooks.insert_one(
+                {"_id": "wh-1", "url": _PLAIN_URL, "events": ["scan.completed"], "webhook_type": stored}
+            )
+        )
+
+        with patch(f"{MODULE}.check_webhook_permission", new_callable=AsyncMock):
+            asyncio.run(
+                update_webhook(
+                    webhook_id="wh-1", webhook_update=WebhookUpdate(**update), current_user=admin_user, db=db
+                )
+            )
+
+        assert db.webhooks._docs["wh-1"]["webhook_type"] == expected
 
 
 class TestDeleteWebhook:

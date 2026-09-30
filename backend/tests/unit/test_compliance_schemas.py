@@ -10,6 +10,7 @@ from app.schemas.compliance import (
     ReportFramework,
     ReportStatus,
 )
+from tests.helpers.compliance import full_coverage
 
 
 def test_control_definition_minimal():
@@ -51,6 +52,7 @@ def test_framework_evaluation_shape():
         summary={"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "total": 0},
         residual_risks=[],
         inputs_fingerprint="sha256:abc",
+        coverage=full_coverage(),
     )
     assert fe.framework_key == ReportFramework.NIST_SP_800_131A
     assert fe.summary["total"] == 0

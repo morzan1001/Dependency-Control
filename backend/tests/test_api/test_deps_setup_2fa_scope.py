@@ -14,7 +14,7 @@ from app.api.deps import PermissionChecker, get_current_user
 from app.core import security
 from app.core.permissions import Permissions
 
-_SETUP_SCOPE = "auth:setup_2fa"
+_SETUP_SCOPE = Permissions.AUTH_SETUP_2FA
 _STORED_PERMISSIONS = [Permissions.SYSTEM_MANAGE, Permissions.PROJECT_CREATE]
 
 
@@ -33,7 +33,7 @@ def _resolve(token: str):
 
     with (
         patch("app.api.deps.UserRepository", return_value=user_repo),
-        patch("app.repositories.token_blacklist.TokenBlacklistRepository", return_value=blacklist_repo),
+        patch("app.api.deps.TokenBlacklistRepository", return_value=blacklist_repo),
     ):
         return asyncio.run(get_current_user(db=MagicMock(), token=token))
 

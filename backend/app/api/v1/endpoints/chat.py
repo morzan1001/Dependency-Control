@@ -1,9 +1,7 @@
 """Chat API endpoints for the AI security assistant."""
 
-import logging
 from typing import Annotated
 
-import redis.asyncio as redis
 from fastapi import Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 
@@ -21,10 +19,8 @@ from app.schemas.chat import (
     ConversationResponse,
     MessageCreate,
 )
-from app.services.chat.rate_limiter import ChatRateLimiter
+from app.services.chat.rate_limiter import CHAT_PREFIX, SURFACE_CHAT, enforce_rate_limit
 from app.services.chat.service import ChatService
-
-logger = logging.getLogger(__name__)
 
 _MSG_CONVERSATION_NOT_FOUND = "Conversation not found"
 
@@ -107,7 +103,7 @@ async def get_conversation(
     if not conv:
         raise HTTPException(status_code=404, detail=_MSG_CONVERSATION_NOT_FOUND)
 
-    messages = await service.get_messages(conversation_id, current_user)
+    messages = await service.get_messages(conversation_id)
     return ConversationDetailResponse(
         conversation=ConversationResponse(
             id=conv["_id"],
@@ -149,22 +145,13 @@ async def send_message(
     _check_chat_enabled()
     system_settings = await deps.get_system_settings(db)
 
-    try:
-        async with redis.from_url(settings.REDIS_URL) as redis_client:
-            limiter = ChatRateLimiter(redis_client)
-            allowed, retry_after = await limiter.check_rate_limit(
-                str(current_user.id),
-                per_minute=system_settings.chat_rate_limit_per_minute,
-                per_hour=system_settings.chat_rate_limit_per_hour,
-            )
-        if not allowed:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Rate limit exceeded",
-                headers={"Retry-After": str(retry_after)},
-            )
-    except redis.RedisError:
-        logger.warning("Redis unavailable for rate limiting, allowing request")
+    await enforce_rate_limit(
+        str(current_user.id),
+        prefix=CHAT_PREFIX,
+        surface=SURFACE_CHAT,
+        per_minute=system_settings.chat_rate_limit_per_minute,
+        per_hour=system_settings.chat_rate_limit_per_hour,
+    )
 
     service = ChatService(db)
     conv = await service.get_conversation(conversation_id, current_user)
@@ -176,7 +163,6 @@ async def send_message(
             conversation_id,
             current_user,
             body.content,
-            body.images,
             max_tool_rounds=system_settings.chat_max_tool_rounds,
         ),
         media_type="text/event-stream",

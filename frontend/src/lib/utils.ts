@@ -42,7 +42,7 @@ export function getErrorMessage(error: unknown): string {
   return err.message || 'An unknown error occurred';
 }
 
-const DEFAULT_DATE_FORMAT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' }
+export const DEFAULT_DATE_FORMAT: Intl.DateTimeFormatOptions = { year: 'numeric', month: 'short', day: 'numeric' }
 
 export function formatDate(
   date: string | Date | undefined | null,

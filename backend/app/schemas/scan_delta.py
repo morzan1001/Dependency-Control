@@ -17,15 +17,6 @@ class DeltaCategory(str, Enum):
     CRYPTO = "crypto"
 
 
-class DeltaChange(str, Enum):
-    """Kinds of change an individual delta item can represent."""
-
-    ADDED = "added"
-    REMOVED = "removed"
-    VERSION_CHANGED = "version_changed"
-    LICENSE_CHANGED = "license_changed"
-
-
 class ScanDeltaTotals(BaseModel):
     """Aggregate counts for a scan-delta response."""
 
@@ -34,7 +25,7 @@ class ScanDeltaTotals(BaseModel):
     added: int = 0
     removed: int = 0
     unchanged: int = 0
-    # Only set for the components category.
+    # Components and findings; crypto never pairs a changed item.
     changed: int = 0
     # Findings-only breakdowns.
     by_severity: dict[str, int] = Field(default_factory=dict)
@@ -42,11 +33,11 @@ class ScanDeltaTotals(BaseModel):
 
 
 class FindingDeltaItem(BaseModel):
-    """A single added/removed finding between two scans."""
+    """A single finding between two scans; 'changed' is a vulnerability record whose version or advisories moved."""
 
     model_config = ConfigDict(extra="forbid")
 
-    change: Literal["added", "removed"]
+    change: Literal["added", "removed", "changed"]
     finding_id: str
     finding_type: str
     severity: str
@@ -54,7 +45,12 @@ class FindingDeltaItem(BaseModel):
     component: str | None = None
     cve_id: str | None = None
     file_path: str | None = None
+    # The project's earliest detection of this finding, across all of its scans.
     first_seen: datetime | None = None
+    from_version: str | None = None
+    to_version: str | None = None
+    added_cves: list[str] = Field(default_factory=list)
+    dropped_cves: list[str] = Field(default_factory=list)
 
 
 class ComponentDeltaItem(BaseModel):
@@ -146,13 +142,10 @@ class ScanDeltaResponse(BaseModel):
     # was scored with, so it counts every vulnerability in the scan whatever the delta asked for.
     from_reachability: ScanDeltaReachability | None = None
     to_reachability: ScanDeltaReachability | None = None
-    # Findings a waiver hides in whole or in part on each side, counted under the finding_type and
-    # severity filters; the `change` filter only scopes the item list.
+    # Wholly or partly waived findings per side, filtered by finding_type only; severity and `change` scope items.
     from_waived_excluded: int = 0
     to_waived_excluded: int = 0
-    # Added and removed items the comparison would not have produced had no waiver applied — the
-    # only evidence that a change is a waiver difference rather than a code difference, since two
-    # sides can hide equal numbers of different findings.
+    # Items a waiver-free comparison would not produce; equal waived counts can still hide different findings.
     waiver_only_changes: int = 0
     # None means both sides fit under the per-side fetch cap and `totals` describe the two scans.
     truncation: DeltaTruncation | None = None

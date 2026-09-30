@@ -20,8 +20,8 @@ from app.core.housekeeping import (
     _is_rescan_due,
     _process_project_rescan,
     _rescan_targets,
-    _resolve_rescan_interval,
     check_scheduled_rescans,
+    resolve_rescan_interval,
 )
 from app.core.worker import AnalysisWorkerManager
 from app.models.project import Project, Scan
@@ -342,49 +342,49 @@ class TestResolveRescanInterval:
         project = _project(rescan_enabled=True, rescan_interval=_PROJECT_INTERVAL_HOURS)
         settings = _system_settings(global_rescan_enabled=False)
 
-        assert _resolve_rescan_interval(project, settings) == _PROJECT_INTERVAL_HOURS
+        assert resolve_rescan_interval(project, settings) == _PROJECT_INTERVAL_HOURS
 
     def test_a_project_opt_out_beats_the_global_switch_being_on(self) -> None:
-        assert _resolve_rescan_interval(_project(rescan_enabled=False), _system_settings()) is None
+        assert resolve_rescan_interval(_project(rescan_enabled=False), _system_settings()) is None
 
     def test_the_global_switch_decides_when_the_project_has_no_opinion(self) -> None:
-        assert _resolve_rescan_interval(_project(), _system_settings()) == _DEFAULT_INTERVAL_HOURS
-        assert _resolve_rescan_interval(_project(), _system_settings(global_rescan_enabled=False)) is None
+        assert resolve_rescan_interval(_project(), _system_settings()) == _DEFAULT_INTERVAL_HOURS
+        assert resolve_rescan_interval(_project(), _system_settings(global_rescan_enabled=False)) is None
 
     def test_the_project_interval_wins_over_the_global_one(self) -> None:
         project = _project(rescan_interval=_PROJECT_INTERVAL_HOURS)
         settings = _system_settings(global_rescan_interval=_GLOBAL_INTERVAL_HOURS)
 
-        assert _resolve_rescan_interval(project, settings) == _PROJECT_INTERVAL_HOURS
+        assert resolve_rescan_interval(project, settings) == _PROJECT_INTERVAL_HOURS
 
     def test_the_global_interval_applies_when_the_project_sets_none(self) -> None:
         settings = _system_settings(global_rescan_interval=_GLOBAL_INTERVAL_HOURS)
 
-        assert _resolve_rescan_interval(_project(), settings) == _GLOBAL_INTERVAL_HOURS
+        assert resolve_rescan_interval(_project(), settings) == _GLOBAL_INTERVAL_HOURS
 
     def test_an_interval_of_zero_disables_rescans_that_are_otherwise_switched_on(self) -> None:
         project = _project(rescan_enabled=True, rescan_interval=_ZERO_INTERVAL_HOURS)
 
-        assert _resolve_rescan_interval(project, _system_settings()) is None
+        assert resolve_rescan_interval(project, _system_settings()) is None
 
     def test_a_negative_interval_disables_rescans(self) -> None:
         project = _project(rescan_enabled=True, rescan_interval=_NEGATIVE_INTERVAL_HOURS)
 
-        assert _resolve_rescan_interval(project, _system_settings()) is None
+        assert resolve_rescan_interval(project, _system_settings()) is None
 
     def test_in_global_mode_the_project_settings_do_not_apply(self) -> None:
         opted_out = _project(rescan_enabled=False, rescan_interval=_PROJECT_INTERVAL_HOURS)
         own_interval = _project(rescan_interval=_PROJECT_INTERVAL_HOURS)
         settings = _system_settings(rescan_mode=SETTINGS_MODE_GLOBAL, global_rescan_interval=_GLOBAL_INTERVAL_HOURS)
 
-        assert _resolve_rescan_interval(opted_out, settings) == _GLOBAL_INTERVAL_HOURS
-        assert _resolve_rescan_interval(own_interval, settings) == _GLOBAL_INTERVAL_HOURS
+        assert resolve_rescan_interval(opted_out, settings) == _GLOBAL_INTERVAL_HOURS
+        assert resolve_rescan_interval(own_interval, settings) == _GLOBAL_INTERVAL_HOURS
 
     def test_in_global_mode_a_project_opt_in_cannot_override_the_global_switch_being_off(self) -> None:
         opted_in = _project(rescan_enabled=True, rescan_interval=_PROJECT_INTERVAL_HOURS)
         settings = _system_settings(rescan_mode=SETTINGS_MODE_GLOBAL, global_rescan_enabled=False)
 
-        assert _resolve_rescan_interval(opted_in, settings) is None
+        assert resolve_rescan_interval(opted_in, settings) is None
 
 
 class TestIsRescanDue:
