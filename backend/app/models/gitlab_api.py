@@ -63,3 +63,5 @@ class GitLabMember(BaseModel):
     # Present only for a token of an instance administrator.
     email: str | None = None
     access_level: int = 0
+    state: str | None = None
+    membership_state: str | None = None

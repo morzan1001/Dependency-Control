@@ -198,6 +198,56 @@ class TestAnUnreachableGroupChangesNothing:
         assert "0 of 2" in " ".join(r.getMessage() for r in caplog.records)
 
 
+def _api_member(member_id, username, access_level, *, state="active", membership_state="active"):
+    """One entry of GET /groups/:id/members/all as an administrator's token receives it."""
+    return {
+        "id": member_id,
+        "username": username,
+        "name": username.title(),
+        "state": state,
+        "avatar_url": f"https://gitlab-a.com/uploads/-/system/user/avatar/{member_id}/avatar.png",
+        "web_url": f"https://gitlab-a.com/{username}",
+        "access_level": access_level,
+        "created_at": "2024-03-01T09:00:00.000Z",
+        "expires_at": None,
+        "membership_state": membership_state,
+        "email": f"{username}@test.com",
+    }
+
+
+class TestOnlyActiveMembersWithAccessAreOwners:
+    _USERS: ClassVar = {f"{name}@test.com": {"_id": f"u-{name}"} for name in ("ada", "bob", "cy")}
+
+    def _written(self, api_members):
+        service = _service()
+        with (
+            make_repositories(existing_team=_existing_team([_SYNCED, _MANUAL])) as (team_repo, user_repo),
+            patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=api_members)),
+        ):
+            user_repo.get_raw_by_verified_email.side_effect = self._USERS.get
+            _run(service)
+        return _written_subset(team_repo)
+
+    def test_a_blocked_maintainer_beside_an_unresolvable_member_leaves_nobody(self):
+        written = self._written(
+            [_api_member(1, "ada", 40, state="blocked"), _api_member(2, "ghost", 30)],
+        )
+
+        assert written == MemberSubset(_OWN, [])
+
+    def test_minimal_and_guest_members_beside_an_unresolvable_developer_leave_nobody(self):
+        written = self._written([_api_member(1, "ada", 5), _api_member(2, "bob", 10), _api_member(3, "ghost", 30)])
+
+        assert written == MemberSubset(_OWN, [])
+
+    def test_an_invitation_not_yet_accepted_owns_nothing_while_a_reporter_does(self):
+        written = self._written(
+            [_api_member(1, "ada", 30, membership_state="awaiting"), _api_member(2, "bob", 20)],
+        )
+
+        assert written == MemberSubset(_OWN, [{"user_id": "u-bob", "role": "member", "source": _OWN}])
+
+
 class TestNoGroupOwnsTheProject:
     def test_a_user_namespace_retires_the_group_owner_the_project_carried(self):
         """GitLab answered, and its answer is that a person owns this project: determined, not unknown."""

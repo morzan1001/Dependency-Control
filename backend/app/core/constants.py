@@ -941,6 +941,8 @@ GITLAB_ACCESS_OWNER = 50
 
 # Minimum access level for admin role in DependencyControl
 GITLAB_ADMIN_MIN_ACCESS = GITLAB_ACCESS_MAINTAINER
+# Guest and Minimal Access members cannot read a group's code, so they own none of its projects.
+GITLAB_TEAM_MEMBER_MIN_ACCESS = GITLAB_ACCESS_REPORTER
 
 # Aggregation key prefixes for finding deduplication
 AGG_KEY_VULNERABILITY = "AGG:VULN"

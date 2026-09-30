@@ -695,7 +695,7 @@ class GitHubService:
                 logger.debug("Skipping GitHub member that resolved to no local user (login=%s).", login)
                 continue
             role = member["role"]
-            user_id = str(user.get("_id", user.get("id")))
+            user_id = str(user["_id"])
             # Two logins can resolve to one local user. A duplicate entry breaks add_member's $ne
             # guard, and the next sync's last-wins merge would silently demote the admin entry.
             previous = resolved.get(user_id)

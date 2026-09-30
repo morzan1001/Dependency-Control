@@ -85,7 +85,7 @@ class TestTeamMemberSyncResolveOnly:
         user_repo.get_raw_by_verified_email = AsyncMock(return_value=existing)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="real", email="real@example.com", access_level=40)]
-        result, _ = asyncio.run(service._build_team_members(members, user_repo))
+        result, _, _ = asyncio.run(service._build_team_members(members, user_repo))
         assert len(result) == 1
         assert result[0].user_id == "u-1"
         user_repo.create.assert_not_called()
@@ -97,8 +97,8 @@ class TestTeamMemberSyncResolveOnly:
         user_repo.get_raw_by_verified_email = AsyncMock(return_value=None)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="group_875_bot_f4597604b42b729d0de22d01e5126164", access_level=40)]
-        result, unresolved = asyncio.run(service._build_team_members(members, user_repo))
-        assert (result, unresolved) == ([], 1)
+        result, unresolved, resolved_any = asyncio.run(service._build_team_members(members, user_repo))
+        assert (result, unresolved, resolved_any) == ([], 1, False)
         user_repo.create.assert_not_called()
 
 
@@ -994,7 +994,7 @@ class TestTeamSyncMergeSemantics:
         service = GitLabService(gitlab_instance_a)
         members = [
             GitLabMember(username="ada", email="ada@test.com", access_level=50),
-            GitLabMember(username="ada-bot", email="ada.bot@test.com", access_level=10),
+            GitLabMember(username="ada-bot", email="ada.bot@test.com", access_level=30),
         ]
 
         _, team_repo = self._sync(service, self._team("team-4", [], path="grp"), members, {"_id": "u-ada"})

@@ -146,7 +146,7 @@ class TestGitLabTeamSync:
     @staticmethod
     async def _resolved(member: GitLabMember, *users: dict) -> list[str]:
         service = GitLabService(make_gitlab_instance())
-        members, _ = await service._build_team_members([member], UserRepository(await _db(*users)))
+        members, _, _ = await service._build_team_members([member], UserRepository(await _db(*users)))
         return [m.user_id for m in members]
 
     @pytest.mark.asyncio

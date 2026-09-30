@@ -12,6 +12,7 @@ from app.core.constants import (
     GITLAB_ADMIN_MIN_ACCESS,
     GITLAB_JWKS_CACHE_TTL,
     GITLAB_JWKS_URI_CACHE_TTL,
+    GITLAB_TEAM_MEMBER_MIN_ACCESS,
     GITLAB_USER_EMAIL_CACHE_TTL,
     MAX_PROJECT_TEAMS,
     TEAM_ROLE_ADMIN,
@@ -579,17 +580,19 @@ class GitLabService:
         self,
         gitlab_members: list[GitLabMember],
         user_repo: UserRepository,
-    ) -> tuple[list[TeamMember], int]:
-        """Resolve each GitLab member to an EXISTING local user, plus the unresolved count.
+    ) -> tuple[list[TeamMember], int, bool]:
+        """Resolve each GitLab member to an EXISTING local user: the owners, the unresolved count, and
+        whether anyone resolved at all.
 
         Tagged with this instance so the merge in ``_upsert_team_with_members`` refreshes only the
-        subset this instance established. Members without a verified local account are skipped —
-        sync never creates users (see ``_find_user``).
+        subset this instance established. Members without a verified local account are skipped:
+        a self-chosen username proves nothing, and sync never creates users.
         """
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
+        resolved_any = False
         for member in gitlab_members:
-            user = await self._find_user(member, user_repo)
+            user = await user_repo.get_raw_by_verified_email(member.email) if member.email else None
             if not user:
                 # No verified local account yet, or a GitLab service account/bot. Sync never
                 # creates users; a real member is added on their next sync after logging in via OIDC.
@@ -600,25 +603,22 @@ class GitLabService:
                     member.access_level,
                 )
                 continue
+            resolved_any = True
+            if (
+                (member.state or "active") != "active"
+                or member.membership_state == "awaiting"
+                or member.access_level < GITLAB_TEAM_MEMBER_MIN_ACCESS
+            ):
+                continue
             role = TEAM_ROLE_ADMIN if member.access_level >= GITLAB_ADMIN_MIN_ACCESS else TEAM_ROLE_MEMBER
-            user_id = str(user.get("_id", user.get("id")))
+            user_id = str(user["_id"])
             # Two GitLab members can resolve to one local user. A duplicate entry breaks
             # add_member's $ne guard, and a last-wins merge would silently demote the admin entry.
             previous = resolved.get(user_id)
             if previous is not None and previous.role == TEAM_ROLE_ADMIN:
                 continue
             resolved[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
-        return list(resolved.values()), unresolved
-
-    async def _find_user(
-        self,
-        member: GitLabMember,
-        user_repo: UserRepository,
-    ) -> dict[str, Any] | None:
-        """The EXISTING local user that verified the member's email; a self-chosen username proves nothing."""
-        if not member.email:
-            return None
-        return await user_repo.get_raw_by_verified_email(member.email)
+        return list(resolved.values()), unresolved, resolved_any
 
     async def _resolve_group_members(
         self,
@@ -628,8 +628,8 @@ class GitLabService:
         group_id: int,
     ) -> list[TeamMember] | None:
         """The members to store for a group, or None to leave the stored ones alone."""
-        team_members, unresolved = await self._build_team_members(members, user_repo)
-        if unresolved and not team_members:
+        team_members, unresolved, resolved_any = await self._build_team_members(members, user_repo)
+        if unresolved and not resolved_any:
             # A token that lost profile access resolves nobody; writing that would strip the
             # whole gitlab subset and read as a group everyone left.
             logger.warning(
