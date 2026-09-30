@@ -75,6 +75,7 @@ Supported aggregation stages
 - ``$match``, ``$sort`` (direction must be 1 or -1), ``$group``, ``$project``, ``$limit``
 - ``$unwind``, both the string and the
   ``{path, preserveNullAndEmptyArrays, includeArrayIndex}`` forms
+- ``$merge`` on ``_id`` with ``whenMatched`` ``keepExisting``, ``merge`` or ``replace``
 - ``$group`` accumulators: ``$sum``, ``$avg``, ``$first``, ``$firstN``, ``$min``,
   ``$max``, ``$addToSet``, ``$push``
 - ``$dateTrunc`` truncates to the start of the unit (day/week/month/year; week
@@ -1148,7 +1149,25 @@ def _run_pipeline(docs: list, pipeline: list, database: Any = None) -> list:
             ]
         elif "$count" in stage:
             results = [{stage["$count"]: len(results)}] if results else []
+        elif "$merge" in stage:
+            _run_merge(results, stage["$merge"], database)
+            results = []
     return results
+
+
+def _run_merge(docs: list, spec: dict, database: Any) -> None:
+    when_matched = spec.get("whenMatched", "merge")
+    if spec.get("on", "_id") != "_id" or when_matched not in ("keepExisting", "merge", "replace"):
+        raise NotImplementedError(
+            f"FakeDatabase $merge supports on=_id with keepExisting, merge or replace, not {spec}"
+        )
+    target = database[spec["into"]]
+    for doc in docs:
+        existing = target._docs.get(doc["_id"])
+        if existing is None or when_matched == "replace":
+            target._docs[doc["_id"]] = _bsonify(doc)
+        elif when_matched == "merge":
+            target._docs[doc["_id"]] = {**existing, **_bsonify(doc)}
 
 
 # ---------------------------------------------------------------------------
