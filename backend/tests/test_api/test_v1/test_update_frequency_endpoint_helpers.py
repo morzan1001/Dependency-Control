@@ -29,6 +29,7 @@ from app.core.config import settings
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.project import Project
 from app.models.user import User
+from app.repositories.update_frequency import window_scans_by_branch
 from app.schemas.analytics import ProjectUpdateSummary, UpdateFrequencyComparison, UpdateFrequencyMetrics
 from app.services.rescan import build_rescan
 from app.services.update_frequency import rank_summaries
@@ -419,6 +420,20 @@ class TestProjectReadPathSelection:
 
         assert result.project_name == "live"
         assert rollup.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_rollup_miss_elects_the_branch_once(self):
+        db = await _scanned_db()
+        live = AsyncMock(return_value=_metrics("live"))
+        elections = AsyncMock(side_effect=window_scans_by_branch)
+
+        with _project_patched(FakeCache(), live), patch.object(settings, "UPDATE_FREQUENCY_USE_ROLLUP", True):
+            with patch(f"{MODULE}.window_scans_by_branch", elections):
+                with patch("app.services.update_frequency.window_scans_by_branch", elections):
+                    await _view(db, window_days=90)
+
+        assert elections.await_count == 1
+        assert live.await_args.kwargs["branch"] == "main"
 
 
 _NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)

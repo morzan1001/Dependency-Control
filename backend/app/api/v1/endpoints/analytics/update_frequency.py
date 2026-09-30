@@ -52,6 +52,7 @@ from app.services.release_history import (
 from app.services.update_frequency import (
     compute_update_frequency,
     compute_update_frequency_comparison,
+    elect_primary_branch,
     load_scan_deps,
     load_outdated_entries,
     rank_summaries,
@@ -212,10 +213,11 @@ async def get_project_update_frequency(
 
     since = window_cutoff(window_days)
     analyzed_branch = branch
+    by_branch: dict[str, BranchWindowActivity] = {}
     if analyzed_branch is None:
-        activity = await window_scans_by_branch(ScanRepository(db), [project_id], since)
-        by_branch = {seen_branch: seen for (_project_id, seen_branch), seen in activity.items()}
-        analyzed_branch = select_primary_branch(by_branch, project.default_branch, project.deleted_branches)
+        analyzed_branch, by_branch = await elect_primary_branch(
+            ScanRepository(db), project_id, since, project.default_branch, project.deleted_branches
+        )
     cache_key = _project_cache_key(
         project_id,
         max_scans=max_scans,
@@ -228,7 +230,7 @@ async def get_project_update_frequency(
     async def _fetch() -> dict[str, Any]:
         metrics = None
         if rollup_window_days is not None:
-            metrics = await _rollup_project_metrics(db, project, rollup_window_days)
+            metrics = await _rollup_project_metrics(db, project, rollup_window_days, analyzed_branch, by_branch)
         if metrics is None:
             metrics = await compute_update_frequency(
                 project_id=project_id,
@@ -240,8 +242,6 @@ async def get_project_update_frequency(
                 window_days=window_days,
                 release_fetcher=_build_release_fetcher(),
                 branch=analyzed_branch,
-                deleted_branches=project.deleted_branches,
-                default_branch=project.default_branch,
             )
         return metrics.model_dump()
 
@@ -479,22 +479,24 @@ async def _rollup_slowest_packages(
     ], len(counts)
 
 
-async def _rollup_project_metrics(db: DatabaseDep, project: Project, window_days: int) -> UpdateFrequencyMetrics | None:
+async def _rollup_project_metrics(
+    db: DatabaseDep,
+    project: Project,
+    window_days: int,
+    branch: str | None,
+    by_branch: Mapping[str, BranchWindowActivity],
+) -> UpdateFrequencyMetrics | None:
     """Metrics folded from the delta ledger, or None when it cannot answer for this project.
 
     A partial fold falls back to the live walk rather than being served: one
     project's walk is affordable, and it reads the scans the ledger has not
     reached yet.
     """
-    project_id = project.id
-    since = cast(datetime, window_cutoff(window_days))
-    activity = await window_scans_by_branch(ScanRepository(db), [project_id], since)
-    by_branch = {branch: seen for (_project_id, branch), seen in activity.items()}
-    branch = select_primary_branch(by_branch, project.default_branch, project.deleted_branches)
     if branch is None:
         return None
 
-    deltas = await ScanUpdateDeltaRepository(db).find_project_window(project_id, branch, since, WINDOW_HARD_LIMIT)
+    since = cast(datetime, window_cutoff(window_days))
+    deltas = await ScanUpdateDeltaRepository(db).find_project_window(project.id, branch, since, WINDOW_HARD_LIMIT)
     resolved = _fold_branch(branch, deltas, by_branch[branch])
     if resolved.status != "ready":
         return None
@@ -504,7 +506,7 @@ async def _rollup_project_metrics(db: DatabaseDep, project: Project, window_days
     folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
     slowest_packages, outdated_backlog = await _rollup_slowest_packages(db, resolved.bars)
     return folded.to_metrics(
-        project_id,
+        project.id,
         project.name,
         branch=resolved.branch,
         slowest_packages=slowest_packages,
