@@ -15,7 +15,7 @@ import { useAuth } from "@/context/useAuth"
 import { useDialogState } from "@/hooks/use-dialog-state"
 import { formatDate } from "@/lib/utils"
 
-// UX hint only; the server re-evaluates webhook type and is the source of truth.
+// Mirrors the server's detection, which decides the type when the request names none.
 function detectWebhookType(url: string): "generic" | "teams" {
   let host: string;
   let path: string;
@@ -122,6 +122,7 @@ export function WebhookManager({
         url: newWebhook.url,
         events: newWebhook.events,
         ...(newWebhook.secret ? { secret: newWebhook.secret } : {}),
+        ...(newWebhook.webhook_type ? { webhook_type: newWebhook.webhook_type } : {}),
       }
       await onCreate(payload)
       createDialog.closeDialog()
@@ -193,9 +194,20 @@ export function WebhookManager({
                     placeholder="https://example.com/webhook"
                   />
                   {detectWebhookType(newWebhook.url) === "teams" && (
-                    <p className="text-xs text-muted-foreground">
-                      Detected as a Microsoft Teams workflow URL — payloads will be sent as Adaptive Cards.
-                    </p>
+                    <div className="flex items-start space-x-2">
+                      <Checkbox
+                        id="webhook-send-json"
+                        checked={newWebhook.webhook_type === "generic"}
+                        onCheckedChange={checked =>
+                          setNewWebhook(prev => ({ ...prev, webhook_type: checked === true ? "generic" : undefined }))
+                        }
+                        className="mt-0.5"
+                      />
+                      <Label htmlFor="webhook-send-json" className="text-xs font-normal text-muted-foreground">
+                        Detected as a Microsoft Teams workflow URL, so payloads are sent as Adaptive Cards. Tick to
+                        send the event JSON instead, e.g. for a plain Logic App or Power Automate flow.
+                      </Label>
+                    </div>
                   )}
                 </div>
                 <div className="space-y-2">
