@@ -19,6 +19,7 @@ import httpx
 import pytest
 
 from app.core.config import settings
+from app.core.constants import WEBHOOK_USER_AGENT_VALUE
 from tests.mocks.fake_mongo import FakeDatabase
 
 ws_module = importlib.import_module("app.services.webhooks.webhook_service")
@@ -251,15 +252,27 @@ class TestDeliveryHeaders:
         assert request.headers["X-Webhook-Signature"] == f"sha256={body_signed}"
 
     @pytest.mark.asyncio
-    async def test_stored_custom_headers_are_sent_but_cannot_replace_protocol_headers(self):
+    @pytest.mark.parametrize("stored_name", ["x-webhook-signature", "content-type", "user-agent"])
+    async def test_a_stored_case_variant_cannot_duplicate_a_protocol_header(self, stored_name: str):
         transport, sent = _answering(_answer(204))
 
-        delivered, _, _ = await _run(
-            transport, secret="s3cret", headers={"X-Webhook-Signature": "forged", "X-Team": "Müller"}
-        )
+        delivered, _, _ = await _run(transport, secret="s3cret", headers={stored_name: "forged", "X-Team": "Müller"})
 
         request = sent[0]
+        expected = {
+            "x-webhook-signature": f"sha256={hmac.new(b's3cret', request.content, hashlib.sha256).hexdigest()}",
+            "content-type": "application/json",
+            "user-agent": WEBHOOK_USER_AGENT_VALUE,
+        }[stored_name]
         assert delivered is True
-        assert request.headers.get_list("X-Webhook-Signature") != ["forged"]
-        assert request.headers.get_list("X-Webhook-Signature")[0].startswith("sha256=")
+        assert request.headers.get_list(stored_name) == [expected]
         assert (b"X-Team", "Müller".encode("latin-1")) in request.headers.raw
+
+    @pytest.mark.asyncio
+    async def test_a_stored_non_latin1_value_fails_once_as_an_invalid_header(self):
+        transport, sent = _answering(_answer(204))
+
+        delivered, logged, sleeps = await _run(transport, headers={"X-Team": "€"})
+
+        assert (delivered, len(sent), sleeps) == (False, 0, [])
+        assert (logged["status_code"], logged["error"], logged["retry_count"]) == (None, "Invalid header value", 0)
