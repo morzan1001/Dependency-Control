@@ -15,7 +15,8 @@ Before the rollout, resolve each gate before the first new pod starts:
 9. Prepare stored waivers for the new matching rules, and set the expiry-sweep watermark.
 10. Review synced team members and active accounts that are not verified (a review, not a gate).
 11. Review accounts that hold only one of `project:update` and `project:delete` (a review).
-12. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 11 re-creates the listed waivers from it).
+12. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 12 re-creates the listed waivers from it).
+13. Check projects that run `os_malware` without an API key (a review).
 
 Deploy blocker, also before the rollout: fill the allowlists of the github.com and gitlab.com instances, or switch their auto-create off.
 
@@ -26,16 +27,17 @@ After the rollout, once the last pod on the previous image has terminated:
 1. End every session and review what was created during the rollout. Mandatory on every installation.
 2. Remove TruffleHog plaintext secrets from `analysis_results`.
 3. Rewrite archive bundles that still hold TruffleHog plaintext.
-4. Backfill `first_seen_at`.
-5. Purge leaked chat tool results, then rotate the exposed secrets.
-6. Rotate GitHub Enterprise tokens that reached github.com.
-7. Review GitLab bindings set through the old unchecked path.
-8. Review the retention of projects created in the dialog.
-9. Restamp every project under the new waiver rules. Mandatory on every installation.
-10. Clean up callgraph languages.
-11. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
-12. Remove memberships of deleted users and leftovers of deleted projects.
-13. Watch the primary's load, and remove the Helm values the chart does not read.
+4. Name stored secret findings after their detector.
+5. Backfill `first_seen_at`.
+6. Purge leaked chat tool results, then rotate the exposed secrets.
+7. Rotate GitHub Enterprise tokens that reached github.com.
+8. Review GitLab bindings set through the old unchecked path.
+9. Review the retention of projects created in the dialog.
+10. Restamp every project under the new waiver rules. Mandatory on every installation.
+11. Clean up callgraph languages.
+12. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
+13. Remove memberships of deleted users and leftovers of deleted projects.
+14. Watch the primary's load, and remove the Helm values the chart does not read.
 
 Once 1.9.41 is confirmed stable, drop the old indexes. Four optional checks look for abuse of the fixed gaps from before the upgrade, and optional repairs clean up data older code left behind. The behaviour changes that users and operators will notice are listed at the end.
 
@@ -260,6 +262,36 @@ db.projects.updateMany({active_analyzers: {$elemMatch: {$nin: ok}}}, {$pull: {ac
 db.system_settings.updateOne({_id: "current"}, {$pull: {default_active_analyzers: {$nin: ok}}});
 ```
 
+Analyzer tunables under `analyzer_settings` that are not numbers, out of range or out of order. The analyzers read them as stored, so a stored `"365"` or `null` fails that analyzer on every scan of the new image, and the settings dialog cannot save it. Unsetting a key returns the project to the default, which the old image reads too. Run it with `DRY = true` for the counts, then with `DRY = false`. After the write, the last find lists projects whose effective values are out of order; unset the lower key of each hit:
+
+```js
+const DRY = true;
+const specs = {
+  "end_of_life.eol_high_after_days": [["int", "long"], 0, 3650],
+  "end_of_life.eol_medium_after_days": [["int", "long"], 0, 3650],
+  "maintainer_risk.stale_after_days": [["int", "long"], 30, 3650],
+  "maintainer_risk.warn_after_days": [["int", "long"], 30, 3650],
+  "typosquatting.critical_similarity": [["int", "long", "double"], 0.5, 1],
+  "typosquatting.high_similarity": [["int", "long", "double"], 0.5, 1],
+  "typosquatting.similarity_threshold": [["int", "long", "double"], 0.5, 1],
+  "deps_dev.scorecard_threshold": [["int", "long", "double"], 0, 10],
+};
+for (const [path, [types, lo, hi]] of Object.entries(specs)) {
+  const f = `analyzer_settings.${path}`;
+  const bad = {[f]: {$exists: true}, $or: [{[f]: {$not: {$type: types}}}, {[f]: NaN}, {[f]: {$lt: lo}}, {[f]: {$gt: hi}}]};
+  print(path, DRY ? db.projects.countDocuments(bad) : db.projects.updateMany(bad, {$unset: {[f]: ""}}).modifiedCount);
+}
+const eff = (p, d) => ({$ifNull: [`$analyzer_settings.${p}`, d]});
+db.projects.find({$or: [
+  {$expr: {$lt: [eff("end_of_life.eol_high_after_days", 365), eff("end_of_life.eol_medium_after_days", 180)]}},
+  {$expr: {$lt: [eff("maintainer_risk.stale_after_days", 730), eff("maintainer_risk.warn_after_days", 365)]}},
+  {$expr: {$lt: [eff("typosquatting.critical_similarity", 0.95), eff("typosquatting.high_similarity", 0.90)]}},
+  {$expr: {$lt: [eff("typosquatting.high_similarity", 0.90), eff("typosquatting.similarity_threshold", 0.82)]}},
+]}, {name: 1, analyzer_settings: 1});
+```
+
+The type check also unsets a whole-number double in a day field, such as `365.0`. Scans accept it, but the dialog cannot save it.
+
 Project fields stored as explicit null, which the model cannot read. For every field other than `name`, `$unset` it so the default applies; give a null name a real one per project:
 
 ```js
@@ -437,6 +469,23 @@ PY
 ```
 
 It matches bare names as tokens inside finding ids, so review the list before acting on it. Keep it: each listed waiver is re-created under the scoped name after the rename. No output means no waiver is affected.
+
+## Before the rollout (review): projects that run `os_malware` without an API key
+
+Without the OpenSourceMalware API key, `os_malware` now reports Failed instead of skipping silently, so every scan of a project that runs it completes with errors and a SCAN-ERROR finding. It is not a default analyzer, so only projects that opted in are affected:
+
+```js
+db.system_settings.countDocuments({_id: "current", open_source_malware_api_key: {$nin: [null, ""]}})  // 1: a key is set
+db.projects.countDocuments({active_analyzers: "os_malware"})
+db.system_settings.countDocuments({_id: "current", default_active_analyzers: "os_malware"})  // 1: projects CI creates run it
+```
+
+If no key is set and either count is not 0, set the key under System Settings, or remove the analyzer where it is not wanted:
+
+```js
+db.projects.updateMany({active_analyzers: "os_malware"}, {$pull: {active_analyzers: "os_malware"}})
+db.system_settings.updateOne({_id: "current"}, {$pull: {default_active_analyzers: "os_malware"}})
+```
 
 ## Deploy blocker: fill the allowlists of the github.com and gitlab.com instances
 
@@ -731,6 +780,61 @@ aws s3api delete-object --bucket <bucket> --key "<old s3_key>" --version-id <Ver
 ```
 
 The purge is complete when the listing matches nothing for every old key and, on GCS with soft delete left on, `gcloud storage ls --soft-deleted gs://<bucket>/<old s3_key>` matches nothing after the retention has passed.
+
+## After the rollout: name stored secret findings after their detector
+
+Secret findings stored before the upgrade read `Secret detected: <number>` and have no `details.detector_name`, and their raw TruffleHog entries have no `DetectorName`. Until this runs, the findings table, CSV, delta, chat and the secrets recommendation show the number. Run it only once every backend pod is on the new image, so no old pod writes numbered rows afterwards. It never changes `finding_id` or `details.detector`, which waivers match on.
+
+The detector table left the code base with this release, so copy it unchanged from the 1.9.40 tag into the pod:
+
+```bash
+git show v1.9.40:backend/app/core/trufflehog.py > th.py
+kubectl cp th.py <namespace>/<backend-pod>:/tmp/th.py
+```
+
+Save the script as `backfill.py`. `kubectl exec -i -n <namespace> <backend-pod> -- python - < backfill.py` prints the counts; add `--write` after the `-` to write them.
+
+```python
+import sys
+
+from pymongo import MongoClient
+
+from app.core.config import settings
+
+DRY_RUN = "--write" not in sys.argv
+exec(open("/tmp/th.py").read())  # defines DETECTOR_TYPE_NAMES
+NAMES = {str(k): v for k, v in DETECTOR_TYPE_NAMES.items()}
+P = "Secret detected: "
+db = MongoClient(settings.MONGODB_URL)[settings.DATABASE_NAME]
+
+rows = entries = 0
+for doc in db.analysis_results.find({"analyzer_name": "trufflehog"}, {"result.findings": 1}):
+    findings = (doc.get("result") or {}).get("findings") or []
+    named = 0
+    for f in findings:
+        if not f.get("DetectorName") and (name := NAMES.get(str(f.get("DetectorType")))):
+            f["DetectorName"] = name
+            named += 1
+    if named:
+        rows, entries = rows + 1, entries + named
+        if not DRY_RUN:
+            db.analysis_results.update_one({"_id": doc["_id"]}, {"$set": {"result.findings": findings}})
+print(f"analysis_results: {entries} entries in {rows} rows")
+
+
+def apply(flt, upd):
+    return db.findings.count_documents(flt) if DRY_RUN else db.findings.update_many(flt, upd).modified_count
+
+
+for d in db.findings.distinct("details.detector", {"type": "secret"}):
+    if name := NAMES.get(d):
+        base = {"type": "secret", "details.detector": d}
+        n_name = apply({**base, "details.detector_name": None}, {"$set": {"details.detector_name": name}})
+        n_desc = apply({**base, "description": P + d}, {"$set": {"description": P + name}})
+        print(f"findings {d} -> {name}: detector_name {n_name}, description {n_desc}")
+```
+
+It names the raw entries first, so a re-aggregation that runs meanwhile already writes names. It walks `analysis_results` once and then runs two `update_many` per known detector on the `type` index. A second run reports 0. Numbers missing from the table (24, 28, 132, 400 and anything above 1063) stay unnamed. Run it again after restoring a scan from a bundle archived before the upgrade.
 
 ## After the rollout: backfill `first_seen_at`
 
@@ -1089,24 +1193,7 @@ db.webhooks.updateMany(
 )
 ```
 
-Older secret findings read "Secret detected: <number>". This gives them the detector name, in a backend pod. It changes only descriptions, never `finding_id` or `details.detector`, which waivers match on.
-
-```bash
-python - <<'PY'
-import asyncio
-from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX as P, DETECTOR_TYPE_NAMES as N
-from app.db.mongodb import connect_to_mongo, get_database
-async def main():
-    await connect_to_mongo()
-    db = await get_database()
-    for d in await db.findings.distinct("description", {"type": "secret"}):
-        raw = d[len(P):] if d.startswith(P) else ""
-        if raw.isdigit() and int(raw) in N:
-            r = await db.findings.update_many({"type": "secret", "description": d}, {"$set": {"description": P + N[int(raw)]}})
-            print(d, "->", N[int(raw)], r.modified_count)
-asyncio.run(main())
-PY
-```
+Nothing reads the Redis key `popular:npm` any more, stored as `dc:popular:npm` under the default `CACHE_PREFIX`. It expires within 24 hours; to drop it now, run `DEL dc:popular:npm` in `redis-cli`.
 
 A stored `dependency_enrichments.enrichment_sources` holds only the last writer's list until its purl is enriched again. This derives the union now:
 
