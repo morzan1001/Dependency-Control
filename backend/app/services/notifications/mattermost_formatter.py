@@ -18,7 +18,7 @@ _COLOR_WARNING = "#ffc107"
 _COLOR_INFO = "#2196f3"
 _ALERT_COLOR = {"critical": _COLOR_DANGER, "warning": _COLOR_WARNING, "ok": _COLOR_SUCCESS}
 
-_MARKDOWN_CONTROL = re.compile(r"([\\`*_\[\]()!<>])")
+_MARKDOWN_CONTROL = re.compile(r"([\\`*_\[\]()!>])")
 
 
 def _escape_markdown(text: str) -> str:

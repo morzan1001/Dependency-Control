@@ -1,5 +1,7 @@
 """An alert nobody re-reads must carry its own truncation notice."""
 
+import urllib.error
+
 from app.schemas.notification import AlertVulnerability
 from app.services.notifications.mattermost_formatter import (
     build_advisory_props,
@@ -260,6 +262,15 @@ class TestMattermostAlerts:
         props = build_generic_props("Scan failed", "upstream said [click](https://evil.example)")
 
         assert props["attachments"][0]["text"] == "upstream said \\[click\\]\\(https://evil.example\\)"
+
+    def test_an_opening_angle_bracket_is_left_to_mattermost(self):
+        error = str(urllib.error.URLError(ConnectionRefusedError(111, "Connection refused")))
+
+        props = build_generic_props("Scan failed: demo", f"Scan s1 for project demo failed: {error}")
+
+        assert props["attachments"][0]["text"] == (
+            "Scan s1 for project demo failed: <urlopen error \\[Errno 111\\] Connection refused\\>"
+        )
 
     def test_names_and_analyzer_results_are_escaped(self):
         props = build_analysis_completed_props(
