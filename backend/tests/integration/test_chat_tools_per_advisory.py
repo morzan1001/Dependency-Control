@@ -454,6 +454,82 @@ async def test_waiver_status_finds_a_dormant_cve_waiver_by_its_vulnerability_id(
     assert (result["waived"], result["waiver_present"], result["suppressing"]) == (False, True, False)
 
 
+_DORMANT_CVE = "CVE-2020-0010"
+
+
+def _dormant_waiver(_id: str, expires: datetime | None, *, project_id: str | None = _PROJECT, by_cve=False) -> dict:
+    return {
+        "_id": _id,
+        "project_id": project_id,
+        "finding_id": None if by_cve else _DORMANT_CVE,
+        "vulnerability_id": _DORMANT_CVE if by_cve else None,
+        "reason": "not reachable",
+        "expiration_date": expires,
+    }
+
+
+_LAPSED = datetime(2026, 1, 31, tzinfo=timezone.utc)
+_LAPSED_EARLIER = datetime(2025, 6, 30, tzinfo=timezone.utc)
+_RENEWED = datetime(2099, 1, 31, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize(
+    ("waivers", "answer", "waiver_id"),
+    [
+        pytest.param(
+            [_dormant_waiver("w-lapsed", _LAPSED), _dormant_waiver("w-renewed", _RENEWED)],
+            "waiver",
+            "w-renewed",
+            id="renewed-beside-lapsed",
+        ),
+        pytest.param(
+            [_dormant_waiver("w-lapsed", _LAPSED), _dormant_waiver("w-global", None, project_id=None)],
+            "waiver",
+            "w-global",
+            id="global-beside-lapsed-project",
+        ),
+        pytest.param(
+            [_dormant_waiver("w-lapsed", _LAPSED), _dormant_waiver("w-cve", _RENEWED, by_cve=True)],
+            "waiver",
+            "w-cve",
+            id="cve-waiver-beside-lapsed-finding-waiver",
+        ),
+        pytest.param(
+            [_dormant_waiver("w-global", None, project_id=None), _dormant_waiver("w-project", _RENEWED)],
+            "waiver",
+            "w-project",
+            id="project-before-global",
+        ),
+        pytest.param(
+            [_dormant_waiver("w-earlier", _LAPSED_EARLIER), _dormant_waiver("w-later", _LAPSED)],
+            "expired_waiver",
+            "w-later",
+            id="latest-lapsed",
+        ),
+    ],
+)
+async def test_waiver_status_off_head_reports_an_active_waiver_before_a_lapsed_one(
+    db, database, waivers, answer, waiver_id
+):
+    await _seed_head(db)
+    await db.waivers.insert_many([dict(w) for w in waivers])
+
+    result = await _call(db, "get_waiver_status", project_id=_PROJECT, finding_id=_DORMANT_CVE)
+
+    assert result[answer]["id"] == waiver_id
+
+
+async def test_waiver_status_without_a_head_build_answers_no_scan_data(db, database):
+    await db.projects.insert_one(
+        {"_id": _PROJECT, "name": "advisory-project", "team_id": None, "default_branch": "main", "deleted_branches": []}
+    )
+    await db.waivers.insert_one(_dormant_waiver("w-cve", None))
+
+    result = await _call(db, "get_waiver_status", project_id=_PROJECT, finding_id=_DORMANT_CVE)
+
+    assert result == {"error": "No scan data available"}
+
+
 async def test_a_row_reads_its_threat_fields_off_the_unwaived_advisories(db, database):
     await _seed_head(db)
     await db.findings.insert_one(

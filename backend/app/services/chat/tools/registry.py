@@ -60,6 +60,7 @@ from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
+from app.repositories.waivers import non_expired_waiver_filter
 from app.schemas.project import license_policy_from_settings
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
@@ -317,7 +318,6 @@ def _plan_sort_key(step: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
-# A head finding's waiver state, with each advisory's own flag and the ids that name it.
 _WAIVER_STATE_PROJECTION = {
     "component": 1,
     "version": 1,
@@ -812,16 +812,15 @@ class ChatToolRegistry:
         wanted = ctx.args["finding_id"]
         vulnerability_id = advisory_id(wanted) or ""
         head_scan_id = await self._head_scan_id(project, ctx.db)
-        findings: list[dict[str, Any]] = []
-        findings_total = 0
-        if head_scan_id:
-            findings, findings_total = await bounded_read(
-                ctx.db["findings"],
-                {"scan_id": head_scan_id, "$or": [{"finding_id": wanted}, advisory_match(vulnerability_id)]},
-                subject=f"findings named {wanted}",
-                limit=_WAIVER_STATE_READ,
-                projection=_WAIVER_STATE_PROJECTION,
-            )
+        if not head_scan_id:
+            return {"error": _ERR_NO_SCAN_DATA}
+        findings, findings_total = await bounded_read(
+            ctx.db["findings"],
+            {"scan_id": head_scan_id, "$or": [{"finding_id": wanted}, advisory_match(vulnerability_id)]},
+            subject=f"findings named {wanted}",
+            limit=_WAIVER_STATE_READ,
+            projection=_WAIVER_STATE_PROJECTION,
+        )
         if findings:
             states = [_waiver_state(f, vulnerability_id) for f in findings]
             waived_count = sum(state["waived"] for state in states)
@@ -835,27 +834,27 @@ class ChatToolRegistry:
                     "that finding's severity counts only its live advisories."
                 ),
             }
-        # No finding doc for this id in the head build: an existing waiver row
-        # suppresses nothing, so report it as present-but-not-suppressing.
-        now = datetime.now(timezone.utc)
-        named = {"$or": [{"finding_id": wanted}, {"vulnerability_id": vulnerability_id}]}
+        named = {
+            "$or": [{"finding_id": wanted}, {"vulnerability_id": vulnerability_id}],
+            "project_id": {"$in": [project["_id"], None]},
+        }
         waivers = ctx.db["waivers"]
-        waiver = await waivers.find_one({**named, "project_id": project["_id"]}) or await waivers.find_one(
-            {**named, "project_id": None}
+        # Descending project_id puts the project's own waiver before a global one (null).
+        active = await waivers.find_one(
+            {"$and": [named, non_expired_waiver_filter(datetime.now(timezone.utc))]}, sort=[("project_id", -1)]
         )
-        if not waiver:
-            return {"waived": False}
-        active = is_waiver_active(waiver.get("expiration_date"), now)
-        serialized = {**_serialize_doc(waiver), "is_active": active}
         if active:
             return {
                 "waived": False,
                 "waiver_present": True,
                 "suppressing": False,
                 "reason": "no matching finding in the head build — finding fixed/moved or waiver dormant",
-                "waiver": serialized,
+                "waiver": {**_serialize_doc(active), "is_active": True},
             }
-        return {"waived": False, "expired_waiver": serialized}
+        lapsed = await waivers.find_one(named, sort=[("expiration_date", -1)])
+        if not lapsed:
+            return {"waived": False}
+        return {"waived": False, "expired_waiver": {**_serialize_doc(lapsed), "is_active": False}}
 
     async def _tool_list_project_waivers(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await ctx.db["projects"].find_one({"_id": ctx.args.get("project_id")}, {"_id": 1})
