@@ -1014,9 +1014,19 @@ def _build_scan_findings_match(
     return query
 
 
-def _scan_findings_lookup_stage() -> dict[str, Any]:
-    """The ``$lookup`` stage that pulls dependency info into each finding."""
-    return {
+def _scan_findings_dependency_join() -> list[dict[str, Any]]:
+    """The stages that pull each finding's dependency info into flat fields."""
+    fields = (
+        "source_type",
+        "source_target",
+        "layer_digest",
+        "found_by",
+        "locations",
+        "purl",
+        "direct",
+        "direct_inferred",
+    )
+    lookup = {
         "$lookup": {
             "from": "dependencies",
             "let": {
@@ -1041,26 +1051,17 @@ def _scan_findings_lookup_stage() -> dict[str, Any]:
                 {"$addFields": {"_exact": {"$eq": ["$name", "$$component"]}}},
                 {"$sort": {"_exact": -1}},
                 {"$limit": 1},
-                {
-                    "$project": {
-                        "source_type": 1,
-                        "source_target": 1,
-                        "layer_digest": 1,
-                        "found_by": 1,
-                        "locations": 1,
-                        "purl": 1,
-                        "direct": 1,
-                        "direct_inferred": 1,
-                    }
-                },
+                {"$project": dict.fromkeys(fields, 1)},
             ],
             "as": "dependency_info",
         }
     }
+    flatten = {"$addFields": {field: {"$arrayElemAt": [f"$dependency_info.{field}", 0]} for field in fields}}
+    return [lookup, flatten, {"$project": {"dependency_info": 0}}]
 
 
 def _scan_findings_add_fields_stage() -> dict[str, Any]:
-    """The ``$addFields`` stage that ranks severity and flattens dependency info."""
+    """The ``$addFields`` stage that ranks severity and derives the id and sort helpers."""
     return {
         "$addFields": {
             "severity_rank": {
@@ -1077,14 +1078,6 @@ def _scan_findings_add_fields_stage() -> dict[str, Any]:
             "id": "$finding_id",
             # Deterministic scalar for sorting by scanner (scanners is a list).
             "first_scanner": {"$arrayElemAt": ["$scanners", 0]},
-            "source_type": {"$arrayElemAt": ["$dependency_info.source_type", 0]},
-            "source_target": {"$arrayElemAt": ["$dependency_info.source_target", 0]},
-            "layer_digest": {"$arrayElemAt": ["$dependency_info.layer_digest", 0]},
-            "found_by": {"$arrayElemAt": ["$dependency_info.found_by", 0]},
-            "locations": {"$arrayElemAt": ["$dependency_info.locations", 0]},
-            "purl": {"$arrayElemAt": ["$dependency_info.purl", 0]},
-            "direct": {"$arrayElemAt": ["$dependency_info.direct", 0]},
-            "direct_inferred": {"$arrayElemAt": ["$dependency_info.direct_inferred", 0]},
         }
     }
 
@@ -1120,23 +1113,25 @@ def _build_scan_findings_pipeline(
     direct_only: bool = False,
 ) -> list[dict[str, Any]]:
     """Compose the full aggregation pipeline used by ``read_scan_findings``."""
-    stages: list[dict[str, Any]] = [
-        {"$match": query},
-        _scan_findings_lookup_stage(),
-        _scan_findings_add_fields_stage(),
-    ]
+    join = _scan_findings_dependency_join()
+    # The join runs one dependency query per finding, so only the page is joined unless the filter or sort reads it.
+    early_join, page_join = (join, []) if direct_only or sort_by == "source_type" else ([], join)
+    stages: list[dict[str, Any]] = [{"$match": query}, _scan_findings_add_fields_stage(), *early_join]
     if direct_only:
         # Drop known-transitive findings; direct=null (code findings / unmatched packages) stays visible.
         stages.append({"$match": {"direct": {"$ne": False}}})
     stages += [
-        # Keep _id through the $sort as the unique tiebreaker; it's dropped from output in the $facet below.
-        {"$project": {"dependency_info": 0}},
         _scan_findings_sort_stage(sort_by, sort_dir),
         {
             "$facet": {
                 "metadata": [{"$count": "total"}],
-                # Drop the _id tiebreaker and first_scanner sort-helper from the output.
-                "data": [{"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 0, "first_scanner": 0}}],
+                "data": [
+                    {"$skip": skip},
+                    {"$limit": limit},
+                    *page_join,
+                    # Drop the _id tiebreaker and first_scanner sort-helper from the output.
+                    {"$project": {"_id": 0, "first_scanner": 0}},
+                ],
             }
         },
     ]

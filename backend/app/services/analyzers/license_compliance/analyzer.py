@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 from app.core.constants import NON_RUNTIME_SCOPES, get_severity_value
-from app.models.license import CATEGORY_RESTRICTIVENESS, LicenseInfo
+from app.models.license import CATEGORY_RESTRICTIVENESS, LicenseCategory, LicenseInfo
 from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 
 from ..base import Analyzer
 from . import compatibility, evaluator, normalizer
 from .constants import (
     CATEGORY_STAT_KEY,
+    INCLUDE_LICENSE_TEXT,
     LICENSE_DATABASE,
+    SHARE_SOURCE_OF_MODIFICATIONS,
 )
 
 
@@ -107,6 +110,15 @@ class LicenseAnalyzer(Analyzer):
                 # A lone licence's URL is its own; with several, the one stored URL may belong to another.
                 normalized = normalizer.extract_license_from_url(lic_url) or normalized
             license_info = LICENSE_DATABASE.get(normalized)
+            if license_info and " WITH " in member and license_info.category == LicenseCategory.STRONG_COPYLEFT:
+                license_info = replace(
+                    license_info,
+                    category=LicenseCategory.WEAK_COPYLEFT,
+                    description="The exception lets code that only links to this library keep its own license; "
+                    "changes to the library itself stay under its copyleft.",
+                    obligations=[SHARE_SOURCE_OF_MODIFICATIONS, INCLUDE_LICENSE_TEXT],
+                    risks=[],
+                )
 
             if not license_info:
                 stats["unknown"] += 1

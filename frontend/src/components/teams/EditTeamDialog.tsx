@@ -13,6 +13,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
+import { getErrorMessage } from "@/lib/utils"
 
 interface EditTeamDialogProps {
   team: Team | null;
@@ -48,7 +49,8 @@ export function EditTeamDialog({ team, isOpen, onClose }: Readonly<EditTeamDialo
           onSuccess: () => {
              handleClose();
              toast.success("Team updated successfully");
-          }
+          },
+          onError: (error) => toast.error("Failed to update team", { description: getErrorMessage(error) }),
         }
       );
     }

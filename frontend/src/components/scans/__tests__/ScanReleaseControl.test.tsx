@@ -77,10 +77,10 @@ function releasedScan(releases: ScanReleaseRef[]): ScanWithReleases {
   return makeScan({ is_release: true, releases })
 }
 
-function renderControl(scan: ScanWithReleases) {
+function renderControl(scan: ScanWithReleases, canWrite = true) {
   return render(
     <MemoryRouter>
-      <ScanReleaseControl projectId={PROJECT_ID} scan={scan} />
+      <ScanReleaseControl projectId={PROJECT_ID} scan={scan} canWrite={canWrite} />
     </MemoryRouter>,
   )
 }
@@ -104,6 +104,13 @@ describe('ScanReleaseControl', () => {
       { projectId: PROJECT_ID, scanId: SCAN_ID, environment: STAGING },
       expect.anything(),
     )
+  })
+
+  it('shows a viewer the release without the withdraw action the server refuses them', () => {
+    renderControl(releasedScan([makeRelease()]), false)
+
+    expect(screen.getByLabelText(`Release ${PRODUCTION_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: `Withdraw from ${PRODUCTION}` })).toBeNull()
   })
 
   // Annotated, not inferred: an inferred fixture drops a field from the response type silently.

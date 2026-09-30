@@ -29,6 +29,7 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { toast } from "sonner"
+import { getErrorMessage } from "@/lib/utils"
 import { TEAM_ROLES } from '@/lib/constants';
 
 interface TeamMembersDialogProps {
@@ -91,7 +92,10 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
                               if (team) {
                                   updateMemberMutation.mutate(
                                     { teamId: team.id, userId: member.user_id, role: value },
-                                    { onSuccess: () => toast.success("Member role updated") }
+                                    {
+                                      onSuccess: () => toast.success("Member role updated"),
+                                      onError: (error) => toast.error("Failed to update member role", { description: getErrorMessage(error) }),
+                                    }
                                   );
                               }
                           }}
@@ -121,7 +125,10 @@ export function TeamMembersDialog({ team, isOpen, onClose }: Readonly<TeamMember
                                   if (team) {
                                       removeMemberMutation.mutate(
                                         { teamId: team.id, userId: member.user_id },
-                                        { onSuccess: () => toast.success("Member removed") }
+                                        {
+                                          onSuccess: () => toast.success("Member removed"),
+                                          onError: (error) => toast.error("Failed to remove member", { description: getErrorMessage(error) }),
+                                        }
                                       );
                                   }
                               }}

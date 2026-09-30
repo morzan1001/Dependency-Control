@@ -199,7 +199,7 @@ export function ProjectWaivers({ projectId }: Readonly<ProjectWaiversProps>) {
                                 <TableRow key={waiver.id}>
                                     <TableCell className="font-mono">
                                         <div className="flex items-center gap-1.5">
-                                            <span className="truncate max-w-[220px]" title={waiver.finding_id || "Any"}>{waiver.finding_id || "Any"}</span>
+                                            <span className="truncate max-w-[220px]" title={waiver.vulnerability_id || waiver.finding_id || "Any"}>{waiver.vulnerability_id || waiver.finding_id || "Any"}</span>
                                             {waiver.scope === 'file' && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">Entire file</Badge>}
                                             {waiver.scope === 'rule' && <Badge variant="default" className="text-[10px] px-1.5 py-0 shrink-0">All files</Badge>}
                                         </div>

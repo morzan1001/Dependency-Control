@@ -14,6 +14,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { toast } from "sonner"
+import { getErrorMessage } from "@/lib/utils"
 
 export function CreateTeamDialog() {
   const [isOpen, setIsOpen] = useState(false);
@@ -31,7 +32,8 @@ export function CreateTeamDialog() {
           setName('');
           setDescription('');
           toast.success("Team created successfully");
-        }
+        },
+        onError: (error) => toast.error("Failed to create team", { description: getErrorMessage(error) }),
       }
     );
   };

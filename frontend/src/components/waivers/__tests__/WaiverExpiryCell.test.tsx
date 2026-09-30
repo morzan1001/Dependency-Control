@@ -1,7 +1,10 @@
 import { render, screen } from "@testing-library/react";
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { WaiverExpiryCell } from "../WaiverExpiryCell";
+import { expirationDateInputToIso } from "@/lib/waiver-date";
 import type { Waiver } from "@/types/waiver";
+
+const ORIGINAL_TZ = process.env.TZ;
 
 function makeWaiver(overrides: Partial<Waiver> = {}): Waiver {
   return {
@@ -16,6 +19,19 @@ function makeWaiver(overrides: Partial<Waiver> = {}): Waiver {
 }
 
 describe("WaiverExpiryCell", () => {
+  afterEach(() => {
+    process.env.TZ = ORIGINAL_TZ;
+  });
+
+  it.each(["Europe/Berlin", "America/Los_Angeles"])("shows the day picked in the dialog to a browser in %s", (zone) => {
+    process.env.TZ = zone;
+    const picked = new Date(2027, 2, 31).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+
+    render(<WaiverExpiryCell waiver={makeWaiver({ expiration_date: expirationDateInputToIso("2027-03-31") })} />);
+
+    expect(screen.getByText(picked)).toBeInTheDocument();
+  });
+
   it("shows 'Never' when there is no expiration_date", () => {
     render(<WaiverExpiryCell waiver={makeWaiver({ expiration_date: undefined })} />);
     expect(screen.getByText(/Never/i)).toBeInTheDocument();

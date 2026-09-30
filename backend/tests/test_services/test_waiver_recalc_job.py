@@ -8,6 +8,7 @@ import pytest
 import app.services.stats as stats_module
 from app.models.waiver import Waiver
 from app.repositories.distributed_locks import DistributedLocksRepository
+from app.services.analytics.cache import get_analytics_cache
 from app.services.stats import request_waiver_recalc, run_waiver_recalc
 from app.services.waivers.apply import waiver_fingerprint
 from tests.mocks.fake_mongo import FakeDatabase
@@ -241,3 +242,38 @@ async def test_the_operator_restamp_entry_clears_flags_stamped_under_older_rules
 
     assert (await db.findings.find_one({"_id": "f-p-1"}))["waived"] is False
     assert (await db.scans.find_one({"_id": "scan-p-1"}))["waiver_fingerprint"] == waiver_fingerprint([])
+
+
+async def _queue_change(db: FakeDatabase) -> None:
+    await request_waiver_recalc(db, await _store(db, _gpl_waiver(project_id="p-1")))
+
+
+async def _let_waiver_expire(db: FakeDatabase) -> None:
+    await _store(db, _gpl_waiver(project_id="p-1", expiration_date=_NOW - timedelta(minutes=5)))
+
+
+@pytest.mark.parametrize("queue", [_queue_change, _let_waiver_expire], ids=["queued-change", "expiry"])
+async def test_analytics_cached_while_a_recalculation_ran_is_dropped_once_it_finishes(monkeypatch, queue):
+    db = FakeDatabase()
+    await _seed_project(db, "p-1", _GPL)
+    await queue(db)
+    cache = get_analytics_cache()
+    original = stats_module.recalculate_project_stats
+
+    async def read_in_the_window(project_id, database, reach=None, **kwargs):
+        cache.set(("hotspots", project_id), "flags before the recalculation")
+        return await original(project_id, database, reach, **kwargs)
+
+    monkeypatch.setattr(stats_module, "recalculate_project_stats", read_in_the_window)
+    await run_waiver_recalc(db)
+
+    assert cache.get(("hotspots", "p-1")) == (False, None)
+
+
+async def test_a_run_with_nothing_queued_keeps_the_analytics_cache():
+    cache = get_analytics_cache()
+    cache.set(("hotspots", "p-1"), "current")
+
+    await run_waiver_recalc(FakeDatabase())
+
+    assert cache.get(("hotspots", "p-1")) == (True, "current")

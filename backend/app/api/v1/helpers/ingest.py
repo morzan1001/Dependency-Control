@@ -4,6 +4,7 @@ from typing import Any
 
 from app.api.v1.helpers.body_limit import refuse_oversized_document
 from app.repositories.analysis_results import AnalysisResultRepository
+from app.schemas.ingest import BaseIngest
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.stats import StatsAccumulator, compute_stats
 from app.services.scan_manager import ScanManager
@@ -11,21 +12,19 @@ from app.services.scan_manager import ScanManager
 _STATS_FIELDS = {path.split(".", 1)[0] for path in StatsAccumulator.REQUIRED_PATHS}
 
 
-async def process_findings_ingest(
-    manager: ScanManager,
-    analyzer_name: str,
-    result_dict: dict[str, Any],
-    scan_id: str,
-) -> dict[str, Any]:
+async def process_findings_ingest(manager: ScanManager, analyzer_name: str, data: BaseIngest) -> dict[str, Any]:
     """Common processing for findings-based ingests (TruffleHog, OpenGrep, KICS, Bearer).
 
     Does NOT trigger aggregation, so a fast scanner can't mark the scan
     'completed' before slower scanners (e.g. SBOM) finish; aggregation is kicked
     off later by the SBOM scanner or the housekeeping job.
     """
-    # Stored first so an oversized result is refused before the aggregation and waiver work.
+    scan_id = manager.run_scan_id(data)
+    result_dict = data.model_dump(exclude=set(BaseIngest.model_fields))
+    # Stored before the scan and release writes, so an oversized result is refused having written nothing.
     with refuse_oversized_document(f"The {analyzer_name} result"):
         await AnalysisResultRepository(manager.db).save_result(scan_id, analyzer_name, result_dict)
+    await manager.find_or_create_scan(data, scan_id=scan_id)
 
     aggregator = ResultAggregator()
     aggregator.aggregate(analyzer_name, result_dict)
