@@ -19,7 +19,6 @@ export interface Message {
   conversation_id: string;
   role: 'user' | 'assistant' | 'tool';
   content: string;
-  images: string[];
   tool_calls: ToolCall[];
   token_count: number;
   created_at: string;

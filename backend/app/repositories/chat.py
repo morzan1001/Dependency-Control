@@ -60,7 +60,6 @@ class ChatRepository:
         conversation_id: str,
         role: str,
         content: str = "",
-        images: list[str] | None = None,
         tool_calls: list[dict[str, Any]] | None = None,
         token_count: int = 0,
     ) -> int | None:
@@ -70,7 +69,6 @@ class ChatRepository:
             "conversation_id": conversation_id,
             "role": role,
             "content": content,
-            "images": images or [],
             "tool_calls": tool_calls or [],
             "token_count": token_count,
             "created_at": datetime.now(timezone.utc),

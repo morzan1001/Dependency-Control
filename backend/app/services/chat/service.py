@@ -62,7 +62,6 @@ class ChatService:
         conversation_id: str,
         user: User,
         content: str,
-        images: list[str] | None = None,
         *,
         max_tool_rounds: int,
     ) -> AsyncIterator[str]:
@@ -78,12 +77,7 @@ class ChatService:
         # Load history before persisting the new message so the current turn isn't replayed twice.
         history = await self.repo.get_recent_messages(conversation_id, limit=settings.CHAT_MAX_HISTORY_MESSAGES)
 
-        message_count = await self.repo.add_message(
-            conversation_id,
-            role="user",
-            content=content,
-            images=images or [],
-        )
+        message_count = await self.repo.add_message(conversation_id, role="user", content=content)
         if message_count is None:
             yield f"data: {json.dumps({'type': 'error', 'message': 'Conversation not found'})}\n\n"
             return
@@ -92,7 +86,7 @@ class ChatService:
             await self.repo.update_conversation_title(conversation_id, str(user.id), title)
 
         available_tools = self.tools.get_available_tool_definitions(user.permissions)
-        messages = build_messages(history, content, images or [])
+        messages = build_messages(history, content)
 
         try:
             rounds_used = 0

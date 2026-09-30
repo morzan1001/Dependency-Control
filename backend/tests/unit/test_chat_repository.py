@@ -97,6 +97,15 @@ async def test_add_and_get_messages(repo):
 
 
 @pytest.mark.asyncio
+async def test_a_stored_message_has_no_images_field(repo):
+    conv = await repo.create_conversation(user_id="user-1", title="My Chat")
+    await repo.add_message(conv["_id"], role="user", content="Hello")
+
+    (message,) = await repo.get_messages(conv["_id"])
+    assert "images" not in message
+
+
+@pytest.mark.asyncio
 async def test_add_message_with_tool_calls(repo):
     conv = await repo.create_conversation(user_id="user-1", title="My Chat")
 

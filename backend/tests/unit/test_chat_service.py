@@ -278,16 +278,9 @@ async def test_current_user_message_not_duplicated_in_prompt():
     # In-memory store so get_recent_messages reflects what add_message persisted.
     stored: list[dict[str, Any]] = []
 
-    async def fake_add(conversation_id, role, content="", images=None, **kwargs):
-        stored.append(
-            {
-                "role": role,
-                "content": content,
-                "images": images or [],
-                "tool_calls": kwargs.get("tool_calls") or [],
-            }
-        )
-        return {"_id": f"msg-{len(stored)}"}
+    async def fake_add(conversation_id, role, content="", **kwargs):
+        stored.append({"role": role, "content": content, "tool_calls": kwargs.get("tool_calls") or []})
+        return len(stored)
 
     async def fake_recent(conversation_id, limit=20):
         return list(stored)

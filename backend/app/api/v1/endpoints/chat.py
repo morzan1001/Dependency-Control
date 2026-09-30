@@ -163,7 +163,6 @@ async def send_message(
             conversation_id,
             current_user,
             body.content,
-            body.images,
             max_tool_rounds=system_settings.chat_max_tool_rounds,
         ),
         media_type="text/event-stream",

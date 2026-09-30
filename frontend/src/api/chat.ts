@@ -60,7 +60,6 @@ async function resolveErrorEvent(response: Response): Promise<ChatSSEEvent> {
 function performSendMessageFetch(
   conversationId: string,
   content: string,
-  images: string[],
   signal?: AbortSignal,
 ): Promise<Response> {
   const token = localStorage.getItem('token');
@@ -70,7 +69,7 @@ function performSendMessageFetch(
       'Content-Type': 'application/json',
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ content, images }),
+    body: JSON.stringify({ content }),
     signal,
   });
 }
@@ -98,10 +97,9 @@ export const chatApi = {
   sendMessage: async function* (
     conversationId: string,
     content: string,
-    images: string[] = [],
     signal?: AbortSignal,
   ): AsyncGenerator<ChatSSEEvent> {
-    let response = await performSendMessageFetch(conversationId, content, images, signal);
+    let response = await performSendMessageFetch(conversationId, content, signal);
 
     if (response.status === 401) {
       let newToken: string | null = null;
@@ -111,7 +109,7 @@ export const chatApi = {
         // Transient refresh failure: keep tokens, fall through to error handling.
       }
       if (newToken) {
-        response = await performSendMessageFetch(conversationId, content, images, signal);
+        response = await performSendMessageFetch(conversationId, content, signal);
       }
     }
 

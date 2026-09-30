@@ -7,14 +7,20 @@ from app.services.chat.context import build_messages
 
 def test_build_messages_signature_has_no_dead_param():
     params = list(inspect.signature(build_messages).parameters)
-    assert params == ["history", "new_message", "new_images"]
+    assert params == ["history", "new_message"]
     assert "tool_definitions_count" not in params
 
 
 def test_build_messages_works_with_new_arity():
-    messages = build_messages([], "hello", [])
+    messages = build_messages([], "hello")
     assert messages[0]["role"] == "system"
     assert messages[-1] == {"role": "user", "content": "hello"}
+
+
+def test_an_image_on_a_stored_message_is_not_replayed():
+    messages = build_messages([{"role": "user", "content": "q", "images": ["aGVsbG8="]}], "next")
+
+    assert messages[1:] == [{"role": "user", "content": "q"}, {"role": "user", "content": "next"}]
 
 
 def test_stored_tool_calls_replay_as_one_assistant_turn_then_a_result_per_call():
@@ -31,7 +37,7 @@ def test_stored_tool_calls_replay_as_one_assistant_turn_then_a_result_per_call()
         {"role": "tool", "content": "stale"},
     ]
 
-    messages = build_messages(history, "next", [])
+    messages = build_messages(history, "next")
 
     assert messages[1:] == [
         {"role": "user", "content": "q"},
