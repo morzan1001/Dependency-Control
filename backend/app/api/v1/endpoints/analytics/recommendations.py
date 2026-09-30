@@ -1,5 +1,6 @@
 """Analytics recommendations endpoint: /projects/{project_id}/recommendations."""
 
+import asyncio
 import logging
 from typing import Any
 
@@ -19,8 +20,10 @@ from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     SCAN_DEPENDENCY_READ_LIMIT,
 )
+from app.core.cve import entry_cves
 from app.core.permissions import Permissions
 from app.models.finding_record import FindingRecord
+from app.repositories.base import find_window
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
@@ -30,9 +33,10 @@ from app.schemas.analytics import (
 )
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
+from app.services.component_identity import component_name_candidates
 from app.services.enrichment.service import apply_enrichments, vulnerability_enrichment_service
 from app.services.recommendation import trends
-from app.services.recommendation.common import live_cves, get_attr
+from app.services.recommendation.common import live_cves
 from app.services.recommendations import recommendation_engine
 
 from ._shared import SCAN_NOT_IN_PROJECT, resolve_project_scan_id
@@ -45,6 +49,9 @@ router = CustomAPIRouter()
 _RECURRENCE_WINDOW_SCANS = 10
 
 _LICENSE_DRIFT_PROJECTION = {"name": 1, "purl": 1, "license": 1, "license_category": 1}
+_JOIN_PROJECTION = dict.fromkeys(
+    ("name", "version", "purl", "type", "direct", "direct_inferred", "source_type", "source_target"), 1
+)
 
 # Recommendation type -> (summary key counted once per recommendation, summary key its impact total adds to).
 _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
@@ -76,10 +83,10 @@ _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
 }
 
 
-async def _apply_live_threat_intel(findings: list[Any]) -> dict[str, VulnerabilityEnrichment]:
+async def _apply_live_threat_intel(findings: list[FindingRecord]) -> dict[str, VulnerabilityEnrichment]:
     """Mark each finding's advisories with KEV/EPSS as of now, not as of the scan; returns the per-CVE enrichment."""
-    vuln_findings = [f for f in findings if get_attr(f, "type") == "vulnerability"]
-    all_cves = list({c for f in vuln_findings for c in live_cves([get_attr(f, "details")])})
+    vuln_findings = [f for f in findings if f.type == "vulnerability"]
+    all_cves = list({c for f in vuln_findings for c in live_cves([f.details])})
     if not all_cves:
         return {}
     try:
@@ -88,10 +95,11 @@ async def _apply_live_threat_intel(findings: list[Any]) -> dict[str, Vulnerabili
         logger.warning("Recommendations: live CVE enrichment failed, using stored data: %s", e)
         return {}
 
+    # A CVE the live sources returned nothing for keeps the scores stored at scan time.
+    live = {cve: e for cve, e in enrichments.items() if e.epss_score is not None or e.is_kev}
     for f in vuln_findings:
-        details = get_attr(f, "details", {})
-        if isinstance(details, dict):
-            apply_enrichments(details, enrichments)
+        refreshed = [v for v in f.details.get("vulnerabilities") or [] if any(c in live for c in entry_cves(v))]
+        apply_enrichments({"vulnerabilities": refreshed}, live)
     return enrichments
 
 
@@ -131,15 +139,25 @@ async def get_project_recommendations(
             project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
         )
         source_target = next((dep.source_target for dep in dependencies if dep.source_target), None)
+        # The window above can miss a finding's row; the join reads exactly the rows the findings name.
+        names = list({n for f in findings if f.type == "vulnerability" for n in component_name_candidates(f.component)})
+        join_query = {"project_id": project_id, "scan_id": scan_id, "name": {"$in": names}}
+        join_dependencies = [dep async for dep in dep_repo.iterate_raw(join_query, _JOIN_PROJECTION)]
 
-        previous_scan_findings = None
+        previous = None
         previous_scan_dependencies = None
         previous_scan = await scan_repo.get_preceding_scan(scan_id)
         if previous_scan:
-            previous_scan_findings, _ = await finding_repo.find_by_scan(
-                previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT
+            previous = trends.PreviousScan()
+            previous_query = {"scan_id": previous_scan.id, "waived": {"$ne": True}}
+            async for doc in finding_repo.iterate_raw(previous_query, trends.PREVIOUS_SCAN_PROJECTION):
+                previous.add(doc)
+            previous_scan_dependencies, _ = await find_window(
+                dep_repo.collection,
+                {"project_id": project_id, "scan_id": previous_scan.id},
+                SCAN_DEPENDENCY_READ_LIMIT,
+                projection=_LICENSE_DRIFT_PROJECTION,
             )
-            previous_scan_dependencies = await dep_repo.find_raw_by_scan(previous_scan.id, _LICENSE_DRIFT_PROJECTION)
 
         recent_scan_ids = [
             recent.id
@@ -153,11 +171,13 @@ async def get_project_recommendations(
 
         cross_project_data = await gather_cross_project_data(user_project_ids, project_id, db)
 
-        recommendations = await recommendation_engine.generate_recommendations(
+        recommendations = await asyncio.to_thread(
+            recommendation_engine.generate_recommendations,
             findings=findings,
             dependencies=dependencies,
+            join_dependencies=join_dependencies,
             source_target=source_target,
-            previous_scan_findings=previous_scan_findings,
+            previous_scan=previous,
             previous_scan_dependencies=previous_scan_dependencies,
             cve_recurrence=cve_recurrence,
             recurrence_window_scans=len(recent_scan_ids),

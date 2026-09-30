@@ -1,5 +1,6 @@
 """Generate actionable remediation recommendations from all finding types."""
 
+import functools
 import logging
 from collections import defaultdict
 from collections.abc import Callable, Mapping, Sequence
@@ -94,50 +95,26 @@ def _deduplicate_recommendations(
 class RecommendationEngine:
     """Generates remediation recommendations, delegating to modules in app.services.recommendation."""
 
-    @staticmethod
-    def _collect_typosquat_findings(malware_findings: list[ModelOrDict]) -> list[ModelOrDict]:
-        """The typosquatting analyzer emits its hits as ``FindingType.MALWARE`` carrying
-        ``details['imitated_package']`` (see ``normalizers.quality.normalize_typosquatting``);
-        the rest of the malware group has no imitated package."""
-        return [
-            f
-            for f in malware_findings
-            if isinstance(get_attr(f, "details", {}), dict) and get_attr(f, "details", {}).get("imitated_package")
-        ]
-
-    def _process_typosquatting(
-        self,
-        recommendations: list[Recommendation],
-        findings_by_type: dict[str, list[ModelOrDict]],
-    ) -> None:
-        """Queue typosquatting recommendations for malware findings carrying an
-        imitated-package indicator."""
-        typosquat_findings = self._collect_typosquat_findings(findings_by_type.get("malware", []))
-        if typosquat_findings:
-            _safe_extend(
-                recommendations,
-                lambda: incidents.process_typosquatting(typosquat_findings),
-                "typosquatting",
-            )
-
-    async def generate_recommendations(
+    def generate_recommendations(
         self,
         findings: Sequence[ModelOrDict] | None = None,
         dependencies: Sequence[ModelOrDict] | None = None,
+        join_dependencies: Sequence[ModelOrDict] | None = None,
         source_target: str | None = None,
-        previous_scan_findings: Sequence[ModelOrDict] | None = None,
+        previous_scan: trends.PreviousScan | None = None,
         previous_scan_dependencies: Sequence[ModelOrDict] | None = None,
         cve_recurrence: dict[str, trends.CveRecurrence] | None = None,
         recurrence_window_scans: int = 0,
         cross_project_data: dict[str, Any] | None = None,
         threat_intel: Mapping[str, VulnerabilityEnrichment] | None = None,
     ) -> list[Recommendation]:
-        """Prioritized remediation across all finding types; ``threat_intel`` is the per-CVE KEV/EPSS just enriched."""
+        """Prioritized remediation across all finding types; ``threat_intel`` is the per-CVE KEV/EPSS just enriched.
+
+        ``dependencies`` is the inventory window; ``join_dependencies`` are the rows the vulnerability findings name.
+        """
         findings_list: list[ModelOrDict] = list(findings) if findings else []
         dependencies_list: list[ModelOrDict] = list(dependencies) if dependencies else []
-        previous_findings_list: list[ModelOrDict] | None = (
-            list(previous_scan_findings) if previous_scan_findings else None
-        )
+        join_list: list[ModelOrDict] = list(join_dependencies) if join_dependencies else []
 
         logger.debug(
             f"Generating recommendations for {len(findings_list)} findings, {len(dependencies_list)} dependencies"
@@ -145,81 +122,34 @@ class RecommendationEngine:
 
         recommendations: list[Recommendation] = []
 
-        # Separate findings by type (using get_attr for Pydantic compatibility)
         findings_by_type: dict[str, list[ModelOrDict]] = defaultdict(list)
         for f in findings_list:
             finding_type = get_attr(f, "type", "other")
             findings_by_type[finding_type].append(f)
+        vulns = findings_by_type["vulnerability"]
+        quality_findings = findings_by_type["quality"]
+        malware = findings_by_type["malware"]
 
-        # Build lookup maps for dependencies
-        dep_by_name_version = {f"{get_attr(d, 'name')}@{get_attr(d, 'version')}": d for d in dependencies_list}
-
-        # 1. Process VULNERABILITIES
         _safe_extend(
             recommendations,
-            lambda: vulnerabilities.process_vulnerabilities(
-                findings_by_type.get("vulnerability", []),
-                dep_by_name_version,
-                dependencies_list,
-                source_target,
-            ),
+            lambda: vulnerabilities.process_vulnerabilities(vulns, join_list, source_target),
             "vulnerabilities",
         )
-
-        # 2. Process SECRETS
-        _safe_extend(
-            recommendations,
-            lambda: secrets.process_secrets(findings_by_type.get("secret", [])),
-            "secrets",
-        )
-
-        # 3. Process SAST (code security)
-        _safe_extend(
-            recommendations,
-            lambda: sast.process_sast(findings_by_type.get("sast", [])),
-            "sast",
-        )
-
-        # 4. Process IAC (infrastructure as code)
-        _safe_extend(
-            recommendations,
-            lambda: iac.process_iac(findings_by_type.get("iac", [])),
-            "iac",
-        )
-
-        # 5. Process LICENSE issues
-        _safe_extend(
-            recommendations,
-            lambda: licenses.process_licenses(findings_by_type.get("license", [])),
-            "licenses",
-        )
-
-        # 5b. License drift detection (license changes between scans)
+        _safe_extend(recommendations, lambda: secrets.process_secrets(findings_by_type["secret"]), "secrets")
+        _safe_extend(recommendations, lambda: sast.process_sast(findings_by_type["sast"]), "sast")
+        _safe_extend(recommendations, lambda: iac.process_iac(findings_by_type["iac"]), "iac")
+        _safe_extend(recommendations, lambda: licenses.process_licenses(findings_by_type["license"]), "licenses")
         if previous_scan_dependencies:
             _safe_extend(
                 recommendations,
                 lambda: licenses.detect_license_drift(dependencies_list, previous_scan_dependencies),
                 "license_drift",
             )
+        _safe_extend(recommendations, lambda: quality.process_quality(quality_findings), "quality")
 
-        # 6. Process QUALITY issues (maintainer risk, etc.)
-        _safe_extend(
-            recommendations,
-            lambda: quality.process_quality(findings_by_type.get("quality", [])),
-            "quality",
-        )
-
-        # 6b. Process CRYPTO issues (weak algorithms, key sizes, protocols,
-        # cipher suites, certificate lifecycle, quantum-vulnerable primitives,
-        # and key-management SAST hits).
         crypto_findings = [f for ft, group in findings_by_type.items() if ft in CRYPTO_FINDING_TYPES for f in group]
-        _safe_extend(
-            recommendations,
-            lambda: crypto_recs.process_crypto(crypto_findings),
-            "crypto",
-        )
+        _safe_extend(recommendations, lambda: crypto_recs.process_crypto(crypto_findings), "crypto")
 
-        # 7. Dependency Hygiene (Outdated, Fragmentation, Dev-in-Prod)
         _safe_extend(
             recommendations,
             lambda: dep_analysis.analyze_outdated_dependencies(dependencies_list),
@@ -236,14 +166,12 @@ class RecommendationEngine:
             "dev_in_production",
         )
 
-        # 8. Trends & Regressions
-        if previous_findings_list is not None:
+        if previous_scan is not None:
             _safe_extend(
                 recommendations,
-                lambda: trends.analyze_regressions(findings_list, previous_findings_list),
+                lambda: trends.analyze_regressions(findings_list, previous_scan),
                 "regressions",
             )
-
         if cve_recurrence:
             _safe_extend(
                 recommendations,
@@ -251,7 +179,6 @@ class RecommendationEngine:
                 "recurring_issues",
             )
 
-        # 9. Graph Analysis (Deep chains, Duplicates)
         _safe_extend(
             recommendations,
             lambda: graph.analyze_deep_dependency_chains(dependencies_list),
@@ -263,67 +190,47 @@ class RecommendationEngine:
             "duplicate_packages",
         )
 
-        # 10. Cross Project Insights & Scorecard Correlation
         if cross_project_data:
             _safe_extend(
                 recommendations,
-                lambda: insights.analyze_cross_project_patterns(findings_list, dependencies_list, cross_project_data),
+                lambda: insights.analyze_cross_project_patterns(cross_project_data),
                 "cross_project_patterns",
             )
-
         _safe_extend(
             recommendations,
-            lambda: insights.correlate_scorecard_with_vulnerabilities(
-                findings_by_type.get("vulnerability", []),
-                findings_by_type.get("quality", []),
-            ),
+            lambda: insights.correlate_scorecard_with_vulnerabilities(vulns, quality_findings),
             "scorecard_correlation",
         )
 
-        # 11. Risks & Hotspots
-        _safe_extend(
-            recommendations,
-            lambda: risks.detect_package_risks(findings_list),
-            "package_risks",
-        )
-
+        packages = functools.cache(functools.partial(risks.roll_up_packages, findings_list))
+        _safe_extend(recommendations, lambda: risks.detect_critical_hotspots(packages()), "critical_hotspots")
+        _safe_extend(recommendations, lambda: risks.detect_toxic_dependencies(packages()), "toxic_dependencies")
         _safe_extend(
             recommendations,
             lambda: risks.analyze_attack_surface(dependencies_list, findings_list),
             "attack_surface",
         )
 
-        # 12. Incidents (Malware, Exploits, Typosquatting)
+        _safe_extend(recommendations, lambda: incidents.process_malware(malware), "malware")
         _safe_extend(
             recommendations,
-            lambda: incidents.process_malware(findings_by_type.get("malware", [])),
-            "malware",
-        )
-
-        _safe_extend(
-            recommendations,
-            lambda: incidents.detect_known_exploits(findings_by_type.get("vulnerability", []), threat_intel),
+            lambda: incidents.detect_known_exploits(vulns, threat_intel),
             "known_exploits",
         )
+        typosquat_findings = [
+            f
+            for f in malware
+            if isinstance(details := get_attr(f, "details", {}), dict) and details.get("imitated_package")
+        ]
+        _safe_extend(recommendations, lambda: incidents.process_typosquatting(typosquat_findings), "typosquatting")
 
-        # Typosquatting
-        self._process_typosquatting(recommendations, findings_by_type)
-
-        # 13. End-of-Life Dependencies
         _safe_extend(
             recommendations,
-            lambda: dep_analysis.analyze_end_of_life(findings_by_type.get("eol", [])),
+            lambda: dep_analysis.analyze_end_of_life(findings_by_type["eol"]),
             "end_of_life",
         )
+        _safe_extend(recommendations, lambda: optimization.identify_quick_wins(vulns, join_list), "quick_wins")
 
-        # 14. Optimization (Quick Wins)
-        _safe_extend(
-            recommendations,
-            lambda: optimization.identify_quick_wins(findings_by_type.get("vulnerability", []), dependencies_list),
-            "quick_wins",
-        )
-
-        # Deduplicate recommendations (keep highest scoring for each type+component)
         before_dedup = len(recommendations)
         recommendations = _deduplicate_recommendations(recommendations)
         if before_dedup != len(recommendations):
@@ -337,5 +244,4 @@ class RecommendationEngine:
         return recommendations
 
 
-# Singleton instance
 recommendation_engine = RecommendationEngine()

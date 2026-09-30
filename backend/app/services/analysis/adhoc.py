@@ -866,9 +866,11 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     # After the waivers, so an accepted risk neither scores nor generates work to do.
     stats = compute_stats(records, languages)
     source_target = next((pi.parsed.source_target for pi in parsed_inputs if pi.parsed.source_target), None)
-    recommendations = await recommendation_engine.generate_recommendations(
+    recommendations = await asyncio.to_thread(
+        recommendation_engine.generate_recommendations,
         findings=[record for record in records if not record.get("waived")],
         dependencies=components,
+        join_dependencies=components,
         source_target=source_target,
         threat_intel=threat_intel,
     )

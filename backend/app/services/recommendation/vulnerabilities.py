@@ -18,6 +18,8 @@ from app.schemas.recommendation import (
     RecommendationType,
     VulnerabilityInfo,
 )
+from app.services.aggregation.versions import normalize_version
+from app.services.component_identity import build_component_index, lookup_component
 from app.services.recommendation.common import (
     ModelOrDict,
     VulnStats,
@@ -37,16 +39,15 @@ _TRANSITIVE_CVES_SHOWN = 5
 
 def process_vulnerabilities(
     findings: list[ModelOrDict],
-    dep_by_name_version: dict[str, ModelOrDict],
-    dependencies: list[ModelOrDict],
+    join_dependencies: list[ModelOrDict],
     source_target: str | None,
 ) -> list[Recommendation]:
-    """Process vulnerability findings."""
+    """Update, base-image and no-fix cards; ``join_dependencies`` holds the inventory rows the findings name."""
     recommendations = []
 
-    vulns_by_source = _categorize_by_source(findings, dep_by_name_version)
+    vulns_by_source = _categorize_by_source(findings, join_dependencies)
 
-    base_image_rec = _analyze_base_image_vulns(vulns_by_source.get("image", []), dependencies, source_target)
+    base_image_rec = _analyze_base_image_vulns(vulns_by_source.get("image", []), source_target)
     if base_image_rec:
         recommendations.append(base_image_rec)
 
@@ -76,7 +77,7 @@ def _classify_category(vuln: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
     if not vuln.fixed_version:
         return "no_fix"
     if not dep:
-        return "application"
+        return "unresolved"
 
     source_type = get_attr(dep, "source_type")
     # An explicit filesystem source wins; otherwise an OS package ships with the base image.
@@ -92,9 +93,13 @@ def _classify_category(vuln: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
 
 def _categorize_by_source(
     findings: list[ModelOrDict],
-    dep_by_name_version: dict[str, ModelOrDict],
+    join_dependencies: list[ModelOrDict],
 ) -> dict[str, list[VulnerabilityInfo]]:
     """Categorize vulnerabilities by their source type."""
+    deps_by_version: dict[str, dict[str, ModelOrDict]] = defaultdict(dict)
+    for row in join_dependencies:
+        deps_by_version[normalize_version(get_attr(row, "version"))][get_attr(row, "name")] = row
+    index_by_version = {version: build_component_index(deps) for version, deps in deps_by_version.items()}
 
     categories = defaultdict(list)
 
@@ -102,7 +107,8 @@ def _categorize_by_source(
         if get_attr(f, "type") != "vulnerability":
             continue
 
-        dep = dep_by_name_version.get(f"{get_attr(f, 'component', '')}@{get_attr(f, 'version', '')}")
+        index = index_by_version.get(normalize_version(get_attr(f, "version")), {})
+        dep = lookup_component(index, get_attr(f, "component") or "")
         vuln = vuln_info(f)
         vuln.direct_inferred = bool(dep and get_attr(dep, "direct_inferred", False))
         categories[_classify_category(vuln, dep)].append(vuln)
@@ -110,11 +116,7 @@ def _categorize_by_source(
     return categories
 
 
-def _analyze_base_image_vulns(
-    vulns: list[VulnerabilityInfo],
-    _dependencies: list[ModelOrDict],
-    source_target: str | None,
-) -> Recommendation | None:
+def _analyze_base_image_vulns(vulns: list[VulnerabilityInfo], source_target: str | None) -> Recommendation | None:
     """Analyze if a base image update would be beneficial."""
 
     if not vulns:

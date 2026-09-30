@@ -162,6 +162,7 @@ FINDING_IDENTITY_PROJECTION: dict[str, int] = dict.fromkeys(
     ),
     1,
 )
+IDENTITY_FIELDS = tuple(dict.fromkeys(path.split(".")[0] for path in FINDING_IDENTITY_PROJECTION))
 
 # The identity fields plus what _to_item renders.
 _FETCH_PROJECTION: dict[str, int] = {

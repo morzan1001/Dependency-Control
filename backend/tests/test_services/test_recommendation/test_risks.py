@@ -5,8 +5,9 @@ from app.services.recommendation.risks import (
     CRITICAL_HOTSPOTS_SHOWN,
     TOXIC_DEPENDENCIES_SHOWN,
     analyze_attack_surface,
-    _roll_up_packages,
-    detect_package_risks,
+    detect_critical_hotspots,
+    detect_toxic_dependencies,
+    roll_up_packages,
 )
 
 
@@ -79,11 +80,11 @@ def _license(component, severity="HIGH", license_name="GPL-3.0"):
 
 
 def _hotspots(findings):
-    return [r for r in detect_package_risks(findings) if r.type == RecommendationType.CRITICAL_HOTSPOT]
+    return detect_critical_hotspots(roll_up_packages(findings))
 
 
 def _toxic(findings):
-    return [r for r in detect_package_risks(findings) if r.type == RecommendationType.TOXIC_DEPENDENCY]
+    return detect_toxic_dependencies(roll_up_packages(findings))
 
 
 def _dep(name, version="1.0", direct=True):
@@ -821,7 +822,7 @@ class TestOnlyPackageFindingsAreRolledUp:
             _vuln("pkg"),
         ]
 
-        assert [pkg.name for pkg in _roll_up_packages(findings)] == ["pkg"]
+        assert [pkg.name for pkg in roll_up_packages(findings)] == ["pkg"]
 
 
 def _advisories(component, version, *cves):
@@ -915,5 +916,5 @@ class TestHotspotsReadTheLiveAdvisories:
         ]
 
         assert _hotspots([finding]) == []
-        [pkg] = _roll_up_packages([finding])
+        [pkg] = roll_up_packages([finding])
         assert pkg.risk_score == 41.0

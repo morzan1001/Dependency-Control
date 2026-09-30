@@ -1,14 +1,21 @@
 """get_project_recommendations: access checks, scan resolution, what reaches the engine, and the summary tally."""
 
 import asyncio
+import json
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import fakeredis.aioredis
 import pytest
 
 from app.api.v1.endpoints.analytics import recommendations as rec_module
 from app.core.cache import CacheService
+from app.models.finding import Finding
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.analysis.engine import _prepare_finding_records
+from app.services.sbom_parser import parse_sbom
+from tests.helpers.findings import stored_vulnerability
 
 _NOW = datetime.now(timezone.utc)
 
@@ -61,7 +68,7 @@ def _rec(rec_type: RecommendationType, impact: dict) -> Recommendation:
 
 
 def _engine_returning(recommendations: list[Recommendation], seen: dict):
-    async def _generate(**kwargs):
+    def _generate(**kwargs):
         seen.update(kwargs)
         return recommendations
 
@@ -71,12 +78,31 @@ def _engine_returning(recommendations: list[Recommendation], seen: dict):
 def _counting_engine(runs: list[int]):
     generate = rec_module.recommendation_engine.generate_recommendations
 
-    async def _generate(**kwargs):
+    def _generate(**kwargs):
         runs.append(len(kwargs["findings"]))
-        await asyncio.sleep(0.05)
-        return await generate(**kwargs)
+        time.sleep(0.05)
+        return generate(**kwargs)
 
     return _generate
+
+
+def _vulnerability_records(scan_id: str, component: str, version: str, advisories: list[dict]) -> list[dict]:
+    """What the analysis engine persists for one aggregated vulnerability."""
+    finding = Finding.model_validate(stored_vulnerability(component, version, advisories))
+    records, _ = _prepare_finding_records([finding], scan_id, "p", None)
+    return records
+
+
+@pytest.fixture
+def no_live_intel(monkeypatch):
+    async def _enrich(_cves):
+        return {}
+
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _enrich)
+
+
+def _card_types(resp) -> list[str]:
+    return [rec["type"] for rec in resp.json()["recommendations"]]
 
 
 @pytest.fixture
@@ -321,3 +347,99 @@ async def test_a_saturated_findings_read_reports_what_the_scan_holds(client, db,
     assert resp.status_code == 200, resp.text
     assert resp.json()["total_findings"] == 2
     assert resp.json()["findings_total"] == 3
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_waived_findings_do_not_reach_the_engine(client, db, owner_auth_headers_proj, monkeypatch):
+    await _insert_scan(db, "s")
+    waived = _finding("f-waived", "secret") | {"waived": True}
+    await db.findings.insert_many([_finding("f-live", "secret"), waived])
+    seen: dict = {}
+    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert [f.id for f in seen["findings"]] == ["f-live"]
+    assert resp.json()["findings_total"] == 1
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_os_package_outside_the_inventory_window_still_joins_its_row(
+    client, db, owner_auth_headers_proj, monkeypatch, no_live_intel
+):
+    sbom = json.loads((Path(__file__).parents[1] / "fixtures" / "sbom" / "rootfs.trivy.cdx.json").read_text())
+    libssl = next(d.to_dict() for d in parse_sbom(sbom).dependencies if d.name == "libssl3")
+    await _insert_scan(db, "s")
+    filler = {"_id": "d-filler", "project_id": "p", "scan_id": "s", "name": "aaa-filler", "version": "1.0"}
+    await db.dependencies.insert_many([filler, libssl | {"_id": "d-libssl", "project_id": "p", "scan_id": "s"}])
+    advisory = {"id": "CVE-2024-0001", "severity": "CRITICAL", "fixed_version": "9.9.9"}
+    await db.findings.insert_many(_vulnerability_records("s", "libssl3", libssl["version"], [advisory]))
+    monkeypatch.setattr(rec_module, "SCAN_DEPENDENCY_READ_LIMIT", 1)
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["dependencies_read"] == 1
+    assert "base_image_update" in _card_types(resp)
+    assert "direct_dependency_update" not in _card_types(resp)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_clean_previous_build_raises_the_regression_card(client, db, owner_auth_headers_proj, no_live_intel):
+    await _insert_scan(db, "s-prev", age_hours=2)
+    await _insert_scan(db, "s")
+    advisory = {"id": "CVE-2024-0001", "severity": "CRITICAL"}
+    await db.findings.insert_many(_vulnerability_records("s", "lib", "1.0", [advisory]))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert "regression_detected" in _card_types(resp)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_advisory_the_previous_build_reported_is_no_regression(
+    client, db, owner_auth_headers_proj, no_live_intel
+):
+    await _insert_scan(db, "s-prev", age_hours=2)
+    await _insert_scan(db, "s")
+    advisory = {"id": "CVE-2024-0001", "severity": "CRITICAL"}
+    for scan_id, version in (("s-prev", "1.0"), ("s", "1.1")):
+        await db.findings.insert_many(_vulnerability_records(scan_id, "lib", version, [advisory]))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert "regression_detected" not in _card_types(resp)
+
+
+@pytest.mark.asyncio
+async def test_a_cve_the_live_refresh_has_no_data_for_keeps_its_stored_scores(
+    client, db, owner_auth_headers_proj, monkeypatch
+):
+    service = rec_module.vulnerability_enrichment_service
+
+    async def _kev_catalog():
+        return {}
+
+    async def _epss_outage(_cves):
+        return {}, False
+
+    monkeypatch.setattr(service._kev_provider, "load_kev_catalog", _kev_catalog)
+    monkeypatch.setattr(service._epss_provider, "load_epss_scores", _epss_outage)
+    await _insert_scan(db, "s")
+    advisory = {"id": "CVE-2024-0001", "severity": "HIGH", "cvss_score": 7.5, "epss_score": 0.42, "risk_score": 71.5}
+    await db.findings.insert_many(_vulnerability_records("s", "lib", "1.0", [advisory]))
+    seen: dict = {}
+    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
+
+    resp = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    [entry] = seen["findings"][0].details["vulnerabilities"]
+    assert (entry["epss_score"], entry["risk_score"]) == (0.42, 71.5)

@@ -103,7 +103,7 @@ def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
             pkg.license_issue = (severity, details.get("license", "unknown"))
 
 
-def _roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
+def roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
     package_findings = [
         f for f in findings if get_attr(f, "component") and get_attr(f, "type") in PACKAGE_FINDING_TYPES
     ]
@@ -121,29 +121,23 @@ def _roll_up_packages(findings: list[ModelOrDict]) -> list[_PackageRisks]:
     return list(packages.values())
 
 
-def detect_package_risks(findings: list[ModelOrDict]) -> list[Recommendation]:
-    """Critical-hotspot and toxic-dependency cards, both read off one roll-up per package."""
-    hotspots: list[tuple[_PackageRisks, list[str]]] = []
-    toxic: list[tuple[_PackageRisks, list[dict[str, str]], int]] = []
-    for pkg in _roll_up_packages(findings):
-        is_hotspot, reasons = _hotspot_reasons(pkg)
-        if is_hotspot:
-            hotspots.append((pkg, reasons))
-        factors, score = _toxic_risk_factors(pkg)
-        if len(factors) >= 2:
-            toxic.append((pkg, factors, score))
-
+def detect_critical_hotspots(packages: list[_PackageRisks]) -> list[Recommendation]:
+    hotspots = [(pkg, reasons) for pkg in packages for is_hotspot, reasons in [_hotspot_reasons(pkg)] if is_hotspot]
     hotspots.sort(key=lambda h: (h[0].has_malware, h[0].stats.kev, h[0].stats.high_epss, h[0].risk_score), reverse=True)
+    return [
+        _hotspot_recommendation(pkg, reasons, rank, population)
+        for rank, (pkg, reasons), population in take_top(hotspots, CRITICAL_HOTSPOTS_SHOWN)
+    ]
+
+
+def detect_toxic_dependencies(packages: list[_PackageRisks]) -> list[Recommendation]:
+    toxic = [
+        (pkg, factors, score) for pkg in packages for factors, score in [_toxic_risk_factors(pkg)] if len(factors) >= 2
+    ]
     toxic.sort(key=lambda t: t[2], reverse=True)
     return [
-        *(
-            _hotspot_recommendation(pkg, reasons, rank, population)
-            for rank, (pkg, reasons), population in take_top(hotspots, CRITICAL_HOTSPOTS_SHOWN)
-        ),
-        *(
-            _toxic_recommendation(pkg, factors, score, rank, population)
-            for rank, (pkg, factors, score), population in take_top(toxic, TOXIC_DEPENDENCIES_SHOWN)
-        ),
+        _toxic_recommendation(pkg, factors, score, rank, population)
+        for rank, (pkg, factors, score), population in take_top(toxic, TOXIC_DEPENDENCIES_SHOWN)
     ]
 
 

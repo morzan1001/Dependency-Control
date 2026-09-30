@@ -36,6 +36,10 @@ from app.core.cve import counted_cves
 from app.core.permissions import Permissions, has_permission
 from app.core.purl import package_identity_expr
 from app.models.user import User
+from app.repositories.dependencies import DependencyRepository
+from app.repositories.findings import FindingRepository
+from app.repositories.projects import ProjectRepository
+from app.repositories.scans import ScanRepository
 from app.schemas.analytics import CVEEnrichmentResult
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.projections import ProjectWithScanId
@@ -437,11 +441,6 @@ async def gather_cross_project_data(
 
     Returns None if the user has one project or fewer.
     """
-    from app.repositories.dependencies import DependencyRepository
-    from app.repositories.findings import FindingRepository
-    from app.repositories.projects import ProjectRepository
-    from app.repositories.scans import ScanRepository
-
     if len(user_project_ids) <= 1:
         return None
 
@@ -454,8 +453,6 @@ async def gather_cross_project_data(
         "projects": [],
         "shared_packages": [],
         "total_projects": len(user_project_ids),
-        # A CVE count out of total_projects would claim a comparison that never ran.
-        "projects_compared": 0,
     }
 
     other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][:_CROSS_PROJECT_COMPARISON_LIMIT]
@@ -489,18 +486,16 @@ async def gather_cross_project_data(
     )
 
     for scan_id, proj_id in scan_id_to_project.items():
-        proj_info = project_info_map.get(proj_id)
         stats = scan_stats_map.get(scan_id)
 
         cross_project_data["projects"].append(
             {
                 "project_id": proj_id,
-                "project_name": proj_info.name if proj_info else "Unknown",
+                "project_name": project_info_map[proj_id].name,
                 "cves": scan_cves_map.get(scan_id, []),
                 "total_critical": stats.critical if stats else 0,
                 "total_high": stats.high if stats else 0,
             }
         )
 
-    cross_project_data["projects_compared"] = len(cross_project_data["projects"])
     return cross_project_data

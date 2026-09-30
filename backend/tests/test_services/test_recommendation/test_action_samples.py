@@ -43,7 +43,9 @@ def _vulnerability(index):
 def test_the_update_action_names_how_many_advisories_it_sampled():
     population = _CVES_SAMPLED + _OVER_THE_SAMPLE
 
-    recs = process_vulnerabilities([_vulnerability(index) for index in range(population)], {}, [], None)
+    installed = {"name": "log4j-core", "version": "2.14.1", "direct": True}
+
+    recs = process_vulnerabilities([_vulnerability(index) for index in range(population)], [installed], None)
 
     action = next(r for r in recs if r.action.get("type") == "update_dependency").action
     assert len(action["cves"]) == _CVES_SAMPLED
