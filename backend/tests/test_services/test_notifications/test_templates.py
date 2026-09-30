@@ -23,7 +23,7 @@ from app.services.notifications.templates import (
 
 
 def _vuln(**fields):
-    return AlertVulnerability(**fields).model_dump()
+    return AlertVulnerability(**fields)
 
 
 @pytest.fixture
@@ -128,13 +128,12 @@ class TestGetVulnerabilityFoundTemplate:
         assert banner in self._render(**counts)
         assert banner not in self._render()
 
-    def test_the_high_epss_banner_and_badge_use_the_one_threshold(self):
+    def test_the_high_epss_banner_names_its_threshold(self):
         result = self._render(
             vulnerabilities=[_vuln(id="CVE-2024-001", severity="MEDIUM", epss_score=0.1)],
             high_epss_count=1,
         )
         assert "has EPSS &gt;= 10%" in result
-        assert "EPSS: 10.0%" in result
 
     def test_a_table_shorter_than_the_alert_says_how_much_shorter(self):
         listed = 10
@@ -147,13 +146,11 @@ class TestGetVulnerabilityFoundTemplate:
 
         assert f"{listed} of {found} Priority (Critical/High/KEV/High EPSS)" in result
 
-    def test_only_a_vulnerability_in_the_high_epss_bucket_carries_the_epss_badge(self):
-        from app.core.constants import EPSS_HIGH_THRESHOLD
+    def test_a_listed_vulnerability_shows_its_epss_score_as_the_chat_channels_do(self):
+        vuln = _vuln(id="CVE-1", severity="HIGH", epss_score=0.004)
 
-        high = self._render(vulnerabilities=[_vuln(id="CVE-1", severity="HIGH", epss_score=EPSS_HIGH_THRESHOLD)])
-        below = self._render(vulnerabilities=[_vuln(id="CVE-2", severity="HIGH", epss_score=0.0999)])
-
-        assert ("EPSS: 10.0%" in high, "EPSS:" in below) == (True, False)
+        assert vuln.tags == ["EPSS: 0.4%"]
+        assert "EPSS: 0.4%" in self._render(vulnerabilities=[vuln])
 
 
 class TestGetAnalysisCompletedTemplate:

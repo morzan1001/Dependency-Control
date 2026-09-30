@@ -7,7 +7,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from markupsafe import Markup
 
 from app.core.config import settings
-from app.core.constants import EPSS_HIGH_THRESHOLD, PASSWORD_RESET_TOKEN_EXPIRE_HOURS
+from app.core.constants import PASSWORD_RESET_TOKEN_EXPIRE_HOURS
 from app.core.epss import HIGH_EPSS_LABEL
 from app.schemas.notification import PRIORITY_VULNS_LABEL
 
@@ -56,7 +56,6 @@ def get_vulnerability_found_template(
             "priority_count": priority_count,
             "priority_label": PRIORITY_VULNS_LABEL,
             "high_epss_label": HIGH_EPSS_LABEL,
-            "high_epss_threshold": EPSS_HIGH_THRESHOLD,
             "kev_count": kev_count,
             "kev_vulnerabilities": kev_vulnerabilities or [],
             "high_epss_count": high_epss_count,
