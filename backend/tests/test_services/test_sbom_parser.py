@@ -162,7 +162,6 @@ class TestDirectnessOfRealGraphs:
         ("fixture", "project_deps"),
         [
             pytest.param("maven.trivy.cdx.json", {"logback-classic", "slf4j-api"}, id="pom"),
-            pytest.param("cargo.trivy.cdx.json", {"serde_json"}, id="cargo"),
             pytest.param(
                 "gomod.trivy.cdx.json",
                 {"github.com/google/uuid", "golang.org/x/sys", "golang.org/x/text"},
@@ -180,6 +179,28 @@ class TestDirectnessOfRealGraphs:
         assert result.skipped_reasons.get("root-component") == 1
         ingested = {dep.purl for dep in result.dependencies}
         assert all(set(dep.parent_components) <= ingested for dep in result.dependencies)
+
+    @pytest.mark.parametrize(
+        ("fixture", "expected"),
+        [
+            pytest.param(
+                "cargo.trivy.cdx.json",
+                {"myservice": (True, False), "serde_json": (False, False), "itoa": (False, False)},
+                id="crate",
+            ),
+            # A virtual workspace's members are absent, so its direct dependency looks like a crate root.
+            pytest.param(
+                "cargows.trivy.cdx.json",
+                {"serde_json": (True, False), **dict.fromkeys(("itoa", "ryu", "serde"), (False, False))},
+                id="virtual-workspace",
+            ),
+        ],
+    )
+    def test_trivy_cargo_lock_keeps_every_package(self, fixture, expected):
+        result = parse_sbom(_fixture(fixture))
+
+        assert _directness(result) == expected
+        assert "root-component" not in result.skipped_reasons
 
     def test_trivy_go_binary_without_main_module_keeps_every_package(self):
         # gofmt (Go toolchain) and a `go build main.go` binary carry no main module, so trivy gives them no root.
