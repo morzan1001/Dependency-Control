@@ -332,7 +332,11 @@ def _parse_and_track_sbom(current_sbom: Any) -> tuple[Any, list[dict[str, Any]]]
     try:
         parsed_sbom = parse_sbom(current_sbom)
         parsed_components = [dep.to_dict() for dep in parsed_sbom.dependencies]
-        logger.info(f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}")
+        logger.info(
+            f"Parsed SBOM: format={parsed_sbom.format.value}, components={len(parsed_components)}, "
+            f"skipped={parsed_sbom.skipped_components}, merged={parsed_sbom.merged_components}, "
+            f"skipped_reasons={parsed_sbom.skipped_reasons}"
+        )
         if analysis_sbom_processed_total:
             analysis_sbom_processed_total.labels(format=parsed_sbom.format.value).inc()
         if analysis_components_parsed_total:

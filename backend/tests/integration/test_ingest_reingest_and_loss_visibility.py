@@ -1,15 +1,35 @@
-"""W14 + cluster-2 follow-ups: re-ingest replaces sbom_refs (no GridFS pile-up), mixed payloads
-cannot wipe stored dependencies, and component loss is surfaced in the ingest response."""
+"""Ingest stores each recognized SBOM in GridFS and nothing else; the analysis engine writes the
+dependency inventory, and a re-ingest replaces sbom_refs so superseded uploads can be reaped."""
+
+import asyncio
+import json
+import logging
+from pathlib import Path
 
 import pytest
-from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
-from app.api.v1.endpoints.ingest import _process_sboms
+from app.core.init_db import create_indexes
+from app.core.worker import AnalysisWorkerManager
 from app.repositories.dependencies import DependencyRepository
-from app.services.gridfs_maintenance import reap_orphan_gridfs_files
+from app.services import scan_manager
+from app.services.analysis.engine import _parse_and_track_sbom
+from app.services.dependency_store import store_scan_dependencies
+from app.services.gridfs_maintenance import gridfs_ref_id, load_gridfs_json, reap_orphan_gridfs_files
+from app.services.sbom_parser import parse_sbom
+from tests.integration.test_upload_uniformity import _syft_sbom
 
 _PROJECT_ID = "test-project-id"
 _SCAN_ID = "8e0d76a5-1291-5949-8e0d-0d90b4bd9e01"
+_FIXTURES = Path(__file__).parents[1] / "fixtures"
+_MIB = 1024 * 1024
+_POLL_ATTEMPTS = 600
+_POLL_INTERVAL_SECONDS = 0.1
+_INGEST_RESPONSE_KEYS = {"status", "scan_id", "message", "sboms_processed", "sboms_failed"}
+
+
+def _fixture(path: str) -> dict:
+    return json.loads((_FIXTURES / path).read_text())
 
 
 def _cyclonedx(components: list[dict]) -> dict:
@@ -28,103 +48,117 @@ _GOOD_SBOM = _cyclonedx(
     ]
 )
 
-# Document-level malformed: metadata must be an object (prod retries carry this shape).
-_MALFORMED_SBOM = {
-    "bomFormat": "CycloneDX",
-    "specVersion": "1.5",
-    "metadata": [],
-    "components": [{"type": "library", "name": "valid", "version": "1.0", "purl": "pkg:pypi/valid@1.0"}],
-}
+
+@pytest.fixture
+def worker_after_ingest(running_worker, monkeypatch):
+    """The running worker, while ingest queues its job where nothing takes it: the test decides when the engine runs."""
+    monkeypatch.setattr(scan_manager, "worker_manager", AnalysisWorkerManager(num_workers=1))
+    return running_worker
 
 
-class _FakeGridFSBucket:
-    """Stores uploads in db['fs.files'] so reference/delete bookkeeping is observable."""
-
-    def __init__(self, db):
-        self._files = db["fs.files"]
-
-    async def upload_from_stream(self, filename, data, metadata=None):
-        oid = ObjectId()
-        await self._files.insert_one(
-            {"_id": str(oid), "filename": filename, "length": len(data), "metadata": metadata or {}}
-        )
-        return oid
-
-    async def delete(self, oid):
-        await self._files.delete_one({"_id": str(oid)})
+async def _analyse(db, worker: AnalysisWorkerManager, scan_id: str) -> dict:
+    await create_indexes(db)
+    await db.projects.update_one({"_id": _PROJECT_ID}, {"$set": {"active_analyzers": ["license_compliance"]}})
+    await worker.add_job(scan_id)
+    for _ in range(_POLL_ATTEMPTS):
+        scan = await db.scans.find_one({"_id": scan_id})
+        if scan["status"] not in ("pending", "processing"):
+            return scan
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+    raise AssertionError(f"scan {scan_id} never finished")
 
 
-async def _seed_existing_dependencies(db) -> None:
-    for name, version in (("requests", "2.31.0"), ("urllib3", "2.1.0")):
-        await db.dependencies.insert_one(
-            {
-                "_id": f"dep-{name}",
-                "project_id": _PROJECT_ID,
-                "scan_id": _SCAN_ID,
-                "name": name,
-                "version": version,
-                "purl": f"pkg:pypi/{name}@{version}",
-            }
-        )
+def _run(sboms: list[dict], pipeline_id: int = 424243, **extra) -> dict:
+    return {"pipeline_id": pipeline_id, "commit_hash": "c" * 40, "branch": "main", "sboms": sboms, **extra}
 
 
 @pytest.mark.asyncio
-async def test_mixed_payload_keeps_stored_dependencies(db):
-    """A good SBOM's delete-once must not wipe a sibling malformed SBOM's prior contribution."""
-    await _seed_existing_dependencies(db)
-    dep_repo = DependencyRepository(db)
+@pytest.mark.live_mongo
+async def test_an_ingest_only_stores_the_sbom_and_the_engine_writes_its_dependencies(
+    client, db, api_key_headers, worker_after_ingest
+):
+    sbom = _fixture("sbom/mono.syft.json")
 
-    _, warnings, _processed, failed, inserted = await _process_sboms(
-        [_GOOD_SBOM, _MALFORMED_SBOM], _FakeGridFSBucket(db), _PROJECT_ID, _SCAN_ID, dep_repo
-    )
+    resp = await client.post("/api/v1/ingest", json=_run([sbom]), headers=api_key_headers)
 
-    assert failed == 1
-    assert inserted == 0, "no partial replacement: either all SBOMs parse or the stored inventory is kept"
-    survivors = await db.dependencies.count_documents({"scan_id": _SCAN_ID})
-    assert survivors == 2, "prior dependency inventory must survive a mixed [good, malformed] payload"
-    assert any("inventory" in w.lower() for w in warnings), f"the kept inventory must be surfaced, got {warnings}"
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert set(body) == _INGEST_RESPONSE_KEYS
+    scan_id = body["scan_id"]
+    assert (body["sboms_processed"], body["sboms_failed"]) == (1, 0)
+    assert await db["fs.files"].count_documents({"metadata.scan_id": scan_id}) == 1
+    assert await db.dependencies.count_documents({}) == 0
 
+    scan = await _analyse(db, worker_after_ingest, scan_id)
 
-@pytest.mark.asyncio
-async def test_all_good_payload_replaces_dependencies(db):
-    await _seed_existing_dependencies(db)
-    dep_repo = DependencyRepository(db)
-
-    _, _warnings, processed, failed, inserted = await _process_sboms(
-        [_GOOD_SBOM], _FakeGridFSBucket(db), _PROJECT_ID, _SCAN_ID, dep_repo
-    )
-
-    assert failed == 0
-    assert processed == 1
-    assert inserted == 1
-    docs = [d async for d in db.dependencies.find({"scan_id": _SCAN_ID})]
-    assert {d["name"] for d in docs} == {"requests"}
+    assert scan["status"] == "completed", scan.get("error")
+    stored = await db.dependencies.count_documents({"scan_id": scan_id})
+    assert stored == len(parse_sbom(sbom).dependencies) == 9
 
 
 @pytest.mark.asyncio
-async def test_skipped_components_are_surfaced_in_warnings(db):
-    """A component-loss event must reach the ingest response, not just pod logs."""
-    sbom = _cyclonedx(
-        [
-            {
-                "type": "library",
-                "bom-ref": "pkg:pypi/requests@2.31.0",
-                "name": "requests",
-                "version": "2.31.0",
-                "purl": "pkg:pypi/requests@2.31.0",
-            },
-            {"type": "file", "bom-ref": "f-1", "name": "some-file.txt"},
-        ]
+@pytest.mark.live_mongo
+async def test_an_sbom_past_25_mib_is_stored_whole_and_its_dependencies_come_from_the_engine(
+    client, db, api_key_headers, worker_after_ingest
+):
+    payload = _syft_sbom()
+    [sbom] = payload["sboms"]
+    assert len(json.dumps(sbom)) > 25 * _MIB
+
+    resp = await client.post("/api/v1/ingest", json=payload, headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    scan_id = resp.json()["scan_id"]
+    [ref] = (await db.scans.find_one({"_id": scan_id}))["sbom_refs"]
+    assert await load_gridfs_json(AsyncIOMotorGridFSBucket(db), gridfs_ref_id(ref)) == sbom
+    assert await db.dependencies.count_documents({}) == 0
+
+    scan = await _analyse(db, worker_after_ingest, scan_id)
+
+    assert scan["status"] == "completed", scan.get("error")
+    stored = await db.dependencies.count_documents({"scan_id": scan_id})
+    assert stored == len(parse_sbom(sbom).dependencies) > len(_fixture("sbom/mono.syft.json")["artifacts"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_recognized_sbom_that_does_not_parse_is_accepted_and_its_scan_completes_with_errors(
+    client, db, api_key_headers, worker_after_ingest
+):
+    sbom = {**_fixture("sbom/mono.syft.cdx.json"), "metadata": []}
+
+    resp = await client.post("/api/v1/ingest", json=_run([sbom]), headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    assert (resp.json()["sboms_processed"], resp.json()["sboms_failed"]) == (1, 0)
+    scan = await _analyse(db, worker_after_ingest, resp.json()["scan_id"])
+    assert scan["status"] == "completed_with_errors"
+    assert "1 of 1 SBOMs failed to parse" in scan["error"]
+
+
+@pytest.mark.asyncio
+async def test_a_payload_with_an_unparsed_sbom_keeps_the_previous_inventory(db):
+    """A re-run cannot swap the stored complete inventory for the partial one of a payload with a failed SBOM."""
+    repo = DependencyRepository(db)
+    previous = parse_sbom(_fixture("sbom/mono.syft.json"))
+    await store_scan_dependencies([previous], _PROJECT_ID, _SCAN_ID, repo)
+
+    stored = await store_scan_dependencies(
+        [parse_sbom(_fixture("sbom/uvdev.syft.cdx.json")), None], _PROJECT_ID, _SCAN_ID, repo
     )
 
-    _, warnings, _, failed, _ = await _process_sboms(
-        [sbom], _FakeGridFSBucket(db), _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
-    )
+    assert stored is None
+    names = {d["name"] async for d in db.dependencies.find({"scan_id": _SCAN_ID})}
+    assert names == {dep.name for dep in previous.dependencies}
 
-    assert failed == 0
-    assert any("skipped" in w.lower() and "file" in w.lower() for w in warnings), (
-        f"skipped component counts and reasons must be surfaced, got {warnings}"
-    )
+
+def test_the_skipped_components_and_their_reasons_reach_the_engine_log(caplog):
+    with caplog.at_level(logging.INFO, logger="app.services.analysis.engine"):
+        _parse_and_track_sbom(_fixture("sbom/mono.syft.json"))
+
+    assert "skipped=3" in caplog.text
+    assert "'file': 2" in caplog.text
+    assert "'root-component': 1" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -162,11 +196,8 @@ async def test_w14_reingest_replaces_sbom_refs_and_the_reaper_frees_the_supersed
 
 @pytest.mark.asyncio
 async def test_a_reingest_during_the_analysis_marks_the_sbom_replaced_and_keeps_the_files_it_reads(
-    client, db, api_key_headers, monkeypatch
+    client, db, api_key_headers, fake_gridfs
 ):
-    from app.api.v1.endpoints import ingest as ingest_module
-
-    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
     payload = {"pipeline_id": 424244, "commit_hash": "d" * 40, "branch": "main", "sboms": [_GOOD_SBOM]}
 
     scan_id = (await client.post("/api/v1/ingest", json=payload, headers=api_key_headers)).json()["scan_id"]
@@ -179,62 +210,44 @@ async def test_a_reingest_during_the_analysis_marks_the_sbom_replaced_and_keeps_
     assert await db["fs.files"].count_documents({}) == 2, "the running analysis still reads the old upload"
 
 
-def _sbom_payload(**extra):
-    return {
-        "pipeline_id": 424243,
-        "commit_hash": "c" * 40,
-        "branch": "main",
-        "sboms": [_GOOD_SBOM],
-        **extra,
-    }
-
-
 @pytest.mark.asyncio
-async def test_a_payload_whose_sboms_did_not_all_fail_is_accepted(client, db, api_key_headers, monkeypatch):
+@pytest.mark.live_mongo
+async def test_a_payload_whose_sboms_did_not_all_fail_is_accepted(client, db, api_key_headers):
     """Refusing the mixed payload would throw away the good SBOM and the scan row the pipeline's
     other analyzers attach their results to."""
-    from app.api.v1.endpoints import ingest as ingest_module
+    sboms = [_fixture("sbom/mono.syft.json"), _fixture("iac/kics_2.1.20_results.json")]
 
-    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
-
-    resp = await client.post(
-        "/api/v1/ingest",
-        json=_sbom_payload(sboms=[_GOOD_SBOM, _MALFORMED_SBOM]),
-        headers=api_key_headers,
-    )
+    resp = await client.post("/api/v1/ingest", json=_run(sboms), headers=api_key_headers)
 
     assert resp.status_code == 202, resp.text
     body = resp.json()
-    assert body["sboms_processed"] == 1
-    assert body["sboms_failed"] == 1
+    assert (body["sboms_processed"], body["sboms_failed"]) == (1, 1)
+    assert await db["fs.files"].count_documents({}) == 1
     assert await db.scans.find_one({"_id": body["scan_id"]}) is not None
 
 
 @pytest.mark.asyncio
-async def test_a_payload_whose_sboms_all_failed_is_refused(client, db, api_key_headers, monkeypatch):
-    from app.api.v1.endpoints import ingest as ingest_module
-
-    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
-
-    resp = await client.post(
-        "/api/v1/ingest",
-        json=_sbom_payload(sboms=[_MALFORMED_SBOM]),
-        headers=api_key_headers,
-    )
+@pytest.mark.live_mongo
+@pytest.mark.parametrize(
+    "document",
+    [_fixture("iac/kics_2.1.20_results.json"), {"$schema": None}],
+    ids=["kics-report", "null-schema"],
+)
+async def test_a_payload_without_a_recognized_sbom_is_refused(client, db, api_key_headers, document):
+    resp = await client.post("/api/v1/ingest", json=_run([document]), headers=api_key_headers)
 
     assert resp.status_code == 400, resp.text
+    assert all(name in resp.json()["detail"] for name in ("CycloneDX", "SPDX", "Syft"))
+    assert await db["fs.files"].count_documents({}) == 0
     assert await db.scans.count_documents({}) == 0
 
 
 @pytest.mark.asyncio
-async def test_a_freshly_ingested_scan_waits_in_the_status_the_worker_claims(client, db, api_key_headers, monkeypatch):
+async def test_a_freshly_ingested_scan_waits_in_the_status_the_worker_claims(client, db, api_key_headers, fake_gridfs):
     """The worker's atomic claim matches on 'pending' alone, so any other word parks the scan
     forever: it is queued, never analysed, and nothing reports it as stuck."""
-    from app.api.v1.endpoints import ingest as ingest_module
 
-    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
-
-    resp = await client.post("/api/v1/ingest", json=_sbom_payload(), headers=api_key_headers)
+    resp = await client.post("/api/v1/ingest", json=_run([_GOOD_SBOM]), headers=api_key_headers)
     assert resp.status_code == 202, resp.text
 
     scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})
@@ -242,14 +255,11 @@ async def test_a_freshly_ingested_scan_waits_in_the_status_the_worker_claims(cli
 
 
 @pytest.mark.asyncio
-async def test_an_ingest_without_a_branch_name_is_filed_under_unknown(client, db, api_key_headers, monkeypatch):
+async def test_an_ingest_without_a_branch_name_is_filed_under_unknown(client, db, api_key_headers, fake_gridfs):
     """Every branch-scoped reader defaults the missing branch to 'unknown'; a scan stored under
     any other sentinel is grouped with nothing."""
-    from app.api.v1.endpoints import ingest as ingest_module
 
-    monkeypatch.setattr(ingest_module, "AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
-
-    resp = await client.post("/api/v1/ingest", json=_sbom_payload(branch=""), headers=api_key_headers)
+    resp = await client.post("/api/v1/ingest", json=_run([_GOOD_SBOM], branch=""), headers=api_key_headers)
     assert resp.status_code == 202, resp.text
 
     scan = await db.scans.find_one({"_id": resp.json()["scan_id"]})

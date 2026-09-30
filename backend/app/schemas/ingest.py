@@ -94,8 +94,6 @@ class SBOMIngestResponse(BaseModel):
     message: str = Field(..., description="Human-readable status message")
     sboms_processed: int = Field(0, description="Number of SBOMs successfully processed")
     sboms_failed: int = Field(0, description="Number of SBOMs that failed to process")
-    dependencies_count: int = Field(0, description="Total dependencies extracted")
-    warnings: list[str] = Field(default_factory=list, description="Processing warnings")
 
 
 class ProjectConfigResponse(BaseModel):

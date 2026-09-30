@@ -8,6 +8,11 @@ from app.schemas.sbom import ParsedDependency, ParsedSBOM
 from app.services.sbom_parser import merge_duplicate_dependencies
 
 _DEP_CHUNK_SIZE = 500
+_FREE_TEXT_MAX_CHARS = 2048
+
+
+def _clip(text: str | None) -> str | None:
+    return text[:_FREE_TEXT_MAX_CHARS] if text else text
 
 
 def _parsed_dep_to_dependency(
@@ -21,8 +26,8 @@ def _parsed_dep_to_dependency(
         version=parsed_dep.version,
         purl=parsed_dep.purl,
         type=parsed_dep.type,
-        license=parsed_dep.license,
-        license_url=parsed_dep.license_url,
+        license=_clip(parsed_dep.license),
+        license_url=_clip(parsed_dep.license_url),
         scope=parsed_dep.scope,
         direct=parsed_dep.direct,
         direct_inferred=parsed_dep.direct_inferred,
@@ -33,13 +38,13 @@ def _parsed_dep_to_dependency(
         found_by=parsed_dep.found_by,
         locations=parsed_dep.locations,
         cpes=parsed_dep.cpes,
-        description=parsed_dep.description,
-        author=parsed_dep.author,
-        publisher=parsed_dep.publisher,
+        description=_clip(parsed_dep.description),
+        author=_clip(parsed_dep.author),
+        publisher=_clip(parsed_dep.publisher),
         group=parsed_dep.group,
-        homepage=parsed_dep.homepage,
-        repository_url=parsed_dep.repository_url,
-        download_url=parsed_dep.download_url,
+        homepage=_clip(parsed_dep.homepage),
+        repository_url=_clip(parsed_dep.repository_url),
+        download_url=_clip(parsed_dep.download_url),
         hashes=parsed_dep.hashes,
         properties=parsed_dep.properties,
     )

@@ -137,9 +137,9 @@ class _FakeGridFSBucket:
     def __init__(self, db):
         self._files = db["fs.files"]
 
-    async def upload_from_stream(self, filename, data):
+    async def upload_from_stream(self, filename, data, metadata=None):
         file_id = ObjectId()
-        await self._files.insert_one({"_id": file_id, "filename": filename, "data": data})
+        await self._files.insert_one({"_id": file_id, "filename": filename, "data": data, "metadata": metadata})
         return file_id
 
     async def open_download_stream(self, file_id):

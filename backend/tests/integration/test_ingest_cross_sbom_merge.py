@@ -3,21 +3,24 @@ SBOMs must be merged before the first insert. 3,698 of 45,084 production scans (
 two or more SBOMs; a 60-scan sample of them index-dropped 2,772 of 21,730 parsed dependencies."""
 
 import asyncio
+import json
+from pathlib import Path
 
 import pytest
-from bson import ObjectId
 
-from app.api.v1.endpoints.ingest import _process_sboms
 from app.core.init_db import create_indexes
 from app.repositories.dependencies import DependencyRepository
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
 from app.services import dependency_store
 from app.services.dependency_store import store_scan_dependencies
+from app.services.sbom_parser import parse_sbom
 
 _PROJECT_ID = "test-project-id"
 _SCAN_ID = "8e0d76a5-1291-5949-8e0d-0d90b4bd9e02"
 
 _PURL = "pkg:deb/debian/libssl3@3.0.11-1~deb12u2?arch=amd64"
+_FIXTURES = Path(__file__).parents[1] / "fixtures"
+_MIB = 1024 * 1024
 
 
 def _syft_cyclonedx(component: dict, dependencies: list[dict]) -> dict:
@@ -69,33 +72,16 @@ _SBOM_BASE_LAYER = _syft_cyclonedx(
 )
 
 
-class _FakeGridFSBucket:
-    def __init__(self, db):
-        self._files = db["fs.files"]
-
-    async def upload_from_stream(self, filename, data, metadata=None):
-        oid = ObjectId()
-        await self._files.insert_one(
-            {"_id": str(oid), "filename": filename, "length": len(data), "metadata": metadata or {}}
-        )
-        return oid
-
-    async def delete(self, oid):
-        await self._files.delete_one({"_id": str(oid)})
-
-
 @pytest.mark.asyncio
 async def test_duplicate_across_sboms_is_merged_not_index_dropped(db):
     # The app's own index definitions, so the test cannot pass by ignoring the unique key.
     await create_indexes(db)
 
-    _refs, warnings, processed, failed, inserted = await _process_sboms(
-        [_SBOM_APP_LAYER, _SBOM_BASE_LAYER], _FakeGridFSBucket(db), _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
+    inserted = await store_scan_dependencies(
+        [parse_sbom(_SBOM_APP_LAYER), parse_sbom(_SBOM_BASE_LAYER)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
     )
 
-    assert (processed, failed) == (2, 0)
     assert inserted == 1, "the two SBOMs describe one package; it must be stored once"
-    assert not warnings, f"a merged duplicate is not a storage loss, got {warnings}"
 
     docs = [d async for d in db.dependencies.find({"scan_id": _SCAN_ID})]
     assert len(docs) == 1
@@ -113,17 +99,14 @@ async def test_duplicate_across_sboms_is_merged_not_index_dropped(db):
 
 @pytest.mark.asyncio
 async def test_the_same_sbom_uploaded_twice_stores_one_inventory(db):
-    """14 identical uploads on one production scan index-dropped 1,586 of 1,708 rows and
-    reported them as a storage loss in the ingest response."""
+    """14 identical uploads on one production scan index-dropped 1,586 of 1,708 rows."""
     await create_indexes(db)
 
-    _refs, warnings, _processed, failed, inserted = await _process_sboms(
-        [_SBOM_APP_LAYER, _SBOM_APP_LAYER], _FakeGridFSBucket(db), _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
+    inserted = await store_scan_dependencies(
+        [parse_sbom(_SBOM_APP_LAYER), parse_sbom(_SBOM_APP_LAYER)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
     )
 
-    assert failed == 0
     assert inserted == 1
-    assert not warnings
     assert await db.dependencies.count_documents({"scan_id": _SCAN_ID}) == 1
 
 
@@ -138,12 +121,11 @@ async def test_a_component_without_its_own_purl_is_still_merged(db):
         "components": [{"type": "library", "bom-ref": "r1", "name": "vendored-blob", "version": "1.0"}],
     }
 
-    _refs, warnings, _processed, failed, inserted = await _process_sboms(
-        [no_purl, no_purl], _FakeGridFSBucket(db), _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
+    inserted = await store_scan_dependencies(
+        [parse_sbom(no_purl), parse_sbom(no_purl)], _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
     )
 
-    assert (failed, inserted) == (0, 1)
-    assert not warnings
+    assert inserted == 1
     assert await db.dependencies.count_documents({"scan_id": _SCAN_ID}) == 1
 
 
@@ -276,3 +258,20 @@ async def test_overlapping_stores_of_one_scan_leave_the_later_inventory(db, earl
     )
 
     assert sorted(await _inventory(db)) == sorted(later)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_description_past_the_document_limit_is_stored_clipped(db):
+    """Mongo refuses a dependency row over 16 MiB (BulkWriteError 17420); the full text stays in the stored SBOM."""
+    await create_indexes(db)
+    sbom = json.loads((_FIXTURES / "sbom/mono.syft.cdx.json").read_text())
+    first = sbom["components"][0]
+    first["description"] = "An async networking library. " * (17 * _MIB // 29 + 1)
+    parsed = parse_sbom(sbom)
+
+    stored = await store_scan_dependencies([parsed], _PROJECT_ID, _SCAN_ID, DependencyRepository(db))
+
+    assert stored == len(parsed.dependencies) == await db.dependencies.count_documents({"scan_id": _SCAN_ID})
+    row = await db.dependencies.find_one({"scan_id": _SCAN_ID, "name": first["name"]})
+    assert row["description"] == first["description"][:2048]

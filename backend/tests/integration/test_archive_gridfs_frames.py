@@ -14,7 +14,7 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo.common import MAX_MESSAGE_SIZE
 
-from app.api.v1.endpoints.ingest import _upload_sbom_to_gridfs
+from app.api.v1.endpoints.ingest import _upload_recognized_sboms
 from app.core.constants import ARCHIVE_GRIDFS_CHUNK_FRAME
 from app.models.archive import ArchiveMetadata
 from app.models.project import Project, Scan
@@ -62,7 +62,7 @@ def _sbom_of(size: int) -> dict[str, Any]:
 
 async def _seed_scan(db, sbom: dict[str, Any]) -> Scan:
     """A CI run's scan whose SBOM is stored the way ingest stores it."""
-    ref = await _upload_sbom_to_gridfs(AsyncIOMotorGridFSBucket(db), sbom, _SCAN_ID)
+    [ref] = await _upload_recognized_sboms([sbom], db, _SCAN_ID)
     scan = Scan(
         id=_SCAN_ID,
         project_id=_PROJECT_ID,
