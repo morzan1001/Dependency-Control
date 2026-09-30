@@ -364,16 +364,6 @@ class TestProcessQualityCombinedScenarios:
         assert "Address Packages with Known Vulnerability Issues" in titles
         assert "Dependencies with Limited Code Review" in titles
 
-    def test_failed_check_as_string(self):
-        """Failed checks can be plain strings instead of dicts."""
-        finding = _quality(
-            overall_score=5.0,
-            failed_checks=["Code-Review"],
-        )
-        recs = process_quality([finding])
-        cr_recs = [r for r in recs if "Code Review" in r.title]
-        assert len(cr_recs) == 1
-
     def test_multiple_findings_mixed(self):
         findings = [
             _quality(

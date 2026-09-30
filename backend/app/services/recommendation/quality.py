@@ -1,4 +1,3 @@
-from collections import defaultdict
 from typing import Any
 
 from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
@@ -26,7 +25,8 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         return []
 
     recommendations = []
-    components_by_issue: dict[str, list[Any]] = defaultdict(list)
+    scorecard_vuln_components: set[str] = set()
+    code_review_components: set[str] = set()
     low_score_by_component: dict[str, dict[str, Any]] = {}
     unmaintained_by_component: dict[str, dict[str, Any]] = {}
 
@@ -48,7 +48,6 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 {
                     "component": component,
                     "score": overall_score,
-                    "project_url": project_url,
                     "critical_issues": critical_issues,
                 },
             )
@@ -59,12 +58,10 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 {"component": component, "score": overall_score, "project_url": project_url},
             )
 
-        for issue in critical_issues:
-            components_by_issue[issue].append(component)
-
-        for check in failed_checks:
-            check_name = check.get("name", "") if isinstance(check, dict) else check
-            components_by_issue[f"check:{check_name}"].append(component)
+        if "Vulnerabilities" in critical_issues:
+            scorecard_vuln_components.add(component)
+        if any(check.get("name") == "Code-Review" for check in failed_checks):
+            code_review_components.add(component)
 
     unmaintained_packages = list(unmaintained_by_component.values())
     unmaintained_shown, unmaintained_total = sample_components(unmaintained_by_component)
@@ -106,9 +103,8 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             )
         )
 
-    vuln_packages = components_by_issue.get("Vulnerabilities", [])
-    vuln_shown, vuln_total = sample_components(sorted(set(vuln_packages)))
-    if vuln_packages:
+    vuln_shown, vuln_total = sample_components(sorted(scorecard_vuln_components))
+    if scorecard_vuln_components:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.SUPPLY_CHAIN_RISK,
@@ -177,9 +173,8 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             )
         )
 
-    code_review_issues = components_by_issue.get("check:Code-Review", [])
-    review_shown, review_total = sample_components(sorted(set(code_review_issues)))
-    if code_review_issues:
+    review_shown, review_total = sample_components(sorted(code_review_components))
+    if code_review_components:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.SUPPLY_CHAIN_RISK,
