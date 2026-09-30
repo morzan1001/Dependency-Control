@@ -5,6 +5,7 @@ from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.compliance import ControlDefinition, ControlStatus
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
+from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.compliance.frameworks.base import (
     _Applicability,
     _applicability,
@@ -44,14 +45,18 @@ def _input(assets, rules=(_RSA_RULE,), *, findings=()):
     return evaluation_input(crypto_assets=assets, findings=list(findings), policy_rules=list(rules))
 
 
+def _state(control, data):
+    return _applicability(control, data, [])[0]
+
+
 def test_rsa_control_not_applicable_when_only_aes_present():
     aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER, key_size_bits=256)
-    assert _applicability(_RSA_CONTROL, _input([aes])) is _Applicability.NO_ASSET_IN_SCOPE
+    assert _state(_RSA_CONTROL, _input([aes])) is _Applicability.NO_ASSET_IN_SCOPE
 
 
 def test_rsa_control_applicable_when_compliant_rsa_present():
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
-    assert _applicability(_RSA_CONTROL, _input([rsa])) is _Applicability.APPLICABLE
+    assert _state(_RSA_CONTROL, _input([rsa])) is _Applicability.APPLICABLE
 
 
 def test_rsa_control_passes_with_compliant_rsa_and_no_findings():
@@ -70,7 +75,7 @@ def test_rsa_control_applicable_when_one_of_several_assets_is_in_scope():
     """A real inventory is mixed; one matching asset makes the control evaluable, not every asset."""
     aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER, key_size_bits=256)
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
-    assert _applicability(_RSA_CONTROL, _input([aes, rsa])) is _Applicability.APPLICABLE
+    assert _state(_RSA_CONTROL, _input([aes, rsa])) is _Applicability.APPLICABLE
 
 
 def test_rsa_control_passes_on_a_mixed_inventory_with_no_findings():
@@ -80,15 +85,59 @@ def test_rsa_control_passes_on_a_mixed_inventory_with_no_findings():
     assert result.status == ControlStatus.PASSED
 
 
+def test_rsa_control_is_not_evaluated_over_an_rsa_key_of_unknown_size():
+    """rule_matches skips a sizeless key, so no finding can exist and PASSED would attest an unchecked minimum."""
+    rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE)
+
+    result = default_evaluator(_RSA_CONTROL, _input([rsa]))
+
+    assert result.status == ControlStatus.NOT_EVALUATED
+    assert "1 of 1 in-scope assets" in (result.status_reason or "")
+
+
+def test_one_sizeless_rsa_key_withholds_the_verdict_beside_a_compliant_one():
+    sizeless = _asset(name="RSA", primitive=CryptoPrimitive.PKE, bom_ref="r1")
+    compliant = _asset(name="RSA", primitive=CryptoPrimitive.PKE, bom_ref="r2", key_size_bits=4096)
+
+    result = default_evaluator(_RSA_CONTROL, _input([sizeless, compliant]))
+
+    assert result.status == ControlStatus.NOT_EVALUATED
+    assert "1 of 2 in-scope assets" in (result.status_reason or "")
+    assert "2048-bit" in (result.status_reason or "")
+
+
+def _weak_rsa_finding(*, waived):
+    """The weak-key analyzer's finding for a 1024-bit RSA key, as persisted under its scan."""
+    weak = _asset(name="RSA", primitive=CryptoPrimitive.PKE, bom_ref="r2", key_size_bits=1024)
+    (finding,) = crypto_findings_for_assets([weak], [_RSA_RULE], scanner="crypto_weak_key")
+    return finding | {"_id": f"s-{finding['id']}", "scan_id": weak.scan_id, "waived": waived}
+
+
+def test_a_sizeless_rsa_key_withholds_a_waived_verdict():
+    sizeless = _asset(name="RSA", primitive=CryptoPrimitive.PKE, bom_ref="r1")
+
+    result = default_evaluator(_RSA_CONTROL, _input([sizeless], findings=[_weak_rsa_finding(waived=True)]))
+
+    assert result.status == ControlStatus.NOT_EVALUATED
+
+
+def test_an_unwaived_finding_fails_the_control_despite_a_sizeless_key():
+    sizeless = _asset(name="RSA", primitive=CryptoPrimitive.PKE, bom_ref="r1")
+
+    result = default_evaluator(_RSA_CONTROL, _input([sizeless], findings=[_weak_rsa_finding(waived=False)]))
+
+    assert result.status == ControlStatus.FAILED
+
+
 def test_no_assets_is_not_applicable():
-    assert _applicability(_RSA_CONTROL, _input([])) is _Applicability.NO_ASSET_IN_SCOPE
+    assert _state(_RSA_CONTROL, _input([])) is _Applicability.NO_ASSET_IN_SCOPE
 
 
 def test_a_control_whose_rules_are_missing_from_the_policy_is_not_evaluated():
     """The analyzer never ran the missing rule, so no finding can exist and PASSED would be a false attestation."""
     aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER)
     data = _input([aes], [])
-    assert _applicability(_RSA_CONTROL, data) is _Applicability.RULES_UNRESOLVED
+    assert _state(_RSA_CONTROL, data) is _Applicability.RULES_UNRESOLVED
     result = default_evaluator(_RSA_CONTROL, data)
     assert result.status == ControlStatus.NOT_EVALUATED
     assert "nist-131a-rsa-min-2048" in (result.status_reason or "")
@@ -114,7 +163,7 @@ def test_control_backed_only_by_disabled_rule_is_not_applicable():
     """A disabled rule is never evaluated, so no finding can exist and PASSED would be a false attestation."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
     data = _input([rsa], [_DISABLED_RSA_RULE])
-    assert _applicability(_RSA_CONTROL, data) is _Applicability.RULES_DISABLED
+    assert _state(_RSA_CONTROL, data) is _Applicability.RULES_DISABLED
 
 
 def test_disabled_rule_control_reports_not_applicable_not_passed():
@@ -128,7 +177,7 @@ def test_enabled_rule_still_applicable_alongside_disabled_duplicate():
     """If at least one backing rule is enabled the control is still evaluable."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
     data = _input([rsa], [_RSA_RULE])
-    assert _applicability(_RSA_CONTROL, data) is _Applicability.APPLICABLE
+    assert _state(_RSA_CONTROL, data) is _Applicability.APPLICABLE
 
 
 # default_evaluator must honour details.matched_rules.

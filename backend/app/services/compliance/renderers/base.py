@@ -5,6 +5,8 @@ from typing import Protocol
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import EvaluationCoverage, FrameworkEvaluation, InputCoverage
+from app.services.compliance.frameworks.base import NAMES_SHOWN
+from app.services.recommendation.common import name_some
 
 _INPUT_COMPLETE = "Evaluated all {in_scope} {subject} in scope."
 _INPUT_PARTIAL = (
@@ -15,6 +17,10 @@ _WITHHELD_EXPLANATION = (
     "Every verdict below that would have rested on finding no match in a capped input is reported "
     "as not_evaluated instead. Failures stand — a subset can under-report a violation but cannot "
     "invent one. Narrow the scope and regenerate for a verdict that covers everything."
+)
+_GAPS_STATEMENT = (
+    "Inputs are missing for part of the scope, so every verdict that would have rested on finding "
+    "no match is reported as not_evaluated: {gaps}."
 )
 
 
@@ -32,13 +38,15 @@ def _input_statement(coverage: InputCoverage, subject: str) -> str:
 
 def coverage_statement(coverage: EvaluationCoverage) -> str:
     """The sentence a reader needs to know whether the verdicts cover the scope."""
-    parts = [
-        _input_statement(coverage.findings, "findings"),
-        _input_statement(coverage.crypto_assets, "crypto assets"),
-    ]
-    if coverage.plan_items is not None:
-        parts.append(_input_statement(coverage.plan_items, "migration plan items"))
-    if not coverage.complete:
+    reads = {
+        "findings": coverage.findings,
+        "crypto assets": coverage.crypto_assets,
+        "migration plan items": coverage.plan_items,
+    }
+    parts = [_input_statement(read, subject) for subject, read in reads.items() if read is not None]
+    if coverage.gaps:
+        parts.append(_GAPS_STATEMENT.format(gaps=name_some(coverage.gaps, NAMES_SHOWN)))
+    if any(read is not None and not read.complete for read in reads.values()):
         parts.append(_WITHHELD_EXPLANATION)
     return " ".join(parts)
 

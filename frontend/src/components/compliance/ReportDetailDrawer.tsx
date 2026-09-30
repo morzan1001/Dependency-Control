@@ -27,21 +27,38 @@ function inputSentence(input: InputCoverage, subject: string): string {
   );
 }
 
-function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage }) {
-  const sentences = [
-    inputSentence(coverage.findings, "findings"),
-    inputSentence(coverage.crypto_assets, "crypto assets"),
-  ];
-  if (isComplete(coverage.findings) && isComplete(coverage.crypto_assets)) {
-    return <div className="text-xs text-muted-foreground">{sentences.join(" ")}</div>;
-  }
+const GAPS_SHOWN = 5;
+
+function gapSentence(gaps: readonly string[]): string {
+  const shown = gaps.slice(0, GAPS_SHOWN).join(", ");
+  const rest = gaps.length - GAPS_SHOWN;
   return (
-    <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-      {sentences.join(" ")} Every verdict that would have rested on finding no match in a capped
-      input is reported as not_evaluated instead. Failures stand. Narrow the scope and regenerate
-      before handing this to an auditor.
-    </div>
+    "Inputs are missing for part of the scope, so every verdict that would have rested on finding " +
+    `no match is reported as not_evaluated: ${rest > 0 ? `${shown} and ${rest} more` : shown}.`
   );
+}
+
+function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage }) {
+  const reads = [
+    [coverage.findings, "findings"],
+    [coverage.crypto_assets, "crypto assets"],
+    [coverage.plan_items, "migration plan items"],
+  ] as const;
+  const sentences = reads.flatMap(([input, subject]) => (input ? [inputSentence(input, subject)] : []));
+  const gaps = coverage.gaps ?? [];
+  if (gaps.length > 0) sentences.push(gapSentence(gaps));
+  const capped = reads.some(([input]) => input && !isComplete(input));
+  if (capped) {
+    sentences.push(
+      "Every verdict that would have rested on finding no match in a capped input is reported as " +
+        "not_evaluated instead. Failures stand. Narrow the scope and regenerate before handing this to an auditor.",
+    );
+  }
+  const tone =
+    capped || gaps.length > 0
+      ? "rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200"
+      : "text-xs text-muted-foreground";
+  return <div className={tone}>{sentences.join(" ")}</div>;
 }
 
 const WITHHELD_KEY: ControlStatus = "not_evaluated";

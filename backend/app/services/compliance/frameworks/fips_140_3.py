@@ -59,6 +59,7 @@ class AlgorithmConformanceFramework:
                 ),
                 severity=Severity.HIGH,
                 remediation=f"Replace disallowed {category} algorithms with approved ones per NIST SP 800-140C/D/F.",
+                maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
                 custom_evaluator=_make_disallowed_evaluator(algos=algos, category=category),
             )
             for category, algos in _disallowed_algorithms().items()
@@ -71,6 +72,7 @@ class AlgorithmConformanceFramework:
                 severity=Severity.HIGH,
                 remediation="Rotate any RSA keys shorter than 2048 bits.",
                 maps_to_rule_ids=["nist-131a-rsa-min-2048"],
+                maps_to_finding_types=[FindingType.CRYPTO_WEAK_KEY],
             )
         )
         return out

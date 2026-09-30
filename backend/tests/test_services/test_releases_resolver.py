@@ -612,7 +612,7 @@ async def test_crypto_hotspots_override_still_short_circuits(db):
 
 
 @pytest.mark.asyncio
-async def test_compliance_pick_scan_ids_returns_project_scan_pairs(db):
+async def test_compliance_pick_scan_ids_maps_each_project_to_its_head(db):
     from app.services.analytics.scopes import ResolvedScope
     from app.services.compliance.engine import ComplianceReportEngine
 
@@ -620,9 +620,9 @@ async def test_compliance_pick_scan_ids_returns_project_scan_pairs(db):
     await db.scans.insert_one(_scan("head-a", _PROJECT_A))
 
     scope = ResolvedScope(scope="user", scope_id=None, project_ids=[_PROJECT_A])
-    pairs = await ComplianceReportEngine()._pick_scan_ids(db, scope)
+    picked = await ComplianceReportEngine()._pick_scan_ids(db, scope, frozenset())
 
-    assert pairs == [(_PROJECT_A, "head-a")]
+    assert picked == ({_PROJECT_A: "head-a"}, [])
 
 
 async def _chat_heads(db, user_project_query: dict, project_id: str | None = None) -> dict[str, str]:
@@ -676,7 +676,10 @@ async def test_every_consumer_falls_back_when_the_pointer_names_a_deleted_scan(d
     assert await resolve_scan_ids(db, [_PROJECT_A]) == {_PROJECT_A: _EXEMPTED_RELEASE}
     assert await get_latest_scan_ids(await _scope(db, [_PROJECT_A]), db) == [_EXEMPTED_RELEASE]
     assert await CryptoHotspotService(db)._pick_scan_ids(scope, None) == [_EXEMPTED_RELEASE]
-    assert await ComplianceReportEngine()._pick_scan_ids(db, scope) == [(_PROJECT_A, _EXEMPTED_RELEASE)]
+    assert await ComplianceReportEngine()._pick_scan_ids(db, scope, frozenset()) == (
+        {_PROJECT_A: _EXEMPTED_RELEASE},
+        [],
+    )
     assert await _chat_heads(db, {"_id": {"$in": [_PROJECT_A]}}) == {_PROJECT_A: _EXEMPTED_RELEASE}
     assert await _chat_heads(db, {}, _PROJECT_A) == {_PROJECT_A: _EXEMPTED_RELEASE}
 

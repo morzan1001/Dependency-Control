@@ -73,5 +73,6 @@ def _is_overdue(
     fsev = finding.get("severity")
     if fsev != severity.value and fsev != severity:
         return False
-    first_seen = finding.get("first_seen_at")
+    # A copy stored before first detection was recorded carries only its scan's time.
+    first_seen = finding.get("first_seen_at") or finding.get("scan_created_at")
     return first_seen is not None and now - first_seen >= timedelta(days=sla_days)

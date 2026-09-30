@@ -13,7 +13,7 @@ from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 _CONSUMERS = {
     "hotspots": lambda db, resolved: CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name"),
-    "compliance": lambda db, resolved: ComplianceReportEngine()._pick_scan_ids(db, resolved),
+    "compliance": lambda db, resolved: ComplianceReportEngine()._pick_scan_ids(db, resolved, frozenset()),
     "pqc": lambda db, resolved: PQCMigrationPlanGenerator(db)._list_vulnerable_assets(resolved),
 }
 

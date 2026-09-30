@@ -11,7 +11,7 @@ from typing import Any, Protocol
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.crypto_asset import CryptoAsset
-from app.models.finding import Severity
+from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
     ControlDefinition,
     ControlResult,
@@ -26,8 +26,9 @@ from app.schemas.crypto_policy import CryptoRule
 from app.schemas.finding_details import all_rule_ids
 from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
-from app.services.analyzers.crypto.matcher import asset_in_rule_scope
+from app.services.analyzers.crypto.matcher import asset_in_rule_scope, rule_matches
 from app.services.crypto_policy.seeder import load_seed_file
+from app.services.recommendation.common import name_some
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,10 @@ _WITHHELD_REASON = (
     "Withheld: {evaluated} of {in_scope} {subject} in scope were read, and this verdict would "
     "have rested on finding no match among the {missing} that were not."
 )
+_GAPS_REASON = "Withheld: the {subject} this verdict rests on do not cover the whole scope: {gaps}."
+
+# Gaps or assets one sentence names before it only counts the rest.
+NAMES_SHOWN = 5
 
 
 class _Applicability(Enum):
@@ -45,23 +50,32 @@ class _Applicability(Enum):
     RULES_DISABLED = auto()
     # The policy lacks every backing rule, so the analyzer never ran one.
     RULES_UNRESOLVED = auto()
+    # An asset an enabled rule matches carries no finding, so the analysis that should flag it did not.
+    UNFLAGGED = auto()
+    # The CBOM states no key size for an asset a key-size minimum applies to.
+    KEY_SIZE_UNKNOWN = auto()
 
 
 def _withheld(
     status: ControlStatus,
-    coverage: InputCoverage,
+    coverage: EvaluationCoverage,
+    read: InputCoverage | None,
     subject: str,
 ) -> tuple[ControlStatus, str | None]:
-    """`status`, or NOT_EVALUATED and why, when the input it rests on did not cover the scope.
-    Call it only for a status whose evidence is that input holding no match: FAILED never
-    qualifies, because a cut input under-reports a violation but cannot invent one."""
-    if coverage.complete:
+    """`status`, or NOT_EVALUATED and why, when the scope has gaps or the input it rests on did not
+    cover the scope. Call it only for a status whose evidence is that input holding no match: FAILED
+    never qualifies, because a cut input under-reports a violation but cannot invent one."""
+    if coverage.gaps:
+        return ControlStatus.NOT_EVALUATED, _GAPS_REASON.format(
+            subject=subject, gaps=name_some(coverage.gaps, NAMES_SHOWN)
+        )
+    if read is None or read.complete:
         return status, None
     return ControlStatus.NOT_EVALUATED, _WITHHELD_REASON.format(
         subject=subject,
-        evaluated=coverage.evaluated,
-        in_scope=coverage.in_scope,
-        missing=coverage.in_scope - coverage.evaluated,
+        evaluated=read.evaluated,
+        in_scope=read.in_scope,
+        missing=read.in_scope - read.evaluated,
     )
 
 
@@ -70,7 +84,7 @@ def findings_verdict(
     coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, str | None]:
     """`status`, or NOT_EVALUATED, for a verdict resting on the findings holding no match."""
-    return _withheld(status, coverage.findings, "findings")
+    return _withheld(status, coverage, coverage.findings, "findings")
 
 
 def crypto_assets_verdict(
@@ -78,7 +92,7 @@ def crypto_assets_verdict(
     coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, str | None]:
     """`status`, or NOT_EVALUATED, for a verdict resting on the inventory holding no such asset."""
-    return _withheld(status, coverage.crypto_assets, "crypto assets")
+    return _withheld(status, coverage, coverage.crypto_assets, "crypto assets")
 
 
 @dataclass
@@ -112,25 +126,19 @@ def default_evaluator(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> ControlResult:
-    """The matching findings' verdict; with none, NOT_APPLICABLE when no asset or enabled rule is in
-    scope, NOT_EVALUATED when the policy lacks the control's rules, else PASSED."""
+    """The matching findings' verdict. FAILED always stands; any other verdict turns NOT_EVALUATED when
+    the policy or inventory says a finding could be missing, and with no finding NOT_APPLICABLE when
+    no asset of the rules' kind or no enabled rule is in scope."""
     matching = [f for f in data.findings if _finding_matches_control(f, control)]
-    evidence: list[str] = []
-    status_reason: str | None = None
-    if matching:
-        status, evidence, status_reason = _classify(matching, data.coverage)
-    elif (applicability := _applicability(control, data)) is _Applicability.APPLICABLE:
-        status, status_reason = findings_verdict(ControlStatus.PASSED, data.coverage)
-    elif applicability is _Applicability.NO_ASSET_IN_SCOPE:
-        status, status_reason = crypto_assets_verdict(ControlStatus.NOT_APPLICABLE, data.coverage)
-    elif applicability is _Applicability.RULES_UNRESOLVED:
-        status = ControlStatus.NOT_EVALUATED
-        status_reason = (
-            f"Rules {', '.join(control.maps_to_rule_ids)} are not in the effective crypto policy, "
-            "so no finding can exist for this control."
-        )
-    else:
-        status = ControlStatus.NOT_APPLICABLE
+    status, evidence, status_reason = _classify(matching, data.coverage)
+    if status is not ControlStatus.FAILED:
+        applicability, reason = _applicability(control, data, matching)
+        if reason:
+            status, status_reason = ControlStatus.NOT_EVALUATED, reason
+        elif not matching and applicability is _Applicability.NO_ASSET_IN_SCOPE:
+            status, status_reason = crypto_assets_verdict(ControlStatus.NOT_APPLICABLE, data.coverage)
+        elif not matching and applicability is _Applicability.RULES_DISABLED:
+            status, status_reason = ControlStatus.NOT_APPLICABLE, None
 
     return ControlResult(
         control_id=control.control_id,
@@ -154,27 +162,62 @@ def _finding_matches_control(finding: dict, control: ControlDefinition) -> bool:
 def _applicability(
     control: ControlDefinition,
     data: EvaluationInput,
-) -> "_Applicability":
-    """Applicable (eligible for PASSED) only when at least one crypto asset falls within an enabled mapped rule's scope.
+    matching: list[dict[str, Any]],
+) -> tuple[_Applicability, str | None]:
+    """Whether the control has a subject in scope, and why its verdict is unevaluated when it cannot be judged.
 
     The inapplicable answers are told apart because only NO_ASSET_IN_SCOPE is read off the
     inventory, and only that one is unsafe to state over a truncated inventory.
     """
     rules = [rule for rule in data.policy_rules if rule.rule_id in control.maps_to_rule_ids]
     if not rules:
-        return _Applicability.RULES_UNRESOLVED
+        unresolved = (
+            f"Rules {', '.join(control.maps_to_rule_ids)} are not in the effective crypto policy, "
+            "so no finding can exist for this control."
+        )
+        return _Applicability.RULES_UNRESOLVED, None if matching else unresolved
     enabled_rules = [rule for rule in rules if rule.enabled]
     if not enabled_rules:
-        # Every backing rule is disabled, so no finding can ever exist; PASSED
-        # would be a false attestation -> NOT_APPLICABLE.
         logger.info(
             "compliance: control %s is backed only by disabled rules %s; reporting NOT_APPLICABLE rather than PASSED",
             control.control_id,
             control.maps_to_rule_ids,
         )
-        return _Applicability.RULES_DISABLED
-    in_scope = any(asset_in_rule_scope(asset, rule) for asset in data.crypto_assets for rule in enabled_rules)
-    return _Applicability.APPLICABLE if in_scope else _Applicability.NO_ASSET_IN_SCOPE
+        return _Applicability.RULES_DISABLED, None
+    # bom_refs repeat across projects, so only the scan tells whose finding flags an asset.
+    flagged = {(f.get("scan_id"), (f.get("details") or {}).get("bom_ref")) for f in matching}
+    for rule in enabled_rules:
+        scoped = [asset for asset in data.crypto_assets if asset_in_rule_scope(asset, rule)]
+        unflagged = sorted(
+            {a.bom_ref for a in scoped if rule_matches(a, rule) and (a.scan_id, a.bom_ref) not in flagged}
+        )
+        if unflagged:
+            return _Applicability.UNFLAGGED, (
+                f"Assets {name_some(unflagged, NAMES_SHOWN)} match rule {rule.rule_id} but carry no finding, "
+                "so the analysis failed or the policy changed since the scan."
+            )
+        sizeless = sum(asset.key_size_bits is None for asset in scoped)
+        if rule.match_min_key_size_bits is not None and sizeless:
+            return _Applicability.KEY_SIZE_UNKNOWN, (
+                f"{sizeless} of {len(scoped)} in-scope assets carry no parseable key size, so the "
+                f"{rule.match_min_key_size_bits}-bit minimum could not be checked for them."
+            )
+    if any(_is_subject(asset, rule) for asset in data.crypto_assets for rule in enabled_rules):
+        return _Applicability.APPLICABLE, None
+    return _Applicability.NO_ASSET_IN_SCOPE, None
+
+
+def _is_subject(asset: CryptoAsset, rule: CryptoRule) -> bool:
+    """Whether the rule judges the asset: a threshold rule what its scope matches, a deny-list rule
+    every asset of its primitive or protocol family, so a clean inventory of that kind passes it."""
+    if rule.match_min_key_size_bits is not None:
+        return asset_in_rule_scope(asset, rule)
+    if rule.match_primitive is not None:
+        return asset.primitive == rule.match_primitive
+    if rule.match_protocol_versions:
+        protocol = (asset.protocol_type or "").lower()
+        return bool(protocol) and any(v.lower().startswith(protocol) for v in rule.match_protocol_versions)
+    return True
 
 
 def _extract_bom_refs(findings: list[dict]) -> list[str]:
@@ -238,6 +281,7 @@ class SeedFramework:
                 severity=Severity(rule.default_severity),
                 remediation=rule.description.strip(),
                 maps_to_rule_ids=[rule.rule_id],
+                maps_to_finding_types=[FindingType(rule.finding_type)],
             )
             for rule in load_seed_file(self.seed_file)
         ]
