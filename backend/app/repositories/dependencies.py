@@ -67,12 +67,3 @@ class DependencyRepository(BaseRepository[Dependency]):
             {"$sort": {"count": -1}},
         ]
         return await self.aggregate(pipeline)
-
-    async def get_distinct_types(self, scan_ids: list[str]) -> list[str]:
-        pipeline: list[dict[str, Any]] = [
-            {"$match": {"scan_id": {"$in": scan_ids}}},
-            {"$group": {"_id": "$type"}},
-            {"$sort": {"_id": 1}},
-        ]
-        results = await self.aggregate(pipeline)
-        return [r["_id"] for r in results if r["_id"]]
