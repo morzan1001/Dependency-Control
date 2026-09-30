@@ -112,31 +112,25 @@ def default_evaluator(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> ControlResult:
-    """FAILED if any active matching finding, WAIVED if all matched are waived, NOT_APPLICABLE if the subject is absent, else PASSED."""
+    """The matching findings' verdict; with none, NOT_APPLICABLE when no asset or enabled rule is in
+    scope, NOT_EVALUATED when the policy lacks the control's rules, else PASSED."""
     matching = [f for f in data.findings if _finding_matches_control(f, control)]
-
-    waived_findings = [f for f in matching if f.get("waived")]
-    active_findings = [f for f in matching if not f.get("waived")]
-
+    evidence: list[str] = []
     status_reason: str | None = None
-    if active_findings:
-        status = ControlStatus.FAILED
-    elif waived_findings:
-        status, status_reason = findings_verdict(ControlStatus.WAIVED, data.coverage)
+    if matching:
+        status, evidence, status_reason = _classify(matching, data.coverage)
+    elif (applicability := _applicability(control, data)) is _Applicability.APPLICABLE:
+        status, status_reason = findings_verdict(ControlStatus.PASSED, data.coverage)
+    elif applicability is _Applicability.NO_ASSET_IN_SCOPE:
+        status, status_reason = crypto_assets_verdict(ControlStatus.NOT_APPLICABLE, data.coverage)
+    elif applicability is _Applicability.RULES_UNRESOLVED:
+        status = ControlStatus.NOT_EVALUATED
+        status_reason = (
+            f"Rules {', '.join(control.maps_to_rule_ids)} are not in the effective crypto policy, "
+            "so no finding can exist for this control."
+        )
     else:
-        applicability = _applicability(control, data)
-        if applicability is _Applicability.APPLICABLE:
-            status, status_reason = findings_verdict(ControlStatus.PASSED, data.coverage)
-        elif applicability is _Applicability.NO_ASSET_IN_SCOPE:
-            status, status_reason = crypto_assets_verdict(ControlStatus.NOT_APPLICABLE, data.coverage)
-        elif applicability is _Applicability.RULES_UNRESOLVED:
-            status = ControlStatus.NOT_EVALUATED
-            status_reason = (
-                f"Rules {', '.join(control.maps_to_rule_ids)} are not in the effective crypto policy, "
-                "so no finding can exist for this control."
-            )
-        else:
-            status = ControlStatus.NOT_APPLICABLE
+        status = ControlStatus.NOT_APPLICABLE
 
     return ControlResult(
         control_id=control.control_id,
@@ -144,9 +138,9 @@ def default_evaluator(
         description=control.description,
         status=status,
         severity=control.severity,
-        evidence_finding_ids=[extract_finding_id(f) for f in matching],
+        evidence_finding_ids=evidence,
         evidence_asset_bom_refs=_extract_bom_refs(matching),
-        waiver_reasons=[(f.get("waiver_reason") or "") for f in waived_findings if f.get("waiver_reason")],
+        waiver_reasons=_waiver_reasons(matching),
         remediation=control.remediation,
         status_reason=status_reason,
     )
@@ -197,29 +191,32 @@ def evaluate_framework(
     controls: list[ControlDefinition],
     data: EvaluationInput,
 ) -> FrameworkEvaluation:
-    """Run every control and build the FrameworkEvaluation."""
-    control_results: list[ControlResult] = []
-    for control in controls:
-        if control.custom_evaluator is not None:
-            result = control.custom_evaluator(data)
-        else:
-            result = default_evaluator(control, data)
-        control_results.append(result)
+    results = [
+        control.custom_evaluator(data) if control.custom_evaluator is not None else default_evaluator(control, data)
+        for control in controls
+    ]
+    return build_evaluation(framework, data, results, coverage=data.coverage)
 
-    summary = build_summary(control_results)
-    residuals = build_residual_risks(control_results)
-    fingerprint = _inputs_fingerprint(data)
+
+def build_evaluation(
+    framework: ComplianceFramework,
+    data: EvaluationInput,
+    controls: list[ControlResult],
+    *,
+    coverage: EvaluationCoverage,
+    extra_inputs: tuple[str, ...] = (),
+) -> FrameworkEvaluation:
     return FrameworkEvaluation(
         framework_key=framework.key,
         framework_name=framework.name,
         framework_version=framework.version,
         generated_at=datetime.now(timezone.utc),
         scope_description=data.scope_description,
-        controls=control_results,
-        summary=summary,
-        residual_risks=residuals,
-        inputs_fingerprint=fingerprint,
-        coverage=data.coverage,
+        controls=controls,
+        summary=build_summary(controls),
+        residual_risks=build_residual_risks(controls),
+        inputs_fingerprint=_inputs_fingerprint(data, *extra_inputs),
+        coverage=coverage,
     )
 
 
@@ -266,17 +263,15 @@ def _classify(
     if not matching:
         status, status_reason = findings_verdict(ControlStatus.PASSED, coverage)
         return status, [], status_reason
-    active = [f for f in matching if not f.get("waived")]
-    evidence_ids = [extract_finding_id(f) for f in matching if f.get("_id") or f.get("id")]
-    if active:
+    evidence_ids = [extract_finding_id(f) for f in matching]
+    if any(not f.get("waived") for f in matching):
         return ControlStatus.FAILED, evidence_ids, None
     status, status_reason = findings_verdict(ControlStatus.WAIVED, coverage)
     return status, evidence_ids, status_reason
 
 
-def _waiver_reason(f: dict[str, Any]) -> str:
-    """Best-effort waiver-reason accessor ('' when absent/None)."""
-    return str(f.get("waiver_reason") or "")
+def _waiver_reasons(findings: list[dict[str, Any]]) -> list[str]:
+    return [r for f in findings if f.get("waived") and (r := f.get("waiver_reason"))]
 
 
 def build_summary(results: list[ControlResult]) -> dict[str, int]:
@@ -308,13 +303,14 @@ def build_residual_risks(results: list[ControlResult]) -> list[ResidualRisk]:
     ]
 
 
-def _inputs_fingerprint(data: EvaluationInput) -> str:
+def _inputs_fingerprint(data: EvaluationInput, *extra: str) -> str:
     bits = "|".join(
         [
             f"policy={data.policy_version}",
             f"override={data.override_version}",
             f"iana={data.iana_catalog_version}",
             f"scans={','.join(sorted(data.scan_ids))}",
+            *extra,
         ]
     )
     return "sha256:" + hashlib.sha256(bits.encode()).hexdigest()

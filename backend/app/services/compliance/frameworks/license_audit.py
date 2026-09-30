@@ -1,6 +1,5 @@
 """License Audit: evaluates SBOM licenses against the project license policy."""
 
-from datetime import datetime, timezone
 from typing import Any
 
 from app.models.finding import FindingType, Severity
@@ -13,9 +12,8 @@ from app.schemas.compliance import (
 from app.services.compliance.frameworks.base import (
     EvaluationInput,
     _classify,
-    _waiver_reason,
-    build_residual_risks,
-    build_summary,
+    _waiver_reasons,
+    build_evaluation,
 )
 
 # License-policy toggle -> control; when the toggle is False, matching-category findings FAIL.
@@ -54,8 +52,6 @@ class LicenseAuditFramework:
     )
 
     async def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        findings = data.findings or []
-
         controls: list[ControlResult] = []
         for policy_key, cfg in _POLICY_TO_CATEGORY.items():
             if getattr(data.license_policy, policy_key):
@@ -74,7 +70,7 @@ class LicenseAuditFramework:
                     )
                 )
                 continue
-            matching = [f for f in findings if _is_license_violation(f, cfg["categories"])]
+            matching = [f for f in data.findings if _is_license_violation(f, cfg["categories"])]
             status, evidence, status_reason = _classify(matching, data.coverage)
             controls.append(
                 ControlResult(
@@ -85,7 +81,7 @@ class LicenseAuditFramework:
                     severity=cfg["severity"],
                     evidence_finding_ids=evidence,
                     evidence_asset_bom_refs=[],
-                    waiver_reasons=[_waiver_reason(f) for f in matching if f.get("waived")],
+                    waiver_reasons=_waiver_reasons(matching),
                     remediation=(
                         "Replace or remove components under disallowed licenses, "
                         "or explicitly flip the corresponding policy toggle if "
@@ -95,7 +91,7 @@ class LicenseAuditFramework:
                 )
             )
 
-        unknown = [f for f in findings if _is_license_violation(f, ["unknown"])]
+        unknown = [f for f in data.findings if _is_license_violation(f, ["unknown"])]
         status, evidence, status_reason = _classify(unknown, data.coverage)
         controls.append(
             ControlResult(
@@ -106,7 +102,7 @@ class LicenseAuditFramework:
                 severity=Severity.MEDIUM,
                 evidence_finding_ids=evidence,
                 evidence_asset_bom_refs=[],
-                waiver_reasons=[_waiver_reason(f) for f in unknown if f.get("waived")],
+                waiver_reasons=_waiver_reasons(unknown),
                 remediation=(
                     "Inspect each flagged component: add a license override, "
                     "pin to a versioned release with declared metadata, or "
@@ -116,17 +112,12 @@ class LicenseAuditFramework:
             )
         )
 
-        return FrameworkEvaluation(
-            framework_key=self.key,
-            framework_name=self.name,
-            framework_version=self.version,
-            generated_at=datetime.now(timezone.utc),
-            scope_description=data.scope_description,
-            controls=controls,
-            summary=build_summary(controls),
-            residual_risks=build_residual_risks(controls),
-            inputs_fingerprint="license-audit-v1",
+        return build_evaluation(
+            self,
+            data,
+            controls,
             coverage=data.coverage,
+            extra_inputs=(f"license_policy={data.license_policy.model_dump_json()}",),
         )
 
 

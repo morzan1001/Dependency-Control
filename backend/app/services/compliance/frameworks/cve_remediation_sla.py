@@ -4,17 +4,12 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from app.models.finding import FindingType, Severity
-from app.schemas.compliance import (
-    ControlResult,
-    FrameworkEvaluation,
-    ReportFramework,
-)
+from app.schemas.compliance import ControlResult, FrameworkEvaluation, ReportFramework
 from app.services.compliance.frameworks.base import (
     EvaluationInput,
     _classify,
-    _waiver_reason,
-    build_residual_risks,
-    build_summary,
+    _waiver_reasons,
+    build_evaluation,
 )
 
 SLA_DAYS: dict[Severity, int] = {
@@ -36,13 +31,12 @@ class CveRemediationSlaFramework:
     disclaimer: str | None = None
 
     async def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        findings = data.findings or []
         now = datetime.now(timezone.utc)
 
         controls: list[ControlResult] = []
         for severity, sla_days in SLA_DAYS.items():
             title = _control_title(severity, sla_days)
-            overdue = [f for f in findings if _is_overdue(f, severity, sla_days, now)]
+            overdue = [f for f in data.findings if _is_overdue(f, severity, sla_days, now)]
             status, evidence, status_reason = _classify(overdue, data.coverage)
             controls.append(
                 ControlResult(
@@ -56,7 +50,7 @@ class CveRemediationSlaFramework:
                     severity=severity,
                     evidence_finding_ids=evidence,
                     evidence_asset_bom_refs=[],
-                    waiver_reasons=[_waiver_reason(f) for f in overdue if f.get("waived")],
+                    waiver_reasons=_waiver_reasons(overdue),
                     remediation=(
                         "Upgrade affected components to their patched version, "
                         "or submit a waiver with documented compensating controls."
@@ -65,18 +59,7 @@ class CveRemediationSlaFramework:
                 )
             )
 
-        return FrameworkEvaluation(
-            framework_key=self.key,
-            framework_name=self.name,
-            framework_version=self.version,
-            generated_at=now,
-            scope_description=data.scope_description,
-            controls=controls,
-            summary=build_summary(controls),
-            residual_risks=build_residual_risks(controls),
-            inputs_fingerprint="cve-remediation-sla-v1",
-            coverage=data.coverage,
-        )
+        return build_evaluation(self, data, controls, coverage=data.coverage)
 
 
 def _is_overdue(

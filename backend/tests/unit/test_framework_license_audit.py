@@ -100,12 +100,19 @@ async def test_waived_finding_produces_waived_control():
             "details": {"license": "GPL-3.0-only", "category": "strong_copyleft"},
             "waived": True,
             "waiver_reason": "accepted risk",
-        }
+        },
+        {
+            "_id": "f2",
+            "type": "license",
+            "details": {"license": "GPL-2.0-only", "category": "strong_copyleft"},
+            "waived": True,
+            "waiver_reason": None,
+        },
     ]
     result = await fw.evaluate(_eval_input(findings=findings, policy=policy))
     strong_ctrl = next(c for c in result.controls if c.control_id == "LICENSE-AUDIT-STRONG-COPYLEFT")
     assert strong_ctrl.status == "waived"
-    assert "accepted risk" in strong_ctrl.waiver_reasons
+    assert strong_ctrl.waiver_reasons == ["accepted risk"]
 
 
 @pytest.mark.asyncio

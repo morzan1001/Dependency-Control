@@ -1,7 +1,5 @@
 """PQC Migration Plan framework: one ControlResult per plan item."""
 
-from datetime import datetime, timezone
-
 from app.models.finding import Severity
 from app.schemas.compliance import (
     ControlResult,
@@ -12,11 +10,7 @@ from app.schemas.compliance import (
     ReportFramework,
 )
 from app.schemas.pqc_migration import MigrationItem, MigrationItemStatus, MigrationPlanResponse
-from app.services.compliance.frameworks.base import (
-    EvaluationInput,
-    build_residual_risks,
-    build_summary,
-)
+from app.services.compliance.frameworks.base import EvaluationInput, build_evaluation
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 # One control per migratable group, so the plan's own ceiling is this report's control ceiling.
@@ -53,18 +47,12 @@ class PQCMigrationPlanFramework:
             limit=_PLAN_ITEM_LIMIT,
         )
 
-        controls = [_item_to_control(item) for item in plan.items]
-        return FrameworkEvaluation(
-            framework_key=self.key,
-            framework_name=self.name,
-            framework_version=self.version,
-            generated_at=datetime.now(timezone.utc),
-            scope_description=data.scope_description,
-            controls=controls,
-            summary=build_summary(controls),
-            residual_risks=build_residual_risks(controls),
-            inputs_fingerprint=_fingerprint(plan),
+        return build_evaluation(
+            self,
+            data,
+            [_item_to_control(item) for item in plan.items],
             coverage=_coverage(data, plan),
+            extra_inputs=(f"mappings={plan.mappings_version}",),
         )
 
 
@@ -99,7 +87,3 @@ def _item_to_control(item: MigrationItem) -> ControlResult:
         waiver_reasons=[],
         remediation=(f"Replace {item.source_family} with {item.recommended_pqc} per {item.recommended_standard}."),
     )
-
-
-def _fingerprint(plan: MigrationPlanResponse) -> str:
-    return f"pqc-mappings-v{plan.mappings_version}"

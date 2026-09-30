@@ -75,6 +75,7 @@ class TestEvaluationSemantics:
                         waiver_reason="compensating control",
                     ),
                     _vuln(Severity.HIGH, days_ago=61, _id="f-open"),
+                    _vuln(Severity.HIGH, days_ago=62, _id="f-waived-silently", waived=True, waiver_reason=None),
                 ]
             )
         )
