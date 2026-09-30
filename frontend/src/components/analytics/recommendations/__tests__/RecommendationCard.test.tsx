@@ -128,6 +128,32 @@ describe('RecommendationCard CVE rendering', () => {
     expect(screen.getByText('vulns fixed')).toBeInTheDocument()
   })
 
+  it('breaks the vulnerability count down by severity on focus', async () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard recommendation={makeRecommendation({ type: 'update_dependency' })} />
+      </MemoryRouter>,
+    )
+    fireEvent.focus(screen.getByText('vulns fixed').parentElement!)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('High: 1')
+  })
+
+  it('opens no empty breakdown for a count that carries no severities', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard
+          recommendation={makeRecommendation(
+            { type: 'fix_cross_project_vuln', cves: [{ cve: 'CVE-2021-0002', total_affected: 3 }] },
+            { type: 'shared_vulnerability', impact: { total: 3 } },
+          )}
+        />
+      </MemoryRouter>,
+    )
+    fireEvent.focus(screen.getByText('vulns fixed').parentElement!)
+    expect(screen.getByText('3')).toBeInTheDocument()
+    expect(screen.queryByRole('tooltip')).not.toBeInTheDocument()
+  })
+
   it('shows no vulnerability count on a hygiene card, which counts no findings', () => {
     render(
       <MemoryRouter>

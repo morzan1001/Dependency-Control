@@ -336,7 +336,7 @@ export type RecommendationType =
 
 export type RecommendationPriority = 'critical' | 'high' | 'medium' | 'low';
 
-// Hygiene cards count no findings: total 0 and no severity breakdown.
+// Severity counts are optional; hygiene cards count no findings (total 0).
 export interface RecommendationImpact {
   critical?: number;
   high?: number;
@@ -361,7 +361,7 @@ export interface RecommendationAction {
   type: string;
   package?: string;
   current_version?: string;
-  target_version?: string;
+  target_version?: string | null;
   current_image?: string;
   suggestion?: string;
   commands?: string[];

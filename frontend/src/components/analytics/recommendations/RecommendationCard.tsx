@@ -67,6 +67,7 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
   const priorityInfo = priorityConfig[recommendation.priority] || priorityConfig.medium
   const effortInfo = effortConfig[recommendation.effort] || effortConfig.medium
   const TypeIcon = typeInfo.icon
+  const severityCounts = SEVERITY_CHIPS.filter(([key]) => (recommendation.impact[key] ?? 0) > 0)
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
@@ -116,14 +117,15 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                         <span className="text-muted-foreground">vulns fixed</span>
                       </div>
                     </TooltipTrigger>
-                    <TooltipContent>
-                      <div className="space-y-1">
-                        {SEVERITY_CHIPS.map(([key, label]) => {
-                          const count = recommendation.impact[key] ?? 0
-                          return count > 0 && <div key={key}>{label}: {count}</div>
-                        })}
-                      </div>
-                    </TooltipContent>
+                    {severityCounts.length > 0 && (
+                      <TooltipContent>
+                        <div className="space-y-1">
+                          {severityCounts.map(([key, label]) => (
+                            <div key={key}>{label}: {recommendation.impact[key]}</div>
+                          ))}
+                        </div>
+                      </TooltipContent>
+                    )}
                   </Tooltip>
                 </TooltipProvider>
               )}
