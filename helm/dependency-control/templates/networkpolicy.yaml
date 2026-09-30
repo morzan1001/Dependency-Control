@@ -212,6 +212,12 @@ spec:
     - podSelector:
         matchLabels:
           {{- include "dependency-control.selectorLabels" . | nindent 10 }}
+          app.kubernetes.io/component: backend
+    # Allow manually launched migration Jobs (labelled job=migration)
+    - podSelector:
+        matchLabels:
+          {{- include "dependency-control.selectorLabels" . | nindent 10 }}
+          job: migration
     # Allow other Mongo nodes (Replication)
     - podSelector:
         matchLabels:
