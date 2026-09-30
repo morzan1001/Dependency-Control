@@ -23,6 +23,7 @@ _GRIDFS_REFERENCES = (
     ("scans", "sbom_refs.gridfs_id"),
     ("analysis_results", "result_gridfs_id"),
     ("compliance_reports", "artifact_gridfs_id"),
+    ("callgraphs", "graph_gridfs_id"),
 )
 
 

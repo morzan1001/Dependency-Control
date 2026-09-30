@@ -149,7 +149,11 @@ class _FakeGridFSBucket:
 
 @pytest.fixture
 def fake_gridfs(monkeypatch):
-    for module in ("app.services.gridfs_maintenance", "app.repositories.analysis_results"):
+    for module in (
+        "app.services.gridfs_maintenance",
+        "app.repositories.analysis_results",
+        "app.repositories.callgraphs",
+    ):
         monkeypatch.setattr(f"{module}.AsyncIOMotorGridFSBucket", _FakeGridFSBucket)
 
 

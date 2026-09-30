@@ -544,14 +544,14 @@ async def run_housekeeping() -> None:
             logger.exception("Orphan reaper failed: %s", e)
 
         try:
-            await reap_orphan_gridfs_files(db)
-        except Exception as e:
-            logger.exception("GridFS orphan reaper failed: %s", e)
-
-        try:
             await _reap_orphan_callgraphs(db)
         except Exception as e:
             logger.exception("Callgraph orphan reaper failed: %s", e)
+
+        try:
+            await reap_orphan_gridfs_files(db)
+        except Exception as e:
+            logger.exception("GridFS orphan reaper failed: %s", e)
 
     except Exception as e:
         logger.exception("Housekeeping task failed: %s", e)

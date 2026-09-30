@@ -8,16 +8,16 @@ import copy
 import uuid
 from datetime import datetime, timezone
 import threading
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from app.api.v1.endpoints import callgraph as callgraph_endpoint
-from app.core.constants import CALLGRAPH_MAX_ENTRIES
 from app.core.permissions import Permissions
 from app.models.project import Project
+from app.repositories.callgraphs import CallgraphRepository
 from tests.helpers.auth import bearer_headers
 from tests.helpers.permission_presets import PRESET_ADMIN
 from tests.mocks.fake_mongo import FakeDatabase
@@ -32,9 +32,6 @@ _COMMIT = "9f1c0d3a2b5e4f6a7c8d9e0f1a2b3c4d5e6f7a8b"
 # uuid5 over "<project>-<pipeline>-<commit>" is the contract between the upload endpoint
 # and the scan the CI job produced; spelled out here so a change to it fails loudly.
 _SCAN_ID = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{_PROJECT_ID}-{_PIPELINE_ID}-{_COMMIT}"))
-
-# Each oversized payload below walks exactly one entry more than this.
-_SMALL_ENTRY_LIMIT = 3
 
 
 def _envelope(fmt: str, language: str | None, data: dict) -> dict:
@@ -187,6 +184,13 @@ async def _upload(client, payload: dict, *, resolved_project_id: str = _PROJECT_
         )
 
 
+async def _stored(db, **query) -> dict:
+    """The project's stored callgraph with its graph loaded, as every reader sees it."""
+    # A copy, because the fake hands out its live documents and the loader merges into what it gets.
+    doc = dict(await db.callgraphs.find_one({"project_id": _PROJECT_ID, **query}))
+    return await CallgraphRepository(db).load_graph(doc)
+
+
 async def _seed_user(db, username: str, permissions: list[str]) -> dict[str, str]:
     await db.users.insert_one(
         {
@@ -225,8 +229,7 @@ class TestProducerUploads:
             f"No scan of pipeline {_PIPELINE_ID} exists yet; its analysis applies this callgraph"
         ]
 
-        stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID, "language": language})
-        assert stored is not None
+        stored = await _stored(db, language=language)
         assert stored["language"] == language
         assert set(stored["module_usage"]) == module_keys
         assert stored["analyzed_modules"] == analyzed
@@ -240,7 +243,7 @@ class TestProducerUploads:
         """The AST producer is the only one shipping symbols, which is what buys symbol-level verdicts."""
         await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
 
-        stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        stored = await _stored(db)
         assert stored["module_usage"]["urllib3.util.retry"]["used_symbols"] == ["Retry"]
         assert stored["module_usage"]["urllib3.util.retry"]["import_locations"] == ["app/client.py"]
 
@@ -248,7 +251,7 @@ class TestProducerUploads:
     async def test_java_publishes_no_coverage_universe_by_default(self, client, db):
         await _upload(client, _envelope("generic", "java", _JAVA_DATA))
 
-        stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        stored = await _stored(db)
         assert stored["analyzed_modules"] == []
 
     @pytest.mark.asyncio
@@ -344,7 +347,7 @@ class TestPayloadValidation:
     async def test_a_golang_upload_keeps_whole_module_paths(self, client, db):
         await _upload(client, _envelope("generic", "golang", _GO_DATA))
 
-        stored = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        stored = await _stored(db)
         assert set(stored["module_usage"]) == {"github.com/gin-gonic/gin", "github.com/sirupsen/logrus"}
 
     @pytest.mark.asyncio
@@ -353,52 +356,6 @@ class TestPayloadValidation:
 
         assert response.status_code == 400
         assert "rust" in response.json()["detail"]
-        assert await db.callgraphs.count_documents({}) == 0
-
-    @pytest.mark.asyncio
-    async def test_payload_over_the_entry_limit_is_rejected(self, client, db):
-        oversized = {
-            "imports": [
-                {"module": f"example.com/m{i}", "file": f"pkg/p{i}", "line": 0, "symbols": []}
-                for i in range(CALLGRAPH_MAX_ENTRIES + 1)
-            ],
-            "analyzed_modules": [],
-        }
-
-        response = await _upload(client, _envelope("generic", "go", oversized))
-
-        assert response.status_code == 413
-        detail = response.json()["detail"]
-        assert str(CALLGRAPH_MAX_ENTRIES) in detail
-        assert str(CALLGRAPH_MAX_ENTRIES + 1) in detail
-        assert await db.callgraphs.count_documents({}) == 0
-
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize(
-        "oversized",
-        [
-            pytest.param(
-                {"imports": [{"module": "lodash", "file": "src/a.js", "symbols": ["map", "get", "set"]}]},
-                id="symbols",
-            ),
-            pytest.param({"src/a.js": ["lodash", "express"], "src/b.js": ["react", "vue"]}, id="madge-dependencies"),
-            pytest.param(
-                {"imports": [], "analyzed_modules": ["lodash", "express", "react", "vue"]}, id="coverage-universe"
-            ),
-        ],
-    )
-    async def test_everything_the_parser_walks_counts_and_is_refused_before_parsing(
-        self, client, db, monkeypatch, oversized
-    ):
-        monkeypatch.setattr("app.api.v1.endpoints.callgraph.CALLGRAPH_MAX_ENTRIES", _SMALL_ENTRY_LIMIT)
-        parse = MagicMock()
-        monkeypatch.setattr("app.api.v1.endpoints.callgraph._parse_callgraph", parse)
-
-        response = await _upload(client, _envelope("auto", "javascript", oversized))
-
-        assert response.status_code == 413
-        assert f"exceeds the limit of {_SMALL_ENTRY_LIMIT}" in response.json()["detail"]
-        assert parse.call_count == 0
         assert await db.callgraphs.count_documents({}) == 0
 
     @pytest.mark.asyncio
@@ -450,7 +407,7 @@ class TestReupload:
         await _upload(client, _envelope("generic", "python", grown))
 
         assert await db.callgraphs.count_documents({}) == 1
-        second = await db.callgraphs.find_one({"project_id": _PROJECT_ID})
+        second = await _stored(db)
         assert second["created_at"] == first["created_at"]
         assert second["_id"] == first["_id"]
         assert "boto3" in second["module_usage"]
@@ -501,6 +458,18 @@ class TestModuleUsageEndpoint:
 
 
 class TestCallgraphEndpoint:
+    @pytest.mark.asyncio
+    async def test_an_uploaded_callgraph_is_served_with_its_graph(self, client, db):
+        await _upload(client, _envelope("generic", "python", _PYTHON_DATA))
+        headers = await _seed_user(db, "admin-1", PRESET_ADMIN)
+
+        response = await client.get(f"/api/v1/projects/{_PROJECT_ID}/callgraph", headers=headers)
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert set(body["module_usage"]) == {"requests", "urllib3.util.retry", "app.config"}
+        assert body["analyzed_modules"] == ["pyyaml", "requests", "urllib3"]
+
     @pytest.mark.asyncio
     async def test_a_callgraph_stored_with_its_edge_lists_is_served_without_them(self, client, db):
         await db.callgraphs.insert_one(

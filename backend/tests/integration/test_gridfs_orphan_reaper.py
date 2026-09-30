@@ -4,6 +4,7 @@ import json
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from bson import ObjectId
@@ -11,6 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.core.constants import ARCHIVE_BATCH_SIZE
 from app.core.init_db import create_indexes
+from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.services.gridfs_maintenance import _GRIDFS_REFERENCES, reap_orphan_gridfs_files, upload_gridfs_json
 from app.services.scan_cascade import delete_scans_and_related_data
@@ -20,6 +22,8 @@ _FIXTURES = Path(__file__).parents[1] / "fixtures"
 _SBOM = json.loads((_FIXTURES / "sbom/npmpeer.syft.cdx.json").read_text())
 _KICS_REPORT = json.loads((_FIXTURES / "iac/kics_2.1.20_results.json").read_text())
 _RUN = {"pipeline_id": 717171, "commit_hash": "e" * 40, "branch": "main"}
+# madge --json --include-npm with the job's package.json merged in
+_MADGE = {"index.js": ["node_modules/lodash/lodash.js", "src/util.js"], "__analyzed_modules__": ["lodash"]}
 # The driver writes an unfinished upload's chunks only once it has buffered 48 MB of them.
 _PAST_THE_UPLOAD_BUFFER = b"x" * (50 * 1024 * 1024)
 
@@ -46,10 +50,24 @@ async def _generated_artifact(client, db, api_key_headers, monkeypatch):
     return report.artifact_gridfs_id, lambda: db.compliance_reports.delete_one({"_id": report.id})
 
 
+async def _uploaded_callgraph(client, db, api_key_headers, monkeypatch):
+    project = Project(id="test-project-id", name="test-project")
+    monkeypatch.setattr("app.api.deps._authenticate_ci", AsyncMock(return_value=project))
+    resp = await client.post(
+        f"/api/v1/projects/{project.id}/callgraph",
+        json={**_RUN, "format": "madge", "data": _MADGE},
+        headers={"Job-Token": "gitlab.oidc.token"},
+    )
+    assert resp.status_code == 200, resp.text
+    row = await db.callgraphs.find_one({"project_id": project.id})
+    return row["graph_gridfs_id"], lambda: db.callgraphs.delete_one({"_id": row["_id"]})
+
+
 _WRITERS: dict[str, _Writer] = {
     "scans": _ingested_sbom,
     "analysis_results": _saved_result,
     "compliance_reports": _generated_artifact,
+    "callgraphs": _uploaded_callgraph,
 }
 
 

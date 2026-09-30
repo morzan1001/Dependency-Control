@@ -461,6 +461,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # Callgraphs
     await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
     await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
+    await database["callgraphs"].create_index("graph_gridfs_id", sparse=True)
     # One callgraph per language per scan. The type filter keeps rows with a null scan_id
     # (pipeline-only uploads) out of the uniqueness scope. Guarded like the teams index so a
     # pre-existing duplicate cannot crash startup.

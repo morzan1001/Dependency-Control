@@ -939,11 +939,6 @@ REACHABILITY_CONFIDENCE_SYMBOLS_NOT_USED = 0.35
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
-# Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
-# calls, the symbols each import names, madge dependencies and the analyzed-modules list.
-# It bounds parse cost only; whether the parsed graph fits one document is checked on write.
-CALLGRAPH_MAX_ENTRIES = 200_000
-
 GITLAB_ACCESS_GUEST = 10
 GITLAB_ACCESS_REPORTER = 20
 GITLAB_ACCESS_DEVELOPER = 30
@@ -1143,7 +1138,7 @@ ADHOC_MAX_SBOM_EVIDENCE_ENTRIES: int = 20_000
 # 10 000 components parse in 0.1 s.
 ADHOC_MAX_SBOM_GRAPH_ENTRIES: int = 250_000
 ADHOC_MAX_SCANNER_FINDINGS: int = 5_000
-# Counted as for CALLGRAPH_MAX_ENTRIES. Each vulnerability the usage index misses scans every
+# Counted by callgraph_entry_count. Each vulnerability the usage index misses scans every
 # import pair: 5 000 such findings over 50 000 pairs take about 20 s.
 ADHOC_MAX_CALLGRAPH_ENTRIES: int = 50_000
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10

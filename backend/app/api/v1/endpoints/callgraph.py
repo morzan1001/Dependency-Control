@@ -8,17 +8,15 @@ from fastapi import HTTPException
 
 from app.api.deps import CurrentUserDep, DatabaseDep, ProjectWriteDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.body_limit import refuse_oversized_document
 from app.api.v1.helpers.callgraph import (
     ParsedCallgraph,
-    callgraph_entry_count,
     detect_format,
     parse_generic_format,
     parse_madge_format,
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
-from app.core.constants import CALLGRAPH_MAX_ENTRIES, PROJECT_ROLE_EDITOR, SCANS_TIP_SORT
+from app.core.constants import PROJECT_ROLE_EDITOR, SCANS_TIP_SORT
 from app.models.callgraph import Callgraph
 from app.repositories.callgraphs import CallgraphRepository
 from app.repositories.scans import ScanRepository
@@ -31,6 +29,7 @@ from app.schemas.callgraph import (
     ModuleUsageResponse,
 )
 from app.services.component_identity import canonical_callgraph_language
+from app.services.gridfs_maintenance import upload_gridfs_json
 from app.services.reachability_enrichment import run_pending_reachability_for_scan
 from app.services.scan_manager import deterministic_scan_id
 
@@ -44,6 +43,9 @@ _FORMAT_PARSERS = {
     "madge": parse_madge_format,
     "generic": parse_generic_format,
 }
+
+_GRAPH_FIELDS = ("module_usage", "analyzed_modules")
+_RESPONSE_PROJECTION = dict.fromkeys((*CallgraphResponse.model_fields, "graph_gridfs_id"), 1)
 
 
 def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
@@ -121,14 +123,6 @@ async def upload_callgraph(
 ) -> CallgraphUploadResponse:
     """Upload call graph data (madge or generic format) for reachability analysis."""
     callgraph_repo = CallgraphRepository(db)
-
-    entry_count = callgraph_entry_count(request.data)
-    if entry_count > CALLGRAPH_MAX_ENTRIES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"Callgraph too large: {entry_count} entries exceeds the limit of {CALLGRAPH_MAX_ENTRIES}",
-        )
-
     format_type = _resolve_format(request.format, request.data)
     language = _resolve_language(request.language, format_type)
 
@@ -171,12 +165,17 @@ async def upload_callgraph(
     callgraph_data = callgraph.model_dump(by_alias=True)
     uploaded_at = callgraph_data.pop("created_at")
     insert_only = {"_id": callgraph_data.pop("_id"), "created_at": uploaded_at}
-    with refuse_oversized_document("The callgraph"):
-        await callgraph_repo.collection.update_one(
-            upsert_filter,
-            {"$set": {**callgraph_data, "updated_at": uploaded_at}, "$setOnInsert": insert_only},
-            upsert=True,
-        )
+    graph = {field: callgraph_data.pop(field) for field in _GRAPH_FIELDS}
+    graph_gridfs_id = await upload_gridfs_json(db, f"callgraph-{project_id}-{language}.json", graph)
+    await callgraph_repo.collection.update_one(
+        upsert_filter,
+        {
+            "$set": {**callgraph_data, "graph_gridfs_id": graph_gridfs_id, "updated_at": uploaded_at},
+            "$unset": dict.fromkeys(_GRAPH_FIELDS, ""),
+            "$setOnInsert": insert_only,
+        },
+        upsert=True,
+    )
 
     logger.info(
         f"Uploaded callgraph for project {project_id} ({match_context}): "
@@ -227,12 +226,11 @@ async def get_callgraph(
     query: dict[str, Any] = {"project_id": project_id}
     if language:
         query["language"] = _canonical_language(language)
-    callgraph = await callgraph_repo.find_one(query)
+    callgraph = await callgraph_repo.find_one_raw(query, _RESPONSE_PROJECTION)
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found for this project")
 
-    data = callgraph.model_dump(by_alias=False, exclude={"id"})
-    return CallgraphResponse(**data)
+    return CallgraphResponse(**await callgraph_repo.load_graph(callgraph))
 
 
 @router.get("/{project_id}/callgraph/modules", responses=RESP_AUTH_404)
@@ -249,9 +247,10 @@ async def get_module_usage(
     query: dict[str, Any] = {"project_id": project_id}
     if language:
         query["language"] = _canonical_language(language)
-    callgraph = await callgraph_repo.find_one_raw(query, {"module_usage": 1, "language": 1})
+    callgraph = await callgraph_repo.find_one_raw(query, {"module_usage": 1, "language": 1, "graph_gridfs_id": 1})
     if not callgraph:
         raise HTTPException(status_code=404, detail="No callgraph found")
+    await callgraph_repo.load_graph(callgraph)
 
     sorted_modules = sorted(
         (ModuleUsageItem(name=key, **usage) for key, usage in callgraph["module_usage"].items()),
