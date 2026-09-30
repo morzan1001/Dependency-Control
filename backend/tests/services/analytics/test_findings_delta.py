@@ -2,9 +2,10 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.services.analytics._delta_pagination import page_of
 from app.services.analytics.findings_delta import (
     _FETCH_PROJECTION,
-    compute_findings_delta,
+    compare_findings,
     finding_identity_key,
 )
 
@@ -269,17 +270,7 @@ async def _seed_added_removed(db):
 async def test_findings_delta_added_and_removed(db):
     await _seed_added_removed(db)
 
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
 
     assert resp.totals.added == 1
     assert resp.totals.removed == 1
@@ -301,17 +292,7 @@ async def test_an_advisory_is_named_by_its_cve_as_on_the_scan_page(db):
     later = _agg_vuln_doc("fb2", "sb", "minimist", "1.2.0", ["GHSA-vh95-rmgr-6w4m", "CVE-2020-7598"])
     await db["findings"].insert_many([aliased, later])
 
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
 
     assert sorted(i.cve_id for i in resp.items) == ["CVE-2020-7598", "CVE-2021-23337"]
 
@@ -320,16 +301,11 @@ async def test_an_advisory_is_named_by_its_cve_as_on_the_scan_page(db):
 async def test_breakdowns_decompose_full_totals_under_change_filter(db):
     """by_severity/by_type decompose the full added+removed totals even when the change filter scopes the paginated item list."""
     await _seed_added_removed(db)
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change="added",
-        severity=None,
-        finding_type=None,
+    resp = page_of(
+        await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None),
+        "added",
+        1,
+        50,
     )
     # totals are independent of the change filter: 1 added, 1 removed
     assert resp.totals.added == 1
@@ -352,16 +328,8 @@ async def test_findings_delta_severity_filter(db):
             _agg_vuln_doc("x2", "sb", "c", "2", ["C2"], severity="LOW"),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=["critical"],
-        finding_type=None,
+    resp = await compare_findings(
+        db, project_id="p1", from_scan="sa", to_scan="sb", severity=["critical"], finding_type=None
     )
     assert resp.totals.added == 1
     assert resp.items[0].severity == "CRITICAL"
@@ -377,16 +345,8 @@ async def test_a_rescored_finding_stays_unchanged_under_a_severity_filter(db, se
             _agg_vuln_doc("r2", "sb", "x", "1", ["CVE-1"], severity="CRITICAL"),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=severity,
-        finding_type=None,
+    resp = await compare_findings(
+        db, project_id="p1", from_scan="sa", to_scan="sb", severity=severity, finding_type=None
     )
     assert (resp.totals.added, resp.totals.removed, resp.totals.unchanged) == (0, 0, unchanged)
     assert resp.items == []
@@ -396,16 +356,11 @@ async def test_a_rescored_finding_stays_unchanged_under_a_severity_filter(db, se
 async def test_findings_delta_pagination(db):
     docs = [_agg_vuln_doc(f"y{i}", "sb", "c", str(i), [f"CVE-{i}"], severity="LOW") for i in range(120)]
     await db["findings"].insert_many(docs)
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=2,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
+    resp = page_of(
+        await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None),
+        None,
+        2,
+        50,
     )
     assert resp.totals.added == 120
     assert resp.page == 2
@@ -423,17 +378,7 @@ async def test_aggregated_vuln_cve_swap_is_one_changed_record(db):
             _agg_vuln_doc("b", "sb", "lodash", "4.17.20", ["CVE-B"]),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
     assert (resp.totals.added, resp.totals.removed, resp.totals.changed, resp.totals.unchanged) == (0, 0, 1, 0)
     [item] = resp.items
     assert (item.change, item.cve_id, item.added_cves, item.dropped_cves) == ("changed", "CVE-B", ["CVE-B"], ["CVE-A"])
@@ -447,17 +392,7 @@ async def test_a_version_bump_that_fixes_nothing_names_no_cve(db):
             _agg_vuln_doc("b", "sb", "lodash", "4.17.21", ["CVE-A"]),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
     assert (resp.totals.added, resp.totals.removed, resp.totals.changed, resp.totals.unchanged) == (0, 0, 1, 0)
     [item] = resp.items
     assert (item.from_version, item.to_version, item.cve_id, item.added_cves, item.dropped_cves) == (
@@ -477,17 +412,7 @@ async def test_an_upgrade_that_fixes_one_cve_is_a_change_not_a_new_critical(db):
             _agg_vuln_doc("b", "sb", "lodash", "4.17.21", ["CVE-2021-23337"]),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
     assert (resp.totals.added, resp.totals.removed, resp.totals.changed) == (0, 0, 1)
     assert resp.totals.by_severity == {}
     [item] = resp.items
@@ -501,17 +426,7 @@ async def test_a_changed_record_reports_the_earlier_first_detection(db):
     after = _agg_vuln_doc("b", "sb", "lodash", "4.17.21", ["CVE-A"])
     await db["findings"].insert_many([before, after])
 
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
 
     assert resp.items[0].first_seen == first
 
@@ -525,17 +440,7 @@ async def test_two_versions_leaving_one_behind_are_not_paired_into_a_change(db):
             _agg_vuln_doc("b", "sb", "lodash", "4.17.21", ["CVE-A"]),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
     assert (resp.totals.added, resp.totals.removed, resp.totals.changed) == (1, 2, 0)
 
 
@@ -548,16 +453,11 @@ async def test_the_change_filter_selects_changed_records(db):
             _agg_vuln_doc("c", "sb", "minimist", "1.2.0", ["CVE-B"]),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change="changed",
-        severity=None,
-        finding_type=None,
+    resp = page_of(
+        await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None),
+        "changed",
+        1,
+        50,
     )
     assert [i.change for i in resp.items] == ["changed"]
     assert (resp.totals.added, resp.totals.changed) == (1, 1)
@@ -582,17 +482,7 @@ async def _license_delta(db, from_versions, to_versions):
     await db["findings"].insert_many(
         [_license_doc(f"a{v}", "sa", v) for v in from_versions] + [_license_doc(f"b{v}", "sb", v) for v in to_versions]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
     return resp.totals.added, resp.totals.removed, resp.totals.unchanged
 
 
@@ -619,17 +509,7 @@ async def test_aggregated_vuln_unchanged_when_cve_set_identical(db):
             _agg_vuln_doc("b", "sb", "lodash", "4.17.20", ["CVE-B", "CVE-A"]),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
     assert resp.totals.added == 0
     assert resp.totals.removed == 0
     assert resp.totals.unchanged == 1
@@ -666,17 +546,7 @@ async def test_sast_rule_swap_on_same_line_is_added_and_removed(db):
             _sast_doc("sb1", "sb", ["rule-b"]),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
     assert resp.totals.added == 1
     assert resp.totals.removed == 1
     assert resp.totals.unchanged == 0
@@ -711,17 +581,7 @@ async def test_malware_similarity_text_change_stays_unchanged(db):
             },
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
     assert resp.totals.added == 0
     assert resp.totals.removed == 0
     assert resp.totals.unchanged == 1
@@ -736,17 +596,7 @@ async def test_secret_identity_stable_across_scans_by_finding_id(db):
             _secret_doc("s_b", "sb", description="Secret detected: AWS"),
         ]
     )
-    resp = await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    resp = await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
     assert resp.totals.added == 0
     assert resp.totals.removed == 0
     assert resp.totals.unchanged == 1
@@ -765,17 +615,7 @@ async def test_fetch_uses_projection(db, monkeypatch):
 
     monkeypatch.setattr(coll, "find", spy_find)
 
-    await compute_findings_delta(
-        db,
-        project_id="p1",
-        from_scan="sa",
-        to_scan="sb",
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
-    )
+    await compare_findings(db, project_id="p1", from_scan="sa", to_scan="sb", severity=None, finding_type=None)
 
     proj = captured["projection"]
     assert proj is _FETCH_PROJECTION

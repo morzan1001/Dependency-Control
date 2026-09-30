@@ -10,16 +10,13 @@ from datetime import datetime, timezone
 import pytest
 
 from app.models.finding import FindingType, Severity
-from app.services.analytics.findings_delta import compute_findings_delta
+from app.services.analytics.findings_delta import compare_findings
 
 _NOW = datetime(2026, 9, 1, tzinfo=timezone.utc)
 
 _PROJECT = "p1"
 _FROM_SCAN = "from"
 _TO_SCAN = "to"
-
-_PAGE = 1
-_PAGE_SIZE = 50
 
 _WAIVED_FINDING = "f-waived"
 _LIVE_FINDING = "f-live"
@@ -83,16 +80,8 @@ async def _seed_side(db, scan_id: str, side: str) -> None:
 
 
 async def _delta(db, *, severity: list[str] | None = None, finding_type: list[str] | None = None):
-    return await compute_findings_delta(
-        db,
-        project_id=_PROJECT,
-        from_scan=_FROM_SCAN,
-        to_scan=_TO_SCAN,
-        page=_PAGE,
-        page_size=_PAGE_SIZE,
-        change=None,
-        severity=severity,
-        finding_type=finding_type,
+    return await compare_findings(
+        db, project_id=_PROJECT, from_scan=_FROM_SCAN, to_scan=_TO_SCAN, severity=severity, finding_type=finding_type
     )
 
 

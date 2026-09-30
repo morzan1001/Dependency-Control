@@ -28,7 +28,6 @@ from app.services.analytics._delta_pagination import (
     both_sides,
     by_side,
     delta_truncation,
-    page_of,
     pair_versions,
 )
 from app.services.recommendation.common import live_cves
@@ -360,22 +359,3 @@ async def compare_findings(
             to_total=to_total,
         ),
     )
-
-
-async def compute_findings_delta(
-    db: AsyncIOMotorDatabase,
-    *,
-    project_id: str,
-    from_scan: str,
-    to_scan: str,
-    page: int,
-    page_size: int,
-    change: str | None,
-    severity: list[str] | None,
-    finding_type: list[str] | None,
-) -> ScanDeltaResponse:
-    """One page of the delta between two scans' findings."""
-    comparison = await compare_findings(
-        db, project_id=project_id, from_scan=from_scan, to_scan=to_scan, severity=severity, finding_type=finding_type
-    )
-    return page_of(comparison, change, page, page_size)

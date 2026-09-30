@@ -20,7 +20,7 @@ from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _persist_findings_and_waivers, _prepare_finding_records
 from app.services.analytics.findings_delta import (
     FINDING_IDENTITY_PROJECTION,
-    compute_findings_delta,
+    compare_findings,
     finding_identity_key,
 )
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
@@ -84,16 +84,8 @@ async def _persist(db, scan_id: str, findings: list[Finding], created_at: dateti
 
 
 async def _delta(db, from_scan: str = "scan-a", to_scan: str = "scan-b"):
-    return await compute_findings_delta(
-        db,
-        project_id=_PROJECT,
-        from_scan=from_scan,
-        to_scan=to_scan,
-        page=1,
-        page_size=50,
-        change=None,
-        severity=None,
-        finding_type=None,
+    return await compare_findings(
+        db, project_id=_PROJECT, from_scan=from_scan, to_scan=to_scan, severity=None, finding_type=None
     )
 
 

@@ -11,16 +11,13 @@ import pytest
 from app.services.analytics import components_delta as components_delta_module
 from app.services.analytics import findings_delta as findings_delta_module
 from app.services.analytics.components_delta import compare_components
-from app.services.analytics.findings_delta import compute_findings_delta
+from app.services.analytics.findings_delta import compare_findings
 
 _PROJECT = "p1"
 _FROM_SCAN = "scan-from"
 _TO_SCAN = "scan-to"
 _CAP = 4
 _POPULATION = 6
-_PAGE = 1
-_PAGE_SIZE = 50
-_NO_CHANGE_FILTER = None
 
 
 def _vuln(scan_id: str, index: int) -> dict:
@@ -63,16 +60,8 @@ def _seed_diverging_natural_order(collection, builder, count: int) -> None:
 
 
 async def _findings_delta(db):
-    return await compute_findings_delta(
-        db,
-        project_id=_PROJECT,
-        from_scan=_FROM_SCAN,
-        to_scan=_TO_SCAN,
-        page=_PAGE,
-        page_size=_PAGE_SIZE,
-        change=_NO_CHANGE_FILTER,
-        severity=None,
-        finding_type=None,
+    return await compare_findings(
+        db, project_id=_PROJECT, from_scan=_FROM_SCAN, to_scan=_TO_SCAN, severity=None, finding_type=None
     )
 
 

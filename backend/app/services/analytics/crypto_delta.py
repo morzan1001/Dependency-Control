@@ -13,7 +13,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import both_sides, by_side, delta_truncation, page_of
+from app.services.analytics._delta_pagination import both_sides, by_side, delta_truncation
 
 # Name-ascending like the asset list, so a capped side is cut at the same alphabetical point on both sides.
 _SIDE_SORT: list[tuple[str, int]] = [("name", 1), ("bom_ref", 1)]
@@ -82,17 +82,3 @@ async def compare_crypto(
             to_total=to_total,
         ),
     )
-
-
-async def compute_crypto_delta_envelope(
-    db: AsyncIOMotorDatabase,
-    *,
-    project_id: str,
-    from_scan: str,
-    to_scan: str,
-    page: int,
-    page_size: int,
-    change: str | None,
-) -> ScanDeltaResponse:
-    comparison = await compare_crypto(db, project_id=project_id, from_scan=from_scan, to_scan=to_scan)
-    return page_of(comparison, change, page, page_size)
