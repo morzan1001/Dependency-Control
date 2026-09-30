@@ -1,6 +1,4 @@
-import asyncio
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Iterable
 from typing import Any
 
 
@@ -17,16 +15,3 @@ class Analyzer(ABC):
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Analyze an SBOM for security issues; on error returns {"error": ...}."""
-
-
-async def gather_bounded[T, R](
-    items: Iterable[T], worker: Callable[[T], Awaitable[R]], limit: int
-) -> list[R | BaseException]:
-    """Run ``worker`` over ``items`` with at most ``limit`` in flight; a failure stays in its item's slot."""
-    semaphore = asyncio.Semaphore(limit)
-
-    async def bounded(item: T) -> R:
-        async with semaphore:
-            return await worker(item)
-
-    return await asyncio.gather(*(bounded(item) for item in items), return_exceptions=True)

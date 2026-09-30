@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from app.core.constants import ANALYZER_BATCH_SIZES
-from app.services.analyzers.base import gather_bounded
+from app.core.http_utils import gather_bounded
 from app.services.analyzers.maintainer_risk import MaintainerRiskAnalyzer
 from app.services.analyzers.malware import OpenSourceMalwareAnalyzer
 

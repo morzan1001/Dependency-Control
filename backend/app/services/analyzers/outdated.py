@@ -6,11 +6,11 @@ from packaging.version import InvalidVersion, Version
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, DEPS_DEV_API_URL
-from app.core.http_utils import InstrumentedAsyncClient
+from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
 from app.models.finding import Severity
 from app.schemas.sbom import has_known_version
 
-from .base import Analyzer, gather_bounded
+from .base import Analyzer
 from .deps_dev import fetch_deps_dev_json
 from app.core.purl import parse_purl
 

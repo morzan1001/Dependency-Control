@@ -2,7 +2,7 @@
 
 import asyncio
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import asynccontextmanager
 from types import TracebackType
 from typing import Any
@@ -148,3 +148,16 @@ class InstrumentedAsyncClient:
 
     async def delete(self, url: str, **kwargs: Any) -> httpx.Response:
         return await self.request("DELETE", url, **kwargs)
+
+
+async def gather_bounded[T, R](
+    items: Iterable[T], worker: Callable[[T], Awaitable[R]], limit: int
+) -> list[R | BaseException]:
+    """Run ``worker`` over ``items`` with at most ``limit`` in flight; a failure stays in its item's slot."""
+    semaphore = asyncio.Semaphore(limit)
+
+    async def bounded(item: T) -> R:
+        async with semaphore:
+            return await worker(item)
+
+    return await asyncio.gather(*(bounded(item) for item in items), return_exceptions=True)

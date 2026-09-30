@@ -8,12 +8,12 @@ import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, NPM_REGISTRY_URL, PYPI_API_URL
-from app.core.http_utils import InstrumentedAsyncClient
+from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
 from app.core.purl import parse_purl
 from app.models.finding import Severity
 from app.schemas.sbom import has_known_version
 
-from .base import Analyzer, gather_bounded
+from .base import Analyzer
 
 logger = logging.getLogger(__name__)
 

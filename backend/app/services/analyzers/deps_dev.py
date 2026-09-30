@@ -10,10 +10,10 @@ from app.core.constants import (
     DEPS_DEV_API_URL,
     SCORECARD_FLAG_THRESHOLD,
 )
-from app.core.http_utils import InstrumentedAsyncClient
+from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
 from app.schemas.sbom import has_known_version
 
-from .base import Analyzer, gather_bounded
+from .base import Analyzer
 from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)

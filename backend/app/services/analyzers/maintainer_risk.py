@@ -18,11 +18,11 @@ from app.core.constants import (
     STALE_PACKAGE_THRESHOLD_DAYS,
     STALE_PACKAGE_WARNING_DAYS,
 )
-from app.core.http_utils import InstrumentedAsyncClient
+from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
 from app.models.finding import Severity
 from app.services.github import github_api_headers
 
-from .base import Analyzer, gather_bounded
+from .base import Analyzer
 from .outdated import fetch_package_info
 from app.core.purl import parse_purl
 
