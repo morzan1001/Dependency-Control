@@ -10,6 +10,7 @@ import pytest
 
 from app.core.constants import EOL_API_URL
 from app.models.finding import Severity
+from app.services.aggregation import ResultAggregator
 from app.services.analyzers import end_of_life
 from app.services.analyzers.end_of_life import (
     EndOfLifeAnalyzer,
@@ -462,6 +463,55 @@ class TestRecommendation:
 
         assert cache.entries["eol:nodejs"] == _NODEJS
         assert all("recommended_version" not in cycle for cycle in cache.entries["eol:nodejs"])
+
+
+class TestFindings:
+    """What the stored finding says, from the analyzer's own output."""
+
+    async def _finding(self, component: dict) -> Any:
+        aggregator = ResultAggregator()
+        aggregator.aggregate("end_of_life", await analyze_cyclonedx(EndOfLifeAnalyzer(), [component]))
+        [finding] = aggregator.get_findings()
+        return finding
+
+    @pytest.mark.asyncio
+    async def test_a_cycle_without_an_eol_date_reads_as_end_of_life(self, serve):
+        serve({"python": _PYTHON})
+
+        finding = await self._finding(_component("python", "2.7.18", "pkg:generic/python@2.7.18"))
+
+        assert finding.description == "End of Life: Version cycle 2.7 reached EOL. Upgrade to 3.13.0 (cycle 3.13)"
+        assert finding.details["eol_date"] is True
+
+    @pytest.mark.asyncio
+    async def test_a_dated_cycle_names_its_eol_date(self, serve):
+        serve({"nodejs": _NODEJS})
+
+        finding = await self._finding(_component("node", "16.20.2", "pkg:generic/node@16.20.2"))
+
+        assert finding.description == (
+            f"End of Life: Version cycle 16 reached EOL on {_NODEJS[1]['eol']}. Upgrade to 22.9.0 (cycle 22)"
+        )
+        assert finding.details["fixed_version"] == "22.9.0"
+
+    @pytest.mark.asyncio
+    async def test_without_a_supported_cycle_there_is_no_fixed_version(self, serve):
+        serve({"angularjs": _ANGULARJS})
+
+        finding = await self._finding(_component("angular", "1.8.3", "pkg:npm/angular@1.8.3"))
+
+        assert "fixed_version" not in finding.details
+        assert finding.description.endswith("Latest: 1.8.3")
+
+    @pytest.mark.asyncio
+    async def test_a_distro_rebuild_points_at_the_distribution(self, serve):
+        serve({"nginx": _NGINX})
+        purl = "pkg:deb/debian/nginx@1.22.1-9%2Bdeb12u1?distro=debian-12"
+
+        finding = await self._finding(_component("nginx", "1.22.1-9+deb12u1", purl))
+
+        assert "distribution" in finding.description
+        assert "fixed_version" not in finding.details
 
 
 def test_the_analyzer_output_carries_no_unread_message():
