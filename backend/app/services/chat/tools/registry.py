@@ -1560,17 +1560,20 @@ class ChatToolRegistry:
         )
 
     async def _tool_list_policy_audit_entries(self, ctx: _ToolContext) -> dict[str, Any]:
-        project_id = ctx.args.get("project_id")
         # System-scope audit is admin-only (system:manage).
         if ctx.args.get("policy_scope") == "system":
             if not has_permission(ctx.user.permissions, Permissions.SYSTEM_MANAGE):
                 return {"error": _ERR_ACCESS_DENIED}
-        elif project_id:
+            project_id = None
+        elif ctx.args.get("project_id"):
             project_id = (await self._require_project(ctx))["_id"]
+        else:
+            raise ToolArgumentError("project_id is required for policy_scope=project")
         return await list_policy_audit_entries(
             ctx.db,
             policy_scope=ctx.args["policy_scope"],
             project_id=project_id,
+            policy_type=ctx.args["policy_type"],
             limit=ctx.args["limit"],
         )
 

@@ -12,6 +12,7 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions
 from app.models.finding import FindingType, Severity
+from app.models.policy_audit_entry import PolicyType
 from app.schemas.analytics import GroupBy, Metric
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.compliance import ReportFramework
@@ -29,6 +30,7 @@ _DESC_ANSWER_NAMES_BUILD = "The result's 'scan' object names the build described
 _SEVERITIES = [s.value for s in Severity]
 _FINDING_TYPES = [t.value for t in FindingType]
 _SEVERITY_FILTER = {"type": "string", "enum": _SEVERITIES, "description": "Filter by severity."}
+_FRAMEWORK = {"type": "string", "enum": [f.value for f in ReportFramework]}
 _TYPE_FILTER = {
     "type": "string",
     "enum": _FINDING_TYPES,
@@ -999,7 +1001,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string"},
-                    "framework": {"type": "string", "enum": [f.value for f in ReportFramework]},
+                    "framework": _FRAMEWORK,
                     "limit": _bounded(10, MAX_COMPLIANCE_REPORT_PAGE, "Max reports"),
                 },
             },
@@ -1009,11 +1011,15 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_policy_audit_entries",
-            "description": "List policy audit timeline entries.",
+            "description": (
+                "List the change history of the crypto policy or the license policy. License policy history "
+                "exists only at project scope; policy_scope=project requires project_id."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "policy_scope": {"type": "string", "enum": ["system", "project"]},
+                    "policy_type": {"type": "string", "enum": list(get_args(PolicyType)), "default": "crypto"},
                     "project_id": {"type": "string"},
                     "limit": _bounded(20, MAX_POLICY_AUDIT_PAGE, "Max entries"),
                 },
@@ -1025,23 +1031,16 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_framework_evaluation_summary",
-            "description": "Evaluate a compliance framework and return summary counts.",
+            "description": (
+                "Evaluate a compliance framework (crypto standards, the PQC migration plan, the license audit "
+                "or the CVE remediation SLA) and return summary counts."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "scope": {"type": "string", "enum": list(get_args(ScopeName))},
                     "scope_id": {"type": "string"},
-                    "framework": {
-                        "type": "string",
-                        "enum": [
-                            "nist-sp-800-131a",
-                            "bsi-tr-02102",
-                            "cnsa-2.0",
-                            "fips-140-3",
-                            "iso-19790",
-                            "pqc-migration-plan",
-                        ],
-                    },
+                    "framework": _FRAMEWORK,
                 },
                 "required": ["scope", "framework"],
             },

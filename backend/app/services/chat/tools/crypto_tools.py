@@ -12,6 +12,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import ScopeName
 from app.models.finding import CRYPTO_FINDING_TYPES
+from app.models.policy_audit_entry import PolicyType
 from app.models.user import User
 from app.schemas.finding_details import all_rule_ids
 from app.services.compliance.renderers.base import coverage_statement
@@ -185,8 +186,8 @@ async def list_compliance_reports(
     db: AsyncIOMotorDatabase,
     *,
     visibility: dict[str, Any],
-    framework: str | None = None,
-    limit: int = 10,
+    framework: str | None,
+    limit: int,
 ) -> dict[str, Any]:
     """Recent compliance reports among those ``visibility`` admits (metadata only, no artifacts)."""
     pkg = _pkg()
@@ -199,13 +200,15 @@ async def list_policy_audit_entries(
     db: AsyncIOMotorDatabase,
     *,
     policy_scope: str,
-    project_id: str | None = None,
-    limit: int = 20,
+    project_id: str | None,
+    policy_type: PolicyType,
+    limit: int,
 ) -> dict[str, Any]:
     pkg = _pkg()
     entries = await pkg.PolicyAuditRepository(db).list(
         policy_scope=cast(Literal["system", "project"], policy_scope),
         project_id=project_id,
+        policy_type=policy_type,
         limit=limit,
     )
     return {"entries": [e.model_dump(by_alias=True) for e in entries]}
@@ -221,10 +224,7 @@ async def get_framework_evaluation_summary(
 ) -> dict[str, Any]:
     """Run compliance evaluation in-process and return summary counts."""
     pkg = _pkg()
-    try:
-        fw_enum = pkg.ReportFramework(framework)
-    except ValueError:
-        return {"error": f"Unknown framework: {framework}"}
+    fw_enum = pkg.ReportFramework(framework)
     resolver = pkg.ScopeResolver(db, user)
     resolved = await resolver.resolve(
         scope=cast(ScopeName, scope),

@@ -43,9 +43,9 @@ def _checked(name: str, schema: dict[str, Any], value: Any) -> Any:
 
 
 def checked_arguments(tool_name: str, arguments: Any) -> dict[str, Any]:
-    """The arguments the tool declares, each of its declared type and vocabulary, with every bounded
-    number defaulted and held to its range; undeclared keys are dropped so a model that adds one still
-    gets its answer. A null stays null, which handlers read as not given."""
+    """The arguments the tool declares, each of its declared type and vocabulary, with every declared
+    default filled and every bounded number held to its range; undeclared keys are dropped so a model
+    that adds one still gets its answer. Any other null stays null, which handlers read as not given."""
     if not isinstance(arguments, dict):
         raise ToolArgumentError("Tool arguments must be a JSON object")
     declared = _DECLARED_PROPERTIES.get(tool_name, {})
@@ -57,4 +57,6 @@ def checked_arguments(tool_name: str, arguments: Any) -> dict[str, Any]:
     for name, schema in declared.items():
         if "maximum" in schema:
             checked[name] = _clamp_limit(checked.get(name), schema["default"], schema["maximum"])
+        elif "default" in schema and not checked.get(name):
+            checked[name] = schema["default"]
     return checked

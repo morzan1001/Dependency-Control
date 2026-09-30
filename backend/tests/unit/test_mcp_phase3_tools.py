@@ -40,7 +40,9 @@ async def test_list_compliance_reports_returns_metadata():
                 ]
             )
         )
-        out = await list_compliance_reports(db, visibility={"scope": "project", "scope_id": "p"})
+        out = await list_compliance_reports(
+            db, visibility={"scope": "project", "scope_id": "p"}, framework=None, limit=10
+        )
     assert len(out["reports"]) == 1
     assert out["reports"][0]["id"] == "r1"
 
@@ -60,7 +62,9 @@ async def test_list_policy_audit_entries_returns_timeline():
                 ]
             )
         )
-        out = await list_policy_audit_entries(db, policy_scope="system")
+        out = await list_policy_audit_entries(
+            db, policy_scope="system", project_id=None, policy_type="crypto", limit=20
+        )
     assert out["entries"][0]["version"] == 1
 
 
