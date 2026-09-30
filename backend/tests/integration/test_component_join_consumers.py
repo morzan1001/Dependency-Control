@@ -501,6 +501,23 @@ async def test_metadata_survives_rows_that_differ_only_in_stored_type(client, db
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_metadata_does_not_merge_two_ecosystems_that_share_a_path(client, db, seeded):
+    debug = {"group": None, "version": "1.0.0"}
+    await db.dependencies.insert_one(
+        {**_dependency("debug-npm", name="debug"), **debug, "type": "npm", "purl": "pkg:npm/debug@1.0.0"}
+    )
+    await db.dependencies.insert_one(
+        {**_dependency("debug-pypi", name="debug"), **debug, "type": "pypi", "purl": "pkg:pypi/debug@1.0.0"}
+    )
+    await db.dependencies.insert_one(
+        {**_dependency("debug-cdx", name="debug"), **debug, "type": "library", "purl": None}
+    )
+
+    assert await _analytics(client, "dependency-metadata", seeded, component="debug") is None
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_the_vulnerability_filter_tells_a_package_s_versions_apart(client, db, seeded):
     await db.dependencies.insert_one({**_dependency("lodash-old", name="lodash"), "version": "4.17.15", "type": "npm"})
     await db.dependencies.insert_one({**_dependency("lodash-new", name="lodash"), "version": "4.17.21", "type": "npm"})

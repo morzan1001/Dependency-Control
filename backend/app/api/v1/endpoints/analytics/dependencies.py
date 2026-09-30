@@ -275,19 +275,26 @@ async def _package_projects_by_version(
             {"$match": dep_query},
             {
                 "$group": {
-                    "_id": {"package": package_identity_expr(), "version": "$version"},
+                    "_id": {
+                        "package": package_identity_expr(),
+                        "version": "$version",
+                        "has_purl": {"$gt": ["$purl", ""]},
+                    },
                     "projects": {"$addToSet": {"id": "$project_id", "direct": "$direct"}},
                 }
             },
         ]
     )
-    # Keyed on path alone: a purl-less 'library' row and its 'npm' purl row describe one package.
+    # Only a purl names the ecosystem: a purl-less 'library' row joins its 'npm' purl row, npm and pypi stay apart.
     by_package: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    purl_types: set[str] = set()
     for row in rows:
-        path = row["_id"]["package"]["path"]
-        if wanted is None or path.lower() == wanted:
-            by_package.setdefault(path, {}).setdefault(row["_id"].get("version"), []).extend(row["projects"])
-    return next(iter(by_package.items())) if len(by_package) == 1 else None
+        package = row["_id"]["package"]
+        if wanted is None or package["path"].lower() == wanted:
+            by_package.setdefault(package["path"], {}).setdefault(row["_id"].get("version"), []).extend(row["projects"])
+            if row["_id"]["has_purl"]:
+                purl_types.add(package["type"])
+    return next(iter(by_package.items())) if len(by_package) == 1 and len(purl_types) <= 1 else None
 
 
 def _affected_projects(
