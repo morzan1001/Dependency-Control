@@ -304,6 +304,7 @@ class TestATeamNothingChangedAboutIsNotWritten:
         service = _service()
         stored = _existing_team([_MANUAL])
         stored["name"] = "GitLab Group: old"
+        stored["bindings"][0]["path"] = "old"
 
         with (
             make_repositories(existing_team=stored) as (team_repo, _),
@@ -316,6 +317,38 @@ class TestATeamNothingChangedAboutIsNotWritten:
         # The description names the group as well, and left behind it goes on naming the one the
         # team was moved out of.
         assert update["description"] == "Imported from GitLab Group grp"
+
+    def test_a_name_generated_for_another_instances_binding_is_left_alone(self):
+        """Bound on two instances, the team would otherwise take the name of whichever pipeline ran last."""
+        service = _service()
+        stored = _existing_team([_MANUAL])
+        stored["name"] = "GitLab Group: zahlungen"
+        stored["bindings"].append(
+            {"provider": "gitlab", "instance_id": "instance-b", "external_id": 77, "path": "zahlungen"}
+        )
+
+        with (
+            make_repositories(existing_team=stored) as (team_repo, _),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=self._UNRESOLVABLE)),
+        ):
+            _run(service)
+
+        team_repo.update_with_binding.assert_not_called()
+
+    def test_a_binding_without_a_stored_path_is_restamped_but_not_renamed(self):
+        service = _service()
+        stored = _existing_team([_MANUAL])
+        stored["name"] = "GitLab Group: old"
+        stored["bindings"][0]["path"] = None
+
+        with (
+            make_repositories(existing_team=stored) as (team_repo, _),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=self._UNRESOLVABLE)),
+        ):
+            _run(service)
+
+        assert team_repo.update_with_binding.await_args.args[1] == {}
+        assert team_repo.update_with_binding.await_args.args[3] == {"path": "grp"}
 
     def test_a_team_its_owner_renamed_keeps_that_name(self):
         service = _service()

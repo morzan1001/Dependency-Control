@@ -346,6 +346,19 @@ class TestTeamMemberWrite:
         assert "name" not in repo.update_with_binding.await_args.args[1]
 
     @pytest.mark.asyncio
+    async def test_an_organisation_spelled_in_another_case_is_no_rename(self):
+        service = _service()
+        team = _bound("t-1", 4711, name="GitHub Team: Acme/payments")
+        team["bindings"][0]["org"] = "Acme"
+        repo = _team_repo(team)
+
+        await service._refresh_team(
+            repo, "acme", _HolderBinding(4711, "payments", team), team, [TeamMember(user_id="u-1", source=_OWN)]
+        )
+
+        assert "name" not in repo.update_with_binding.await_args.args[1]
+
+    @pytest.mark.asyncio
     async def test_the_stored_slug_follows_the_one_the_organisation_reports(self):
         service = _service()
         team = _bound("t-1", 4711, slug="pay-old")

@@ -63,13 +63,13 @@ async def _ingest(
     return await project_repo.get_by_id(project_id)
 
 
-async def _seed(db) -> None:
+async def _seed(db, name: str = "Payments Guild") -> None:
     await create_team_indexes(db)
     await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     await TeamRepository(db).create(
         Team(
             id="t-shared",
-            name="Payments Guild",
+            name=name,
             bindings=[
                 GitHubTeamBinding(instance_id=_A, org="acme", external_id=4711, slug="payments"),
                 GitHubTeamBinding(instance_id=_B, org="acme", external_id=8150, slug="zahlungen"),
@@ -206,3 +206,17 @@ async def test_one_instance_resolves_only_through_its_own_binding():
 @pytest.mark.asyncio
 async def test_one_instance_resolves_only_through_its_own_binding_on_real_mongo(db):
     await _assert_one_instance_resolves_only_through_its_own_binding(db)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_generated_name_does_not_flip_between_the_instances_on_real_mongo(db):
+    """Named for A's binding, the team keeps that name through B's runs instead of taking the name
+    of whichever pipeline ran last."""
+    await _seed(db, name="GitHub Team: acme/payments")
+
+    await _ingest(db, _B, _TEAMS_B, "p-b", "acme/p-b")
+    await _ingest(db, _A, _TEAMS_A, "p-a", "acme/p-a")
+    await _ingest(db, _B, _TEAMS_B, "p-b", "acme/p-b")
+
+    assert (await TeamRepository(db).get_raw_by_id("t-shared"))["name"] == "GitHub Team: acme/payments"

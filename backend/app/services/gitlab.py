@@ -43,12 +43,10 @@ _GITLAB_API_TIMEOUT = 10.0
 # listing is uncapped, so a large group is many pages of 10s each. This bounds the reads as a whole.
 _GITLAB_RESOLUTION_TIMEOUT = 30.0
 
-_AUTO_TEAM_NAME_PREFIX = "GitLab Group:"
-
 
 def _auto_team_name(group_path: str) -> str:
-    """The name a team gets while nobody has renamed it; the prefix is what marks it as ours to set."""
-    return f"{_AUTO_TEAM_NAME_PREFIX} {group_path}"
+    """The name a team gets while nobody has renamed it."""
+    return f"GitLab Group: {group_path}"
 
 
 def _auto_team_description(group_path: str) -> str:
@@ -642,16 +640,15 @@ class GitLabService:
         return team_members
 
     @staticmethod
-    def _renamed_fields(team: dict[str, Any], group_path: str) -> dict[str, Any]:
-        """The name to follow GitLab with, while the team still carries the generated one.
+    def _renamed_fields(team: dict[str, Any], stored_path: str | None, group_path: str) -> dict[str, Any]:
+        """The name to follow GitLab with, while the team still carries the one this binding generated.
 
-        A team its owner renamed keeps that name for good: only the prefix marks a name as ours.
+        A team its owner renamed keeps that name for good, and so does one named after another
+        instance's binding: following it would rename the team back and forth between the two.
         """
-        current = str(team.get("name") or "")
-        generated = _auto_team_name(group_path)
-        if not current.startswith(_AUTO_TEAM_NAME_PREFIX) or current == generated:
+        if not stored_path or stored_path == group_path or team.get("name") != _auto_team_name(stored_path):
             return {}
-        return {"name": generated, "description": _auto_team_description(group_path)}
+        return {"name": _auto_team_name(group_path), "description": _auto_team_description(group_path)}
 
     async def _refresh_team(
         self,
@@ -666,7 +663,8 @@ class GitLabService:
         ``team_members`` is None to leave the stored members alone, which the rename must not hang
         on: a group whose members none resolve would otherwise never follow a rename.
         """
-        updates: dict[str, Any] = self._renamed_fields(team, group_path)
+        stored_path = (binding_of(team, self._instance_id) or {}).get("path")
+        updates: dict[str, Any] = self._renamed_fields(team, stored_path, group_path)
         # Handed to the server as the subset to replace rather than merged here: the snapshot is
         # several round trips old, and a member added in between would be written back out of the
         # team after the add had already reported success.
@@ -675,10 +673,9 @@ class GitLabService:
             if team_members is not None
             else None
         )
-        stored = binding_of(team, self._instance_id) or {}
         # A group that was renamed or moved has to carry the path GitLab reports now, including on
         # a team bound by hand before any sync ran.
-        binding_fields = {"path": group_path} if stored.get("path") != group_path else {}
+        binding_fields = {"path": group_path} if stored_path != group_path else {}
         if not updates and not binding_fields and subset is None:
             return
         await team_repo.update_with_binding(

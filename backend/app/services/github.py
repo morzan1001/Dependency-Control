@@ -71,8 +71,6 @@ _CACHED_FIELD = "value"
 # organisation on pull would otherwise own the whole estate.
 _WRITE_PERMISSIONS = ("push", "maintain", "admin")
 
-_AUTO_TEAM_NAME_PREFIX = "GitHub Team:"
-
 _GITHUB_TEAM_ROLES = (("maintainer", TEAM_ROLE_ADMIN), ("member", TEAM_ROLE_MEMBER))
 
 _org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Semaphore]]" = (
@@ -115,8 +113,8 @@ def _team_writes_to(repository: dict[str, Any]) -> bool | None:
 
 
 def _auto_team_name(org: str, slug: str) -> str:
-    """The name a team gets while nobody has renamed it; the prefix is what marks it as ours to set."""
-    return f"{_AUTO_TEAM_NAME_PREFIX} {org}/{slug}"
+    """The name a team gets while nobody has renamed it."""
+    return f"GitHub Team: {org}/{slug}"
 
 
 def _auto_team_description(org: str, slug: str) -> str:
@@ -705,16 +703,22 @@ class GitHubService:
         return list(resolved.values())
 
     @staticmethod
-    def _renamed_fields(team: dict[str, Any], org: str, team_slug: str) -> dict[str, Any]:
-        """The name to follow GitHub with, while the team still carries the generated one.
+    def _renamed_fields(team: dict[str, Any], binding: dict[str, Any], org: str, team_slug: str) -> dict[str, Any]:
+        """The name to follow GitHub with, while the team still carries the one this binding generated.
 
-        A team its owner renamed keeps that name for good: only the prefix marks a name as ours.
+        A team its owner renamed keeps that name for good, and so does one named after another
+        instance's binding: following it would rename the team back and forth between the two.
         """
-        current = str(team.get("name") or "")
-        generated = _auto_team_name(org, team_slug)
-        if not current.startswith(_AUTO_TEAM_NAME_PREFIX) or current == generated:
+        stored_org, stored_slug = binding.get("org"), binding.get("slug")
+        # Organisations are stored in whatever case they were first written in.
+        if (
+            not stored_org
+            or not stored_slug
+            or (stored_org.casefold(), stored_slug) == (org.casefold(), team_slug)
+            or str(team.get("name") or "").casefold() != _auto_team_name(stored_org, stored_slug).casefold()
+        ):
             return {}
-        return {"name": generated, "description": _auto_team_description(org, team_slug)}
+        return {"name": _auto_team_name(org, team_slug), "description": _auto_team_description(org, team_slug)}
 
     async def _refresh_team(
         self,
@@ -729,7 +733,8 @@ class GitHubService:
         ``team_members`` is None to leave the stored members alone, which the rename must not hang
         on: barely a login resolves here, so a name would otherwise never follow a renamed team.
         """
-        updates: dict[str, Any] = self._renamed_fields(team, org, holder.slug)
+        binding = binding_of(team, self._instance_id) or {}
+        updates: dict[str, Any] = self._renamed_fields(team, binding, org, holder.slug)
         # Handed to the server as the subset to replace rather than merged here: the snapshot is
         # several round trips old, and a member added in between would be written back out of the
         # team after the add had already reported success.
@@ -738,7 +743,6 @@ class GitHubService:
             if team_members is not None
             else None
         )
-        binding = binding_of(team, self._instance_id) or {}
         # The binding is the numeric team id, so a renamed slug has to follow it.
         binding_fields = {"slug": holder.slug} if binding.get("slug") != holder.slug else {}
         if not updates and not binding_fields and subset is None:
