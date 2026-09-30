@@ -12,15 +12,16 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import DatabaseDep, McpKeyDep
 from app.api.router import CustomAPIRouter
+from app.core import metrics
 from app.models.user import User
-from app.services.chat.tools import ChatToolRegistry, get_tool_definitions
+from app.services.chat.tools import ChatToolRegistry
 
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
 SERVER_NAME = "dependency-control"
-SERVER_VERSION = "1.0"
+SERVER_VERSION = metrics.APP_VERSION
 MCP_PROTOCOL_VERSION = "2025-03-26"
 
 _PARSE_ERROR = -32700
@@ -49,21 +50,6 @@ class _RpcError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
-
-
-def _tools_list_payload() -> dict[str, Any]:
-    """Map our TOOL_DEFINITIONS (OpenAI-style) into MCP tool shape."""
-    tools = []
-    for td in get_tool_definitions():
-        fn = td.get("function", {})
-        tools.append(
-            {
-                "name": fn.get("name", ""),
-                "description": fn.get("description", ""),
-                "inputSchema": fn.get("parameters", {"type": "object", "properties": {}}),
-            }
-        )
-    return {"tools": tools}
 
 
 async def _handle_tool_call(
@@ -107,24 +93,47 @@ async def _dispatch(method: str, params: dict[str, Any], user: User, db: AsyncIO
             ),
         }
 
-    if method == "initialized" or method == "notifications/initialized":
+    if method == "notifications/initialized":
         return None
 
     if method == "ping":
         return {}
 
     if method == "tools/list":
-        registry = ChatToolRegistry()
-        available = registry.get_available_tool_names(user.permissions)
-        payload = _tools_list_payload()
-        payload["tools"] = [t for t in payload["tools"] if t["name"] in available]
-        return payload
+        definitions = ChatToolRegistry().get_available_tool_definitions(user.permissions)
+        return {
+            "tools": [
+                {"name": fn["name"], "description": fn["description"], "inputSchema": fn["parameters"]}
+                for fn in (definition["function"] for definition in definitions)
+            ]
+        }
 
     if method == "tools/call":
-        registry = ChatToolRegistry()
-        return await _handle_tool_call(registry, params, user, db)
+        return await _handle_tool_call(ChatToolRegistry(), params, user, db)
 
-    raise ValueError(f"Unknown method: {method}")
+    raise _RpcError(_METHOD_NOT_FOUND, f"Unknown method: {method}")
+
+
+async def _handle_request(item: Any, user: User, db: AsyncIOMotorDatabase[Any]) -> dict[str, Any] | None:
+    """Answer one JSON-RPC request; a notification (no id) gets no answer once it names a method."""
+    if not isinstance(item, dict):
+        return _rpc_error(_INVALID_REQUEST, "Request must be an object")
+    request_id = item.get("id")
+    method = item.get("method")
+    if not isinstance(method, str):
+        return _rpc_error(_INVALID_REQUEST, "Missing 'method'", request_id)
+
+    params = item.get("params") or {}
+    try:
+        if not isinstance(params, dict):
+            raise _RpcError(_INVALID_PARAMS, "'params' must be an object")
+        response = _rpc_result(await _dispatch(method, params, user, db), request_id)
+    except _RpcError as e:
+        response = _rpc_error(e.code, e.message, request_id)
+    except Exception:
+        logger.exception("MCP dispatch failed for method=%s", method)
+        response = _rpc_error(_INTERNAL_ERROR, "Internal server error", request_id)
+    return None if request_id is None else response
 
 
 @router.post(
@@ -155,41 +164,9 @@ async def mcp_rpc(
     batched = isinstance(payload, list)
     requests = payload if batched else [payload]
 
-    responses = []
-    for item in requests:
-        if not isinstance(item, dict):
-            responses.append(_rpc_error(_INVALID_REQUEST, "Request must be an object"))
-            continue
+    responses = [r for item in requests if (r := await _handle_request(item, user, db)) is not None]
 
-        request_id = item.get("id")
-        method = item.get("method")
-        params = item.get("params") or {}
-        if not isinstance(method, str):
-            responses.append(_rpc_error(_INVALID_REQUEST, "Missing 'method'", request_id))
-            continue
-
-        try:
-            result = await _dispatch(method, params, user, db)
-        except _RpcError as e:
-            if request_id is not None:
-                responses.append(_rpc_error(e.code, e.message, request_id))
-            continue
-        except ValueError as e:
-            if request_id is not None:
-                responses.append(_rpc_error(_METHOD_NOT_FOUND, str(e), request_id))
-            continue
-        except Exception:
-            logger.exception("MCP dispatch failed for method=%s", method)
-            if request_id is not None:
-                responses.append(_rpc_error(_INTERNAL_ERROR, "Internal server error", request_id))
-            continue
-
-        if request_id is None:
-            continue
-
-        responses.append(_rpc_result(result, request_id))
-
-    # Notifications (no id) get no response; 202 if every item was a notification.
+    # 202 once every item was a notification.
     if not responses:
         return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=None)
     if batched:

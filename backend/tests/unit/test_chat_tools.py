@@ -4,7 +4,8 @@ import pytest
 
 from app.core.permissions import Permissions
 from app.models.user import User
-from app.services.chat.tools import ChatToolRegistry, get_tool_definitions
+from app.services.chat.tools import ChatToolRegistry
+from app.services.chat.tools.definitions import TOOL_DEFINITIONS
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -14,7 +15,7 @@ def _user(permissions: list[str]) -> User:
 
 
 def test_tool_definitions_valid_json_schema():
-    tools = get_tool_definitions()
+    tools = TOOL_DEFINITIONS
     assert len(tools) > 0
     for tool in tools:
         assert "type" in tool
@@ -55,7 +56,7 @@ def test_user_with_chat_access_gets_basic_tools():
 
 def test_tool_definitions_match_registry():
     registry = ChatToolRegistry()
-    definitions = get_tool_definitions()
+    definitions = TOOL_DEFINITIONS
     definition_names = {t["function"]["name"] for t in definitions}
     all_tools = registry.get_available_tool_names(PRESET_ADMIN)
 
@@ -65,7 +66,7 @@ def test_tool_definitions_match_registry():
 
 def test_dispatch_table_covers_exactly_the_declared_tools():
     """A declared tool absent from the table answers "Unknown tool" instead of failing loudly."""
-    declared = {t["function"]["name"] for t in get_tool_definitions()}
+    declared = {t["function"]["name"] for t in TOOL_DEFINITIONS}
     assert set(ChatToolRegistry._HANDLERS) == declared
 
 

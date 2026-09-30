@@ -1,4 +1,4 @@
-"""Static tool metadata: TOOL_DEFINITIONS, TOOL_PERMISSIONS, get_tool_definitions()."""
+"""Static tool metadata: TOOL_DEFINITIONS and TOOL_PERMISSIONS."""
 
 from typing import Any, get_args
 
@@ -1099,8 +1099,3 @@ TOOL_PERMISSIONS: dict[str, list[str]] = {
     "list_archives": _ARCHIVE_READ,
     "get_archive_details": _ARCHIVE_READ,
 }
-
-
-def get_tool_definitions() -> list[dict[str, Any]]:
-    """Return all tool definitions in Ollama function-calling format."""
-    return TOOL_DEFINITIONS

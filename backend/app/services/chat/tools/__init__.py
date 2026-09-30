@@ -37,7 +37,6 @@ from .crypto_tools import (
     list_policy_audit_entries,
     suggest_crypto_policy_override,
 )
-from .definitions import TOOL_DEFINITIONS, TOOL_PERMISSIONS, get_tool_definitions
 from .registry import ChatToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -45,8 +44,6 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "FRAMEWORK_REGISTRY",
     "MAX_TOOL_RESULT_BYTES",
-    "TOOL_DEFINITIONS",
-    "TOOL_PERMISSIONS",
     "ChatToolRegistry",
     "ComplianceReportEngine",
     "ComplianceReportRepository",
@@ -71,7 +68,6 @@ __all__ = [
     "get_crypto_trends",
     "get_framework_evaluation_summary",
     "get_project_crypto_policy",
-    "get_tool_definitions",
     "list_compliance_reports",
     "list_crypto_assets",
     "list_policy_audit_entries",

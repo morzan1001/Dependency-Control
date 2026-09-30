@@ -6,9 +6,11 @@ proves the tool surface is behind a key at all.
 
 import pytest
 
+from app.core import metrics
 from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP
 from app.core.permissions import Permissions
 from app.repositories.api_keys import ApiKeyRepository
+from app.services.chat.tools import ChatToolRegistry
 
 _MCP = "/api/v1/mcp/"
 
@@ -22,8 +24,14 @@ _UNIFIED_COL = "api_keys"
 _TOOLS_LIST = {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "tools/list", "params": {}}
 
 _OK = 200
+_ACCEPTED = 202
 _UNAUTHORIZED = 401
 _FORBIDDEN = 403
+
+_INVALID_REQUEST = -32600
+_METHOD_NOT_FOUND = -32601
+_INVALID_PARAMS = -32602
+_INTERNAL_ERROR = -32603
 
 # An owner holding both permissions leaves the key itself as the only thing that can refuse.
 _BOTH_SURFACES = (Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC)
@@ -161,3 +169,68 @@ async def test_results_and_errors_of_one_batch_share_the_json_rpc_version(client
     assert [item["id"] for item in body] == [_REQUEST_ID, 2]
     assert "result" in body[0] and "error" in body[1]
     assert {item["jsonrpc"] for item in body} == {"2.0"}
+
+
+async def _rpc(client, db, payload):
+    _doc, token = await _issue_unified_key(db)
+    return await client.post(_MCP, json=payload, headers=_bearer(token))
+
+
+@pytest.mark.asyncio
+async def test_a_notification_gets_202_without_a_body(client, db):
+    resp = await _rpc(client, db, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    assert resp.status_code == _ACCEPTED, resp.text
+
+
+@pytest.mark.asyncio
+async def test_a_request_without_a_method_is_invalid_with_a_null_id(client, db):
+    resp = await _rpc(client, db, {"jsonrpc": "2.0"})
+
+    assert resp.json() == {
+        "jsonrpc": "2.0",
+        "id": None,
+        "error": {"code": _INVALID_REQUEST, "message": "Missing 'method'"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_params_that_are_not_an_object_are_invalid_params(client, db):
+    resp = await _rpc(
+        client, db, {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "tools/call", "params": ["list_projects"]}
+    )
+
+    assert resp.json()["error"]["code"] == _INVALID_PARAMS
+
+
+@pytest.mark.asyncio
+async def test_the_bare_initialized_name_is_an_unknown_method(client, db):
+    resp = await _rpc(client, db, {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "initialized"})
+
+    assert resp.json()["error"]["code"] == _METHOD_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_a_tool_result_that_cannot_be_serialised_is_an_internal_error(client, db, monkeypatch):
+    circular: dict = {}
+    circular["self"] = circular
+
+    async def _circular_result(*_args):
+        return circular
+
+    monkeypatch.setattr(ChatToolRegistry, "execute_tool", _circular_result)
+
+    resp = await _rpc(
+        client,
+        db,
+        {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "tools/call", "params": {"name": "list_projects"}},
+    )
+
+    assert resp.json()["error"] == {"code": _INTERNAL_ERROR, "message": "Internal server error"}
+
+
+@pytest.mark.asyncio
+async def test_initialize_reports_the_release_version(client, db):
+    resp = await _rpc(client, db, {"jsonrpc": "2.0", "id": _REQUEST_ID, "method": "initialize", "params": {}})
+
+    assert resp.json()["result"]["serverInfo"]["version"] == metrics.APP_VERSION
