@@ -102,7 +102,7 @@ class HashVerificationAnalyzer(Analyzer):
     ) -> dict[str, Any] | None:
         """Compare SBOM hashes to registry hashes; return mismatch/verified/None."""
         for sbom_alg, sbom_value in sbom_hashes.items():
-            registry_value = registry_hashes.get(normalize_hash_algorithm(sbom_alg))
+            registry_value = registry_hashes.get(sbom_alg)
             if registry_value is None:
                 continue
             # npm serves one digest per algorithm, PyPI one per released file.
