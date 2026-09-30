@@ -638,11 +638,7 @@ class GitHubService:
         return str(_json_document(response).get("email") or "")
 
     async def _public_emails(self, logins: list[str]) -> dict[str, str] | None:
-        """Login -> public profile email ("" for none); None once GitHub refused one of them.
-
-        A refusal read as "no public email" would retire the member from the team, so it stops the
-        reads still queued rather than spending the budget on answers that can no longer be used.
-        """
+        """Login -> public email ("" for none); None once GitHub refused one, which cancels the reads still queued."""
         keys = {login: self._get_cache_key(f"user_email:{login}") for login in logins}
         cached = await cache_service.mget(list(keys.values()))
         emails = {login: value for login, key in keys.items() if isinstance(value := cached.get(key), str)}
