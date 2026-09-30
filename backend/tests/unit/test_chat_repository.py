@@ -121,10 +121,9 @@ async def test_add_message_with_tool_calls(repo):
                 "duration_ms": 50,
             }
         ],
-        token_count=120,
     )
 
     messages = await repo.get_messages(conv["_id"])
     assert len(messages) == 1
     assert messages[0]["tool_calls"][0]["tool_name"] == "list_projects"
-    assert messages[0]["token_count"] == 120
+    assert "token_count" not in messages[0]

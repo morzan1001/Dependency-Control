@@ -320,7 +320,7 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     import json as _json
 
     try:
-        encoded = _json.dumps(result, default=str)
+        encoded = _json.dumps(result, ensure_ascii=False, default=str).encode()
     except (TypeError, ValueError):
         return result
     if len(encoded) <= MAX_TOOL_RESULT_BYTES:
@@ -342,7 +342,7 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     while lo < hi:
         mid = (lo + hi + 1) // 2
         result[biggest_key] = original[:mid]
-        if len(_json.dumps(result, default=str)) <= MAX_TOOL_RESULT_BYTES:
+        if len(_json.dumps(result, ensure_ascii=False, default=str).encode()) <= MAX_TOOL_RESULT_BYTES:
             lo = mid
         else:
             hi = mid - 1

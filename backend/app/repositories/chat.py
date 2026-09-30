@@ -61,7 +61,6 @@ class ChatRepository:
         role: str,
         content: str = "",
         tool_calls: list[dict[str, Any]] | None = None,
-        token_count: int = 0,
     ) -> int | None:
         """Store the message and return the conversation's message count, or None if the conversation is gone."""
         doc = {
@@ -70,7 +69,6 @@ class ChatRepository:
             "role": role,
             "content": content,
             "tool_calls": tool_calls or [],
-            "token_count": token_count,
             "created_at": datetime.now(timezone.utc),
         }
         await self.messages.insert_one(doc)

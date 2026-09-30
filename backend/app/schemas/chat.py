@@ -45,7 +45,6 @@ class MessageResponse(BaseModel):
     role: Literal["user", "assistant", "tool"]
     content: str
     tool_calls: list[ToolCallResponse]
-    token_count: int
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

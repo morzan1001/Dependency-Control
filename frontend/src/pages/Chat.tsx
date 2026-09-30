@@ -224,7 +224,6 @@ export default function Chat() {
                     role: 'user',
                     content: pendingUserMessage.content,
                     tool_calls: [],
-                    token_count: 0,
                     created_at: new Date().toISOString(),
                   }}
                 />

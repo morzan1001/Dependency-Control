@@ -14,7 +14,7 @@ _CONVERSATION = "conv-legacy"
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_a_message_stored_with_images_is_served_without_them(client, db, monkeypatch):
+async def test_a_legacy_message_is_served_without_its_images_and_token_count(client, db, monkeypatch):
     monkeypatch.setattr(settings, "CHAT_ENABLED", True)
     now = datetime.now(timezone.utc)
     await db["chat_conversations"].insert_one(
@@ -42,3 +42,4 @@ async def test_a_message_stored_with_images_is_served_without_them(client, db, m
     (message,) = resp.json()["messages"]
     assert message["content"] == "what is this?"
     assert "images" not in message
+    assert "token_count" not in message

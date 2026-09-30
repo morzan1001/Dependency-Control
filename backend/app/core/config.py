@@ -86,7 +86,6 @@ class Settings(BaseSettings):
     # rounds) stay in SystemSettings so admins can adjust them via the UI.
     CHAT_ENABLED: bool = False
     CHAT_MAX_HISTORY_MESSAGES: int = 15
-    CHAT_MAX_TOKEN_BUDGET: int = 12000
 
     # Policy audit settings
     # Minimum age (days) an entry must have before it can be manually pruned via API.

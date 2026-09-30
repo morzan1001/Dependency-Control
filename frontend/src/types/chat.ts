@@ -20,7 +20,6 @@ export interface Message {
   role: 'user' | 'assistant' | 'tool';
   content: string;
   tool_calls: ToolCall[];
-  token_count: number;
   created_at: string;
 }
 
