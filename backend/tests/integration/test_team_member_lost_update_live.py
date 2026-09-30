@@ -17,7 +17,7 @@ import pytest
 from app.core.constants import TEAM_SOURCE_GITHUB, team_source
 from app.models.team import GitHubTeamBinding, Team, TeamMember
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubEmailLookup, GitHubService
+from app.services.github import GitHubService
 from tests.mocks.github import make_github_instance
 
 pytestmark = [pytest.mark.asyncio, pytest.mark.live_mongo]
@@ -61,12 +61,12 @@ async def _sync_with_an_add_in_flight(db, added: TeamMember) -> None:
 
     with (
         patch.object(service, "get_org_teams", new=AsyncMock(return_value=_ORG_TEAMS)),
-        patch.object(service, "get_team_repository", new=AsyncMock(return_value=True)),
+        patch.object(service, "team_writes_to_repository", new=AsyncMock(return_value=True)),
         patch.object(service, "get_team_members", new=AsyncMock(side_effect=_members_while_the_admin_adds_one)),
-        patch.object(service, "get_org_repository_map", new=AsyncMock(return_value={})),
-        patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup("ada@corp.com"))),
+        patch.object(service, "get_org_repository_map", new=AsyncMock(return_value={"acme/widgets": [4711]})),
+        patch.object(service, "_public_emails", new=AsyncMock(return_value={"ada": "ada@corp.com"})),
     ):
-        await service.sync_team_from_github(db, "acme", "acme/widgets")
+        await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
 
 
 async def _stored_members(db) -> dict[str, dict]:

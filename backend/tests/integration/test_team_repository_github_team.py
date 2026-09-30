@@ -3,7 +3,7 @@
 import pytest
 
 from app.core.constants import TEAM_SOURCE_GITHUB
-from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team
+from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
 from app.repositories.teams import TeamRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -66,6 +66,16 @@ async def _assert_a_gitlab_binding_of_the_same_instance_id_is_left_out(db) -> No
     assert [team["_id"] for team in await repo.find_raw_by_github_org("gh-1", "acme")] == ["t-a"]
 
 
+async def _assert_the_bound_teams_arrive_without_their_members(db) -> None:
+    repo = await _seed(db)
+    await db.teams.update_one({"_id": "t-a"}, {"$set": {"members": [TeamMember(user_id="u-1").model_dump()]}})
+
+    (team,) = await repo.find_raw_by_github_org("gh-1", "acme")
+
+    # Every ingest of the organisation reads every bound team, and the sync never reads a member array.
+    assert set(team) == {"_id", "name", "bindings"}
+
+
 @pytest.mark.asyncio
 async def test_lookup_is_scoped_to_the_instance():
     await _assert_scoped_to_the_instance(FakeDatabase())
@@ -119,3 +129,14 @@ async def test_a_gitlab_binding_is_not_read_as_a_github_one_on_real_mongo(db):
 @pytest.mark.asyncio
 async def test_the_bound_teams_of_an_organisation_exclude_every_other_binding_on_real_mongo(db):
     await _assert_the_org_listing_is_scoped(db)
+
+
+@pytest.mark.asyncio
+async def test_the_bound_teams_arrive_without_their_members():
+    await _assert_the_bound_teams_arrive_without_their_members(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_bound_teams_arrive_without_their_members_on_real_mongo(db):
+    await _assert_the_bound_teams_arrive_without_their_members(db)

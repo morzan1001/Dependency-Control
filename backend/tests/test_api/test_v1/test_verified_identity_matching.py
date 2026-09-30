@@ -17,7 +17,7 @@ from app.models.gitlab_api import GitLabMember
 from app.models.team import GitLabGroupBinding, Team, TeamMember
 from app.repositories.teams import TeamRepository
 from app.repositories.users import UserRepository
-from app.services.github import GitHubEmailLookup, GitHubService
+from app.services.github import GitHubService
 from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
@@ -172,12 +172,13 @@ class TestGitHubTeamSync:
     @staticmethod
     async def _resolved(login: str, public_email: str | None, *users: dict) -> list[str]:
         service = GitHubService(make_github_instance(access_token="ghp-secret", sync_teams=True))
-        lookup = AsyncMock(return_value=GitHubEmailLookup(public_email))
-        with patch.object(service, "get_user_public_email", new=lookup):
-            members, _, _ = await service._build_team_members(
+        emails = AsyncMock(return_value={login: public_email or ""})
+        with patch.object(service, "_public_emails", new=emails):
+            resolved = await service._build_team_members(
                 [{"login": login, "role": "member"}], UserRepository(await _db(*users))
             )
-        return [m.user_id for m in members]
+        assert resolved is not None
+        return [m.user_id for m in resolved.members]
 
     @pytest.mark.asyncio
     async def test_a_login_equal_to_the_username_of_an_account_is_not_resolved(self):

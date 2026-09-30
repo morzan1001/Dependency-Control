@@ -7,7 +7,7 @@ import pytest
 from app.core.constants import TEAM_SOURCE_GITHUB, team_source
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubEmailLookup, GitHubService, GitHubTeamSyncResult
+from app.services.github import GitHubService, GitHubTeamSyncResult
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 
@@ -23,19 +23,24 @@ _THEIRS = team_source(TEAM_SOURCE_GITHUB, "gh-2")
 
 def _service():
     service = GitHubService(make_github_instance(id="gh-1", access_token="ghp-secret", sync_teams=True))
-    service.get_user_public_email = AsyncMock(return_value=GitHubEmailLookup("ada@corp.com"))
+    service._public_emails = AsyncMock(side_effect=lambda logins: dict.fromkeys(logins, "ada@corp.com"))
     return service
 
 
 def _stubbed_reads(service, holders=("payments",), repo_map=None, org_teams=None):
-    async def _check(_org, team_slug, _owner, _repo):
+    """Unless given, the map names the ``holders`` as the teams holding acme/widgets."""
+    org_teams = org_teams or _ORG_TEAMS
+    if repo_map is None:
+        repo_map = {"acme/widgets": [team["id"] for team in org_teams if team["slug"] in holders]}
+
+    async def _check(_org, team_slug, _team_id, _owner, _repo):
         return team_slug in holders
 
     return (
-        patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams or _ORG_TEAMS)),
-        patch.object(service, "get_team_repository", new=AsyncMock(side_effect=_check)),
+        patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams)),
+        patch.object(service, "team_writes_to_repository", new=AsyncMock(side_effect=_check)),
         patch.object(service, "get_team_members", new=AsyncMock(return_value=[{"login": "ada", "role": "maintainer"}])),
-        patch.object(service, "get_org_repository_map", new=AsyncMock(return_value=repo_map or {})),
+        patch.object(service, "get_org_repository_map", new=AsyncMock(return_value=repo_map)),
     )
 
 
@@ -65,7 +70,7 @@ async def _assert_the_maintainer_lands_in_the_bound_team(db) -> None:
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service)
 
     with org_reads, check_reads, member_reads, map_reads:
-        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
 
     assert result == GitHubTeamSyncResult(["t-1"])
     team = await _binding_holder(repo, "gh-1", 4711)
@@ -84,7 +89,7 @@ async def _assert_an_unbound_github_group_becomes_a_team(db) -> None:
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service, holders=(), repo_map=_HELD_BY_PLATFORM)
 
     with org_reads, check_reads, member_reads, map_reads:
-        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
 
     assert await repo.count({}) == 1
     team = await _binding_holder(repo, "gh-1", 9000)
@@ -105,8 +110,8 @@ async def _assert_the_group_is_not_created_twice(db) -> None:
     )
 
     with org_reads, check_reads, member_reads, map_reads:
-        first = await service.sync_team_from_github(db, "acme", "acme/widgets")
-        second = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        first = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
+        second = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
 
     assert await repo.count({}) == 1
     assert second == first
@@ -126,7 +131,7 @@ async def _assert_a_team_of_the_same_name_is_left_alone(db) -> None:
     )
 
     with org_reads, check_reads, member_reads, map_reads:
-        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
 
     created = await _binding_holder(repo, "gh-1", 9000)
     assert created["_id"] != "t-llama"
@@ -150,10 +155,10 @@ async def _assert_a_cleared_binding_stays_cleared(db) -> None:
     )
 
     with org_reads, check_reads, member_reads, map_reads:
-        owned = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        owned = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
         assert owned == GitHubTeamSyncResult(["t-platform"])
         assert await repo.remove_binding_for_instance("t-platform", "gh-1")
-        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
 
     assert (await repo.get_raw_by_id("t-platform"))["bindings"] == []
     created = await _binding_holder(repo, "gh-1", 9000)
@@ -168,7 +173,7 @@ async def _sync_against_the_existing_team(db, existing: Team) -> tuple[GitHubTea
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service, holders=(), repo_map=_HELD_BY_PLATFORM)
 
     with org_reads, check_reads, member_reads, map_reads:
-        return await service.sync_team_from_github(db, "acme", "acme/widgets"), repo
+        return await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set()), repo
 
 
 async def _assert_a_team_bound_to_another_instance_keeps_only_that_binding(db) -> None:
@@ -209,7 +214,7 @@ async def _assert_the_group_gets_one_team_however_many_answer_to_its_name(db) ->
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service, holders=(), repo_map=_HELD_BY_PLATFORM)
 
     with org_reads, check_reads, member_reads, map_reads:
-        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
 
     created = await _binding_holder(repo, "gh-1", 9000)
     assert result == GitHubTeamSyncResult([created["_id"]])
@@ -255,7 +260,7 @@ async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service)
 
     with org_reads, check_reads, member_reads, map_reads:
-        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
 
     assert result == GitHubTeamSyncResult(["t-1"])
     assert await repo.count({}) == 2
@@ -280,7 +285,7 @@ async def _assert_the_organisation_case_does_not_decide(db) -> None:
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service)
 
     with org_reads, check_reads, member_reads, map_reads:
-        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets", current_owner_ids=set())
 
     assert result == GitHubTeamSyncResult(["t-1"])
     team = await _binding_holder(repo, "gh-1", 4711)

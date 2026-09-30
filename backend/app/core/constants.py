@@ -998,6 +998,9 @@ GITHUB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
 # One workflow run fans out into many jobs; without this every job refetches the same three lists.
 GITHUB_TEAM_SYNC_CACHE_TTL = 300  # 5 minutes
 
+# Profile emails rarely change, and each is a request per member of every holding team.
+GITHUB_USER_EMAIL_CACHE_TTL = 21600  # 6 hours
+
 # Building the map costs one request per team of the organisation, and the largest one here has 204.
 # At this TTL the three configured organisations together spend ~313 of the token's 5000 requests per
 # hour on it; at five minutes they would spend more than the whole budget. Which repositories a team

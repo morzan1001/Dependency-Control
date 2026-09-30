@@ -273,12 +273,12 @@ async def test_the_service_is_asked_about_the_repository_the_token_names():
     await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme-org", "acme/widgets", service, db)
 
     service.sync_team_from_github.assert_awaited_once_with(
-        db, "acme-org", "acme/widgets", owner_budget=MAX_PROJECT_TEAMS
+        db, "acme-org", "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
     )
 
 
 @pytest.mark.asyncio
-async def test_the_provider_is_told_how_much_room_the_project_has_left():
+async def test_the_provider_is_told_which_owners_it_replaces_and_how_much_room_is_left():
     """Told rather than only checked afterwards: GitHub creates the teams it names, and a resolution
     refused after the fact would leave those teams owning nothing."""
     db = FakeDatabase()
@@ -293,7 +293,10 @@ async def test_the_provider_is_told_how_much_room_the_project_has_left():
 
     await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme-org", "acme/widgets", service, db)
 
-    assert service.sync_team_from_github.await_args.kwargs == {"owner_budget": MAX_PROJECT_TEAMS - 4}
+    assert service.sync_team_from_github.await_args.kwargs == {
+        "current_owner_ids": {"gh-a"},
+        "owner_budget": MAX_PROJECT_TEAMS - 4,
+    }
 
 
 @pytest.mark.asyncio

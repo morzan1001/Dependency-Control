@@ -8,13 +8,9 @@ from fastapi import HTTPException
 
 from app.core.constants import MAX_PROJECT_TEAMS, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.system import SystemSettings
-from app.services.github import _MemberResolution
 from tests.mocks.github import make_github_oidc_payload
 from tests.mocks.gitlab import make_oidc_payload
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
-
-
-_ACTOR_RESOLVES_TO_NOBODY = _MemberResolution(None)
 
 
 def _make_system_settings(**kwargs):
@@ -722,7 +718,7 @@ class TestIngestGitHubOidcProjectLookup:
                         actor="developer",
                     )
                 )
-                mock_svc.resolve_login = AsyncMock(return_value=_ACTOR_RESOLVES_TO_NOBODY)
+                mock_svc.resolve_login = AsyncMock(return_value=None)
                 MockService.return_value = mock_svc
 
                 result = asyncio.run(
@@ -885,7 +881,7 @@ class TestIngestGitHubTeamSync:
                 payload.update(payload_overrides)
                 mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
                 mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(sync_result))
-                mock_svc.resolve_login = AsyncMock(return_value=_ACTOR_RESOLVES_TO_NOBODY)
+                mock_svc.resolve_login = AsyncMock(return_value=None)
                 MockService.return_value = mock_svc
 
                 asyncio.run(
@@ -913,7 +909,7 @@ class TestIngestGitHubTeamSync:
             {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ["t-9"], project_doc=_TEAM_SYNC_PROJECT
         )
         mock_svc.sync_team_from_github.assert_awaited_once_with(
-            db, "acme", "acme/widgets", owner_budget=MAX_PROJECT_TEAMS
+            db, "acme", "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
         )
 
     def test_the_org_is_the_repository_owner_claim_not_the_path_prefix(self):
@@ -925,7 +921,7 @@ class TestIngestGitHubTeamSync:
             repository_owner="acme-org",
         )
         mock_svc.sync_team_from_github.assert_awaited_once_with(
-            db, "acme-org", "acme/widgets", owner_budget=MAX_PROJECT_TEAMS
+            db, "acme-org", "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
         )
 
     def test_every_resolved_owner_is_written_to_the_project(self):
@@ -947,7 +943,7 @@ class TestIngestGitHubTeamSync:
         mock_svc, projects_coll, db = self._run(instance, ["t-9", "t-4"], repository_owner="acme-org")
         # The auto-create call site sources the org from the same claim as the existing-project one,
         # and a project being created has the whole cap to itself.
-        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
+        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets", current_owner_ids=set())
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == ["t-4", "t-9"]
         expected_source = team_source(TEAM_SOURCE_GITHUB, _TEAM_SYNC_INSTANCE["_id"])
@@ -1053,7 +1049,7 @@ def _ingest_via_github(
     issuer=_GITHUB_COM_ISSUER,
     *,
     any_user=None,
-    actor_resolution=_ACTOR_RESOLVES_TO_NOBODY,
+    actor_resolution=None,
     **payload_overrides,
 ):
     """Run a GitHub OIDC ingest; returns the outcome (project or HTTPException), projects and service mocks.
@@ -1230,7 +1226,7 @@ class TestIngestGitHubInitialAdmin:
 
     def test_the_account_the_actor_login_resolves_to_is_made_admin(self):
         outcome, _, mock_svc = _ingest_via_github(
-            _GITHUB_AUTO_CREATE_INSTANCE, actor_resolution=_MemberResolution({"_id": "u-ada"}), actor="ada-gh"
+            _GITHUB_AUTO_CREATE_INSTANCE, actor_resolution={"_id": "u-ada"}, actor="ada-gh"
         )
 
         assert [(member.user_id, member.role) for member in outcome.members] == [("u-ada", "admin")]

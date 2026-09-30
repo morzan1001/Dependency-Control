@@ -2,7 +2,6 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
 import httpx
@@ -305,8 +304,8 @@ class GitLabService:
 
     async def _try_fetch_jwks_once(self, cache_key: str) -> dict | None:
         """Single attempt to fetch JWKS via discovery + fallbacks. Returns {} on definitive failure."""
+        jwks_uri = await self._get_jwks_uri()
         async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
-            jwks_uri = await self._get_jwks_uri()
             if jwks_uri:
                 jwks = await self._fetch_jwks_from_uri(client, jwks_uri, cache_key)
                 if jwks is not None:
@@ -687,7 +686,7 @@ class GitLabService:
             return
         await team_repo.update_with_binding(
             team["_id"],
-            {**updates, "updated_at": datetime.now(timezone.utc)},
+            updates,
             binding.key,
             binding_fields,
             subset,

@@ -27,8 +27,8 @@ class MemberSubset(NamedTuple):
     members: list[dict[str, Any]]
 
 
-def _member_subset_stage(subset: MemberSubset) -> dict[str, Any]:
-    """Replace exactly the entries ``subset.source`` established, against the array as stored now.
+def _subset_members(subset: MemberSubset) -> dict[str, Any]:
+    """The stored members with exactly the entries ``subset.source`` established replaced.
 
     Merging a snapshot in Python and writing the whole array back loses a member added between
     that read and the write, and the add has already been reported as done to whoever made it.
@@ -51,7 +51,7 @@ def _member_subset_stage(subset: MemberSubset) -> dict[str, Any]:
             "cond": {"$not": [{"$in": [f"$$resolved.{_USER_ID}", kept_ids]}]},
         }
     }
-    return {"$set": {_MEMBERS: {"$let": {"vars": {"kept": kept}, "in": {"$concatArrays": ["$$kept", added]}}}}}
+    return {"$let": {"vars": {"kept": kept}, "in": {"$concatArrays": ["$$kept", added]}}}
 
 
 def _binding_restamp_stage(key: str, binding_fields: dict[str, Any]) -> dict[str, Any]:
@@ -160,16 +160,25 @@ class TeamRepository:
         a pipeline — the only form that can read the stored array — and the restamp travels as a
         ``$map`` because a classic modifier cannot be combined with one.
         """
+        now = datetime.now(timezone.utc)
         if member_subset is not None:
-            stages: list[dict[str, Any]] = [_member_subset_stage(member_subset)]
+            members = _subset_members(member_subset)
+            query: dict[str, Any] = {"_id": team_id}
+            if not update_data and not binding_fields:
+                # An unchanged subset must not bump updated_at, or every ingest rewrites every holder.
+                query["$expr"] = {"$ne": [members, {"$ifNull": [f"${_MEMBERS}", []]}]}
+            stages: list[dict[str, Any]] = [{"$set": {_MEMBERS: members}}]
             if binding_fields:
                 stages.append(_binding_restamp_stage(key, binding_fields))
-            if update_data:
-                stages.append({"$set": update_data})
-            await self.collection.update_one({"_id": team_id}, stages)
+            stages.append({"$set": {**update_data, "updated_at": now}})
+            await self.collection.update_one(query, stages)
             return
 
-        updates = {**update_data, **{f"{_BINDINGS}.$[{_ENTRY}].{name}": v for name, v in binding_fields.items()}}
+        updates = {
+            **update_data,
+            "updated_at": now,
+            **{f"{_BINDINGS}.$[{_ENTRY}].{name}": v for name, v in binding_fields.items()},
+        }
         await self.collection.update_one(
             {"_id": team_id},
             {"$set": updates},
@@ -192,7 +201,8 @@ class TeamRepository:
                         "org": {"$regex": f"^{re.escape(github_org)}$", "$options": "i"},
                     }
                 }
-            }
+            },
+            {"name": 1, _BINDINGS: 1},
         )
         return await cursor.to_list(None)
 

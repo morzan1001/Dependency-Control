@@ -263,7 +263,11 @@ async def _github_team_sync_stages(
     """The ownership stages GitHub sync contributes to this ingest's update."""
     source = team_source(TEAM_SOURCE_GITHUB, instance_id)
     result = await github_service.sync_team_from_github(
-        db, github_org, repository_path, owner_budget=_owner_budget(project, source)
+        db,
+        github_org,
+        repository_path,
+        current_owner_ids=owners_replaced_by(project, source),
+        owner_budget=_owner_budget(project, source),
     )
     return _team_subset_stages(project, source, result.team_ids, repository_path)
 
@@ -459,13 +463,15 @@ async def _handle_github_oidc(
             "github.com issuer needs an allowed owner list",
         )
 
-    actor = (await github_service.resolve_login(gh_payload.actor, user_repo)).user
+    actor = await github_service.resolve_login(gh_payload.actor, user_repo)
     members = [ProjectMember(user_id=str(actor["_id"]), role=PROJECT_ROLE_ADMIN)] if actor else []
 
     owners: list[str] = []
     github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)
     if github_instance.sync_teams:
-        sync_result = await github_service.sync_team_from_github(db, gh_payload.repository_owner, repo_path)
+        sync_result = await github_service.sync_team_from_github(
+            db, gh_payload.repository_owner, repo_path, current_owner_ids=set()
+        )
         owners = _new_project_owners(github_source, sync_result.team_ids, repo_path)
 
     new_project = Project(
