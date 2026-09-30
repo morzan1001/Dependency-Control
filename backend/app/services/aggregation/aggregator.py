@@ -75,6 +75,16 @@ def _package_key(finding: Finding) -> tuple[str, str]:
     return normalize_component(finding.component), normalize_version(finding.version)
 
 
+def _adopt_smallest_spelling(existing: Finding, finding: Finding, id_prefix: str) -> None:
+    """Keep the smallest raw (component, version) spelling so arrival order cannot pick the finding id."""
+    existing.component, existing.version = min(
+        (existing.component, existing.version),
+        (finding.component, finding.version),
+        key=lambda cv: (cv[0], cv[1] or ""),
+    )
+    existing.id = f"{id_prefix}{existing.component}:{existing.version}"
+
+
 class ResultAggregator:
     def __init__(self) -> None:
         self.findings: dict[str, Finding] = {}
@@ -471,6 +481,7 @@ class ResultAggregator:
     ) -> None:
         """Merge a vulnerability finding into an existing aggregate."""
         absorb_header(existing, finding, source)
+        _adopt_smallest_spelling(existing, finding, "")
         vuln_list: list[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
         merge_vulnerability_into_list(vuln_list, vuln_entry)
         existing.details["vulnerabilities"] = vuln_list
@@ -530,6 +541,7 @@ class ResultAggregator:
     ) -> None:
         """Merge a quality finding into an existing aggregated finding."""
         absorb_header(existing, finding, source)
+        _adopt_smallest_spelling(existing, finding, "QUALITY:")
         quality_list: list[QualityEntry] = existing.details.get("quality_issues", [])
         existing_ids = {q.get("id") for q in quality_list}
         if finding.id not in existing_ids:

@@ -258,3 +258,71 @@ class TestMultiSbomArrivalOrder:
         [finding] = aggregator.get_findings()
 
         assert finding.found_in == ["src/a.py", "sbom-a", "src/b.py", "sbom-b"]
+
+
+# trivy spells a Go toolchain version with a "v" prefix, grype (like the syft SBOM) with "go".
+STDLIB = {
+    "trivy": {
+        "Results": [
+            {
+                "Target": "usr/local/bin/app",
+                "Class": "lang-pkgs",
+                "Type": "gobinary",
+                "Vulnerabilities": [
+                    {
+                        "VulnerabilityID": "CVE-2024-24790",
+                        "PkgName": "stdlib",
+                        "InstalledVersion": "v1.21.5",
+                        "FixedVersion": "1.21.11, 1.22.4",
+                        "Severity": "CRITICAL",
+                        "Description": "net/netip: Unexpected behavior from Is methods for IPv4-mapped IPv6 addresses",
+                    }
+                ],
+            }
+        ]
+    },
+    "grype": {
+        "matches": [
+            {
+                "vulnerability": {
+                    "id": "CVE-2024-24790",
+                    "severity": "Critical",
+                    "description": "net/netip: Unexpected behavior from Is methods for IPv4-mapped IPv6 addresses",
+                    "fix": {"versions": ["1.21.11", "1.22.4"], "state": "fixed"},
+                    "urls": [],
+                },
+                "artifact": {"name": "stdlib", "version": "go1.21.5"},
+            }
+        ]
+    },
+}
+
+
+def _maintainer_risk(component: str) -> dict:
+    [issue] = MAINTAINER_RISK["maintainer_issues"]
+    return {"maintainer_issues": [{**issue, "component": component}]}
+
+
+class TestSurvivingSpelling:
+    @staticmethod
+    def _vulnerability(order: tuple[str, ...]) -> tuple[str, str, str | None]:
+        aggregator = ResultAggregator()
+        for analyzer in order:
+            aggregator.aggregate(analyzer, STDLIB[analyzer], source="app")
+        [finding] = aggregator.get_findings()
+        return finding.id, finding.component, finding.version
+
+    @staticmethod
+    def _quality(spellings: tuple[str, ...]) -> tuple[str, str, str | None]:
+        aggregator = ResultAggregator()
+        for i, component in enumerate(spellings):
+            aggregator.aggregate("maintainer_risk", _maintainer_risk(component), source=f"sbom-{i}")
+        [finding] = aggregator.get_findings()
+        return finding.id, finding.component, finding.version
+
+    def test_the_vulnerability_spelling_does_not_depend_on_analyzer_order(self):
+        assert self._vulnerability(("trivy", "grype")) == self._vulnerability(("grype", "trivy"))
+        assert self._vulnerability(("trivy", "grype")) == ("stdlib:go1.21.5", "stdlib", "go1.21.5")
+
+    def test_the_quality_spelling_does_not_depend_on_sbom_order(self):
+        assert self._quality(("left-pad", "Left-Pad")) == self._quality(("Left-Pad", "left-pad"))
