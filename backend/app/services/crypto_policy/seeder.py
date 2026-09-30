@@ -98,7 +98,7 @@ async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
     rules = list(load_seed_rules())
     editor = existing.updated_by if existing else None
     if existing is not None and existing.seed_version is None and editor is None:
-        # Reverts once stored no updated_by, so a legacy policy's last editor is read from its audit history.
+        # A policy without seed_version can lack updated_by after a person reverted it; the audit history names them.
         newest = await PolicyAuditRepository(db).list(policy_scope="system", limit=1)
         editor = newest[0].actor_user_id if newest else None
     if existing is not None and editor is not None:

@@ -132,7 +132,7 @@ async def test_license_policy_entries_isolated_from_crypto(client, db, owner_aut
 
 @pytest.mark.asyncio
 async def test_a_license_change_after_a_prune_takes_a_fresh_version(client, db, owner_auth_headers_proj):
-    """Counting the surviving entries handed out a number an existing entry already holds."""
+    """The next version follows the highest stored one, so a pruned entry frees no number for reuse."""
     for model in ("internal_only", "distributed", "internal_only"):
         resp = await client.put(
             "/api/v1/projects/p", json=_license_settings(distribution_model=model), headers=owner_auth_headers_proj
