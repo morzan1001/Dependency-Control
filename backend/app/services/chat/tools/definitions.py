@@ -419,7 +419,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_global_waivers",
-            "description": "List all global waivers that apply across all projects. Requires admin permission.",
+            "description": "List all global waivers that apply across all projects.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -783,7 +783,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "list_archives",
-            "description": "List archived scans. Requires archive read permission.",
+            "description": "List archived scans.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -978,7 +978,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_system_settings",
-            "description": "Get current system-wide configuration. Admin only.",
+            "description": "Get current system-wide configuration.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -990,7 +990,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_system_health",
-            "description": "Get system health status: database connectivity, worker status, cache stats. Admin only.",
+            "description": "Get cache health and statistics.",
             "parameters": {
                 "type": "object",
                 "properties": {},

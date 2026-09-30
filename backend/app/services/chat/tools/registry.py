@@ -61,6 +61,7 @@ from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
 from app.repositories.waivers import non_expired_waiver_filter
+from app.schemas.archive import AdminArchiveListItem
 from app.schemas.project import license_policy_from_settings
 from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
@@ -154,6 +155,7 @@ _PROJECT_DETAIL_FIELDS = [
 _MEMBER_FIELDS = ("user_id", "username", "role", "effective_role", "inherited_from")
 # Custom headers hold receiver credentials, and a tool answer leaves the process for the LLM provider.
 _WEBHOOK_FIELDS = _rendered_fields(WebhookResponse, withheld=frozenset({"headers"}))
+_ARCHIVE_FIELDS = _rendered_fields(AdminArchiveListItem)
 
 # Everything an answer needs to name the build it describes.
 _BUILD_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1, "status": 1}
@@ -1460,7 +1462,7 @@ class ChatToolRegistry:
         limit = ctx.args["limit"]
         cursor = ctx.db["archive_metadata"].find(query, sort=[("archived_at", -1)], limit=limit)
         archives = await cursor.to_list(length=limit)
-        return {"archives": [_serialize_doc(a) for a in archives]}
+        return {"archives": [_serialize_doc(a, _ARCHIVE_FIELDS) for a in archives]}
 
     async def _tool_get_archive_details(self, ctx: _ToolContext) -> dict[str, Any]:
         archive = await ctx.db["archive_metadata"].find_one({"_id": ctx.args["archive_id"]})
@@ -1468,7 +1470,7 @@ class ChatToolRegistry:
             return {"error": _ERR_ARCHIVE_NOT_FOUND}
         if not has_permission(ctx.user.permissions, Permissions.ARCHIVE_READ_ALL):
             await self._require_project(ctx, archive.get("project_id") or "", refusal=_ERR_ARCHIVE_NOT_FOUND)
-        return {"archive": _serialize_doc(archive)}
+        return {"archive": _serialize_doc(archive, _ARCHIVE_FIELDS)}
 
     async def _tool_list_project_webhooks(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
@@ -1528,8 +1530,7 @@ class ChatToolRegistry:
     async def _tool_get_system_health(self, ctx: _ToolContext) -> dict[str, Any]:
         from app.core.cache import cache_service
 
-        cache_health = await cache_service.health_check()
-        return {"database": "connected", "cache": cache_health}
+        return {"cache": await cache_service.health_check()}
 
     async def _tool_list_crypto_assets(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
