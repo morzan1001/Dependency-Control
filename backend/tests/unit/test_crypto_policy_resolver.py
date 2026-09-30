@@ -59,6 +59,19 @@ async def test_override_disable_propagates(db):
     effective = await CryptoPolicyResolver(db).resolve("p")
     a = next(r for r in effective.rules if r.rule_id == "a")
     assert a.enabled is False
+    assert effective.active_rules == []
+
+
+@pytest.mark.asyncio
+async def test_active_rules_hold_only_the_enabled_rules_while_rules_keep_all(db):
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", rules=[_rule("on"), _rule("off", enabled=False)], version=1)
+    )
+
+    effective = await CryptoPolicyResolver(db).resolve("p")
+
+    assert [r.rule_id for r in effective.active_rules] == ["on"]
+    assert [r.rule_id for r in effective.rules] == ["on", "off"]
 
 
 @pytest.mark.asyncio

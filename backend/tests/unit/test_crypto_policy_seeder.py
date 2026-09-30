@@ -30,6 +30,11 @@ def test_load_seed_rules_returns_nonempty():
     assert "pqc-quantum-vulnerable-pke" in rule_ids
 
 
+def test_the_seed_rules_are_parsed_once_into_an_immutable_tuple():
+    assert isinstance(load_seed_rules(), tuple)
+    assert load_seed_rules() is load_seed_rules()
+
+
 def test_load_seed_rules_sources_covered():
     rules = load_seed_rules()
     sources = {r.source for r in rules}

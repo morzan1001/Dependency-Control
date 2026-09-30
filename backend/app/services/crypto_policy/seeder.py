@@ -1,5 +1,6 @@
 """Seeds the system crypto policy from ./seed/*.yaml; project overrides are untouched."""
 
+import functools
 import logging
 from pathlib import Path
 
@@ -20,13 +21,14 @@ CURRENT_SEED_VERSION = 1
 _SEED_DIR = Path(__file__).parent / "seed"
 
 
-def load_seed_rules() -> list[CryptoRule]:
+@functools.cache
+def load_seed_rules() -> tuple[CryptoRule, ...]:
     rules: list[CryptoRule] = []
     for path in sorted(_SEED_DIR.glob("*.yaml")):
         with open(path) as f:
             data = yaml.safe_load(f) or {}
         rules.extend(CryptoRule.model_validate(rule_dict) for rule_dict in data.get("rules") or [])
-    return rules
+    return tuple(rules)
 
 
 async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
@@ -40,7 +42,7 @@ async def seed_crypto_policies(db: AsyncIOMotorDatabase) -> None:
         )
         return
     rules = load_seed_rules()
-    new_policy = CryptoPolicy(scope="system", rules=rules, version=CURRENT_SEED_VERSION)
+    new_policy = CryptoPolicy(scope="system", rules=list(rules), version=CURRENT_SEED_VERSION)
     await repo.upsert_system_policy(new_policy)
     await record_policy_change(
         db,
