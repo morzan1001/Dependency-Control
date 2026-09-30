@@ -1,4 +1,5 @@
 from datetime import datetime
+from itertools import pairwise
 from typing import Annotated, Any
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, field_validator
@@ -6,9 +7,17 @@ from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstra
 from app.core.constants import (
     DEFAULT_ACTIVE_ANALYZERS,
     DEFAULT_RETENTION_DAYS,
+    EOL_HIGH_AFTER_DAYS,
+    EOL_MEDIUM_AFTER_DAYS,
     MAX_RETENTION_DAYS,
     PROJECT_ROLE_VIEWER,
     RETENTION_ACTION_DELETE,
+    SCORECARD_FLAG_THRESHOLD,
+    STALE_PACKAGE_THRESHOLD_DAYS,
+    STALE_PACKAGE_WARNING_DAYS,
+    TYPOSQUATTING_CRITICAL_SIMILARITY,
+    TYPOSQUATTING_HIGH_SIMILARITY,
+    TYPOSQUATTING_SIMILARITY_THRESHOLD,
     ProjectRole,
     RetentionAction,
 )
@@ -71,9 +80,47 @@ def _reject_unusable_license_settings(value: dict[str, dict[str, Any]] | None) -
     return value
 
 
+# analyzer -> key -> (type, min, max, default), with the ranges of frontend/src/lib/analyzer-settings-schemas.ts.
+# Each analyzer lists its keys from the largest to the smallest, and the values must keep that order.
+ANALYZER_TUNABLES: dict[str, dict[str, tuple[type[int] | type[float], float, float, float]]] = {
+    "deps_dev": {"scorecard_threshold": (float, 0, 10, SCORECARD_FLAG_THRESHOLD)},
+    "end_of_life": {
+        "eol_high_after_days": (int, 0, 3650, EOL_HIGH_AFTER_DAYS),
+        "eol_medium_after_days": (int, 0, 3650, EOL_MEDIUM_AFTER_DAYS),
+    },
+    "maintainer_risk": {
+        "stale_after_days": (int, 30, 3650, STALE_PACKAGE_THRESHOLD_DAYS),
+        "warn_after_days": (int, 30, 3650, STALE_PACKAGE_WARNING_DAYS),
+    },
+    "typosquatting": {
+        "critical_similarity": (float, 0.5, 1.0, TYPOSQUATTING_CRITICAL_SIMILARITY),
+        "high_similarity": (float, 0.5, 1.0, TYPOSQUATTING_HIGH_SIMILARITY),
+        "similarity_threshold": (float, 0.5, 1.0, TYPOSQUATTING_SIMILARITY_THRESHOLD),
+    },
+}
+
+
+def _reject_invalid_tunables(value: dict[str, dict[str, Any]] | None) -> dict[str, dict[str, Any]] | None:
+    """The analyzers read these values as stored, so one they cannot use fails or silently disables every later scan."""
+    for analyzer, specs in ANALYZER_TUNABLES.items():
+        settings = (value or {}).get(analyzer) or {}
+        effective = []
+        for key, (kind, low, high, default) in specs.items():
+            number = settings.get(key, default)
+            if isinstance(number, bool) or not isinstance(number, (kind, int)) or not low <= number <= high:
+                raise ValueError(
+                    f"{analyzer}.{key} must be {'an integer' if kind is int else 'a number'} from {low} to {high}"
+                )
+            effective.append(number)
+        if any(larger < smaller for larger, smaller in pairwise(effective)):
+            raise ValueError(f"{analyzer} needs {' >= '.join(specs)}")
+    return value
+
+
 AnalyzerSettings = Annotated[
     dict[str, dict[str, Any]],
     AfterValidator(_reject_unusable_license_settings),
+    AfterValidator(_reject_invalid_tunables),
 ]
 
 

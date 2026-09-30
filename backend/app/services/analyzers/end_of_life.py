@@ -97,8 +97,8 @@ class EndOfLifeAnalyzer(Analyzer):
     def _apply_settings(self, settings: dict[str, Any] | None) -> None:
         """Bind this project's thresholds to this run's instance."""
         s = settings or {}
-        self._high_after_days = int(s.get("eol_high_after_days", EOL_HIGH_AFTER_DAYS))
-        self._medium_after_days = int(s.get("eol_medium_after_days", EOL_MEDIUM_AFTER_DAYS))
+        self._high_after_days = s.get("eol_high_after_days", EOL_HIGH_AFTER_DAYS)
+        self._medium_after_days = s.get("eol_medium_after_days", EOL_MEDIUM_AFTER_DAYS)
 
     def _emit_for_versions(
         self,

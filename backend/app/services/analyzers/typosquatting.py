@@ -194,9 +194,9 @@ class TyposquattingAnalyzer(Analyzer):
         issues = []
 
         settings = settings or {}
-        similarity_threshold = float(settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD))
-        critical_at = float(settings.get("critical_similarity", TYPOSQUATTING_CRITICAL_SIMILARITY))
-        high_at = float(settings.get("high_similarity", TYPOSQUATTING_HIGH_SIMILARITY))
+        similarity_threshold = settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD)
+        critical_at = settings.get("critical_similarity", TYPOSQUATTING_CRITICAL_SIMILARITY)
+        high_at = settings.get("high_similarity", TYPOSQUATTING_HIGH_SIMILARITY)
 
         normalized_popular: dict[str, set[str]] = {}  # lazy per-ecosystem cache
 

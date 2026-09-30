@@ -79,8 +79,8 @@ class MaintainerRiskAnalyzer(Analyzer):
         """Analyze maintainer health for packages in the SBOM."""
         settings = settings or {}
         github_token = settings.get("github_token")
-        self._stale_after_days = int(settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS))
-        self._warn_after_days = int(settings.get("warn_after_days", STALE_PACKAGE_WARNING_DAYS))
+        self._stale_after_days = settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS)
+        self._warn_after_days = settings.get("warn_after_days", STALE_PACKAGE_WARNING_DAYS)
         timeout = ANALYZER_TIMEOUTS.get("maintainer_risk", ANALYZER_TIMEOUTS["default"])
 
         async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:

@@ -29,21 +29,6 @@ async def fetch_deps_dev_json(client: InstrumentedAsyncClient, url: str) -> dict
     return document
 
 
-def _validated_threshold(
-    settings: dict[str, Any] | None, key: str, default: float, min_value: float = 0.0, max_value: float = 10.0
-) -> float:
-    """Extract and validate a numeric threshold from settings, falling back to default."""
-    if not settings or key not in settings:
-        return default
-    try:
-        value = float(settings[key])
-        if min_value <= value <= max_value:
-            return value
-    except (ValueError, TypeError):
-        pass
-    return default
-
-
 def _lookup_target(component: dict[str, Any]) -> tuple[str, str, str] | None:
     """``(cache key, deps.dev system, deps.dev name)`` of a component deps.dev can look up at its version."""
     parsed = parse_purl(component.get("purl", ""))
@@ -107,7 +92,7 @@ class DepsDevAnalyzer(Analyzer):
         package_metadata: dict[str, Any] = {}
 
         # The cache is shared across projects, so it holds every scorecard and each project filters its own.
-        threshold = _validated_threshold(settings, "scorecard_threshold", SCORECARD_FLAG_THRESHOLD)
+        threshold = (settings or {}).get("scorecard_threshold", SCORECARD_FLAG_THRESHOLD)
 
         targets: dict[str, tuple[dict[str, Any], str, str]] = {}
         for component in components:
