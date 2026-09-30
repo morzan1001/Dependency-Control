@@ -328,6 +328,13 @@ class TestGitHubJwksSource:
         discovery["up"] = True
         assert await service.refresh_jwks() == rotated
 
+    async def test_a_malformed_issuer_serves_no_key_set(self, monkeypatch, jwks_cache):
+        requested = _serve_idp(monkeypatch, lambda request: httpx.Response(200, json=_JWKS))
+        service = GitHubService(make_github_instance(url="https://github.corp.example.com:_services/token"))
+
+        assert await service.get_jwks() is None
+        assert requested == []
+
 
 _TEAMS_ENDPOINT = "/repos/acme/widgets/teams"
 _TEAMS_URL = f"https://api.github.com{_TEAMS_ENDPOINT}"

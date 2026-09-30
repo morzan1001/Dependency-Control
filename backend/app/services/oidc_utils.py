@@ -34,7 +34,7 @@ async def discover_jwks_uri(base_url: str, cache_key: str) -> str | None:
         async with InstrumentedAsyncClient("OIDC discovery", timeout=_JWKS_FETCH_TIMEOUT_SECONDS) as client:
             response = await client.get(f"{base_url}/.well-known/openid-configuration")
         document = response.json() if response.status_code == 200 else {}
-    except (httpx.HTTPError, ValueError) as e:
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as e:
         logger.warning("OIDC discovery failed for %s: %s", base_url, e)
         return None
     jwks_uri = document.get("jwks_uri") if isinstance(document, dict) else None
@@ -48,7 +48,7 @@ async def _jwks_from(client: InstrumentedAsyncClient, uri: str) -> dict[str, Any
     try:
         response = await client.get(uri)
         body = response.json() if response.status_code == 200 else None
-    except (httpx.HTTPError, ValueError) as e:
+    except (httpx.HTTPError, httpx.InvalidURL, ValueError) as e:
         logger.warning("JWKS fetch from %s failed: %s", uri, e)
         return None
     return body if isinstance(body, dict) and isinstance(body.get("keys"), list) else None
