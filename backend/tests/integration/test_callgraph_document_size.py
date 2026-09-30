@@ -8,6 +8,7 @@ from bson import ObjectId
 
 from app.api.v1.helpers.callgraph import parse_madge_format
 from app.core.housekeeping import run_housekeeping
+from app.core.init_db import create_indexes
 from app.models.callgraph import Callgraph
 from app.models.project import Project
 from app.models.user import User
@@ -100,12 +101,14 @@ def _legacy_inline(data: dict[str, list[str]]) -> dict:
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
 async def test_a_callgraph_over_16_mib_and_200k_entries_is_stored_and_enriches_the_scan(client, db):
+    await create_indexes(db)
     await _seed_scan_with_finding(db, "pkg-7")
 
     resp = await _upload(client, _madge(20_001, 100, 2_000))
 
     assert resp.status_code == 200, resp.text
-    assert resp.json()["imports_parsed"] == 200_010
+    assert (resp.json()["imports_parsed"], resp.json()["warnings"]) == (200_010, [])
+    assert "reachability_pending" not in await db.scans.find_one({"_id": _SCAN_ID})
     doc = await db.callgraphs.find_one({"scan_id": _SCAN_ID})
     assert "module_usage" not in doc
     assert "analyzed_modules" not in doc

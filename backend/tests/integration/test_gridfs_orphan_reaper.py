@@ -14,7 +14,7 @@ from app.core.constants import ARCHIVE_BATCH_SIZE
 from app.core.init_db import create_indexes
 from app.models.project import Project
 from app.repositories.analysis_results import AnalysisResultRepository
-from app.services.gridfs_maintenance import _GRIDFS_REFERENCES, reap_orphan_gridfs_files, upload_gridfs_json
+from app.services.gridfs_maintenance import reap_orphan_gridfs_files, upload_gridfs_json
 from app.services.scan_cascade import delete_scans_and_related_data
 from tests.helpers.compliance import generated_report
 
@@ -63,11 +63,11 @@ async def _uploaded_callgraph(client, db, api_key_headers, monkeypatch):
     return row["graph_gridfs_id"], lambda: db.callgraphs.delete_one({"_id": row["_id"]})
 
 
-_WRITERS: dict[str, _Writer] = {
-    "scans": _ingested_sbom,
-    "analysis_results": _saved_result,
-    "compliance_reports": _generated_artifact,
-    "callgraphs": _uploaded_callgraph,
+_WRITERS: dict[tuple[str, str], _Writer] = {
+    ("scans", "sbom_refs.gridfs_id"): _ingested_sbom,
+    ("analysis_results", "result_gridfs_id"): _saved_result,
+    ("compliance_reports", "artifact_gridfs_id"): _generated_artifact,
+    ("callgraphs", "graph_gridfs_id"): _uploaded_callgraph,
 }
 
 
@@ -81,11 +81,11 @@ async def _file_ids(db) -> set[str]:
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-@pytest.mark.parametrize(("collection", "field"), _GRIDFS_REFERENCES, ids=[c for c, _ in _GRIDFS_REFERENCES])
+@pytest.mark.parametrize(("collection", "field"), _WRITERS, ids=[c for c, _ in _WRITERS])
 async def test_each_registry_field_protects_its_file(
     client, db, api_key_headers, owner_auth_headers_proj, monkeypatch, collection, field
 ):
-    file_id, delete_reference = await _WRITERS[collection](client, db, api_key_headers, monkeypatch)
+    file_id, delete_reference = await _WRITERS[collection, field](client, db, api_key_headers, monkeypatch)
     _every_file_outlived_the_window(monkeypatch)
 
     await reap_orphan_gridfs_files(db)
@@ -123,7 +123,7 @@ async def test_the_reaper_walks_more_than_one_batch(db, monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.live_mongo
-@pytest.mark.parametrize(("collection", "field"), _GRIDFS_REFERENCES, ids=[c for c, _ in _GRIDFS_REFERENCES])
+@pytest.mark.parametrize(("collection", "field"), _WRITERS, ids=[c for c, _ in _WRITERS])
 async def test_each_registry_lookup_is_an_index_scan(db, collection, field):
     await create_indexes(db)
 
