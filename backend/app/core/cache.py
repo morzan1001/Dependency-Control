@@ -100,8 +100,8 @@ class CacheTTL:
     # Update frequency analysis (changes only on new scan completion)
     UPDATE_FREQUENCY = 30 * 60  # 30 minutes
 
-    # Keyed by scan_id (auto-invalidates on new scan); TTL only bounds staleness
-    # of the cross-project signal woven in.
+    # Keyed by the scan's completion, so every finished analysis misses; TTL only bounds
+    # staleness of the cross-project signal woven in.
     RECOMMENDATIONS = 10 * 60  # 10 minutes
 
     # Long TTL: version histories almost never change retroactively; new releases append.
@@ -193,10 +193,10 @@ class CacheKeys:
         return f"update_freq_cmp:{scope_hash}:" + (f"team={team_id}" if team_id else "all-teams")
 
     @staticmethod
-    def recommendations(project_id: str, scan_id: str, scope_hash: str) -> str:
+    def recommendations(project_id: str, scan_id: str, analysis_stamp: str, scope_hash: str) -> str:
         # scope_hash (digest of caller's accessible project ids) prevents cross-project
         # recommendation data leaking across users with different project access.
-        return f"recommendations:{project_id}:{scan_id}:{scope_hash}"
+        return f"recommendations:{project_id}:{scan_id}:{analysis_stamp}:{scope_hash}"
 
 
 class CacheService:

@@ -1,6 +1,5 @@
 """Analytics recommendations endpoint: /projects/{project_id}/recommendations."""
 
-import hashlib
 import logging
 from typing import Any
 
@@ -15,7 +14,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404
-from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.cache import CacheKeys, CacheTTL, cache_service, scope_digest
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     SCAN_DEPENDENCY_READ_LIMIT,
@@ -116,69 +115,82 @@ async def get_project_recommendations(
     dep_repo = DependencyRepository(db)
     user_project_ids = await get_user_project_ids(current_user, db)
 
-    # Cache per scan + caller scope so users with different project access never
-    # share an entry; cross-project signal isn't in the key and may be TTL-stale.
-    scope_hash = hashlib.md5(",".join(sorted(user_project_ids)).encode(), usedforsecurity=False).hexdigest()[:16]
-    cache_key = CacheKeys.recommendations(project_id, scan_id, scope_hash)
-    cached = await cache_service.get(cache_key)
-    if cached:
-        return RecommendationsResponse(**cached)
-
-    findings, findings_total = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
-    threat_intel = await _apply_live_threat_intel(findings)
-
-    dependencies, dependencies_total = await dep_repo.find_by_scan(
-        project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
+    stamped = await scan_repo.find_many_raw({"_id": scan_id}, limit=1, projection={"completed_at": 1})
+    completed_at = stamped[0].get("completed_at") if stamped else None
+    # Per analysis + caller scope so users with different project access never share an
+    # entry; cross-project signal isn't in the key and may be TTL-stale.
+    cache_key = CacheKeys.recommendations(
+        project_id, scan_id, completed_at.isoformat() if completed_at else "none", scope_digest(user_project_ids)
     )
-    source_target = next((dep.source_target for dep in dependencies if dep.source_target), None)
 
-    previous_scan_findings = None
-    previous_scan_dependencies = None
-    previous_scan = await scan_repo.get_preceding_scan(scan_id)
-    if previous_scan:
-        previous_scan_findings, _ = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
-        previous_scan_dependencies = await dep_repo.find_raw_by_scan(previous_scan.id, _LICENSE_DRIFT_PROJECTION)
+    async def _compute() -> dict[str, Any]:
+        findings, findings_total = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
+        threat_intel = await _apply_live_threat_intel(findings)
 
-    recent_scan_ids = [
-        recent.id
-        for recent in await scan_repo.find_many(
-            {"project_id": project_id},
-            limit=_RECURRENCE_WINDOW_SCANS,
-            sort=[("created_at", -1)],
+        dependencies, dependencies_total = await dep_repo.find_by_scan(
+            project_id, scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT
         )
-    ]
-    cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
+        source_target = next((dep.source_target for dep in dependencies if dep.source_target), None)
 
-    cross_project_data = await gather_cross_project_data(user_project_ids, project_id, db)
+        previous_scan_findings = None
+        previous_scan_dependencies = None
+        previous_scan = await scan_repo.get_preceding_scan(scan_id)
+        if previous_scan:
+            previous_scan_findings, _ = await finding_repo.find_by_scan(
+                previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT
+            )
+            previous_scan_dependencies = await dep_repo.find_raw_by_scan(previous_scan.id, _LICENSE_DRIFT_PROJECTION)
 
-    recommendations = await recommendation_engine.generate_recommendations(
-        findings=findings,
-        dependencies=dependencies,
-        source_target=source_target,
-        previous_scan_findings=previous_scan_findings,
-        previous_scan_dependencies=previous_scan_dependencies,
-        cve_recurrence=cve_recurrence,
-        recurrence_window_scans=len(recent_scan_ids),
-        cross_project_data=cross_project_data,
-        threat_intel=threat_intel,
+        recent_scan_ids = [
+            recent.id
+            for recent in await scan_repo.find_many(
+                {"project_id": project_id},
+                limit=_RECURRENCE_WINDOW_SCANS,
+                sort=[("created_at", -1)],
+            )
+        ]
+        cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
+
+        cross_project_data = await gather_cross_project_data(user_project_ids, project_id, db)
+
+        recommendations = await recommendation_engine.generate_recommendations(
+            findings=findings,
+            dependencies=dependencies,
+            source_target=source_target,
+            previous_scan_findings=previous_scan_findings,
+            previous_scan_dependencies=previous_scan_dependencies,
+            cve_recurrence=cve_recurrence,
+            recurrence_window_scans=len(recent_scan_ids),
+            cross_project_data=cross_project_data,
+            threat_intel=threat_intel,
+        )
+
+        finding_counts = _finding_counts(findings)
+        response = RecommendationsResponse(
+            project_id=project_id,
+            project_name=project.name,
+            scan_id=scan_id,
+            total_findings=len(findings),
+            findings_total=findings_total,
+            total_vulnerabilities=finding_counts["vulnerabilities"],
+            recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
+            summary=_summarize(recommendations, finding_counts),
+            dependencies_read=len(dependencies),
+            dependencies_total=dependencies_total,
+        )
+        # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
+        return response.model_dump(mode="json")
+
+    # A waiter outlasts a slow miss instead of starting a second one.
+    payload = await cache_service.get_or_fetch_with_lock(
+        cache_key,
+        _compute,
+        ttl_seconds=CacheTTL.RECOMMENDATIONS,
+        lock_ttl_seconds=30,
+        max_wait_seconds=30,
+        reraise_fetch_errors=True,
     )
-
-    finding_counts = _finding_counts(findings)
-    response = RecommendationsResponse(
-        project_id=project_id,
-        project_name=project.name,
-        scan_id=scan_id,
-        total_findings=len(findings),
-        findings_total=findings_total,
-        total_vulnerabilities=finding_counts["vulnerabilities"],
-        recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
-        summary=_summarize(recommendations, finding_counts),
-        dependencies_read=len(dependencies),
-        dependencies_total=dependencies_total,
-    )
-    # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
-    await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)
-    return response
+    return RecommendationsResponse.model_validate(payload)
 
 
 def _finding_counts(findings: list[FindingRecord]) -> dict[str, int]:

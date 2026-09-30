@@ -411,7 +411,8 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> li
             MONGO_GROUP: {
                 "_id": package_identity_expr(),
                 "versions": {"$addToSet": "$version"},
-                "project_ids": {"$addToSet": "$project_id"},
+                # One head scan per compared project, so distinct scans count the projects.
+                "scan_ids": {"$addToSet": "$scan_id"},
             }
         },
         {
@@ -419,7 +420,7 @@ def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> li
                 "name": "$_id.path",
                 "versions": 1,
                 "version_count": {"$size": "$versions"},
-                "project_count": {"$size": "$project_ids"},
+                "project_count": {"$size": "$scan_ids"},
             }
         },
         {MONGO_MATCH: {"version_count": {"$gt": 1}, "project_count": {"$gte": min_projects}}},

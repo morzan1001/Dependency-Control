@@ -76,17 +76,20 @@ class TestScopeDigest:
 
 
 class TestCacheKeysRecommendations:
-    """Recommendations key isolates by scan and caller scope to prevent cross-project cache sharing."""
+    """Recommendations key isolates by scan, analysis and caller scope."""
 
     def test_includes_all_components(self):
-        key = CacheKeys.recommendations("proj1", "scanA", "deadbeef")
-        assert "proj1" in key and "scanA" in key and "deadbeef" in key
+        key = CacheKeys.recommendations("proj1", "scanA", "2026-09-30T10:00:00", "deadbeef")
+        assert "proj1" in key and "scanA" in key and "2026-09-30T10:00:00" in key and "deadbeef" in key
 
     def test_differs_by_scan(self):
-        assert CacheKeys.recommendations("p", "s1", "h") != CacheKeys.recommendations("p", "s2", "h")
+        assert CacheKeys.recommendations("p", "s1", "t", "h") != CacheKeys.recommendations("p", "s2", "t", "h")
+
+    def test_differs_by_analysis(self):
+        assert CacheKeys.recommendations("p", "s", "t1", "h") != CacheKeys.recommendations("p", "s", "t2", "h")
 
     def test_differs_by_scope(self):
-        assert CacheKeys.recommendations("p", "s", "h1") != CacheKeys.recommendations("p", "s", "h2")
+        assert CacheKeys.recommendations("p", "s", "t", "h1") != CacheKeys.recommendations("p", "s", "t", "h2")
 
 
 class TestCacheKeysKevCatalog:

@@ -1,10 +1,13 @@
 """get_project_recommendations: access checks, scan resolution, what reaches the engine, and the summary tally."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
+import fakeredis.aioredis
 import pytest
 
 from app.api.v1.endpoints.analytics import recommendations as rec_module
+from app.core.cache import CacheService
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 
 _NOW = datetime.now(timezone.utc)
@@ -15,13 +18,15 @@ def _path(project_id: str) -> str:
 
 
 async def _insert_scan(db, scan_id: str, project_id: str = "p", age_hours: int = 0) -> None:
+    created_at = _NOW - timedelta(hours=age_hours)
     await db.scans.insert_one(
         {
             "_id": scan_id,
             "project_id": project_id,
             "branch": "main",
             "status": "completed",
-            "created_at": _NOW - timedelta(hours=age_hours),
+            "created_at": created_at,
+            "completed_at": created_at + timedelta(minutes=5),
         }
     )
 
@@ -61,6 +66,69 @@ def _engine_returning(recommendations: list[Recommendation], seen: dict):
         return recommendations
 
     return _generate
+
+
+def _counting_engine(runs: list[int]):
+    generate = rec_module.recommendation_engine.generate_recommendations
+
+    async def _generate(**kwargs):
+        runs.append(len(kwargs["findings"]))
+        await asyncio.sleep(0.05)
+        return await generate(**kwargs)
+
+    return _generate
+
+
+@pytest.fixture
+def redis_cache(monkeypatch):
+    cache = CacheService()
+    cache._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    cache._pool = object()  # non-None so get_client() short-circuits to the fake
+    cache._available = True
+    monkeypatch.setattr(rec_module, "cache_service", cache)
+    return cache
+
+
+async def _reanalyse(db, scan_id: str, finding: dict) -> None:
+    """A re-ingest or a late analyzer result: the same scan id gets a new finding set and completion."""
+    await db.findings.insert_one(finding)
+    await db.scans.update_one({"_id": scan_id}, {"$set": {"completed_at": _NOW + timedelta(hours=1)}})
+
+
+@pytest.mark.asyncio
+async def test_a_reanalysed_scan_is_not_served_its_earlier_recommendations(
+    client, db, owner_auth_headers_proj, monkeypatch, redis_cache
+):
+    await _insert_scan(db, "s")
+    await db.findings.insert_one(_finding("f1", "vulnerability"))
+    runs: list[int] = []
+    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _counting_engine(runs))
+
+    first = await client.get(_path("p"), headers=owner_auth_headers_proj)
+    repeat = await client.get(_path("p"), headers=owner_auth_headers_proj)
+    await _reanalyse(db, "s", _finding("f2", "sast"))
+    after = await client.get(_path("p"), headers=owner_auth_headers_proj)
+
+    assert first.status_code == repeat.status_code == after.status_code == 200, after.text
+    assert repeat.json() == first.json()
+    assert runs == [1, 2]
+    assert after.json()["total_findings"] == 2
+    assert after.json()["summary"]["sast_issues"] == 1
+
+
+@pytest.mark.asyncio
+async def test_concurrent_views_of_one_scan_share_one_computation(
+    client, db, owner_auth_headers_proj, monkeypatch, redis_cache
+):
+    await _insert_scan(db, "s")
+    await db.findings.insert_one(_finding("f1", "vulnerability"))
+    runs: list[int] = []
+    monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _counting_engine(runs))
+
+    responses = await asyncio.gather(*(client.get(_path("p"), headers=owner_auth_headers_proj) for _ in range(3)))
+
+    assert [r.status_code for r in responses] == [200, 200, 200]
+    assert runs == [1]
 
 
 @pytest.mark.asyncio
