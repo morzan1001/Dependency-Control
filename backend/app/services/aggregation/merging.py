@@ -7,64 +7,21 @@ from typing import Any
 
 from app.core.constants import get_severity_value
 from app.core.cve import advisory_ids, entry_cves
-from app.services.normalizers.utils import FindingIdPrefix
-from app.models.finding import Finding, FindingType
+from app.models.finding import Finding
 from app.schemas.finding import VulnerabilityEntry
 from app.services.aggregation.versions import VersionKey, parse_version_key, split_fixed_versions
 
 
-def _sast_entry(f: Finding) -> dict[str, Any]:
-    """Build the per-scanner sast_findings entry from a single Finding."""
-    return {
+def to_sast_aggregate(f: Finding) -> Finding:
+    """Wrap one scanner's SAST finding in the persisted sast_findings shape."""
+    entry = {
         "id": f.details.get("rule_id", "unknown"),
-        "scanner": f.scanners[0] if f.scanners else "unknown",
+        "scanner": f.scanners[0],
         "severity": f.severity,
         "details": f.details,
     }
-
-
-def merge_sast_findings(findings: list[Finding]) -> Finding | None:
-    """Merge a list of SAST findings into one finding holding the per-scanner entries."""
-    if not findings:
-        return None
-
-    base = findings[0]
-
-    merged_details: dict[str, Any] = {
-        "sast_findings": [],
-        "file": base.component,
-        "line": base.details.get("line") or base.details.get("start", {}).get("line"),
-    }
-
-    merged_scanners: set = set()
-    max_severity_val = 0
-    max_severity = "INFO"
-
-    for f in findings:
-        s_val = get_severity_value(f.severity)
-        if s_val > max_severity_val:
-            max_severity_val = s_val
-            max_severity = f.severity
-
-        merged_scanners.update(f.scanners)
-        merged_details["sast_findings"].append(_sast_entry(f))
-
-    description = base.description
-    if len(findings) > 1 and len(merged_scanners) > 1:
-        description += f" (Confirmed by {len(merged_scanners)} scanners)"
-
-    return Finding(
-        id=(base.id if len(findings) == 1 else f"{FindingIdPrefix.SAST_AGG}-{base.component}-{merged_details['line']}"),
-        type=FindingType.SAST,
-        severity=max_severity,
-        component=base.component,
-        version=base.version,
-        description=description,
-        scanners=sorted(merged_scanners),
-        details=merged_details,
-        found_in=base.found_in,
-        aliases=(sorted({f.id for f in findings if f.id != base.id}) if len(findings) > 1 else base.aliases),
-    )
+    line = f.details.get("start", {}).get("line")
+    return f.model_copy(update={"details": {"sast_findings": [entry], "file": f.component, "line": line}})
 
 
 def _same_advisory(a_ids: set[str], a: Mapping[str, Any], b: Mapping[str, Any]) -> bool:

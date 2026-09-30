@@ -322,7 +322,7 @@ class SastFindingEntry(_DetailsModel):
 
 
 class SastDetails(_DetailsModel):
-    """Merged SAST finding (aggregation.merging.merge_sast_findings)."""
+    """SAST finding as persisted (aggregation.merging.to_sast_aggregate)."""
 
     sast_findings: list[SastFindingEntry] = []
     file: str | None = None

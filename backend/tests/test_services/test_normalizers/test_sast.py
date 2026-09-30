@@ -205,6 +205,65 @@ class TestNormalizeOpengrep:
         assert entry["details"]["cwe_ids"]
         assert f.description
 
+    def test_an_unmapped_severity_stays_unknown_through_get_findings(self):
+        result = self._opengrep_result(
+            [
+                {
+                    "check_id": "rules.inventory.flask-route",
+                    "path": "app/routes.py",
+                    "start": {"line": 3, "col": 1},
+                    "end": {"line": 3, "col": 20},
+                    "extra": {"severity": "INVENTORY", "message": "route", "metadata": {}},
+                }
+            ]
+        )
+        self.agg.aggregate("opengrep", result)
+        [f] = self.agg.get_findings()
+
+        assert f.severity == "UNKNOWN"
+        assert f.details["sast_findings"][0]["severity"] == "UNKNOWN"
+
+    def test_opengrep_and_bearer_on_one_line_stay_two_findings(self):
+        self.agg.aggregate(
+            "opengrep",
+            self._opengrep_result(
+                [
+                    {
+                        "check_id": "python.lang.security.audit.sqli",
+                        "path": "app/db.py",
+                        "start": {"line": 10, "col": 5},
+                        "end": {"line": 10, "col": 40},
+                        "extra": {"severity": "ERROR", "message": "sqli", "metadata": {"cwe": ["CWE-89"]}},
+                    }
+                ]
+            ),
+        )
+        self.agg.aggregate(
+            "bearer",
+            {
+                "findings": [
+                    {
+                        "id": "python_lang_sql_injection",
+                        "title": "SQL injection",
+                        "severity": "high",
+                        "full_filename": "app/db.py",
+                        "line_number": 10,
+                        "cwe_ids": ["89"],
+                    }
+                ]
+            },
+        )
+        findings = self.agg.get_findings()
+
+        assert sorted(f.id for f in findings) == [
+            "BEARER-python_lang_sql_injection-app/db.py-10",
+            "OPENGREP-python.lang.security.audit.sqli-app/db.py-10",
+        ]
+        for f in findings:
+            [entry] = f.details["sast_findings"]
+            assert f.scanners == [entry["scanner"]]
+            assert (f.details["file"], f.details["line"]) == ("app/db.py", 10)
+
     def test_get_findings_sets_match_signature(self):
         result = self._opengrep_result(
             [

@@ -28,8 +28,8 @@ from app.services.component_identity import (
 from app.services.aggregation.cross_link import cross_link_pair
 from app.services.aggregation.merging import (
     merge_findings_data,
-    merge_sast_findings,
     merge_vulnerability_into_list,
+    to_sast_aggregate,
 )
 from app.services.aggregation.quality import update_quality_description
 from app.services.aggregation.scorecard import enrich_with_scorecard
@@ -309,44 +309,6 @@ class ResultAggregator:
             normalizers[analyzer_name](self, result, source=source)
 
     @staticmethod
-    def _sast_group_key(f: Finding) -> tuple:
-        """Build the SAST grouping key for a finding."""
-        line = f.details.get("line")
-        start_line = f.details.get("start", {}).get("line")
-        effective_line = line or start_line or 0
-        rule_id = f.details.get("rule_id", "unknown")
-        return (f.component, effective_line, rule_id)
-
-    @staticmethod
-    def _vuln_group_key(f: Finding) -> tuple | None:
-        """Build vulnerability grouping key, or None if finding has no vulns."""
-        vulns = {v["id"] for v in f.details.get("vulnerabilities", [])}
-        if not vulns:
-            return None
-        component, version = _package_key(f)
-        return (extract_artifact_name(component), version)
-
-    def _partition_findings(
-        self, current_findings: list[Finding]
-    ) -> tuple[dict[tuple, list[Finding]], dict[Any, list[Finding]]]:
-        """Partition findings into SAST and vulnerability groups."""
-        groups: dict[tuple, list[Finding]] = {}
-        sast_groups: dict[Any, list[Finding]] = {}
-
-        for f in current_findings:
-            if f.type == FindingType.SAST:
-                sast_groups.setdefault(self._sast_group_key(f), []).append(f)
-                continue
-            if f.type != FindingType.VULNERABILITY:
-                continue
-            group_key = self._vuln_group_key(f)
-            if group_key is None:
-                continue
-            groups.setdefault(group_key, []).append(f)
-
-        return groups, sast_groups
-
-    @staticmethod
     def _merge_cluster(cluster: list[Finding], representative: str) -> Finding:
         """Merge one package's findings into the entry carrying the most qualified name."""
         if len(cluster) == 1:
@@ -382,23 +344,19 @@ class ResultAggregator:
         Analyzers aggregate in completion order, so every step here is kept order-independent:
         identical scanner output must yield an identical finding set between runs.
         """
-        current_findings = list(self.findings.values())
-        groups, sast_groups = self._partition_findings(current_findings)
-
-        final_findings: list[Finding] = [
-            f for f in current_findings if f.type not in (FindingType.VULNERABILITY, FindingType.SAST)
-        ]
-
-        for group in sast_groups.values():
-            if not group:
-                continue
-            # Single-item groups still pass through so every SAST finding gets a consistent sast_findings list.
-            merged_f = merge_sast_findings(sorted(group, key=self._finding_sort_key))
-            if merged_f:
-                final_findings.append(merged_f)
+        final_findings: list[Finding] = []
+        vuln_groups: dict[tuple[str, str], list[Finding]] = {}
+        for f in self.findings.values():
+            if f.type == FindingType.VULNERABILITY:
+                component, version = _package_key(f)
+                vuln_groups.setdefault((extract_artifact_name(component), version), []).append(f)
+            elif f.type == FindingType.SAST:
+                final_findings.append(to_sast_aggregate(f))
+            else:
+                final_findings.append(f)
 
         merged_ids: set = set()
-        for group in groups.values():
+        for group in vuln_groups.values():
             for p in self._reduce_vuln_group(group):
                 if p.id not in merged_ids:
                     final_findings.append(p)

@@ -3,7 +3,7 @@
 import pytest
 
 _SEVERITIES = ("CRITICAL", "ERROR", "WARNING", "INFO", "NEGLIGIBLE", "BOGUS")
-_EXPECTED_PER_BUCKET = {"critical": 1, "high": 1, "medium": 1, "low": 1, "info": 1}
+_EXPECTED_PER_BUCKET = {"critical": 1, "high": 1, "medium": 1, "low": 1, "info": 0}
 _EXPOSED_KEYS = frozenset({"total", "critical", "high", "medium", "low", "info"})
 
 
@@ -35,7 +35,7 @@ async def test_opengrep_ingest_stats_block_shape(client, db, api_key_headers):
     assert body["waived_count"] == 0
     # ScanStatsResponse exposes exactly these keys; anything else the stats model grows is dropped.
     assert set(body["stats"]) == _EXPOSED_KEYS
-    # ERROR->HIGH, WARNING->MEDIUM, INFO->LOW; an unmapped severity (BOGUS) is folded to INFO by merge_sast_findings.
+    # ERROR->HIGH, WARNING->MEDIUM, INFO->LOW; an unmapped severity (BOGUS) stays UNKNOWN, which is not exposed.
     assert body["stats"]["critical"] == _EXPECTED_PER_BUCKET["critical"]
     assert body["stats"]["high"] == _EXPECTED_PER_BUCKET["high"]
     assert body["stats"]["medium"] == _EXPECTED_PER_BUCKET["medium"]
@@ -44,8 +44,8 @@ async def test_opengrep_ingest_stats_block_shape(client, db, api_key_headers):
     # Known defect, pinned not blessed: Stats carries no total, so ScanStatsResponse.total always
     # falls back to its default and every findings-ingest response reports zero.
     assert body["stats"]["total"] == 0
-    # NEGLIGIBLE is the only unexposed bucket; the exposed counts sum to 5.
-    assert sum(body["stats"][k] for k in ("critical", "high", "medium", "low", "info")) == 5
+    # NEGLIGIBLE and UNKNOWN are the unexposed buckets; the exposed counts sum to 4.
+    assert sum(body["stats"][k] for k in ("critical", "high", "medium", "low", "info")) == 4
 
 
 @pytest.mark.asyncio
