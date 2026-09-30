@@ -631,13 +631,10 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
 
     resolved: list[str] = []
     for name in selected:
-        if name in post_processor_factories:
-            # Stages rather than selectable analyzers: they report their own outcome, so a
-            # skip note here would contradict the same report.
+        if name in post_processor_factories or name in CRYPTO_ANALYZERS:
+            # Post-processors are stages that report their own outcome; every crypto name gets its note below.
             continue
-        if name in CRYPTO_ANALYZERS:
-            report.skipped[name] = _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED)
-        elif name not in analyzer_factories:
+        if name not in analyzer_factories:
             report.skipped[name] = _UNKNOWN_ANALYZER
         else:
             resolved.append(name)
