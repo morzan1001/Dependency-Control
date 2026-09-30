@@ -27,6 +27,8 @@ _DELETED_BRANCH = "feature/spike"
 
 _HEAD_SCAN = "scan-head"
 _OLDER_SCAN = "scan-older"
+_OLDEST_SCAN = "scan-oldest"
+_RESCAN_OF_HEAD = "scan-head-rescan"
 _QUEUED_SCAN = "scan-queued"
 _FAILED_SCAN = "scan-failed"
 _DELETED_BRANCH_SCAN = "scan-on-deleted-branch"
@@ -97,7 +99,7 @@ def _vulnerability(scan_id, cve, severity, component):
         "severity": severity,
         "component": component,
         "version": "1.0.0",
-        "created_at": _NOW - timedelta(days=300),
+        "first_seen_at": _NOW - timedelta(days=300),
         "waived": False,
         "details": {
             "fixed_version": _FIX_VERSION,
@@ -144,7 +146,7 @@ def seeded(db):
             "severity": _SEV_HIGH,
             "component": _HEAD_COMPONENT,
             "version": "2.4.0",
-            "created_at": _NOW - timedelta(days=300),
+            "first_seen_at": _NOW - timedelta(days=300),
             "waived": True,
             "waiver_reason": "legal signed off",
             "details": {},
@@ -275,7 +277,7 @@ class TestCrossProjectToolsAnswerFromHead:
         result = await _call(seeded, admin_user, "get_hotspots")
 
         (hotspot,) = result["hotspots"]
-        assert hotspot["latest_scan_id"] == _HEAD_SCAN
+        assert hotspot["head_scan_id"] == _HEAD_SCAN
         assert hotspot["stats"]["critical"] == _HEAD_CRITICAL_COUNT
 
     @pytest.mark.asyncio
@@ -386,10 +388,60 @@ class TestCompareScansDefaultPair:
             seeded,
             admin_user,
             "compare_scans",
-            {"project_id": _PROJECT, "scan_id_a": _OLDER_SCAN, "scan_id_b": _DELETED_BRANCH_SCAN},
+            {"project_id": _PROJECT, "from_scan_id": _OLDER_SCAN, "to_scan_id": _DELETED_BRANCH_SCAN},
         )
 
         assert result["to_scan_id"] == _DELETED_BRANCH_SCAN
+
+    @pytest.fixture
+    def with_oldest(self, seeded):
+        doc = _scan(_OLDEST_SCAN, _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 40)
+        seeded.scans._docs[doc["_id"]] = doc
+        _point_at(seeded, _HEAD_SCAN)
+        return seeded
+
+    @pytest.mark.asyncio
+    async def test_a_lone_from_scan_is_compared_with_head(self, with_oldest, admin_user):
+        """'What changed since build X' names X alone."""
+        result = await _call(
+            with_oldest, admin_user, "compare_scans", {"project_id": _PROJECT, "from_scan_id": _OLDEST_SCAN}
+        )
+
+        assert (result["from_scan_id"], result["to_scan_id"]) == (_OLDEST_SCAN, _HEAD_SCAN)
+
+    @pytest.mark.asyncio
+    async def test_a_lone_to_scan_is_compared_with_the_build_before_it(self, with_oldest, admin_user):
+        result = await _call(
+            with_oldest, admin_user, "compare_scans", {"project_id": _PROJECT, "to_scan_id": _OLDER_SCAN}
+        )
+
+        assert (result["from_scan_id"], result["to_scan_id"]) == (_OLDEST_SCAN, _OLDER_SCAN)
+
+    @pytest.mark.asyncio
+    async def test_a_rescanned_head_is_compared_with_the_build_before_its_commit(self, seeded, admin_user):
+        """The rescan re-analyses head's own commit, so the build before is the one before that commit."""
+        rescan = _scan(_RESCAN_OF_HEAD, _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 0)
+        rescan.update(is_rescan=True, original_scan_id=_HEAD_SCAN)
+        seeded.scans._docs[_RESCAN_OF_HEAD] = rescan
+        seeded.scans._docs[_HEAD_SCAN]["latest_rescan_id"] = _RESCAN_OF_HEAD
+        _point_at(seeded, _HEAD_SCAN)
+
+        result = await _call(seeded, admin_user, "compare_scans", {"project_id": _PROJECT})
+
+        assert (result["from_scan_id"], result["to_scan_id"]) == (_OLDER_SCAN, _RESCAN_OF_HEAD)
+
+    @pytest.mark.asyncio
+    async def test_a_scan_of_another_project_is_refused(self, seeded, admin_user):
+        seeded.scans._docs[_FOREIGN_SCAN] = _scan(
+            _FOREIGN_SCAN, _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 0, project_id="another-project"
+        )
+        _point_at(seeded, _HEAD_SCAN)
+
+        result = await _call(
+            seeded, admin_user, "compare_scans", {"project_id": _PROJECT, "from_scan_id": _FOREIGN_SCAN}
+        )
+
+        assert result == {"error": "Scan not found in this project"}
 
 
 def _crypto_asset(scan_id, name):

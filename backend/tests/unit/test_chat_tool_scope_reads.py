@@ -128,7 +128,6 @@ async def test_an_estate_wide_tool_reads_the_callers_projects_once(tool_name: st
         ("search_findings", {"query": _CVE}, "findings"),
         ("get_cve_details", {"cve_id": _CVE}, "findings"),
         ("get_expiring_waivers", {}, "waivers"),
-        ("get_risk_trends", {}, "scans"),
     ],
 )
 @pytest.mark.asyncio

@@ -23,6 +23,7 @@ from app.core.constants import (
     ANALYTICS_MAX_SCOPE_PROJECTS,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    SCAN_USABLE_STATUSES,
     SEVERITY_ORDER,
     get_severity_value,
 )
@@ -46,8 +47,8 @@ from app.schemas.system import SystemSettingsResponse
 from app.schemas.webhook import WebhookResponse
 from app.services.aggregation.versions import split_fixed_versions
 from app.services.component_identity import artifact_segment, build_component_index, lookup_component
-from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
-from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
+from app.services.analytics.crypto_trends import auto_bucket
+from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError, read_scope_projects
 from app.core.purl import canonical_purl
 from app.services.compliance.visibility import report_visibility_filter
@@ -70,7 +71,6 @@ from ._helpers import (
     bounded_read_note,
     clamped_limit_note,
     ranked_advisories,
-    staleness_identities,
 )
 from .crypto_tools import (
     generate_pqc_migration_plan,
@@ -146,7 +146,6 @@ _TEAM_PROJECT_READ = 50
 _WAIVER_READ = 100
 _WEBHOOK_READ = 20
 _WEBHOOK_DELIVERY_READ = 20
-_TREND_SCAN_READ = 500
 _REMEDIATION_FINDING_READ = 500
 _COMPONENT_USAGE_READ = 100
 _CVE_OCCURRENCE_READ = 25
@@ -238,11 +237,7 @@ def _severity_tiers(requested: Any) -> list[Any]:
 
 
 async def _ranked_findings(
-    db: AsyncIOMotorDatabase,
-    query: dict[str, Any],
-    limit: int,
-    *,
-    keep: Callable[[dict[str, Any]], bool] | None = None,
+    db: AsyncIOMotorDatabase, query: dict[str, Any], limit: int
 ) -> tuple[list[dict[str, Any]], str | None]:
     """The `limit` worst findings for `query`, filled one severity tier at a time so a scan whose
     natural order opens with thousands of LOW findings cannot hide its criticals. Also returns the
@@ -270,12 +265,7 @@ async def _ranked_findings(
             ),
             reverse=True,
         )
-        for finding in candidates:
-            if keep is not None and not keep(finding):
-                continue
-            out.append(finding)
-            if len(out) >= limit:
-                break
+        out.extend(candidates[: limit - len(out)])
     return out, note
 
 
@@ -556,23 +546,57 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_risk_trends(self, ctx: _ToolContext) -> dict[str, Any]:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=ctx.args["days"])
-        if ctx.args.get("project_id"):
-            scope = {"project_id": (await self._require_project(ctx))["_id"]}
-        else:
-            scope = await self._in_scope(ctx)
-        match_query: dict[str, Any] = {**scope, "created_at": {"$gte": cutoff}}
-        scans, scans_total = await bounded_read(
-            ctx.db["scans"],
-            match_query,
-            subject="scans in the window",
-            limit=_TREND_SCAN_READ,
-            sort=[("created_at", 1)],
-            projection={"_id": 1, "project_id": 1, "stats": 1, "created_at": 1},
-        )
+        window = timedelta(days=ctx.args["days"])
+        bucket = auto_bucket(window)
+        head, _ = await self._heads_in_scope(ctx)
+        if not head:
+            return {"trend": [], "message": _ERR_NO_SCAN_DATA}
+        head_branches = [
+            {"project_id": scan["project_id"], "branch": scan.get("branch")}
+            async for scan in ctx.db["scans"].find(
+                {"_id": {"$in": list(head.values())}}, {"project_id": 1, "branch": 1}
+            )
+        ]
+        severities = ("critical", "high", "medium", "low")
+        pipeline: list[dict[str, Any]] = [
+            {
+                "$match": {
+                    "$or": head_branches,
+                    "status": {"$in": SCAN_USABLE_STATUSES},
+                    "created_at": {"$gte": datetime.now(timezone.utc) - window},
+                }
+            },
+            {"$sort": {"created_at": -1}},
+            {
+                "$group": {
+                    "_id": {
+                        "project_id": "$project_id",
+                        "period": {"$dateTrunc": {"date": "$created_at", "unit": bucket}},
+                    },
+                    **{field: {"$first": f"$stats.{field}"} for field in (*severities, "risk_score")},
+                }
+            },
+            {
+                "$group": {
+                    "_id": "$_id.period",
+                    **{severity: {"$sum": f"${severity}"} for severity in severities},
+                    # A 0-100 score per project; a sum across projects would leave that scale.
+                    "risk_score": {"$avg": "$risk_score"},
+                    "projects": {"$sum": 1},
+                }
+            },
+            {"$sort": {"_id": -1}},
+        ]
+        rows = await ctx.db["scans"].aggregate(pipeline).to_list(length=None)
         return {
-            "trend_data": [_serialize_doc(s) for s in scans],
-            "trend_data_total": scans_total,
+            "bucket": bucket,
+            "trend": [
+                {
+                    "period": row["_id"].date().isoformat(),
+                    **{key: row[key] for key in (*severities, "risk_score", "projects")},
+                }
+                for row in rows
+            ],
         }
 
     async def _tool_get_dependency_tree(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -600,7 +624,7 @@ class ChatToolRegistry:
             {
                 "project_id": pid,
                 "project_name": names.get(pid, ""),
-                "latest_scan_id": head[pid],
+                "head_scan_id": head[pid],
                 "stats": stats_by_project.get(pid),
             }
             for pid in ranked
@@ -684,7 +708,7 @@ class ChatToolRegistry:
                     "that finding's severity counts only its live advisories."
                 ),
             }
-        # No finding doc for this id in the latest scan: an existing waiver row
+        # No finding doc for this id in the head build: an existing waiver row
         # suppresses nothing, so report it as present-but-not-suppressing.
         now = datetime.now(timezone.utc)
         named = {"$or": [{"finding_id": wanted}, {"vulnerability_id": vulnerability_id}]}
@@ -701,7 +725,7 @@ class ChatToolRegistry:
                 "waived": False,
                 "waiver_present": True,
                 "suppressing": False,
-                "reason": "no matching finding in the latest scan — finding fixed/moved or waiver dormant",
+                "reason": "no matching finding in the head build — finding fixed/moved or waiver dormant",
                 "waiver": serialized,
             }
         return {"waived": False, "expired_waiver": serialized}
@@ -777,7 +801,7 @@ class ChatToolRegistry:
         if not findings:
             return {
                 "plan": [],
-                "message": "No unwaived CRITICAL/HIGH findings on the latest scan.",
+                "message": "No unwaived CRITICAL/HIGH findings on the head build.",
             }
 
         # Keyed by lowercase component name — purl would be more precise
@@ -917,13 +941,13 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_auto_fixable_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        latest, names = await self._heads_in_scope(ctx)
-        if not latest:
+        head, names = await self._heads_in_scope(ctx)
+        if not head:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         rows, ranking_note = await _ranked_findings(
             ctx.db,
             {
-                "scan_id": {"$in": list(latest.values())},
+                "scan_id": {"$in": list(head.values())},
                 "severity": {"$in": ["CRITICAL", "HIGH"]},
                 **_ACTIVE,
                 # The live_fixed_version rule: a live advisory names a fix and no live CRITICAL/HIGH one lacks one.
@@ -1015,42 +1039,44 @@ class ChatToolRegistry:
 
     async def _tool_compare_scans(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        scan_a_id = ctx.args.get("scan_id_a")
-        scan_b_id = ctx.args.get("scan_id_b")
-        if not scan_a_id or not scan_b_id:
-            head_scan_id = await self._head_scan_id(project, ctx.db)
-            preceding = await ScanRepository(ctx.db).get_preceding_scan(head_scan_id) if head_scan_id else None
-            if not head_scan_id or not preceding:
-                return {"error": _ERR_NEED_TWO_SCANS}
-            scan_b_id = head_scan_id
-            scan_a_id = preceding.id
-
-        scan_a = await ctx.db["scans"].find_one({"_id": scan_a_id, "project_id": project["_id"]})
-        scan_b = await ctx.db["scans"].find_one({"_id": scan_b_id, "project_id": project["_id"]})
-        if not scan_a or not scan_b:
-            return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
-
-        findings_response = await compute_findings_delta(
-            ctx.db,
-            project_id=project["_id"],
-            from_scan=scan_a["_id"],
-            to_scan=scan_b["_id"],
-            page=1,
-            page_size=int(ctx.args.get("page_size") or 50),
-            change=None,
-            severity=_ensure_list(ctx.args.get("severity")),
-            finding_type=_ensure_list(ctx.args.get("finding_type")),
-        )
-        return findings_response.model_dump(mode="json")
+        from_id, to_id = ctx.args.get("from_scan_id"), ctx.args.get("to_scan_id")
+        named = [scan_id for scan_id in (from_id, to_id) if scan_id]
+        if named:
+            in_project = await ctx.db["scans"].distinct("_id", {"_id": {"$in": named}, "project_id": project["_id"]})
+            if any(scan_id not in in_project for scan_id in named):
+                return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
+        # Head and a verified scan's predecessor are this project's by construction.
+        to_scan = to_id or await self._head_scan_id(project, ctx.db)
+        preceding = await ScanRepository(ctx.db).get_preceding_scan(to_scan) if to_scan and not from_id else None
+        from_scan = from_id or (preceding.id if preceding else None)
+        if not from_scan or not to_scan:
+            return {"error": _ERR_NEED_TWO_SCANS}
+        try:
+            delta = await compute_scan_delta_dispatch(
+                db=ctx.db,
+                project_id=project["_id"],
+                category=ctx.args.get("category") or "findings",
+                from_scan=from_scan,
+                to_scan=to_scan,
+                page=int(ctx.args.get("page") or 1),
+                page_size=ctx.args["page_size"],
+                change=ctx.args.get("change"),
+                severity=_ensure_list(ctx.args.get("severity")),
+                finding_type=_ensure_list(ctx.args.get("finding_type")),
+                allow_same_scan=not (from_id and to_id),
+            )
+        except InvalidDeltaQuery as e:
+            return {"error": str(e)}
+        return delta.model_dump(mode="json")
 
     async def _tool_get_kev_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        latest, names = await self._heads_in_scope(ctx)
-        if not latest:
+        head, names = await self._heads_in_scope(ctx)
+        if not head:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         rows, ranking_note = await _ranked_findings(
             ctx.db,
             {
-                "scan_id": {"$in": list(latest.values())},
+                "scan_id": {"$in": list(head.values())},
                 "details.vulnerabilities": {"$elemMatch": {DETAILS_KEY_IN_KEV: True, **_ACTIVE}},
                 **_ACTIVE,
             },
@@ -1068,17 +1094,17 @@ class ChatToolRegistry:
         }
 
     async def _tool_find_component_usage(self, ctx: _ToolContext) -> dict[str, Any]:
-        latest, names = await self._heads_in_scope(ctx)
+        head, names = await self._heads_in_scope(ctx)
         if not names:
             return {"matches": [], "message": "No accessible projects"}
-        latest_scan_ids = list(latest.values())
+        head_scan_ids = list(head.values())
         # The caller may quote a finding's group-qualified component; the inventory
         # stores the bare artifact name, so search on that too.
         wanted = ctx.args["component_name"]
         patterns = {wanted, artifact_segment(wanted)}
         dep_query: dict[str, Any] = {
             "name": {"$in": [re.compile(re.escape(p), re.IGNORECASE) for p in patterns if p]},
-            "scan_id": {"$in": latest_scan_ids},
+            "scan_id": {"$in": head_scan_ids},
         }
         if ctx.args.get("version"):
             dep_query["version"] = ctx.args["version"]
@@ -1114,13 +1140,13 @@ class ChatToolRegistry:
 
     async def _tool_get_findings_by_cve(self, ctx: _ToolContext) -> dict[str, Any]:
         cve = advisory_id(ctx.args["cve_id"]) or ""
-        latest, names = await self._heads_in_scope(ctx)
-        if not latest:
+        head, names = await self._heads_in_scope(ctx)
+        if not head:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         rows, rows_total = await bounded_read(
             ctx.db["findings"],
             {
-                "scan_id": {"$in": list(latest.values())},
+                "scan_id": {"$in": list(head.values())},
                 **advisory_match(cve),
             },
             subject=f"findings naming {cve}",
@@ -1165,10 +1191,6 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_stale_findings(self, ctx: _ToolContext) -> dict[str, Any]:
-        from datetime import datetime as _dt
-        from datetime import timedelta as _td
-        from datetime import timezone as _tz
-
         days = ctx.args["days_open"]
         sev_min = (ctx.args.get("severity_min") or "HIGH").upper()
         allowed_sev = [
@@ -1176,28 +1198,23 @@ class ChatToolRegistry:
             for s in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
             if get_severity_value(s) >= SEVERITY_ORDER.get(sev_min, SEVERITY_ORDER["HIGH"])
         ]
-        latest, names = await self._heads_in_scope(ctx)
-        if not latest:
+        head, names = await self._heads_in_scope(ctx)
+        if not head:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-        cutoff = _dt.now(_tz.utc) - _td(days=days)
-        project_ids = list(latest.keys())
-        old_keys: set[tuple[str, tuple[str, str, str]]] = set()
-        async for f in ctx.db["findings"].find(
-            {"project_id": {"$in": project_ids}, "created_at": {"$lt": cutoff}},
-            {**FINDING_IDENTITY_PROJECTION, "project_id": 1},
-        ):
-            project_id = f.get("project_id")
-            if project_id:
-                old_keys.update((project_id, identity) for identity in staleness_identities(f))
-        if not old_keys:
-            return {"findings": [], "message": f"No findings older than {days} days"}
         stale, ranking_note = await _ranked_findings(
             ctx.db,
-            {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}, **_ACTIVE},
+            {
+                "scan_id": {"$in": list(head.values())},
+                "severity": {"$in": allowed_sev},
+                "first_seen_at": {"$lt": datetime.now(timezone.utc) - timedelta(days=days)},
+                **_ACTIVE,
+            },
             ctx.args["limit"],
-            keep=lambda f: any((_row_project_id(f), identity) in old_keys for identity in staleness_identities(f)),
         )
-        out = _slim_with_project(stale, names)
+        out = [
+            {**slim, "first_seen_at": _clip_value(f.get("first_seen_at"))}
+            for slim, f in zip(_slim_with_project(stale, names), stale, strict=True)
+        ]
         return {
             "findings": out,
             "count": len(out),
@@ -1207,11 +1224,11 @@ class ChatToolRegistry:
         }
 
     async def _tool_get_license_violations(self, ctx: _ToolContext) -> dict[str, Any]:
-        latest, names = await self._heads_in_scope(ctx)
-        if not latest:
+        head, names = await self._heads_in_scope(ctx)
+        if not head:
             return {"findings": [], "message": _ERR_NO_SCAN_DATA}
         rows, ranking_note = await _ranked_findings(
-            ctx.db, {"scan_id": {"$in": list(latest.values())}, "type": "license", **_ACTIVE}, ctx.args["limit"]
+            ctx.db, {"scan_id": {"$in": list(head.values())}, "type": "license", **_ACTIVE}, ctx.args["limit"]
         )
         out = _slim_with_project(rows, names)
         return {
@@ -1489,23 +1506,6 @@ class ChatToolRegistry:
             days=ctx.args["days"],
         )
 
-    async def _tool_get_scan_delta(self, ctx: _ToolContext) -> dict[str, Any]:
-        project = await self._require_project(ctx)
-        scan_a = await ctx.db["scans"].find_one({"_id": ctx.args["from_scan_id"], "project_id": project["_id"]})
-        scan_b = await ctx.db["scans"].find_one({"_id": ctx.args["to_scan_id"], "project_id": project["_id"]})
-        if not scan_a or not scan_b:
-            return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
-        crypto_response = await compute_crypto_delta_envelope(
-            ctx.db,
-            project_id=project["_id"],
-            from_scan=scan_a["_id"],
-            to_scan=scan_b["_id"],
-            page=1,
-            page_size=int(ctx.args.get("page_size") or 50),
-            change=None,
-        )
-        return crypto_response.model_dump(mode="json")
-
     async def _tool_generate_pqc_migration_plan(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
         return await generate_pqc_migration_plan(
@@ -1608,7 +1608,6 @@ class ChatToolRegistry:
         "suggest_crypto_policy_override": _tool_suggest_crypto_policy_override,
         "get_crypto_hotspots": _tool_get_crypto_hotspots,
         "get_crypto_trends": _tool_get_crypto_trends,
-        "get_scan_delta": _tool_get_scan_delta,
         "generate_pqc_migration_plan": _tool_generate_pqc_migration_plan,
         "list_compliance_reports": _tool_list_compliance_reports,
         "list_policy_audit_entries": _tool_list_policy_audit_entries,

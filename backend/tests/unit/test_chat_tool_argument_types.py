@@ -109,11 +109,11 @@ _DECLARED_PARAMETERS = [
 # Every bounded integer: the schema a client validates against is also the clamp the server applies.
 _BOUNDED_PARAMETERS = [(tool, name, schema) for tool, name, schema in _DECLARED_PARAMETERS if "maximum" in schema]
 _BOUNDED_IDS = [f"{tool}.{parameter}" for tool, parameter, _ in _BOUNDED_PARAMETERS]
-# An offset has no ceiling: skipping further only ever returns fewer rows.
+# An offset has no ceiling: skipping or paging further only ever returns fewer rows.
 _CEILINGED_INTEGERS = [
     (tool, name, schema)
     for tool, name, schema in _DECLARED_PARAMETERS
-    if schema["type"] == "integer" and name != "skip"
+    if schema["type"] == "integer" and name not in {"skip", "page"}
 ]
 _DOMAIN_VOCABULARY = {
     "type": [t.value for t in FindingType],
@@ -304,7 +304,7 @@ async def test_a_null_optional_argument_still_means_not_given() -> None:
 async def test_a_single_string_where_a_list_is_declared_is_still_accepted() -> None:
     result = await ChatToolRegistry().execute_tool(
         "compare_scans",
-        {"project_id": _MINE, "scan_id_a": _MY_PRIOR_SCAN, "scan_id_b": _MY_SCAN, "severity": "critical"},
+        {"project_id": _MINE, "from_scan_id": _MY_PRIOR_SCAN, "to_scan_id": _MY_SCAN, "severity": "critical"},
         _caller(),
         _seeded(),
     )

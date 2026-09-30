@@ -262,7 +262,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_risk_trends",
-            "description": "Get risk trend data over time: how vulnerability counts changed over days/weeks.",
+            "description": (
+                "How vulnerability counts changed over time on each project's head branch. One point per "
+                "period, newest first: bucket names the period (day up to 14 days, week up to 90, month "
+                "beyond). A point sums the last usable head-branch build of each project in that period; "
+                "risk_score is their average and projects says how many built in it."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -360,13 +365,13 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_waiver_status",
             "description": (
-                "Check whether a finding is currently SUPPRESSED by a waiver in the latest scan. "
+                "Check whether a finding is currently SUPPRESSED by a waiver in the head build. "
                 "Returns one entry per matching finding (a finding id such as a license id can cover "
                 "several components) with the advisories a per-CVE waiver suppresses; waived is true "
                 "only when it is waived on every one of them (for an advisory ID: that advisory). "
                 "Returns waived:false with waiver_present:true "
-                "and suppressing:false when an active waiver exists but the finding is not in the latest "
-                "scan (fixed/moved/renamed or the waiver is dormant)."
+                "and suppressing:false when an active waiver exists but the finding is not in the head "
+                "build (fixed/moved/renamed or the waiver is dormant)."
             ),
             "parameters": {
                 "type": "object",
@@ -500,35 +505,38 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "compare_scans",
             "description": (
-                "Compare two scans of the same project. Returns a paginated findings "
-                "delta envelope: 'category' = 'findings', 'totals.added' / "
-                "'totals.removed' / 'totals.unchanged' (each a count, plus "
-                "'totals.by_severity' and 'totals.by_type' breakdowns), and an "
-                "'items' array of finding records with 'change' ('added'|'removed'), "
-                "'finding_type', 'severity', 'title', 'component', 'cve_id'. Use the "
-                "'severity' and 'finding_type' filters to narrow the items. Use when "
-                "the user asks 'what changed since my last deploy?', 'did the last "
-                "scan introduce new vulns?' or 'which findings did we resolve?'. "
-                "Without explicit scan ids, compares the project's current build "
-                "against the build before it on the same branch."
+                "Compare two scans of the same project for findings, components or cryptographic "
+                "assets. Returns a paginated delta envelope: 'totals' counts added/removed/unchanged "
+                "(components also changed), and 'items' carry 'change'. to_scan_id defaults to the "
+                "head build and from_scan_id to the build before to_scan_id on its branch. Items list "
+                "added before removed: pass change='removed' for resolved findings and page for later "
+                "pages. Use when the user asks 'what changed since my last deploy?', 'did the last "
+                "scan introduce new vulns?', 'which findings did we resolve?' or what crypto changed."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": "The project ID."},
-                    "scan_id_a": {"type": "string", "description": "Optional older scan."},
-                    "scan_id_b": {"type": "string", "description": "Optional newer scan."},
+                    "from_scan_id": {"type": "string", "description": "Optional baseline scan."},
+                    "to_scan_id": {"type": "string", "description": "Optional target scan."},
+                    "category": {"type": "string", "enum": ["findings", "components", "crypto"]},
+                    "change": {
+                        "type": "string",
+                        "enum": ["added", "removed", "changed", "all"],
+                        "description": "Optional: only items of this change; 'changed' is for components.",
+                    },
                     "severity": {
                         "type": "array",
                         "items": {"type": "string", "enum": _SEVERITIES},
-                        "description": "Optional: restrict items to these severities.",
+                        "description": "Optional: restrict findings to these severities.",
                     },
                     "finding_type": {
                         "type": "array",
                         "items": {"type": "string", "enum": _FINDING_TYPES},
-                        "description": "Optional: restrict items to these finding types.",
+                        "description": "Optional: restrict findings to these finding types.",
                     },
-                    "page_size": _bounded(50, 200, "Items per page in the returned envelope"),
+                    "page": {"type": "integer", "minimum": 1, "description": "Page number (default 1)."},
+                    "page_size": _bounded(20, MAX_FINDING_ROWS, "Items per page"),
                 },
                 "required": ["project_id"],
             },
@@ -563,7 +571,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "Find every authorized project that currently ships a given package/library "
                 "(e.g. 'log4j-core', 'openssl'). Optionally constrain to one version. Use "
                 "when the user asks 'where do we use X?', 'which projects are affected by "
-                "a zero-day in Y?' or during incident scoping. Scans ONLY the latest scan "
+                "a zero-day in Y?' or during incident scoping. Scans ONLY the head build "
                 "per project, not historical data."
             ),
             "parameters": {
@@ -622,11 +630,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_stale_findings",
             "description": (
-                "Return unwaived findings that have been open for longer than N days — useful "
-                "for compliance / SLA tracking. A finding is considered stale when the "
-                "same finding_id exists in an older scan (> N days ago) of the same "
-                "project AND is still present in the latest scan. Use when the user "
-                "asks 'what vulns have we been ignoring?', 'what's old?' or about SLA."
+                "Return unwaived findings in the head build that were first seen more than N days "
+                "ago in the project, the age the CVE SLA report uses; each row carries first_seen_at. "
+                "Use when the user asks 'what vulns have we been ignoring?', 'what's old?' or about SLA."
             ),
             "parameters": {
                 "type": "object",
@@ -929,30 +935,6 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     "days": _bounded(30, MAX_DAY_WINDOW, "Days to look back"),
                 },
                 "required": ["project_id"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_scan_delta",
-            "description": (
-                "Compare two scans of a project for cryptographic assets. Returns a "
-                "paginated crypto delta envelope: 'category' = 'crypto', "
-                "'totals.added' / 'totals.removed' / 'totals.unchanged' (counts), and "
-                "an 'items' array of crypto-asset records with 'change' "
-                "('added'|'removed'), 'name', 'variant', 'primitive', 'locations', "
-                "'asset_count'."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "project_id": {"type": "string"},
-                    "from_scan_id": {"type": "string", "description": "The baseline scan ID"},
-                    "to_scan_id": {"type": "string", "description": "The target scan ID"},
-                    "page_size": _bounded(50, 200, "Items per page in the returned envelope"),
-                },
-                "required": ["project_id", "from_scan_id", "to_scan_id"],
             },
         },
     },

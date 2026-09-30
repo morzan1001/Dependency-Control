@@ -19,9 +19,7 @@ _MINE = "p-mine"
 _THEIRS = "p-theirs"
 _SENTINEL = "sentinel-only-in-the-foreign-project"
 _OPERATOR = {"$ne": None}
-_ID_PARAMETERS = frozenset(
-    {"project_id", "scan_id", "finding_id", "asset_id", "scan_id_a", "scan_id_b", "from_scan_id", "to_scan_id"}
-)
+_ID_PARAMETERS = frozenset({"project_id", "scan_id", "finding_id", "asset_id", "from_scan_id", "to_scan_id"})
 # "system" scope is admin-gated and not project-scoped.
 _ENUM_STAND_INS = {"policy_scope": "project"}
 

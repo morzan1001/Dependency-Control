@@ -6,11 +6,9 @@ from typing import Any
 
 from app.core.config import settings
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
-from app.core.cve import advisory_ids, canonical_cve, canonical_cves
+from app.core.cve import advisory_ids, canonical_cve
 from app.core.risk_scoring import calculate_exploit_maturity
 from app.repositories.base import find_window
-from app.services.component_identity import extract_artifact_name
-from app.services.analytics.findings_delta import finding_identity_key
 from app.services.aggregation.versions import parse_version_key
 from app.services.recommendation.common import live_cves, vuln_info
 
@@ -129,26 +127,6 @@ def _clamp_limit(raw: Any, default: int, maximum: int) -> int:
     if requested is not None and clamped != requested and ledger is not None:
         ledger.append((requested, clamped))
     return clamped
-
-
-_VULNERABILITY = "vulnerability"
-
-
-def staleness_identities(finding: dict[str, Any]) -> set[tuple[str, str, str]]:
-    """What a finding must still be for its "days open" clock to keep running.
-
-    A vulnerability record is keyed once per advisory on the folded component name. The scan
-    delta's identity carries ``version`` on purpose — a bump is a change it must report — but
-    reusing it here would restart the clock the moment an unrelated upgrade lands, and a
-    long-lived unfixed advisory is the one that most deserves attention. Every other type's
-    identity is already version-free, so it is taken as the delta computes it.
-    """
-    if (finding.get("type") or "") == _VULNERABILITY:
-        component = extract_artifact_name(finding.get("component") or "")
-        advisories = canonical_cves([finding.get("details")])
-        if advisories:
-            return {(_VULNERABILITY, component, advisory) for advisory in advisories}
-    return {finding_identity_key(finding)}
 
 
 def _ensure_list(value: Any) -> list[Any] | None:
