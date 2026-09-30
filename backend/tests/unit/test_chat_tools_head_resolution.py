@@ -282,6 +282,14 @@ class TestCrossProjectToolsAnswerFromHead:
         assert hotspot["stats"]["critical"] == _HEAD_CRITICAL_COUNT
 
     @pytest.mark.asyncio
+    async def test_the_project_list_counts_the_head_build(self, seeded, admin_user, pointer):
+        _point_at(seeded, pointer)
+
+        result = await _call(seeded, admin_user, "list_projects")
+
+        assert result["projects"][0]["stats"]["critical"] == _HEAD_CRITICAL_COUNT
+
+    @pytest.mark.asyncio
     async def test_org_wide_top_priority_findings_are_the_head_builds(self, seeded, admin_user, pointer):
         _point_at(seeded, pointer)
 

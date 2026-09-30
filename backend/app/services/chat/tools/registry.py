@@ -49,6 +49,7 @@ from app.core.risk_scoring import (
 )
 from app.models.finding import Severity
 from app.models.project import Project
+from app.models.stats import Stats
 from app.models.user import User
 from app.models.waiver import is_waiver_active
 from app.models.webhook import Webhook
@@ -169,9 +170,10 @@ _RANKING_SAMPLED = (
 # Scan stats and REST analytics leave waived findings out, so every chat count and priority list does too.
 _ACTIVE: dict[str, Any] = {"waived": {"$ne": True}}
 
-# How many projects the summary names as the worst; projects tie on their critical count often
-# enough that the id has to break it, or the same estate ranks differently request to request.
 _TOP_RISKY = 3
+_PROJECT_ROW_PROJECTION = dict.fromkeys(
+    ("name", "team_ids", "last_scan_at", "created_at", "latest_scan_id", "default_branch", "deleted_branches"), 1
+)
 
 # Read ceilings for the tools that answer from a whole collection rather than from a ranked page.
 # Every answer built on one of these carries the population it was cut from.
@@ -203,12 +205,21 @@ _CALLGRAPH_SUMMARY_PROJECTION = {
 }
 
 
-def _stat(stats: dict[str, Any] | None, severity: str) -> int:
-    """A severity count off a scan's stats block; a scan carrying none counts as zero."""
-    try:
-        return int((stats or {}).get(severity, 0) or 0)
-    except (TypeError, ValueError):
-        return 0
+def _rank_risky_projects(stats: dict[str, Stats], limit: int) -> list[str]:
+    """Project ids worst first by head critical, then high; the id breaks ties so the order is stable."""
+    return sorted(stats, key=lambda pid: (-stats[pid].critical, -stats[pid].high, pid))[:limit]
+
+
+def _top_risky(stats: dict[str, Stats], names: dict[str, str]) -> list[dict[str, Any]]:
+    return [
+        {
+            "project_id": pid,
+            "project_name": names.get(pid, ""),
+            "critical": stats[pid].critical,
+            "high": stats[pid].high,
+        }
+        for pid in _rank_risky_projects(stats, _TOP_RISKY)
+    ]
 
 
 def _row_project_id(row: dict[str, Any]) -> str:
@@ -482,12 +493,14 @@ class ChatToolRegistry:
         name_filter = {"name": {"$regex": re.escape(search), "$options": "i"}} if search else {}
         query = and_filters(ctx.user_project_query, name_filter)
         limit = ctx.args["limit"]
-        cursor = ctx.db["projects"].find(query, sort=[("last_scan_at", -1)], limit=limit)
+        cursor = ctx.db["projects"].find(query, _PROJECT_ROW_PROJECTION, sort=[("last_scan_at", -1)], limit=limit)
         projects = await cursor.to_list(length=limit)
         team_names = await resolve_team_names(ctx.db, {tid for p in projects for tid in p.get("team_ids") or []})
+        stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
         rows = []
         for p in projects:
-            row = _serialize_doc(p, ["_id", "name", "stats", "last_scan_at", "created_at"])
+            row = _serialize_doc(p, ["_id", "name", "last_scan_at", "created_at"])
+            row["stats"] = stats[p["_id"]].model_dump(exclude_unset=True) if p["_id"] in stats else None
             row["teams"] = [ref.model_dump() for ref in team_refs(p.get("team_ids") or [], team_names)]
             rows.append(row)
         return {"projects": rows, "count": len(rows)}
@@ -630,21 +643,11 @@ class ChatToolRegistry:
         severity_counts = await FindingRepository(ctx.db).get_severity_distribution(
             list(head.values()), finding_type=None
         )
-        ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:_TOP_RISKY]
-        top3 = [
-            {
-                "project_id": pid,
-                "project_name": names.get(pid, ""),
-                "critical": _stat(stats_by_project.get(pid), "critical"),
-                "high": _stat(stats_by_project.get(pid), "high"),
-            }
-            for pid in ranked
-        ]
         return {
             "total_projects": len(names),
             "severity_breakdown": severity_counts,
             "total_findings": sum(severity_counts.values()),
-            "top_risky_projects": top3,
+            "top_risky_projects": _top_risky(stats_by_project, names),
             "hint": (
                 "If the user asked 'where should I start' or 'what is worst', "
                 "name the top_risky_projects directly instead of re-emitting the "
@@ -729,15 +732,14 @@ class ChatToolRegistry:
         limit = ctx.args["limit"]
         head, names = await self._heads_in_scope(ctx)
         stats_by_project = await self._head_scan_stats(ctx.db, head)
-        ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:limit]
         hotspots = [
             {
                 "project_id": pid,
                 "project_name": names.get(pid, ""),
                 "head_scan_id": head[pid],
-                "stats": stats_by_project.get(pid),
+                "stats": stats_by_project[pid].model_dump(exclude_unset=True),
             }
-            for pid in ranked
+            for pid in _rank_risky_projects(stats_by_project, limit)
         ]
         return {"hotspots": hotspots}
 
@@ -783,12 +785,19 @@ class ChatToolRegistry:
         team = await _gated(check_team_access(ctx.args.get("team_id", ""), ctx.user, ctx.db), _ERR_TEAM_NOT_FOUND)
         query = and_filters(ctx.user_project_query, {"team_ids": team.id})
         projects, projects_total = await bounded_read(
-            ctx.db["projects"], query, subject="team projects", limit=_TEAM_PROJECT_READ
+            ctx.db["projects"],
+            query,
+            subject="team projects",
+            limit=_TEAM_PROJECT_READ,
+            projection=_PROJECT_ROW_PROJECTION,
         )
-        return {
-            "projects": [_serialize_doc(p, ["_id", "name", "stats", "last_scan_at"]) for p in projects],
-            "projects_total": projects_total,
-        }
+        stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
+        rows = []
+        for p in projects:
+            row = _serialize_doc(p, ["_id", "name", "last_scan_at"])
+            row["stats"] = stats[p["_id"]].model_dump(exclude_unset=True) if p["_id"] in stats else None
+            rows.append(row)
+        return {"projects": rows, "projects_total": projects_total}
 
     async def _tool_get_waiver_status(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
@@ -1344,24 +1353,10 @@ class ChatToolRegistry:
             and_filters(ctx.user_project_query, {"team_ids": team.id}),
             subject="team projects",
             limit=_TEAM_RISK_PROJECT_READ,
-            projection={"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1},
+            projection=_PROJECT_ROW_PROJECTION,
         )
-        totals: dict[str, int] = {}
-        risky = []
-        for p in projects:
-            stats = p.get("stats") or {}
-            for sev in ("critical", "high", "medium", "low"):
-                totals[sev] = totals.get(sev, 0) + int(stats.get(sev, 0) or 0)
-            risky.append(
-                (
-                    int(stats.get("critical", 0) or 0),
-                    int(stats.get("high", 0) or 0),
-                    p.get("_id"),
-                    p.get("name", ""),
-                )
-            )
-        risky.sort(reverse=True)
-        top3 = [{"project_id": pid, "project_name": name, "critical": c, "high": h} for c, h, pid, name in risky[:3]]
+        stats = await self._head_scan_stats(ctx.db, await ScanRepository(ctx.db).get_latest_active_scan_ids(projects))
+        totals = {sev: sum(getattr(s, sev) for s in stats.values()) for sev in ("critical", "high", "medium", "low")}
         return {
             "team_id": team.id,
             "team_name": team.name,
@@ -1370,7 +1365,7 @@ class ChatToolRegistry:
             "projects_summed": len(projects),
             "project_count": projects_total,
             "severity_totals": totals,
-            "top_risky_projects": top3,
+            "top_risky_projects": _top_risky(stats, {p["_id"]: p.get("name", "") for p in projects}),
         }
 
     async def _tool_get_projects_without_recent_scan(self, ctx: _ToolContext) -> dict[str, Any]:
@@ -1735,16 +1730,11 @@ class ChatToolRegistry:
             "is_head": scan_id == head_scan_id,
         }
 
-    async def _head_scan_stats(self, db: AsyncIOMotorDatabase, head: dict[str, str]) -> dict[str, dict[str, Any]]:
-        """project_id -> the stats block of that project's head scan."""
-        if not head:
-            return {}
-        stats: dict[str, dict[str, Any]] = {}
-        async for scan in db["scans"].find({"_id": {"$in": list(head.values())}}, {"project_id": 1, "stats": 1}):
-            project_id = scan.get("project_id")
-            if project_id:
-                stats[project_id] = scan.get("stats") or {}
-        return stats
+    async def _head_scan_stats(self, db: AsyncIOMotorDatabase, head: dict[str, str]) -> dict[str, Stats]:
+        """project_id -> its head scan's stats; a scan carrying none counts as zero."""
+        scans = await ScanRepository(db).find_many_with_stats({"_id": {"$in": list(head.values())}}, limit=len(head))
+        by_scan = {scan.id: scan.stats for scan in scans}
+        return {pid: by_scan.get(scan_id) or Stats() for pid, scan_id in head.items()}
 
     async def _heads_in_scope(self, ctx: _ToolContext) -> tuple[dict[str, str], dict[str, str]]:
         """Head scan ids and names by project id, for the `project_id` argument or the whole scope in one read."""

@@ -6,7 +6,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.v1.endpoints import teams
-from app.core.constants import TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER, team_source
+from app.core.constants import SCAN_STATUS_COMPLETED, TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER, team_source
 from app.core.permissions import Permissions
 from app.models.user import User
 from app.schemas.team import TeamMemberUpdate
@@ -51,6 +51,17 @@ async def _db(members=_A_MEMBER, bindings=()) -> FakeDatabase:
                 "name": project_id,
                 "team_ids": ["t-1"],
                 "members": members_of,
+                "default_branch": "main",
+                "latest_scan_id": f"scan-{project_id}",
+            }
+        )
+        await db.scans.insert_one(
+            {
+                "_id": f"scan-{project_id}",
+                "project_id": project_id,
+                "branch": "main",
+                "status": SCAN_STATUS_COMPLETED,
+                "created_at": _NOW,
                 "stats": {"critical": critical},
             }
         )

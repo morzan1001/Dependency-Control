@@ -55,8 +55,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "list_projects",
             "description": (
-                "List projects the user can access, with stats (vulnerability counts, "
-                "last scan date). For 'where should I start' "
+                "List projects the user can access, with their head build's severity stats and "
+                "last scan date. For 'where should I start' "
                 "use get_top_priority_findings or get_hotspots instead — those answer "
                 "the prioritisation question directly."
             ),
@@ -296,7 +296,11 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_hotspots",
-            "description": "Get the riskiest dependencies and projects based on vulnerability density and severity.",
+            "description": (
+                "The riskiest projects the user can access, worst first by their head build's critical "
+                "then high count, each with its head_scan_id and severity stats. For the riskiest "
+                "libraries use search_findings or find_component_usage."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -350,7 +354,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_team_projects",
-            "description": "Get all projects belonging to a specific team.",
+            "description": "Get a team's projects with their head build's severity stats and last scan date.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -693,9 +697,9 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "get_team_risk_overview",
             "description": (
-                "Aggregate security posture for a single team: per-team severity "
-                "totals plus the three riskiest projects in the team. Use when the "
-                "user asks 'how is team X doing?' or 'team-level summary'."
+                "Aggregate security posture for a single team: severity totals over its projects' head "
+                "builds plus the three riskiest projects (critical, then high). Use when the user asks "
+                "'how is team X doing?' or 'team-level summary'."
             ),
             "parameters": {
                 "type": "object",
