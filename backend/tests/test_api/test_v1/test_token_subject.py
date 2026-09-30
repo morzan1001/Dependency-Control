@@ -104,7 +104,13 @@ async def test_ending_every_session_refuses_a_token_minted_for_a_username_equal_
     db = await _db_with(_BOB, {"_id": "u-eve", "username": "eve", "email": "eve@test.com", "is_active": True})
     minted_before = datetime.now(timezone.utc) - timedelta(hours=1)
     token = jwt.encode(
-        {"sub": "u-bob", "type": "refresh", "iat": minted_before, "exp": minted_before + timedelta(days=7)},
+        {
+            "sub": "u-bob",
+            "type": "refresh",
+            "jti": "jti-before-the-switch",
+            "iat": minted_before,
+            "exp": minted_before + timedelta(days=7),
+        },
         settings.SECRET_KEY,
         algorithm=settings.ALGORITHM,
     )

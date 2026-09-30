@@ -30,11 +30,8 @@ def get_email_change_template(confirmation_link: str) -> str:
     return render_template("email_change.html", {"link": confirmation_link})
 
 
-def get_password_reset_template(username: str, link: str) -> str:
-    return render_template(
-        "password_reset.html",
-        {"username": username, "link": link, "valid_hours": PASSWORD_RESET_TOKEN_EXPIRE_HOURS},
-    )
+def get_password_reset_template(link: str) -> str:
+    return render_template("password_reset.html", {"link": link, "valid_hours": PASSWORD_RESET_TOKEN_EXPIRE_HOURS})
 
 
 def get_system_invitation_template(invitation_link: str, inviter_name: str) -> str:
@@ -46,10 +43,8 @@ def get_vulnerability_found_template(
     project_name_scanned: str,
     vulnerabilities: list,
     priority_count: int,
-    has_kev: bool = False,
     kev_count: int = 0,
     kev_vulnerabilities: list | None = None,
-    has_high_epss: bool = False,
     high_epss_count: int = 0,
 ) -> str:
     return render_template(
@@ -62,10 +57,8 @@ def get_vulnerability_found_template(
             "priority_label": PRIORITY_VULNS_LABEL,
             "high_epss_label": HIGH_EPSS_LABEL,
             "high_epss_threshold": EPSS_HIGH_THRESHOLD,
-            "has_kev": has_kev,
             "kev_count": kev_count,
             "kev_vulnerabilities": kev_vulnerabilities or [],
-            "has_high_epss": has_high_epss,
             "high_epss_count": high_epss_count,
         },
     )
@@ -79,7 +72,6 @@ def get_analysis_completed_template(
     severity_high: int = 0,
     severity_medium: int = 0,
     severity_low: int = 0,
-    analyzer_count: int = 0,
     results_summary: list | None = None,
 ) -> str:
     return render_template(
@@ -92,7 +84,6 @@ def get_analysis_completed_template(
             "severity_high": severity_high,
             "severity_medium": severity_medium,
             "severity_low": severity_low,
-            "analyzer_count": analyzer_count,
             "results_summary": results_summary or [],
         },
     )

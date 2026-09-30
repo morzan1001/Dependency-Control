@@ -94,6 +94,10 @@ export const refreshAccessToken = async (): Promise<string | null> => {
       const status = axios.isAxiosError(err) ? err.response?.status : undefined;
       // 4xx: refresh token is dead — clear tokens and signal logout via null.
       if (status !== undefined && status >= 400 && status < 500) {
+        // Another tab already exchanged this refresh token and stored the pair it got back.
+        if (localStorage.getItem('refresh_token') !== refreshToken) {
+          return localStorage.getItem('token');
+        }
         localStorage.removeItem('token');
         localStorage.removeItem('refresh_token');
         return null;

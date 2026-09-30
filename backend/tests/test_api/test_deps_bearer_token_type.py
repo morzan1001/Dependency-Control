@@ -1,6 +1,7 @@
 """Only an access token authenticates a bearer request: every other token the server signs names a
 user too, but none carries the enforced-2FA scope an access token is minted with."""
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -22,6 +23,8 @@ _UNAUTHORIZED = 401
 _MSG_CREDENTIALS = "Could not validate credentials"
 # The logout lies a whole day after the token was issued, so no clock offset can reorder them.
 _LOGOUT_AFTER_ISSUE = timedelta(days=1)
+# Far enough from both edges of a second that a logout and the next mint share it.
+_MID_SECOND = (0.01, 0.9)
 
 
 def _untyped_token(subject: str) -> str:
@@ -51,7 +54,7 @@ async def _db_with_user(**fields) -> FakeDatabase:
     "mint",
     [
         pytest.param(security.create_refresh_token, id="refresh"),
-        pytest.param(security.create_password_reset_token, id="password-reset"),
+        pytest.param(lambda subject: security.create_password_reset_token(subject, None), id="password-reset"),
         pytest.param(security.create_email_verification_token, id="email-verification"),
         pytest.param(lambda subject: security.create_email_change_token(subject, "new@test.com"), id="email-change"),
         pytest.param(_untyped_token, id="no-type-claim"),
@@ -92,6 +95,24 @@ async def test_an_access_token_issued_before_the_last_logout_is_refused():
 
     assert exc_info.value.status_code == _UNAUTHORIZED
     assert _validations("revoked") == revoked_before + 1
+
+
+async def _mid_second_now() -> datetime:
+    now = datetime.now(timezone.utc)
+    fraction = now.microsecond / 1_000_000
+    if not _MID_SECOND[0] <= fraction <= _MID_SECOND[1]:
+        await asyncio.sleep(1 - fraction + _MID_SECOND[0] * 2)
+        now = datetime.now(timezone.utc)
+    return now
+
+
+@pytest.mark.asyncio
+async def test_an_access_token_minted_later_in_the_same_second_as_the_logout_is_accepted():
+    db = await _db_with_user(last_logout_at=await _mid_second_now())
+
+    user = await get_current_user(db=db, token=security.create_access_token(_USER_ID))
+
+    assert user.id == _USER_ID
 
 
 @pytest.mark.asyncio

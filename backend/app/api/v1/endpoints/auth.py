@@ -1,7 +1,6 @@
-import hashlib
 import logging
 import secrets
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Annotated, Any
 from urllib.parse import urlencode
 
@@ -18,7 +17,6 @@ from fastapi import (
 )
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
-from jose import jwt
 
 from app.api import deps
 from app.api.deps import DatabaseDep
@@ -54,6 +52,7 @@ from app.core.metrics import (
 )
 from app.models.system import SystemSettings
 from app.models.user import User, is_local_account
+from app.repositories.token_blacklist import TokenBlacklistRepository
 from app.repositories.users import UserRepository
 from app.schemas.auth import (
     EmailVerifyResponse,
@@ -71,6 +70,8 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 _MSG_USER_INACTIVE = "User account is inactive"
+_MSG_CREDENTIALS = "Could not validate credentials"
+_MSG_INVALID_RESET_TOKEN = "Invalid or expired reset token"
 
 
 async def _check_rate_limit(key: str, max_attempts: int = 5, window_seconds: int = 300) -> None:
@@ -123,28 +124,32 @@ def _verify_totp_or_raise(user: dict, otp: str | None) -> None:
         auth_2fa_verifications_total.labels(result="success").inc()
 
 
-def _enforce_2fa_setup_scope(user: dict, system_config: SystemSettings) -> list | None:
-    """Return ["auth:setup_2fa"] when enforce_2fa is on and a local user has no 2FA configured, else None."""
-    if user.get("totp_enabled", False):
-        return None
+def _ensure_email_verified(user: dict, system_config: SystemSettings) -> None:
+    # An SSO account's address is its identity provider's to vouch for.
+    if (
+        system_config.enforce_email_verification
+        and not user.get("is_verified", False)
+        and is_local_account(user.get("auth_provider"))
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Email not verified",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    if system_config.enforce_2fa and is_local_account(user.get("auth_provider")):
-        return ["auth:setup_2fa"]
 
-    return None
-
-
-def _resolve_login_permissions(user: dict, otp: str | None, system_config: SystemSettings) -> list:
-    """Resolve permissions based on 2FA status. Verifies OTP when 2FA is enabled."""
-    if user.get("totp_enabled", False):
-        _verify_totp_or_raise(user, otp)
-        return list(user.get("permissions", []))
-
-    restricted = _enforce_2fa_setup_scope(user, system_config)
-    if restricted is not None:
-        return restricted
-
-    return list(user.get("permissions", []))
+def _session_tokens(user: dict, system_config: SystemSettings) -> dict[str, str]:
+    """A token pair for a password session; only the setup-2FA scope while enforced 2FA is unconfigured."""
+    if (
+        system_config.enforce_2fa
+        and not user.get("totp_enabled", False)
+        and is_local_account(user.get("auth_provider"))
+    ):
+        permissions = ["auth:setup_2fa"]
+    else:
+        permissions = list(user.get("permissions", []))
+    access_token, refresh_token = security.create_token_pair(str(user["_id"]), permissions)
+    return {"access_token": access_token, "refresh_token": refresh_token, "token_type": "bearer"}
 
 
 @router.post(
@@ -181,37 +186,14 @@ async def login_access_token(
         )
 
     system_config = await deps.get_system_settings(db)
-
-    # Skip email-verification gate for OIDC users; trust the provider.
-    if (
-        system_config.enforce_email_verification
-        and not user.get("is_verified", False)
-        and is_local_account(user.get("auth_provider"))
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Email not verified",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    permissions = _resolve_login_permissions(user, otp, system_config)
-
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-
-    access_token = security.create_access_token(
-        str(user["_id"]), permissions=permissions, expires_delta=access_token_expires
-    )
-
-    refresh_token = security.create_refresh_token(str(user["_id"]))
+    _ensure_email_verified(user, system_config)
+    if user.get("totp_enabled", False):
+        _verify_totp_or_raise(user, otp)
 
     if auth_login_attempts_total:
         auth_login_attempts_total.labels(status="success").inc()
 
-    return {
-        "access_token": access_token,
-        "refresh_token": refresh_token,
-        "token_type": "bearer",
-    }
+    return _session_tokens(user, system_config)
 
 
 @router.post(
@@ -224,11 +206,11 @@ async def refresh_token(
     refresh_token: Annotated[str, Body(embed=True, description="The refresh token obtained during login")],
     db: DatabaseDep,
 ) -> Any:
-    """Get a new access token using a valid refresh token."""
+    """Exchange a refresh token for a new pair; the presented refresh token is spent."""
     try:
-        _, user = await deps.decode_token(refresh_token, "refresh", db)
+        claims, user = await deps.decode_token(refresh_token, "refresh", db)
     except deps.TokenRejected as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Could not validate credentials") from exc
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_MSG_CREDENTIALS) from exc
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -241,24 +223,14 @@ async def refresh_token(
             detail="Inactive user",
         )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-
-    # Re-apply the enforced-2FA setup gate so a refresh can't mint full permissions for a local user without 2FA.
     system_config = await deps.get_system_settings(db)
-    restricted = _enforce_2fa_setup_scope(user, system_config)
-    permissions = restricted if restricted is not None else user.get("permissions", [])
-
-    access_token = security.create_access_token(
-        str(user["_id"]), permissions=permissions, expires_delta=access_token_expires
-    )
-
-    new_refresh_token = security.create_refresh_token(str(user["_id"]))
-
-    return {
-        "access_token": access_token,
-        "refresh_token": new_refresh_token,
-        "token_type": "bearer",
-    }
+    _ensure_email_verified(user, system_config)
+    # The insert is the atomic step: of two concurrent exchanges of one token only one lists it.
+    if not await TokenBlacklistRepository(db).blacklist_token(
+        claims.jti, datetime.fromtimestamp(claims.exp, tz=timezone.utc), reason="refresh_rotated"
+    ):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_MSG_CREDENTIALS)
+    return _session_tokens(user, system_config)
 
 
 @router.post(
@@ -312,35 +284,18 @@ async def create_user(
 
 @router.post("/logout", summary="Logout user", responses=RESP_AUTH)
 async def logout(
-    request: Request,
+    token: Annotated[str, Depends(deps.oauth2_scheme)],
     current_user: Annotated[User, Depends(deps.get_current_user)],
     db: DatabaseDep,
 ) -> LogoutResponse:
     """Logout the current user by blacklisting the token JTI and bumping last_logout_at."""
-    from app.repositories.token_blacklist import TokenBlacklistRepository
-    from app.repositories.users import UserRepository
-
-    auth_header = request.headers.get("Authorization", "")
-    if auth_header.startswith("Bearer "):
-        token = auth_header[7:]
-
-        try:
-            payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-            jti = payload.get("jti")
-            exp_timestamp = payload.get("exp")
-
-            if jti and exp_timestamp:
-                exp_datetime = datetime.fromtimestamp(exp_timestamp, tz=timezone.utc)
-
-                blacklist_repo = TokenBlacklistRepository(db)
-                await blacklist_repo.blacklist_token(jti, exp_datetime, reason="logout")
-                logger.info(f"Token {jti[:8]}... blacklisted for user {current_user.username}")
-        except Exception as e:
-            logger.warning(f"Could not blacklist token on logout: {e}")
-
-    # last_logout_at invalidates tokens without a JTI or issued before now.
-    user_repo = UserRepository(db)
-    await user_repo.update(current_user.id, {"last_logout_at": datetime.now(timezone.utc)})
+    claims = security.decode_session_token(token, "access")
+    # None only when the token expired after get_current_user accepted it.
+    if claims:
+        await TokenBlacklistRepository(db).blacklist_token(
+            claims.jti, datetime.fromtimestamp(claims.exp, tz=timezone.utc), reason="logout"
+        )
+    await UserRepository(db).update(current_user.id, {"last_logout_at": datetime.now(timezone.utc)})
 
     return LogoutResponse(message="Successfully logged out")
 
@@ -722,13 +677,7 @@ async def login_oidc_callback(
         _validate_existing_oidc_user(user, email)
 
     # OIDC users are exempt from 2FA enforcement; we trust the provider.
-    permissions = user.get("permissions", [])
-
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token = security.create_access_token(
-        str(user["_id"]), permissions=permissions, expires_delta=access_token_expires
-    )
-    refresh_token = security.create_refresh_token(str(user["_id"]))
+    access_token, refresh_token = security.create_token_pair(str(user["_id"]), list(user.get("permissions", [])))
 
     if auth_oidc_logins_total:
         auth_oidc_logins_total.labels(status="success").inc()
@@ -769,7 +718,7 @@ async def forgot_password(
     user = await user_repo.get_raw_by_email(email)
 
     if user and user.get("is_active", True) and is_local_account(user.get("auth_provider")):
-        send_password_reset_email(background_tasks, user["email"], user.get("username", "User"), system_config)
+        send_password_reset_email(background_tasks, user, system_config)
 
     # Pad to a constant ~200ms so response time never reveals whether the email exists.
     elapsed = time.monotonic() - start_time
@@ -786,28 +735,14 @@ async def forgot_password(
     responses=RESP_400_404,
 )
 async def reset_password(request: Request, reset_in: UserPasswordReset, db: DatabaseDep) -> PasswordResetResponse:
-    """Reset password using the token from email; the token is one-time use to prevent replay."""
+    """Reset password using the token from email; a reset voids that link and every other one issued before it."""
     await _check_rate_limit(
         f"reset_pw:{request.client.host if request.client else 'unknown'}", max_attempts=5, window_seconds=600
     )
-    token_hash = hashlib.sha256(reset_in.token.encode()).hexdigest()
-    token_key = f"used_reset_token:{token_hash}"
-
-    if await cache_service.get(token_key):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This reset token has already been used",
-        )
-
-    email = security.verify_password_reset_token(reset_in.token)
-    if not email:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Invalid or expired reset token",
-        )
-
-    # TTL matches the token's 1-hour expiration.
-    await cache_service.set(token_key, True, ttl_seconds=3600)
+    verified = security.verify_password_reset_token(reset_in.token)
+    if not verified:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_MSG_INVALID_RESET_TOKEN)
+    email, fingerprint = verified
 
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
@@ -816,6 +751,9 @@ async def reset_password(request: Request, reset_in: UserPasswordReset, db: Data
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
+    current_hash = user.get("hashed_password")
+    if security.password_fingerprint(current_hash) != fingerprint:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_MSG_INVALID_RESET_TOKEN)
 
     if not user.get("is_active", True):
         raise HTTPException(
@@ -829,16 +767,18 @@ async def reset_password(request: Request, reset_in: UserPasswordReset, db: Data
             detail=f"Password reset not available for {user['auth_provider']} accounts. Please use your identity provider.",
         )
 
-    hashed_password = security.get_password_hash(reset_in.new_password)
-
-    # Bump last_logout_at to invalidate all existing sessions.
-    await user_repo.update(
+    # Guarded on the hash the link was checked against, so of two concurrent uses only one writes.
+    if not await user_repo.update_raw(
         user["_id"],
         {
-            "hashed_password": hashed_password,
-            "last_logout_at": datetime.now(timezone.utc),
+            "$set": {
+                "hashed_password": security.get_password_hash(reset_in.new_password),
+                "last_logout_at": datetime.now(timezone.utc),
+            }
         },
-    )
+        guard={"hashed_password": current_hash},
+    ):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=_MSG_INVALID_RESET_TOKEN)
 
     if auth_password_resets_total:
         auth_password_resets_total.labels(status="success").inc()

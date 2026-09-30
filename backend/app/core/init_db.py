@@ -633,6 +633,8 @@ async def init_db() -> None:
             email="admin@example.com",
             hashed_password=hashed_password,
             permissions=list(ALL_PERMISSIONS),
+            # admin@example.com can never receive a verification mail.
+            is_verified=True,
         )
 
         await user_collection.insert_one(user.model_dump(by_alias=True))

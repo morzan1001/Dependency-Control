@@ -22,6 +22,7 @@ _USER_LOOKUP = "app.repositories.users.UserRepository.get_raw_by_id"
 _TIMING_PAD_FLOOR_SECONDS = 0.15
 
 _BAD_REQUEST = 400
+_UNAUTHORIZED = 401
 _FORBIDDEN = 403
 _NOT_FOUND = 404
 _MSG_CREDENTIALS = "Could not validate credentials"
@@ -144,12 +145,40 @@ class TestRefreshToken2FAGate:
         assert _decode_permissions(result["access_token"]) == ["auth:setup_2fa"]
 
 
+class TestRefreshTokenEmailVerificationGate:
+    """Refresh applies the gate login applies, so enforcing verification reaches sessions already open."""
+
+    def test_an_unverified_local_account_is_refused_once_verification_is_enforced(self):
+        user = {"_id": "u-bob", "username": "bob", "is_active": True, "is_verified": False, "auth_provider": "local"}
+
+        with pytest.raises(HTTPException) as exc_info:
+            _refresh(
+                security.create_refresh_token("u-bob"),
+                user,
+                system_config=_make_settings(enforce_email_verification=True),
+            )
+
+        assert exc_info.value.status_code == _UNAUTHORIZED
+        assert exc_info.value.detail == "Email not verified"
+
+    def test_an_sso_account_is_left_to_its_identity_provider(self):
+        user = {"_id": "u-dave", "username": "dave", "is_active": True, "is_verified": False, "auth_provider": "oidc"}
+
+        result = _refresh(
+            security.create_refresh_token("u-dave"),
+            user,
+            system_config=_make_settings(enforce_email_verification=True),
+        )
+
+        assert result["access_token"]
+
+
 class TestRefreshTokenType:
     @pytest.mark.parametrize(
         "mint",
         [
             pytest.param(lambda: security.create_access_token("u-bob", permissions=["admin:manage"]), id="access"),
-            pytest.param(lambda: security.create_password_reset_token("bob@test.com"), id="password-reset"),
+            pytest.param(lambda: security.create_password_reset_token("bob@test.com", None), id="password-reset"),
         ],
     )
     def test_a_token_of_another_type_is_not_accepted_in_place_of_a_refresh_token(self, mint):

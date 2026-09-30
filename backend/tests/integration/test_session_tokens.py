@@ -1,0 +1,235 @@
+"""Tokens end where the account says they end: an exchanged refresh token, a superseded reset link
+and a logged-out bearer stop working, whatever state the cache is in."""
+
+import asyncio
+import re
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
+
+import pytest
+import pytest_asyncio
+from httpx import ASGITransport, AsyncClient
+from jose import jwt
+
+from app.core import security
+from app.core.config import settings
+from app.core.permissions import Permissions
+
+_API = settings.API_V1_STR
+_BOB_ID = "u-bob"
+_BOB_EMAIL = "bob@test.com"
+_PASSWORD = "Correct-Horse-1"
+_FIRST_NEW_PASSWORD = "Battery-Staple-2"
+_SECOND_NEW_PASSWORD = "Tr0ub4dor-and-3"
+_OK = 200
+_CREATED = 201
+_BAD_REQUEST = 400
+_FORBIDDEN = 403
+_MAIL_SETTINGS = {"smtp_host": "smtp.example.com", "emails_from_email": "dc@example.com"}
+
+
+class _UnavailableCache:
+    """The cache as it answers while Redis is down: nothing stored, nothing kept."""
+
+    async def get(self, key):
+        return None
+
+    async def set(self, key, value, ttl_seconds=None):
+        return False
+
+
+@pytest_asyncio.fixture
+async def api(db):
+    from app.api.deps import get_database
+    from app.main import app
+
+    async def _get_database():
+        return db
+
+    app.dependency_overrides[get_database] = _get_database
+    try:
+        with patch("app.api.v1.endpoints.auth.cache_service", _UnavailableCache()):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                yield client
+    finally:
+        app.dependency_overrides.pop(get_database, None)
+
+
+@pytest.fixture
+def mailbox():
+    with patch("app.api.v1.helpers.auth.EmailProvider") as provider:
+        provider.return_value.send = AsyncMock()
+        yield provider.return_value.send
+
+
+async def _add_bob(db, **fields):
+    await db.users.insert_one(
+        {
+            "_id": _BOB_ID,
+            "username": "bob",
+            "email": _BOB_EMAIL,
+            "hashed_password": security.get_password_hash(_PASSWORD),
+            "is_active": True,
+            "is_verified": True,
+            "auth_provider": "local",
+            "permissions": [],
+            **fields,
+        }
+    )
+
+
+async def _store_settings(db, **fields):
+    await db.system_settings.insert_one({"_id": "current", **fields})
+
+
+async def _refresh(api, token):
+    return await api.post(f"{_API}/login/refresh-token", json={"refresh_token": token})
+
+
+async def _request_reset_link(api, mailbox) -> str:
+    response = await api.post(f"{_API}/forgot-password", json={"email": _BOB_EMAIL})
+    assert response.status_code == _OK
+    return re.search(r"token=(\S+)", mailbox.await_args.kwargs["message"]).group(1)
+
+
+async def _reset(api, token, new_password):
+    return await api.post(f"{_API}/reset-password", json={"token": token, "new_password": new_password})
+
+
+async def _stored_hash(db):
+    return (await db.users.find_one({"_id": _BOB_ID}))["hashed_password"]
+
+
+async def _login(api, username, password):
+    return await api.post(f"{_API}/login/access-token", data={"username": username, "password": password})
+
+
+@pytest.mark.asyncio
+async def test_an_exchanged_refresh_token_is_refused_and_its_successor_works(api, db):
+    await _add_bob(db)
+    presented = security.create_refresh_token(_BOB_ID)
+
+    first = await _refresh(api, presented)
+    replay = await _refresh(api, presented)
+    successor = await _refresh(api, first.json()["refresh_token"])
+
+    assert first.status_code == _OK
+    assert replay.status_code == _FORBIDDEN
+    assert successor.status_code == _OK
+    claims = jwt.get_unverified_claims(presented)
+    entry = await db.token_blacklist.find_one({"_id": claims["jti"]})
+    assert entry["reason"] == "refresh_rotated"
+    assert entry["expires_at"] == datetime.fromtimestamp(claims["exp"], tz=timezone.utc)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_two_concurrent_exchanges_of_one_refresh_token_mint_one_pair(api, db):
+    await _add_bob(db)
+    presented = security.create_refresh_token(_BOB_ID)
+
+    responses = await asyncio.gather(_refresh(api, presented), _refresh(api, presented))
+
+    assert sorted(r.status_code for r in responses) == [_OK, _FORBIDDEN]
+
+
+@pytest.mark.asyncio
+async def test_a_reset_link_stops_working_once_a_newer_one_was_used(api, db, mailbox):
+    await _add_bob(db)
+    await _store_settings(db, **_MAIL_SETTINGS)
+    older = await _request_reset_link(api, mailbox)
+    newer = await _request_reset_link(api, mailbox)
+
+    used = await _reset(api, newer, _FIRST_NEW_PASSWORD)
+    superseded = await _reset(api, older, _SECOND_NEW_PASSWORD)
+
+    assert used.status_code == _OK
+    assert superseded.status_code == _BAD_REQUEST
+    assert security.verify_password(_FIRST_NEW_PASSWORD, await _stored_hash(db))
+
+
+@pytest.mark.asyncio
+async def test_a_reset_link_works_once_while_the_cache_is_unavailable(api, db, mailbox):
+    await _add_bob(db)
+    await _store_settings(db, **_MAIL_SETTINGS)
+    link = await _request_reset_link(api, mailbox)
+
+    used = await _reset(api, link, _FIRST_NEW_PASSWORD)
+    replayed = await _reset(api, link, _SECOND_NEW_PASSWORD)
+
+    assert used.status_code == _OK
+    assert replayed.status_code == _BAD_REQUEST
+    assert security.verify_password(_FIRST_NEW_PASSWORD, await _stored_hash(db))
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_two_concurrent_resets_with_one_link_apply_one_password(api, db, mailbox):
+    await _add_bob(db)
+    await _store_settings(db, **_MAIL_SETTINGS)
+    link = await _request_reset_link(api, mailbox)
+
+    first, second = await asyncio.gather(
+        _reset(api, link, _FIRST_NEW_PASSWORD), _reset(api, link, _SECOND_NEW_PASSWORD)
+    )
+
+    assert sorted([first.status_code, second.status_code]) == [_OK, _BAD_REQUEST]
+    applied = _FIRST_NEW_PASSWORD if first.status_code == _OK else _SECOND_NEW_PASSWORD
+    assert security.verify_password(applied, await _stored_hash(db))
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_reset_link_gives_an_account_migrated_from_sso_its_first_password(api, db, mailbox):
+    await _add_bob(db, hashed_password=None)
+    await _store_settings(db, **_MAIL_SETTINGS)
+    link = await _request_reset_link(api, mailbox)
+
+    reset = await _reset(api, link, _FIRST_NEW_PASSWORD)
+    login = await _login(api, "bob", _FIRST_NEW_PASSWORD)
+
+    assert reset.status_code == _OK
+    assert login.status_code == _OK
+
+
+@pytest.mark.asyncio
+async def test_logout_with_a_lowercase_scheme_revokes_the_token_itself(api, db):
+    await _add_bob(db)
+    token = security.create_access_token(_BOB_ID)
+
+    response = await api.post(f"{_API}/logout", headers={"Authorization": f"bearer {token}"})
+
+    assert response.status_code == _OK
+    entry = await db.token_blacklist.find_one({"_id": jwt.get_unverified_claims(token)["jti"]})
+    assert entry["reason"] == "logout"
+
+
+@pytest.mark.asyncio
+async def test_an_account_an_admin_created_can_log_in_while_verification_is_enforced(api, db):
+    await _add_bob(db, permissions=[Permissions.USER_CREATE])
+    await _store_settings(db, enforce_email_verification=True)
+    admin_token = security.create_access_token(_BOB_ID)
+
+    created = await api.post(
+        f"{_API}/users/",
+        json={"email": "alice@test.com", "username": "alice", "password": _FIRST_NEW_PASSWORD},
+        headers={"Authorization": f"Bearer {admin_token}"},
+    )
+    login = await _login(api, "alice", _FIRST_NEW_PASSWORD)
+
+    assert created.status_code == _CREATED
+    assert login.status_code == _OK
+
+
+@pytest.mark.asyncio
+async def test_the_bootstrap_admin_can_log_in_while_verification_is_enforced(api, db, capsys):
+    from app.core import init_db as init_db_module
+
+    with patch.object(init_db_module, "get_database", new=AsyncMock(return_value=db)):
+        await init_db_module.init_db()
+    password = re.search(r"Password: (\S+)", capsys.readouterr().out).group(1)
+    await db.system_settings.update_one({"_id": "current"}, {"$set": {"enforce_email_verification": True}}, upsert=True)
+
+    login = await _login(api, "admin", password)
+
+    assert login.status_code == _OK

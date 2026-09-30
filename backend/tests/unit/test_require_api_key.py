@@ -1,6 +1,7 @@
 """The unified key dependency admits a caller only when the key names the surface and the owner
 still holds that surface's permission."""
 
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock
 
 import pytest
@@ -307,6 +308,27 @@ async def test_touch_stamps_last_used_once_with_the_key_id(monkeypatch):
     await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
 
     touch.assert_awaited_once_with(_KEY_ID)
+
+
+@pytest.mark.parametrize(
+    ("last_used_at", "stamped"),
+    [
+        pytest.param(None, True, id="never-used"),
+        pytest.param(timedelta(minutes=2), True, id="used-two-minutes-ago"),
+        pytest.param(timedelta(seconds=10), False, id="used-ten-seconds-ago"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_key_used_within_the_last_minute_is_not_stamped_again(monkeypatch, last_used_at, stamped):
+    doc = _key_doc([API_KEY_SURFACE_MCP])
+    doc["last_used_at"] = None if last_used_at is None else datetime.now(timezone.utc) - last_used_at
+    db, _ = _db_with_key(doc)
+    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
+    touch = _patch_touch_last_used(monkeypatch)
+
+    await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+
+    assert touch.await_count == int(stamped)
 
 
 @pytest.mark.asyncio

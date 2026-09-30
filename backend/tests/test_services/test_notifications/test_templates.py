@@ -64,10 +64,7 @@ class TestGetVerificationEmailTemplate:
 
 class TestGetPasswordResetTemplate:
     def _render(self, **overrides):
-        defaults = {
-            "username": "testuser",
-            "link": "https://example.com/reset?token=xyz",
-        }
+        defaults = {"link": "https://example.com/reset?token=xyz"}
         defaults.update(overrides)
         return get_password_reset_template(**defaults)
 
@@ -120,10 +117,20 @@ class TestGetVulnerabilityFoundTemplate:
         result = self._render(project_name_scanned="vuln-target")
         assert "vuln-target" in result
 
+    @pytest.mark.parametrize(
+        ("counts", "banner"),
+        [
+            pytest.param({"kev_count": 1}, "Known Exploited Vulnerabilities Detected", id="kev"),
+            pytest.param({"high_epss_count": 1}, "High Exploitation Probability", id="high-epss"),
+        ],
+    )
+    def test_a_banner_shows_exactly_when_its_bucket_has_a_vulnerability(self, counts, banner):
+        assert banner in self._render(**counts)
+        assert banner not in self._render()
+
     def test_the_high_epss_banner_and_badge_use_the_one_threshold(self):
         result = self._render(
             vulnerabilities=[_vuln(id="CVE-2024-001", severity="MEDIUM", epss_score=0.1)],
-            has_high_epss=True,
             high_epss_count=1,
         )
         assert "has EPSS &gt;= 10%" in result
@@ -167,6 +174,16 @@ class TestGetAnalysisCompletedTemplate:
     def test_contains_scanned_project_name(self):
         result = self._render(project_name_scanned="backend-api")
         assert "backend-api" in result
+
+    @pytest.mark.parametrize(
+        ("results_summary", "headline"),
+        [
+            pytest.param(["trivy: 3"], "1 analyzer ran.", id="one"),
+            pytest.param(["trivy: 3", "grype: 2"], "2 analyzers ran.", id="two"),
+        ],
+    )
+    def test_the_headline_counts_the_summarised_analyzers(self, results_summary, headline):
+        assert headline in self._render(results_summary=results_summary)
 
 
 _ADVISED_PROJECT = {"id": "p1", "name": "billing", "findings": ["log4j-core (2.14.1)"]}

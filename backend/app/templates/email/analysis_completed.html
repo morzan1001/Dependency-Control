@@ -3,6 +3,7 @@
 {% block title %}Analysis Completed - {{ project_name }}{% endblock %}
 
 {% block content %}
+{% set analyzer_count = results_summary|length %}
 <h2>Analysis Completed</h2>
 
 <p>The dependency analysis for project <strong>{{ project_name_scanned }}</strong> has finished successfully.</p>

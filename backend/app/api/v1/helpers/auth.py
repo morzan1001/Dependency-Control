@@ -1,5 +1,7 @@
 """Account mails and the email precondition of the endpoints that send them."""
 
+from typing import Any
+
 from fastapi import BackgroundTasks, HTTPException, status
 
 from app.core import security
@@ -67,16 +69,17 @@ def send_email_change_email(
 
 
 def send_password_reset_email(
-    background_tasks: BackgroundTasks, email: str, username: str, system_settings: SystemSettings
+    background_tasks: BackgroundTasks, user: dict[str, Any], system_settings: SystemSettings
 ) -> bool:
-    link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={security.create_password_reset_token(email)}"
+    token = security.create_password_reset_token(user["email"], user.get("hashed_password"))
+    link = f"{settings.FRONTEND_BASE_URL}/reset-password?token={token}"
     return _queue_email(
         background_tasks,
         system_settings,
-        email,
+        user["email"],
         f"Reset your password for {settings.PROJECT_NAME}",
         f"Reset your password by clicking this link: {link}",
-        templates.get_password_reset_template(username=username, link=link),
+        templates.get_password_reset_template(link),
     )
 
 

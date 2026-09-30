@@ -171,7 +171,6 @@ async def send_scan_notifications(
                 severity_high=severity_counts["HIGH"],
                 severity_medium=severity_counts["MEDIUM"],
                 severity_low=severity_counts["LOW"],
-                analyzer_count=len(results_summary),
                 results_summary=results_summary,
             )
 
@@ -259,10 +258,8 @@ async def send_scan_notifications(
             project_name_scanned=project.name,
             vulnerabilities=top_vulns,
             priority_count=len(priority_vulns),
-            has_kev=bool(kev_vulns),
             kev_count=len(kev_vulns),
             kev_vulnerabilities=kev_vulns,
-            has_high_epss=bool(high_epss_vulns),
             high_epss_count=len(high_epss_vulns),
         )
 

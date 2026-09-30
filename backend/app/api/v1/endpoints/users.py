@@ -94,7 +94,8 @@ async def create_user(
     user_dict = user_in.model_dump()
     user_dict["hashed_password"] = security.get_password_hash(user_dict.pop("password"))
 
-    new_user = User(**user_dict)
+    # The admin vouches for the address, as an accepted invitation does.
+    new_user = User(**user_dict, is_verified=True)
     await UserRepository(db).create(new_user)
     return new_user
 
@@ -294,7 +295,7 @@ async def reset_user_password(
     system_settings = await deps.get_system_settings(db)
     require_email_configured(system_settings)
 
-    email_queued = send_password_reset_email(background_tasks, user["email"], user["username"], system_settings)
+    email_queued = send_password_reset_email(background_tasks, user, system_settings)
     return {"message": "Password reset email queued", "email_queued": email_queued}
 
 

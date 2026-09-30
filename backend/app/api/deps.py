@@ -1,16 +1,16 @@
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import ValidationError
 
 from app.core import security
 from app.core.config import settings
 from app.core.constants import (
+    API_KEY_LAST_USED_RESOLUTION_SECONDS,
     API_KEY_SURFACE_ADHOC,
     API_KEY_SURFACE_MCP,
     MAX_PROJECT_TEAMS,
@@ -35,6 +35,7 @@ from app.repositories.projects import (
     replace_team_subset_pipeline,
 )
 from app.repositories.system_settings import SystemSettingsRepository
+from app.repositories.token_blacklist import TokenBlacklistRepository
 from app.repositories.users import UserRepository
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
@@ -62,44 +63,19 @@ class TokenRejected(Exception):
         self.result = result
 
 
-async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabase) -> None:
-    if not jti:
-        return
-    from app.repositories.token_blacklist import TokenBlacklistRepository
-
-    blacklist_repo = TokenBlacklistRepository(db)
-    if await blacklist_repo.is_blacklisted(jti):
-        raise TokenRejected("blacklisted")
-
-
-def _check_logout_invalidation(user: dict, payload: dict) -> None:
-    """Raise TokenRejected if the token was issued before the user's last logout."""
-    last_logout_at = user.get("last_logout_at")
-    if not last_logout_at:
-        return
-    iat = payload.get("iat")
-    if not iat:
-        return
-    if iat < last_logout_at.timestamp():
-        raise TokenRejected("revoked")
-
-
 async def decode_token(token: str, expected_type: str, db: AsyncIOMotorDatabase) -> tuple[TokenPayload, dict | None]:
     """A valid ``expected_type`` JWT's claims and the raw user they name (None if absent); raises TokenRejected."""
-    try:
-        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
-        token_data = TokenPayload(**payload)
-    except (JWTError, ValidationError) as exc:
-        raise TokenRejected("invalid") from exc
-    if token_data.type != expected_type or not token_data.sub:
+    claims = security.decode_session_token(token, expected_type)
+    if claims is None:
         raise TokenRejected("invalid")
+    if await TokenBlacklistRepository(db).is_blacklisted(claims.jti):
+        raise TokenRejected("blacklisted")
 
-    await _ensure_token_not_blacklisted(payload.get("jti"), db)
-
-    user = await UserRepository(db).get_raw_by_id(token_data.sub)
-    if user is not None:
-        _check_logout_invalidation(user, payload)
-    return token_data, user
+    user = await UserRepository(db).get_raw_by_id(claims.sub)
+    last_logout_at = user.get("last_logout_at") if user else None
+    if last_logout_at and claims.iat < last_logout_at.timestamp():
+        raise TokenRejected("revoked")
+    return claims, user
 
 
 def _count_validation(result: str) -> None:
@@ -667,7 +643,11 @@ async def _admit_unified_key(
     # Answered second: a key that never named the surface must not learn what its owner holds.
     _require_permission(user, surface, permission)
 
-    if touch:
+    last_used_at = key_doc.get("last_used_at")
+    if touch and (
+        last_used_at is None
+        or (datetime.now(timezone.utc) - last_used_at).total_seconds() >= API_KEY_LAST_USED_RESOLUTION_SECONDS
+    ):
         await key_repo.touch_last_used(key_doc.get("_id", ""))
     return user, key_doc
 
