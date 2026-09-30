@@ -71,7 +71,11 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
                 asset_type=CryptoAssetType.PROTOCOL,
             )
             effective = await CryptoPolicyResolver(db).resolve(project_id)
-            amp_rules = [r for r in effective.rules if r.enabled and r.match_cipher_weaknesses]
+            amp_rules = [
+                r
+                for r in effective.rules
+                if r.enabled and r.finding_type == FindingType.CRYPTO_WEAK_PROTOCOL and r.match_cipher_weaknesses
+            ]
 
             findings: list[dict[str, Any]] = []
             unresolved = 0

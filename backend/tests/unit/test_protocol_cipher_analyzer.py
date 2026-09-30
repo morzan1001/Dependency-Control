@@ -120,7 +120,7 @@ async def test_rule_amplifies_with_weakness_match(db):
     assert [m["rule_id"] for m in finding["details"]["matched_rules"]] == ["cnsa20-require-pfs"]
 
 
-async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=None):
+async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=None, extra_rules=()):
     """A CycloneDX 1.6 protocol asset judged by the seeded policy, with the PFS rule toggled."""
     parsed = parse_cbom(
         {
@@ -146,6 +146,7 @@ async def _analyze_spec_protocol(db, cipher_suites, pfs_enabled=False, evidence=
         r.model_copy(update={"enabled": pfs_enabled}) if r.rule_id == "cnsa20-require-pfs" else r
         for r in load_seed_rules()
     ]
+    rules.extend(extra_rules)
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=rules))
     return await ProtocolCipherSuiteAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
 
@@ -181,6 +182,24 @@ async def test_a_disabled_rule_leaves_the_catalog_baseline_alone(db):
     (finding,) = result["findings"]
     assert finding["severity"] == "LOW"
     assert "rule_id" not in finding["details"]
+
+
+@pytest.mark.asyncio
+async def test_a_weakness_rule_of_another_finding_type_leaves_protocol_findings_alone(db):
+    rule = CryptoRule(
+        rule_id="algo-no-pfs",
+        name="no pfs",
+        description="",
+        finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
+        default_severity=Severity.CRITICAL,
+        source=CryptoPolicySource.CUSTOM,
+        match_cipher_weaknesses=["no-forward-secrecy"],
+    )
+    result = await _analyze_spec_protocol(db, [{"name": "TLS_RSA_WITH_AES_128_GCM_SHA256"}], extra_rules=[rule])
+    (finding,) = result["findings"]
+    assert finding["severity"] == "LOW"
+    assert "rule_id" not in finding["details"]
+    assert "matched_rules" not in finding["details"]
 
 
 @pytest.mark.asyncio

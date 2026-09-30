@@ -62,15 +62,17 @@ def _name_or_variant_matches(asset: CryptoAsset, patterns: list[str]) -> bool:
     return False
 
 
-# ML-DSA, SLH-DSA and FN-DSA are post-quantum; their "dsa" token must not read as classic DSA.
-_POST_QUANTUM_PREFIXES = ("ml-", "slh-", "fn-")
+# A qualifier names one family with the next part: EC-DSA is ECDSA and ML_DSA is ML-DSA, not DSA.
+_QUALIFIER = re.compile(r"\b(ec|ml|slh|fn|hashml|hashslh) +")
+# A post-quantum or hybrid name (X25519-MLKEM768) holds no classic family on its own.
+_POST_QUANTUM_FAMILIES = ("mlkem", "mldsa", "slhdsa", "fndsa", "hashmldsa", "hashslhdsa")
 
 
 def _family_tokens(name: str) -> set[str]:
     """RSA-2048 -> {rsa, 2048}, SHA1withRSA -> {sha1, sha, rsa}: name parts plus the letters before a digit run."""
-    if name.startswith(_POST_QUANTUM_PREFIXES):
+    tokens = set(_QUALIFIER.sub(r"\1", " ".join(re.split(r"[^a-z0-9]+|with", name))).split())
+    if any(token.startswith(_POST_QUANTUM_FAMILIES) for token in tokens):
         return set()
-    tokens = {token for token in re.split(r"[^a-z0-9]+|with", name) if token}
     return tokens | {m.group(1) for token in tokens if (m := re.match(r"([a-z]+)\d", token))}
 
 
