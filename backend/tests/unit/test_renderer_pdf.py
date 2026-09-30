@@ -19,8 +19,7 @@ def _partial_coverage():
     )
 
 
-@pytest.mark.parametrize("coverage_factory", [None, _partial_coverage])
-def test_pdf_renderer_produces_pdf_bytes(coverage_factory):
+def test_pdf_renderer_produces_pdf_bytes():
     """A partial coverage object must reach the template; test_compliance_coverage.py checks what
     the template then prints, since it can run where WeasyPrint's native stack cannot."""
     from app.schemas.compliance import ReportFormat
@@ -28,8 +27,7 @@ def test_pdf_renderer_produces_pdf_bytes(coverage_factory):
     from tests.unit.test_renderer_json import _evaluation, _report
 
     evaluation = _evaluation()
-    if coverage_factory is not None:
-        evaluation.coverage = coverage_factory()
+    evaluation.coverage = _partial_coverage()
     rep = _report()
     rep.format = ReportFormat.PDF
     out, filename, mime = PdfRenderer().render(evaluation, rep)

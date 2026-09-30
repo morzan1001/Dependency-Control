@@ -148,8 +148,8 @@ export function createInstanceApi<
       const response = await api.put<TInstance>(`${basePath}/${instanceId}`, data);
       return response.data;
     },
-    delete: async (instanceId: string, force = false): Promise<void> => {
-      await api.delete(`${basePath}/${instanceId}`, { params: { force } });
+    delete: async (instanceId: string): Promise<void> => {
+      await api.delete(`${basePath}/${instanceId}`);
     },
     testConnection: async (instanceId: string): Promise<TTestResponse> => {
       const response = await api.post<TTestResponse>(`${basePath}/${instanceId}/test-connection`);

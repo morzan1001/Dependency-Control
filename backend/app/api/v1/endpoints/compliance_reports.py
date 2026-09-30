@@ -1,4 +1,4 @@
-"""Compliance report REST endpoints; generation runs in a BackgroundTask with a best-effort webhook on completion."""
+"""Compliance report REST endpoints; generation runs in a BackgroundTask that announces its outcome."""
 
 import logging
 from collections.abc import AsyncIterator
@@ -8,7 +8,6 @@ from typing import Any
 from bson import ObjectId
 from fastapi import BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from gridfs.errors import NoFile
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pydantic import BaseModel, Field
 
@@ -22,13 +21,17 @@ from app.core.constants import (
     ScopeName,
 )
 from app.core.permissions import Permissions, has_permission
+from app.db.mongodb import open_gridfs_download_with_retry
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
 from app.services.compliance.engine import ComplianceReportEngine
+from app.services.compliance.retention import delete_report_artifact
 from app.services.compliance.visibility import report_visibility_filter
+from app.services.notifications.service import safe_notify_project_event
+from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
 
@@ -166,13 +169,9 @@ async def download_report(
     status_val = _status_str(r.status)
     if status_val != "completed":
         raise HTTPException(status_code=409, detail=f"Report not ready (status: {status_val})")
-    if r.artifact_gridfs_id is None:
-        raise HTTPException(status_code=410, detail="Artifact expired or missing")
-
-    bucket = AsyncIOMotorGridFSBucket(db)
     try:
         # artifact_gridfs_id is stored as a string; GridFS needs an ObjectId.
-        stream = await bucket.open_download_stream(ObjectId(r.artifact_gridfs_id))
+        stream = await open_gridfs_download_with_retry(AsyncIOMotorGridFSBucket(db), ObjectId(r.artifact_gridfs_id))
     except Exception as exc:
         raise HTTPException(status_code=410, detail="Artifact storage error") from exc
 
@@ -219,33 +218,21 @@ async def delete_report(
             status_code=403,
             detail="Cannot delete a report you did not request",
         )
-    if r.artifact_gridfs_id:
-        bucket = AsyncIOMotorGridFSBucket(db)
-        try:
-            await bucket.delete(ObjectId(r.artifact_gridfs_id))
-        except NoFile:
-            pass  # already gone — nothing to clean up
-        except Exception:
-            logger.warning("Failed to delete GridFS artifact %s", r.artifact_gridfs_id, exc_info=True)
+    await delete_report_artifact(db, r.artifact_gridfs_id)
     await repo.delete(report_id)
 
 
 async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, user: User) -> None:
-    """BackgroundTask target: run engine then fire best-effort webhook."""
-    engine = ComplianceReportEngine()
+    """BackgroundTask target: run the engine, announce the outcome by webhook and tell project members once it is ready."""
     try:
-        await engine.generate(report=report, db=db, user=user)
+        status, summary = await ComplianceReportEngine().generate(report=report, db=db, user=user)
     except Exception:
         logger.exception("Compliance report engine failed for %s", report.id)
+        stored = await ComplianceReportRepository(db).get_by_id(report.id)
+        if stored is None:
+            return
+        status, summary = stored.status, stored.summary
 
-    from app.services.webhooks import webhook_service
-
-    fresh = await ComplianceReportRepository(db).get_by_id(report.id)
-    fresh_status = None
-    fresh_summary: dict = {}
-    if fresh is not None:
-        fresh_status = _status_str(fresh.status)
-        fresh_summary = fresh.summary or {}
     payload = {
         "event": WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -254,8 +241,8 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
         "format": _status_str(report.format),
         "scope": report.scope,
         "scope_id": report.scope_id,
-        "status": fresh_status,
-        "summary": fresh_summary,
+        "status": _status_str(status),
+        "summary": summary,
     }
     await webhook_service.safe_trigger_webhooks(
         db,
@@ -265,9 +252,7 @@ async def _run_and_webhook(db: AsyncIOMotorDatabase, report: ComplianceReport, u
         context="compliance_reports",
     )
 
-    if report.scope == "project" and report.scope_id:
-        from app.services.notifications.service import safe_notify_project_event
-
+    if status == ReportStatus.COMPLETED and report.scope == "project":
         await safe_notify_project_event(
             db,
             project_id=report.scope_id,

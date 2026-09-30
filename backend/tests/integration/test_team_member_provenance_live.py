@@ -16,11 +16,11 @@ from app.core.init_db import create_team_indexes
 from app.models.gitlab_api import GitLabMember
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubEmailLookup, GitHubService
+from app.services.github import GitHubService
 from app.services.gitlab import GitLabService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
-from tests.mocks.gitlab import make_gitlab_instance, make_project_details
+from tests.mocks.gitlab import make_gitlab_instance, make_project_details, sync_team
 
 _GH_A = "gh-inst-a"
 _GH_B = "gh-inst-b"
@@ -64,8 +64,8 @@ async def _seed(db) -> None:
     )
 
 
-async def _public_email(login: str) -> GitHubEmailLookup:
-    return GitHubEmailLookup(f"{login}@corp.com")
+async def _public_emails(logins: list[str]) -> dict[str, str]:
+    return {login: f"{login}@corp.com" for login in logins}
 
 
 async def _github_sync(db, instance_id: str, org_teams: list[dict], logins: list[dict] | None) -> None:
@@ -73,29 +73,34 @@ async def _github_sync(db, instance_id: str, org_teams: list[dict], logins: list
     service = GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret", sync_teams=True))
     with (
         patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams)),
-        patch.object(service, "get_team_repository", new=AsyncMock(return_value=True)),
+        patch.object(service, "team_writes_to_repository", new=AsyncMock(return_value=True)),
         patch.object(service, "get_team_members", new=AsyncMock(return_value=logins)),
-        patch.object(service, "get_org_repository_map", new=AsyncMock(return_value={})),
-        patch.object(service, "get_user_public_email", new=AsyncMock(side_effect=_public_email)),
+        patch.object(
+            service,
+            "get_org_repository_map",
+            new=AsyncMock(return_value={"acme/widgets": [t["id"] for t in org_teams]}),
+        ),
+        patch.object(service, "_public_emails", new=AsyncMock(side_effect=_public_emails)),
     ):
-        await service.sync_team_from_github(db, "acme", "acme/widgets")
+        await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
 
 async def _gitlab_sync(db, instance_id: str, members: list[GitLabMember] | None) -> None:
     """One CI run of one GitLab instance against a project of the bound group."""
     service = GitLabService(make_gitlab_instance(id=instance_id, sync_teams=True))
     with patch.object(service, "get_group_members", new=AsyncMock(return_value=members)):
-        await service.sync_team_from_gitlab(
+        await sync_team(
+            service,
             db=db,
             gitlab_project_id=100,
             gitlab_project_path="grp/proj",
-            gitlab_project_data=make_project_details(namespace_kind="group", namespace_id=42, namespace_path="grp"),
+            project_details=make_project_details(namespace_kind="group", namespace_id=42, namespace_path="grp"),
         )
 
 
 async def _run(db, name: str) -> None:
     if name == _GH_A:
-        await _github_sync(db, _GH_A, _ORG_TEAM_A, [{"login": "ada", "role": "maintainer"}])
+        await _github_sync(db, _GH_A, _ORG_TEAM_A, [{"login": "ada", "role": "admin"}])
     elif name == _GH_B:
         await _github_sync(db, _GH_B, _ORG_TEAM_B, [{"login": "bob", "role": "member"}])
     else:

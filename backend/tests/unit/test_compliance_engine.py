@@ -1,33 +1,38 @@
-from datetime import datetime, timezone
+import asyncio
+import gc
+import weakref
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.config import settings
+from app.core.constants import COMPLIANCE_REPORT_SLOTS, SCAN_STATUS_COMPLETED, SCAN_STATUS_COMPLETED_WITH_ERRORS
 from app.core.metrics import compliance_reports_total
-from app.models.crypto_policy import CryptoPolicy
-from app.models.finding import CRYPTO_FINDING_TYPES
+from app.core.permissions import Permissions
 from app.models.compliance_report import ComplianceReport
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.models.crypto_asset import CryptoAsset
+from app.models.finding import Finding, FindingType, Severity
+from app.models.project import Project, Scan
+from app.models.user import User
+from app.repositories.compliance_report import ComplianceReportRepository
+from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.findings import FindingRepository
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.schemas.compliance import ControlStatus, ReportFormat, ReportFramework, ReportStatus
 from app.schemas.project import LicensePolicySchema
-from app.services.analytics.scopes import ResolvedScope
+from app.services.aggregation import ResultAggregator
+from app.services.analysis.engine import _prepare_finding_records, _stamp_first_seen
+from app.services.analytics.scopes import ResolvedScope, ScopeResolver
+from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
-from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
-from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
-from app.services.crypto_policy.resolver import EffectivePolicy
-
-
-@pytest.fixture(autouse=True)
-def _resolver_reads_the_mocked_aggregate():
-    """These tests hand-build db.scans.aggregate; the query belongs to the resolver, whose
-    delegation test_releases_resolver.py proves against a fake database."""
-
-    async def _fake(db, project_ids, *, release_environment=None, projects=None):
-        return {row["_id"]: row["scan_id"] async for row in db.scans.aggregate([])}
-
-    with patch("app.services.releases.resolve_scan_ids", new=_fake):
-        yield
+from app.services.crypto_policy.seeder import seed_crypto_policies
+from app.services.normalizers.license import normalize_license
+from tests.helpers.analyzers import analyze_cyclonedx
+from tests.helpers.compliance import evaluation_input
 
 
 def _report(**overrides):
@@ -52,21 +57,9 @@ async def test_engine_marks_report_completed_on_success():
     report = _report()
     user = MagicMock(id="u1", permissions=frozenset())
 
-    # Real EvaluationInput (not a MagicMock) so the engine must wire the correct shape.
-    inputs = EvaluationInput(
-        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=[]),
-        scope_description="u",
-        crypto_assets=[],
-        findings=[],
-        policy_rules=[],
-        policy_version=1,
-        iana_catalog_version=2,
-        scan_ids=["s1"],
-    )
+    inputs = evaluation_input(policy_version=1, iana_catalog_version=2)
     evaluation = MagicMock(summary={"total": 0})
-    # spec=["evaluate"] makes hasattr(fw, "evaluate_async") False so the engine takes the sync path.
-    fw = MagicMock(spec=["evaluate"])
-    fw.evaluate = MagicMock(return_value=evaluation)
+    fw = MagicMock(evaluate=AsyncMock(return_value=evaluation))
 
     resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(scope="user", scope_id=None, project_ids=[])))
 
@@ -88,59 +81,14 @@ async def test_engine_marks_report_completed_on_success():
         patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")),
         patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
     ):
-        await engine.generate(report=report, db=db, user=user)
+        outcome = await engine.generate(report=report, db=db, user=user)
 
-    assert update_mock.call_count >= 2
+    assert outcome == (ReportStatus.COMPLETED, {"total": 0})
+    fw.evaluate.assert_awaited_once_with(inputs)
     final_call = update_mock.call_args_list[-1]
     assert final_call.kwargs.get("status") == ReportStatus.COMPLETED
-
-    # The engine must pass a real EvaluationInput so evaluators can rely on its attributes.
-    fw.evaluate.assert_called_once()
-    passed_arg = fw.evaluate.call_args.args[0]
-    assert isinstance(passed_arg, EvaluationInput)
-    assert passed_arg.policy_version == 1
-    assert passed_arg.iana_catalog_version == 2
-
-
-@pytest.mark.asyncio
-async def test_engine_awaits_evaluate_async_when_available():
-    """The engine must await evaluate_async when a framework exposes it."""
-    db = MagicMock()
-    update_mock = AsyncMock()
-    engine = ComplianceReportEngine()
-    report = _report()
-    user = MagicMock(id="u1", permissions=frozenset())
-
-    inputs = MagicMock(policy_version=1, iana_catalog_version=2)
-    evaluation = MagicMock(summary={"total": 0})
-    fw = MagicMock(spec=["evaluate_async"])
-    fw.evaluate_async = AsyncMock(return_value=evaluation)
-
-    resolver = MagicMock(resolve=AsyncMock(return_value=ResolvedScope(scope="user", scope_id=None, project_ids=[])))
-
-    with (
-        patch(
-            "app.services.compliance.engine.ComplianceReportRepository",
-            return_value=MagicMock(update_status=update_mock, get=AsyncMock(return_value=report)),
-        ),
-        patch(
-            "app.services.compliance.engine.ScopeResolver",
-            return_value=resolver,
-        ),
-        patch.dict(
-            "app.services.compliance.engine.FRAMEWORK_REGISTRY",
-            {ReportFramework.NIST_SP_800_131A: fw},
-            clear=False,
-        ),
-        patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=inputs)),
-        patch.object(engine, "_render", return_value=(b"{}", "x.json", "application/json")),
-        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
-    ):
-        await engine.generate(report=report, db=db, user=user)
-
-    fw.evaluate_async.assert_awaited_once()
-    final_call = update_mock.call_args_list[-1]
-    assert final_call.kwargs.get("status") == ReportStatus.COMPLETED
+    assert final_call.kwargs.get("policy_version_snapshot") == 1
+    assert final_call.kwargs.get("iana_catalog_version_snapshot") == 2
 
 
 @pytest.mark.asyncio
@@ -169,6 +117,53 @@ async def test_engine_marks_failed_on_exception():
     assert "boom" in (final_call.kwargs.get("error_message") or "")
 
 
+@pytest.mark.asyncio
+async def test_a_failed_report_expires_like_a_completed_one(db):
+    """The requester has no access to the project, so the scope does not resolve."""
+    report = _report(scope="project", scope_id="p")
+    await ComplianceReportRepository(db).create(report)
+    before = datetime.now(timezone.utc).replace(microsecond=0)  # stored datetimes keep milliseconds only
+
+    outcome = await ComplianceReportEngine().generate(
+        report=report, db=db, user=User(id="u1", username="u1", email="u1@corp.com", permissions=[])
+    )
+
+    stored = await ComplianceReportRepository(db).get_by_id(report.id)
+    assert outcome == (ReportStatus.FAILED, {})
+    assert stored.status == ReportStatus.FAILED
+    assert stored.expires_at >= before + timedelta(days=settings.COMPLIANCE_REPORT_RETENTION_DAYS)
+
+
+@pytest.mark.asyncio
+async def test_no_more_reports_evaluate_at_once_than_there_are_slots(monkeypatch):
+    monkeypatch.setattr(engine_module, "_REPORT_SLOTS", asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS))
+    engine = ComplianceReportEngine()
+    framework = MagicMock(evaluate=AsyncMock(return_value=MagicMock()))
+    resolved = ResolvedScope(scope="user", scope_id=None, project_ids=[])
+    in_flight, peak, release = 0, 0, asyncio.Event()
+
+    async def gather(*_):
+        nonlocal in_flight, peak
+        in_flight += 1
+        peak = max(peak, in_flight)
+        await release.wait()
+        in_flight -= 1
+        return evaluation_input()
+
+    with patch.object(engine, "_gather_inputs", new=gather):
+        runs = [
+            asyncio.create_task(engine.evaluate(MagicMock(), resolved, framework))
+            for _ in range(COMPLIANCE_REPORT_SLOTS + 1)
+        ]
+        for _ in range(5):
+            await asyncio.sleep(0)
+        assert peak == COMPLIANCE_REPORT_SLOTS
+        release.set()
+        await asyncio.gather(*runs)
+
+    assert framework.evaluate.await_count == COMPLIANCE_REPORT_SLOTS + 1
+
+
 def _reports_counted(status: str) -> float:
     return compliance_reports_total.labels(framework=ReportFramework.NIST_SP_800_131A.value, status=status)._value.get()
 
@@ -179,18 +174,8 @@ async def test_engine_counts_a_completed_report_under_the_success_status():
     before = _reports_counted("success")
     engine = ComplianceReportEngine()
     report = _report()
-    inputs = EvaluationInput(
-        resolved=ResolvedScope(scope="user", scope_id=None, project_ids=[]),
-        scope_description="u",
-        crypto_assets=[],
-        findings=[],
-        policy_rules=[],
-        policy_version=1,
-        iana_catalog_version=2,
-        scan_ids=["s1"],
-    )
-    fw = MagicMock(spec=["evaluate"])
-    fw.evaluate = MagicMock(return_value=MagicMock(summary={"total": 0}))
+    inputs = evaluation_input()
+    fw = MagicMock(evaluate=AsyncMock(return_value=MagicMock(summary={"total": 0})))
 
     with (
         patch(
@@ -238,198 +223,326 @@ async def test_engine_counts_a_crashed_report_under_the_error_status():
     assert _reports_counted("error") == before + 1
 
 
-@pytest.mark.asyncio
-async def test_engine_gather_inputs_builds_evaluation_input():
-    db = MagicMock()
-    scan_aggregate = MagicMock()
+async def _store_project(db, pid, *, scanned=True, failed_analyzers=None, **fields):
+    """The project and its head scan as ingest and the analysis engine leave them."""
+    scan_id = f"scan-{pid}" if scanned else None
+    project = Project(id=pid, name=f"name-{pid}", latest_scan_id=scan_id, members=[{"user_id": "u1"}], **fields)
+    await db.projects.insert_one(project.model_dump(by_alias=True))
+    if scanned:
+        status = SCAN_STATUS_COMPLETED_WITH_ERRORS if failed_analyzers else SCAN_STATUS_COMPLETED
+        scan = Scan(id=scan_id, project_id=pid, branch="main", status=status, failed_analyzers=failed_analyzers)
+        await db.scans.insert_one(scan.model_dump(by_alias=True))
+    return scan_id
 
-    async def scan_agg_iter():
-        yield {"_id": "p1", "scan_id": "s1"}
 
-    scan_aggregate.__aiter__ = lambda self: scan_agg_iter()
-    db.scans.aggregate = MagicMock(return_value=scan_aggregate)
+async def _store_findings(db, pid, scan_id, findings):
+    records, _ = _prepare_finding_records(list(findings), scan_id, pid, datetime.now(timezone.utc))
+    await _stamp_first_seen(records, pid, FindingRepository(db))
+    await db.findings.insert_many(records)
 
-    db.scans.find_one = AsyncMock(return_value={"project_id": "p1"})
 
-    asset_repo_mock = MagicMock(list_by_scan=AsyncMock(return_value=[]))
-
-    db.findings.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[])))
-
-    policy_repo_mock = MagicMock(
-        require_system_policy=AsyncMock(return_value=CryptoPolicy(scope="system", rules=[], version=1))
+def _vulnerability(component, severity):
+    return Finding(
+        id=f"CVE-2021-44228:{component}",
+        type=FindingType.VULNERABILITY,
+        severity=severity,
+        component=component,
+        version="2.14.1",
+        description="remote code execution",
+        scanners=["trivy"],
     )
 
-    resolved = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
 
-    engine = ComplianceReportEngine()
-    with (
-        patch(
-            "app.services.compliance.engine.CryptoAssetRepository",
-            return_value=asset_repo_mock,
-        ),
-        patch(
-            "app.services.compliance.engine.CryptoPolicyRepository",
-            return_value=policy_repo_mock,
-        ),
-    ):
-        result = await engine._gather_inputs(db, resolved)
+def _project_scope(pid="p1"):
+    return ResolvedScope(scope="project", scope_id=pid, project_ids=[pid])
 
-    assert result.resolved is resolved
+
+async def _user_scope(db):
+    user = User(id="u1", username="u1", email="u1@corp.com", permissions=[Permissions.PROJECT_READ])
+    return await ScopeResolver(db, user).resolve(scope="user", scope_id=None)
+
+
+def _reads(collection):
+    """Every find the collection serves, as (query, projection, options)."""
+    reads: list[tuple] = []
+    find = collection.find
+
+    def recording_find(query=None, projection=None, **kwargs):
+        reads.append((query, projection, kwargs))
+        return find(query, projection, **kwargs)
+
+    collection.find = recording_find
+    return reads
+
+
+async def _gather(db, resolved, key):
+    return await ComplianceReportEngine()._gather_inputs(db, resolved, FRAMEWORK_REGISTRY[key])
+
+
+@pytest.mark.asyncio
+async def test_engine_gather_inputs_builds_evaluation_input(db):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1")
+
+    result = await _gather(db, await _user_scope(db), ReportFramework.NIST_SP_800_131A)
+
     assert "user scope" in result.scope_description
-    assert result.scan_ids == ["s1"]
+    assert result.scan_ids == ["scan-p1"]
+    assert result.coverage.gaps == []
 
 
-def _make_engine_db(*, agg_rows, project_doc=None):
-    """MagicMock db that drives _gather_inputs and captures the findings query and per-scan lookups."""
-    db = MagicMock()
+@pytest.mark.asyncio
+async def test_an_unscanned_project_withholds_a_cve_pass(db):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1")
+    await _store_project(db, "p2", scanned=False)
 
-    async def scan_agg_iter():
-        for r in agg_rows:
-            yield r
-
-    scan_aggregate = MagicMock()
-    scan_aggregate.__aiter__ = lambda self: scan_agg_iter()
-    db.scans.aggregate = MagicMock(return_value=scan_aggregate)
-    # project_id comes from the aggregation, so find_one must not be called.
-    db.scans.find_one = AsyncMock(return_value={"project_id": "should-not-be-used"})
-
-    captured: dict = {}
-
-    def find(query, projection=None, **_kwargs):
-        captured["findings_query"] = query
-        captured["findings_projection"] = projection
-        return MagicMock(to_list=AsyncMock(return_value=[]))
-
-    db.findings.find = MagicMock(side_effect=find)
-
-    projects_mock = MagicMock()
-    projects_mock.find_one = AsyncMock(return_value=project_doc)
-    db.__getitem__ = MagicMock(side_effect=lambda k: projects_mock if k == "projects" else MagicMock())
-
-    return db, captured, projects_mock
-
-
-async def _run_gather(engine, db, resolved, framework, asset_repo_mock=None):
-    asset_repo_mock = asset_repo_mock or MagicMock(list_by_scan=AsyncMock(return_value=[]))
-    policy_repo_mock = MagicMock(
-        require_system_policy=AsyncMock(return_value=CryptoPolicy(scope="system", rules=[], version=1))
+    inputs, evaluation = await ComplianceReportEngine().evaluate(
+        db, await _user_scope(db), CveRemediationSlaFramework()
     )
-    no_policy = EffectivePolicy(rules=[], system_rules=[], system_version=1, override_version=None)
+
+    critical = next(c for c in evaluation.controls if c.control_id == "CVE-SLA-CRITICAL")
+    assert critical.status == ControlStatus.NOT_EVALUATED.value
+    assert "name-p2" in (critical.status_reason or "")
+    assert inputs.coverage.gaps == ["project 'name-p2' has no usable scan"]
+    assert evaluation.coverage.complete is False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("failed", "gap_in", "no_gap_in"),
+    [
+        ("trivy", ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.NIST_SP_800_131A),
+        ("crypto_weak_algorithm", ReportFramework.NIST_SP_800_131A, ReportFramework.CVE_REMEDIATION_SLA),
+        ("license_compliance", ReportFramework.LICENSE_AUDIT, ReportFramework.FIPS_140_3),
+    ],
+)
+async def test_a_failed_analyzer_is_a_gap_only_for_the_framework_it_feeds(db, failed, gap_in, no_gap_in):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1", failed_analyzers=[failed, "end_of_life"])
+
+    affected = await _gather(db, _project_scope(), gap_in)
+    unaffected = await _gather(db, _project_scope(), no_gap_in)
+
+    assert affected.coverage.gaps == [f"project 'name-p1': {failed} failed in scan scan-p1"]
+    assert unaffected.coverage.gaps == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("active", "key"),
+    [(["trivy", "osv"], ReportFramework.LICENSE_AUDIT), (["license_compliance"], ReportFramework.CVE_REMEDIATION_SLA)],
+)
+async def test_a_project_running_none_of_the_framework_analyzers_is_a_gap(db, active, key):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1", active_analyzers=active)
+    await _store_project(db, "p2")
+
+    inputs = await _gather(db, await _user_scope(db), key)
+
+    assert len(inputs.coverage.gaps) == 1
+    assert inputs.coverage.gaps[0].startswith("project 'name-p1' runs none of ")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [k for k in ReportFramework if k is not ReportFramework.PQC_MIGRATION_PLAN])
+async def test_every_findings_read_projects_named_scalars_and_filters_by_scan_alone(db, key):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1")
+    reads = _reads(db.findings)
+
+    await _gather(db, _project_scope(), key)
+
+    ((query, projection, _),) = reads
+    assert set(projection.values()) == {1}
+    assert "details" not in projection
+    assert "project_id" not in query
+
+
+@pytest.mark.asyncio
+async def test_cve_sla_reads_only_the_severities_it_has_a_deadline_for(db):
+    await seed_crypto_policies(db)
+    scan_id = await _store_project(db, "p1")
+    await _store_findings(
+        db, "p1", scan_id, [_vulnerability("log4j-core", Severity.CRITICAL), _vulnerability("commons-io", Severity.LOW)]
+    )
+
+    inputs = await _gather(db, _project_scope(), ReportFramework.CVE_REMEDIATION_SLA)
+
+    assert [f["severity"] for f in inputs.findings] == [Severity.CRITICAL.value]
+    assert inputs.findings[0]["first_seen_at"] is not None
+    assert inputs.coverage.findings.in_scope == 1
+
+
+@pytest.mark.asyncio
+async def test_license_audit_reads_only_the_categories_its_controls_judge(db):
+    await seed_crypto_policies(db)
+    scan_id = await _store_project(db, "p1")
+    components = [
+        {"type": "library", "name": "lgpl-lib", "version": "1.0.0", "licenses": [{"license": {"id": "LGPL-2.1-only"}}]},
+        {"type": "library", "name": "bare-lib", "version": "1.0.0"},
+    ]
+    aggregator = ResultAggregator()
+    normalize_license(aggregator, await analyze_cyclonedx(LicenseAnalyzer(), components, {}), source="sbom.json")
+    await _store_findings(db, "p1", scan_id, aggregator.get_findings())
+
+    inputs = await _gather(db, _project_scope(), ReportFramework.LICENSE_AUDIT)
+
+    assert [f["details"] for f in inputs.findings] == [{"category": "unknown"}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [ReportFramework.NIST_SP_800_131A, ReportFramework.FIPS_140_3])
+async def test_a_crypto_framework_reads_only_the_finding_types_its_controls_map_to(db, key):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1")
+    reads = _reads(db.findings)
+
+    await _gather(db, _project_scope(), key)
+
+    ((query, _, _),) = reads
+    assert query["type"] == {"$in": ["crypto_weak_algorithm", "crypto_weak_key"]}
+
+
+@pytest.mark.asyncio
+async def test_the_pqc_plan_reads_neither_findings_nor_assets(db):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1")
+    finding_reads, asset_reads = _reads(db.findings), _reads(db.crypto_assets)
+
+    inputs = await _gather(db, _project_scope(), ReportFramework.PQC_MIGRATION_PLAN)
+
+    assert finding_reads == asset_reads == []
+    assert inputs.coverage.findings is None
+    assert inputs.coverage.crypto_assets is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("key", [ReportFramework.CVE_REMEDIATION_SLA, ReportFramework.LICENSE_AUDIT])
+async def test_a_framework_without_crypto_controls_reads_no_assets(db, key):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1")
+    asset_reads = _reads(db.crypto_assets)
+
+    inputs = await _gather(db, _project_scope(), key)
+
+    assert asset_reads == []
+    assert inputs.coverage.crypto_assets is None
+    assert inputs.coverage.findings is not None
+
+
+def _rsa(pid, scan_id, key_size_bits):
+    return CryptoAsset(
+        project_id=pid,
+        scan_id=scan_id,
+        bom_ref=f"crypto/algorithm/rsa-{pid}",
+        name="RSA",
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.PKE,
+        key_size_bits=key_size_bits,
+        occurrence_locations=["src/tls.py"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_the_inventory_comes_from_one_unsorted_read_across_the_scope(db):
+    await seed_crypto_policies(db)
+    for pid in ("p1", "p2"):
+        scan_id = await _store_project(db, pid)
+        await CryptoAssetRepository(db).bulk_upsert(pid, scan_id, [_rsa(pid, scan_id, 4096)])
+    asset_reads = _reads(db.crypto_assets)
+
+    inputs = await _gather(db, await _user_scope(db), ReportFramework.NIST_SP_800_131A)
+
+    ((_, projection, options),) = asset_reads
+    assert "sort" not in options
+    assert set(projection.values()) == {1}
+    assert sorted(a.project_id for a in inputs.crypto_assets) == ["p1", "p2"]
+    assert inputs.crypto_assets[0].occurrence_locations == []
+    assert inputs.coverage.crypto_assets.in_scope == 2
+
+
+@pytest.mark.asyncio
+async def test_a_stored_rsa_key_size_reaches_the_key_size_control(db):
+    await seed_crypto_policies(db)
+    scan_id = await _store_project(db, "p1")
+    await CryptoAssetRepository(db).bulk_upsert("p1", scan_id, [_rsa("p1", scan_id, 4096)])
+
+    _, evaluation = await ComplianceReportEngine().evaluate(
+        db, _project_scope(), FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A]
+    )
+
+    rsa = next(c for c in evaluation.controls if c.control_id == "NIST-131A-nist-131a-rsa-min-2048")
+    assert rsa.status == ControlStatus.PASSED.value
+
+
+@pytest.mark.asyncio
+async def test_generate_lets_go_of_the_inputs_before_rendering():
+    """Rendering, upload and the status write run long after evaluation, so the findings may not stay alive."""
+    engine = ComplianceReportEngine()
+    report = _report(framework=ReportFramework.CVE_REMEDIATION_SLA)
+    handed_out: list[weakref.ref] = []
+    alive_at_render: list[bool] = []
+
+    async def gather(db, resolved, framework):
+        inputs = evaluation_input(policy_version=3, iana_catalog_version=4)
+        handed_out.append(weakref.ref(inputs))
+        return inputs
+
+    def render(fmt, framework, evaluation, rep):
+        gc.collect()
+        alive_at_render.append(handed_out[0]() is not None)
+        return b"{}", "x.json", "application/json"
+
+    update_status = AsyncMock()
     with (
-        patch("app.services.compliance.engine.CryptoAssetRepository", return_value=asset_repo_mock),
-        patch("app.services.compliance.engine.CryptoPolicyRepository", return_value=policy_repo_mock),
         patch(
-            "app.services.compliance.engine.CryptoPolicyResolver",
-            return_value=MagicMock(resolve=AsyncMock(return_value=no_policy)),
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=update_status),
         ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=MagicMock(resolve=AsyncMock(return_value=_project_scope())),
+        ),
+        patch.object(engine, "_gather_inputs", new=gather),
+        patch.object(engine, "_render", side_effect=render),
+        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
     ):
-        result = await engine._gather_inputs(db, resolved, framework)
-    return result, asset_repo_mock
+        await engine.generate(report=report, db=MagicMock(), user=MagicMock(id="u1", permissions=frozenset()))
+
+    assert alive_at_render == [False]
+    assert update_status.call_args_list[-1].kwargs["policy_version_snapshot"] == 3
+    assert update_status.call_args_list[-1].kwargs["iana_catalog_version_snapshot"] == 4
 
 
 @pytest.mark.asyncio
-async def test_gather_inputs_loads_vulnerability_findings_for_cve_sla():
-    """The findings filter must select `vulnerability` for the CVE SLA framework."""
-    db, captured, _ = _make_engine_db(agg_rows=[{"_id": "p1", "scan_id": "s1"}])
-    resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
-    engine = ComplianceReportEngine()
+async def test_gather_inputs_passes_the_saved_license_policy_beside_the_crypto_rules(db):
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1", analyzer_settings={"license_compliance": {"allow_strong_copyleft": True}})
 
-    await _run_gather(engine, db, resolved, CveRemediationSlaFramework())
-
-    assert captured["findings_query"]["type"] == "vulnerability"
-
-
-@pytest.mark.asyncio
-async def test_gather_inputs_loads_license_findings_for_license_audit():
-    """The findings filter must select `license` for the License-Audit framework."""
-    db, captured, _ = _make_engine_db(agg_rows=[{"_id": "p1", "scan_id": "s1"}])
-    resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
-    engine = ComplianceReportEngine()
-
-    await _run_gather(engine, db, resolved, LicenseAuditFramework())
-
-    assert captured["findings_query"]["type"] == "license"
-
-
-@pytest.mark.asyncio
-async def test_gather_inputs_keeps_crypto_filter_for_crypto_framework():
-    db, captured, _ = _make_engine_db(agg_rows=[{"_id": "p1", "scan_id": "s1"}])
-    resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
-    engine = ComplianceReportEngine()
-
-    await _run_gather(engine, db, resolved, FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A])
-
-    assert captured["findings_query"]["type"] == {"$in": sorted(CRYPTO_FINDING_TYPES)}
-
-
-@pytest.mark.asyncio
-async def test_gather_inputs_union_filter_when_framework_unknown():
-    """Without a framework, the filter must load every consumed finding type."""
-    db, captured, _ = _make_engine_db(agg_rows=[{"_id": "p1", "scan_id": "s1"}])
-    resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
-    engine = ComplianceReportEngine()
-
-    await _run_gather(engine, db, resolved, None)
-
-    assert captured["findings_query"]["type"] == {"$in": sorted(CRYPTO_FINDING_TYPES | {"vulnerability", "license"})}
-
-
-@pytest.mark.asyncio
-async def test_gather_inputs_passes_the_saved_license_policy_beside_the_crypto_rules():
-    db, _, projects_mock = _make_engine_db(
-        agg_rows=[{"_id": "p1", "scan_id": "s1"}],
-        project_doc={"_id": "p1", "analyzer_settings": {"license_compliance": {"allow_strong_copyleft": True}}},
-    )
-    resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
-    engine = ComplianceReportEngine()
-
-    result, _ = await _run_gather(engine, db, resolved, LicenseAuditFramework())
+    result = await _gather(db, _project_scope(), ReportFramework.LICENSE_AUDIT)
 
     assert result.license_policy == LicensePolicySchema(allow_strong_copyleft=True)
-    assert result.policy_rules == []
-    projects_mock.find_one.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_gather_inputs_ignores_a_stored_legacy_license_policy():
+async def test_gather_inputs_ignores_a_stored_legacy_license_policy(db):
     """The report judges by the analyzer_settings entry the scan grades under, not by a top-level license_policy."""
-    db, _, _ = _make_engine_db(
-        agg_rows=[{"_id": "p1", "scan_id": "s1"}],
-        project_doc={"_id": "p1", "license_policy": {"allow_strong_copyleft": True}},
-    )
-    resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
-    engine = ComplianceReportEngine()
+    await seed_crypto_policies(db)
+    await _store_project(db, "p1")
+    await db.projects.update_one({"_id": "p1"}, {"$set": {"license_policy": {"allow_strong_copyleft": True}}})
 
-    result, _ = await _run_gather(engine, db, resolved, LicenseAuditFramework())
+    result = await _gather(db, _project_scope(), ReportFramework.LICENSE_AUDIT)
 
     assert result.license_policy == LicensePolicySchema()
 
 
 @pytest.mark.asyncio
-async def test_gather_inputs_uses_the_default_license_policy_for_a_multi_project_scope():
-    db, _, projects_mock = _make_engine_db(
-        agg_rows=[{"_id": "p1", "scan_id": "s1"}, {"_id": "p2", "scan_id": "s2"}],
-    )
-    resolved = ResolvedScope(scope="team", scope_id="t1", project_ids=["p1", "p2"])
-    engine = ComplianceReportEngine()
+async def test_gather_inputs_uses_the_default_license_policy_for_a_multi_project_scope(db):
+    await seed_crypto_policies(db)
+    for pid in ("p1", "p2"):
+        await _store_project(db, pid, analyzer_settings={"license_compliance": {"allow_strong_copyleft": True}})
 
-    result, _ = await _run_gather(engine, db, resolved, LicenseAuditFramework())
+    result = await _gather(db, await _user_scope(db), ReportFramework.LICENSE_AUDIT)
 
     assert result.license_policy == LicensePolicySchema()
-    projects_mock.find_one.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_collect_crypto_assets_avoids_per_scan_find_one():
-    """The engine must reuse the project_id from _pick_scan_ids instead of a find_one per scan."""
-    db, _, _ = _make_engine_db(
-        agg_rows=[{"_id": "p1", "scan_id": "s1"}, {"_id": "p2", "scan_id": "s2"}],
-    )
-    resolved = ResolvedScope(scope="team", scope_id="t1", project_ids=["p1", "p2"])
-    engine = ComplianceReportEngine()
-
-    _, asset_repo_mock = await _run_gather(engine, db, resolved, FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A])
-
-    db.scans.find_one.assert_not_called()
-    calls = {(c.args[0], c.args[1]) for c in asset_repo_mock.list_by_scan.call_args_list}
-    assert calls == {("p1", "s1"), ("p2", "s2")}

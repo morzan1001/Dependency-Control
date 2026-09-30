@@ -38,7 +38,7 @@ async def test_revert_system_policy_creates_new_version(
     )
     system = await CryptoPolicyRepository(db).get_system_policy()
     v2 = system.version
-    entries = await PolicyAuditRepository(db).list(policy_scope="system", limit=10)
+    entries = await PolicyAuditRepository(db).list(policy_scope="system", policy_type="crypto", limit=10)
     target_version = next(
         e.version for e in entries if any(r.get("rule_id") == "alpha" for r in e.snapshot.get("rules", []))
     )
@@ -55,7 +55,7 @@ async def test_revert_system_policy_creates_new_version(
     assert any(r.rule_id == "alpha" for r in current.rules)
     assert not any(r.rule_id == "beta" for r in current.rules)
 
-    entries = await PolicyAuditRepository(db).list(policy_scope="system", limit=10)
+    entries = await PolicyAuditRepository(db).list(policy_scope="system", policy_type="crypto", limit=10)
     latest = entries[0]
     action = latest.action.value if hasattr(latest.action, "value") else latest.action
     assert action == "revert"

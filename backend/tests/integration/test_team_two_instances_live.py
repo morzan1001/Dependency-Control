@@ -16,7 +16,7 @@ from app.models.project import Project
 from app.models.team import GitHubTeamBinding, Team
 from app.repositories.projects import ProjectRepository
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubEmailLookup, GitHubService
+from app.services.github import GitHubService
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 
@@ -31,42 +31,45 @@ _TEAMS_B = [{"id": 8150, "slug": "zahlungen", "name": "Zahlungen", "parent": Non
 
 def _service(instance_id: str) -> GitHubService:
     service = GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret", sync_teams=True))
-    service.get_user_public_email = AsyncMock(return_value=GitHubEmailLookup("ada@corp.com"))
+    service._public_emails = AsyncMock(side_effect=lambda logins: dict.fromkeys(logins, "ada@corp.com"))
     return service
 
 
-def _reads(service: GitHubService, org_teams: list[dict]):
+def _reads(service: GitHubService, org_teams: list[dict], repo_map: dict[str, list[int]]):
     """Every read the resolution makes, answered as GitHub would for a group that holds the repository."""
     return (
         patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams)),
-        patch.object(service, "get_team_repository", new=AsyncMock(return_value=True)),
-        patch.object(service, "get_team_members", new=AsyncMock(return_value=[{"login": "ada", "role": "maintainer"}])),
-        patch.object(service, "get_org_repository_map", new=AsyncMock(return_value={})),
+        patch.object(service, "team_writes_to_repository", new=AsyncMock(return_value=True)),
+        patch.object(service, "get_team_members", new=AsyncMock(return_value=[{"login": "ada", "role": "admin"}])),
+        patch.object(service, "get_org_repository_map", new=AsyncMock(return_value=repo_map)),
     )
 
 
-async def _ingest(db, instance_id: str, org_teams: list[dict], project_id: str, path: str) -> Project:
-    """One CI run of one instance against one of its projects."""
+async def _ingest(
+    db, instance_id: str, org_teams: list[dict], project_id: str, path: str, held: list[int] | None = None
+) -> Project:
+    """One CI run of one instance against one of its projects, which ``held`` or else every team holds."""
     project_repo = ProjectRepository(db)
     project = await project_repo.get_by_id(project_id)
     service = _service(instance_id)
-    org_reads, check_reads, member_reads, map_reads = _reads(service, org_teams)
+    repo_map = {path: [team["id"] for team in org_teams] if held is None else held}
+    org_reads, check_reads, member_reads, map_reads = _reads(service, org_teams, repo_map)
 
     with org_reads, check_reads, member_reads, map_reads:
-        stages = await _github_team_sync_stages(project, instance_id, "acme", path, service, db)
+        stages = await _github_team_sync_stages(project, instance_id, path, service, db)
 
     if stages:
         await project_repo.update_raw(project_id, stages)
     return await project_repo.get_by_id(project_id)
 
 
-async def _seed(db) -> None:
+async def _seed(db, name: str = "Payments Guild") -> None:
     await create_team_indexes(db)
     await db["users"].insert_one({"_id": "u-ada", "username": "ada", "email": "ada@corp.com", "is_verified": True})
     await TeamRepository(db).create(
         Team(
             id="t-shared",
-            name="Payments Guild",
+            name=name,
             bindings=[
                 GitHubTeamBinding(instance_id=_A, org="acme", external_id=4711, slug="payments"),
                 GitHubTeamBinding(instance_id=_B, org="acme", external_id=8150, slug="zahlungen"),
@@ -155,7 +158,7 @@ async def _assert_one_instance_resolves_only_through_its_own_binding(db) -> None
         ).model_dump(by_alias=True)
     )
 
-    after_a = await _ingest(db, _A, _TEAMS_A, "p-a", "acme/p-a")
+    after_a = await _ingest(db, _A, _TEAMS_A, "p-a", "acme/p-a", held=[])
 
     assert after_a.team_ids == []
     assert (await TeamRepository(db).get_raw_by_id("t-b-only"))["bindings"][0]["instance_id"] == _B
@@ -203,3 +206,17 @@ async def test_one_instance_resolves_only_through_its_own_binding():
 @pytest.mark.asyncio
 async def test_one_instance_resolves_only_through_its_own_binding_on_real_mongo(db):
     await _assert_one_instance_resolves_only_through_its_own_binding(db)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_generated_name_does_not_flip_between_the_instances_on_real_mongo(db):
+    """Named for A's binding, the team keeps that name through B's runs instead of taking the name
+    of whichever pipeline ran last."""
+    await _seed(db, name="GitHub Team: acme/payments")
+
+    await _ingest(db, _B, _TEAMS_B, "p-b", "acme/p-b")
+    await _ingest(db, _A, _TEAMS_A, "p-a", "acme/p-a")
+    await _ingest(db, _B, _TEAMS_B, "p-b", "acme/p-b")
+
+    assert (await TeamRepository(db).get_raw_by_id("t-shared"))["name"] == "GitHub Team: acme/payments"

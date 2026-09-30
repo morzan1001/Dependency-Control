@@ -172,7 +172,7 @@ async def client(db):
 def _ci_credentials(resolved_project_id: str = _PROJECT_ID):
     """Stand in for the Job-Token exchange, resolving to ``resolved_project_id``."""
     return patch(
-        f"{DEPS}.get_project_for_ingest",
+        f"{DEPS}._authenticate_ci",
         new_callable=AsyncMock,
         return_value=Project(id=resolved_project_id, name="cg-project"),
     )

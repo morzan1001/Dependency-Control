@@ -947,6 +947,8 @@ GITLAB_ACCESS_OWNER = 50
 
 # Minimum access level for admin role in DependencyControl
 GITLAB_ADMIN_MIN_ACCESS = GITLAB_ACCESS_MAINTAINER
+# Guest and Minimal Access members cannot read a group's code, so they own none of its projects.
+GITLAB_TEAM_MEMBER_MIN_ACCESS = GITLAB_ACCESS_REPORTER
 
 # Aggregation key prefixes for finding deduplication
 AGG_KEY_VULNERABILITY = "AGG:VULN"
@@ -989,20 +991,18 @@ SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
 }
 # Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, NEGLIGIBLE/INFO=0.0, UNKNOWN=20.0
 
-# GitLab JWKS cache TTLs (in seconds)
-GITLAB_JWKS_CACHE_TTL = 3600  # 1 hour
-GITLAB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
+JWKS_CACHE_TTL = 3600
+JWKS_URI_CACHE_TTL = 86400
 
 # GitLab answers a non-admin token's GET /users/:id at most 300 times per 10 minutes by default, and
 # public emails rarely change: at a day one token keeps ~43,000 members answered, at an hour ~1,800.
 GITLAB_USER_EMAIL_CACHE_TTL = 86400  # 24 hours
 
-# GitHub JWKS cache TTLs (in seconds)
-GITHUB_JWKS_CACHE_TTL = 3600  # 1 hour
-GITHUB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
-
 # One workflow run fans out into many jobs; without this every job refetches the same three lists.
 GITHUB_TEAM_SYNC_CACHE_TTL = 300  # 5 minutes
+
+# Profile emails rarely change, and each is a request per member of every holding team.
+GITHUB_USER_EMAIL_CACHE_TTL = 21600  # 6 hours
 
 # Building the map costs one request per team of the organisation, and the largest one here has 204.
 # At this TTL the three configured organisations together spend ~313 of the token's 5000 requests per
@@ -1142,6 +1142,9 @@ ADHOC_MAX_SCANNER_FINDINGS: int = 5_000
 # import pair: 5 000 such findings over 50 000 pairs take about 20 s.
 ADHOC_MAX_CALLGRAPH_ENTRIES: int = 50_000
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
+# Reports evaluating at once per process. A saturated report holds ~55 MiB of findings and assets, so two slots
+# in each of WORKER_COUNT=2 processes keep evaluation near 220 MiB of the 2 GiB pod limit.
+COMPLIANCE_REPORT_SLOTS: int = 2
 POLICY_AUDIT_DEFAULT_MIN_PRUNE_DAYS: int = 90
 CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500
 

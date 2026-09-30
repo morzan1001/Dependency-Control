@@ -17,6 +17,7 @@ from tests.mocks.gitlab import (
     make_note,
     make_project_details,
     make_repositories,
+    sync_team,
 )
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
@@ -84,7 +85,7 @@ class TestTeamMemberSyncResolveOnly:
         user_repo.get_raw_by_verified_email = AsyncMock(return_value=existing)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="real", email="real@example.com", access_level=40)]
-        result, _ = asyncio.run(service._build_team_members(members, user_repo))
+        result, _, _ = asyncio.run(service._build_team_members(members, user_repo))
         assert len(result) == 1
         assert result[0].user_id == "u-1"
         user_repo.create.assert_not_called()
@@ -96,8 +97,8 @@ class TestTeamMemberSyncResolveOnly:
         user_repo.get_raw_by_verified_email = AsyncMock(return_value=None)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="group_875_bot_f4597604b42b729d0de22d01e5126164", access_level=40)]
-        result, unresolved = asyncio.run(service._build_team_members(members, user_repo))
-        assert (result, unresolved) == ([], 1)
+        result, unresolved, resolved_any = asyncio.run(service._build_team_members(members, user_repo))
+        assert (result, unresolved, resolved_any) == ([], 1, False)
         user_repo.create.assert_not_called()
 
 
@@ -460,11 +461,12 @@ class TestTeamSyncNamespaceCheck:
         service = GitLabService(gitlab_instance_a)
 
         result = asyncio.run(
-            service.sync_team_from_gitlab(
+            sync_team(
+                service,
                 db=MagicMock(),
                 gitlab_project_id=100,
                 gitlab_project_path="john/proj",
-                gitlab_project_data=make_project_details(
+                project_details=make_project_details(
                     namespace_kind="user",
                     namespace_id=1,
                     namespace_path="john",
@@ -477,11 +479,12 @@ class TestTeamSyncNamespaceCheck:
         service = GitLabService(gitlab_instance_a)
 
         result = asyncio.run(
-            service.sync_team_from_gitlab(
+            sync_team(
+                service,
                 db=MagicMock(),
                 gitlab_project_id=100,
                 gitlab_project_path="group/proj",
-                gitlab_project_data=None,
+                project_details=None,
             )
         )
         assert result.team_ids is None
@@ -500,11 +503,12 @@ class TestTeamSyncGroupMembers:
             db = create_mock_db({"teams": teams_coll, "users": create_mock_collection()})
 
             asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=db,
                     gitlab_project_id=100,
                     gitlab_project_path="my-group/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="group",
                         namespace_id=42,
                         namespace_path="my-group",
@@ -535,11 +539,12 @@ class TestTeamSyncGroupMembers:
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=db,
                     gitlab_project_id=100,
                     gitlab_project_path="grp/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="group",
                         namespace_id=42,
                         namespace_path="grp",
@@ -560,7 +565,7 @@ class TestTeamSyncGroupMembers:
 
         with (
             patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members,
-            patch.object(service, "_resolve_group_by_path", new_callable=AsyncMock) as mock_resolve,
+            patch.object(service, "_lookup_group", new_callable=AsyncMock) as mock_resolve,
         ):
             mock_members.return_value = members
             mock_resolve.return_value = GitLabGroupLookup(reachable=True, group={"id": 10})
@@ -572,11 +577,12 @@ class TestTeamSyncGroupMembers:
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
             asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=db,
                     gitlab_project_id=100,
                     gitlab_project_path="org/subgroup/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="group",
                         namespace_id=42,
                         namespace_path="org/subgroup",
@@ -608,11 +614,12 @@ class TestTeamSyncGroupMembers:
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=db,
                     gitlab_project_id=100,
                     gitlab_project_path="grp/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="group",
                         namespace_id=42,
                         namespace_path="grp",
@@ -634,11 +641,12 @@ class TestTeamSyncSilentReturnsAreLogged:
 
         with caplog.at_level("WARNING", logger="app.services.gitlab"):
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=MagicMock(),
                     gitlab_project_id=999,
                     gitlab_project_path="grp/proj",
-                    gitlab_project_data=None,
+                    project_details=None,
                 )
             )
 
@@ -652,11 +660,12 @@ class TestTeamSyncSilentReturnsAreLogged:
 
         with caplog.at_level("INFO", logger="app.services.gitlab"):
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=MagicMock(),
                     gitlab_project_id=777,
                     gitlab_project_path="alice/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="user",
                         namespace_id=1,
                         namespace_path="alice",
@@ -681,11 +690,12 @@ class TestTeamSyncSilentReturnsAreLogged:
 
             with caplog.at_level("WARNING", logger="app.services.gitlab"):
                 result = asyncio.run(
-                    service.sync_team_from_gitlab(
+                    sync_team(
+                        service,
                         db=db,
                         gitlab_project_id=555,
                         gitlab_project_path="my-group/proj",
-                        gitlab_project_data=make_project_details(
+                        project_details=make_project_details(
                             namespace_kind="group",
                             namespace_id=42,
                             namespace_path="my-group",
@@ -708,11 +718,12 @@ class TestTeamSyncSilentReturnsAreLogged:
 
             with caplog.at_level("ERROR", logger="app.services.gitlab"):
                 result = asyncio.run(
-                    service.sync_team_from_gitlab(
+                    sync_team(
+                        service,
                         db=db,
                         gitlab_project_id=222,
                         gitlab_project_path="grp/proj",
-                        gitlab_project_data=make_project_details(
+                        project_details=make_project_details(
                             namespace_kind="group",
                             namespace_id=10,
                             namespace_path="grp",
@@ -738,14 +749,15 @@ class TestTeamSyncResolveGroupFallback:
         with (
             make_repositories(user_doc={"_id": "uid", "username": "dev"}) as (team_repo, _),
             patch.object(service, "get_group_members", new=AsyncMock(return_value=members)),
-            patch.object(service, "_resolve_group_by_path", new=AsyncMock(return_value=lookup)),
+            patch.object(service, "_lookup_group", new=AsyncMock(return_value=lookup)),
         ):
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=MagicMock(),
                     gitlab_project_id=100,
                     gitlab_project_path="org/subgroup/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="group",
                         namespace_id=42,  # deep "org/subgroup" id
                         namespace_path="org/subgroup",
@@ -758,19 +770,19 @@ class TestTeamSyncResolveGroupFallback:
         result, team_repo = self._sync(gitlab_instance_a, GitLabGroupLookup(reachable=True, group=None))
 
         assert result.team_ids is None
-        team_repo.create.assert_not_called()
+        team_repo.create_bound.assert_not_awaited()
 
     def test_a_truncated_path_that_went_unanswered_creates_nothing(self, gitlab_instance_a):
         result, team_repo = self._sync(gitlab_instance_a, GitLabGroupLookup(reachable=False, group=None))
 
         assert result.team_ids is None
-        team_repo.create.assert_not_called()
+        team_repo.create_bound.assert_not_awaited()
 
     def test_a_resolved_parent_binds_the_truncated_group(self, gitlab_instance_a):
         result, team_repo = self._sync(gitlab_instance_a, GitLabGroupLookup(reachable=True, group={"id": 10}))
 
         assert result.team_ids is not None
-        created = team_repo.create.await_args.args[0]
+        created = team_repo.create_bound.await_args.args[0]
         assert created.name == "GitLab Group: org"
         assert created.bindings[0].external_id == 10
 
@@ -796,11 +808,12 @@ class TestTeamSyncInstanceScoping:
         members = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
         with patch.object(service, "get_group_members", new=AsyncMock(return_value=members)):
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=db,
                     gitlab_project_id=100,
                     gitlab_project_path=f"{group_path}/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="group",
                         namespace_id=group_id,
                         namespace_path=group_path,
@@ -870,13 +883,12 @@ class TestMemberResolution:
             patch.object(service, "get_group_members", new=AsyncMock(return_value=[member])),
         ):
             asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=MagicMock(),
                     gitlab_project_id=100,
                     gitlab_project_path="grp/proj",
-                    gitlab_project_data=make_project_details(
-                        namespace_kind="group", namespace_id=42, namespace_path="grp"
-                    ),
+                    project_details=make_project_details(namespace_kind="group", namespace_id=42, namespace_path="grp"),
                 )
             )
         return team_repo, user_repo
@@ -887,14 +899,14 @@ class TestMemberResolution:
         team_repo, user_repo = self._resolved(gitlab_instance_a, member, user_doc={"_id": "u-ada"})
 
         user_repo.get_raw_by_verified_email.assert_awaited_once_with("ada@corp.com")
-        assert [m.user_id for m in team_repo.create.await_args.args[0].members] == ["u-ada"]
+        assert [m.user_id for m in team_repo.create_bound.await_args.args[0].members] == ["u-ada"]
 
     def test_a_member_no_verified_account_holds_is_skipped(self, gitlab_instance_a):
         member = GitLabMember(username="ghost", email="ghost@corp.com", access_level=30)
 
         team_repo, _ = self._resolved(gitlab_instance_a, member)
 
-        team_repo.create.assert_not_called()
+        team_repo.create_bound.assert_not_awaited()
 
 
 class TestTeamSyncMergeSemantics:
@@ -908,11 +920,12 @@ class TestTeamSyncMergeSemantics:
             patch.object(service, "get_group_members", new=AsyncMock(return_value=members)),
         ):
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=MagicMock(),
                     gitlab_project_id=100,
                     gitlab_project_path=f"{namespace_path}/proj",
-                    gitlab_project_data=make_project_details(
+                    project_details=make_project_details(
                         namespace_kind="group", namespace_id=42, namespace_path=namespace_path
                     ),
                 )
@@ -981,7 +994,7 @@ class TestTeamSyncMergeSemantics:
         service = GitLabService(gitlab_instance_a)
         members = [
             GitLabMember(username="ada", email="ada@test.com", access_level=50),
-            GitLabMember(username="ada-bot", email="ada.bot@test.com", access_level=10),
+            GitLabMember(username="ada-bot", email="ada.bot@test.com", access_level=30),
         ]
 
         _, team_repo = self._sync(service, self._team("team-4", [], path="grp"), members, {"_id": "u-ada"})
@@ -1023,13 +1036,12 @@ class TestTeamSyncEmaillessMembers:
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
             result = asyncio.run(
-                service.sync_team_from_gitlab(
+                sync_team(
+                    service,
                     db=db,
                     gitlab_project_id=100,
                     gitlab_project_path="grp/proj",
-                    gitlab_project_data=make_project_details(
-                        namespace_kind="group", namespace_id=42, namespace_path="grp"
-                    ),
+                    project_details=make_project_details(namespace_kind="group", namespace_id=42, namespace_path="grp"),
                 )
             )
 
@@ -1055,11 +1067,12 @@ class TestTeamSyncEmaillessMembers:
 
             with caplog.at_level("DEBUG", logger="app.services.gitlab"):
                 asyncio.run(
-                    service.sync_team_from_gitlab(
+                    sync_team(
+                        service,
                         db=db,
                         gitlab_project_id=100,
                         gitlab_project_path="grp/proj",
-                        gitlab_project_data=make_project_details(
+                        project_details=make_project_details(
                             namespace_kind="group", namespace_id=42, namespace_path="grp"
                         ),
                     )

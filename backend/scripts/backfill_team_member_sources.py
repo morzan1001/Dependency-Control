@@ -35,10 +35,9 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-
 from app.core.config import settings
-from app.db.mongodb import create_client
 from app.core.constants import TEAM_SOURCE_PROVIDERS, team_source
+from app.db.mongodb import create_client
 
 # The same rule as the ownership provenance migration, and deliberately the one definition of it:
 # two spellings of "which instance may be attributed" is two chances to attribute differently.

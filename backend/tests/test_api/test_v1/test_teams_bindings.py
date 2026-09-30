@@ -336,6 +336,25 @@ class TestClearBinding:
         assert sorted(binding["key"] for binding in _bindings(db)) == ["github:gh-2:12", "gitlab:gl-1:77"]
         assert sorted(binding.key for binding in response.bindings) == ["github:gh-2:12", "gitlab:gl-1:77"]
 
+    def test_the_members_that_instance_synced_leave_with_its_binding(self):
+        """No sync ever retires them once the binding is gone, so they would keep the team's access for good."""
+        team = _team("team-1", "Payments Guild", _github_binding(), _gitlab_binding())
+        team["members"] = [
+            {"user_id": "synced", "role": "member", "source": "github:gh-1"},
+            {"user_id": "manual", "role": "admin", "source": "manual"},
+            {"user_id": "group", "role": "member", "source": "gitlab:gl-1"},
+            {"user_id": "elsewhere", "role": "member", "source": "github:gh-2"},
+        ]
+        db = _db(team)
+
+        self._run(db)
+
+        assert [member["user_id"] for member in db.teams._docs["team-1"]["members"]] == [
+            "manual",
+            "group",
+            "elsewhere",
+        ]
+
     def test_an_instance_the_team_is_not_bound_to_is_not_found(self):
         db = _db(_team("team-1", "Payments Guild", _github_binding()))
 

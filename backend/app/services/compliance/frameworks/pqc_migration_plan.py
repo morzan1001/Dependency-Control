@@ -1,11 +1,7 @@
-"""PQC Migration Plan framework; async-only (generator issues DB queries), one ControlResult per plan item."""
-
-from datetime import datetime, timezone
-from typing import ClassVar
+"""PQC Migration Plan framework: one ControlResult per plan item."""
 
 from app.models.finding import Severity
 from app.schemas.compliance import (
-    ControlDefinition,
     ControlResult,
     ControlStatus,
     EvaluationCoverage,
@@ -14,11 +10,7 @@ from app.schemas.compliance import (
     ReportFramework,
 )
 from app.schemas.pqc_migration import MigrationItem, MigrationItemStatus, MigrationPlanResponse
-from app.services.compliance.frameworks.base import (
-    EvaluationInput,
-    build_residual_risks,
-    build_summary,
-)
+from app.services.compliance.frameworks.base import EvaluationInput, build_evaluation
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 # One control per migratable group, so the plan's own ceiling is this report's control ceiling.
@@ -43,47 +35,30 @@ class PQCMigrationPlanFramework:
     key: ReportFramework = ReportFramework.PQC_MIGRATION_PLAN
     name: str = "PQC Migration Plan"
     version: str = "1"
-    source_url: str = "https://csrc.nist.gov/Projects/post-quantum-cryptography"
     disclaimer: str | None = (
         "This report enumerates currently-detected quantum-vulnerable crypto "
         "assets and their NIST-standardised PQC successors. It is not a "
         "formal compliance assessment against an external standard."
     )
-    controls: ClassVar[list[ControlDefinition]] = []
 
-    def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        """Sync entry point unsupported; dispatch via evaluate_async."""
-        raise RuntimeError("Use evaluate_async for PQC framework")
-
-    async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
-        if data.db is None:
-            raise ValueError("EvaluationInput.db is required for PQC meta-framework")
-
+    async def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
         plan = await PQCMigrationPlanGenerator(data.db).generate(
             resolved=data.resolved,
             limit=_PLAN_ITEM_LIMIT,
         )
 
-        controls = [_item_to_control(item) for item in plan.items]
-        return FrameworkEvaluation(
-            framework_key=self.key,
-            framework_name=self.name,
-            framework_version=self.version,
-            generated_at=datetime.now(timezone.utc),
-            scope_description=data.scope_description,
-            controls=controls,
-            summary=build_summary(controls),
-            residual_risks=build_residual_risks(controls),
-            inputs_fingerprint=_fingerprint(plan),
+        return build_evaluation(
+            self,
+            data,
+            [_item_to_control(item) for item in plan.items],
             coverage=_coverage(data, plan),
+            extra_inputs=(f"mappings={plan.mappings_version}",),
         )
 
 
-def _coverage(data: EvaluationInput, plan: MigrationPlanResponse) -> EvaluationCoverage | None:
+def _coverage(data: EvaluationInput, plan: MigrationPlanResponse) -> EvaluationCoverage:
     """The engine's coverage widened by the plan's own bound: past the ceiling the control list
     is a cut of a plan whose summary counts every item."""
-    if data.coverage is None:
-        return None
     return data.coverage.model_copy(
         update={
             "plan_items": InputCoverage(
@@ -112,7 +87,3 @@ def _item_to_control(item: MigrationItem) -> ControlResult:
         waiver_reasons=[],
         remediation=(f"Replace {item.source_family} with {item.recommended_pqc} per {item.recommended_standard}."),
     )
-
-
-def _fingerprint(plan: MigrationPlanResponse) -> str:
-    return f"pqc-mappings-v{plan.mappings_version}"

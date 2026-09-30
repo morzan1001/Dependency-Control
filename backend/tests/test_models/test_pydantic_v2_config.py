@@ -486,14 +486,13 @@ class TestProjectApiKeyHashExclusion:
 
 
 class TestAutoCreateUsesSystemAnalyzers:
-    """Verify that auto-created projects inherit default_active_analyzers from SystemSettings."""
+    """Auto-created projects inherit default_active_analyzers from the stored SystemSettings."""
 
     def test_gitlab_auto_create_uses_custom_analyzers(self):
         import asyncio
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from app.api.deps import get_project_for_ingest
-        from app.models.system import SystemSettings
 
         instance_doc = {
             "_id": "inst-x",
@@ -510,6 +509,7 @@ class TestAutoCreateUsesSystemAnalyzers:
         from tests.mocks.gitlab import make_oidc_payload
         from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
+        custom_analyzers = ["trivy", "osv"]
         gitlab_instances_coll = create_mock_collection(find_one=instance_doc)
         projects_coll = create_mock_collection(find_one=None)
         users_coll = create_mock_collection(find_one=admin_doc)
@@ -518,6 +518,9 @@ class TestAutoCreateUsesSystemAnalyzers:
                 "gitlab_instances": gitlab_instances_coll,
                 "projects": projects_coll,
                 "users": users_coll,
+                "system_settings": create_mock_collection(
+                    find_one={"_id": "current", "default_active_analyzers": custom_analyzers}
+                ),
             }
         )
 
@@ -526,12 +529,6 @@ class TestAutoCreateUsesSystemAnalyzers:
             return update.get("$setOnInsert", {})
 
         projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
-
-        custom_analyzers = ["trivy", "osv"]
-        settings = SystemSettings(
-            gitlab_integration_enabled=True,
-            default_active_analyzers=custom_analyzers,
-        )
 
         with patch("jose.jwt.get_unverified_claims") as mock_claims:
             mock_claims.return_value = {"iss": "https://gitlab.example.com"}
@@ -552,7 +549,6 @@ class TestAutoCreateUsesSystemAnalyzers:
                         x_api_key=None,
                         oidc_token="a.b.c",
                         db=db,
-                        settings=settings,
                     )
                 )
 
@@ -563,7 +559,6 @@ class TestAutoCreateUsesSystemAnalyzers:
         from unittest.mock import AsyncMock, MagicMock, patch
 
         from app.api.deps import get_project_for_ingest
-        from app.models.system import SystemSettings
 
         github_instance_doc = {
             "_id": "gh-inst-x",
@@ -576,10 +571,10 @@ class TestAutoCreateUsesSystemAnalyzers:
         }
         admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
 
-        from app.services.github import _MemberResolution
         from tests.mocks.github import make_github_oidc_payload
         from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
+        custom_analyzers = ["end_of_life"]
         gitlab_instances_coll = create_mock_collection(find_one=None)
         github_instances_coll = create_mock_collection(find_one=github_instance_doc)
         projects_coll = create_mock_collection(find_one=None)
@@ -590,6 +585,9 @@ class TestAutoCreateUsesSystemAnalyzers:
                 "github_instances": github_instances_coll,
                 "projects": projects_coll,
                 "users": users_coll,
+                "system_settings": create_mock_collection(
+                    find_one={"_id": "current", "default_active_analyzers": custom_analyzers}
+                ),
             }
         )
 
@@ -599,16 +597,10 @@ class TestAutoCreateUsesSystemAnalyzers:
 
         projects_coll.find_one_and_update = AsyncMock(side_effect=fake_find_or_create)
 
-        custom_analyzers = ["end_of_life"]
-        settings = SystemSettings(
-            gitlab_integration_enabled=True,
-            default_active_analyzers=custom_analyzers,
-        )
-
         with patch("jose.jwt.get_unverified_claims") as mock_claims:
             mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
 
-            with patch("app.services.github.GitHubService") as MockService:
+            with patch("app.api.deps.GitHubService") as MockService:
                 mock_svc = MagicMock()
                 mock_svc.validate_oidc_token = AsyncMock(
                     return_value=make_github_oidc_payload(
@@ -618,7 +610,7 @@ class TestAutoCreateUsesSystemAnalyzers:
                         actor="dev",
                     )
                 )
-                mock_svc.resolve_login = AsyncMock(return_value=_MemberResolution(None))
+                mock_svc.resolve_login = AsyncMock(return_value=None)
                 MockService.return_value = mock_svc
 
                 result = asyncio.run(
@@ -626,7 +618,6 @@ class TestAutoCreateUsesSystemAnalyzers:
                         x_api_key=None,
                         oidc_token="a.b.c",
                         db=db,
-                        settings=settings,
                     )
                 )
 

@@ -33,6 +33,12 @@ def test_empty_diff():
     assert "no effective changes" in summary.lower()
 
 
+def test_a_text_only_edit_is_reported():
+    old = _policy(_rule("a"))
+    new = _policy(_rule("a").model_copy(update={"description": "Explains why MD5 is refused"}), version=2)
+    assert compute_change_summary(old, new) == "Modified 1"
+
+
 def test_add_rule():
     old = _policy(_rule("a"))
     new = _policy(_rule("a"), _rule("b"), version=2)

@@ -13,7 +13,6 @@ _REQUIRED_IN_STORAGE = {
         "name",
         "url",
         "is_active",
-        "is_default",
         "oidc_audience",
         "auto_create_projects",
         "sync_teams",

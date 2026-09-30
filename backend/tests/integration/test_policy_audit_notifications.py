@@ -43,6 +43,7 @@ async def test_system_policy_change_notifies_users_with_permission(
     call = mock_perm.await_args
     assert call.kwargs.get("permission") == ["system:manage", "analytics:global"]
     assert call.kwargs.get("event_type") == "crypto_policy_changed"
+    assert call.kwargs.get("subject") == "System crypto policy changed"
     mock_members.assert_not_awaited()
 
 
@@ -74,4 +75,5 @@ async def test_project_policy_change_notifies_project_members(
     assert project_arg is not None
     assert getattr(project_arg, "id", None) == "p"
     assert call.kwargs.get("event_type") == "crypto_policy_changed"
+    assert call.kwargs.get("subject") == "Project project-p crypto policy changed"
     mock_perm.assert_not_awaited()

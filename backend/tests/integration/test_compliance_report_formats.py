@@ -29,16 +29,11 @@ def _install_fake_pipeline(monkeypatch):
     from app.api.v1.endpoints import compliance_reports as ep_mod
     from app.services.analytics.scopes import ResolvedScope
     from app.services.compliance import engine as engine_mod
-    from app.services.compliance.frameworks.base import EvaluationInput
+    from tests.helpers.compliance import evaluation_input
 
-    inputs = EvaluationInput(
+    inputs = evaluation_input(
         resolved=ResolvedScope(scope="project", scope_id="p", project_ids=["p"]),
         scope_description="project 'p'",
-        crypto_assets=[],
-        findings=[],
-        policy_rules=[],
-        policy_version=1,
-        iana_catalog_version=1,
         scan_ids=[],
     )
     monkeypatch.setattr(

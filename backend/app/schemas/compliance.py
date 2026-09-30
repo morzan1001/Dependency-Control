@@ -10,7 +10,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.models.finding import Severity
+from app.models.finding import FindingType, Severity
 
 
 class ReportStatus(str, Enum):
@@ -55,7 +55,8 @@ class ControlDefinition:
     severity: Severity
     remediation: str
     maps_to_rule_ids: list[str] = field(default_factory=list)
-    # If set, produces a ControlResult in place of the default evaluator.
+    maps_to_finding_types: list[FindingType] = field(default_factory=list)
+    # Called as (control, data) in place of the default evaluator.
     custom_evaluator: Callable[..., "ControlResult"] | None = None
 
 
@@ -97,17 +98,19 @@ class InputCoverage(BaseModel):
 
 
 class EvaluationCoverage(BaseModel):
-    """What the control verdicts were actually computed over, per input a verdict can rest on."""
+    """What the control verdicts were computed over, per input the framework reads; None for one it never reads."""
 
-    findings: InputCoverage
-    crypto_assets: InputCoverage
+    findings: InputCoverage | None = None
+    crypto_assets: InputCoverage | None = None
     # Set only by a framework that builds one control per row of a bounded plan.
     plan_items: InputCoverage | None = None
+    # Parts of the scope no input could cover: an unscanned project or a missing or failed analyzer.
+    gaps: list[str] = Field(default_factory=list)
 
     @property
     def complete(self) -> bool:
-        plan_complete = self.plan_items is None or self.plan_items.complete
-        return self.findings.complete and self.crypto_assets.complete and plan_complete
+        inputs = (self.findings, self.crypto_assets, self.plan_items)
+        return not self.gaps and all(read.complete for read in inputs if read is not None)
 
 
 class FrameworkEvaluation(BaseModel):
@@ -120,7 +123,6 @@ class FrameworkEvaluation(BaseModel):
     summary: dict[str, int] = Field(default_factory=dict)
     residual_risks: list[ResidualRisk] = Field(default_factory=list)
     inputs_fingerprint: str
-    # Set by the engine, which is the only caller that knows the scope's true finding count.
-    coverage: EvaluationCoverage | None = None
+    coverage: EvaluationCoverage
 
     model_config = ConfigDict(use_enum_values=True)

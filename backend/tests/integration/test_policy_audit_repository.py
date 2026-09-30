@@ -31,7 +31,7 @@ async def test_insert_and_list(db):
     repo = PolicyAuditRepository(db)
     await repo.create(_entry(version=1))
     await repo.create(_entry(version=2))
-    entries = await repo.list(policy_scope="system", limit=10)
+    entries = await repo.list(policy_scope="system", policy_type="crypto", limit=10)
     assert len(entries) == 2
 
 
@@ -40,7 +40,7 @@ async def test_list_respects_project_id_filter(db):
     repo = PolicyAuditRepository(db)
     await repo.create(_entry(policy_scope="project", project_id="p1", version=1))
     await repo.create(_entry(policy_scope="project", project_id="p2", version=1))
-    p1_entries = await repo.list(policy_scope="project", project_id="p1", limit=10)
+    p1_entries = await repo.list(policy_scope="project", policy_type="crypto", project_id="p1", limit=10)
     assert len(p1_entries) == 1
     assert p1_entries[0].project_id == "p1"
 
@@ -49,11 +49,11 @@ async def test_list_respects_project_id_filter(db):
 async def test_get_by_version(db):
     repo = PolicyAuditRepository(db)
     await repo.create(_entry(version=7))
-    hit = await repo.get_by_version(policy_scope="system", project_id=None, version=7)
+    hit = await repo.get_by_version(policy_scope="system", policy_type="crypto", project_id=None, version=7)
     assert hit is not None
     assert hit.version == 7
 
-    miss = await repo.get_by_version(policy_scope="system", project_id=None, version=99)
+    miss = await repo.get_by_version(policy_scope="system", policy_type="crypto", project_id=None, version=99)
     assert miss is None
 
 
@@ -65,7 +65,7 @@ async def test_entries_saved_in_one_millisecond_are_listed_newest_version_first(
     await repo.create(_entry(version=_OLDER_VERSION, ts=same_instant))
     await repo.create(_entry(version=_NEWER_VERSION, ts=same_instant, action=PolicyAuditAction.REVERT))
 
-    entries = await repo.list(policy_scope="system", limit=_LIST_LIMIT)
+    entries = await repo.list(policy_scope="system", policy_type="crypto", limit=_LIST_LIMIT)
 
     assert [e.version for e in entries] == [_NEWER_VERSION, _OLDER_VERSION]
 
@@ -81,11 +81,12 @@ async def test_delete_older_than(db):
     cutoff = now - timedelta(days=90)
     deleted = await repo.delete_older_than(
         policy_scope="system",
+        policy_type="crypto",
         project_id=None,
         cutoff=cutoff,
     )
     assert deleted == 1
-    remaining = await repo.list(policy_scope="system", limit=10)
+    remaining = await repo.list(policy_scope="system", policy_type="crypto", limit=10)
     assert {e.version for e in remaining} == {2, 3}
 
 
@@ -98,10 +99,10 @@ async def test_delete_older_than_spares_an_entry_stamped_at_the_cutoff(db):
     await repo.create(_entry(version=1, ts=cutoff - timedelta(milliseconds=1)))
     await repo.create(_entry(version=2, ts=cutoff))
 
-    deleted = await repo.delete_older_than(policy_scope="system", project_id=None, cutoff=cutoff)
+    deleted = await repo.delete_older_than(policy_scope="system", policy_type="crypto", project_id=None, cutoff=cutoff)
 
     assert deleted == 1
-    remaining = await repo.list(policy_scope="system", limit=_LIST_LIMIT)
+    remaining = await repo.list(policy_scope="system", policy_type="crypto", limit=_LIST_LIMIT)
     assert [e.version for e in remaining] == [2]
 
 
@@ -113,7 +114,7 @@ async def test_a_duplicated_version_resolves_to_its_newest_entry(db):
     await repo.create(_entry(version=1, ts=earlier).model_copy(update={"comment": "oldest"}))
     await repo.create(_entry(version=1, ts=earlier + timedelta(days=1)).model_copy(update={"comment": "newest"}))
 
-    hit = await repo.get_by_version(policy_scope="system", project_id=None, version=1)
+    hit = await repo.get_by_version(policy_scope="system", policy_type="crypto", project_id=None, version=1)
 
     assert hit is not None
     assert hit.comment == "newest"

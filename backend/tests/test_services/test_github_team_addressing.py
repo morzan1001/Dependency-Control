@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.schemas.github_instance import GitHubOrgTeam
 from app.services.github import build_org_team_options, build_team_slug_map
 
 
@@ -34,13 +35,13 @@ class TestOrgTeamOptions:
             {"id": 2, "slug": "cards-eng", "name": "Cards", "parent": None},
         ]
         assert build_org_team_options(org_teams) == [
-            {"id": 1, "slug": "cards", "name": "Cards", "parent_name": "Payments"},
-            {"id": 2, "slug": "cards-eng", "name": "Cards", "parent_name": None},
+            GitHubOrgTeam(id=1, slug="cards", name="Cards", parent_name="Payments"),
+            GitHubOrgTeam(id=2, slug="cards-eng", name="Cards", parent_name=None),
         ]
 
     def test_a_nameless_team_is_offered_under_its_slug(self):
         options = build_org_team_options([{"id": 1, "slug": "payments", "parent": None}])
-        assert options[0]["name"] == "payments"
+        assert options[0].name == "payments"
 
     @pytest.mark.parametrize(
         "malformed",
@@ -54,4 +55,4 @@ class TestOrgTeamOptions:
     def test_an_entry_that_cannot_address_a_team_is_not_offered(self, malformed):
         """Binding to it would store a pair no check endpoint can be built from."""
         options = build_org_team_options([malformed, {"id": 3, "slug": "sound", "name": "Sound"}])
-        assert [option["id"] for option in options] == [3]
+        assert [option.id for option in options] == [3]

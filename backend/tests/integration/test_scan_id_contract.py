@@ -37,7 +37,7 @@ async def test_one_ci_run_lands_on_one_scan(client, db, api_key_headers, _projec
     ):
         sbom = await client.post("/api/v1/ingest", json={**_RUN, "sboms": [_SBOM]}, headers=api_key_headers)
     findings = await client.post("/api/v1/ingest/opengrep", json={**_RUN, "findings": []}, headers=api_key_headers)
-    with patch("app.api.deps.get_project_for_ingest", new_callable=AsyncMock, return_value=_project):
+    with patch("app.api.deps._authenticate_ci", new_callable=AsyncMock, return_value=_project):
         callgraph = await client.post(
             f"/api/v1/projects/{_project.id}/callgraph", json={**_RUN, **_CALLGRAPH}, headers=api_key_headers
         )

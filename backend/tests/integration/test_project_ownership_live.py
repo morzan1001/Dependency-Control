@@ -15,6 +15,7 @@ from app.api.deps import _gitlab_team_sync_stages
 from app.api.v1.endpoints.projects import update_project
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.project import Project
+from app.models.team import TeamSyncResult
 from app.models.user import User
 from app.repositories.projects import (
     ProjectRepository,
@@ -24,7 +25,6 @@ from app.repositories.projects import (
     set_owners_pipeline,
 )
 from app.schemas.project import ProjectUpdate
-from app.services.gitlab import GitLabTeamSyncResult
 from tests.mocks.fake_mongo import FakeDatabase
 
 _GITLAB_A = team_source(TEAM_SOURCE_GITLAB, "gl-inst-a")
@@ -102,8 +102,7 @@ async def _assert_an_ingest_leaves_unmigrated_owners_as_they_are(db) -> None:
     await db.projects.insert_one(dict(_UNMIGRATED_PROJECT))
     project = Project(**_UNMIGRATED_PROJECT)
     service = MagicMock()
-    service.get_project_details = AsyncMock(return_value=MagicMock())
-    service.sync_team_from_gitlab = AsyncMock(return_value=GitLabTeamSyncResult(["gl-still-held"]))
+    service.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(["gl-still-held"]))
 
     stages = await _gitlab_team_sync_stages(project, "gl-inst-a", 100, "grp/proj", service, db)
 

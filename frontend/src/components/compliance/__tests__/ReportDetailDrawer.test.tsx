@@ -81,6 +81,60 @@ describe("ReportDetailDrawer", () => {
     expect(screen.queryByText(PARTIAL_WARNING)).not.toBeInTheDocument();
   });
 
+  it("leaves out an input the framework never read", () => {
+    const cveReport: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: {
+        findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED },
+        crypto_assets: null,
+        plan_items: null,
+        gaps: [],
+      },
+    };
+    withClient(<ReportDetailDrawer report={cveReport} onClose={() => {}} />);
+
+    expect(screen.getByText(`Evaluated all ${IN_SCOPE.toLocaleString()} findings in scope.`)).toBeInTheDocument();
+    expect(screen.queryByText(/crypto assets/i)).not.toBeInTheDocument();
+  });
+
+  it("states the plan items a migration plan report covered", () => {
+    const pqcReport: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: { findings: null, crypto_assets: null, plan_items: { evaluated: 1000, in_scope: 4200, limit: 1000 }, gaps: [] },
+    };
+    withClient(<ReportDetailDrawer report={pqcReport} onClose={() => {}} />);
+
+    expect(screen.getByText(/Evaluated 1,000 of 4,200 migration plan items/i)).toBeInTheDocument();
+  });
+
+  it("warns about the part of the scope no input covered", () => {
+    const gapped: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: {
+        findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED },
+        crypto_assets: null,
+        gaps: ["project 'payments' has no usable scan"],
+      },
+    };
+    withClient(<ReportDetailDrawer report={gapped} onClose={() => {}} />);
+
+    const notice = screen.getByText(/project 'payments' has no usable scan/);
+    expect(notice.className).toMatch(/amber/);
+    expect(screen.queryByText(PARTIAL_WARNING)).not.toBeInTheDocument();
+  });
+
+  it("names five gaps and counts the rest", () => {
+    const gaps = ["a", "b", "c", "d", "e", "f", "g"].map((name) => `project '${name}' has no usable scan`);
+    const gapped: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: { findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED }, gaps },
+    };
+    withClient(<ReportDetailDrawer report={gapped} onClose={() => {}} />);
+
+    const notice = screen.getByText(/project 'e' has no usable scan and 2 more\./);
+    expect(notice.textContent).not.toContain("project 'f'");
+  });
+
   it("shows how many verdicts the cap withheld", () => {
     const withheld: ComplianceReportMeta = {
       ...sampleReport,

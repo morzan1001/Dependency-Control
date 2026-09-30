@@ -43,7 +43,6 @@ class GitLabInstanceBase(BaseModel):
     url: str = Field(..., description="Base URL of the GitLab instance (e.g. 'https://gitlab.com')")
     description: str | None = Field(None, description="Optional description of this instance")
     is_active: bool = Field(True, description="Whether this instance is currently active")
-    is_default: bool = Field(False, description="Whether this is the default instance")
     auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
     sync_teams: bool = Field(False, description="Sync GitLab group members to local teams")
     team_sync_depth: int = Field(
@@ -91,7 +90,6 @@ class GitLabInstanceUpdate(BaseModel):
     url: str | None = Field(None, description="Base URL of the GitLab instance")
     description: str | None = Field(None, description="Optional description")
     is_active: bool | None = Field(None, description="Whether this instance is active")
-    is_default: bool | None = Field(None, description="Whether this is the default instance")
     access_token: str | None = Field(None, description="Personal or Group Access Token with 'api' scope")
     oidc_audience: str | None = Field(
         None, description="Expected 'aud' claim for OIDC tokens. If provided, must not be empty."
@@ -105,9 +103,9 @@ class GitLabInstanceUpdate(BaseModel):
         None, description="Top-level groups whose projects' tokens are accepted; [] accepts every project"
     )
 
-    _not_null = field_validator(
-        "name", "url", "is_active", "is_default", "auto_create_projects", "sync_teams", "team_sync_depth"
-    )(reject_null)
+    _not_null = field_validator("name", "url", "is_active", "auto_create_projects", "sync_teams", "team_sync_depth")(
+        reject_null
+    )
     _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
     _namespaces_top_level = field_validator("allowed_namespaces")(_validate_namespaces)
     _url_normalised = field_validator("url")(strip_trailing_slash)

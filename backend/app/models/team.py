@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, NamedTuple
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
@@ -55,6 +55,13 @@ def binding_of(team: dict[str, Any], instance_id: str) -> dict[str, Any] | None:
         if binding.get("instance_id") == instance_id:
             return dict(binding)
     return None
+
+
+class TeamSyncResult(NamedTuple):
+    """The teams a provider says own a project; None when it could not be asked, which leaves the
+    owners it set alone where the empty list retires them."""
+
+    team_ids: list[str] | None
 
 
 class Team(MongoDocument, CreatedAtModel):

@@ -9,7 +9,7 @@ export interface GitHubInstance {
   auto_create_projects: boolean;
   sync_teams: boolean;
   allowed_owner_ids: string[];
-  has_access_token?: boolean;
+  token_configured: boolean;
   created_at: string;
   created_by: string;
   last_modified_at?: string;

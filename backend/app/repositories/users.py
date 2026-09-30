@@ -63,6 +63,12 @@ class UserRepository(BaseRepository[User]):
         """The lookup identity matching must use: an unverified address names whoever typed it."""
         return await self.find_one_raw({**_email_query(email), "is_verified": True})
 
+    async def find_raw_by_verified_emails(self, emails: list[str]) -> list[dict[str, Any]]:
+        """Every verified account one of ``emails`` names, matched as ``get_raw_by_verified_email`` does."""
+        patterns = [re.compile(f"^{re.escape(email)}$", re.IGNORECASE) for email in emails]
+        cursor = self.collection.find({"email": {"$in": patterns}, "is_verified": True})
+        return await cursor.to_list(None)
+
     async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
         cursor = self.collection.find({"_id": {"$in": user_ids}})
         return await cursor.to_list(None)

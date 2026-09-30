@@ -5,11 +5,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import HTTPException, status
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import team_source
 from app.models.base import VcsInstanceModel
 from app.models.github_instance import GitHubInstance
 from app.models.gitlab_instance import GitLabInstance
 from app.repositories.projects import ProjectRepository
+from app.repositories.teams import TeamRepository
 from app.repositories.vcs_instances import VcsInstanceRepository
 
 logger = logging.getLogger(__name__)
@@ -72,29 +75,28 @@ async def prepare_update(
 
 
 async def delete_guarded(
+    db: AsyncIOMotorDatabase[Any],
     repo: VcsInstanceRepository[Any],
-    project_repo: ProjectRepository,
     instance: GitLabInstance | GitHubInstance,
     *,
-    force: bool,
-    label: str,
+    provider: str,
     username: str,
 ) -> None:
-    """Delete the instance unless projects still link to it; force orphans them."""
-    field = repo.project_link_field
-    project_count = await project_repo.count({field: str(instance.id)})
-    if project_count > 0 and not force:
+    """Delete an instance no project links to, with its team bindings and the members its sync added."""
+    instance_id = str(instance.id)
+    project_count = await ProjectRepository(db).count({repo.project_link_field: instance_id})
+    if project_count:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
-                f"Cannot delete instance '{instance.name}': {project_count} projects "
-                f"are still linked. Set {field}=null on projects first "
-                f"or use force=true to delete anyway."
+                f"Cannot delete instance '{instance.name}': {project_count} projects are still linked. "
+                "Delete those projects first, or edit this instance in place instead of re-creating it."
             ),
         )
-    if not await repo.delete(str(instance.id)):
+    # Teams first: a failure then leaves the instance in place, so the delete can be retried.
+    detached = await TeamRepository(db).remove_instance(instance_id, team_source(provider, instance_id))
+    if not await repo.delete(instance_id):
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete instance")
     logger.warning(
-        f"Deleted {label} instance '{instance.name}' by user {username} "
-        f"(force={force}, orphaned_projects={project_count})"
+        "Deleted %s instance '%s' by user %s, detached from %d teams", provider, instance.name, username, detached
     )

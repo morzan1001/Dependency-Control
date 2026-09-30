@@ -52,7 +52,6 @@ interface InstanceFormData {
   sync_teams: boolean;
   // GitLab-specific
   team_sync_depth: number;
-  is_default: boolean;
   allowed_namespaces: string;
   // GitHub-specific
   github_url: string;
@@ -70,7 +69,6 @@ const emptyFormData: InstanceFormData = {
   access_token: "",
   sync_teams: false,
   team_sync_depth: 1,
-  is_default: false,
   allowed_namespaces: "",
   github_url: "",
   allowed_owner_ids: "",
@@ -131,7 +129,7 @@ export function CICDInstancesManagement() {
   });
 
   const deleteGitLabMutation = useMutation({
-    mutationFn: (id: string) => gitlabInstancesApi.delete(id, false),
+    mutationFn: (id: string) => gitlabInstancesApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
       toast.success("GitLab instance deleted successfully");
@@ -188,7 +186,7 @@ export function CICDInstancesManagement() {
   });
 
   const deleteGitHubMutation = useMutation({
-    mutationFn: (id: string) => githubInstancesApi.delete(id, false),
+    mutationFn: (id: string) => githubInstancesApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
       toast.success("GitHub instance deleted successfully");
@@ -242,7 +240,6 @@ export function CICDInstancesManagement() {
         sync_teams: formData.sync_teams,
         team_sync_depth: formData.team_sync_depth,
         is_active: formData.is_active,
-        is_default: formData.is_default,
         allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
       };
       createGitLabMutation.mutate(data);
@@ -277,7 +274,6 @@ export function CICDInstancesManagement() {
         sync_teams: formData.sync_teams,
         team_sync_depth: formData.team_sync_depth,
         is_active: formData.is_active,
-        is_default: formData.is_default,
         allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
       };
       updateGitLabMutation.mutate({ id: editingInstance.id, data });
@@ -311,7 +307,6 @@ export function CICDInstancesManagement() {
       access_token: "",
       sync_teams: instance.sync_teams || false,
       team_sync_depth: instance.team_sync_depth ?? 1,
-      is_default: instance.is_default || false,
       allowed_namespaces: (instance.allowed_namespaces ?? []).join(", "),
       github_url: instance.github_url || "",
       allowed_owner_ids: (instance.allowed_owner_ids ?? []).join(", "),
@@ -394,14 +389,7 @@ export function CICDInstancesManagement() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      {instance.name}
-                      {instance.is_default && (
-                        <Badge variant="outline" className="text-xs">
-                          Default
-                        </Badge>
-                      )}
-                    </div>
+                    {instance.name}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {instance.url}
@@ -436,7 +424,7 @@ export function CICDInstancesManagement() {
                           No Token
                         </Badge>
                       )}
-                      {instance._type === "github" && instance.has_access_token === false && (
+                      {instance._type === "github" && !instance.token_configured && (
                         <Badge variant="secondary" className="text-xs">
                           No PAT
                         </Badge>
@@ -533,8 +521,11 @@ export function CICDInstancesManagement() {
           <DialogHeader>
             <DialogTitle>Delete {deleteInstance?._type === "gitlab" ? "GitLab" : "GitHub"} Instance?</DialogTitle>
             <DialogDescription>
-              This will remove the {deleteInstance?._type === "gitlab" ? "GitLab" : "GitHub"} instance
-              "{deleteInstance?.name}". Projects linked to this instance will lose their CI/CD integration.
+              This permanently removes the {deleteInstance?._type === "gitlab" ? "GitLab" : "GitHub"} instance
+              "{deleteInstance?.name}", its team bindings and every team membership its sync added. A team
+              whose only admin came from this sync is left without one, and re-creating the instance does not
+              restore the bindings. An instance that projects still link to is refused; edit it in place
+              instead.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>
@@ -737,19 +728,6 @@ function InstanceForm({
             }
           />
         </div>
-
-        {formData.type === "gitlab" && (
-          <div className="flex items-center justify-between">
-            <Label htmlFor="ci-is-default">Default Instance</Label>
-            <Switch
-              id="ci-is-default"
-              checked={formData.is_default}
-              onCheckedChange={(checked) =>
-                setFormData((prev) => ({ ...prev, is_default: checked }))
-              }
-            />
-          </div>
-        )}
 
         <div className="flex items-center justify-between">
           <div>

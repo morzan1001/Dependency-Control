@@ -2,6 +2,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
+import httpx
 from fastapi import HTTPException, Query, status
 
 from app.api import deps
@@ -16,8 +17,8 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_502,
 )
+from app.core.constants import TEAM_SOURCE_GITLAB
 from app.models.gitlab_instance import GitLabInstance
-from app.repositories.projects import ProjectRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.schemas.gitlab_instance import (
     AUTO_CREATE_NEEDS_NAMESPACES,
@@ -43,7 +44,6 @@ def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
         url=instance.url,
         description=instance.description,
         is_active=instance.is_active,
-        is_default=instance.is_default,
         oidc_audience=instance.oidc_audience,
         auto_create_projects=instance.auto_create_projects,
         sync_teams=instance.sync_teams,
@@ -102,7 +102,6 @@ async def create_instance(
         url=instance_data.url,
         description=instance_data.description,
         is_active=instance_data.is_active,
-        is_default=instance_data.is_default,
         access_token=instance_data.access_token,
         oidc_audience=instance_data.oidc_audience,
         auto_create_projects=instance_data.auto_create_projects,
@@ -120,8 +119,8 @@ async def create_instance(
                 response = await client.get(
                     f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers()
                 )
-        except Exception as e:
-            logger.exception("Connection test failed for %s: %s", instance_data.url, e)
+        except (httpx.HTTPError, httpx.InvalidURL) as e:
+            logger.warning("Connection test failed for %s: %s", instance_data.url, e)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {e!s}"
             ) from e
@@ -132,10 +131,6 @@ async def create_instance(
             )
 
     created_instance = await instance_repo.create(new_instance)
-
-    if created_instance.is_default:
-        await instance_repo.set_as_default(str(created_instance.id))
-
     logger.info(f"Created GitLab instance '{created_instance.name}' by user {current_user.username}")
 
     return _to_response(created_instance)
@@ -166,9 +161,6 @@ async def update_instance(
     if not updated_instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found after update")
 
-    if update_dict.get("is_default"):
-        await instance_repo.set_as_default(instance_id)
-
     logger.info(f"Updated GitLab instance '{updated_instance.name}' by user {current_user.username}")
 
     return _to_response(updated_instance)
@@ -179,17 +171,12 @@ async def delete_instance(
     instance_id: str,
     db: DatabaseDep,
     current_user: deps.SystemManagerDep,
-    force: bool = False,
 ) -> None:
-    """Delete a GitLab instance; fails if projects are still linked unless force=true (which orphans them)."""
+    """Delete a GitLab instance no project links to, with its team bindings and the members its sync added."""
     instance_repo = GitLabInstanceRepository(db)
-    project_repo = ProjectRepository(db)
-
     instance = await get_or_404(instance_repo, instance_id, _LABEL)
 
-    await delete_guarded(
-        instance_repo, project_repo, instance, force=force, label=_LABEL, username=current_user.username
-    )
+    await delete_guarded(db, instance_repo, instance, provider=TEAM_SOURCE_GITLAB, username=current_user.username)
 
 
 @router.get("/{instance_id}/groups", responses=RESP_AUTH_404_502)
@@ -210,7 +197,7 @@ async def list_instance_groups(
                 f"Could not list the groups of instance '{instance.name}'. It needs an access token that can read them."
             ),
         )
-    return [GitLabGroupOption(**option) for option in build_group_options(groups)]
+    return build_group_options(groups)
 
 
 def _test_result(

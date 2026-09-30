@@ -1,8 +1,8 @@
 import asyncio
 import logging
+import urllib.parse
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from typing import Any, NamedTuple
 
 import httpx
@@ -11,12 +11,13 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.cache import cache_service
 from app.core.constants import (
     GITLAB_ADMIN_MIN_ACCESS,
-    GITLAB_JWKS_CACHE_TTL,
-    GITLAB_JWKS_URI_CACHE_TTL,
+    GITLAB_TEAM_MEMBER_MIN_ACCESS,
     GITLAB_USER_EMAIL_CACHE_TTL,
+    MAX_PROJECT_TEAMS,
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITLAB,
+    team_binding_key,
     team_source,
 )
 from app.core.http_utils import InstrumentedAsyncClient
@@ -28,26 +29,26 @@ from app.models.gitlab_api import (
     OIDCPayload,
 )
 from app.models.gitlab_instance import GitLabInstance
-from app.models.team import GitLabGroupBinding, Team, TeamMember, binding_of
-from app.repositories.teams import TeamRepository
+from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult, binding_of
+from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
-from app.repositories.teams import MemberSubset
+from app.schemas.gitlab_instance import GitLabGroupOption
+from app.services.github import response_ok
+from app.services.oidc_utils import discover_jwks_uri, fetch_jwks
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
 
 _GITLAB_API_TIMEOUT = 10.0
 
-# The group lookup and the member listing run inside the ingest request, and the listing is
-# uncapped, so a large group is many pages of 10s each. This bounds the reads as a whole.
+# The project read, the group lookup and the member listing run inside the ingest request, and the
+# listing is uncapped, so a large group is many pages of 10s each. This bounds the reads as a whole.
 _GITLAB_RESOLUTION_TIMEOUT = 30.0
-
-_AUTO_TEAM_NAME_PREFIX = "GitLab Group:"
 
 
 def _auto_team_name(group_path: str) -> str:
-    """The name a team gets while nobody has renamed it; the prefix is what marks it as ours to set."""
-    return f"{_AUTO_TEAM_NAME_PREFIX} {group_path}"
+    """The name a team gets while nobody has renamed it."""
+    return f"GitLab Group: {group_path}"
 
 
 def _auto_team_description(group_path: str) -> str:
@@ -65,33 +66,27 @@ class GitLabGroupLookup(NamedTuple):
     group: dict[str, Any] | None
 
 
-def build_group_options(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The groups a human can bind to, with the full path that tells two same-named subgroups
-    apart. An entry that cannot address a group is left out, as it is everywhere else."""
+def group_full_path(group: dict[str, Any], fallback: str = "") -> str:
+    """The path that tells two same-named subgroups apart."""
+    return str(group.get("full_path") or group.get("path") or fallback)
+
+
+def build_group_options(groups: list[dict[str, Any]]) -> list[GitLabGroupOption]:
+    """The groups a human can bind to. An entry that cannot address a group is left out, as it is
+    everywhere else."""
     options = []
     for group in groups:
         group_id = group.get("id")
-        full_path = group.get("full_path") or group.get("path")
+        full_path = group_full_path(group)
         if not isinstance(group_id, int) or not full_path:
             continue
-        options.append(
-            {
-                "id": group_id,
-                "full_path": str(full_path),
-                "name": str(group.get("name") or full_path),
-            }
-        )
+        options.append(GitLabGroupOption(id=group_id, full_path=full_path, name=str(group.get("name") or full_path)))
     return options
 
 
-class GitLabTeamSyncResult(NamedTuple):
-    """The Dependency Control teams GitLab says own the project — at most the one group's.
-
-    ``team_ids`` is None when GitLab could not be asked, which is not the empty list: the first
-    leaves the project's GitLab owner alone, the second retires it.
-    """
-
-    team_ids: list[str] | None
+class _OwningGroup(NamedTuple):
+    id: int
+    path: str
 
 
 class GitLabSyncTarget(NamedTuple):
@@ -101,7 +96,7 @@ class GitLabSyncTarget(NamedTuple):
     ``determined`` holds for a project no group owns at all, which retires the group owner it had.
     """
 
-    group: tuple[int, str] | None
+    group: _OwningGroup | None
     determined: bool = True
 
 
@@ -119,6 +114,7 @@ _NO_OWNING_GROUP = GitLabSyncTarget(None)
 class GitLabService:
     def __init__(self, gitlab_instance: GitLabInstance):
         self.instance = gitlab_instance
+        self._instance_id = str(gitlab_instance.id)
         self.base_url = gitlab_instance.url.rstrip("/")
         self.api_url = f"{self.base_url}/api/v4"
         self._cache_key_prefix = f"instance:{gitlab_instance.id}"
@@ -251,111 +247,27 @@ class GitLabService:
         )
         return True
 
-    async def _get_jwks_uri(self) -> str | None:
-        """Resolve the JWKS URI from the OIDC discovery document, Redis-cached."""
-        cache_key = self._get_cache_key("jwks_uri")
+    async def _jwks_uris(self) -> list[str]:
+        discovered = await discover_jwks_uri(self.base_url, self._get_cache_key(f"jwks_uri:{self.base_url}"))
+        fallbacks = [f"{self.base_url}/oauth/discovery/keys", f"{self.base_url}/-/jwks"]
+        return list(dict.fromkeys([discovered, *fallbacks] if discovered else fallbacks))
 
-        cached_uri = await cache_service.get(cache_key)
-        if cached_uri:
-            result: str = cached_uri
-            return result
-
-        async with InstrumentedAsyncClient("GitLab OIDC", timeout=10.0) as client:
-            try:
-                response = await client.get(f"{self.base_url}/.well-known/openid-configuration")
-                if response.status_code == 200:
-                    config = response.json()
-                    jwks_uri: str | None = config.get("jwks_uri")
-                    if jwks_uri:
-                        await cache_service.set(cache_key, jwks_uri, ttl_seconds=GITLAB_JWKS_URI_CACHE_TTL)
-                    return jwks_uri
-            except Exception as e:
-                logger.warning(f"Error fetching OIDC discovery: {type(e).__name__}: {e}")
-
-        return None
-
-    async def _fetch_jwks_from_uri(
-        self,
-        client: InstrumentedAsyncClient,
-        jwks_uri: str,
-        cache_key: str,
-    ) -> dict | None:
-        """Fetch JWKS from a known URI and cache it; returns None if unavailable."""
-        response = await client.get(jwks_uri)
-        if response.status_code != 200:
-            return None
-        jwks: dict[Any, Any] = response.json()
-        await cache_service.set(cache_key, jwks, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
-        return jwks
-
-    async def _fetch_jwks_from_fallbacks(
-        self,
-        client: InstrumentedAsyncClient,
-        cache_key: str,
-    ) -> dict | None:
-        """Try common fallback JWKS endpoints; returns None if all fail."""
-        for path in ["/oauth/discovery/keys", "/-/jwks"]:
-            response = await client.get(f"{self.base_url}{path}")
-            if response.status_code == 200:
-                jwks_fallback: dict[Any, Any] = response.json()
-                await cache_service.set(cache_key, jwks_fallback, ttl_seconds=GITLAB_JWKS_CACHE_TTL)
-                logger.info(f"JWKS fetched from fallback path: {path}")
-                return jwks_fallback
-        return None
-
-    async def _try_fetch_jwks_once(self, cache_key: str) -> dict | None:
-        """Single attempt to fetch JWKS via discovery + fallbacks. Returns {} on definitive failure."""
-        async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
-            jwks_uri = await self._get_jwks_uri()
-            if jwks_uri:
-                jwks = await self._fetch_jwks_from_uri(client, jwks_uri, cache_key)
-                if jwks is not None:
-                    return jwks
-
-            fallback = await self._fetch_jwks_from_fallbacks(client, cache_key)
-            if fallback is not None:
-                return fallback
-
-            logger.error(f"Failed to fetch JWKS from any known endpoint for {self.base_url}")
-            return {}
+    async def refresh_jwks(self) -> dict | None:
+        return await fetch_jwks(self._get_cache_key(f"jwks:{self.base_url}"), self._jwks_uris, "GitLab")
 
     async def get_jwks(self) -> dict | None:
-        """Fetch and Redis-cache the JWKS from GitLab, retrying on transient failure."""
-        cache_key = self._get_cache_key("jwks")
-
-        cached_jwks = await cache_service.get(cache_key)
-        if cached_jwks:
-            result_jwks: dict[Any, Any] = cached_jwks
-            return result_jwks
-
-        import asyncio as _asyncio
-
-        for attempt in range(3):
-            try:
-                return await self._try_fetch_jwks_once(cache_key)
-            except Exception as e:
-                logger.warning(
-                    f"JWKS fetch attempt {attempt + 1}/3 failed for {self.base_url}: {type(e).__name__}: {e}"
-                )
-                if attempt < 2:
-                    await _asyncio.sleep(1)
-        logger.error(f"JWKS fetch failed after 3 attempts for {self.base_url}")
-        return {}
-
-    async def _invalidate_jwks_cache(self) -> None:
-        """Invalidate the JWKS cache to force a refresh on next request."""
-        cache_key = self._get_cache_key("jwks")
-        await cache_service.delete(cache_key)
+        """The instance's cached key set, fetched on a miss; None while GitLab serves none."""
+        cached: dict | None = await cache_service.get(self._get_cache_key(f"jwks:{self.base_url}"))
+        return cached or await self.refresh_jwks()
 
     async def validate_oidc_token(self, token: str) -> OIDCPayload | None:
         """Validate a GitLab OIDC JWT, refreshing JWKS on key rotation."""
         return await _validate_oidc_token(
             token=token,
             get_jwks=self.get_jwks,
-            invalidate_cache=self._invalidate_jwks_cache,
+            refresh_jwks=self.refresh_jwks,
             issuer=self.base_url,
-            # `or None` normalizes "" -> None so unconfigured instances fail the audience check closed.
-            audience=self.instance.oidc_audience or None,
+            audience=self.instance.oidc_audience,
             payload_model=OIDCPayload,
             provider_name="GitLab",
         )
@@ -369,10 +281,11 @@ class GitLabService:
 
     async def get_project_details(self, project_id: int) -> GitLabProjectDetails | None:
         """Fetches project details using the system token."""
-        response = await self._api_get(f"/projects/{project_id}")
-        if response and response.status_code == 200:
-            return GitLabProjectDetails(**response.json())
-        return None
+        endpoint = f"/projects/{project_id}"
+        response = await self._api_get(endpoint)
+        if response is None or not response_ok("GitLab", endpoint, response):
+            return None
+        return GitLabProjectDetails(**response.json())
 
     async def get_default_branch(self, project_id: int) -> str | None:
         """The project's default branch. Returns None on API failure."""
@@ -381,10 +294,11 @@ class GitLabService:
 
     async def get_merge_requests_for_commit(self, project_id: int, commit_sha: str) -> list[GitLabMergeRequest]:
         """Fetches merge requests associated with a specific commit."""
-        response = await self._api_get(f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests")
-        if response and response.status_code == 200:
-            return [GitLabMergeRequest(**mr) for mr in response.json()]
-        return []
+        endpoint = f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests"
+        response = await self._api_get(endpoint)
+        if response is None or not response_ok("GitLab", endpoint, response):
+            return []
+        return [GitLabMergeRequest(**mr) for mr in response.json()]
 
     async def post_merge_request_comment(self, project_id: int, mr_iid: int, body: str) -> bool:
         """Posts a comment to a merge request."""
@@ -487,52 +401,34 @@ class GitLabService:
 
     async def get_group(self, group_id: int) -> GitLabGroupLookup:
         """One group by its numeric id."""
-        response = await self._api_get(f"/groups/{group_id}")
-        if response is None:
-            return GitLabGroupLookup(reachable=False, group=None)
-        if response.status_code == 200:
-            group: dict[str, Any] = response.json()
-            return GitLabGroupLookup(reachable=True, group=group)
-        # 404 is also what GitLab answers for a group the token may not see, which is the same
-        # answer for a binding: this instance cannot resolve it.
-        if response.status_code == 404:
-            return GitLabGroupLookup(reachable=True, group=None)
-        logger.error("GitLab GET /groups/%s answered %s", group_id, response.status_code)
-        return GitLabGroupLookup(reachable=False, group=None)
+        return await self._lookup_group(str(group_id))
 
-    async def _resolve_group_by_path(self, group_path: str) -> GitLabGroupLookup:
-        """One group by its full path."""
-        import urllib.parse
-
-        encoded_path = urllib.parse.quote(group_path, safe="")
-        response = await self._api_get(f"/groups/{encoded_path}")
-        if response is None:
-            return GitLabGroupLookup(reachable=False, group=None)
-        if response.status_code == 200:
-            group: dict[str, Any] = response.json()
-            return GitLabGroupLookup(reachable=True, group=group)
-        # 404 is also what GitLab answers for a group the token may not see, which is the same
-        # answer here: this instance cannot resolve it.
-        if response.status_code == 404:
+    async def _lookup_group(self, ref: str) -> GitLabGroupLookup:
+        """One group by its numeric id or its full path."""
+        endpoint = f"/groups/{urllib.parse.quote(ref, safe='')}"
+        response = await self._api_get(endpoint, params={"with_projects": "false"})
+        # 404 is also what GitLab answers for a group the token may not see: this instance cannot resolve it.
+        if response is not None and response.status_code == 404:
             return GitLabGroupLookup(reachable=True, group=None)
-        logger.error("GitLab GET /groups/%s answered %s", group_path, response.status_code)
-        return GitLabGroupLookup(reachable=False, group=None)
+        if response is None or not response_ok("GitLab", endpoint, response):
+            return GitLabGroupLookup(reachable=False, group=None)
+        return GitLabGroupLookup(reachable=True, group=response.json())
 
     async def _resolve_sync_target_group(
         self,
         gitlab_project_id: int,
         gitlab_project_path: str,
-        gitlab_project_data: GitLabProjectDetails | None,
+        project: GitLabProjectDetails | None,
     ) -> GitLabSyncTarget:
         """Which GitLab group (id, path) should back the team for this project."""
-        if not gitlab_project_data or not gitlab_project_data.namespace:
+        if not project or not project.namespace:
             logger.warning(
                 f"Skipping team sync for project_id={gitlab_project_id} ({gitlab_project_path}): "
-                f"no GitLab project details available (likely access denied or 404 on /projects/{gitlab_project_id})."
+                "no GitLab project details available."
             )
             return _UNDETERMINED_TARGET
 
-        if gitlab_project_data.namespace.kind != "group":
+        if project.namespace.kind != "group":
             # Determined, not unknown: GitLab answered, and its answer is that a person owns this
             # project. A group owner it carries from before the move is retired on the strength of it.
             logger.info(
@@ -541,7 +437,7 @@ class GitLabService:
             )
             return _NO_OWNING_GROUP
 
-        namespace = gitlab_project_data.namespace
+        namespace = project.namespace
         group_id = namespace.id
         group_path = namespace.full_path
 
@@ -549,16 +445,16 @@ class GitLabService:
         # depth=2 -> "mo/edge", depth=0 -> full path.
         depth = getattr(self.instance, "team_sync_depth", 1)
         if depth <= 0:
-            return GitLabSyncTarget((group_id, group_path))
+            return GitLabSyncTarget(_OwningGroup(group_id, group_path))
 
         parts = group_path.split("/")
         truncated_path = "/".join(parts[:depth])
         if len(parts) <= depth:
-            return GitLabSyncTarget((group_id, truncated_path))
+            return GitLabSyncTarget(_OwningGroup(group_id, truncated_path))
 
-        parent = await self._resolve_group_by_path(truncated_path)
+        parent = await self._lookup_group(truncated_path)
         if parent.group:
-            return GitLabSyncTarget((parent.group["id"], truncated_path))
+            return GitLabSyncTarget(_OwningGroup(parent.group["id"], truncated_path))
 
         # An ancestor of a group this instance carries exists by construction, so a 404 here is a
         # group the token may not see rather than one that is gone. Either way, falling back to the
@@ -577,23 +473,25 @@ class GitLabService:
     @property
     def _member_source(self) -> str:
         """The provenance of a member this instance resolves, and the subset its sync replaces."""
-        return team_source(TEAM_SOURCE_GITLAB, str(self.instance.id))
+        return team_source(TEAM_SOURCE_GITLAB, self._instance_id)
 
     async def _build_team_members(
         self,
         gitlab_members: list[GitLabMember],
         user_repo: UserRepository,
-    ) -> tuple[list[TeamMember], int]:
-        """Resolve each GitLab member to an EXISTING local user, plus the unresolved count.
+    ) -> tuple[list[TeamMember], int, bool]:
+        """Resolve each GitLab member to an EXISTING local user: the owners, the unresolved count, and
+        whether anyone resolved at all.
 
         Tagged with this instance so the merge in ``_upsert_team_with_members`` refreshes only the
-        subset this instance established. Members without a verified local account are skipped —
-        sync never creates users (see ``_find_user``).
+        subset this instance established. Members without a verified local account are skipped:
+        a self-chosen username proves nothing, and sync never creates users.
         """
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
+        resolved_any = False
         for member in gitlab_members:
-            user = await self._find_user(member, user_repo)
+            user = await user_repo.get_raw_by_verified_email(member.email) if member.email else None
             if not user:
                 # No verified local account yet, or a GitLab service account/bot. Sync never
                 # creates users; a real member is added on their next sync after logging in via OIDC.
@@ -604,64 +502,60 @@ class GitLabService:
                     member.access_level,
                 )
                 continue
+            resolved_any = True
+            if (
+                (member.state or "active") != "active"
+                or member.membership_state == "awaiting"
+                or member.access_level < GITLAB_TEAM_MEMBER_MIN_ACCESS
+            ):
+                continue
             role = TEAM_ROLE_ADMIN if member.access_level >= GITLAB_ADMIN_MIN_ACCESS else TEAM_ROLE_MEMBER
-            user_id = str(user.get("_id", user.get("id")))
+            user_id = str(user["_id"])
             # Two GitLab members can resolve to one local user. A duplicate entry breaks
             # add_member's $ne guard, and a last-wins merge would silently demote the admin entry.
             previous = resolved.get(user_id)
             if previous is not None and previous.role == TEAM_ROLE_ADMIN:
                 continue
             resolved[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
-        return list(resolved.values()), unresolved
-
-    async def _find_user(
-        self,
-        member: GitLabMember,
-        user_repo: UserRepository,
-    ) -> dict[str, Any] | None:
-        """The EXISTING local user that verified the member's email; a self-chosen username proves nothing."""
-        if not member.email:
-            return None
-        return await user_repo.get_raw_by_verified_email(member.email)
+        return list(resolved.values()), unresolved, resolved_any
 
     async def _resolve_group_members(
         self,
         members: list[GitLabMember],
         user_repo: UserRepository,
-        team_name: str,
+        group_path: str,
         group_id: int,
     ) -> list[TeamMember] | None:
         """The members to store for a group, or None to leave the stored ones alone."""
-        team_members, unresolved = await self._build_team_members(members, user_repo)
-        if unresolved and not team_members:
+        team_members, unresolved, resolved_any = await self._build_team_members(members, user_repo)
+        if unresolved and not resolved_any:
             # A token that lost profile access resolves nobody; writing that would strip the
             # whole gitlab subset and read as a group everyone left.
             logger.warning(
                 "Resolved 0 of %d members of GitLab group '%s' (group_id=%d); leaving the existing members untouched.",
                 unresolved,
-                team_name,
+                group_path,
                 group_id,
             )
             return None
         return team_members
 
     @staticmethod
-    def _renamed_fields(team: dict[str, Any], group_path: str) -> dict[str, Any]:
-        """The name to follow GitLab with, while the team still carries the generated one.
+    def _renamed_fields(team: dict[str, Any], stored_path: str | None, group_path: str) -> dict[str, Any]:
+        """The name to follow GitLab with, while the team still carries the one this binding generated.
 
-        A team its owner renamed keeps that name for good: only the prefix marks a name as ours.
+        A team its owner renamed keeps that name for good, and so does one named after another
+        instance's binding: following it would rename the team back and forth between the two.
         """
-        current = str(team.get("name") or "")
-        generated = _auto_team_name(group_path)
-        if not current.startswith(_AUTO_TEAM_NAME_PREFIX) or current == generated:
+        if not stored_path or stored_path == group_path or team.get("name") != _auto_team_name(stored_path):
             return {}
-        return {"name": generated, "description": _auto_team_description(group_path)}
+        return {"name": _auto_team_name(group_path), "description": _auto_team_description(group_path)}
 
     async def _refresh_team(
         self,
         team_repo: TeamRepository,
         team: dict[str, Any],
-        binding: GitLabGroupBinding,
+        group_id: int,
         group_path: str,
         team_members: list[TeamMember] | None,
     ) -> None:
@@ -670,7 +564,8 @@ class GitLabService:
         ``team_members`` is None to leave the stored members alone, which the rename must not hang
         on: a group whose members none resolve would otherwise never follow a rename.
         """
-        updates: dict[str, Any] = self._renamed_fields(team, group_path)
+        stored_path = (binding_of(team, self._instance_id) or {}).get("path")
+        updates: dict[str, Any] = self._renamed_fields(team, stored_path, group_path)
         # Handed to the server as the subset to replace rather than merged here: the snapshot is
         # several round trips old, and a member added in between would be written back out of the
         # team after the add had already reported success.
@@ -679,16 +574,15 @@ class GitLabService:
             if team_members is not None
             else None
         )
-        stored = binding_of(team, binding.instance_id) or {}
         # A group that was renamed or moved has to carry the path GitLab reports now, including on
         # a team bound by hand before any sync ran.
-        binding_fields = {"path": group_path} if stored.get("path") != group_path else {}
+        binding_fields = {"path": group_path} if stored_path != group_path else {}
         if not updates and not binding_fields and subset is None:
             return
         await team_repo.update_with_binding(
             team["_id"],
-            {**updates, "updated_at": datetime.now(timezone.utc)},
-            binding.key,
+            updates,
+            team_binding_key(TEAM_SOURCE_GITLAB, self._instance_id, group_id),
             binding_fields,
             subset,
         )
@@ -697,38 +591,41 @@ class GitLabService:
         self,
         team_repo: TeamRepository,
         existing_team: dict[str, Any] | None,
-        instance_id: str,
         group_id: int,
         group_path: str,
         team_members: list[TeamMember] | None,
-    ) -> str | None:
-        """The team backing the group, refreshed or created; None when there is nothing to create."""
-        binding = GitLabGroupBinding(instance_id=instance_id, external_id=group_id, path=group_path)
+    ) -> TeamSyncResult:
+        """The team backing the group, refreshed or created.
+
+        No team and none creatable is an answer, not a failure: the group's members are all
+        strangers here, so nothing in Dependency Control owns the project.
+        """
         if existing_team:
-            await self._refresh_team(team_repo, existing_team, binding, group_path, team_members)
-            return str(existing_team["_id"])
-        if team_members:
-            new_team = Team(
+            await self._refresh_team(team_repo, existing_team, group_id, group_path, team_members)
+            return TeamSyncResult([str(existing_team["_id"])])
+        if not team_members:
+            return TeamSyncResult([])
+        created = await team_repo.create_bound(
+            Team(
                 name=_auto_team_name(group_path),
                 description=_auto_team_description(group_path),
-                bindings=[binding],
+                bindings=[GitLabGroupBinding(instance_id=self._instance_id, external_id=group_id, path=group_path)],
                 members=team_members,
             )
-            await team_repo.create(new_team)
-            return str(new_team.id)
-        return None
+        )
+        return TeamSyncResult([str(created["_id"])] if created else None)
 
     async def _read_owning_group(
         self,
         gitlab_project_id: int,
         gitlab_project_path: str,
-        gitlab_project_data: GitLabProjectDetails | None,
     ) -> tuple[GitLabSyncTarget, list[GitLabMember] | None]:
         """Everything this sync asks GitLab for: the owning group, and the members it holds."""
-        target = await self._resolve_sync_target_group(gitlab_project_id, gitlab_project_path, gitlab_project_data)
+        project = await self.get_project_details(gitlab_project_id)
+        target = await self._resolve_sync_target_group(gitlab_project_id, gitlab_project_path, project)
         if target.group is None:
             return target, None
-        members = await self.get_group_members(target.group[0])
+        members = await self.get_group_members(target.group.id)
         return target, None if members is None else await self._with_public_emails(members)
 
     async def sync_team_from_gitlab(
@@ -736,12 +633,16 @@ class GitLabService:
         db: AsyncIOMotorDatabase,
         gitlab_project_id: int,
         gitlab_project_path: str,
-        gitlab_project_data: GitLabProjectDetails | None = None,
-    ) -> GitLabTeamSyncResult:
+        *,
+        owner_budget: int = MAX_PROJECT_TEAMS,
+    ) -> TeamSyncResult:
         """Sync the GitLab group's members to a local Team and report which team owns the project.
 
         Undetermined on any failure: the owning group is what GitLab was asked for, and an
         unanswered question must not read as "this project has no GitLab owner".
+
+        ``owner_budget`` is how many owners the project has room for. Below one no team is created:
+        a team created for an ownership write that is then refused is a team nobody owns anything through.
 
         Never raises.
         """
@@ -753,9 +654,7 @@ class GitLabService:
                 # Only the reads are bounded: cancelling them costs nothing, while cancelling the
                 # write would leave the team half-refreshed for no gain.
                 async with asyncio.timeout(_GITLAB_RESOLUTION_TIMEOUT):
-                    target, members = await self._read_owning_group(
-                        gitlab_project_id, gitlab_project_path, gitlab_project_data
-                    )
+                    target, members = await self._read_owning_group(gitlab_project_id, gitlab_project_path)
             except TimeoutError:
                 logger.warning(
                     "Resolving the owning group of project_id=%s (%s) took longer than %.0fs; "
@@ -764,42 +663,37 @@ class GitLabService:
                     gitlab_project_path,
                     _GITLAB_RESOLUTION_TIMEOUT,
                 )
-                return GitLabTeamSyncResult(None)
+                return TeamSyncResult(None)
 
             if not target.determined:
-                return GitLabTeamSyncResult(None)
+                return TeamSyncResult(None)
             if target.group is None:
-                return GitLabTeamSyncResult([])
+                return TeamSyncResult([])
 
             group_id, group_path = target.group
-            team_name = _auto_team_name(group_path)
-            instance_id = str(self.instance.id)
+            # Only by the (instance, group) key: two instances can each carry a group of the same path.
+            existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, self._instance_id, group_id)
 
             if members is None:
                 logger.warning(
-                    f"Failed to fetch members for group '{team_name}' (group_id={group_id}) "
-                    f"while syncing project_id={gitlab_project_id}. Skipping member sync."
+                    "Failed to fetch members for GitLab group '%s' (group_id=%d) while syncing project_id=%s; "
+                    "its team keeps its members, and without a team the owner stays undetermined.",
+                    group_path,
+                    group_id,
+                    gitlab_project_id,
                 )
-                # Match ONLY by the (instance, group) composite key. A name-based fallback
-                # is unsafe: two instances owning a same-path group would collide cross-tenant.
-                team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, instance_id, group_id)
-                if team:
-                    return GitLabTeamSyncResult([str(team["_id"])])
-                logger.warning(
-                    f"No existing team for group '{team_name}' (group_id={group_id}); "
-                    f"the owner of project_id={gitlab_project_id} stays undetermined."
-                )
-                return GitLabTeamSyncResult(None)
+                return TeamSyncResult([str(existing_team["_id"])] if existing_team else None)
 
-            # Match ONLY by the (instance, group) composite key (see the failed-fetch branch above).
-            existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, instance_id, group_id)
-            team_members = await self._resolve_group_members(members, user_repo, team_name, group_id)
-            team_id = await self._upsert_team_with_members(
-                team_repo, existing_team, instance_id, group_id, group_path, team_members
-            )
-            # No team and none creatable is an answer, not a failure: the group's members are all
-            # strangers here, so nothing in Dependency Control owns the project.
-            return GitLabTeamSyncResult([team_id] if team_id else [])
+            if existing_team is None and owner_budget < 1:
+                logger.warning(
+                    "Project_id=%s has no room for another owner; no team is created for GitLab group '%s'.",
+                    gitlab_project_id,
+                    group_path,
+                )
+                return TeamSyncResult(None)
+
+            team_members = await self._resolve_group_members(members, user_repo, group_path, group_id)
+            return await self._upsert_team_with_members(team_repo, existing_team, group_id, group_path, team_members)
 
         except Exception as e:
             logger.exception(
@@ -809,4 +703,4 @@ class GitLabService:
                 type(e).__name__,
                 e,
             )
-            return GitLabTeamSyncResult(None)
+            return TeamSyncResult(None)

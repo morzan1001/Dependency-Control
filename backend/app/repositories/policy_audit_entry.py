@@ -1,4 +1,4 @@
-"""MongoDB access for crypto_policy_history; a policy_type discriminator (default crypto) lets crypto and license policies share one collection, and docs missing the field are treated as crypto."""
+"""MongoDB access for crypto_policy_history; every read names its policy_type, so crypto and license policies share one collection, and docs missing the field are treated as crypto."""
 
 from datetime import datetime
 from typing import Any, Literal
@@ -25,7 +25,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         *,
         policy_scope: Literal["system", "project"],
         project_id: str | None = None,
-        policy_type: PolicyType = "crypto",
+        policy_type: PolicyType,
         skip: int = 0,
         limit: int = 50,
     ) -> list[PolicyAuditEntry]:
@@ -51,7 +51,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         policy_scope: str,
         project_id: str | None,
         version: int,
-        policy_type: PolicyType = "crypto",
+        policy_type: PolicyType,
     ) -> PolicyAuditEntry | None:
         query: dict[str, Any] = {
             "policy_scope": policy_scope,
@@ -68,7 +68,7 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         *,
         policy_scope: Literal["system", "project"],
         project_id: str | None,
-        policy_type: PolicyType = "crypto",
+        policy_type: PolicyType,
     ) -> int:
         query: dict[str, Any] = {
             "policy_scope": policy_scope,
@@ -84,12 +84,13 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         policy_scope: str,
         project_id: str | None,
         cutoff: datetime,
+        policy_type: PolicyType,
     ) -> int:
         query: dict[str, Any] = {
             "policy_scope": policy_scope,
             "project_id": project_id,
             "timestamp": {"$lt": cutoff},
-            **_policy_type_filter("crypto"),
+            **_policy_type_filter(policy_type),
         }
         result = await self.collection.delete_many(query)
         return result.deleted_count

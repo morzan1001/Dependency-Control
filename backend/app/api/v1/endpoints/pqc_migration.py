@@ -20,8 +20,10 @@ from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
+from app.services.notifications.service import safe_notify_project_event
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from app.services.pqc_migration.mappings_loader import CURRENT_MAPPINGS_VERSION
+from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
 
@@ -73,8 +75,6 @@ async def _fire_pqc_webhook(
     resolved: ResolvedScope,
 ) -> None:
     """Best-effort webhook dispatch for the PQC migration plan; exceptions are logged, never raised."""
-    from app.services.webhooks import webhook_service
-
     payload = {
         "event": WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -92,9 +92,7 @@ async def _fire_pqc_webhook(
         context="pqc_migration",
     )
 
-    if resolved.scope == "project" and resolved.scope_id:
-        from app.services.notifications.service import safe_notify_project_event
-
+    if resolved.scope == "project":
         await safe_notify_project_event(
             db,
             project_id=resolved.scope_id,

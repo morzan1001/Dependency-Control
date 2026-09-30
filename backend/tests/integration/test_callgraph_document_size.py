@@ -23,7 +23,7 @@ def _madge(files: int, path_length: int, packages: int) -> dict[str, list[str]]:
 
 async def _upload(client, data: dict[str, list[str]]):
     with patch(
-        "app.api.deps.get_project_for_ingest",
+        "app.api.deps._authenticate_ci",
         new_callable=AsyncMock,
         return_value=Project(id=_PROJECT_ID, name="test-project"),
     ):

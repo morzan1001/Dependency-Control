@@ -15,7 +15,7 @@ function githubInstance(overrides: Partial<GitHubInstance> = {}): GitHubInstance
     auto_create_projects: false,
     sync_teams: false,
     allowed_owner_ids: [],
-    has_access_token: true,
+    token_configured: true,
     created_at: '2026-09-01T00:00:00Z',
     created_by: 'admin',
     ...overrides,
@@ -28,7 +28,6 @@ function gitlabInstance(overrides: Partial<GitLabInstance> = {}): GitLabInstance
     name: 'GitLab.com',
     url: 'https://gitlab.com',
     is_active: true,
-    is_default: false,
     auto_create_projects: false,
     sync_teams: false,
     team_sync_depth: 1,
@@ -60,6 +59,14 @@ describe('mergeInstances', () => {
     const gitlab = merged.find((instance) => instance._type === 'gitlab')
     expect(github?.allowed_owner_ids).toEqual(['111'])
     expect(gitlab?.allowed_namespaces).toEqual(['acme'])
+  })
+
+  it('carries the token flag through under one name for both providers', () => {
+    const merged = mergeInstances(
+      [gitlabInstance({ token_configured: false })],
+      [githubInstance({ token_configured: false })],
+    )
+    expect(merged.map((instance) => instance.token_configured)).toEqual([false, false])
   })
 })
 

@@ -12,9 +12,8 @@ import pytest
 from app.api.deps import _github_team_sync_stages, _gitlab_team_sync_stages
 from app.core.constants import MAX_PROJECT_TEAMS, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.project import Project
+from app.models.team import TeamSyncResult
 from app.repositories.projects import ProjectRepository
-from app.services.github import GitHubTeamSyncResult
-from app.services.gitlab import GitLabTeamSyncResult
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT_ID = "p-1"
@@ -50,16 +49,15 @@ async def _gitlab_sync(
     db, project: Project, resolved: list[str] | None, instance_id: str = _GITLAB_INSTANCE
 ) -> tuple[dict, list[dict]]:
     service = MagicMock()
-    service.get_project_details = AsyncMock(return_value=MagicMock())
-    service.sync_team_from_gitlab = AsyncMock(return_value=GitLabTeamSyncResult(resolved))
+    service.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(resolved))
     stages = await _gitlab_team_sync_stages(project, instance_id, 100, "grp/proj", service, db)
     return await _apply(db, project, stages), stages
 
 
 async def _github_sync(db, project: Project, resolved: list[str] | None) -> tuple[dict, list[dict]]:
     service = MagicMock()
-    service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(resolved))
-    stages = await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme", "acme/widgets", service, db)
+    service.sync_team_from_github = AsyncMock(return_value=TeamSyncResult(resolved))
+    stages = await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme/widgets", service, db)
     return await _apply(db, project, stages), stages
 
 
@@ -268,17 +266,17 @@ async def test_the_service_is_asked_about_the_repository_the_token_names():
     db = FakeDatabase()
     project = await _seed(db, team_ids=[], team_sources={})
     service = MagicMock()
-    service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult([]))
+    service.sync_team_from_github = AsyncMock(return_value=TeamSyncResult([]))
 
-    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme-org", "acme/widgets", service, db)
+    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme/widgets", service, db)
 
     service.sync_team_from_github.assert_awaited_once_with(
-        db, "acme-org", "acme/widgets", owner_budget=MAX_PROJECT_TEAMS
+        db, "acme/widgets", current_owner_ids=set(), owner_budget=MAX_PROJECT_TEAMS
     )
 
 
 @pytest.mark.asyncio
-async def test_the_provider_is_told_how_much_room_the_project_has_left():
+async def test_the_provider_is_told_which_owners_it_replaces_and_how_much_room_is_left():
     """Told rather than only checked afterwards: GitHub creates the teams it names, and a resolution
     refused after the fact would leave those teams owning nothing."""
     db = FakeDatabase()
@@ -289,11 +287,32 @@ async def test_the_provider_is_told_how_much_room_the_project_has_left():
         team_sources={**dict.fromkeys(others, "manual"), "gh-a": _GITHUB},
     )
     service = MagicMock()
-    service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(["gh-a"]))
+    service.sync_team_from_github = AsyncMock(return_value=TeamSyncResult(["gh-a"]))
 
-    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme-org", "acme/widgets", service, db)
+    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme/widgets", service, db)
 
-    assert service.sync_team_from_github.await_args.kwargs == {"owner_budget": MAX_PROJECT_TEAMS - 4}
+    assert service.sync_team_from_github.await_args.kwargs == {
+        "current_owner_ids": {"gh-a"},
+        "owner_budget": MAX_PROJECT_TEAMS - 4,
+    }
+
+
+@pytest.mark.asyncio
+async def test_gitlab_reads_the_project_itself_and_is_told_how_much_room_is_left():
+    db = FakeDatabase()
+    others = [f"m-{n}" for n in range(4)]
+    project = await _seed(
+        db,
+        team_ids=[*others, "gl-a"],
+        team_sources={**dict.fromkeys(others, "manual"), "gl-a": _GITLAB},
+    )
+    service = MagicMock()
+    service.sync_team_from_gitlab = AsyncMock(return_value=TeamSyncResult(["gl-a"]))
+
+    await _gitlab_team_sync_stages(project, _GITLAB_INSTANCE, 100, "grp/proj", service, db)
+
+    service.sync_team_from_gitlab.assert_awaited_once_with(db, 100, "grp/proj", owner_budget=MAX_PROJECT_TEAMS - 4)
+    service.get_project_details.assert_not_called()
 
 
 @pytest.mark.asyncio
