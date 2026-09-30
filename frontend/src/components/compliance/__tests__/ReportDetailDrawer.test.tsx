@@ -123,6 +123,18 @@ describe("ReportDetailDrawer", () => {
     expect(screen.queryByText(PARTIAL_WARNING)).not.toBeInTheDocument();
   });
 
+  it("names five gaps and counts the rest", () => {
+    const gaps = ["a", "b", "c", "d", "e", "f", "g"].map((name) => `project '${name}' has no usable scan`);
+    const gapped: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: { findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED }, gaps },
+    };
+    withClient(<ReportDetailDrawer report={gapped} onClose={() => {}} />);
+
+    const notice = screen.getByText(/project 'e' has no usable scan and 2 more\./);
+    expect(notice.textContent).not.toContain("project 'f'");
+  });
+
   it("shows how many verdicts the cap withheld", () => {
     const withheld: ComplianceReportMeta = {
       ...sampleReport,

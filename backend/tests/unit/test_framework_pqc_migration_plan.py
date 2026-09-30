@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.schemas.compliance import ReportFramework
+from app.schemas.compliance import EvaluationCoverage, ReportFramework
 from app.schemas.pqc_migration import (
     MigrationItem,
     MigrationItemStatus,
@@ -91,6 +91,16 @@ async def test_a_complete_plan_reports_complete_coverage():
     result = await _evaluate(_plan())
 
     assert result.coverage.complete is True
+
+
+@pytest.mark.asyncio
+async def test_a_plan_keeps_the_scope_gaps_the_engine_found():
+    gap = "project 'payments' has no usable scan"
+
+    result = await _evaluate(_plan(), coverage=EvaluationCoverage(gaps=[gap]))
+
+    assert result.coverage.gaps == [gap]
+    assert result.coverage.complete is False
 
 
 def test_framework_identity():
