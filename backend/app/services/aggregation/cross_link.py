@@ -31,7 +31,6 @@ def cross_link_pair(f1: Finding, f2: Finding) -> None:
         add_context_to_vulnerability(primary, other)
         _add_vulnerability_context(primary, other)
         _add_scorecard_context(primary, other)
-        _record_additional_type(primary, other)
 
 
 def is_ahead_of_default(finding_type: str, details: dict[str, Any] | None) -> bool:
@@ -39,23 +38,25 @@ def is_ahead_of_default(finding_type: str, details: dict[str, Any] | None) -> bo
     return finding_type == FindingType.OUTDATED and bool((details or {}).get("ahead_of_default"))
 
 
-def _record_additional_type(finding: Finding, other: Finding) -> None:
-    """List the other finding types this package carries, for the multi-type badge row."""
-    if finding.type == other.type or is_ahead_of_default(other.type, other.details):
-        return
+def record_additional_types(group: list[Finding]) -> None:
+    """List the other finding types a finding's package carries at its version, for the multi-type badge row."""
+    by_version: dict[str, dict[str, str]] = {}
+    for finding in group:
+        if not is_ahead_of_default(finding.type, finding.details):
+            severities = by_version.setdefault(finding.version or "", {})
+            severities[finding.type] = max_severity(severities.get(finding.type, finding.severity), finding.severity)
 
-    # use_enum_values=True stores the raw strings, so no .value here.
-    other_type = str(other.type)
-    severity = str(other.severity)
-    types: list[dict[str, str]] = finding.details.setdefault("additional_finding_types", [])
-    for entry in types:
-        if entry["type"] == other_type:
-            entry["severity"] = max_severity(entry["severity"], severity)
-            return
-
-    types.append({"type": other_type, "severity": severity})
-    # Pairs are visited in list order; sort so the badge row does not depend on it.
-    types.sort(key=lambda entry: entry["type"])
+    for finding in group:
+        others: dict[str, str] = {}
+        for version, severities in by_version.items():
+            if _same_version(version, finding.version):
+                for finding_type, severity in severities.items():
+                    others[finding_type] = max_severity(others.get(finding_type, severity), severity)
+        others.pop(finding.type, None)
+        if others:
+            finding.details["additional_finding_types"] = [
+                {"type": finding_type, "severity": severity} for finding_type, severity in sorted(others.items())
+            ]
 
 
 def _same_version(a: str | None, b: str | None) -> bool:

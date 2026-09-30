@@ -311,8 +311,8 @@ class ScanFindingItem(BaseModel):
     related_findings: list[str] = Field(default_factory=list, description="Related finding IDs")
     related_findings_omitted: int | None = Field(
         None,
-        description="Same-component findings left unlinked because the group exceeded the "
-        "cross-linking ceiling; None when the list above is complete",
+        description="Same-component findings left unlinked: same-type hits in one file, or every "
+        "sibling past the cross-linking ceiling; None when the list above is complete",
     )
     created_at: datetime | None = Field(None, description="When the finding was created")
 

@@ -1,6 +1,7 @@
 """ResultAggregator - aggregates findings from multiple analyzers."""
 
 import re
+from collections import Counter
 from typing import Any
 
 from app.core.constants import (
@@ -24,7 +25,7 @@ from app.services.component_identity import (
     extract_artifact_name,
     normalize_component,
 )
-from app.services.aggregation.cross_link import cross_link_pair
+from app.services.aggregation.cross_link import cross_link_pair, record_additional_types
 from app.services.aggregation.merging import (
     absorb_header,
     merge_findings_data,
@@ -375,23 +376,19 @@ class ResultAggregator:
 
         return final_findings
 
-    def _link_finding_group(self, component_findings: list[Finding]) -> None:
+    @staticmethod
+    def _link_finding_group(component_findings: list[Finding], link_same_type: bool) -> None:
         for i, f1 in enumerate(component_findings):
             for f2 in component_findings[i + 1 :]:
-                if f1.id == f2.id:
-                    continue
-                cross_link_pair(f1, f2)
+                if f1.id != f2.id and (link_same_type or f1.type != f2.type):
+                    cross_link_pair(f1, f2)
 
     def _link_related_findings_by_component(self, findings: list[Finding]) -> None:
         """Link findings for the same package, or the same file path, to each other.
 
-        Groups past ``MAX_CROSS_LINK_GROUP_SIZE`` are left unlinked but not unmarked: a file
-        carrying thousands of SAST hits is one "component" here, linking it pairwise costs more
-        than it tells anyone, and an empty ``related_findings`` reads the same as a finding with
-        no siblings at all. ``related_findings_omitted`` carries the sibling count the list would
-        have held so the two cases stop looking alike. Only ``related_findings`` and the
-        ``details`` context blocks depend on this, never a severity, a count or a score — which
-        is why the ceiling is safe on the persisted path too.
+        ``related_findings_omitted`` counts the siblings left unlinked: same-type hits in one file,
+        which exchange no context but grow quadratically, and every sibling past
+        ``MAX_CROSS_LINK_GROUP_SIZE``. No severity, count or score depends on the links.
         """
         representatives = cluster_by_package_identity(
             f.component for f in findings if f.component and f.type in PACKAGE_FINDING_TYPES
@@ -407,15 +404,19 @@ class ResultAggregator:
                 key = ("file", f.component.strip())
             component_map.setdefault(key, []).append(f)
 
-        for component_findings in component_map.values():
+        for (kind, _), component_findings in component_map.items():
             if len(component_findings) <= 1:
                 continue
-            if len(component_findings) <= MAX_CROSS_LINK_GROUP_SIZE:
-                self._link_finding_group(component_findings)
+            record_additional_types(component_findings)
+            if len(component_findings) > MAX_CROSS_LINK_GROUP_SIZE:
+                for finding in component_findings:
+                    finding.related_findings_omitted = len(component_findings) - 1
                 continue
-            siblings = len(component_findings) - 1
-            for finding in component_findings:
-                finding.related_findings_omitted = siblings
+            self._link_finding_group(component_findings, link_same_type=kind == "package")
+            if kind == "file":
+                type_counts = Counter(f.type for f in component_findings)
+                for finding in component_findings:
+                    finding.related_findings_omitted = type_counts[finding.type] - 1 or None
 
     def get_dependency_enrichments(self) -> list[dict[str, Any]]:
         """Enrichment entries for persistence: canonical purl (the match key), name/version (purl-less match), payload."""

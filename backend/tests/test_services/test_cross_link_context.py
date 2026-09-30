@@ -7,7 +7,7 @@ import pytest
 
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
-from app.services.aggregation.cross_link import cross_link_pair
+from app.services.aggregation.cross_link import cross_link_pair, record_additional_types
 from app.services.analyzers.end_of_life import EndOfLifeAnalyzer
 from app.services.analyzers.license_compliance.analyzer import LicenseAnalyzer
 from app.services.analyzers.outdated import OutdatedAnalyzer
@@ -47,7 +47,7 @@ class TestAdditionalFindingTypes:
         vuln = _vuln()
         outdated = _finding("OUTDATED-lodash", FindingType.OUTDATED, Severity.MEDIUM, "lodash")
 
-        cross_link_pair(vuln, outdated)
+        record_additional_types([vuln, outdated])
 
         assert vuln.details["additional_finding_types"] == [{"type": "outdated", "severity": "MEDIUM"}]
         assert outdated.details["additional_finding_types"] == [{"type": "vulnerability", "severity": "CRITICAL"}]
@@ -56,7 +56,7 @@ class TestAdditionalFindingTypes:
         a = _finding("LIC-A", FindingType.LICENSE, Severity.HIGH, "lodash")
         b = _finding("LIC-B", FindingType.LICENSE, Severity.LOW, "lodash")
 
-        cross_link_pair(a, b)
+        record_additional_types([a, b])
 
         assert "additional_finding_types" not in a.details
 
@@ -66,13 +66,26 @@ class TestAdditionalFindingTypes:
         quality_high = _finding("Q-2", FindingType.QUALITY, Severity.HIGH, "lodash")
         eol = _finding("EOL-1", FindingType.EOL, Severity.MEDIUM, "lodash")
 
-        cross_link_pair(vuln, quality_low)
-        cross_link_pair(vuln, eol)
-        cross_link_pair(vuln, quality_high)
+        record_additional_types([vuln, quality_low, eol, quality_high])
 
         assert vuln.details["additional_finding_types"] == [
             {"type": "eol", "severity": "MEDIUM"},
             {"type": "quality", "severity": "HIGH"},
+        ]
+
+    def test_only_the_same_version_or_a_versionless_finding_counts(self):
+        vuln = _vuln()
+        eol = _finding("EOL-1", FindingType.EOL, Severity.MEDIUM, "lodash")
+        eol.version = "3.0.0"
+        license_finding = _finding("LIC-MIT", FindingType.LICENSE, Severity.LOW, "lodash")
+        license_finding.version = ""
+
+        record_additional_types([vuln, eol, license_finding])
+
+        assert vuln.details["additional_finding_types"] == [{"type": "license", "severity": "LOW"}]
+        assert license_finding.details["additional_finding_types"] == [
+            {"type": "eol", "severity": "MEDIUM"},
+            {"type": "vulnerability", "severity": "CRITICAL"},
         ]
 
 
@@ -137,6 +150,7 @@ class TestContextStaysWithItsVersion:
         outdated.version = "3.0.0"
 
         cross_link_pair(vuln, outdated)
+        record_additional_types([vuln, outdated])
 
         assert outdated.id in vuln.related_findings
         assert vuln.id in outdated.related_findings

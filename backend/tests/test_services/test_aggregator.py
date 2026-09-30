@@ -926,28 +926,72 @@ class TestGetFindings:
         assert [e["id"] for e in entries] == ["CVE-2026-1", "CVE-2026-5", "CVE-2026-9"]
 
     def _add_sast_findings_on_one_file(self, count):
-        for index in range(count):
-            self.agg.add_finding(
-                Finding(
-                    id=f"SAST-{index}",
-                    type=FindingType.SAST,
-                    severity=Severity.MEDIUM,
-                    component=_CROWDED_FILE,
-                    version="",
-                    description="eval() detected",
-                    scanners=["opengrep"],
-                    details={"line": index + 1, "rule_id": f"rule-{index}"},
-                )
-            )
+        self.agg.aggregate(
+            "opengrep",
+            {
+                "results": [
+                    {
+                        "check_id": f"rules.python.eval-{index}",
+                        "path": _CROWDED_FILE,
+                        "start": {"line": index + 1, "col": 1},
+                        "end": {"line": index + 1, "col": 20},
+                        "extra": {"severity": "WARNING", "message": "eval() detected", "metadata": {}},
+                    }
+                    for index in range(count)
+                ]
+            },
+        )
 
-    def test_a_group_at_the_cap_is_still_cross_linked(self):
+    def _add_secret_on_the_crowded_file(self):
+        self.agg.aggregate(
+            "trufflehog",
+            {
+                "findings": [
+                    {
+                        "DetectorType": "2",
+                        "Raw": "AKIAIOSFODNN7EXAMPLE",
+                        "Verified": True,
+                        "SourceMetadata": {"Data": {"Filesystem": {"file": _CROWDED_FILE}}},
+                    }
+                ]
+            },
+        )
+
+    def test_same_type_hits_in_one_file_are_counted_not_linked(self):
+        """Pairwise ids of one file's SAST hits grow quadratically and exchange no context."""
         self._add_sast_findings_on_one_file(MAX_CROSS_LINK_GROUP_SIZE)
 
         findings = self.agg.get_findings()
 
         assert len(findings) == MAX_CROSS_LINK_GROUP_SIZE
-        assert all(len(f.related_findings) == MAX_CROSS_LINK_GROUP_SIZE - 1 for f in findings)
-        assert all(f.related_findings_omitted is None for f in findings)
+        assert all(f.related_findings == [] for f in findings)
+        assert all(f.related_findings_omitted == MAX_CROSS_LINK_GROUP_SIZE - 1 for f in findings)
+
+    def test_different_types_in_one_file_link_to_each_other(self):
+        self._add_sast_findings_on_one_file(2)
+        self._add_secret_on_the_crowded_file()
+
+        findings = self.agg.get_findings()
+
+        [secret] = [f for f in findings if f.type == FindingType.SECRET]
+        sast = [f for f in findings if f.type == FindingType.SAST]
+        assert sorted(secret.related_findings) == sorted(f.id for f in sast)
+        assert secret.related_findings_omitted is None
+        assert secret.details["additional_finding_types"] == [{"type": "sast", "severity": "MEDIUM"}]
+        for hit in sast:
+            assert hit.related_findings == [secret.id]
+            assert hit.related_findings_omitted == 1
+            assert hit.details["additional_finding_types"] == [{"type": "secret", "severity": "CRITICAL"}]
+
+    def test_a_group_past_the_cap_keeps_its_badges(self):
+        self._add_sast_findings_on_one_file(MAX_CROSS_LINK_GROUP_SIZE)
+        self._add_secret_on_the_crowded_file()
+
+        findings = self.agg.get_findings()
+
+        [secret] = [f for f in findings if f.type == FindingType.SECRET]
+        assert secret.related_findings == []
+        assert secret.details["additional_finding_types"] == [{"type": "sast", "severity": "MEDIUM"}]
 
     def test_a_group_past_the_cap_is_left_unlinked(self):
         """Pairwise linking of one crowded file is quadratic and tells a reader nothing."""

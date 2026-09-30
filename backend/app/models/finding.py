@@ -83,8 +83,8 @@ class Finding(BaseModel):
     )
     related_findings_omitted: int | None = Field(
         None,
-        description="Same-component findings this one was not linked to because the group exceeded "
-        "the cross-linking ceiling; None when the list above is complete",
+        description="Same-component findings this one was not linked to: same-type hits in one file, "
+        "or every sibling past the cross-linking ceiling; None when the list above is complete",
     )
 
     # Status fields
