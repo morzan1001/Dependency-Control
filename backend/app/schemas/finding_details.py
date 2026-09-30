@@ -10,6 +10,7 @@ test failure instead of a silently-empty feature.
 re-validation; it does not exempt readers from declaring what they consume.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -410,6 +411,15 @@ class CryptoRuleDetails(_DetailsModel):
     primitive: str | None = None
     references: list[Any] = []
     occurrence_count: int | None = None
+
+
+def all_rule_ids(details: Mapping[str, Any] | None) -> set[str]:
+    """Every rule a crypto finding belongs to: the lead rule_id plus each matched_rules entry."""
+    details = details or {}
+    ids = {entry["rule_id"] for entry in details.get("matched_rules") or [] if entry.get("rule_id")}
+    if lead := details.get("rule_id"):
+        ids.add(lead)
+    return ids
 
 
 class CryptoCertificateDetails(_DetailsModel):

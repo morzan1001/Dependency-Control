@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from app.core.config import settings
 from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
@@ -223,8 +224,8 @@ class ComplianceReportEngine:
         if key == ReportFramework.LICENSE_AUDIT:
             return "license"
         if key is None:
-            return {"$regex": "^crypto_|^vulnerability$|^license$"}
-        return {"$regex": "^crypto_"}
+            return {"$in": sorted(CRYPTO_FINDING_TYPES | {"vulnerability", "license"})}
+        return {"$in": sorted(CRYPTO_FINDING_TYPES)}
 
     async def _resolve_license_policy(
         self,

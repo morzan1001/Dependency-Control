@@ -7,10 +7,14 @@ population beside it reads as the whole list of offenders.
 
 import pytest
 
+from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
 from app.models.user import User
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.services.analyzers.crypto.base import crypto_findings_for_assets
 from app.services.chat.tools import ChatToolRegistry
 from app.services.chat.tools.crypto_tools import _NOISY_RULE_SAMPLE, suggest_crypto_policy_override
+from app.services.crypto_policy.seeder import load_seed_rules
 from tests.helpers.permission_presets import PRESET_ADMIN
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -145,3 +149,26 @@ async def test_a_scan_with_no_crypto_findings_reports_an_empty_population():
 
     assert result["top_noisy_rules"] == []
     assert result["top_noisy_rules_total"] == 0
+
+
+@pytest.mark.asyncio
+async def test_the_noisy_rule_sample_counts_every_rule_a_finding_matched():
+    """Disabling a finding's lead rule leaves it standing under the other rules it matched."""
+    db = FakeDatabase()
+    md5 = CryptoAsset(
+        project_id=_PROJECT,
+        scan_id=_SCAN,
+        bom_ref="crypto/algorithm/md5",
+        name="MD5",
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.HASH,
+    )
+    (finding,) = crypto_findings_for_assets([md5], load_seed_rules(), scanner="crypto_weak_algorithm")
+    db.findings._docs[finding["id"]] = {**finding, "_id": finding["id"], "project_id": _PROJECT, "scan_id": _SCAN}
+    matched = sorted(entry["rule_id"] for entry in finding["details"]["matched_rules"])
+
+    result = await suggest_crypto_policy_override(db, project_id=_PROJECT, scan_id=_SCAN)
+
+    assert len(matched) > 1
+    assert result["top_noisy_rules"] == [{"rule_id": rule_id, "findings": 1} for rule_id in matched]
+    assert result["top_noisy_rules_total"] == len(matched)

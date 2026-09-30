@@ -21,6 +21,7 @@ from app.schemas.compliance import (
     ResidualRisk,
 )
 from app.schemas.crypto_policy import CryptoRule
+from app.schemas.finding_details import all_rule_ids
 from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.analyzers.crypto.matcher import asset_in_rule_scope
@@ -150,22 +151,10 @@ def default_evaluator(
     )
 
 
-def _finding_rule_ids(finding: dict) -> set:
-    """All rule_ids a finding attributes itself to (lead details.rule_id plus details.matched_rules)."""
-    details = finding.get("details") or {}
-    ids: set = set()
-    if lead_id := details.get("rule_id"):
-        ids.add(lead_id)
-    for m in details.get("matched_rules") or []:
-        if isinstance(m, dict) and m.get("rule_id"):
-            ids.add(m["rule_id"])
-    return ids
-
-
 def _finding_matches_control(finding: dict, control: ControlDefinition) -> bool:
     # The control's finding types come from the seed; its rule_ids survive an admin retyping the rule.
     if control.maps_to_rule_ids:
-        return bool(_finding_rule_ids(finding) & set(control.maps_to_rule_ids))
+        return bool(all_rule_ids(finding.get("details")) & set(control.maps_to_rule_ids))
     return finding.get("type") in control.maps_to_finding_types
 
 

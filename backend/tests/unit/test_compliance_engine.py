@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.metrics import compliance_reports_total
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.schemas.project import LicensePolicySchema
@@ -347,7 +348,7 @@ async def test_gather_inputs_keeps_crypto_filter_for_crypto_framework():
 
     await _run_gather(engine, db, resolved, NistSp800_131aFramework())
 
-    assert captured["findings_query"]["type"] == {"$regex": "^crypto_"}
+    assert captured["findings_query"]["type"] == {"$in": sorted(CRYPTO_FINDING_TYPES)}
 
 
 @pytest.mark.asyncio
@@ -359,8 +360,7 @@ async def test_gather_inputs_union_filter_when_framework_unknown():
 
     await _run_gather(engine, db, resolved, None)
 
-    regex = captured["findings_query"]["type"]["$regex"]
-    assert "crypto_" in regex and "vulnerability" in regex and "license" in regex
+    assert captured["findings_query"]["type"] == {"$in": sorted(CRYPTO_FINDING_TYPES | {"vulnerability", "license"})}
 
 
 @pytest.mark.asyncio
