@@ -28,7 +28,6 @@ function gitlabInstance(overrides: Partial<GitLabInstance> = {}): GitLabInstance
     name: 'GitLab.com',
     url: 'https://gitlab.com',
     is_active: true,
-    is_default: false,
     auto_create_projects: false,
     sync_teams: false,
     team_sync_depth: 1,

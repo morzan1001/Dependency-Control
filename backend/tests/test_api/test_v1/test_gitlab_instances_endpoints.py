@@ -18,11 +18,14 @@ class TestGitLabInstanceModelDefaults:
             created_by="admin",
         )
         assert instance.is_active is True
-        assert instance.is_default is False
         assert instance.auto_create_projects is False
         assert instance.sync_teams is False
         assert instance.access_token is None
         assert instance.oidc_audience is None
+
+    def test_a_stored_document_with_the_retired_default_flag_loads_without_it(self):
+        instance = GitLabInstance(name="Test", url="https://gitlab.com", created_by="admin", is_default=True)
+        assert "is_default" not in instance.model_dump()
 
     def test_id_auto_generated(self):
         instance = GitLabInstance(
@@ -421,46 +424,6 @@ class TestCreateInstance:
         assert persisted.url == "https://new-gitlab.com"
         assert result.url == "https://new-gitlab.com"
 
-    def test_creating_a_default_instance_demotes_the_previous_default(self, admin_user):
-        """set_as_default is what clears the flag elsewhere; without it get_default() picks
-        arbitrarily between two flagged rows."""
-        from app.api.v1.endpoints.gitlab_instances import create_instance
-
-        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False, set_as_default=True)
-        mock_repo.create = AsyncMock(side_effect=lambda inst: inst)
-        mock_response = MagicMock(status_code=200)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.GitLabService", return_value=_make_gitlab_service_mock(mock_response)):
-                result = asyncio.run(
-                    create_instance(
-                        instance_data=self._make_create_data(is_default=True),
-                        db=MagicMock(),
-                        current_user=admin_user,
-                    )
-                )
-
-        mock_repo.set_as_default.assert_called_once_with(result.id)
-
-    def test_creating_a_non_default_instance_leaves_the_current_default_alone(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import create_instance
-
-        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False, set_as_default=True)
-        mock_repo.create = AsyncMock(side_effect=lambda inst: inst)
-        mock_response = MagicMock(status_code=200)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            with patch(f"{MODULE}.GitLabService", return_value=_make_gitlab_service_mock(mock_response)):
-                asyncio.run(
-                    create_instance(
-                        instance_data=self._make_create_data(is_default=False),
-                        db=MagicMock(),
-                        current_user=admin_user,
-                    )
-                )
-
-        mock_repo.set_as_default.assert_not_called()
-
     def test_create_persists_and_returns_team_sync_depth(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import create_instance
 
@@ -568,28 +531,6 @@ class TestUpdateInstance:
 
         assert result.name == "New Name"
         mock_repo.update.assert_called_once()
-
-    def test_set_as_default_calls_repo(self, admin_user):
-        from app.api.v1.endpoints.gitlab_instances import update_instance
-
-        existing = make_gitlab_instance(id="inst-1", is_default=False)
-        updated = make_gitlab_instance(id="inst-1", is_default=True)
-        mock_repo = _make_repo_mock(set_as_default=True)
-        mock_repo.get_by_id = AsyncMock(return_value=existing)
-        mock_repo.update = AsyncMock(return_value=updated)
-
-        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-            result = asyncio.run(
-                update_instance(
-                    instance_id="inst-1",
-                    update_data=self._make_update_data(is_default=True),
-                    db=MagicMock(),
-                    current_user=admin_user,
-                )
-            )
-
-        assert result.is_default is True
-        mock_repo.set_as_default.assert_called_once_with("inst-1")
 
     def test_update_applies_and_returns_team_sync_depth(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import update_instance

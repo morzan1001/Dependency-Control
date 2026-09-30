@@ -30,7 +30,6 @@ export type UnifiedInstance = {
   token_configured: boolean;
   created_at: string;
   // GitLab-specific
-  is_default?: boolean;
   team_sync_depth?: number;
   allowed_namespaces?: string[];
   // GitHub-specific
@@ -58,7 +57,6 @@ export function mergeInstances(
         sync_teams: gl.sync_teams,
         token_configured: gl.token_configured,
         created_at: gl.created_at,
-        is_default: gl.is_default,
         team_sync_depth: gl.team_sync_depth,
         allowed_namespaces: gl.allowed_namespaces,
       });

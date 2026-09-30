@@ -43,7 +43,6 @@ def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
         url=instance.url,
         description=instance.description,
         is_active=instance.is_active,
-        is_default=instance.is_default,
         oidc_audience=instance.oidc_audience,
         auto_create_projects=instance.auto_create_projects,
         sync_teams=instance.sync_teams,
@@ -102,7 +101,6 @@ async def create_instance(
         url=instance_data.url,
         description=instance_data.description,
         is_active=instance_data.is_active,
-        is_default=instance_data.is_default,
         access_token=instance_data.access_token,
         oidc_audience=instance_data.oidc_audience,
         auto_create_projects=instance_data.auto_create_projects,
@@ -132,10 +130,6 @@ async def create_instance(
             )
 
     created_instance = await instance_repo.create(new_instance)
-
-    if created_instance.is_default:
-        await instance_repo.set_as_default(str(created_instance.id))
-
     logger.info(f"Created GitLab instance '{created_instance.name}' by user {current_user.username}")
 
     return _to_response(created_instance)
@@ -165,9 +159,6 @@ async def update_instance(
     updated_instance = await instance_repo.update(instance_id, update_dict)
     if not updated_instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found after update")
-
-    if update_dict.get("is_default"):
-        await instance_repo.set_as_default(instance_id)
 
     logger.info(f"Updated GitLab instance '{updated_instance.name}' by user {current_user.username}")
 

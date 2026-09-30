@@ -52,7 +52,6 @@ interface InstanceFormData {
   sync_teams: boolean;
   // GitLab-specific
   team_sync_depth: number;
-  is_default: boolean;
   allowed_namespaces: string;
   // GitHub-specific
   github_url: string;
@@ -70,7 +69,6 @@ const emptyFormData: InstanceFormData = {
   access_token: "",
   sync_teams: false,
   team_sync_depth: 1,
-  is_default: false,
   allowed_namespaces: "",
   github_url: "",
   allowed_owner_ids: "",
@@ -242,7 +240,6 @@ export function CICDInstancesManagement() {
         sync_teams: formData.sync_teams,
         team_sync_depth: formData.team_sync_depth,
         is_active: formData.is_active,
-        is_default: formData.is_default,
         allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
       };
       createGitLabMutation.mutate(data);
@@ -277,7 +274,6 @@ export function CICDInstancesManagement() {
         sync_teams: formData.sync_teams,
         team_sync_depth: formData.team_sync_depth,
         is_active: formData.is_active,
-        is_default: formData.is_default,
         allowed_namespaces: parseAllowlist(formData.allowed_namespaces),
       };
       updateGitLabMutation.mutate({ id: editingInstance.id, data });
@@ -311,7 +307,6 @@ export function CICDInstancesManagement() {
       access_token: "",
       sync_teams: instance.sync_teams || false,
       team_sync_depth: instance.team_sync_depth ?? 1,
-      is_default: instance.is_default || false,
       allowed_namespaces: (instance.allowed_namespaces ?? []).join(", "),
       github_url: instance.github_url || "",
       allowed_owner_ids: (instance.allowed_owner_ids ?? []).join(", "),
@@ -394,14 +389,7 @@ export function CICDInstancesManagement() {
                     </Badge>
                   </TableCell>
                   <TableCell>
-                    <div className="flex items-center gap-2">
-                      {instance.name}
-                      {instance.is_default && (
-                        <Badge variant="outline" className="text-xs">
-                          Default
-                        </Badge>
-                      )}
-                    </div>
+                    {instance.name}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {instance.url}
@@ -737,19 +725,6 @@ function InstanceForm({
             }
           />
         </div>
-
-        {formData.type === "gitlab" && (
-          <div className="flex items-center justify-between">
-            <Label htmlFor="ci-is-default">Default Instance</Label>
-            <Switch
-              id="ci-is-default"
-              checked={formData.is_default}
-              onCheckedChange={(checked) =>
-                setFormData((prev) => ({ ...prev, is_default: checked }))
-              }
-            />
-          </div>
-        )}
 
         <div className="flex items-center justify-between">
           <div>

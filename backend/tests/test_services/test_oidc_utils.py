@@ -487,7 +487,6 @@ class TestInstanceResponseAllowsNullAudience:
             url="https://gitlab.com",
             description=None,
             is_active=True,
-            is_default=False,
             oidc_audience=None,
             auto_create_projects=False,
             sync_teams=False,

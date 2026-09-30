@@ -241,7 +241,6 @@ const GITLAB_INSTANCES = {
         name: 'Internal GitLab',
         url: 'https://gitlab.example.com',
         is_active: true,
-        is_default: true,
         auto_create_projects: true,
         sync_teams: false,
         team_sync_depth: 1,

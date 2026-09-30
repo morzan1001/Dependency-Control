@@ -433,7 +433,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["gitlab_instances"].create_index("url", unique=True)
     await database["gitlab_instances"].create_index("name", unique=True)
     await database["gitlab_instances"].create_index("is_active")
-    await database["gitlab_instances"].create_index("is_default")
 
     # GitHub Instances
     await database["github_instances"].create_index("url", unique=True)

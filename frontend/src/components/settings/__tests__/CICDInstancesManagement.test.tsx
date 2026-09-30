@@ -70,7 +70,6 @@ function gitlabInstance(overrides: Partial<GitLabInstance> = {}) {
           name: 'Internal GitLab',
           url: 'https://gitlab.example.com',
           is_active: true,
-          is_default: true,
           auto_create_projects: false,
           sync_teams: true,
           team_sync_depth: 1,
@@ -344,5 +343,20 @@ describe('CICDInstancesManagement owner and namespace allowlists', () => {
 
     await waitFor(() => expect(mockGitLabUpdate).toHaveBeenCalled())
     expect(mockGitLabUpdate.mock.calls[0][1]).toMatchObject({ allowed_namespaces: ['acme', 'acme-labs'] })
+  })
+
+  it('offers no default-instance flag on a GitLab instance', async () => {
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+    mockUseGitHubInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
+
+    renderManagement()
+
+    expect(within(screen.getByRole('table')).queryByText('Default')).toBeNull()
+    const dialog = openEditDialog(/Internal GitLab/)
+    expect(within(dialog).queryByLabelText('Default Instance')).toBeNull()
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Update Instance' }))
+
+    await waitFor(() => expect(mockGitLabUpdate).toHaveBeenCalled())
+    expect(mockGitLabUpdate.mock.calls[0][1]).not.toHaveProperty('is_default')
   })
 })
