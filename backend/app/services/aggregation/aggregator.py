@@ -41,6 +41,7 @@ from app.services.analyzers.license_compliance.normalizer import (
 from app.services.analyzers.license_compliance.normalizer import (
     tokenize_license_string,
 )
+from app.services.analyzers.maintainer_risk import MAINTENANCE_RISK_TYPES
 from app.core.purl import canonical_purl
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
@@ -513,8 +514,7 @@ class ResultAggregator:
         """Detect whether the finding carries a maintenance signal."""
         if issue_type == "scorecard":
             return "Maintained" in finding.details.get("critical_issues", [])
-        maintenance_risk_types = ("stale_package", "infrequent_updates", "archived_repo")
-        return any(r.get("type", "") in maintenance_risk_types for r in finding.details.get("risks", []))
+        return any(r.get("type") in MAINTENANCE_RISK_TYPES for r in finding.details.get("risks", []))
 
     def _merge_quality_into_existing(
         self,

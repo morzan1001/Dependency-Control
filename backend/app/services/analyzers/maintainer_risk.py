@@ -29,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 # Risk types suppressed unless corroborating evidence is also present.
 _STALENESS_TYPES = ("stale_package", "infrequent_updates")
+# unaddressed_issues stays out: a busy tracker on a half-year-quiet repo is no sign of abandonment.
+MAINTENANCE_RISK_TYPES = frozenset({"stale_package", "infrequent_updates", "archived_repo", "inactive_repo"})
 _FREE_EMAIL_TYPE = "free_email_maintainer"
 _BUS_FACTOR_TYPE = "single_maintainer"
 

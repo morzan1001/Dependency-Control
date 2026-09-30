@@ -19,6 +19,7 @@ from app.services.aggregation.versions import (
     normalize_version,
     parse_version_key,
 )
+from app.services.analyzers.maintainer_risk import MaintainerRiskAnalyzer
 
 # One file carrying many SAST hits is a single "component" to the cross-linker.
 _CROWDED_FILE = "app/handlers.py"
@@ -631,6 +632,47 @@ class TestAddQualityFinding:
         assert len(agg.details["quality_issues"]) == 2
         # Severity should escalate to HIGH
         assert agg.severity == "HIGH"
+
+
+class TestMaintenanceIssueFlag:
+    @staticmethod
+    def _quality_for(risks):
+        issue = {
+            "component": "jetty-util",
+            "version": "9.4.0",
+            "risks": risks,
+            "severity": MaintainerRiskAnalyzer()._calculate_overall_severity(risks),
+        }
+        agg = ResultAggregator()
+        agg.aggregate("maintainer_risk", {"maintainer_issues": [issue]})
+        [quality] = agg.get_findings()
+        return quality
+
+    def test_an_inactive_repository_alone_is_a_maintenance_issue(self):
+        """Outside npm/PyPI the GitHub push date is the only staleness signal."""
+        risks, _ = MaintainerRiskAnalyzer()._assess_all_risks(
+            {"github_info": {"days_since_push": 1200, "pushed_at": "2023-06-01T00:00:00Z"}}, "maven"
+        )
+        assert [r["type"] for r in risks] == ["inactive_repo"]
+
+        assert self._quality_for(risks).details["has_maintenance_issues"] is True
+
+    @pytest.mark.parametrize(
+        ("risk_type", "expected"),
+        [
+            ("stale_package", True),
+            ("infrequent_updates", True),
+            ("archived_repo", True),
+            ("inactive_repo", True),
+            ("unaddressed_issues", False),
+            ("single_maintainer", False),
+            ("free_email_maintainer", False),
+        ],
+    )
+    def test_every_emitted_risk_type_has_a_decided_flag(self, risk_type, expected):
+        risks = [{"type": risk_type, "severity_score": 2, "message": risk_type}]
+
+        assert self._quality_for(risks).details["has_maintenance_issues"] is expected
 
 
 class TestMergeFindingsData:
