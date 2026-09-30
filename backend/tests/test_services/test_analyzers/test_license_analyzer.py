@@ -455,6 +455,32 @@ class TestOrResolution:
         assert verdicts == [(lic, sev.value) for lic, sev in expected]
 
 
+class TestLicenseException:
+    @staticmethod
+    async def _analyze(expression):
+        components = _parsed_cyclonedx([_library("lib", expression)])
+        return await LicenseAnalyzer().analyze({}, parsed_components=components)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("expression", "severity", "category"),
+        [
+            pytest.param("GPL-2.0-only WITH Classpath-exception-2.0", Severity.INFO, "weak_copyleft", id="classpath"),
+            pytest.param("GPL-3.0-or-later WITH GCC-exception-3.1", Severity.INFO, "weak_copyleft", id="gcc"),
+            pytest.param("GPL-2.0-only", Severity.HIGH, "strong_copyleft", id="no-exception"),
+        ],
+    )
+    async def test_an_exception_lifts_strong_copyleft_to_weak(self, expression, severity, category):
+        result = await self._analyze(expression)
+        assert [(i["severity"], i["category"]) for i in result["license_issues"]] == [(severity.value, category)]
+        assert [entry["category"] for entry in result["component_licenses"]] == [category]
+
+    @pytest.mark.asyncio
+    async def test_an_excepted_member_of_a_conjunction_is_weak_copyleft(self):
+        result = await self._analyze("LicenseRef-Fedora-Public-Domain AND (GPL-2.0-only WITH ClassPath-exception-2.0)")
+        assert [entry["category"] for entry in result["component_licenses"]] == ["weak_copyleft"]
+
+
 class TestTransitiveDependencySeverity:
     """Transitive dependency severity adjustment."""
 
