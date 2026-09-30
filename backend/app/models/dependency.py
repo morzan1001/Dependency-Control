@@ -23,6 +23,7 @@ class Dependency(MongoDocument):
     # Licensing
     license: str | None = Field(None, description="License expression or name")
     license_url: str | None = Field(None, description="URL to license text")
+    license_category: str | None = Field(None, description="License category the analysis copies from the license scan")
 
     # Scope and relationships
     scope: str | None = Field(None, description="Dependency scope (e.g. runtime, dev, optional)")

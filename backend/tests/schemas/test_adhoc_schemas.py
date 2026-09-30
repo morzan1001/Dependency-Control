@@ -114,6 +114,8 @@ def test_a_partial_license_policy_keeps_plain_string_values():
         "library_usage": "mixed",
         "allow_strong_copyleft": False,
         "allow_network_copyleft": False,
+        "ignore_dev_dependencies": True,
+        "ignore_transitive": False,
     }
 
 

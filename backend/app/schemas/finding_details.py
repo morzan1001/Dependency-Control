@@ -10,6 +10,7 @@ test failure instead of a silently-empty feature.
 re-validation; it does not exempt readers from declaring what they consume.
 """
 
+from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -191,7 +192,7 @@ class LicenseDetails(_DetailsModel):
     purl: str | None = None
     spdx_expression: str | None = None
     context_reason: str | None = None
-    effective_severity: str | None = None
+    severity_without_context: str | None = None
     additional_finding_types: list[AdditionalFindingType] = []
     vulnerability_info: VulnerabilityContextInfo | None = None
     scorecard_context: ScorecardContext | None = None
@@ -401,6 +402,16 @@ class CryptoRuleDetails(_DetailsModel):
     key_size_bits: int | None = None
     primitive: str | None = None
     references: list[Any] = []
+    occurrence_count: int | None = None
+
+
+def all_rule_ids(details: Mapping[str, Any] | None) -> set[str]:
+    """Every rule a crypto finding belongs to: the lead rule_id plus each matched_rules entry."""
+    details = details or {}
+    ids = {entry["rule_id"] for entry in details.get("matched_rules") or [] if entry.get("rule_id")}
+    if lead := details.get("rule_id"):
+        ids.add(lead)
+    return ids
 
 
 class CryptoCertificateDetails(_DetailsModel):
@@ -412,18 +423,17 @@ class CryptoCertificateDetails(_DetailsModel):
     days_expired: int | None = None
     not_valid_after: str | None = None
     days_until_expiry: int | None = None
-    threshold_matched: str | None = None
     days_until_valid: int | None = None
     not_valid_before: str | None = None
     algorithm_name: str | None = None
     related_algo_bom_ref: str | None = None
     key_size_bits: int | None = None
     min_key_size_bits: int | None = None
-    subject: str | None = None
-    issuer: str | None = None
     validity_days: int | None = None
     threshold: int | None = None
     rule_id: str | None = None
+    matched_rules: list[MatchedRuleEntry] | None = None
+    occurrence_count: int | None = None
 
 
 class CryptoProtocolDetails(_DetailsModel):
@@ -441,3 +451,5 @@ class CryptoProtocolDetails(_DetailsModel):
     weakness_tags: list[str] = []
     catalog_version: int | str | None = None
     rule_id: str | None = None
+    matched_rules: list[MatchedRuleEntry] | None = None
+    occurrence_count: int | None = None

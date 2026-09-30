@@ -6,7 +6,7 @@ from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.schemas.project import LicensePolicySchema
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.adhoc import _aggregate_atomically, run_adhoc_analysis
-from app.services.analysis.registry import analyzer_factories
+from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories
 from tests.helpers.analyzers import serve_analyzer
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -280,7 +280,11 @@ async def test_unknown_analyzer_name_is_reported_not_silently_dropped():
 
     assert response.analyzers.skipped[_UNKNOWN_NAME] == _UNKNOWN_ANALYZER
     # Every registered analyzer the request left out is accounted for alongside it.
-    assert set(response.analyzers.skipped) == set(analyzer_factories) | {_UNKNOWN_NAME, _REACHABILITY, _CRYPTO_RULES}
+    assert set(response.analyzers.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS | {
+        _UNKNOWN_NAME,
+        _REACHABILITY,
+        _CRYPTO_RULES,
+    }
     assert response.analyzers.ran == [_ENRICHMENT]
 
 
@@ -335,7 +339,10 @@ async def test_unparseable_sbom_is_reported_without_aborting_the_run():
 
     assert _SBOM_LABEL in response.analyzers.skipped_inputs
     # ``skipped`` is keyed by analyzer name; an input label in there is unreadable for consumers.
-    assert set(response.analyzers.skipped) == set(analyzer_factories) | {_REACHABILITY, _CRYPTO_RULES}
+    assert set(response.analyzers.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS | {
+        _REACHABILITY,
+        _CRYPTO_RULES,
+    }
     assert len(_findings_of_type(response, _TYPE_SECRET)) == _EXPECTED_SECRET_FINDINGS
 
 
@@ -468,7 +475,11 @@ async def test_empty_posted_payload_is_skipped_rather_than_reported_as_ran():
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert response.analyzers.skipped[_TRUFFLEHOG_NAME] == _EMPTY_PAYLOAD
-    assert set(response.analyzers.skipped) == set(analyzer_factories) | {_TRUFFLEHOG_NAME, _REACHABILITY, _CRYPTO_RULES}
+    assert set(response.analyzers.skipped) == set(analyzer_factories) | CRYPTO_ANALYZERS | {
+        _TRUFFLEHOG_NAME,
+        _REACHABILITY,
+        _CRYPTO_RULES,
+    }
     assert response.analyzers.ran == [_ENRICHMENT]
 
 

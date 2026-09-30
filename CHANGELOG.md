@@ -13,10 +13,11 @@ Before the rollout, resolve each gate before the first new pod starts:
 7. Fix an empty or `local` OIDC provider name, and accounts with an empty provider.
 8. Clean stored values that the stricter write schemas refuse.
 9. Prepare stored waivers for the new matching rules, and set the expiry-sweep watermark.
-10. Review synced team members and active accounts that are not verified (a review, not a gate).
-11. Review accounts that hold only one of `project:update` and `project:delete` (a review).
-12. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 14 re-creates the listed waivers from it).
-13. Check projects that run `os_malware` without an API key (a review).
+10. Move stored licence policies into the analyzer settings.
+11. Review synced team members and active accounts that are not verified (a review, not a gate).
+12. Review accounts that hold only one of `project:update` and `project:delete` (a review).
+13. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 15 re-creates the listed waivers from it).
+14. Check projects that run `os_malware` without an API key (a review).
 
 Deploy blocker, also before the rollout: fill the allowlists of the github.com and gitlab.com instances, or switch their auto-create off.
 
@@ -26,20 +27,22 @@ After the rollout, once the last pod on the previous image has terminated:
 
 1. End every session and review what was created during the rollout. Mandatory on every installation.
 2. Remove duplicate scanner results, before the next housekeeping rescan cycle. Mandatory on every installation.
-3. Remove TruffleHog plaintext secrets from `analysis_results`.
-4. Rewrite archive bundles that still hold TruffleHog plaintext.
-5. Name stored secret findings after their detector.
-6. Backfill `first_seen_at`.
-7. Purge leaked chat tool results, then rotate the exposed secrets.
-8. Rotate GitHub Enterprise tokens that reached github.com.
-9. Review GitLab bindings set through the old unchecked path.
-10. Review the retention of projects created in the dialog.
-11. Restamp every project under the new waiver rules. Mandatory on every installation.
-12. Clean up callgraph languages.
-13. Rewrite stored dependency type aliases.
-14. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
-15. Remove memberships of deleted users and leftovers of deleted projects.
-16. Watch the primary's load, and remove the Helm values the chart does not read.
+3. Rewrite licence-conflict waivers to the sorted-pair finding id, before the next scan.
+4. Remove TruffleHog plaintext secrets from `analysis_results`.
+5. Rewrite archive bundles that still hold TruffleHog plaintext.
+6. Name stored secret findings after their detector.
+7. Backfill `first_seen_at`.
+8. Purge leaked chat tool results, then rotate the exposed secrets.
+9. Rotate GitHub Enterprise tokens that reached github.com.
+10. Review GitLab bindings set through the old unchecked path.
+11. Review the retention of projects created in the dialog.
+12. Restamp every project under the new waiver rules. Mandatory on every installation.
+13. Clean up callgraph languages.
+14. Rewrite stored dependency type aliases.
+15. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
+16. Remove memberships of deleted users and leftovers of deleted projects.
+17. Watch the primary's load, and remove the Helm values the chart does not read.
+18. Review the crypto system policy after its seed bump (a review).
 
 Once 1.9.41 is confirmed stable, drop the old indexes. Four optional checks look for abuse of the fixed gaps from before the upgrade, and optional repairs clean up data older code left behind. The behaviour changes that users and operators will notice are listed at the end.
 
@@ -415,6 +418,78 @@ Last, set the expiry-sweep watermark. Without it, the first recalculation on the
 db.waiver_recalc.updateOne({_id: "expiry_sweep"}, {$set: {swept_until: new Date()}}, {upsert: true})
 ```
 
+## Before the rollout (gate): move stored licence policies into the analyzer settings
+
+Scans and the License Audit now read the licence policy only from `analyzer_settings.license_compliance`, the entry the project settings page shows and saves. The top-level `license_policy` field is no longer read, and writing a nested `license_compliance.license_policy`, an unknown key or a value that cannot be coerced answers 422; lax booleans such as `"false"`, `"no"` and `"0"` are stored as booleans. Without this step, a project that carries only a top-level `license_policy` is graded under the defaults (distributed, network-facing) on its next scan without notice, and a stored unknown key or a value that cannot be coerced makes the next save of its settings page answer 422.
+
+Run the script in-pod with mongosh before the first new pod starts. Run it twice: first as is, a dry run that prints the lists and counts and writes nothing, then with `APPLY = true`. For each project it:
+
+- copies a top-level `license_policy` into `analyzer_settings.license_compliance` when that entry holds no policy key yet
+- flattens a nested `license_compliance.license_policy` into its parent; the nested values win
+- stores lax booleans as booleans (`"false"` becomes false) and drops unknown keys, each printed as `NOTE`
+- removes `license_policy`, also where it is an explicit null
+
+Its output:
+
+- `SKIPPED` projects hold an invalid enum or boolean value, for example `"cli-batch"`, and are left untouched. Fix them by hand, then run the script again.
+- `CHANGED` projects are graded under a different policy from their next scan on, shown as the policy the old image read -> the policy 1.9.41 reads. They include projects whose top-level and settings-page policies disagreed, and projects whose stored `"false"` the old image read as true. Tell their owners.
+- `printjson(stats)` counts `legacy` (object `license_policy`), `nested`, `changed`, `skipped`, `updated` and `null_legacy_unset`.
+
+```js
+const APPLY = false;  // dry run first; set true to write
+const D = {distribution_model: "distributed", deployment_model: "network_facing", library_usage: "mixed",
+  allow_strong_copyleft: false, allow_network_copyleft: false, ignore_dev_dependencies: true, ignore_transitive: false};
+const K = Object.keys(D);
+const ENUMS = {distribution_model: ["internal_only", "distributed", "open_source"],
+  deployment_model: ["network_facing", "cli_batch", "desktop", "embedded"], library_usage: ["unmodified", "modified", "mixed"]};
+const TRUE = ["true", "1", "yes", "on", "t", "y"], FALSE = ["false", "0", "no", "off", "f", "n"];
+const toBool = v => typeof v === "boolean" ? v : TRUE.includes(String(v).toLowerCase()) ? true
+  : FALSE.includes(String(v).toLowerCase()) ? false : undefined;
+function oldScan(p) {  // what the pre-rollout analyzer read
+  const s = Object.assign(p.license_policy ? {license_policy: p.license_policy} : {}, (p.analyzer_settings || {}).license_compliance || {});
+  let raw = s.license_policy || {};
+  if (!Object.keys(raw).length && ["distribution_model", "deployment_model", "library_usage"].some(k => k in s)) raw = s;
+  return {distribution_model: raw.distribution_model ?? D.distribution_model, deployment_model: raw.deployment_model ?? D.deployment_model,
+    library_usage: raw.library_usage ?? D.library_usage,
+    allow_strong_copyleft: !!(raw.allow_strong_copyleft ?? s.allow_strong_copyleft), allow_network_copyleft: !!(raw.allow_network_copyleft ?? s.allow_network_copyleft),
+    ignore_dev_dependencies: !!(s.ignore_dev_dependencies ?? true), ignore_transitive: !!(s.ignore_transitive ?? false)};
+}
+function migrated(p) {  // the flat entry the new code reads
+  const {license_policy: nested, ...flat} = (p.analyzer_settings || {}).license_compliance || {};
+  const legacy = K.some(k => k in flat) ? {} : (p.license_policy || {});
+  const entry = {}, problems = [];
+  for (const [k, v] of Object.entries({...legacy, ...flat, ...(nested || {})})) {
+    if (!(k in D)) { problems.push(`dropped unknown key ${k}`); continue; }
+    const val = typeof D[k] === "boolean" ? toBool(v) : v;
+    if (val === undefined || (ENUMS[k] && !ENUMS[k].includes(val))) problems.push(`invalid ${k}=${JSON.stringify(v)}`);
+    else entry[k] = val;
+  }
+  return {entry, problems};
+}
+const stats = {legacy: 0, nested: 0, changed: 0, skipped: 0, updated: 0};
+db.projects.find({$or: [{license_policy: {$ne: null}}, {"analyzer_settings.license_compliance": {$exists: true}}]}).forEach(p => {
+  if (p.license_policy) stats.legacy++;
+  if (((p.analyzer_settings || {}).license_compliance || {}).license_policy) stats.nested++;
+  const {entry, problems} = migrated(p), before = oldScan(p), after = {...D, ...entry};
+  if (problems.some(x => x.startsWith("invalid"))) { stats.skipped++; print(`SKIPPED ${p._id} ${p.name}: ${problems}`); return; }
+  if (problems.length) print(`NOTE ${p._id} ${p.name}: ${problems}`);
+  if (K.some(k => before[k] !== after[k])) { stats.changed++; print(`CHANGED ${p._id} ${p.name}: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`); }
+  const target = p.analyzer_settings ? {"analyzer_settings.license_compliance": entry} : {analyzer_settings: {license_compliance: entry}};
+  if (APPLY) { db.projects.updateOne({_id: p._id}, {$set: target, $unset: {license_policy: ""}}); stats.updated++; }
+});
+if (APPLY) stats.null_legacy_unset = db.projects.updateMany({license_policy: {$type: "null"}}, {$unset: {license_policy: ""}}).modifiedCount;
+printjson(stats);
+```
+
+Verify afterwards. Each count is 0, or at most the number of `SKIPPED` projects:
+
+```js
+db.projects.countDocuments({license_policy: {$exists: true}})
+db.projects.countDocuments({"analyzer_settings.license_compliance.license_policy": {$exists: true}})
+```
+
+The old image still accepts `license_policy` in `PUT /api/v1/projects/{id}`, so repeat the verify right before the rollout and re-run the script if a count grew.
+
 ## Before the rollout (review): synced members and accounts that are not verified
 
 Identity matching now uses verified accounts only. These read-only reviews show who is affected; they do not block the rollout.
@@ -645,6 +720,20 @@ db.analysis_results.aggregate([
 ```
 
 A second run finds nothing. Duplicate rows of the built-in analyzers need nothing: the next analysis of their scan replaces them.
+
+## After the rollout: rewrite licence-conflict waivers to the sorted-pair finding id
+
+A licence conflict is now one finding per licence pair. Its `finding_id` is `LIC-` plus the pair sorted by licence id, such as `LIC-Apache-2.0 / GPL-2.0-only`, its component is the pair, and its version is empty. A conflict waiver stored before names the pair in arrival order and the two components as `a + b` with their versions, so it matches none of the new findings. Run this once the last old pod has terminated, because old pods still write the old ids, and before the next scan, which would otherwise show every waived conflict as open. The find lists the waivers the loop rewrites:
+
+```js
+db.waivers.find({finding_id: /^LIC-.+ \/ .+$/}, {project_id: 1, finding_id: 1, package_name: 1, package_version: 1})
+db.waivers.find({finding_id: /^LIC-.+ \/ .+$/}).forEach(w => {
+  const label = w.finding_id.slice(4).split(" / ").sort().join(" / ");
+  db.waivers.updateOne({_id: w._id}, {$set: {finding_id: "LIC-" + label, package_version: null, ...(w.package_name ? {package_name: label} : {})}});
+});
+```
+
+Licence ids are ASCII, so `sort()` orders them as the analyzer does, and a null `package_version` adds no version criterion. A second run changes nothing. The restamp below stamps the new ids onto scans analysed during the rollout. Conflict findings stored before the rollout keep their old id and show as not waived from the restamp until their scan is analysed again. The loop only reorders the pair: a conflict that still shows as not waived after its next scan names a licence differently in 1.9.41, so re-create its waiver from the new finding.
 
 ## After the rollout: remove TruffleHog plaintext secrets
 
@@ -1098,6 +1187,21 @@ Zero counts mean there is nothing to remove. Afterwards, check for teams and pro
 
 Every MongoDB read now goes to the primary; a `readPreference` in the URI is overridden. Watch the primary's CPU and connection count on the replica set after the rollout, and during the first restamp, whose reads all go there. The chart no longer reads `backend.env.mongodbReadPreference`, and no template ever read `chat.rateLimitPerMinute` or `chat.rateLimitPerHour`; remove all three from the deployment values. Leaving them is harmless but misleading. The updated Grafana dashboard `chat-ai-assistant.json` ships with the chart and shows the new `dc_chat_tool_calls_total` statuses on its "Tool Error Rate" panel.
 
+## After the rollout (review): the crypto system policy after its seed bump
+
+The first start of 1.9.41 reseeds the system crypto policy once. A policy nobody edited takes the full seed. A policy a person edited keeps its rules and regains every seed rule_id it lacks, so seed rules an admin deleted come back. Review the policy on the crypto policy page, where every change is audited.
+
+Re-added seed rules: compare the policy with the audit entry before its `seed` entry, and disable or delete again the rules that were removed on purpose.
+
+The widened `pqc-quantum-vulnerable-pke` rule: the seed adds `ECDHE`, `X25519` and `X448` to its name patterns, so these key exchanges are reported as quantum-vulnerable. An edited policy keeps its own copy of the rule and does not get them. Add the three patterns to that rule on the page, and to every project override that holds its own copy of the rule. The first line below lists those overrides; the second updates the system policy directly, bypassing the audit and the version:
+
+```js
+db.crypto_policies.find({scope: "project", "rules.rule_id": "pqc-quantum-vulnerable-pke"}, {project_id: 1})
+db.crypto_policies.updateOne({scope: "system", project_id: null, "rules.rule_id": "pqc-quantum-vulnerable-pke"}, {$addToSet: {"rules.$.match_name_patterns": {$each: ["ECDHE", "X25519", "X448"]}}})
+```
+
+A customised policy that took the full seed: the seeder tells an edited policy by `updated_by`. For a policy whose last change before 1.9.41 was a revert, which stored no `updated_by`, it reads the editor from the newest audit entry instead. If audit retention pruned every entry of such a policy, the seed replaced it. Re-enter the rules on the page. The save records you as the editor, so later seed bumps only add missing rule_ids.
+
 ## Once 1.9.41 is confirmed stable: drop the old indexes
 
 The new findings indexes start with the old `(project_id, component, type)` and `(scan_id, severity)` keys, and nothing reads the webhook deliveries' `(success, webhook_id)` index, so the old indexes only cost writes now. Drop them only once a rollback is no longer expected: 1.9.40 recreates them at startup, in-line on the large findings collection, and pods do not start until that build finishes.
@@ -1226,7 +1330,7 @@ db.webhooks.updateMany(
 )
 ```
 
-Nothing reads the Redis key `popular:npm` any more, stored as `dc:popular:npm` under the default `CACHE_PREFIX`. It expires within 24 hours; to drop it now, run `DEL dc:popular:npm` in `redis-cli`.
+Nothing reads the Redis keys `popular:npm` and `iana:tls_cipher_suites:v1` any more, stored as `dc:popular:npm` and `dc:iana:tls_cipher_suites:v1` under the default `CACHE_PREFIX`. They expire within 24 hours and 7 days; to drop them now, run `DEL dc:popular:npm dc:iana:tls_cipher_suites:v1` in `redis-cli`.
 
 A stored `dependency_enrichments.enrichment_sources` holds only the last writer's list until its purl is enriched again. This derives the union now:
 
@@ -1279,6 +1383,12 @@ Scans no longer get `reachability_pending_since` or `reachability_completed_at`,
 db.scans.updateMany({$or: [{reachability_pending_since: {$exists: true}}, {reachability_completed_at: {$exists: true}}]}, {$unset: {reachability_pending_since: "", reachability_completed_at: ""}})
 db.findings.updateMany({$or: [{"details.quality_info.overall_score": {$exists: true}}, {"details.quality_info.quality_finding_id": {$exists: true}}, {"details.license_info.license_finding_id": {$exists: true}}, {"details.eol_info.eol_finding_id": {$exists: true}}]}, {$unset: {"details.quality_info.overall_score": "", "details.quality_info.quality_finding_id": "", "details.license_info.license_finding_id": "", "details.eol_info.eol_finding_id": ""}})
 db.findings.updateMany({type: "quality", "details.scorecard_context": {$exists: true}}, {$unset: {"details.scorecard_context": ""}})
+```
+
+Licence findings stored before the upgrade hold their severity without project context under `details.effective_severity`, which the detail view no longer reads, so they show no "Without project context" hint. To show it now:
+
+```js
+db.findings.updateMany({type: "license", "details.effective_severity": {$exists: true}}, {$rename: {"details.effective_severity": "details.severity_without_context"}})
 ```
 
 Two read-only counts show whether findings in the old SAST aggregate shape remain. Once both return 0, for example after retention has aged out old scans, a later release can stop reading that shape:
@@ -1412,6 +1522,13 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 
   `details.fixed_version` is empty as soon as one advisory has no fix, and ignores fixes below the installed version.
 - Licence resolution recognises many more URLs and names. Expect fewer "License could not be determined" findings, and new copyleft findings for GPL and LGPL declared by URL. EOL now covers Alpine, Tomcat, Apache httpd, Vue, Docker Engine, CouchDB, Maven, Packer and Spring or Rails through NVD CPEs; java and openjdk are no longer looked up.
+- New scans store a dependency's licences as one SPDX expression, `A AND B`, or `A OR B` for maven and npm packages, with compound entries in parentheses, instead of `A, B`. Dependency rows stored before keep the `, ` join; the next scan of each project writes the new form. Check Metabase SQL that splits `dependencies.license` on `', '`.
+- A licence conflict is one finding per licence pair, named by the pair sorted by licence id, and its explanation lists every component involved. The next delta shows each existing conflict once as resolved and new.
+- Crypto analysis:
+  - the crypto analyzers run once per scan instead of once per SBOM, so a scan with several SBOMs no longer duplicates certificate and cipher findings, and their `found_in` reads `CBOM`
+  - certificate weak-signature and weak-key findings come only from enabled crypto policy rules, at the rule's severity; the seeded SHA-1 rule gives MEDIUM where the old check said HIGH
+  - certificate and protocol finding ids stay the same from scan to scan, so the next scan replaces each existing one once
+  - a CBOM upload replaces the assets of its own earlier upload for the scan, so two CBOM jobs that post to one scan replace each other and only the last upload's assets are kept
 - Trivy and Grype results no longer contain `trivy_vulnerabilities` or `grype_vulnerabilities`. New vulnerability, quality and SAST findings no longer store duplicate copies of their fields, and `details.github_advisory_url` is no longer written.
 - New secret findings name their detector ("Secret detected: AWS"), and Bearer findings no longer show a "Fingerprint".
 - Scan stats count differently. This covers `scan.stats`, `project.stats`, the `scan_completed` webhook and the ingest response:
@@ -1449,6 +1566,7 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - Findings-delta severity keys are uppercase, as stored. Scan delta answers 404 for an unknown project and 404 "No scan found for this project" for a scan of another project. An empty `?scan_id=` on the dependency tree and on recommendations answers the same 404 instead of falling back to head.
 - Analytics search reports `page: 1` for an empty result. Vulnerability search filters CVE rows, not documents, and each CVE row shows only its own KEV, EPSS and fix.
 - The inventory licence tile counts `unknown`, and a component without an ecosystem counts as `unknown`. The three scorecard "severity below" settings are gone.
+- The inputs fingerprint of every crypto compliance report changes once, for unchanged inputs too.
 - Chat and MCP finding tools answer per advisory. `get_vulnerability_details` returns `advisories`, and `get_cve_details` returns `in_kev` and `scanners`.
 
 ### Webhooks, notifications and chat
@@ -1479,10 +1597,12 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - Instance updates answer 422 for a null required field or a null `oidc_audience`, and audiences are stored trimmed.
 - Broadcasts ignore the request's `type`. They answer 422 for an unknown `target_type`, an advisory package type that is not a purl type, or an advisory max version that is a wildcard or has no numeric release. Responses no longer carry `unique_user_count`, and advisory broadcasts gain `uncomparable_versions`, the matched packages whose version cannot be compared with the max version; a project matched only through them is not counted. The package typeahead `GET /notifications/packages/suggest` lists only names in head scans, and after 2 s it answers no names with `more: true`.
 - Crypto policy updates and reverts answer 422 for:
-  - unknown rules, or rules no analyzer evaluates
-  - an inverted expiry ladder
+  - unknown rules, or enabled rules no analyzer evaluates
+  - an inverted expiry ladder on an enabled rule
   - duplicate or empty rule ids
   - more than 200 rules, or a list over 50 entries
+
+  A disabled rule is checked only against the list bound, so a draft saves, and a rule added in the editor starts disabled.
 - `analysis_results` rows of the built-in analyzers carry `source` `SBOM #n` and are replaced on every analysis. A rescan copies its original's scanner rows server-side under `_id` `<rescan id>:<original row id>`, and an analysis aggregates every scanner row of its scan, not only the first 10 000.
 - Ad-hoc `analyzers.skipped_inputs` keys read `SBOM #N` instead of `sbom#N`.
 

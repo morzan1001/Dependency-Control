@@ -31,8 +31,16 @@ mappings:
     notes: |
       Migrate ECDSA-P256/P384 signatures to ML-DSA-65.
 
+  - source_family: "EdDSA"
+    source_primitive: signature
+    use_case: "digital-signature"
+    recommended_pqc: "ML-DSA-65"
+    standard: "FIPS 204"
+    notes: |
+      Migrate Ed25519/Ed448 signatures to ML-DSA-65.
+
   - source_family: "ECDH"
-    source_primitive: kem
+    source_primitive: key-agree
     use_case: "key-exchange"
     recommended_pqc: "ML-KEM-768"
     standard: "FIPS 203"
@@ -40,7 +48,7 @@ mappings:
       ECDH key agreement -> ML-KEM KEM.
 
   - source_family: "DH"
-    source_primitive: kem
+    source_primitive: key-agree
     use_case: "key-exchange"
     recommended_pqc: "ML-KEM-768"
     standard: "FIPS 203"
@@ -60,13 +68,20 @@ mappings:
 timelines:
   - name: "CNSA 2.0 baseline"
     deadline: "2030-01-01"
-    applies_to: ["RSA", "ECDSA", "ECDH"]
+    applies_to: ["RSA", "ECDSA", "EdDSA", "ECDH"]
   - name: "NIST SP 800-131A transition target"
     deadline: "2035-01-01"
-    applies_to: ["RSA", "ECDSA", "DH", "DSA"]
+    applies_to: ["RSA", "ECDSA", "EdDSA", "DH", "DSA"]
 
 # Vulnerable-family aliases that may appear in asset names from CBOM tools.
 family_aliases:
   "Diffie-Hellman": "DH"
+  "DHE": "DH"
+  "FFDH": "DH"
+  "ECDHE": "ECDH"
+  "X25519": "ECDH"
+  "X448": "ECDH"
   "EC-DSA": "ECDSA"
   "ecDSA": "ECDSA"
+  "Ed25519": "EdDSA"
+  "Ed448": "EdDSA"

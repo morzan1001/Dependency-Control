@@ -1,4 +1,4 @@
-"""Registry-resolved ProtocolCipherSuiteAnalyzer produces findings."""
+"""The registered protocol cipher-suite evaluator produces findings."""
 
 import pytest
 
@@ -7,12 +7,11 @@ from app.models.crypto_policy import CryptoPolicy
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType
-from tests.helpers.analyzers import build_analyzer
+from tests.helpers.analyzers import evaluate_crypto
 
 
 @pytest.mark.asyncio
 async def test_protocol_cipher_registered_and_runs(db):
-    analyzer = build_analyzer("crypto_protocol_cipher")
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
         "s",
@@ -33,12 +32,7 @@ async def test_protocol_cipher_registered_and_runs(db):
         ],
     )
     await CryptoPolicyRepository(db).upsert_system_policy(CryptoPolicy(scope="system", version=1, rules=[]))
-    result = await analyzer.analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_protocol_cipher", db)
     findings = result["findings"]
     assert any("RC4_128_SHA" in f["details"]["cipher_suite"] for f in findings)
     assert not any("AES_256_GCM_SHA384" in f["details"]["cipher_suite"] for f in findings)

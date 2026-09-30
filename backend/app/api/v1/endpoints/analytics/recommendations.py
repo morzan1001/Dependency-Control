@@ -45,6 +45,8 @@ router = CustomAPIRouter()
 # Newest scans the recurrence count is taken over; the recommendation text names the window.
 _RECURRENCE_WINDOW_SCANS = 10
 
+_LICENSE_DRIFT_PROJECTION = {"name": 1, "purl": 1, "license": 1, "license_category": 1}
+
 # Recommendation type -> (summary key counted once per recommendation, summary key its impact total adds to).
 _SUMMARY_BUCKETS: dict[RecommendationType, tuple[str | None, str | None]] = {
     RecommendationType.BASE_IMAGE_UPDATE: ("base_image_updates", "total_fixable_vulns"),
@@ -131,9 +133,11 @@ async def get_project_recommendations(
     source_target = next((dep.source_target for dep in dependencies if dep.source_target), None)
 
     previous_scan_findings = None
+    previous_scan_dependencies = None
     previous_scan = await scan_repo.get_preceding_scan(scan_id)
     if previous_scan:
         previous_scan_findings, _ = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
+        previous_scan_dependencies = await dep_repo.find_raw_by_scan(previous_scan.id, _LICENSE_DRIFT_PROJECTION)
 
     recent_scan_ids = [
         recent.id
@@ -152,6 +156,7 @@ async def get_project_recommendations(
         dependencies=dependencies,
         source_target=source_target,
         previous_scan_findings=previous_scan_findings,
+        previous_scan_dependencies=previous_scan_dependencies,
         cve_recurrence=cve_recurrence,
         recurrence_window_scans=len(recent_scan_ids),
         cross_project_data=cross_project_data,

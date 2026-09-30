@@ -4,7 +4,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.models.crypto_policy import CryptoPolicy
 from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.schemas.crypto_policy import CryptoRule
 from app.services.crypto_policy.seeder import (
     CURRENT_SEED_VERSION,
     load_seed_rules,
@@ -30,6 +32,11 @@ def test_load_seed_rules_returns_nonempty():
     assert "pqc-quantum-vulnerable-pke" in rule_ids
 
 
+def test_the_seed_rules_are_parsed_once_into_an_immutable_tuple():
+    assert isinstance(load_seed_rules(), tuple)
+    assert load_seed_rules() is load_seed_rules()
+
+
 def test_load_seed_rules_sources_covered():
     rules = load_seed_rules()
     sources = {r.source for r in rules}
@@ -42,10 +49,10 @@ def test_load_seed_rules_sources_covered():
 @pytest.mark.asyncio
 async def test_seed_is_idempotent(db):
     await seed_crypto_policies(db)
-    v1 = (await CryptoPolicyRepository(db).get_system_policy()).version
+    first = await CryptoPolicyRepository(db).get_system_policy()
     await seed_crypto_policies(db)
-    v2 = (await CryptoPolicyRepository(db).get_system_policy()).version
-    assert v1 == v2 == CURRENT_SEED_VERSION
+    second = await CryptoPolicyRepository(db).get_system_policy()
+    assert (first.version, first.seed_version) == (second.version, second.seed_version) == (1, CURRENT_SEED_VERSION)
 
 
 @pytest.mark.asyncio
@@ -72,12 +79,81 @@ async def test_reseeding_the_same_version_writes_no_second_audit_entry(db):
     assert await db.crypto_policy_history.count_documents({}) == 1
 
 
-@pytest.mark.asyncio
-async def test_seed_skipped_when_version_higher(db):
-    from app.models.crypto_policy import CryptoPolicy
+def _custom_rule() -> CryptoRule:
+    return load_seed_rules()[0].model_copy(update={"rule_id": "custom-admin-rule", "name": "custom"})
 
+
+@pytest.mark.asyncio
+async def test_the_seed_skips_a_policy_at_the_current_seed_version_whatever_its_edit_count(db):
     repo = CryptoPolicyRepository(db)
-    await repo.upsert_system_policy(CryptoPolicy(scope="system", rules=[], version=CURRENT_SEED_VERSION + 5))
+    await repo.upsert_system_policy(
+        CryptoPolicy(scope="system", rules=[_custom_rule()], version=1, seed_version=CURRENT_SEED_VERSION)
+    )
+
     await seed_crypto_policies(db)
+
     got = await repo.get_system_policy()
-    assert got.version == CURRENT_SEED_VERSION + 5
+    assert ([r.rule_id for r in got.rules], got.version) == (["custom-admin-rule"], 1)
+
+
+@pytest.mark.asyncio
+async def test_a_seed_bump_replaces_a_policy_no_person_edited(db):
+    """A document without seed_version and without an editor takes the full seed, whatever its version."""
+    repo = CryptoPolicyRepository(db)
+    await repo.upsert_system_policy(CryptoPolicy(scope="system", rules=[_custom_rule()], version=4))
+
+    await seed_crypto_policies(db)
+
+    got = await repo.get_system_policy()
+    assert [r.rule_id for r in got.rules] == [r.rule_id for r in load_seed_rules()]
+    assert (got.version, got.seed_version, got.updated_by) == (5, CURRENT_SEED_VERSION, None)
+
+
+@pytest.mark.asyncio
+async def test_a_seed_bump_gives_an_edited_policy_only_the_seed_rules_it_lacks(db):
+    seed = load_seed_rules()
+    disabled = seed[0].model_copy(update={"enabled": False})
+    repo = CryptoPolicyRepository(db)
+    await repo.upsert_system_policy(
+        CryptoPolicy(scope="system", rules=[disabled, _custom_rule()], version=2, updated_by="admin-user")
+    )
+
+    await seed_crypto_policies(db)
+
+    got = await repo.get_system_policy()
+    assert got.rules[:2] == [disabled, _custom_rule()]
+    assert [r.rule_id for r in got.rules[2:]] == [r.rule_id for r in seed[1:]]
+    assert (got.version, got.seed_version) == (3, CURRENT_SEED_VERSION)
+
+
+@pytest.mark.asyncio
+async def test_an_edited_policy_keeps_its_rules_and_editor_through_consecutive_seed_bumps(db):
+    """The seeder reads updated_by as the edited marker, so a seed write must not clear it."""
+    repo = CryptoPolicyRepository(db)
+    await repo.upsert_system_policy(
+        CryptoPolicy(scope="system", rules=[_custom_rule()], version=2, updated_by="admin-user")
+    )
+
+    await seed_crypto_policies(db)
+    with patch("app.services.crypto_policy.seeder.CURRENT_SEED_VERSION", CURRENT_SEED_VERSION + 1):
+        await seed_crypto_policies(db)
+
+    got = await repo.get_system_policy()
+    assert (got.rules[0].rule_id, got.updated_by) == ("custom-admin-rule", "admin-user")
+    assert (got.version, got.seed_version) == (4, CURRENT_SEED_VERSION + 1)
+
+
+@pytest.mark.asyncio
+async def test_a_legacy_policy_whose_last_change_was_a_seed_takes_the_new_seed(db):
+    from app.services.audit.history import record_policy_change
+
+    with patch("app.services.crypto_policy.seeder.record_policy_change", new=record_policy_change):
+        await seed_crypto_policies(db)
+        await db.crypto_policies.update_one(
+            {"scope": "system"},
+            {"$set": {"rules": [_custom_rule().model_dump(mode="json")]}, "$unset": {"seed_version": ""}},
+        )
+        await seed_crypto_policies(db)
+
+    got = await CryptoPolicyRepository(db).get_system_policy()
+    assert ([r.rule_id for r in got.rules], got.updated_by) == ([r.rule_id for r in load_seed_rules()], None)

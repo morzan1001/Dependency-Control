@@ -106,6 +106,7 @@ from app.schemas.project import (
     ScanHistoryResponse,
     ScanReleaseRef,
     ScanWithReleases,
+    license_policy_from_settings,
 )
 from app.services.branch_sync import sync_project_branches
 from app.services.component_identity import component_match_expr
@@ -636,25 +637,23 @@ async def _assert_github_pr_token_present(
 async def _audit_license_policy_change(
     db: Any,
     project_id: str,
-    old_license_policy: dict[str, Any] | None,
+    old_project: Project | None,
     updated_project: Project,
     actor: User,
 ) -> None:
     """Record a best-effort license-policy audit entry; never blocks the caller."""
     try:
-        new_license_policy = _resolve_license_policy(updated_project)
-        if old_license_policy == new_license_policy:
-            return
         from app.schemas.policy_audit import PolicyAuditAction
         from app.services.audit.history import record_license_policy_change
 
-        action = PolicyAuditAction.CREATE if not old_license_policy else PolicyAuditAction.UPDATE
+        old_entry = (old_project.analyzer_settings or {}).get("license_compliance") if old_project else None
+        new_entry = (updated_project.analyzer_settings or {}).get("license_compliance")
         await record_license_policy_change(
             db,
             project_id=project_id,
-            old_policy=old_license_policy,
-            new_policy=new_license_policy,
-            action=action,
+            old_policy=license_policy_from_settings(old_entry).model_dump(),
+            new_policy=license_policy_from_settings(new_entry).model_dump(),
+            action=PolicyAuditAction.UPDATE if old_entry else PolicyAuditAction.CREATE,
             actor=actor,
             comment=None,
         )
@@ -702,9 +701,6 @@ async def update_project(
         system_settings.rescan_mode,
     )
 
-    # Capture the pre-update license policy so we can audit transitions.
-    old_license_policy = _resolve_license_policy(project)
-
     try:
         written = await project_repo.update_fields_and_owners(project_id, update_data, ownership_stages, guard)
     except DuplicateKeyError as exc:
@@ -721,23 +717,8 @@ async def update_project(
     if updated_project.default_branch != project.default_branch:
         await ScanRepository(db).sync_project_head(project_id)
         updated_project = await _reload_project(project_repo, project_id)
-    await _audit_license_policy_change(db, project_id, old_license_policy, updated_project, current_user)
+    await _audit_license_policy_change(db, project_id, project, updated_project, current_user)
     return updated_project
-
-
-def _resolve_license_policy(project: Project) -> dict[str, Any] | None:
-    """Return the project's license policy, preferring analyzer_settings['license_compliance'] over the legacy top-level field."""
-    settings = (
-        (project.analyzer_settings or {}).get("license_compliance")
-        if getattr(project, "analyzer_settings", None)
-        else None
-    )
-    if settings:
-        return dict(settings)
-    legacy = getattr(project, "license_policy", None)
-    if legacy:
-        return dict(legacy) if isinstance(legacy, dict) else legacy.model_dump()
-    return None
 
 
 @router.get(

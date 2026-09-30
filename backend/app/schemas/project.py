@@ -37,13 +37,12 @@ class LicensePolicySchema(BaseModel):
     ``use_enum_values``/``validate_default`` serialize values as plain strings.
     """
 
-    # extra="forbid": a misspelt key used to be discarded, restoring the network-facing default and
-    # re-grading every AGPL finding in the project on every future scan.
+    # extra="forbid": a discarded misspelt key would silently restore a default on every future scan.
     model_config = ConfigDict(use_enum_values=True, validate_default=True, extra="forbid")
 
     distribution_model: DistributionModel = Field(
         DistributionModel.DISTRIBUTED,
-        description="How the project is distributed: internal_only (no external distribution), "
+        description="How the project is distributed: internal_only (internal users only), "
         "distributed (binary/source to third parties), open_source (project is open source)",
     )
     deployment_model: DeploymentModel = Field(
@@ -58,25 +57,20 @@ class LicensePolicySchema(BaseModel):
     )
     allow_strong_copyleft: bool = Field(False, description="Allow GPL-style licenses (reduces severity to INFO)")
     allow_network_copyleft: bool = Field(False, description="Allow AGPL/SSPL licenses (reduces severity)")
+    ignore_dev_dependencies: bool = Field(True, description="Skip components in a non-runtime scope")
+    ignore_transitive: bool = Field(False, description="Skip transitive dependencies")
 
 
-_LICENSE_POLICY_ENUMS: dict[str, type[DistributionModel] | type[DeploymentModel] | type[LibraryUsage]] = {
-    "distribution_model": DistributionModel,
-    "deployment_model": DeploymentModel,
-    "library_usage": LibraryUsage,
-}
+def license_policy_from_settings(entry: dict[str, Any] | None) -> LicensePolicySchema:
+    """The effective policy of a stored license_compliance entry; the scan passes it merged with system settings."""
+    policy_fields = LicensePolicySchema.model_fields
+    return LicensePolicySchema.model_validate({k: v for k, v in (entry or {}).items() if k in policy_fields})
 
 
-def _reject_unusable_license_settings(value: dict[str, dict[str, Any]] | None) -> dict[str, dict[str, Any]] | None:
-    """The license analyzer coerces these three keys into enums on every scan, so a value it will
-    refuse must not be stored: the write returns 200 and each later scan of the project raises."""
-    settings = (value or {}).get("license_compliance")
-    if isinstance(settings, dict):
-        nested = settings.get("license_policy")
-        for scope in (settings, nested if isinstance(nested, dict) else {}):
-            for key, enum in _LICENSE_POLICY_ENUMS.items():
-                if key in scope:
-                    enum(scope[key])
+def _validate_license_settings(value: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    entry = value.get("license_compliance")
+    if entry is not None:
+        value["license_compliance"] = LicensePolicySchema.model_validate(entry).model_dump(exclude_unset=True)
     return value
 
 
@@ -119,7 +113,7 @@ def _reject_invalid_tunables(value: dict[str, dict[str, Any]] | None) -> dict[st
 
 AnalyzerSettings = Annotated[
     dict[str, dict[str, Any]],
-    AfterValidator(_reject_unusable_license_settings),
+    AfterValidator(_validate_license_settings),
     AfterValidator(_reject_invalid_tunables),
 ]
 
@@ -199,9 +193,6 @@ class ProjectUpdate(BaseModel):
     github_pr_comments_enabled: bool | None = Field(None, description="Post scan results as PR comments on GitHub")
     enforce_notification_settings: bool | None = Field(
         None, description="Enforce admin notification settings for all members"
-    )
-    license_policy: LicensePolicySchema | None = Field(
-        None, description="License compliance policy controlling copyleft finding severity"
     )
     analyzer_settings: AnalyzerSettings | None = Field(
         None, description="Per-analyzer configuration overrides keyed by analyzer ID"

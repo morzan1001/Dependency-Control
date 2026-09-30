@@ -23,11 +23,16 @@ class CryptoPrimitive(str, Enum):
     KEM = "kem"
     KDF = "kdf"
     DRBG = "drbg"
+    KEY_AGREE = "key-agree"
+    AE = "ae"
+    XOF = "xof"
+    COMBINER = "combiner"
+    UNKNOWN = "unknown"
     OTHER = "other"
 
 
 QUANTUM_VULNERABLE_PRIMITIVES: frozenset[CryptoPrimitive] = frozenset(
-    {CryptoPrimitive.PKE, CryptoPrimitive.SIGNATURE, CryptoPrimitive.KEM}
+    {CryptoPrimitive.PKE, CryptoPrimitive.SIGNATURE, CryptoPrimitive.KEM, CryptoPrimitive.KEY_AGREE}
 )
 
 
@@ -56,10 +61,14 @@ class ParsedCryptoAsset(BaseModel):
     subject_public_key_ref: str | None = None
     certificate_format: str | None = None
 
+    # Related-crypto-material-only
+    algorithm_ref: str | None = None
+
     # Protocol-only
     protocol_type: str | None = None
     version: str | None = None
     cipher_suites: list[str] = Field(default_factory=list)
+    cipher_suite_ids: list[str | None] = Field(default_factory=list)
 
     # Context
     occurrence_locations: list[str] = Field(default_factory=list)

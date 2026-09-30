@@ -2,6 +2,7 @@
 
 import pytest
 
+from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
@@ -14,10 +15,11 @@ def _eval_input(findings=None, policy=None):
         scope_description="project 'p'",
         crypto_assets=[],
         findings=findings or [],
-        policy_rules=[policy] if policy is not None else [],
+        policy_rules=[],
         policy_version=1,
         iana_catalog_version=1,
         scan_ids=["s1"],
+        license_policy=LicensePolicySchema(**(policy or {})),
     )
 
 

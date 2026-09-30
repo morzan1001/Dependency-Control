@@ -20,8 +20,10 @@ from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
 from app.models.user import User
 from app.repositories.projects import ProjectRepository, surviving_admin_filter
+from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
 from app.services.analysis.registry import SELECTABLE_ANALYZERS
+from app.services.crypto_policy.resolver import project_overrides_locked
 
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 
@@ -207,6 +209,13 @@ async def authorize_waiver_read(project_id: str | None, user: User, db: AsyncIOM
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
     if project_id and not has_permission(user.permissions, Permissions.WAIVER_READ_ALL):
         await check_project_access(project_id, user, db)
+
+
+async def ensure_crypto_overrides_writable(db: AsyncIOMotorDatabase) -> None:
+    if project_overrides_locked(await SystemSettingsRepository(db).get()):
+        raise HTTPException(
+            status_code=403, detail="System enforces a global crypto policy; project overrides are disabled."
+        )
 
 
 def generate_project_api_key(project_id: str) -> tuple[str, str]:

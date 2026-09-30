@@ -68,7 +68,6 @@ from app.services.waivers.signature import compute_match_signature
 
 _LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
 _SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
-_SPDX_WITH_SPLIT = re.compile(r"\s++WITH\s++")
 _ENTRY_LEVEL_KEYS = frozenset({"ecosystem_specific", "fixed_version", "cvss_score", "cvss_vector", "references"})
 _NORMALIZERS = {
     "trivy": normalize_trivy,
@@ -165,7 +164,7 @@ class ResultAggregator:
             return False
         if token.startswith("LicenseRef-"):
             return True
-        return all(_SPDX_TOKEN_SHAPE.match(part) for part in _SPDX_WITH_SPLIT.split(token))
+        return all(_SPDX_TOKEN_SHAPE.match(part) for part in token.split(" WITH "))
 
     @staticmethod
     def _sanitize_deps_dev_license(lic: Any) -> str | None:

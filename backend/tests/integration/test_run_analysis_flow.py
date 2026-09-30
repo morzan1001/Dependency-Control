@@ -17,6 +17,7 @@ from app.models.project import Scan
 from app.models.stats import Stats
 from app.services import gridfs_maintenance
 from app.services.analysis import engine
+from app.services.crypto_policy.seeder import seed_crypto_policies
 from tests.helpers.analyzers import serve_analyzer
 
 _PROJECT_ID = "notify-project"
@@ -163,7 +164,8 @@ def enrichment_inputs(monkeypatch) -> dict:
 
 
 @pytest.mark.asyncio
-async def test_a_cbom_scan_runs_the_crypto_analyzers_on_top_of_the_configured_ones(db, notified, enrichment_inputs):
+async def test_a_cbom_scan_runs_the_crypto_analyzers_once_beside_the_configured_ones(db, notified, enrichment_inputs):
+    await seed_crypto_policies(db)
     scan = Scan(
         project_id=_PROJECT_ID, branch="main", sbom_refs=[], status="processing", scan_type="cbom", worker_id=_WORKER
     )
@@ -171,7 +173,9 @@ async def test_a_cbom_scan_runs_the_crypto_analyzers_on_top_of_the_configured_on
 
     assert await engine.run_analysis(scan.id, [], ["osv"], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED
 
-    assert enrichment_inputs["analyzers"] == sorted({"osv"} | engine.CRYPTO_ANALYZERS)
+    assert enrichment_inputs["analyzers"] == ["osv"]
+    rows = await db.analysis_results.find({"scan_id": scan.id}).to_list(None)
+    assert sorted(row["analyzer_name"] for row in rows) == sorted(engine.CRYPTO_ANALYZERS)
 
 
 @pytest.mark.asyncio

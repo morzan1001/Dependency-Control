@@ -73,10 +73,8 @@ class TestCleanupAnalyzerNames:
         assert CRYPTO_ANALYZERS.issubset(names)
 
 
-class TestAggregateExternalSkipsPostProcessors:
-    def test_epss_kev_and_reachability_not_aggregated(self, monkeypatch):
-        # No registered analyzer -> only _POST_PROCESSOR_ANALYZERS membership can exclude these.
-        monkeypatch.setattr("app.services.analysis.engine.analyzer_factories", {})
+class TestAggregateExternalSkipsEngineRows:
+    def test_post_processor_and_crypto_rows_are_not_aggregated_again(self):
         aggregator = ResultAggregator()
 
         calls = []
@@ -92,13 +90,14 @@ class TestAggregateExternalSkipsPostProcessors:
         for analyzer_name, result in (
             ("epss_kev", build_epss_kev_summary([])),
             ("reachability", build_reachability_summary([], [])),
+            *((name, {"findings": []}) for name in sorted(CRYPTO_ANALYZERS)),
         ):
             asyncio.run(AnalysisResultRepository(db).save_result("scan-1", analyzer_name, result))
         results_summary: list = []
 
         asyncio.run(_aggregate_external_results(aggregator, AnalysisResultRepository(db), "scan-1", results_summary))
 
-        assert calls == [], f"post-processor rows must not be aggregated; got {calls}"
+        assert calls == [], f"engine-written rows must not be aggregated; got {calls}"
         assert results_summary == [], f"no spurious Success lines expected; got {results_summary}"
 
 
@@ -121,3 +120,4 @@ class TestCarryOverExcludesPostProcessors:
         nin = captured["exclude_names"]
         assert "epss_kev" in nin
         assert "reachability" in nin
+        assert CRYPTO_ANALYZERS.issubset(nin)

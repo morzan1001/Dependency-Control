@@ -78,13 +78,12 @@ def _gridfs_patched(monkeypatch):
     return fs
 
 
-async def _seed_scan(db, sbom_refs: list[dict], scan_type: str | None = None) -> str:
+async def _seed_scan(db, sbom_refs: list[dict]) -> str:
     scan = Scan(
         project_id=_PROJECT_ID,
         branch="main",
         sbom_refs=sbom_refs,
         status="processing",
-        scan_type=scan_type,
         worker_id=_WORKER,
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
@@ -115,10 +114,10 @@ class _CliTimeoutAnalyzer:
         return {"error": "grype analysis failed", "details": "grype timed out after 300 seconds"}
 
 
-class _EmptyMessageCryptoAnalyzer:
-    """Crypto analyzers return ``{"error": str(e), "findings": []}``; asyncio.TimeoutError() has no message."""
+class _EmptyMessageAnalyzer:
+    """A failure path returning ``{"error": str(e), "findings": []}``; asyncio.TimeoutError() has no message."""
 
-    async def analyze(self, sbom, settings=None, parsed_components=None, *, project_id, scan_id, db):
+    async def analyze(self, sbom, settings=None, parsed_components=None):
         return {"error": str(TimeoutError()), "findings": []}
 
 
@@ -300,17 +299,17 @@ async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, 
 
 @pytest.mark.asyncio
 async def test_an_error_result_with_an_empty_message_still_counts_as_failed(db, _gridfs_patched, monkeypatch):
-    serve_analyzer(monkeypatch, "crypto_weak_key", _EmptyMessageCryptoAnalyzer())
+    serve_analyzer(monkeypatch, "osv", _EmptyMessageAnalyzer())
     await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)], scan_type="cbom")
+    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
     assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["crypto_weak_key"], db, worker_id=_WORKER)
+        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["osv"], db, worker_id=_WORKER)
         == SCAN_STATUS_COMPLETED_WITH_ERRORS
     )
 
     scan = await db.scans.find_one({"_id": scan_id})
-    assert scan["failed_analyzers"] == ["crypto_weak_key"]
+    assert scan["failed_analyzers"] == ["osv"]
 
 
 @pytest.mark.asyncio

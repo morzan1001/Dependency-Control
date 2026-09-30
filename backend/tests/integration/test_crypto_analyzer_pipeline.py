@@ -7,7 +7,9 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-from app.services.analyzers.crypto.base import CryptoRuleAnalyzer, crypto_findings_for_assets
+from app.services.analyzers.crypto.base import crypto_findings_for_assets
+from app.services.cbom_parser import parse_crypto_components
+from tests.helpers.analyzers import evaluate_crypto
 
 _SHARED_PROJECT = "p4"
 _SHARED_SCAN = "s4"
@@ -15,12 +17,6 @@ _ASSET_LIMIT = 50_000
 _POLL_ATTEMPTS = 200
 _POLL_INTERVAL_SECONDS = 0.1
 _NON_TERMINAL_STATUSES = ("running", "pending", "processing", None)
-# Regenerated per call, so it is the one field two evaluations of the same rules cannot share.
-_GENERATED_FIELD = "id"
-
-
-def _without_generated_ids(findings):
-    return [{key: value for key, value in finding.items() if key != _GENERATED_FIELD} for finding in findings]
 
 
 def _rule(rule_id, ft, **extra):
@@ -69,18 +65,7 @@ async def test_analyzer_emits_findings_for_matching_assets(db):
     )
     await CryptoPolicyRepository(db).upsert_system_policy(policy)
 
-    analyzer = CryptoRuleAnalyzer(
-        name="crypto_weak_algorithm",
-        finding_types={FindingType.CRYPTO_WEAK_ALGORITHM},
-    )
-    result = await analyzer.analyze(
-        sbom={},
-        settings={},
-        parsed_components=None,
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_weak_algorithm", db)
     findings = result["findings"]
     assert len(findings) == 1
     assert findings[0]["component"].startswith("MD5")
@@ -120,18 +105,7 @@ async def test_analyzer_only_emits_for_its_finding_types(db):
     )
     await CryptoPolicyRepository(db).upsert_system_policy(policy)
 
-    weak_key = CryptoRuleAnalyzer(
-        name="crypto_weak_key",
-        finding_types={FindingType.CRYPTO_WEAK_KEY},
-    )
-    result = await weak_key.analyze(
-        sbom={},
-        settings={},
-        parsed_components=None,
-        project_id="p2",
-        scan_id="s2",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_weak_key", db, "p2", "s2")
     assert len(result["findings"]) == 1
     assert result["findings"][0]["type"] == "crypto_weak_key"
 
@@ -161,18 +135,7 @@ async def test_analyzer_respects_disabled_rule(db):
             ],
         )
     )
-    analyzer = CryptoRuleAnalyzer(
-        name="crypto_weak_algorithm",
-        finding_types={FindingType.CRYPTO_WEAK_ALGORITHM},
-    )
-    result = await analyzer.analyze(
-        sbom={},
-        settings={},
-        parsed_components=None,
-        project_id="p3",
-        scan_id="s3",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_weak_algorithm", db, "p3", "s3")
     assert result["findings"] == []
 
 
@@ -180,7 +143,7 @@ async def test_analyzer_respects_disabled_rule(db):
 async def test_analyzer_adds_nothing_to_the_shared_rule_evaluation(db):
     """``crypto_findings_for_assets`` is shared with the ad-hoc path, which owns no scan.
 
-    The analyzer's whole contribution over it is the stored assets, the resolved policy and the
+    The evaluator's whole contribution over it is the stored assets, the resolved policy and the
     finding-type filter, so a change made for the other caller cannot pass unseen here.
     """
     stored = [
@@ -229,24 +192,13 @@ async def test_analyzer_adds_nothing_to_the_shared_rule_evaluation(db):
             ],
         )
     )
-    analyzer = CryptoRuleAnalyzer(
-        name="crypto_weak_algorithm",
-        finding_types={FindingType.CRYPTO_WEAK_ALGORITHM},
-    )
 
-    result = await analyzer.analyze(
-        sbom={},
-        settings={},
-        parsed_components=None,
-        project_id=_SHARED_PROJECT,
-        scan_id=_SHARED_SCAN,
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_weak_algorithm", db, _SHARED_PROJECT, _SHARED_SCAN)
 
     assets = await CryptoAssetRepository(db).list_by_scan(_SHARED_PROJECT, _SHARED_SCAN, limit=_ASSET_LIMIT)
-    expected = crypto_findings_for_assets(assets, [owned])
+    expected = crypto_findings_for_assets(assets, [owned], scanner="crypto_weak_algorithm")
     assert expected, "the rule must actually match, or the comparison is vacuous"
-    assert _without_generated_ids(result["findings"]) == _without_generated_ids(expected)
+    assert result["findings"] == expected
 
 
 @pytest.mark.live_mongo
@@ -294,3 +246,24 @@ async def test_end_to_end_cbom_ingest_creates_findings(client, db, running_worke
         f for f in findings if f.get("type") == "crypto_weak_algorithm" and f.get("details", {}).get("rule_id") == "md5"
     ]
     assert len(md5_findings) >= 1
+
+
+def test_a_rule_finding_carries_the_first_twenty_locations_and_the_total():
+    (parsed,) = parse_crypto_components(
+        [
+            {
+                "type": "cryptographic-asset",
+                "bom-ref": "md5",
+                "name": "MD5",
+                "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": {"primitive": "hash"}},
+                "evidence": {
+                    "occurrences": [{"location": f"src/Crypto{index}.java", "line": index} for index in range(25)]
+                },
+            }
+        ]
+    )
+    asset = CryptoAsset(project_id="p", scan_id="s", **parsed.model_dump())
+    rule = _rule("md5", FindingType.CRYPTO_WEAK_ALGORITHM, match_name_patterns=["MD5"])
+    (finding,) = crypto_findings_for_assets([asset], [rule], scanner="crypto_weak_algorithm")
+    assert finding["found_in"] == asset.occurrence_locations[:20]
+    assert finding["details"]["occurrence_count"] == 25

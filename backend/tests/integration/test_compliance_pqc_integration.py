@@ -4,6 +4,8 @@ import asyncio
 
 import pytest
 
+from app.services.crypto_policy.seeder import seed_crypto_policies
+
 _POLL_ATTEMPTS = 50
 _POLL_INTERVAL_SECONDS = 0.1
 _TERMINAL_STATUSES = ("completed", "failed")
@@ -16,6 +18,7 @@ async def test_pqc_report_does_not_crash_with_asyncio_run(
     db,
     owner_auth_headers_proj,
 ):
+    await seed_crypto_policies(db)
     resp = await client.post(
         "/api/v1/compliance/reports",
         json={

@@ -4,14 +4,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.core.metrics import compliance_reports_total
+from app.models.crypto_policy import CryptoPolicy
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
+from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
-from app.services.compliance.frameworks.nist_sp_800_131a import NistSp800_131aFramework
+from app.services.crypto_policy.resolver import EffectivePolicy
 
 
 @pytest.fixture(autouse=True)
@@ -251,7 +255,9 @@ async def test_engine_gather_inputs_builds_evaluation_input():
 
     db.findings.find = MagicMock(return_value=MagicMock(to_list=AsyncMock(return_value=[])))
 
-    policy_repo_mock = MagicMock(get_system_policy=AsyncMock(return_value=None))
+    policy_repo_mock = MagicMock(
+        require_system_policy=AsyncMock(return_value=CryptoPolicy(scope="system", rules=[], version=1))
+    )
 
     resolved = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
 
@@ -305,10 +311,17 @@ def _make_engine_db(*, agg_rows, project_doc=None):
 
 async def _run_gather(engine, db, resolved, framework, asset_repo_mock=None):
     asset_repo_mock = asset_repo_mock or MagicMock(list_by_scan=AsyncMock(return_value=[]))
-    policy_repo_mock = MagicMock(get_system_policy=AsyncMock(return_value=None))
+    policy_repo_mock = MagicMock(
+        require_system_policy=AsyncMock(return_value=CryptoPolicy(scope="system", rules=[], version=1))
+    )
+    no_policy = EffectivePolicy(rules=[], system_rules=[], system_version=1, override_version=None)
     with (
         patch("app.services.compliance.engine.CryptoAssetRepository", return_value=asset_repo_mock),
         patch("app.services.compliance.engine.CryptoPolicyRepository", return_value=policy_repo_mock),
+        patch(
+            "app.services.compliance.engine.CryptoPolicyResolver",
+            return_value=MagicMock(resolve=AsyncMock(return_value=no_policy)),
+        ),
     ):
         result = await engine._gather_inputs(db, resolved, framework)
     return result, asset_repo_mock
@@ -344,9 +357,9 @@ async def test_gather_inputs_keeps_crypto_filter_for_crypto_framework():
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     engine = ComplianceReportEngine()
 
-    await _run_gather(engine, db, resolved, NistSp800_131aFramework())
+    await _run_gather(engine, db, resolved, FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A])
 
-    assert captured["findings_query"]["type"] == {"$regex": "^crypto_"}
+    assert captured["findings_query"]["type"] == {"$in": sorted(CRYPTO_FINDING_TYPES)}
 
 
 @pytest.mark.asyncio
@@ -358,49 +371,42 @@ async def test_gather_inputs_union_filter_when_framework_unknown():
 
     await _run_gather(engine, db, resolved, None)
 
-    regex = captured["findings_query"]["type"]["$regex"]
-    assert "crypto_" in regex and "vulnerability" in regex and "license" in regex
+    assert captured["findings_query"]["type"] == {"$in": sorted(CRYPTO_FINDING_TYPES | {"vulnerability", "license"})}
 
 
 @pytest.mark.asyncio
-async def test_gather_inputs_prepends_project_license_policy():
-    """The resolved project license policy must be plumbed into policy_rules[0]."""
-    license_policy = {"allow_strong_copyleft": True, "allow_network_copyleft": False}
+async def test_gather_inputs_passes_the_saved_license_policy_beside_the_crypto_rules():
     db, _, projects_mock = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}],
-        project_doc={"_id": "p1", "license_policy": license_policy},
+        project_doc={"_id": "p1", "analyzer_settings": {"license_compliance": {"allow_strong_copyleft": True}}},
     )
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     engine = ComplianceReportEngine()
 
     result, _ = await _run_gather(engine, db, resolved, LicenseAuditFramework())
 
-    assert result.policy_rules[0] == license_policy
+    assert result.license_policy == LicensePolicySchema(allow_strong_copyleft=True)
+    assert result.policy_rules == []
     projects_mock.find_one.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_gather_inputs_prefers_analyzer_settings_license_policy():
-    """analyzer_settings.license_compliance takes precedence over top-level project.license_policy."""
+async def test_gather_inputs_ignores_a_stored_legacy_license_policy():
+    """The report judges by the analyzer_settings entry the scan grades under, not by a top-level license_policy."""
     db, _, _ = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}],
-        project_doc={
-            "_id": "p1",
-            "license_policy": {"allow_strong_copyleft": False},
-            "analyzer_settings": {"license_compliance": {"allow_strong_copyleft": True}},
-        },
+        project_doc={"_id": "p1", "license_policy": {"allow_strong_copyleft": True}},
     )
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     engine = ComplianceReportEngine()
 
     result, _ = await _run_gather(engine, db, resolved, LicenseAuditFramework())
 
-    assert result.policy_rules[0] == {"allow_strong_copyleft": True}
+    assert result.license_policy == LicensePolicySchema()
 
 
 @pytest.mark.asyncio
-async def test_gather_inputs_no_license_policy_for_multi_project_scope():
-    """A multi-project team/user scope must not prepend a single project policy."""
+async def test_gather_inputs_uses_the_default_license_policy_for_a_multi_project_scope():
     db, _, projects_mock = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}, {"_id": "p2", "scan_id": "s2"}],
     )
@@ -409,7 +415,7 @@ async def test_gather_inputs_no_license_policy_for_multi_project_scope():
 
     result, _ = await _run_gather(engine, db, resolved, LicenseAuditFramework())
 
-    assert result.policy_rules == []
+    assert result.license_policy == LicensePolicySchema()
     projects_mock.find_one.assert_not_awaited()
 
 
@@ -422,7 +428,7 @@ async def test_collect_crypto_assets_avoids_per_scan_find_one():
     resolved = ResolvedScope(scope="team", scope_id="t1", project_ids=["p1", "p2"])
     engine = ComplianceReportEngine()
 
-    _, asset_repo_mock = await _run_gather(engine, db, resolved, NistSp800_131aFramework())
+    _, asset_repo_mock = await _run_gather(engine, db, resolved, FRAMEWORK_REGISTRY[ReportFramework.NIST_SP_800_131A])
 
     db.scans.find_one.assert_not_called()
     calls = {(c.args[0], c.args[1]) for c in asset_repo_mock.list_by_scan.call_args_list}

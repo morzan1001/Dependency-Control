@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import re
 from datetime import datetime
 from typing import Any
 
@@ -96,7 +97,8 @@ def _parse_one(comp: dict[str, Any], idx: int) -> ParsedCryptoAsset | None:
         bom_ref=bom_ref,
         name=name,
         asset_type=asset_type,
-        properties=_extract_properties(comp),
+        properties=component_properties(comp),
+        occurrence_locations=occurrence_locations(comp),
     )
 
     if asset_type == CryptoAssetType.ALGORITHM:
@@ -105,6 +107,10 @@ def _parse_one(comp: dict[str, Any], idx: int) -> ParsedCryptoAsset | None:
         _populate_certificate(asset, crypto_props.get("certificateProperties") or {})
     elif asset_type == CryptoAssetType.PROTOCOL:
         _populate_protocol(asset, crypto_props.get("protocolProperties") or {})
+    elif asset_type == CryptoAssetType.RELATED_CRYPTO_MATERIAL:
+        material = crypto_props.get("relatedCryptoMaterialProperties") or {}
+        asset.key_size_bits = _coerce_positive_int(material.get("size"))
+        asset.algorithm_ref = material.get("algorithmRef")
 
     _populate_evidence(asset, comp.get("evidence") or {})
     return asset
@@ -200,37 +206,47 @@ def _populate_protocol(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None:
     asset.version = props.get("version")
     cipher_suites = props.get("cipherSuites") or []
     if isinstance(cipher_suites, list):
-        names = []
-        for c in cipher_suites:
-            # CycloneDX 1.6: cipherSuites entries are objects with a "name"
-            # (IANA suite name). Tolerate the non-spec plain-string form too.
-            name = c.get("name") if isinstance(c, dict) else c
-            if name:
-                names.append(str(name))
-        asset.cipher_suites = names
+        for entry in cipher_suites:
+            # CycloneDX 1.6 cipherSuites entries are objects; tolerate the non-spec plain-string form too.
+            suite = entry if isinstance(entry, dict) else {"name": entry}
+            if suite.get("name"):
+                asset.cipher_suites.append(str(suite["name"]))
+                asset.cipher_suite_ids.append(_cipher_suite_id(suite.get("identifiers")))
+
+
+def _cipher_suite_id(identifiers: Any) -> str | None:
+    """The IANA catalog's spelling: ["0xC0", "0x30"], ["0xc0,0x30"] and ["0xC030"] all give "0xC0,0x30"."""
+    if not isinstance(identifiers, list):
+        return None
+    digits = re.sub(r"0x|[\s,]", "", ",".join(map(str, identifiers)).lower()).upper()
+    return f"0x{digits[:2]},0x{digits[2:]}" if re.fullmatch(r"[0-9A-F]{4}", digits) else None
+
+
+def component_properties(comp: dict[str, Any]) -> dict[str, str]:
+    raw = comp.get("properties")
+    return {
+        str(p["name"]): str(p["value"])
+        for p in (raw if isinstance(raw, list) else [])
+        if isinstance(p, dict) and p.get("name") and p.get("value") not in (None, "")
+    }
+
+
+def occurrence_locations(comp: dict[str, Any]) -> list[str]:
+    evidence = comp.get("evidence")
+    occurrences = evidence.get("occurrences") if isinstance(evidence, dict) else None
+    locations = (
+        o.get("location") for o in (occurrences if isinstance(occurrences, list) else []) if isinstance(o, dict)
+    )
+    return list(dict.fromkeys(str(loc) for loc in locations if loc))
 
 
 def _populate_evidence(asset: ParsedCryptoAsset, evidence: dict[str, Any]) -> None:
-    occurrences = evidence.get("occurrences") or []
-    asset.occurrence_locations = [
-        str(o.get("location")) for o in occurrences if isinstance(o, dict) and o.get("location")
-    ]
     detection = evidence.get("detectionContext")
     if isinstance(detection, str):
         asset.detection_context = detection
     confidence = evidence.get("confidence")
     if isinstance(confidence, (int, float)):
         asset.confidence = float(confidence)
-
-
-def _extract_properties(comp: dict[str, Any]) -> dict[str, str]:
-    props = {}
-    for p in comp.get("properties") or []:
-        name = p.get("name")
-        value = p.get("value")
-        if name and value is not None:
-            props[str(name)] = str(value)
-    return props
 
 
 def _parse_iso_date(raw: Any) -> datetime | None:

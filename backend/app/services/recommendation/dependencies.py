@@ -4,6 +4,7 @@ from typing import Any
 from app.core.constants import (
     DEV_DEPENDENCY_PATTERN,
     DEV_DEPENDENCY_RUNTIME_PACKAGES,
+    NON_RUNTIME_SCOPES,
 )
 from app.core.purl import package_identity
 from app.schemas.recommendation import (
@@ -235,7 +236,7 @@ def analyze_dev_in_production(
 
     for dep in dependencies:
         scope = str(get_attr(dep, "scope") or "").lower()
-        if scope in ("dev", "development", "test"):
+        if scope in NON_RUNTIME_SCOPES:
             continue
 
         # The qualified name, so a dev-only scope matches where the SBOM split it into group and name.

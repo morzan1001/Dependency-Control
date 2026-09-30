@@ -3,6 +3,7 @@
 import pytest
 
 from app.services.analyzers.license_compliance import LicenseAnalyzer
+from app.services.analyzers.license_compliance.constants import LICENSE_INCOMPATIBILITY_CATEGORY
 
 
 def _component(name, version, license_str, *, scope="runtime", direct=True):
@@ -64,7 +65,7 @@ async def test_suppressed_transitive_finding_still_classifies():
 
 @pytest.mark.asyncio
 async def test_dev_scoped_component_is_not_classified():
-    result = await _analyze([_component("jest", "29.0.0", "MIT", scope="dev")])
+    result = await _analyze([_component("jest", "29.0.0", "MIT", scope="excluded")])
 
     assert result["component_licenses"] == []
     assert result["summary"]["skipped"] == 1
@@ -105,6 +106,5 @@ async def test_compatibility_conflicts_do_not_appear_in_component_licenses():
         ]
     )
 
-    synthetic = [i for i in result["license_issues"] if " + " in i["component"]]
-    assert synthetic, "expected the GPL-2.0-only/GPL-3.0-only conflict issue"
-    assert all(" + " not in e["component"] for e in result["component_licenses"])
+    [conflict] = [i for i in result["license_issues"] if i["category"] == LICENSE_INCOMPATIBILITY_CATEGORY]
+    assert conflict["component"] not in {e["component"] for e in result["component_licenses"]}

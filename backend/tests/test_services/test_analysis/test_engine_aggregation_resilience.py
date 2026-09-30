@@ -31,7 +31,7 @@ class TestAggregateExternalResultsResilience:
         results_summary: list = []
 
         # 'trivy' absent from analyzers -> external results path
-        monkeypatch.setattr("app.services.analysis.engine.analyzer_factories", {})
+        monkeypatch.setattr("app.services.analysis.engine._ENGINE_RESULT_NAMES", frozenset())
 
         good_result = _row(
             "trivy",
@@ -92,7 +92,7 @@ class TestAggregateExternalResultsResilience:
         aggregator = self._make_aggregator()
         results_summary: list = []
 
-        monkeypatch.setattr("app.services.analysis.engine.analyzer_factories", {})
+        monkeypatch.setattr("app.services.analysis.engine._ENGINE_RESULT_NAMES", frozenset())
 
         good_result = _row(
             "trivy",

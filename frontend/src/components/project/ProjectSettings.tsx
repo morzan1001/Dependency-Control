@@ -164,11 +164,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
     project.analyzer_settings || {}
   )
 
-  // Fall back to license_policy when no per-analyzer license setting exists.
-  const initialLicenseCompliance = analyzerSettingsState.license_compliance || (
-    project.license_policy ? { ...project.license_policy } as Record<string, unknown> : {}
-  )
-
   const saveAnalyzerSettings = (analyzerId: string, values: Record<string, unknown>) => {
     const updated = { ...analyzerSettingsState, [analyzerId]: values }
     setAnalyzerSettingsState(updated)
@@ -726,9 +721,7 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
       {openSettingsAnalyzer && (() => {
         const schema = getSettingsSchema(openSettingsAnalyzer)
         if (!schema) return null
-        const currentValues = openSettingsAnalyzer === 'license_compliance'
-          ? initialLicenseCompliance
-          : (analyzerSettingsState[openSettingsAnalyzer] || {})
+        const currentValues = analyzerSettingsState[openSettingsAnalyzer] || {}
         return (
           <AnalyzerSettingsDialog
             // Remount on analyzer switch so internal state re-initializes from currentValues.

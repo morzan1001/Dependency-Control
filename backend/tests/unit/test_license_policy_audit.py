@@ -1,61 +1,44 @@
-"""Unit tests for the license-policy change-summary helper."""
+"""Unit tests for the license-policy change-summary helper, which diffs two resolved policies."""
 
+from app.schemas.project import LicensePolicySchema
 from app.services.audit.history import compute_license_policy_change_summary
 
 
-def test_initial_policy_summary():
-    s = compute_license_policy_change_summary(old=None, new={"distribution_model": "distributed"})
-    assert "Initial license policy" in s
-
-
-def test_cleared_policy_summary():
-    s = compute_license_policy_change_summary(old={"distribution_model": "distributed"}, new={})
-    assert s == "License policy cleared"
+def _policy(**fields):
+    return LicensePolicySchema(**fields).model_dump()
 
 
 def test_field_transition_summary():
-    s = compute_license_policy_change_summary(
-        old={"allow_strong_copyleft": False, "distribution_model": "distributed"},
-        new={"allow_strong_copyleft": True, "distribution_model": "distributed"},
-    )
-    assert "allow_strong_copyleft: False -> True" in s
+    s = compute_license_policy_change_summary(old=_policy(), new=_policy(allow_strong_copyleft=True))
+    assert s == "allow_strong_copyleft: False -> True"
 
 
 def test_multiple_field_transitions():
     s = compute_license_policy_change_summary(
-        old={"distribution_model": "distributed", "library_usage": "mixed"},
-        new={"distribution_model": "internal_only", "library_usage": "unmodified"},
+        old=_policy(), new=_policy(distribution_model="internal_only", library_usage="unmodified")
     )
-    assert "distribution_model: distributed -> internal_only" in s
-    assert "library_usage: mixed -> unmodified" in s
+    assert s == "distribution_model: distributed -> internal_only, library_usage: mixed -> unmodified"
 
 
-def test_added_field_summary():
-    s = compute_license_policy_change_summary(
-        old={"distribution_model": "distributed"},
-        new={"distribution_model": "distributed", "allow_strong_copyleft": True},
-    )
-    assert "added allow_strong_copyleft=True" in s
+def test_the_flags_the_scan_reads_are_compared():
+    s = compute_license_policy_change_summary(old=_policy(), new=_policy(ignore_transitive=True))
+    assert s == "ignore_transitive: False -> True"
 
 
-def test_removed_field_summary():
-    s = compute_license_policy_change_summary(
-        old={"distribution_model": "distributed", "allow_strong_copyleft": True},
-        new={"distribution_model": "distributed"},
-    )
-    assert "removed allow_strong_copyleft" in s
-
-
-def test_no_effective_change_returns_marker():
-    s = compute_license_policy_change_summary(
-        old={"distribution_model": "distributed"},
-        new={"distribution_model": "distributed"},
-    )
+def test_restating_a_default_is_no_effective_change():
+    s = compute_license_policy_change_summary(old=_policy(), new=_policy(distribution_model="distributed"))
     assert s == "No effective changes"
 
 
 def test_summary_is_capped_at_200_chars():
-    old = {}
-    new = {f"extra_field_{i}": f"value_{i}" for i in range(50)}
-    s = compute_license_policy_change_summary(old=old, new=new)
-    assert len(s) <= 200
+    new = _policy(
+        distribution_model="internal_only",
+        deployment_model="cli_batch",
+        library_usage="unmodified",
+        allow_strong_copyleft=True,
+        allow_network_copyleft=True,
+        ignore_dev_dependencies=False,
+        ignore_transitive=True,
+    )
+    s = compute_license_policy_change_summary(old=_policy(), new=new)
+    assert len(s) == 200

@@ -1531,6 +1531,11 @@ class FakeCollection:
         self._apply_update(self._docs[matched], update)
         return self._docs[matched] if return_document else before
 
+    async def find_one_and_delete(self, query, **_kwargs):
+        await asyncio.sleep(0)
+        matched = _matched_key(self._docs, query)
+        return self._docs.pop(matched) if matched is not None else None
+
     @staticmethod
     def _apply_update(
         target: dict, update: dict | list, skip_set_on_insert: bool = False, array_filters: list | None = None

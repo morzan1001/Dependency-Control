@@ -4,14 +4,6 @@ import type { TeamRef, TeamSource } from './team';
 
 export type { EnhancedStats } from './scan';
 
-export interface LicensePolicy {
-  distribution_model: 'internal_only' | 'distributed' | 'open_source';
-  deployment_model: 'network_facing' | 'cli_batch' | 'desktop' | 'embedded';
-  library_usage: 'unmodified' | 'modified' | 'mixed';
-  allow_strong_copyleft: boolean;
-  allow_network_copyleft: boolean;
-}
-
 export interface ProjectMember {
   user_id: string;
   username?: string;
@@ -37,7 +29,6 @@ export interface Project {
   active_analyzers?: string[];
   retention_days?: number;
   retention_action?: RetentionAction;
-  license_policy?: LicensePolicy;
   analyzer_settings?: Record<string, Record<string, unknown>>;
   default_branch?: string;
   enforce_notification_settings?: boolean;
@@ -72,7 +63,6 @@ export interface ProjectUpdate {
   active_analyzers?: string[];
   retention_days?: number;
   retention_action?: RetentionAction;
-  license_policy?: LicensePolicy;
   analyzer_settings?: Record<string, Record<string, unknown>>;
   enforce_notification_settings?: boolean;
   default_branch?: string | null;

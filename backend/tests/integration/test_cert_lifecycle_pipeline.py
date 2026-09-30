@@ -1,4 +1,4 @@
-"""Registry-resolved CertificateLifecycleAnalyzer produces findings."""
+"""The registered certificate-lifecycle evaluator produces findings."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -11,12 +11,11 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-from tests.helpers.analyzers import build_analyzer
+from tests.helpers.analyzers import evaluate_crypto
 
 
 @pytest.mark.asyncio
 async def test_cert_lifecycle_registered_and_runs(db):
-    analyzer = build_analyzer("crypto_certificate_lifecycle")
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
@@ -54,12 +53,7 @@ async def test_cert_lifecycle_registered_and_runs(db):
         )
     )
 
-    result = await analyzer.analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await evaluate_crypto("crypto_certificate_lifecycle", db)
     types = {f["type"] for f in result["findings"]}
     assert "crypto_cert_expiring_soon" in types
     assert "crypto_cert_self_signed" in types

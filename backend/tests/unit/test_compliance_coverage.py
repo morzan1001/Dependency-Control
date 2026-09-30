@@ -30,6 +30,7 @@ from app.schemas.compliance import (
     InputCoverage,
     ReportFramework,
 )
+from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
@@ -474,17 +475,17 @@ def test_the_same_fips_pass_stands_when_the_inventory_covered_the_scope():
     assert _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"].status == ControlStatus.PASSED.value
 
 
-def _rule(*, enabled: bool, match_primitive: str | None = None) -> dict:
-    return {
-        "rule_id": "rule-1",
-        "name": "r",
-        "description": "d",
-        "finding_type": FindingType.CRYPTO_WEAK_ALGORITHM.value,
-        "default_severity": Severity.HIGH.value,
-        "match_primitive": match_primitive,
-        "enabled": enabled,
-        "source": "nist-sp-800-131a",
-    }
+def _rule(*, enabled: bool, match_primitive: CryptoPrimitive | None = None) -> CryptoRule:
+    return CryptoRule(
+        rule_id="rule-1",
+        name="r",
+        description="d",
+        finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
+        default_severity=Severity.HIGH,
+        match_primitive=match_primitive,
+        enabled=enabled,
+        source=CryptoPolicySource.NIST_SP_800_131A,
+    )
 
 
 def test_a_not_applicable_decided_by_the_policy_stands_over_a_truncated_inventory():
@@ -497,7 +498,6 @@ def test_a_not_applicable_decided_by_the_policy_stands_over_a_truncated_inventor
         severity=Severity.HIGH,
         remediation="r",
         maps_to_rule_ids=["rule-1"],
-        maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
     )
     data = _sla_input([], _assets_partial())
     data.crypto_assets = [_algorithm("SHA-256", CryptoPrimitive.HASH)]
@@ -517,11 +517,10 @@ def test_a_not_applicable_read_off_the_inventory_is_withheld_over_a_truncated_on
         severity=Severity.HIGH,
         remediation="r",
         maps_to_rule_ids=["rule-1"],
-        maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
     )
     data = _sla_input([], _assets_partial())
     data.crypto_assets = [_algorithm("SHA-256", CryptoPrimitive.HASH)]
-    data.policy_rules = [_rule(enabled=True, match_primitive=CryptoPrimitive.BLOCK_CIPHER.value)]
+    data.policy_rules = [_rule(enabled=True, match_primitive=CryptoPrimitive.BLOCK_CIPHER)]
 
     result = default_evaluator(control, data)
 

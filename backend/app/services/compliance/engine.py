@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from app.core.config import settings
 from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
+from app.models.finding import CRYPTO_FINDING_TYPES
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
@@ -22,11 +23,13 @@ from app.schemas.compliance import (
     ReportFramework,
     ReportStatus,
 )
+from app.schemas.project import LicensePolicySchema, license_policy_from_settings
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
-from app.services.analyzers.crypto.catalogs.loader import CURRENT_IANA_CATALOG_VERSION
+from app.services.analyzers.crypto.catalogs.loader import IANA_WEAKNESS_RULES_VERSION
 from app.services.compliance.frameworks import FRAMEWORK_REGISTRY
 from app.services.compliance.frameworks.base import ComplianceFramework, EvaluationInput
 from app.services.compliance.renderers import RENDERER_REGISTRY
+from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
 
@@ -112,15 +115,15 @@ class ComplianceReportEngine:
         scan_ids = [sid for _, sid in scan_pairs]
         assets, assets_in_scope = await self._collect_crypto_assets(db, scan_pairs)
         findings, findings_in_scope = await self._collect_findings(db, resolved, scan_ids, framework)
-        policy_repo = CryptoPolicyRepository(db)
-        system = await policy_repo.get_system_policy()
-        policy_version = getattr(system, "version", None) if system else None
-        policy_rules = [r.model_dump() for r in system.rules] if system else []
-        # License Audit reads its toggles from policy_rules[0]; prepend the
-        # project license policy there. Crypto frameworks key by rule_id and ignore it.
-        license_policy = await self._resolve_license_policy(db, resolved, framework)
-        if license_policy is not None:
-            policy_rules = [license_policy, *policy_rules]
+        project_ids = resolved.project_ids or []
+        if resolved.scope == "project" and len(project_ids) == 1:
+            effective = await CryptoPolicyResolver(db).resolve(project_ids[0])
+            policy_rules, policy_version = effective.rules, effective.system_version
+            override_version = None if effective.override_locked else effective.override_version
+        else:
+            system = await CryptoPolicyRepository(db).require_system_policy()
+            policy_rules, policy_version = system.rules, system.version
+            override_version = None
         scope_desc = self._scope_description(resolved)
         return EvaluationInput(
             resolved=resolved,
@@ -128,8 +131,10 @@ class ComplianceReportEngine:
             crypto_assets=assets,
             findings=findings,
             policy_rules=policy_rules,
+            license_policy=await self._resolve_license_policy(db, resolved, framework),
             policy_version=policy_version,
-            iana_catalog_version=CURRENT_IANA_CATALOG_VERSION,
+            override_version=override_version,
+            iana_catalog_version=IANA_WEAKNESS_RULES_VERSION,
             scan_ids=scan_ids,
             db=db,
             coverage=EvaluationCoverage(
@@ -226,50 +231,22 @@ class ComplianceReportEngine:
         if key == ReportFramework.LICENSE_AUDIT:
             return "license"
         if key is None:
-            return {"$regex": "^crypto_|^vulnerability$|^license$"}
-        return {"$regex": "^crypto_"}
+            return {"$in": sorted(CRYPTO_FINDING_TYPES | {"vulnerability", "license"})}
+        return {"$in": sorted(CRYPTO_FINDING_TYPES)}
 
     async def _resolve_license_policy(
         self,
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
         framework: ComplianceFramework | None,
-    ) -> dict[str, Any] | None:
-        """Effective project license policy; None unless scope is a single project carrying the toggles."""
+    ) -> LicensePolicySchema:
+        """The single project's saved policy; every other scope, and a crypto framework, gets the default."""
         key = getattr(framework, "key", None)
-        if key not in (ReportFramework.LICENSE_AUDIT, None):
-            return None
-        project_ids = resolved.project_ids
-        if resolved.scope != "project" or not project_ids or len(project_ids) != 1:
-            return None
-        doc = await db["projects"].find_one(
-            {"_id": project_ids[0]},
-            {"license_policy": 1, "analyzer_settings": 1},
-        )
-        if not doc:
-            return None
-        return self._effective_license_policy(doc)
-
-    @staticmethod
-    def _effective_license_policy(project_doc: dict[str, Any]) -> dict[str, Any] | None:
-        """Precedence: analyzer_settings.license_compliance (or its nested license_policy) over top-level project.license_policy."""
-        license_keys = ("allow_strong_copyleft", "allow_network_copyleft", "distribution_model")
-
-        def _matches(candidate: Any) -> bool:
-            return isinstance(candidate, dict) and any(k in candidate for k in license_keys)
-
-        analyzer_settings = project_doc.get("analyzer_settings") or {}
-        settings = analyzer_settings.get("license_compliance") if isinstance(analyzer_settings, dict) else None
-        if isinstance(settings, dict):
-            nested = settings.get("license_policy")
-            if _matches(nested):
-                return nested
-            if _matches(settings):
-                return settings
-        legacy = project_doc.get("license_policy")
-        if _matches(legacy):
-            return legacy
-        return None
+        project_ids = resolved.project_ids or []
+        if key not in (ReportFramework.LICENSE_AUDIT, None) or resolved.scope != "project" or len(project_ids) != 1:
+            return LicensePolicySchema()
+        doc = await db["projects"].find_one({"_id": project_ids[0]}, {"analyzer_settings.license_compliance": 1})
+        return license_policy_from_settings(((doc or {}).get("analyzer_settings") or {}).get("license_compliance"))
 
     def _scope_description(self, resolved: ResolvedScope) -> str:
         if resolved.scope == "project":

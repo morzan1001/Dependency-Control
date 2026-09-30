@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from app.models.finding import FindingType, Severity
+from app.models.finding import Severity
 from app.schemas.compliance import (
     ControlDefinition,
     ControlResult,
@@ -20,7 +20,6 @@ def test_control_definition_minimal():
         severity=Severity.HIGH,
         remediation="Replace MD5 with SHA-256.",
         maps_to_rule_ids=["nist-131a-md5"],
-        maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
     )
     assert cd.control_id == "NIST-131A-01"
     assert cd.custom_evaluator is None

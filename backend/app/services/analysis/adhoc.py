@@ -202,10 +202,12 @@ _STAGE_NOTES: dict[str, str] = {
 }
 
 # Analyzers that put nothing the caller posted on the wire: the licence database ships with the
-# image, the crypto analyzers read stored assets, and the two CLI scanners match the SBOM against
-# a vulnerability database they fetch for themselves. Named rather than inferred so a new
-# analyzer has to be placed on one side of the contract before it can quietly break it.
-_SENDS_NOTHING: frozenset[str] = frozenset({"license_compliance", "trivy", "grype"}) | frozenset(CRYPTO_ANALYZERS)
+# image, and the two CLI scanners match the SBOM against a vulnerability database they fetch for
+# themselves. Named rather than inferred so a new analyzer has to be placed on one side of the
+# contract before it can quietly break it.
+_SENDS_NOTHING: frozenset[str] = frozenset({"license_compliance", "trivy", "grype"})
+
+_ADHOC_CRYPTO_RULES = tuple(r for r in load_seed_rules() if r.enabled and r.finding_type in RULE_DRIVEN_FINDING_TYPES)
 
 _NO_CALLGRAPH = "no callgraph supplied"
 _AUTO_FORMAT = "auto"
@@ -621,24 +623,19 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
 
     resolved: list[str] = []
     for name in selected:
-        if name in post_processor_factories:
-            # Stages rather than selectable analyzers: they report their own outcome, so a
-            # skip note here would contradict the same report.
+        if name in post_processor_factories or name in CRYPTO_ANALYZERS:
+            # Post-processors are stages that report their own outcome; every crypto name gets its note below.
             continue
-        if name in CRYPTO_ANALYZERS:
-            report.skipped[name] = _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED)
-        elif name not in analyzer_factories:
+        if name not in analyzer_factories:
             report.skipped[name] = _UNKNOWN_ANALYZER
         else:
             resolved.append(name)
 
     for name in analyzer_factories:
-        if name in resolved or name in report.skipped:
-            continue
-        if name in CRYPTO_ANALYZERS:
-            report.skipped[name] = _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED)
-        else:
+        if name not in resolved and name not in report.skipped:
             report.skipped[name] = ADHOC_SKIP_REASONS.get(name, _NOT_REQUESTED)
+    for name in sorted(CRYPTO_ANALYZERS):
+        report.skipped.setdefault(name, _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED))
 
     return resolved
 
@@ -656,14 +653,12 @@ def _aggregate_crypto_rules(
         report.skipped[_CRYPTO_RULES] = _NO_CRYPTO_ASSETS
         return
 
-    # A seeded lifecycle or cipher rule constrains no subject, so the matcher alone would fire it on every asset.
-    rules = [rule for rule in load_seed_rules() if rule.enabled and rule.finding_type in RULE_DRIVEN_FINDING_TYPES]
     for parsed_input in parsed_inputs:
         assets = [
             CryptoAsset(project_id=_ADHOC_SCOPE, scan_id=_ADHOC_SCOPE, **asset.model_dump())
             for asset in parsed_input.parsed.crypto_assets
         ]
-        findings = crypto_findings_for_assets(assets, rules)
+        findings = crypto_findings_for_assets(assets, _ADHOC_CRYPTO_RULES, scanner=_CRYPTO_RULES)
         if findings:
             aggregator.aggregate(
                 _CRYPTO_DISPATCH_KEY,
@@ -823,8 +818,8 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     parsed_inputs = await asyncio.to_thread(_parse_sboms, request, report)
 
-    license_policy = request.license_policy.model_dump() if request.license_policy else None
-    settings_for = _build_settings_resolver(SystemSettings(), license_policy, None)
+    license_settings = {"license_compliance": request.license_policy.model_dump()} if request.license_policy else None
+    settings_for = _build_settings_resolver(SystemSettings(), license_settings)
 
     requested = resolve_adhoc_analyzers(request.analyzers, report)
 
