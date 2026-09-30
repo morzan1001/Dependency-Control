@@ -67,7 +67,8 @@ async def write_policy(
         project_id=project_id,
         rules=list(rules or []),
         version=max(current.version if current else 0, audited) + 1,
-        updated_by=str(actor.id) if actor else None,
+        # A seed write keeps the last editor, the marker by which the seeder spares an edited policy.
+        updated_by=str(actor.id) if actor else (current.updated_by if current else None),
         seed_version=CURRENT_SEED_VERSION
         if action == PolicyAuditAction.SEED
         else (current.seed_version if current else None),

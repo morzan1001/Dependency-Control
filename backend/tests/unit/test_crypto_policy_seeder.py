@@ -124,3 +124,20 @@ async def test_a_seed_bump_gives_an_edited_policy_only_the_seed_rules_it_lacks(d
     assert got.rules[:2] == [disabled, _custom_rule()]
     assert [r.rule_id for r in got.rules[2:]] == [r.rule_id for r in seed[1:]]
     assert (got.version, got.seed_version) == (3, CURRENT_SEED_VERSION)
+
+
+@pytest.mark.asyncio
+async def test_an_edited_policy_keeps_its_rules_and_editor_through_consecutive_seed_bumps(db):
+    """The seeder reads updated_by as the edited marker, so a seed write must not clear it."""
+    repo = CryptoPolicyRepository(db)
+    await repo.upsert_system_policy(
+        CryptoPolicy(scope="system", rules=[_custom_rule()], version=2, updated_by="admin-user")
+    )
+
+    await seed_crypto_policies(db)
+    with patch("app.services.crypto_policy.seeder.CURRENT_SEED_VERSION", CURRENT_SEED_VERSION + 1):
+        await seed_crypto_policies(db)
+
+    got = await repo.get_system_policy()
+    assert (got.rules[0].rule_id, got.updated_by) == ("custom-admin-rule", "admin-user")
+    assert (got.version, got.seed_version) == (4, CURRENT_SEED_VERSION + 1)
