@@ -36,12 +36,15 @@ async def build_user_project_query(
     user: User,
     team_repo: TeamRepository,
 ) -> dict[str, Any]:
-    """Build a MongoDB query for projects the user can access (empty dict if read_all).
+    """Build a MongoDB query for projects the user can access (empty dict for read_all or a write superuser).
 
-    Membership and a project-read permission, the same two layers ``check_project_access``
-    composes: a caller with neither permission reads no project through any surface, however many
-    it is a member of.
+    The layers ``check_project_access`` composes, in its order: project:update opens every project,
+    otherwise membership and a project-read permission; a caller with neither permission reads no
+    project through any surface, however many it is a member of.
     """
+    if is_write_superuser(user):
+        return {}
+
     if not may_read_projects(user):
         return NO_PROJECTS
 

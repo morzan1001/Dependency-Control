@@ -4,23 +4,32 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.projects import build_user_project_query
+from app.core.constants import ScopeName
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.teams import TeamRepository
-from app.services.analytics.scopes import ScopeResolver, may_query_global, team_scope_filter
+from app.services.analytics.scopes import may_query_global, read_scope_projects, team_scope_filter
 
 
-async def report_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict[str, Any]:
-    """Own user reports (all for system:manage) and the project, team and global reports whose scope resolves."""
+async def report_visibility_filter(
+    db: AsyncIOMotorDatabase, user: User, scope: ScopeName | None = None
+) -> dict[str, Any]:
+    """Own user reports (all for system:manage) and the project, team and global reports whose scope resolves;
+    projects and teams are read only when ``scope`` (None for every scope) can match their reports."""
     is_super = has_permission(user.permissions, Permissions.SYSTEM_MANAGE)
     branches: list[dict[str, Any]] = [
         {"scope": "user"} if is_super else {"scope": "user", "requested_by": str(user.id)}
     ]
-    project_ids = [p.id for p in await ScopeResolver(db, user).list_user_projects()]
-    if project_ids:
-        branches.append({"scope": "project", "scope_id": {"$in": project_ids}})
-    teams = team_scope_filter(user)
-    team_ids = [] if teams is None else await TeamRepository(db).find_ids(teams)
+    team_repo = TeamRepository(db)
+    if scope in (None, "project"):
+        project_query = await build_user_project_query(user, team_repo)
+        if not project_query:
+            branches.append({"scope": "project"})
+        elif project_ids := [p.id for p in await read_scope_projects(db, project_query)]:
+            branches.append({"scope": "project", "scope_id": {"$in": project_ids}})
+    teams = team_scope_filter(user) if scope in (None, "team") else None
+    team_ids = [] if teams is None else await team_repo.find_ids(teams)
     if team_ids:
         branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
     if may_query_global(user):

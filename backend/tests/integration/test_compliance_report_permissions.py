@@ -1,15 +1,20 @@
 """Integration tests for compliance-report endpoint authorization."""
 
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 import pytest
 
+from app.core.permissions import Permissions
 from app.models.compliance_report import ComplianceReport
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.services.analytics import scopes
+from tests.helpers.auth import bearer_headers
 
 _MEMBER_USER_ID = "testuser"
 _OTHER_USER_ID = "another-user"
+_WRITE_SUPERUSER = bearer_headers("editor-at-large", [Permissions.PROJECT_READ, Permissions.PROJECT_UPDATE])
 
 
 async def _insert_report(
@@ -153,6 +158,49 @@ async def test_list_reports_hides_global_reports_from_a_caller_without_global_an
     assert global_report not in member_ids
 
     assert global_report in await _listed_ids(client, admin_auth_headers)
+
+
+@pytest.mark.asyncio
+async def test_a_project_write_superuser_lists_a_project_report_outside_its_membership(client, db):
+    await db.projects.insert_one({"_id": "p-foreign", "name": "p-foreign", "members": []})
+    report = await _insert_report(db, requested_by=_OTHER_USER_ID, scope="project", scope_id="p-foreign")
+
+    assert report in await _listed_ids(client, _WRITE_SUPERUSER)
+
+
+@pytest.mark.asyncio
+async def test_a_project_write_superuser_opens_a_project_report_outside_its_membership(client, db):
+    await db.projects.insert_one({"_id": "p-foreign", "name": "p-foreign", "members": []})
+    report = await _insert_report(db, requested_by=_OTHER_USER_ID, scope="project", scope_id="p-foreign")
+
+    resp = await client.get(f"/api/v1/compliance/reports/{report}", headers=_WRITE_SUPERUSER)
+
+    assert resp.status_code == 200, resp.text
+
+
+@pytest.mark.asyncio
+async def test_a_read_all_caller_lists_project_reports_past_the_analytics_project_ceiling(client, db):
+    await db.projects.insert_one({"_id": "p-2", "name": "p-2", "members": []})
+    report = await _insert_report(db, requested_by=_OTHER_USER_ID, scope="project", scope_id="p-2")
+
+    with patch.object(scopes, "ANALYTICS_MAX_SCOPE_PROJECTS", 1):
+        ids = await _listed_ids(client, bearer_headers("reader", [Permissions.PROJECT_READ_ALL]))
+
+    assert report in ids
+
+
+@pytest.mark.asyncio
+async def test_listing_personal_reports_reads_none_of_the_callers_projects(client, db, member_auth_headers):
+    await db.projects.insert_one(
+        {"_id": "p-2", "name": "p-2", "members": [{"user_id": _MEMBER_USER_ID, "role": "viewer"}]}
+    )
+    own = await _insert_report(db, requested_by=_MEMBER_USER_ID)
+
+    with patch.object(scopes, "ANALYTICS_MAX_SCOPE_PROJECTS", 1):
+        resp = await client.get("/api/v1/compliance/reports?scope=user", headers=member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert [r["_id"] for r in resp.json()["reports"]] == [own]
 
 
 @pytest.mark.asyncio
