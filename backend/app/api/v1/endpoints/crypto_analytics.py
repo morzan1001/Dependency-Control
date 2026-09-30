@@ -1,8 +1,7 @@
 """REST endpoints for crypto analytics (hotspots, trends)."""
 
-from datetime import datetime
-
 from fastapi import HTTPException, Query
+from pydantic import AwareDatetime
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -66,8 +65,8 @@ async def get_hotspot_locations(
 async def get_trends(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    range_start: datetime = Query(...),
-    range_end: datetime = Query(...),
+    range_start: AwareDatetime = Query(...),
+    range_end: AwareDatetime = Query(...),
     scope: ScopeName = Query(...),
     scope_id: str | None = Query(None),
     metric: Metric = Query("total_crypto_findings"),

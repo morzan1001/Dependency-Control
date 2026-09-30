@@ -2,6 +2,7 @@ import { useParams, Link, useNavigate } from 'react-router-dom'
 import { projectApi } from '@/api/projects'
 import { useProject, useProjectBranches } from '@/hooks/queries/use-projects'
 import { useCurrentUser } from '@/hooks/queries/use-users'
+import { useAppConfig } from '@/hooks/queries/use-system'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Filter, Trash2 } from 'lucide-react'
@@ -36,6 +37,7 @@ export default function ProjectDetails() {
   const [selectedBranches, setSelectedBranches] = useState<string[]>([])
   const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
+  const { data: appConfig } = useAppConfig()
 
   const [hasInitializedBranches, setHasInitializedBranches] = useState(false)
 
@@ -144,7 +146,7 @@ export default function ProjectDetails() {
             <TabsTrigger value="scans">Pipelines</TabsTrigger>
             <TabsTrigger value="waivers">Waivers</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
-            <TabsTrigger value="archives">Archives</TabsTrigger>
+            {appConfig?.archive_enabled && <TabsTrigger value="archives">Archives</TabsTrigger>}
             <TabsTrigger value="settings">Settings</TabsTrigger>
           </TabsList>
           
@@ -243,9 +245,11 @@ export default function ProjectDetails() {
           <ProjectMembers project={project} projectId={project.id} />
         </TabsContent>
 
-        <TabsContent value="archives" className="space-y-4">
-          <ProjectArchives projectId={project.id} />
-        </TabsContent>
+        {appConfig?.archive_enabled && (
+          <TabsContent value="archives" className="space-y-4">
+            <ProjectArchives projectId={project.id} />
+          </TabsContent>
+        )}
 
         {user && (
           <TabsContent value="settings" className="space-y-4">

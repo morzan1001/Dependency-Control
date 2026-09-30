@@ -189,6 +189,20 @@ async def test_trends_user_scope_accepted(client, db, owner_auth_headers_proj):
 
 
 @pytest.mark.asyncio
+async def test_trends_rejects_naive_range_bound(client, db, owner_auth_headers_proj):
+    resp = await client.get(
+        "/api/v1/analytics/crypto/trends",
+        params={
+            "scope": "user",
+            "range_start": "2026-09-01T00:00:00",
+            "range_end": "2026-09-30T00:00:00+00:00",
+        },
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.asyncio
 async def test_cache_hit_on_second_call(client, db, owner_auth_headers_proj):
     params = {"scope": "project", "scope_id": "p", "group_by": "name"}
     await client.get(

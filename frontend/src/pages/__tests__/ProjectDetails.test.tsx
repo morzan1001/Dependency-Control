@@ -17,6 +17,10 @@ vi.mock('@/hooks/queries/use-users', () => ({
   useCurrentUser: (...args: unknown[]) => mockUseCurrentUser(...args),
 }))
 
+vi.mock('@/hooks/queries/use-system', () => ({
+  useAppConfig: () => ({ data: undefined }),
+}))
+
 vi.mock('@/api/projects', () => ({
   projectApi: { exportCsv: vi.fn(), exportSbom: vi.fn() },
 }))
