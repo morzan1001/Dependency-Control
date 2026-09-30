@@ -48,8 +48,16 @@ class GHSAProvider:
             if response.status_code == 404:
                 # 404 is authoritative: cache the unresolved placeholder for the GHSA TTL, not the 1 h failure TTL.
                 return GHSAData(ghsa_id=ghsa_id).model_dump()
-            if response.status_code in (403, 429) and response.headers.get("X-RateLimit-Remaining") == "0":
-                self._rate_limited_until[authenticated] = float(response.headers.get("X-RateLimit-Reset") or 0)
+            # A secondary limit sends Retry-After, which GitHub ranks above the primary quota's reset.
+            retry_after = response.headers.get("Retry-After")
+            if response.status_code in (403, 429) and (
+                retry_after or response.headers.get("X-RateLimit-Remaining") == "0"
+            ):
+                self._rate_limited_until[authenticated] = (
+                    time.time() + float(retry_after)
+                    if retry_after
+                    else float(response.headers.get("X-RateLimit-Reset") or 0)
+                )
                 if response.status_code == 403:
                     external_api_rate_limit_hits_total.labels(service=client.service_name).inc()
             response.raise_for_status()

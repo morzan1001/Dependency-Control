@@ -37,6 +37,16 @@ async def _exhausted(request: httpx.Request) -> httpx.Response:
     return httpx.Response(403, headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": reset})
 
 
+async def _secondary_limit(request: httpx.Request) -> httpx.Response:
+    await asyncio.sleep(0)
+    reset = str(int(time.time()) + 3600)
+    return httpx.Response(
+        403,
+        headers={"Retry-After": "60", "X-RateLimit-Remaining": "4990", "X-RateLimit-Reset": reset},
+        json={"message": "You have exceeded a secondary rate limit. Please wait a few minutes before you try again."},
+    )
+
+
 @pytest.mark.asyncio
 async def test_a_token_removed_between_runs_is_no_longer_sent_to_github(fake_cache, monkeypatch):
     seen = serve_enrichment(monkeypatch, fake_cache, Upstreams(advisories={_LOG4SHELL: None, _OTHER: None}))
@@ -121,6 +131,22 @@ async def test_an_exhausted_quota_stops_every_lookup_until_it_resets(fake_cache,
     assert all(first[i].cve_id is None and second[i].cve_id is None for i in ids)
     assert list((await fake_cache.mget([CacheKeys.ghsa(i) for i in ids])).values()) == [None] * len(ids)
     assert external_api_rate_limit_hits_total.labels(service=_ADVISORY_API_LABEL)._value.get() == hits_before + 2
+
+
+@pytest.mark.asyncio
+async def test_a_secondary_limit_stops_every_lookup_for_its_retry_after(fake_cache, monkeypatch):
+    healthy = Upstreams(advisories={_LOG4SHELL: _LOG4SHELL_CVE})
+    limited = [True]
+    seen = serve_enrichment(monkeypatch, fake_cache, lambda r: _secondary_limit(r) if limited[0] else healthy(r))
+
+    await _resolve(_LOG4SHELL, *(f"GHSA-aaaa-bbbb-{n:04d}" for n in range(5)))
+    assert (await _resolve(_LOG4SHELL))[_LOG4SHELL].cve_id is None
+    assert len(seen) == 2
+
+    limited[0] = False
+    after_retry_after = time.time() + 61
+    monkeypatch.setattr(time, "time", lambda: after_retry_after)
+    assert (await _resolve(_LOG4SHELL))[_LOG4SHELL].cve_id == _LOG4SHELL_CVE
 
 
 @pytest.mark.asyncio
