@@ -1,20 +1,13 @@
-"""deps.dev analyzer: the validated scorecard threshold and the identity of cached results."""
+"""deps.dev analyzer: the scorecard threshold, the identity of cached results and the deps.dev status policy."""
 
+import asyncio
 from typing import Any
 
+import httpx
 import pytest
 
-from app.services.analyzers.deps_dev import DepsDevAnalyzer, _validated_threshold
-
-
-def test_a_threshold_outside_the_score_range_falls_back_to_the_default():
-    assert _validated_threshold({"scorecard_threshold": 11.0}, "scorecard_threshold", 5.0) == 5.0
-    assert _validated_threshold({"scorecard_threshold": -1.0}, "scorecard_threshold", 5.0) == 5.0
-
-
-def test_a_threshold_at_the_edge_of_the_score_range_is_kept():
-    assert _validated_threshold({"scorecard_threshold": 0.0}, "scorecard_threshold", 5.0) == 0.0
-    assert _validated_threshold({"scorecard_threshold": 10.0}, "scorecard_threshold", 5.0) == 10.0
+from app.services.aggregation import ResultAggregator
+from app.services.analyzers.deps_dev import DepsDevAnalyzer
 
 
 class _FakeCache:
@@ -33,14 +26,14 @@ class _FakeCache:
 
 
 def _payload(name: str, version: str, purl: str, score: float) -> dict[str, Any]:
-    """What another project's scan cached: its own component's spelling throughout."""
+    """What another project's scan cached: its own component's spelling in the metadata."""
     return {
         "metadata": {"name": name, "version": version, "system": "npm", "purl": purl, "licenses": ["MIT"]},
         "scorecard_issue": {
-            "component": name,
-            "version": version,
-            "purl": purl,
-            "scorecard": {"overallScore": score, "checks": []},
+            "project_url": "https://github.com/o/r",
+            "scorecard": {"overallScore": score, "date": None, "repository": "github.com/o/r", "checks": []},
+            "failed_checks": [],
+            "critical_issues": [],
         },
     }
 
@@ -101,6 +94,17 @@ class TestIdentityOfCachedResults:
         assert result == {"scorecard_issues": [], "package_metadata": {}}
         assert cache.looked_up == []
 
+    @pytest.mark.asyncio
+    async def test_a_component_without_a_known_version_is_never_looked_up(self, monkeypatch):
+        cache = _FakeCache({})
+        monkeypatch.setattr("app.services.analyzers.deps_dev.cache_service", cache)
+        component = {"name": "left-pad", "version": "unknown", "purl": "pkg:npm/left-pad"}
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[component])
+
+        assert result == {"scorecard_issues": [], "package_metadata": {}}
+        assert cache.looked_up == []
+
 
 class _NoClient:
     async def __aenter__(self):
@@ -108,3 +112,253 @@ class _NoClient:
 
     async def __aexit__(self, *_a: object) -> None:
         return None
+
+
+_API = "https://api.deps.dev/v3alpha"
+_BABEL = "github.com/babel/babel"
+_CORE = {"name": "@babel/core", "version": "7.24.0", "purl": "pkg:npm/%40babel/core@7.24.0"}
+_TRAVERSE = {"name": "@babel/traverse", "version": "7.24.0", "purl": "pkg:npm/%40babel/traverse@7.24.0"}
+_CORE_KEY = "deps:npm:@babel/core:7.24.0"
+_CORE_URL = f"{_API}/systems/npm/packages/%40babel%2Fcore/versions/7.24.0"
+_TRAVERSE_URL = f"{_API}/systems/npm/packages/%40babel%2Ftraverse/versions/7.24.0"
+_PROJECT_URL = f"{_API}/projects/github.com%2Fbabel%2Fbabel"
+
+
+def _version_doc(name: str) -> dict[str, Any]:
+    return {
+        "versionKey": {"system": "NPM", "name": name, "version": "7.24.0"},
+        "publishedAt": "2024-02-28T13:25:37Z",
+        "isDefault": False,
+        "isDeprecated": False,
+        "licenses": ["MIT"],
+        "advisoryKeys": [],
+        "links": [{"label": "SOURCE_REPO", "url": "https://github.com/babel/babel"}],
+        "slsaProvenances": [],
+        "attestations": [],
+        "relatedProjects": [
+            {"projectKey": {"id": _BABEL}, "relationProvenance": "UNVERIFIED_METADATA", "relationType": "SOURCE_REPO"}
+        ],
+    }
+
+
+def _check(name: str, score: int, reason: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "documentation": {"shortDescription": f"About {name}.", "url": f"https://scorecard.dev/checks#{name}"},
+        "score": score,
+        "reason": reason,
+        "details": [f"Warn: {reason}"],
+    }
+
+
+_PROJECT_DOC = {
+    "projectKey": {"id": _BABEL},
+    "openIssuesCount": 812,
+    "starsCount": 43000,
+    "forksCount": 5700,
+    "license": "MIT",
+    "description": "Babel is a compiler for writing next generation JavaScript.",
+    "homepage": "https://babel.dev",
+    "scorecard": {
+        "date": "2026-09-22T00:00:00Z",
+        "repository": {"name": _BABEL, "commit": "5e2c8b1"},
+        "scorecard": {"version": "v5.0.0", "commit": "ea7e27ed"},
+        "checks": [
+            _check("Maintained", 10, "30 commit(s) and 12 issue activity found in the last 90 days"),
+            _check("Code-Review", 2, "Found 3/13 approved changesets"),
+            _check("Vulnerabilities", 0, "12 existing vulnerabilities detected"),
+            _check("Packaging", -1, "packaging workflow not detected"),
+        ],
+        "overallScore": 4.2,
+        "metadata": [],
+    },
+}
+
+_DEPENDENTS_DOC = {"dependentCount": 25000, "directDependentCount": 8000, "indirectDependentCount": 17000}
+
+
+def _babel_routes() -> dict[str, Any]:
+    return {
+        _CORE_URL: _version_doc("@babel/core"),
+        f"{_CORE_URL}:dependents": _DEPENDENTS_DOC,
+        _TRAVERSE_URL: _version_doc("@babel/traverse"),
+        f"{_TRAVERSE_URL}:dependents": _DEPENDENTS_DOC,
+        _PROJECT_URL: _PROJECT_DOC,
+    }
+
+
+class _DepsDev:
+    """Answers like api.deps.dev: a JSON body, a status, a raw body or a raised error per URL, else 404."""
+
+    def __init__(self, routes: dict[str, Any]) -> None:
+        self.routes = routes
+        self.requested: list[str] = []
+        self.sessions = 0
+        self.in_flight = 0
+        self.peak_in_flight = 0
+
+    async def __aenter__(self) -> "_DepsDev":
+        self.sessions += 1
+        return self
+
+    async def __aexit__(self, *_a: object) -> None:
+        return None
+
+    async def get(self, url: str, **_kw: Any) -> httpx.Response:
+        self.requested.append(url)
+        self.in_flight += 1
+        self.peak_in_flight = max(self.peak_in_flight, self.in_flight)
+        try:
+            await asyncio.sleep(0.01)
+        finally:
+            self.in_flight -= 1
+        answer = self.routes.get(url, 404)
+        if isinstance(answer, Exception):
+            raise answer
+        request = httpx.Request("GET", url)
+        if isinstance(answer, int):
+            return httpx.Response(answer, request=request)
+        if isinstance(answer, str):
+            return httpx.Response(200, text=answer, request=request)
+        return httpx.Response(200, json=answer, request=request)
+
+
+def _serve(monkeypatch: pytest.MonkeyPatch, cache: Any, routes: dict[str, Any]) -> _DepsDev:
+    api = _DepsDev(routes)
+    monkeypatch.setattr("app.services.analyzers.deps_dev.cache_service", cache)
+    monkeypatch.setattr("app.services.analyzers.deps_dev.InstrumentedAsyncClient", lambda *a, **k: api)
+    return api
+
+
+class TestDepsDevLookups:
+    @pytest.mark.asyncio
+    async def test_a_negative_cache_entry_counts_as_a_hit(self, fake_cache, monkeypatch):
+        await fake_cache.set(_CORE_KEY, {})
+        api = _serve(monkeypatch, fake_cache, _babel_routes())
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE])
+
+        assert api.sessions == 0
+        assert result == {"scorecard_issues": [], "package_metadata": {}}
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_package_is_negative_cached_as_complete(self, fake_cache, monkeypatch):
+        routes = _babel_routes()
+        routes[_CORE_URL] = 404
+        _serve(monkeypatch, fake_cache, routes)
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE])
+
+        assert result == {"scorecard_issues": [], "package_metadata": {}}
+        assert await fake_cache.get(_CORE_KEY) == {}
+
+    @pytest.mark.parametrize(
+        ("url", "answer"),
+        [
+            (_CORE_URL, 500),
+            (_CORE_URL, httpx.ReadTimeout("timed out")),
+            (_CORE_URL, "<html>upstream error</html>"),
+            (_PROJECT_URL, 503),
+        ],
+        ids=["version-500", "version-timeout", "version-bad-body", "project-503"],
+    )
+    @pytest.mark.asyncio
+    async def test_a_failed_lookup_marks_the_component_skipped_and_caches_nothing(
+        self, fake_cache, monkeypatch, url, answer
+    ):
+        routes = _babel_routes()
+        routes[url] = answer
+        _serve(monkeypatch, fake_cache, routes)
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE])
+
+        assert result["partial_components_skipped"] == 1
+        assert result["package_metadata"] == {}
+        assert await fake_cache.get(_CORE_KEY) is None
+
+    @pytest.mark.parametrize(
+        "answer",
+        [500, httpx.ReadTimeout("timed out"), "<html>upstream error</html>"],
+        ids=["dependents-500", "dependents-timeout", "dependents-bad-body"],
+    )
+    @pytest.mark.asyncio
+    async def test_a_failed_dependents_lookup_keeps_the_rest_of_the_component(self, fake_cache, monkeypatch, answer):
+        routes = _babel_routes()
+        routes[f"{_CORE_URL}:dependents"] = answer
+        _serve(monkeypatch, fake_cache, routes)
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE])
+
+        [metadata] = result["package_metadata"].values()
+        [issue] = result["scorecard_issues"]
+        assert "partial_components_skipped" not in result
+        assert "dependents" not in metadata
+        assert (metadata["licenses"], metadata["project"]["stars"], issue["purl"]) == (["MIT"], 43000, _CORE["purl"])
+
+    @pytest.mark.asyncio
+    async def test_packages_of_one_project_share_one_project_fetch(self, fake_cache, monkeypatch):
+        api = _serve(monkeypatch, fake_cache, _babel_routes())
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE, _TRAVERSE])
+
+        assert api.requested.count(_PROJECT_URL) == 1
+        assert [meta["project"]["stars"] for meta in result["package_metadata"].values()] == [43000, 43000]
+
+    @pytest.mark.asyncio
+    async def test_project_and_dependents_are_fetched_concurrently(self, fake_cache, monkeypatch):
+        api = _serve(monkeypatch, fake_cache, _babel_routes())
+
+        await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE])
+
+        assert api.peak_in_flight == 2
+
+    @pytest.mark.asyncio
+    async def test_the_scorecard_issue_carries_only_what_its_readers_use(self, fake_cache, monkeypatch):
+        _serve(monkeypatch, fake_cache, _babel_routes())
+
+        result = await DepsDevAnalyzer().analyze({}, parsed_components=[_CORE])
+
+        [issue] = result["scorecard_issues"]
+        assert issue == {
+            "component": "@babel/core",
+            "version": "7.24.0",
+            "purl": "pkg:npm/%40babel/core@7.24.0",
+            "project_url": "https://github.com/babel/babel",
+            "scorecard": {
+                "overallScore": 4.2,
+                "date": "2026-09-22T00:00:00Z",
+                "repository": _BABEL,
+                "checks": [
+                    {"name": "Maintained", "score": 10},
+                    {"name": "Code-Review", "score": 2},
+                    {"name": "Vulnerabilities", "score": 0},
+                    {"name": "Packaging", "score": -1},
+                ],
+            },
+            "failed_checks": [{"name": "Code-Review", "score": 2}, {"name": "Vulnerabilities", "score": 0}],
+            "critical_issues": ["Vulnerabilities"],
+        }
+        aggregator = ResultAggregator()
+        aggregator.aggregate("deps_dev", result)
+        [finding] = aggregator.get_findings()
+        [quality] = finding.details["quality_issues"]
+        details = quality["details"]
+        assert (details["overall_score"], details["project_url"], details["critical_issues"]) == (
+            4.2,
+            "https://github.com/babel/babel",
+            ["Vulnerabilities"],
+        )
+        assert details["checks_summary"] == {"Maintained": 10, "Code-Review": 2, "Vulnerabilities": 0}
+
+    @pytest.mark.asyncio
+    async def test_a_project_with_a_higher_threshold_sees_a_package_another_project_fetched_first(
+        self, fake_cache, monkeypatch
+    ):
+        _serve(monkeypatch, fake_cache, _babel_routes())
+        analyzer = DepsDevAnalyzer()
+
+        lenient = await analyzer.analyze({}, {"scorecard_threshold": 4.0}, [_CORE])
+        strict = await analyzer.analyze({}, {"scorecard_threshold": 7.0}, [_CORE])
+
+        assert lenient["scorecard_issues"] == []
+        assert [issue["component"] for issue in strict["scorecard_issues"]] == ["@babel/core"]

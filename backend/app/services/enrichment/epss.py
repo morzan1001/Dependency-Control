@@ -1,12 +1,10 @@
-import asyncio
 import logging
-
-import httpx
+from typing import Any
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, EPSS_API_URL
-from app.core.http_utils import InstrumentedAsyncClient
-from app.core.metrics import external_api_rate_limit_hits_total
+from app.core.config import settings
+from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, EPSS_API_URL, EPSS_CONCURRENT_BATCHES
+from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
 from app.schemas.enrichment import EPSSData
 
 logger = logging.getLogger(__name__)
@@ -15,112 +13,68 @@ logger = logging.getLogger(__name__)
 class EPSSProvider:
     """Provider for Exploit Prediction Scoring System (EPSS) data."""
 
-    def __init__(self, max_retries: int = 3, retry_delay: float = 1.0):
-        self._max_retries = max_retries
-        self._retry_delay = retry_delay
-        self._batch_size = ANALYZER_BATCH_SIZES.get("epss", 100)
-        self._timeout = ANALYZER_TIMEOUTS.get("epss", ANALYZER_TIMEOUTS["default"])
+    def __init__(self) -> None:
+        self._batch_size = ANALYZER_BATCH_SIZES["epss"]
+        self._timeout = ANALYZER_TIMEOUTS["epss"]
 
-    async def fetch_epss_batch(self, client: InstrumentedAsyncClient, cves: list[str]) -> dict[str, EPSSData]:
-        if not cves:
-            return {}
-
-        last_error = None
-        for attempt in range(self._max_retries):
-            try:
-                cve_param = ",".join(cves)
-                response = await client.get(f"{EPSS_API_URL}?cve={cve_param}", timeout=self._timeout)
-                response.raise_for_status()
-
-                data = response.json()
-                results = {}
-
-                for entry in data.get("data", []):
-                    cve = entry.get("cve", "")
-                    if cve:
-                        epss_val = entry.get("epss")
-                        percentile_val = entry.get("percentile")
-                        results[cve] = EPSSData(
-                            cve=cve,
-                            epss_score=float(epss_val) if epss_val is not None else 0.0,
-                            percentile=(float(percentile_val) * 100 if percentile_val is not None else 0.0),
-                            date=entry.get("date") or "",
-                        )
-
-                if len(results) < len(cves):
-                    missing = set(cves) - set(results.keys())
-                    if missing:
-                        logger.debug(f"EPSS: No data for {len(missing)} CVEs (may be too new or invalid)")
-
-                return results
-
-            except httpx.TimeoutException:
-                last_error = "Timeout"
-                logger.warning(f"EPSS API timeout (attempt {attempt + 1}/{self._max_retries})")
-            except httpx.ConnectError:
-                last_error = "Connection error"
-                logger.warning(f"EPSS API connection error (attempt {attempt + 1}/{self._max_retries})")
-            except httpx.HTTPStatusError as e:
-                last_error = f"HTTP {e.response.status_code}"
-                if e.response.status_code == 429:
-                    external_api_rate_limit_hits_total.labels(service="EPSS API").inc()
-                    wait_time = self._retry_delay * (2**attempt)
-                    logger.warning(f"EPSS API rate limited, waiting {wait_time}s")
-                    await asyncio.sleep(wait_time)
-                elif e.response.status_code >= 500:
-                    logger.warning(f"EPSS API server error {e.response.status_code} (attempt {attempt + 1})")
-                else:
-                    # 4xx other than 429 won't be fixed by retrying.
-                    logger.warning(f"EPSS API client error: {e}")
-                    return {}
-            except Exception as e:
-                last_error = str(e)
-                logger.warning(f"Failed to fetch EPSS data (attempt {attempt + 1}): {e}")
-
-            if attempt < self._max_retries - 1:
-                await asyncio.sleep(self._retry_delay)
-
-        logger.error(f"EPSS API failed after {self._max_retries} attempts: {last_error}")
-        return {}
-
-    async def _fetch_and_cache_batches(
-        self, client: InstrumentedAsyncClient, missing_cves: list[str], result: dict[str, EPSSData]
-    ) -> None:
-        for i in range(0, len(missing_cves), self._batch_size):
-            batch = missing_cves[i : i + self._batch_size]
-            batch_results = await self.fetch_epss_batch(client, batch)
-
-            cache_mapping = {}
-            for cve, data in batch_results.items():
-                cache_mapping[CacheKeys.epss(cve)] = data.model_dump()
-                result[cve] = data
-
-            if cache_mapping:
-                await cache_service.mset(cache_mapping, CacheTTL.EPSS_SCORE)
-
-            # Throttle between batches to stay polite to the FIRST.org API.
-            if i + self._batch_size < len(missing_cves):
-                await asyncio.sleep(0.5)
-
-    async def load_epss_scores(self, client: InstrumentedAsyncClient, cves: list[str]) -> dict[str, EPSSData]:
-        """Load EPSS scores for `cves`, hitting Redis cache first."""
-        result = {}
-        missing_cves = []
-
-        cache_keys = [CacheKeys.epss(cve) for cve in cves]
-        cached_data = await cache_service.mget(cache_keys)
-
-        for cve, cache_key in zip(cves, cache_keys, strict=True):
-            cached = cached_data[cache_key]
-            if cached:
-                result[cve] = EPSSData(**cached)
-            else:
-                missing_cves.append(cve)
-
-        if missing_cves:
-            logger.debug(
-                f"Fetching EPSS data for {len(missing_cves)} CVEs ({len(cves) - len(missing_cves)} from cache)"
+    async def _fetch_batch(self, client: InstrumentedAsyncClient, cves: list[str]) -> dict[str, EPSSData]:
+        response = await client.send_with_backoff(
+            "GET",
+            f"{EPSS_API_URL}?cve={','.join(cves)}",
+            attempts=settings.ENRICHMENT_MAX_RETRIES,
+            base_delay=settings.ENRICHMENT_RETRY_DELAY,
+        )
+        response.raise_for_status()
+        return {
+            entry["cve"]: EPSSData(
+                cve=entry["cve"],
+                epss_score=float(entry.get("epss") or 0.0),
+                percentile=float(entry.get("percentile") or 0.0) * 100,
+                date=entry.get("date") or "",
             )
-            await self._fetch_and_cache_batches(client, missing_cves, result)
+            for entry in response.json().get("data", [])
+            if entry.get("cve")
+        }
 
-        return result
+    async def _fetch_and_cache(self, cves: list[str]) -> tuple[dict[str, EPSSData], bool]:
+        """Fetch uncached CVEs; True when every batch answered, so a CVE it left out has no score."""
+        batches = [cves[i : i + self._batch_size] for i in range(0, len(cves), self._batch_size)]
+        async with InstrumentedAsyncClient("EPSS API", timeout=self._timeout) as client:
+            outcomes = await gather_bounded(
+                batches, lambda batch: self._fetch_batch(client, batch), EPSS_CONCURRENT_BATCHES
+            )
+
+        scores: dict[str, EPSSData] = {}
+        unscored: dict[str, Any] = {}
+        failed = 0
+        for batch, outcome in zip(batches, outcomes, strict=True):
+            if isinstance(outcome, BaseException):
+                failed += 1
+                logger.warning(f"EPSS batch of {len(batch)} CVEs failed: {outcome}")
+                continue
+            scores |= outcome
+            unscored |= {CacheKeys.epss(cve): {} for cve in batch if cve not in outcome}
+
+        await cache_service.mset(
+            {CacheKeys.epss(cve): data.model_dump() for cve, data in scores.items()}, CacheTTL.EPSS_SCORE
+        )
+        await cache_service.mset(unscored, CacheTTL.NEGATIVE_RESULT)
+        return scores, failed == 0
+
+    async def load_epss_scores(self, cves: list[str]) -> tuple[dict[str, EPSSData], bool]:
+        """EPSS scores for `cves` from Redis, then FIRST.org; False when some could not be fetched."""
+        cached_data = await cache_service.mget([CacheKeys.epss(cve) for cve in cves])
+        result: dict[str, EPSSData] = {}
+        missing: list[str] = []
+        for cve in dict.fromkeys(cves):
+            cached = cached_data[CacheKeys.epss(cve)]
+            if cached is None:
+                missing.append(cve)
+            elif cached:
+                result[cve] = EPSSData(**cached)
+
+        if not missing:
+            return result, True
+        logger.debug(f"Fetching EPSS data for {len(missing)} CVEs ({len(result)} from cache)")
+        fetched, complete = await self._fetch_and_cache(missing)
+        return result | fetched, complete

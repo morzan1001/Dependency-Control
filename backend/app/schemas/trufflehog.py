@@ -25,6 +25,7 @@ class TruffleHogFinding(BaseModel):
             return str(v)
         return v
 
+    DetectorName: str | None = Field(None, max_length=128)
     DecoderName: str | None = None
     Verified: bool | None = None
     RawHash: str | None = None

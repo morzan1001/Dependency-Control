@@ -200,3 +200,12 @@ async def test_the_stage_reports_the_finding_type_each_rule_declares():
 
     by_ref = {finding["details"]["bom_ref"]: finding["type"] for finding in _crypto_findings(response)}
     assert by_ref == {_MD5_REF: _TYPE_WEAK_ALGORITHM, _RSA_REF: _TYPE_WEAK_KEY}
+
+
+@pytest.mark.asyncio
+async def test_a_cbom_gives_the_component_analyzers_no_components_to_grade():
+    request = AdhocAnalyzeRequest(sboms=[_cbom(_MD5)], analyzers=["license_compliance"], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert [finding for finding in response.findings if finding not in _crypto_findings(response)] == []

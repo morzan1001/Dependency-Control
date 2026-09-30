@@ -19,9 +19,7 @@ from app.core.constants import (
     ADHOC_MAX_SCANNER_FINDINGS,
     DEPS_DEV_API_URL,
     EOL_API_URL,
-    EPSS_API_URL,
     GITHUB_API_URL,
-    KEV_CATALOG_URL,
     MALWARE_API_URL,
     NPM_REGISTRY_URL,
     OSV_BATCH_API_URL,
@@ -51,9 +49,10 @@ from app.services.analysis.stats import build_epss_kev_summary, build_reachabili
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.analyzers.crypto.base import crypto_findings_for_assets
+from app.services.analyzers.malware import MISSING_API_KEY
 from app.services.component_identity import canonical_callgraph_language
 from app.services.crypto_policy.seeder import load_seed_rules
-from app.services.enrichment.service import VulnerabilityEnrichmentService
+from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.reachability_enrichment import (
     ComponentLanguages,
     _prepare_callgraph,
@@ -187,7 +186,9 @@ _STAGE_NOTES: dict[str, str] = {
     "outdated_packages": _COORDINATES_SENT.format(hosts=_hosts(DEPS_DEV_API_URL)),
     "end_of_life": _COORDINATES_SENT.format(hosts=_hosts(EOL_API_URL)),
     "hash_verification": _COORDINATES_SENT.format(hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL)),
-    "maintainer_risk": _COORDINATES_SENT.format(hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL, GITHUB_API_URL)),
+    "maintainer_risk": _COORDINATES_SENT.format(
+        hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL, DEPS_DEV_API_URL, GITHUB_API_URL)
+    ),
     "os_malware": _COORDINATES_SENT.format(hosts=_hosts(MALWARE_API_URL)),
     # The odd one out: it downloads a list and matches against it here, so nothing posted leaves.
     "typosquatting": (
@@ -195,8 +196,9 @@ _STAGE_NOTES: dict[str, str] = {
         "process; no posted coordinate is sent"
     ),
     _ENRICHMENT: (
-        f"vulnerability ids are sent to the EPSS API at {_hosts(EPSS_API_URL)} and matched "
-        f"against the CISA KEV catalog from {_hosts(KEV_CATALOG_URL)}"
+        f"vulnerability ids are sent to {_hosts(*vulnerability_enrichment_service.SENDS_IDS_TO)}; the CISA KEV "
+        f"catalog is downloaded from {_hosts(*vulnerability_enrichment_service.DOWNLOADS_FROM)} and matched in "
+        "this process"
     ),
     _CRYPTO_RULES: "graded against the shipped seed rules, not against this installation's crypto policy",
 }
@@ -449,7 +451,7 @@ async def _run_one_analyzer(
     analyzer: Analyzer,
     sbom: dict[str, Any],
     settings: dict[str, Any],
-    parsed_components: list[dict[str, Any]] | None,
+    parsed_components: list[dict[str, Any]],
     aggregator: ResultAggregator,
     report: AnalyzerReport,
     fallback_source: str,
@@ -684,22 +686,19 @@ def _aggregate_crypto_rules(
 async def _enrich_vulnerabilities(
     records: list[dict[str, Any]], report: AnalyzerReport
 ) -> tuple[dict[str, Any], dict[str, VulnerabilityEnrichment]]:
-    """Add EPSS/KEV to the vulnerability records through a service private to this request;
-    returns the EPSS/KEV summary and the per-CVE enrichment.
-
-    The module singleton carries a mutable GitHub token shared with background scans.
-    """
+    """Add EPSS/KEV to the vulnerability records; returns the EPSS/KEV summary and the per-CVE enrichment."""
     vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
-    service = VulnerabilityEnrichmentService()
     threat_intel: dict[str, VulnerabilityEnrichment] = {}
     try:
-        threat_intel = await service.enrich_findings(vulnerabilities)
-        _record_ran(report, _ENRICHMENT)
+        threat_intel, unavailable = await vulnerability_enrichment_service.enrich_findings(vulnerabilities)
     except Exception as exc:
         logger.warning("adhoc: EPSS/KEV enrichment failed: %s", exc)
         _record_errored(report, _ENRICHMENT, str(exc))
-    finally:
-        await service.close()
+    else:
+        if unavailable:
+            _record_errored(report, _ENRICHMENT, f"{' and '.join(unavailable)} unavailable")
+        else:
+            _record_ran(report, _ENRICHMENT)
     refresh_vulnerability_info(records)
     return dict(build_epss_kev_summary(vulnerabilities)), threat_intel
 
@@ -853,7 +852,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
                 analyzer_factories[name](),
                 parsed_input.sbom,
                 settings_for(name),
-                parsed_input.components or None,
+                parsed_input.components,
                 aggregator,
                 report,
                 _input_label(parsed_input),
@@ -896,8 +895,12 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         threat_intel=threat_intel,
     )
 
-    # A stage that errored still reached upstream, so attempted is the condition, not success.
-    report.notes = {name: note for name, note in _STAGE_NOTES.items() if name in report.ran or name in report.errored}
+    # A stage that errored still reached upstream, unless it stopped for want of an API key before any request.
+    report.notes = {
+        name: note
+        for name, note in _STAGE_NOTES.items()
+        if name in report.ran or any(MISSING_API_KEY not in reason for reason in report.errored.get(name, ()))
+    }
 
     return AdhocAnalyzeResponse(
         findings=records,

@@ -152,7 +152,7 @@ def _run_impact(
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
-        patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
+        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake_enrich),
     ):
         response = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=limit))
 
@@ -199,7 +199,7 @@ def _run_hotspots(
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=mock_finding_repo),
         patch(f"{MODULE}.DependencyRepository", return_value=mock_dep_repo),
-        patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
+        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake_enrich),
     ):
         response = asyncio.run(
             get_vulnerability_hotspots(
@@ -812,7 +812,7 @@ def _impact_aggregate_calls(*limits: int) -> int:
         patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=repo),
-        patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
+        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake_enrich),
     ):
         for lim in limits:
             asyncio.run(get_impact_analysis(current_user=user, db=db, limit=lim))
@@ -850,7 +850,7 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
         patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
         patch(f"{MODULE}.FindingRepository", return_value=repo),
         patch(f"{MODULE}.DependencyRepository", return_value=dep_repo),
-        patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
+        patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake_enrich),
     ):
         for sb in sort_bys:
             asyncio.run(
@@ -897,7 +897,7 @@ class TestAnalyticsResultCache:
             patch(f"{MODULE}.get_user_projects", new=_fake_get_user_projects),
             patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
             patch(f"{MODULE}.FindingRepository", return_value=repo),
-            patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
+            patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake_enrich),
         ):
             fresh = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=20))
             cached = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=20))
@@ -1055,7 +1055,7 @@ class TestHistoricalFirstSeen:
             patch(f"{MODULE}.get_user_projects", new=_gupi),
             patch(f"{MODULE}.get_projects_with_scans", new=_gpws),
             patch(f"{MODULE}.FindingRepository", return_value=repo),
-            patch(f"{MODULE}.get_cve_enrichment", new=_enr),
+            patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_enr),
         ):
             resp = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=20))
 
@@ -1097,7 +1097,7 @@ class TestHistoricalFirstSeen:
             patch(f"{MODULE}.get_projects_with_scans", new=_gpws),
             patch(f"{MODULE}.FindingRepository", return_value=repo),
             patch(f"{MODULE}.DependencyRepository", return_value=dep_repo),
-            patch(f"{MODULE}.get_cve_enrichment", new=_enr),
+            patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_enr),
         ):
             resp = asyncio.run(
                 get_vulnerability_hotspots(

@@ -378,8 +378,11 @@ CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project pattern
 EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploited
 
 # OpenSSF Scorecard thresholds
-# deps_dev raises a scorecard finding below this unless a project sets its own scorecard_threshold.
+# deps_dev raises a scorecard finding below this unless a project sets its own scorecard_threshold;
+# normalize_scorecard grades a score below it at least MEDIUM.
 SCORECARD_FLAG_THRESHOLD: float = 5.0
+# normalize_scorecard grades a score below this HIGH.
+SCORECARD_HIGH_SEVERITY_THRESHOLD: float = 3.0
 # Recommendations call a scored package poor quality below this.
 SCORECARD_POOR_QUALITY_THRESHOLD: float = 4.0
 
@@ -423,7 +426,6 @@ ANALYZER_BATCH_SIZES: dict[str, int] = {
     "malware": 20,
     "maintainer_risk": 10,
     "hash_verification": 10,
-    "typosquatting": 50,
     "end_of_life": 20,
     "epss": 100,  # Max CVEs per EPSS API request
 }
@@ -441,12 +443,12 @@ ANALYZER_TIMEOUTS: dict[str, float] = {
     "epss": 30.0,
     "kev": 30.0,
     "ghsa": 15.0,
-    "default": 30.0,
 }
 
 # GHSA concurrent fetching (with GitHub token: 5000 req/hour, without: 60 req/hour)
 GHSA_CONCURRENT_REQUESTS_AUTHENTICATED: int = 10
 GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED: int = 2
+EPSS_CONCURRENT_BATCHES: int = 4
 
 # "low"/"medium"/"high" are the EPSS buckets; "active" is KEV, "weaponized" KEV with ransomware use.
 ExploitMaturity = Literal["unknown", "low", "medium", "high", "active", "weaponized"]
@@ -528,7 +530,8 @@ IMPACT_MAX_SCORE_BOOST: float = (
 # Threat intelligence
 EPSS_API_URL = "https://api.first.org/data/v1/epss"
 KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-GHSA_API_URL = "https://api.github.com/advisories"
+GITHUB_API_URL = "https://api.github.com"
+GHSA_API_URL = f"{GITHUB_API_URL}/advisories"
 
 # Vulnerability databases
 # querybatch answers with {id, modified} only; the full record must be fetched per id.
@@ -544,7 +547,6 @@ NPM_REGISTRY_URL = "https://registry.npmjs.org"
 EOL_API_URL = "https://endoflife.date/api"
 MALWARE_API_URL = "https://api.opensourcemalware.com/functions/v1/check-malicious"
 TOP_PYPI_PACKAGES_URL = "https://hugovk.dev/top-pypi-packages/top-pypi-packages-30-days.json"
-GITHUB_API_URL = "https://api.github.com"
 
 # Mapping from package/component names to endoflife.date product IDs
 # See https://endoflife.date/api for all available products
@@ -635,11 +637,8 @@ NAME_TO_EOL_MAPPING: dict[str, str | tuple[str, ...]] = {
     "spring-framework": "spring-framework",
     "spring-boot": "spring-boot",
     "spring": "spring-framework",
-    # NVD CPE product names
-    "spring_framework": "spring-framework",
-    "spring_boot": "spring-boot",
-    "http_server": "apache-http-server",
-    "ruby_on_rails": "rails",
+    # NVD CPE product that does not normalise to its slug
+    "http-server": "apache-http-server",
     "laravel": "laravel",
     "symfony": "symfony",
     "express": "nodejs",
@@ -678,10 +677,6 @@ SEVERITY_ALIASES: dict[str, str] = {
     "ERROR": "HIGH",
     "TRACE": "INFO",
 }
-
-# Scanner-specific overrides applied before safe_severity and SEVERITY_ALIASES.
-OPENGREP_SEVERITY_MAP: dict[str, str] = {"INFO": "LOW"}
-BEARER_SEVERITY_MAP: dict[str, str] = {"warning": "LOW"}
 
 # Notification channel identifiers
 NOTIFICATION_CHANNEL_EMAIL = "email"

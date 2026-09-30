@@ -2,8 +2,6 @@ import difflib
 import logging
 from typing import Any
 
-import httpx
-
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
@@ -17,9 +15,83 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
-from app.core.purl import is_npm, is_pypi, pep503_normalize
+from app.core.purl import parse_purl, pep503_normalize
 
 logger = logging.getLogger(__name__)
+
+
+_STATIC_PYPI_FALLBACK = frozenset(
+    {
+        "requests",
+        "flask",
+        "django",
+        "numpy",
+        "pandas",
+        "boto3",
+        "urllib3",
+        "botocore",
+        "typing-extensions",
+        "python-dateutil",
+        "setuptools",
+        "pip",
+        "wheel",
+        "certifi",
+        "idna",
+        "charset-normalizer",
+        "aiohttp",
+        "pydantic",
+        "fastapi",
+        "uvicorn",
+        "sqlalchemy",
+        "pytest",
+        "docker",
+        "kubernetes",
+    }
+)
+
+_STATIC_NPM_PACKAGES = frozenset(
+    {
+        "react",
+        "react-dom",
+        "lodash",
+        "express",
+        "axios",
+        "moment",
+        "tslib",
+        "commander",
+        "chalk",
+        "debug",
+        "inquirer",
+        "async",
+        "bluebird",
+        "uuid",
+        "classnames",
+        "prop-types",
+        "vue",
+        "angular",
+        "next",
+        "webpack",
+        "eslint",
+        "prettier",
+        "babel",
+        "jest",
+        "rxjs",
+        "yargs",
+        "body-parser",
+        "cors",
+        "dotenv",
+        "jsonwebtoken",
+        "mongoose",
+        "socket.io",
+        "redis",
+        "aws-sdk",
+        "typescript",
+        "fs-extra",
+        "mkdirp",
+        "glob",
+        "minimist",
+    }
+)
 
 
 def _normalize_pkg_name(name: str | None) -> str:
@@ -34,15 +106,6 @@ def _normalize_pkg_name(name: str | None) -> str:
 def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
     """True if ``longer`` extends ``shorter`` after a separator (``react-dom`` yes, ``expresss`` no)."""
     return longer.startswith(shorter + "-")
-
-
-def _resolve_ecosystem(component: dict[str, Any], purl: str) -> str:
-    """``pypi`` / ``npm`` / ``unknown`` from PURL or component type."""
-    if is_pypi(purl) or component.get("type") == "python":
-        return "pypi"
-    if is_npm(purl) or component.get("type") == "npm":
-        return "npm"
-    return "unknown"
 
 
 def _severity_for_ratio(ratio: float, critical_at: float, high_at: float) -> str:
@@ -60,154 +123,64 @@ def _build_typosquat_issue(
     severity: str,
 ) -> dict[str, Any]:
     name = component.get("name")
+    similarity = round(ratio, 2)
     return {
         "component": name,
         "version": component.get("version"),
         "purl": component.get("purl", ""),
         "imitated_package": popular,
-        "similarity": round(ratio, 2),
+        "similarity": similarity,
         "severity": severity,
-        "message": (f"Potential typosquatting: '{name}' is similar to popular package '{popular}'"),
+        "message": (
+            f"Possible typosquatting detected! '{name}' is {similarity * 100:.1f}% similar to popular package '{popular}'"
+        ),
     }
 
 
 class TyposquattingAnalyzer(Analyzer):
-    """Detects typosquatting by comparing package names against a Redis-cached list of popular packages."""
+    """Detects typosquatting by comparing package names against the popular packages of their ecosystem."""
 
     name = "typosquatting"
 
     async def _ensure_popular_packages(self) -> dict[str, set[str]]:
-        """Load popular packages from Redis cache or fetch from APIs."""
-        pypi_cache_key = CacheKeys.popular_packages("pypi")
-        npm_cache_key = CacheKeys.popular_packages("npm")
+        """PyPI's cached top-package ranking (built-in names while it is unavailable) and the npm constant."""
+        # Lock and wait outlast the 30 s fetch, so peers wait for the holder instead of re-downloading.
+        pypi = await cache_service.get_or_fetch_with_lock(
+            CacheKeys.popular_packages("pypi"),
+            self._fetch_pypi_packages,
+            CacheTTL.POPULAR_PACKAGES,
+            lock_ttl_seconds=60,
+            max_wait_seconds=35,
+        )
+        return {"pypi": set(pypi or _STATIC_PYPI_FALLBACK), "npm": set(_STATIC_NPM_PACKAGES)}
 
-        cached_data = await cache_service.mget([pypi_cache_key, npm_cache_key])
-
-        cached_pypi = cached_data.get(pypi_cache_key)
-        cached_npm = cached_data.get(npm_cache_key)
-
-        if cached_pypi:
-            pypi = set(cached_pypi)
-            logger.debug(f"Loaded {len(pypi)} PyPI packages from Redis cache")
-        else:
-            pypi = await self._fetch_pypi_packages()
-
-        if cached_npm:
-            npm = set(cached_npm)
-            logger.debug(f"Loaded {len(npm)} npm packages from Redis cache")
-        else:
-            npm = self._get_static_npm()
-            await cache_service.set(npm_cache_key, list(npm), CacheTTL.POPULAR_PACKAGES)
-
-        return {"pypi": pypi, "npm": npm}
-
-    async def _fetch_pypi_packages(self) -> set[str]:
-        """Fetch top PyPI packages and cache in Redis."""
-        cache_key = CacheKeys.popular_packages("pypi")
-        timeout = ANALYZER_TIMEOUTS.get("typosquatting", ANALYZER_TIMEOUTS["default"])
-
-        reason = "unexpected status"
+    async def _fetch_pypi_packages(self) -> list[str] | None:
+        """The top PyPI package names, or None when the ranking cannot be read."""
+        timeout = ANALYZER_TIMEOUTS["typosquatting"]
         try:
             # The corpus has moved host before, and a 301 that is not followed leaves the
-            # detector comparing against the handful of names below.
+            # detector comparing against the handful of built-in names.
             async with InstrumentedAsyncClient("PyPI API", timeout=timeout, follow_redirects=True) as client:
                 resp = await client.get(TOP_PYPI_PACKAGES_URL)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    rows = data.get("rows", [])[:TYPOSQUATTING_POPULAR_PACKAGE_RANKS]
-                    packages = {row["project"].lower() for row in rows}
-                    await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
-                    logger.info(f"Loaded {len(packages)} popular PyPI packages (cached in Redis)")
+            reason = f"HTTP {resp.status_code}"
+            if resp.status_code == 200:
+                rows = resp.json().get("rows", [])[:TYPOSQUATTING_POPULAR_PACKAGE_RANKS]
+                packages = sorted({row["project"].lower() for row in rows})
+                if packages:
+                    logger.info(f"Loaded {len(packages)} popular PyPI packages")
                     return packages
-                reason = f"HTTP {resp.status_code}"
-        except httpx.TimeoutException:
-            reason = "timeout"
-        except httpx.ConnectError:
-            reason = "connection error"
+                reason = "empty corpus"
         except Exception as e:
             reason = type(e).__name__
 
-        packages = self._get_static_pypi()
         # A corpus this small is a detector that finds almost nothing, so it is not a debug note.
         logger.warning(
             "PyPI popular-package corpus unavailable (%s); comparing against %d built-in names instead of %d ranks",
             reason,
-            len(packages),
+            len(_STATIC_PYPI_FALLBACK),
             TYPOSQUATTING_POPULAR_PACKAGE_RANKS,
         )
-        await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
-        return packages
-
-    def _get_static_pypi(self) -> set[str]:
-        return {
-            "requests",
-            "flask",
-            "django",
-            "numpy",
-            "pandas",
-            "boto3",
-            "urllib3",
-            "botocore",
-            "typing-extensions",
-            "python-dateutil",
-            "setuptools",
-            "pip",
-            "wheel",
-            "certifi",
-            "idna",
-            "charset-normalizer",
-            "aiohttp",
-            "pydantic",
-            "fastapi",
-            "uvicorn",
-            "sqlalchemy",
-            "pytest",
-            "docker",
-            "kubernetes",
-        }
-
-    def _get_static_npm(self) -> set[str]:
-        return {
-            "react",
-            "react-dom",
-            "lodash",
-            "express",
-            "axios",
-            "moment",
-            "tslib",
-            "commander",
-            "chalk",
-            "debug",
-            "inquirer",
-            "async",
-            "bluebird",
-            "uuid",
-            "classnames",
-            "prop-types",
-            "vue",
-            "angular",
-            "next",
-            "webpack",
-            "eslint",
-            "prettier",
-            "babel",
-            "jest",
-            "rxjs",
-            "yargs",
-            "body-parser",
-            "cors",
-            "dotenv",
-            "jsonwebtoken",
-            "mongoose",
-            "socket.io",
-            "redis",
-            "aws-sdk",
-            "typescript",
-            "fs-extra",
-            "mkdirp",
-            "glob",
-            "minimist",
-        }
+        return None
 
     async def analyze(
         self,
@@ -217,13 +190,13 @@ class TyposquattingAnalyzer(Analyzer):
     ) -> dict[str, Any]:
         popular_packages = await self._ensure_popular_packages()
 
-        components = self._get_components(sbom, parsed_components)
+        components = parsed_components or []
         issues = []
 
         settings = settings or {}
-        similarity_threshold = float(settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD))
-        critical_at = float(settings.get("critical_similarity", TYPOSQUATTING_CRITICAL_SIMILARITY))
-        high_at = float(settings.get("high_similarity", TYPOSQUATTING_HIGH_SIMILARITY))
+        similarity_threshold = settings.get("similarity_threshold", TYPOSQUATTING_SIMILARITY_THRESHOLD)
+        critical_at = settings.get("critical_similarity", TYPOSQUATTING_CRITICAL_SIMILARITY)
+        high_at = settings.get("high_similarity", TYPOSQUATTING_HIGH_SIMILARITY)
 
         normalized_popular: dict[str, set[str]] = {}  # lazy per-ecosystem cache
 
@@ -258,8 +231,8 @@ class TyposquattingAnalyzer(Analyzer):
         high_at: float,
     ) -> dict[str, Any] | None:
         """Return a typosquat finding for ``component``, or ``None`` if clean."""
-        purl = component.get("purl", "")
-        ecosystem = _resolve_ecosystem(component, purl)
+        parsed = parse_purl(component.get("purl") or "")
+        ecosystem = parsed.registry_system if parsed else None
         if ecosystem not in popular_packages:
             return None
 

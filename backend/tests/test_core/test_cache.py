@@ -3,11 +3,14 @@
 import asyncio
 import contextlib
 import hashlib
+import threading
 
 import fakeredis.aioredis
 import pytest
+import redis.asyncio as redis
+from fakeredis import TcpFakeServer
 
-from app.core.cache import CacheKeys, CacheService, CacheTTL, suppress_cache_writes
+from app.core.cache import CacheKeys, CacheService, CacheTTL, settings, suppress_cache_writes
 
 
 class TestCacheTTLValues:
@@ -100,7 +103,7 @@ class TestCacheKeysGhsa:
 class TestCacheKeysOsv:
     def _expected_osv_key(self, purl: str) -> str:
         purl_hash = hashlib.md5(purl.encode()).hexdigest()[:16]
-        return f"osv3:{purl_hash}"
+        return f"osv4:{purl_hash}"
 
     def test_basic_purl(self):
         purl = "pkg:pypi/requests@2.31.0"
@@ -124,7 +127,7 @@ class TestCacheKeysOsv:
     def test_long_purl(self):
         long_purl = "pkg:npm/@very-long-scope/very-long-package-name@99.99.99"
         result = CacheKeys.osv(long_purl)
-        assert result.startswith("osv3:")
+        assert result.startswith("osv4:")
         assert result == self._expected_osv_key(long_purl)
 
 
@@ -141,10 +144,10 @@ class TestCacheKeysDepsDev:
 
 class TestCacheKeysLatestVersion:
     def test_pypi_package(self):
-        assert CacheKeys.latest_version("pypi", "requests") == "latest:pypi:requests"
+        assert CacheKeys.latest_version("pypi", "requests") == "latest2:pypi:requests"
 
     def test_npm_package(self):
-        assert CacheKeys.latest_version("npm", "express") == "latest:npm:express"
+        assert CacheKeys.latest_version("npm", "express") == "latest2:npm:express"
 
 
 class TestCacheKeysEol:
@@ -173,10 +176,13 @@ class TestCacheKeysPopularPackages:
 
 class TestCacheKeysMaintainer:
     def test_basic_maintainer(self):
-        assert CacheKeys.maintainer("pypi", "requests") == "maintainer:pypi:requests"
+        assert CacheKeys.maintainer("pypi", "requests") == "maintainer2:pypi:requests"
 
     def test_npm_maintainer(self):
-        assert CacheKeys.maintainer("npm", "express") == "maintainer:npm:express"
+        assert CacheKeys.maintainer("npm", "express") == "maintainer2:npm:express"
+
+    def test_github_facts_share_one_entry_per_repository_whatever_the_spelling(self):
+        assert CacheKeys.maintainer_github("Vercel/Next.js") == "maintainer_gh:vercel/next.js"
 
 
 class TestCacheKeysMalware:
@@ -401,3 +407,67 @@ class TestSuppressCacheWrites:
 
         assert await fake_cache.get(_SEEDED_KEY) == _SEEDED_VALUE
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
+
+
+@pytest.fixture
+def tcp_redis(monkeypatch):
+    """A Redis speaking RESP over a real socket, so the service builds its own connection pool."""
+    server = TcpFakeServer(("127.0.0.1", 0), server_type="redis")
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    host, port = server.server_address[:2]
+    monkeypatch.setattr(settings, "REDIS_URL", f"redis://{host}:{port}/0")
+    yield
+    server.shutdown()
+    server.server_close()
+
+
+class TestConnectionPoolBursts:
+    @pytest.mark.asyncio
+    async def test_more_concurrent_misses_than_pooled_connections_are_all_cached(self, tcp_redis):
+        svc = CacheService()
+        keys = [f"deps:npm:pkg{i}:1.0.0" for i in range(60)]
+
+        async def fetch():
+            return {"ok": True}
+
+        try:
+            await asyncio.gather(*(svc.get_or_fetch_with_lock(key, fetch, ttl_seconds=60) for key in keys))
+
+            assert svc._available is True
+            assert await svc.mget(keys) == {key: {"ok": True} for key in keys}
+        finally:
+            await svc.close()
+
+
+class TestFetchFailuresReachTheCaller:
+    """With reraise_fetch_errors a failed fetch raises exactly once, whatever the cache does."""
+
+    @pytest.mark.asyncio
+    async def test_a_redis_failure_on_the_lock_still_raises_the_fetch_error(self, fake_cache, monkeypatch):
+        async def lock_refused(*_a, **_kw):
+            raise redis.ConnectionError("connection reset")
+
+        monkeypatch.setattr(fake_cache._client, "set", lock_refused)
+        calls = []
+
+        async def fetch():
+            calls.append("fetch")
+            raise RuntimeError("upstream answered 503")
+
+        with pytest.raises(RuntimeError, match="503"):
+            await fake_cache.get_or_fetch_with_lock("deps:npm:a:1.0.0", fetch, reraise_fetch_errors=True)
+        assert calls == ["fetch"]
+
+    @pytest.mark.asyncio
+    async def test_a_fetch_after_the_lock_wait_times_out_raises_once(self, fake_cache):
+        key = "deps:npm:b:1.0.0"
+        await fake_cache._client.set(fake_cache._make_key(f"lock:{key}"), "peer-token")
+        calls = []
+
+        async def fetch():
+            calls.append("fetch")
+            raise RuntimeError("upstream answered 503")
+
+        with pytest.raises(RuntimeError, match="503"):
+            await fake_cache.get_or_fetch_with_lock(key, fetch, max_wait_seconds=0.3, reraise_fetch_errors=True)
+        assert calls == ["fetch"]

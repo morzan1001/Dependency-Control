@@ -20,11 +20,7 @@ class KEVEntry(BaseModel):
     """CISA Known Exploited Vulnerability entry."""
 
     cve: str
-    vendor_project: str
-    product: str
-    vulnerability_name: str
     date_added: str
-    short_description: str
     required_action: str
     due_date: str
     known_ransomware_use: bool = False
@@ -35,13 +31,7 @@ class GHSAData(BaseModel):
 
     ghsa_id: str
     cve_id: str | None = None
-    summary: str | None = None
-    severity: str | None = None
-    published_at: str | None = None
-    updated_at: str | None = None
-    withdrawn_at: str | None = None
     github_url: str = ""
-    aliases: list[str] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
     @property

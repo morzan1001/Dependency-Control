@@ -7,6 +7,7 @@ bounded only by the tool deciding to exit. Both analyzers that fork are covered:
 """
 
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -23,17 +24,18 @@ _TOOL_FAILED = 1
 _NO_STDOUT = b""
 _NO_EXTRA_FILES: list[str] = []
 _TEMP_SBOM_PATH = "/tmp/adhoc-sbom.json"
-_NO_SETTINGS = None
 # Neither CycloneDX nor SPDX, so Trivy reaches for syft to convert it.
 _SYFT_JSON_SBOM = {"artifacts": [], "descriptor": {"name": "syft"}}
+_CONVERTED_SBOM = '{"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []}'
+_FAILING_CONVERTER = ["sh", "-c", "echo 'unknown SBOM format' >&2; exit 1"]
 
 
-def _record_and_hang(monkeypatch: pytest.MonkeyPatch, spawned: list) -> None:
-    """Every subprocess the analyzer starts becomes the hanging stand-in, and is handed back."""
+def _record_and_hang(monkeypatch: pytest.MonkeyPatch, spawned: list, stand_in: list[str] = _HANGING_SCANNER) -> None:
+    """Every subprocess the analyzer starts becomes the stand-in, hanging by default, and is handed back."""
     start_process = asyncio.create_subprocess_exec
 
     async def _stand_in(*_args, **kwargs):
-        process = await start_process(*_HANGING_SCANNER, **kwargs)
+        process = await start_process(*stand_in, **kwargs)
         spawned.append(process)
         return process
 
@@ -76,7 +78,7 @@ async def test_a_syft_conversion_that_never_finishes_is_bounded_and_the_scan_goe
     analyzer = TrivyAnalyzer()
     monkeypatch.setattr(analyzer, "syft_convert_timeout", _SCALED_TIMEOUT)
 
-    target, extra = await analyzer._preprocess_sbom(_SYFT_JSON_SBOM, _TEMP_SBOM_PATH, _NO_SETTINGS)
+    target, extra = await analyzer._preprocess_sbom(_SYFT_JSON_SBOM, _TEMP_SBOM_PATH)
 
     assert (target, extra) == (_TEMP_SBOM_PATH, _NO_EXTRA_FILES)
     assert spawned[0].returncode is not None, "the converter outlived its own ceiling"
@@ -86,10 +88,30 @@ async def test_a_syft_conversion_that_never_finishes_is_bounded_and_the_scan_goe
 async def test_a_cancelled_run_kills_the_syft_conversion_too(monkeypatch):
     spawned: list = []
     _record_and_hang(monkeypatch, spawned)
-    coroutine = TrivyAnalyzer()._preprocess_sbom(_SYFT_JSON_SBOM, _TEMP_SBOM_PATH, _NO_SETTINGS)
+    coroutine = TrivyAnalyzer()._preprocess_sbom(_SYFT_JSON_SBOM, _TEMP_SBOM_PATH)
 
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(coroutine, timeout=_CANCEL_AFTER_SECONDS)
 
     assert len(spawned) == _ONE_PROCESS
     assert spawned[0].returncode is not None, "the converter outlived the run that started it"
+
+
+@pytest.mark.asyncio
+async def test_a_finished_syft_conversion_hands_trivy_the_converted_file(monkeypatch, tmp_path):
+    _record_and_hang(monkeypatch, [], ["printf", "%s", _CONVERTED_SBOM])
+    posted = str(tmp_path / "sbom.json")
+
+    target, extra = await TrivyAnalyzer()._preprocess_sbom(_SYFT_JSON_SBOM, posted)
+
+    assert extra == [target] == [f"{posted}.cdx.json"]
+    assert await asyncio.to_thread(Path(target).read_text) == _CONVERTED_SBOM
+
+
+@pytest.mark.asyncio
+async def test_a_failed_syft_conversion_leaves_trivy_the_posted_file(monkeypatch):
+    _record_and_hang(monkeypatch, [], _FAILING_CONVERTER)
+
+    target, extra = await TrivyAnalyzer()._preprocess_sbom(_SYFT_JSON_SBOM, _TEMP_SBOM_PATH)
+
+    assert (target, extra) == (_TEMP_SBOM_PATH, _NO_EXTRA_FILES)

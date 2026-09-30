@@ -325,7 +325,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                     })()}
                                     <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
                                         <DetailSection label="Detector" compact>
-                                            <p className="font-medium">{finding.details?.detector || "Unknown"}</p>
+                                            <p className="font-medium">{finding.details?.detector_name || finding.details?.detector || "Unknown"}</p>
                                         </DetailSection>
                                         <DetailSection label="Verified" compact>
                                             <Badge variant={finding.details?.verified ? "destructive" : "secondary"}>

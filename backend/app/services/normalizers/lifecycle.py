@@ -55,16 +55,18 @@ def normalize_eol(aggregator: "ResultAggregator", result: dict[str, Any], source
         latest = eol_info.get("latest")
         component = safe_get(item, "component", "unknown")
 
-        recommended = eol_info.get("recommended_version") or latest
+        recommended = eol_info.get("recommended_version")
         recommended_cycle = eol_info.get("recommended_cycle")
 
-        if recommended_cycle:
-            description = (
-                f"End of Life: Version cycle {cycle} reached EOL on {eol_date}. "
-                f"Upgrade to {recommended} (cycle {recommended_cycle})"
-            )
+        # endoflife.date marks an undated end of life with ``eol: true``.
+        reached = f"reached EOL on {eol_date}" if isinstance(eol_date, str) else "reached EOL"
+        if item.get("distro_build"):
+            advice = "The distribution may still backport fixes to this build; a newer base image leaves the cycle"
+        elif recommended_cycle:
+            advice = f"Upgrade to {recommended} (cycle {recommended_cycle})"
         else:
-            description = f"End of Life reached on {eol_date} (Cycle {cycle}). Latest: {latest}"
+            advice = f"Latest: {latest}"
+        description = f"End of Life: Version cycle {cycle} {reached}. {advice}"
 
         aggregator.add_finding(
             Finding(

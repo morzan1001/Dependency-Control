@@ -604,6 +604,7 @@ async def test_an_analyzer_that_never_ran_is_not_named_in_the_notes():
         ("end_of_life", "endoflife.date"),
         ("hash_verification", "pypi.org"),
         ("maintainer_risk", "api.github.com"),
+        ("maintainer_risk", "api.deps.dev"),
         ("os_malware", "api.opensourcemalware.com"),
     ],
 )
@@ -617,6 +618,16 @@ async def test_every_stage_that_sends_coordinates_upstream_names_its_host(monkey
 
     assert analyzer_name in response.analyzers.notes
     assert upstream in response.analyzers.notes[analyzer_name]
+
+
+@pytest.mark.asyncio
+async def test_os_malware_without_its_api_key_errors_and_is_not_named_as_sending():
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["os_malware"], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.errored == {"os_malware": [f"{_SBOM_LABEL}: OpenSourceMalware API key not configured"]}
+    assert "os_malware" not in response.analyzers.notes
 
 
 def test_every_registered_analyzer_is_classified_as_sending_or_not():

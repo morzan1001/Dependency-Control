@@ -9,9 +9,6 @@ from app.core.purl import (
     MAX_PURL_LENGTH,
     MAX_VERSION_LENGTH,
     get_purl_type,
-    is_npm,
-    is_purl_type,
-    is_pypi,
     package_identity,
     package_identity_expr,
     parse_purl,
@@ -332,31 +329,6 @@ class TestGetPurlType:
     )
     def test_returns_none_for(self, malformed):
         assert get_purl_type(malformed) is None
-
-
-class TestIsPurlType:
-    @pytest.mark.parametrize(
-        ("purl", "wanted", "expected"),
-        [
-            pytest.param("pkg:pypi/requests@1.0", "pypi", True, id="single_match"),
-            pytest.param("pkg:pypi/requests@1.0", "npm", False, id="single_mismatch"),
-        ],
-    )
-    def test_is_purl_type(self, purl, wanted, expected):
-        assert is_purl_type(purl, wanted) is expected
-
-
-class TestConvenienceFunctions:
-    @pytest.mark.parametrize(
-        ("predicate", "own_type_purl", "foreign_purl"),
-        [
-            pytest.param(is_pypi, "pkg:pypi/requests@2.31.0", "pkg:npm/express@4.0.0", id="is_pypi"),
-            pytest.param(is_npm, "pkg:npm/express@4.0.0", "pkg:pypi/requests@1.0", id="is_npm"),
-        ],
-    )
-    def test_accepts_its_own_type_and_rejects_a_foreign_one(self, predicate, own_type_purl, foreign_purl):
-        assert predicate(own_type_purl) is True
-        assert predicate(foreign_purl) is False
 
 
 @pytest.mark.parametrize(

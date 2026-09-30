@@ -1,14 +1,18 @@
 """K22: /v1/querybatch answers with {id, modified} only, so the full OSV record must be
 fetched per id. Without that, every OSV finding carried a fabricated severity."""
 
+import asyncio
+from collections.abc import Callable
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
+from app.core.cache import CacheKeys
 from app.services.aggregation import ResultAggregator
-from app.services.analyzers.osv import OSVAnalyzer
+from app.services.analyzers import osv
+from app.services.analyzers.osv import OSVAnalyzer, _HydrationBudget
+from tests.helpers.osv import batch_queries, osv_cache, serve_osv, vuln_ids_fetched
 
 _COMPONENTS = [
     {"name": "lodash", "version": "4.17.11", "purl": "pkg:npm/lodash@4.17.11"},
@@ -45,55 +49,24 @@ _RECORDS = {
 }
 
 
-def _batch_response() -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = {"results": _BATCH_RESULTS}
-    return resp
+def _record(vuln_id: str) -> httpx.Response:
+    return httpx.Response(200, json=_RECORDS[vuln_id])
 
 
-def _record_response(vuln_id: str) -> MagicMock:
-    resp = MagicMock()
-    resp.status_code = 200
-    resp.json.return_value = _RECORDS[vuln_id]
-    return resp
+def _osv(record_for: Callable[[str], httpx.Response] = _record, batch: list[dict[str, Any]] = _BATCH_RESULTS):
+    """querybatch answers ``batch``; /v1/vulns/{id} answers ``record_for(id)``."""
 
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.method == "POST":
+            return httpx.Response(200, json={"results": batch})
+        return record_for(request.url.path.rsplit("/", 1)[-1])
 
-def _client_stub(get_side_effect=None) -> MagicMock:
-    client = MagicMock()
-    client.post = AsyncMock(return_value=_batch_response())
-
-    async def _get(url: str, *args, **kwargs):
-        vuln_id = url.rsplit("/", 1)[-1]
-        if get_side_effect is not None:
-            return await get_side_effect(vuln_id)
-        return _record_response(vuln_id)
-
-    client.get = AsyncMock(side_effect=_get)
-    client.__aenter__ = AsyncMock(return_value=client)
-    client.__aexit__ = AsyncMock(return_value=False)
-    return client
+    return handle
 
 
 @pytest.fixture
-def _cache_spy(monkeypatch):
-    """No cache hits; records every mset so the caching contract can be asserted."""
-    written: dict[str, Any] = {}
-
-    async def _mget(keys):
-        return dict.fromkeys(keys)
-
-    async def _mset(mapping, ttl=None):
-        written.update(mapping)
-        return True
-
-    monkeypatch.setattr("app.services.analyzers.osv.cache_service.mget", _mget)
-    monkeypatch.setattr("app.services.analyzers.osv.cache_service.mset", _mset)
-    return written
-
-
-def _install(monkeypatch, client) -> None:
-    monkeypatch.setattr("app.services.analyzers.osv.InstrumentedAsyncClient", lambda *a, **k: client)
+def cache(monkeypatch):
+    return osv_cache(monkeypatch)
 
 
 def _entries(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -101,9 +74,8 @@ def _entries(result: dict[str, Any]) -> dict[str, dict[str, Any]]:
 
 
 @pytest.mark.asyncio
-async def test_severity_and_advisory_data_come_from_the_hydrated_record(_cache_spy, monkeypatch):
-    client = _client_stub()
-    _install(monkeypatch, client)
+async def test_severity_and_advisory_data_come_from_the_hydrated_record(cache, monkeypatch):
+    serve_osv(monkeypatch, _osv())
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
     entries = _entries(result)
@@ -117,28 +89,37 @@ async def test_severity_and_advisory_data_come_from_the_hydrated_record(_cache_s
 
 
 @pytest.mark.asyncio
-async def test_unrated_record_stays_unknown_instead_of_a_placeholder(_cache_spy, monkeypatch):
-    async def _bare(vuln_id: str):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.return_value = {"id": vuln_id, "summary": "no severity anywhere"}
-        return resp
-
-    _install(monkeypatch, _client_stub(_bare))
+async def test_unrated_record_stays_unknown_instead_of_a_placeholder(cache, monkeypatch):
+    serve_osv(monkeypatch, _osv(lambda vuln_id: httpx.Response(200, json={"id": vuln_id, "summary": "unrated"})))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
     assert {e["severity"] for e in _entries(result).values()} == {"UNKNOWN"}
 
 
-@pytest.mark.asyncio
-async def test_unresolvable_record_is_reported_and_left_unrated(_cache_spy, monkeypatch):
-    async def _fail(vuln_id: str):
-        if vuln_id == "GHSA-flask":
-            raise httpx.TimeoutException("timed out")
-        return _record_response(vuln_id)
+def _flask_fails(failure: httpx.Response | Exception) -> Callable[[str], httpx.Response]:
+    def record_for(vuln_id: str) -> httpx.Response:
+        if vuln_id != "GHSA-flask":
+            return _record(vuln_id)
+        if isinstance(failure, Exception):
+            raise failure
+        return failure
 
-    _install(monkeypatch, _client_stub(_fail))
+    return record_for
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(httpx.TimeoutException("timed out"), id="timeout"),
+        pytest.param(httpx.Response(404), id="404"),
+        # A proxy error page answering 200 must cost one id, not the analyzer.
+        pytest.param(httpx.Response(200, text="<html>Bad Gateway</html>"), id="unparseable_body"),
+    ],
+)
+async def test_an_unresolvable_record_is_reported_and_left_unrated(cache, monkeypatch, failure):
+    serve_osv(monkeypatch, _osv(_flask_fails(failure)))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
     entries = _entries(result)
@@ -151,58 +132,68 @@ async def test_unresolvable_record_is_reported_and_left_unrated(_cache_spy, monk
 
 
 @pytest.mark.asyncio
-async def test_each_id_is_fetched_once_and_cached_under_its_modified_stamp(_cache_spy, monkeypatch):
-    shared = [
-        {"name": "a", "version": "1", "purl": "pkg:npm/a@1"},
-        {"name": "b", "version": "1", "purl": "pkg:npm/b@1"},
-        {"name": "c", "version": "1", "purl": "pkg:npm/c@1"},
-    ]
-    client = _client_stub()
-    client.post = AsyncMock(
-        return_value=MagicMock(
-            status_code=200,
-            json=MagicMock(
-                return_value={"results": [{"vulns": [{"id": "GHSA-lodash", "modified": "2026-01-01T00:00:00Z"}]}] * 3}
-            ),
-        )
-    )
-    _install(monkeypatch, client)
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(httpx.ConnectError("connection reset"), id="transport_error"),
+        pytest.param(httpx.Response(503), id="5xx"),
+        pytest.param(httpx.Response(429), id="429"),
+    ],
+)
+async def test_a_transient_record_failure_is_retried(cache, monkeypatch, failure):
+    failed: list[str] = []
 
-    await OSVAnalyzer().analyze(_SBOM, parsed_components=shared)
+    def record_for(vuln_id: str) -> httpx.Response:
+        if vuln_id == "GHSA-flask" and not failed:
+            failed.append(vuln_id)
+            return _flask_fails(failure)(vuln_id)
+        return _record(vuln_id)
 
-    assert client.get.await_count == 1, "one id shared by three components must be fetched once"
-    assert "osvrec:GHSA-lodash:2026-01-01T00:00:00Z" in _cache_spy
-
-
-@pytest.mark.asyncio
-async def test_a_cached_record_costs_no_request(monkeypatch):
-    warm = {
-        "osvrec:GHSA-lodash:2026-01-01T00:00:00Z": _RECORDS["GHSA-lodash"],
-        "osvrec:GHSA-flask:2026-02-02T00:00:00Z": _RECORDS["GHSA-flask"],
-    }
-
-    async def _mget(keys):
-        # Only the record cache is warm; the per-component cache stays empty.
-        return {key: warm.get(key) for key in keys}
-
-    async def _mset(mapping, ttl=None):
-        return True
-
-    monkeypatch.setattr("app.services.analyzers.osv.cache_service.mget", _mget)
-    monkeypatch.setattr("app.services.analyzers.osv.cache_service.mset", _mset)
-    client = _client_stub()
-    _install(monkeypatch, client)
+    serve_osv(monkeypatch, _osv(record_for))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
-    assert client.get.await_count == 0
+    assert "partial_vulnerabilities_unhydrated" not in result
+    assert _entries(result)["flask"]["severity"] == "CRITICAL"
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_record_fetch_is_not_repeated(cache, monkeypatch):
+    seen = serve_osv(monkeypatch, _osv(_flask_fails(httpx.ReadTimeout("timed out"))))
+
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert vuln_ids_fetched(seen).count("GHSA-flask") == 1
+    assert result["partial_vulnerabilities_unhydrated"] == 1
+
+
+@pytest.mark.asyncio
+async def test_each_id_is_fetched_once_and_cached_under_its_modified_stamp(cache, monkeypatch):
+    shared = [{"name": name, "version": "1", "purl": f"pkg:npm/{name}@1"} for name in ("a", "b", "c")]
+    seen = serve_osv(monkeypatch, _osv(batch=[_BATCH_RESULTS[0]] * 3))
+
+    await OSVAnalyzer().analyze(_SBOM, parsed_components=shared)
+
+    assert vuln_ids_fetched(seen) == ["GHSA-lodash"], "one id shared by three components must be fetched once"
+    assert "osvrec:GHSA-lodash:2026-01-01T00:00:00Z" in cache
+
+
+@pytest.mark.asyncio
+async def test_a_cached_record_costs_no_request(cache, monkeypatch):
+    cache["osvrec:GHSA-lodash:2026-01-01T00:00:00Z"] = _RECORDS["GHSA-lodash"]
+    cache["osvrec:GHSA-flask:2026-02-02T00:00:00Z"] = _RECORDS["GHSA-flask"]
+    seen = serve_osv(monkeypatch, _osv())
+
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert vuln_ids_fetched(seen) == []
     assert _entries(result)["lodash"]["severity"] == "LOW"
 
 
 @pytest.mark.asyncio
-async def test_hydrated_severity_survives_into_the_finding(_cache_spy, monkeypatch):
+async def test_hydrated_severity_survives_into_the_finding(cache, monkeypatch):
     """End to end: the normalizer must persist the hydrated severity, not UNKNOWN."""
-    _install(monkeypatch, _client_stub())
+    serve_osv(monkeypatch, _osv())
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
     agg = ResultAggregator()
@@ -239,31 +230,8 @@ def test_vector_only_records_reach_the_policy_ends(record_id, expected):
 
 
 @pytest.mark.asyncio
-async def test_malformed_record_body_costs_one_id_not_the_analyzer(_cache_spy, monkeypatch):
-    """A proxy error page answering 200 must not abort hydration for the whole scan."""
-
-    async def _bad_json(vuln_id: str):
-        resp = MagicMock()
-        resp.status_code = 200
-        resp.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
-        return resp if vuln_id == "GHSA-flask" else _record_response(vuln_id)
-
-    _install(monkeypatch, _client_stub(_bad_json))
-
-    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
-
-    assert result["partial_vulnerabilities_unhydrated"] == 1
-    assert _entries(result)["lodash"]["severity"] == "LOW"
-
-
-@pytest.mark.asyncio
-async def test_malformed_batch_body_reports_skipped_components(_cache_spy, monkeypatch):
-    client = _client_stub()
-    bad = MagicMock()
-    bad.status_code = 200
-    bad.json.side_effect = ValueError("not json")
-    client.post = AsyncMock(return_value=bad)
-    _install(monkeypatch, client)
+async def test_malformed_batch_body_reports_skipped_components(cache, monkeypatch):
+    serve_osv(monkeypatch, lambda request: httpx.Response(200, text="not json"))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
@@ -272,95 +240,64 @@ async def test_malformed_batch_body_reports_skipped_components(_cache_spy, monke
 
 
 @pytest.mark.asyncio
-async def test_404_leaves_the_record_unresolved(_cache_spy, monkeypatch):
-    async def _missing(vuln_id: str):
-        resp = MagicMock()
-        resp.status_code = 404
-        return resp if vuln_id == "GHSA-flask" else _record_response(vuln_id)
-
-    _install(monkeypatch, _client_stub(_missing))
-
-    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
-
-    assert result["partial_vulnerabilities_unhydrated"] == 1
-    assert _entries(result)["flask"]["severity"] == "UNKNOWN"
-
-
-@pytest.mark.asyncio
-async def test_persistent_429_gives_up_within_the_bounded_retries(_cache_spy, monkeypatch):
-    attempts: list[str] = []
-
-    async def _throttled(vuln_id: str):
-        attempts.append(vuln_id)
-        resp = MagicMock()
-        resp.status_code = 429
-        return resp
-
-    monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", AsyncMock())
+async def test_persistent_429_gives_up_within_the_bounded_retries(cache, monkeypatch):
+    seen = serve_osv(monkeypatch, _osv(lambda vuln_id: httpx.Response(429)))
     analyzer = OSVAnalyzer()
-    _install(monkeypatch, _client_stub(_throttled))
 
     result = await analyzer.analyze(_SBOM, parsed_components=_COMPONENTS)
 
     assert result["partial_vulnerabilities_unhydrated"] == 2
-    assert len(attempts) == 2 * (1 + analyzer.max_retries)
+    assert len(vuln_ids_fetched(seen)) == 2 * (1 + analyzer.max_retries)
     assert {e["severity"] for e in _entries(result).values()} == {"UNKNOWN"}
 
 
 @pytest.mark.asyncio
-async def test_a_failure_run_trips_the_circuit_breaker(_cache_spy, monkeypatch):
+async def test_a_failure_run_trips_the_circuit_breaker(cache, monkeypatch):
     """A dead OSV must not be hammered once per id for the whole scan."""
     many = [{"name": f"p{i}", "version": "1", "purl": f"pkg:npm/p{i}@1"} for i in range(40)]
-    calls: list[str] = []
-
-    async def _dead(vuln_id: str):
-        calls.append(vuln_id)
-        resp = MagicMock()
-        resp.status_code = 500
-        return resp
-
-    client = _client_stub(_dead)
-    client.post = AsyncMock(
-        return_value=MagicMock(
-            status_code=200,
-            json=MagicMock(
-                return_value={"results": [{"vulns": [{"id": f"V-{i}", "modified": "m"}]} for i in range(40)]}
-            ),
-        )
-    )
-    _install(monkeypatch, client)
+    batch = [{"vulns": [{"id": f"V-{i}", "modified": "m"}]} for i in range(40)]
+    seen = serve_osv(monkeypatch, _osv(lambda vuln_id: httpx.Response(500), batch=batch))
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=many)
 
-    assert len(calls) < 40, "the breaker must stop the run before every id has been tried"
+    assert len(set(vuln_ids_fetched(seen))) < 40, "the breaker must stop the run before every id has been tried"
     assert result["partial_vulnerabilities_unhydrated"] == 40
 
 
 @pytest.mark.asyncio
-async def test_entries_holding_unresolved_stubs_are_not_cached(_cache_spy, monkeypatch):
-    """Caching them would serve UNKNOWN for six hours with no partial flag on the next scan."""
-
-    async def _one_missing(vuln_id: str):
-        resp = MagicMock()
-        resp.status_code = 404
-        return resp if vuln_id == "GHSA-flask" else _record_response(vuln_id)
-
-    _install(monkeypatch, _client_stub(_one_missing))
-
+async def test_the_stubs_are_cached_and_an_unresolved_record_is_fetched_again_next_scan(cache, monkeypatch):
+    """The querybatch answer is definitive even when a record fails; the records have their own cache."""
+    serve_osv(monkeypatch, _osv(_flask_fails(httpx.Response(404))))
     await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
-    component_keys = [k for k in _cache_spy if k.startswith("osv3:")]
-    assert len(component_keys) == 1, "only the fully hydrated component may be cached"
+    for component, answer in zip(_COMPONENTS, _BATCH_RESULTS, strict=True):
+        assert cache[CacheKeys.osv(component["purl"])] == answer["vulns"]
+
+    seen = serve_osv(monkeypatch, _osv())
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert batch_queries(seen) == []
+    assert vuln_ids_fetched(seen) == ["GHSA-flask"]
+    assert "partial_vulnerabilities_unhydrated" not in result
+    assert _entries(result)["flask"]["severity"] == "CRITICAL"
+
+
+@pytest.mark.asyncio
+async def test_a_clean_answer_is_cached_and_served_without_a_request(cache, monkeypatch):
+    serve_osv(monkeypatch, _osv(batch=[{}, {}]))
+    await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    seen = serve_osv(monkeypatch, _osv())
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert seen == []
+    assert result == {"osv_vulnerabilities": []}
 
 
 @pytest.mark.asyncio
 async def test_budget_deadline_trips_without_any_failure():
     """The wall-clock branch of _HydrationBudget: only the consecutive-failure branch was
     covered, so a broken deadline check would not have shown up."""
-    import asyncio
-
-    from app.services.analyzers.osv import _HydrationBudget
-
     past = _HydrationBudget(deadline=asyncio.get_running_loop().time() - 1)
     assert past.exhausted()
     past.record(success=True)
@@ -374,50 +311,31 @@ async def test_budget_deadline_trips_without_any_failure():
 
 
 @pytest.mark.asyncio
-async def test_an_expired_deadline_reports_every_id_as_unhydrated(_cache_spy, monkeypatch):
+async def test_an_expired_deadline_reports_every_id_as_unhydrated(cache, monkeypatch):
     """A healthy OSV that is merely slow must leave the ids visible as partial, not silently
     unrated, and must not spend a single request once the budget is gone."""
-    calls: list[str] = []
-
-    async def _count(vuln_id: str):
-        calls.append(vuln_id)
-        return _record_response(vuln_id)
-
     monkeypatch.setattr("app.services.analyzers.osv._HYDRATION_BUDGET_SECONDS", -1.0)
-    _install(monkeypatch, _client_stub(_count))
+    seen = serve_osv(monkeypatch, _osv())
 
     result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
 
-    assert calls == [], "no record may be fetched after the budget is exhausted"
+    assert vuln_ids_fetched(seen) == [], "no record may be fetched after the budget is exhausted"
     assert result["partial_vulnerabilities_unhydrated"] == 2
     assert {e["severity"] for e in _entries(result).values()} == {"UNKNOWN"}
 
 
 @pytest.mark.asyncio
-async def test_the_429_ladder_rechecks_the_deadline_between_attempts():
-    """The deadline cannot cancel a request in flight, so the ladder must recheck it: without
-    that the tail past the budget is 4 x 60s of timeouts plus 35s of backoff, not one request."""
-    import asyncio
-
-    from app.services.analyzers.osv import _HydrationBudget
-
-    attempts: list[str] = []
-
-    async def _throttled(vuln_id: str):
-        attempts.append(vuln_id)
-        resp = MagicMock()
-        resp.status_code = 429
-        return resp
-
+async def test_the_retry_ladder_stops_at_the_hydration_deadline(monkeypatch):
+    """The deadline cannot cancel a request in flight, so no retry may start past it: otherwise
+    the tail past the budget is 4 x 60s of timeouts plus 35s of backoff, not one request."""
+    seen = serve_osv(monkeypatch, lambda request: httpx.Response(429))
     analyzer = OSVAnalyzer()
-    analyzer.retry_base_delay = 0.0
-    client = _client_stub(_throttled)
-    expired = _HydrationBudget(deadline=asyncio.get_running_loop().time() - 1)
+    now = asyncio.get_running_loop().time()
 
-    assert await analyzer._get_vuln_record(client, "GHSA-lodash", expired) is None
-    assert attempts == ["GHSA-lodash"], "the in-flight attempt completes, the ladder does not continue"
+    async with osv.InstrumentedAsyncClient("OSV API") as client:
+        assert await analyzer._get_vuln_record(client, "GHSA-lodash", now - 1) is None
+        assert len(seen) == 1, "the in-flight attempt completes, the ladder does not continue"
 
-    attempts.clear()
-    ahead = _HydrationBudget(deadline=asyncio.get_running_loop().time() + 60)
-    assert await analyzer._get_vuln_record(client, "GHSA-lodash", ahead) is None
-    assert len(attempts) == 1 + analyzer.max_retries, "with budget left the full ladder still runs"
+        seen.clear()
+        assert await analyzer._get_vuln_record(client, "GHSA-lodash", now + 60) is None
+        assert len(seen) == 1 + analyzer.max_retries, "with budget left the full ladder still runs"

@@ -106,16 +106,14 @@ class VulnerabilityScannerDetails(_DetailsModel):
     cvss_vector: str | None = None
     references: list[Any] | None = None
     cwe_ids: list[str] | None = None
-    # trivy
     published_date: str | None = None
     last_modified_date: str | None = None
+    # trivy
     layer_id: str | None = None
     # grype
     datasource: str | None = None
     namespace: str | None = None
     # osv
-    published: str | None = None
-    modified: str | None = None
     osv_url: str | None = None
     ecosystem_specific: dict[str, Any] | None = None
 
@@ -205,6 +203,7 @@ class LicenseDetails(_DetailsModel):
 
 class SecretDetails(_DetailsModel):
     detector: str
+    detector_name: str | None = None
     decoder: str | None = None
     verified: bool | None = None
     redacted: str | None = None
@@ -309,7 +308,6 @@ class SastScannerDetails(_DetailsModel):
     license: str | None = None
     fingerprint: str | None = None
     documentation_url: str | None = None
-    full_description: str | None = None
 
 
 class SastFindingEntry(_DetailsModel):
@@ -344,7 +342,6 @@ class IacDetails(_DetailsModel):
     cwe_ids: list[str] = []
     documentation_url: str | None = None
     references: list[Any] = []
-    full_description: str | None = None
 
 
 class TyposquattingDetails(_DetailsModel):

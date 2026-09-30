@@ -2,13 +2,6 @@ from abc import ABC, abstractmethod
 from typing import Any
 
 
-def normalize_hash_algorithm(alg: str) -> str:
-    """Normalize a hash algorithm name (lowercase, no hyphens): "SHA-256" -> "sha256"."""
-    if not alg:
-        return ""
-    return alg.lower().replace("-", "")
-
-
 class Analyzer(ABC):
     """Base class for all SBOM analyzers; on error, analyze() returns a dict with an "error" key."""
 
@@ -22,83 +15,3 @@ class Analyzer(ABC):
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Analyze an SBOM for security issues; on error returns {"error": ...}."""
-
-    def _get_components(
-        self,
-        sbom: dict[str, Any],
-        parsed_components: list[dict[str, Any]] | None = None,
-    ) -> list[dict[str, Any]]:
-        """Return normalized components, preferring pre-parsed ones over raw-SBOM extraction."""
-        if parsed_components:
-            return parsed_components
-
-        components = []
-
-        # CycloneDX (standard 'components' list)
-        if "components" in sbom:
-            for comp in sbom["components"]:
-                name = comp.get("name")
-                if not name or not isinstance(name, str) or not name.strip():
-                    continue
-
-                hashes = {}
-                for h in comp.get("hashes", []):
-                    if isinstance(h, dict) and h.get("alg") and h.get("content"):
-                        alg = normalize_hash_algorithm(h["alg"])
-                        hashes[alg] = h["content"]
-
-                normalized = {
-                    "name": name,
-                    "version": comp.get("version"),
-                    "purl": comp.get("purl"),
-                    "type": comp.get("type", "library"),
-                    "hashes": hashes,
-                    "cpes": [c.get("cpe") for c in comp.get("cpes", []) if isinstance(c, dict) and c.get("cpe")],
-                    "licenses": comp.get("licenses", []),
-                }
-                components.append(normalized)
-            return components
-
-        # Syft JSON (uses 'artifacts')
-        if "artifacts" in sbom:
-            for artifact in sbom["artifacts"]:
-                name = artifact.get("name")
-                if not name or not isinstance(name, str) or not name.strip():
-                    continue
-
-                comp = {
-                    "name": name,
-                    "version": artifact.get("version"),
-                    "purl": artifact.get("purl"),
-                    "type": artifact.get("type", "library"),
-                    "hashes": {},
-                    "cpes": [c.get("cpe") for c in artifact.get("cpes", []) if isinstance(c, dict) and c.get("cpe")],
-                }
-                components.append(comp)
-            return components
-
-        # SPDX (uses 'packages')
-        if "packages" in sbom:
-            for pkg in sbom["packages"]:
-                name = pkg.get("name")
-                if not name or not isinstance(name, str) or not name.strip():
-                    continue
-
-                purl = None
-                if "externalRefs" in pkg:
-                    for ref in pkg["externalRefs"]:
-                        if ref.get("referenceType") == "purl":
-                            purl = ref.get("referenceLocator")
-                            break
-
-                comp = {
-                    "name": name,
-                    "version": pkg.get("versionInfo"),
-                    "purl": purl,
-                    "type": "library",
-                    "hashes": {},
-                }
-                components.append(comp)
-            return components
-
-        return []

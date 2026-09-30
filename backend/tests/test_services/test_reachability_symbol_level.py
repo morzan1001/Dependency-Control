@@ -24,19 +24,12 @@ def _go_osv_result():
                         "id": "GO-2023-0001",
                         "summary": "HTTP/2 rapid reset",
                         "database_specific": {"severity": "HIGH"},
-                        "affected": [
-                            {
-                                "ranges": [{"events": [{"fixed": "0.17.0"}]}],
-                                "ecosystem_specific": {
-                                    "imports": [
-                                        {
-                                            "path": "golang.org/x/net/http2",
-                                            "symbols": ["Server.ServeConn", "ConfigureServer"],
-                                        }
-                                    ]
-                                },
-                            }
-                        ],
+                        "fixed_version": "0.17.0",
+                        "ecosystem_specific": {
+                            "imports": [
+                                {"path": "golang.org/x/net/http2", "symbols": ["Server.ServeConn", "ConfigureServer"]}
+                            ]
+                        },
                     }
                 ],
             }
@@ -81,7 +74,7 @@ def test_symbol_level_reachability_from_stored_shape():
 def test_import_level_when_no_symbols_in_advisory():
     agg = ResultAggregator()
     payload = _go_osv_result()
-    del payload["osv_vulnerabilities"][0]["vulnerabilities"][0]["affected"][0]["ecosystem_specific"]
+    del payload["osv_vulnerabilities"][0]["vulnerabilities"][0]["ecosystem_specific"]
     agg.aggregate("osv", payload)
     finding = agg.get_findings()[0].model_dump()
     module_usage = {"golang.org/x/net": {"import_locations": ["main.go"], "used_symbols": ["X"]}}

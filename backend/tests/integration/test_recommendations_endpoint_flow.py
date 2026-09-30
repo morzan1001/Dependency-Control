@@ -151,7 +151,7 @@ async def test_the_live_per_cve_threat_intel_reaches_the_engine(client, db, owne
     async def _enrich(cves):
         return {cve: live[cve] for cve in cves}
 
-    monkeypatch.setattr(rec_module, "get_cve_enrichment", _enrich)
+    monkeypatch.setattr(rec_module.vulnerability_enrichment_service, "enrich_cves", _enrich)
     seen: dict = {}
     monkeypatch.setattr(rec_module.recommendation_engine, "generate_recommendations", _engine_returning([], seen))
 

@@ -31,8 +31,7 @@ from app.schemas.analytics import (
 )
 from app.schemas.enrichment import VulnerabilityEnrichment
 from app.schemas.recommendation import Recommendation, RecommendationType
-from app.services.enrichment import get_cve_enrichment
-from app.services.enrichment.service import apply_enrichments
+from app.services.enrichment.service import apply_enrichments, vulnerability_enrichment_service
 from app.services.recommendation import trends
 from app.services.recommendation.common import live_cves, get_attr
 from app.services.recommendations import recommendation_engine
@@ -83,7 +82,7 @@ async def _apply_live_threat_intel(findings: list[Any]) -> dict[str, Vulnerabili
     if not all_cves:
         return {}
     try:
-        enrichments = await get_cve_enrichment(all_cves)
+        enrichments = await vulnerability_enrichment_service.enrich_cves(all_cves)
     except Exception as e:
         logger.warning("Recommendations: live CVE enrichment failed, using stored data: %s", e)
         return {}

@@ -155,6 +155,6 @@ class TestGrypeRetryPolicyConfig:
     def test_quiet_flag_not_passed(self):
         # --quiet suppresses the stderr the retry logic inspects; never re-add it.
         analyzer = GrypeAnalyzer()
-        args = analyzer._build_command_args("sbom.json", None)
+        args = analyzer._build_command_args("sbom.json")
         assert "--quiet" not in args
         assert "-q" not in args

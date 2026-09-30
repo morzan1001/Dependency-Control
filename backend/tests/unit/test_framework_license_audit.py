@@ -5,6 +5,7 @@ import pytest
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
+from tests.helpers.analyzers import analyze_cyclonedx
 
 
 def _eval_input(findings=None, policy=None):
@@ -129,13 +130,11 @@ async def test_analyzer_output_reaches_the_identified_control():
     from app.services.analyzers.license_compliance import LicenseAnalyzer
     from app.services.normalizers.license import normalize_license
 
-    sbom = {
-        "components": [
-            {"type": "library", "name": "mit-lib", "version": "1.0.0", "licenses": [{"license": {"id": "MIT"}}]},
-            {"type": "library", "name": "undeclared-lib", "version": "2.0.0"},
-        ]
-    }
-    result = await LicenseAnalyzer().analyze(sbom)
+    components = [
+        {"type": "library", "name": "mit-lib", "version": "1.0.0", "licenses": [{"license": {"id": "MIT"}}]},
+        {"type": "library", "name": "undeclared-lib", "version": "2.0.0"},
+    ]
+    result = await analyze_cyclonedx(LicenseAnalyzer(), components)
     assert result["summary"]["unknown"] == 1
 
     aggregator = ResultAggregator()

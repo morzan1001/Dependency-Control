@@ -51,7 +51,7 @@ class LicenseAnalyzer(Analyzer):
             ),
         )
 
-        components = self._get_components(sbom, parsed_components)
+        components = parsed_components or []
         issues: list[dict[str, Any]] = []
         component_licenses: list[dict[str, Any]] = []
 

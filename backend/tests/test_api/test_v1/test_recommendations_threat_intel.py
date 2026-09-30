@@ -25,7 +25,7 @@ def _run(findings, enrichments):
     async def _fake(cves):
         return {c: enrichments[c] for c in cves if c in enrichments}
 
-    with patch(f"{MODULE}.get_cve_enrichment", new=_fake):
+    with patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake):
         return asyncio.run(_apply_live_threat_intel(findings))
 
 
@@ -79,7 +79,7 @@ class TestApplyLiveThreatIntel:
             called["n"] += 1
             return {}
 
-        with patch(f"{MODULE}.get_cve_enrichment", new=_fake):
+        with patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake):
             asyncio.run(_apply_live_threat_intel([f]))
         assert called["n"] == 0, "must not call enrichment when there are no CVEs"
 
@@ -95,7 +95,7 @@ class TestApplyLiveThreatIntel:
         async def _down(cves):
             raise RuntimeError("feed down")
 
-        with patch(f"{MODULE}.get_cve_enrichment", new=_down):
+        with patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_down):
             assert asyncio.run(_apply_live_threat_intel([f])) == {}
 
 
@@ -117,7 +117,7 @@ class TestRefreshedCards:
             requested.extend(cves)
             return {}
 
-        with patch(f"{MODULE}.get_cve_enrichment", new=_fake):
+        with patch(f"{MODULE}.vulnerability_enrichment_service.enrich_cves", new=_fake):
             asyncio.run(_apply_live_threat_intel([f]))
 
         assert requested == ["CVE-2"]

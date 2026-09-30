@@ -61,6 +61,7 @@ from app.services.analysis.integrations import decorate_github_pr, decorate_gitl
 from app.services.analysis.notifications import notify_analysis_failed, send_scan_notifications
 from app.services.analysis.registry import (
     CRYPTO_ANALYZERS,
+    RAW_SBOM_ANALYZERS,
     VULNERABILITY_ANALYZERS,
     analyzer_factories,
     is_crypto_analyzer,
@@ -73,7 +74,7 @@ from app.services.analysis.stats import (
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
-from app.services.enrichment import enrich_vulnerability_findings
+from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.github import is_public_github
 from app.services.gridfs_maintenance import extract_gridfs_ids_from_refs, gridfs_ref_id, load_gridfs_json
 from app.services.reachability_enrichment import (
@@ -311,7 +312,7 @@ def _parse_and_track_sbom(current_sbom: Any) -> tuple[Any, list[dict[str, Any]]]
         if analysis_components_parsed_total:
             analysis_components_parsed_total.inc(len(parsed_components))
     except Exception as parse_err:
-        logger.warning(f"Failed to pre-parse SBOM: {parse_err} - analyzers will use fallback parsing")
+        logger.warning(f"Failed to pre-parse SBOM: {parse_err} - only the raw-document scanners will run")
         if analysis_sbom_parse_errors_total:
             analysis_sbom_parse_errors_total.inc()
     return parsed_sbom, parsed_components
@@ -353,6 +354,8 @@ def _resolve_effective_analyzers(
     else:
         effective_analyzers = sorted(n for n in active_analyzers if n not in CRYPTO_ANALYZERS)
 
+    if parsed_sbom is None:
+        effective_analyzers = [n for n in effective_analyzers if n in RAW_SBOM_ANALYZERS or n in CRYPTO_ANALYZERS]
     # CBOM-only scans with no real SBOM content: drop SBOM-format scanners
     if not parsed_components and scan_type == "cbom":
         effective_analyzers = [n for n in effective_analyzers if n not in VULNERABILITY_ANALYZERS]
@@ -363,9 +366,11 @@ def _build_settings_resolver(
     system_settings: Any,
     project_license_policy: dict[str, Any] | None,
     project_analyzer_settings: dict[str, dict[str, Any]] | None,
+    github_token: str | None = None,
 ) -> Callable[[str], dict[str, Any]]:
     """Return a function that yields per-analyzer settings dicts."""
     base_settings = system_settings.model_dump() if system_settings else {}
+    base_settings["github_token"] = github_token
     if project_license_policy:
         base_settings["license_policy"] = project_license_policy
 
@@ -393,6 +398,7 @@ async def _process_sbom(
     project_id: str | None = None,
     scan_type: str | None = None,
     payload: list[ParsedSBOM | None] | None = None,
+    github_token: str | None = None,
 ) -> list[str]:
     """Process a single resolved SBOM: parse, collect deps, run analyzers; returns the results summary."""
     fallback_source = f"SBOM #{index + 1}"
@@ -408,7 +414,9 @@ async def _process_sbom(
 
     effective_analyzers = _resolve_effective_analyzers(active_analyzers, parsed_sbom, parsed_components, scan_type)
 
-    settings_for = _build_settings_resolver(system_settings, project_license_policy, project_analyzer_settings)
+    settings_for = _build_settings_resolver(
+        system_settings, project_license_policy, project_analyzer_settings, github_token
+    )
 
     tasks = [
         process_analyzer(
@@ -420,7 +428,7 @@ async def _process_sbom(
             aggregator,
             settings=settings_for(analyzer_name),
             fallback_source=fallback_source,
-            parsed_components=(parsed_components if parsed_components else None),
+            parsed_components=parsed_components,
             project_id=project_id,
         )
         for analyzer_name in effective_analyzers
@@ -528,10 +536,13 @@ async def _run_epss_kev_enrichment(
 ) -> None:
     """Run EPSS/KEV enrichment on vulnerability findings."""
     try:
-        await enrich_vulnerability_findings(vulnerability_findings, github_token=github_token)
+        _, unavailable = await vulnerability_enrichment_service.enrich_findings(
+            vulnerability_findings, github_token=github_token
+        )
         epss_kev_summary = build_epss_kev_summary(vulnerability_findings)
         await result_repo.insert_result(scan_id, "epss_kev", epss_kev_summary)
-        results_summary.append(f"epss_kev: Success ({len(vulnerability_findings)} enriched)")
+        outcome = f"Partial ({' and '.join(unavailable)} unavailable)" if unavailable else "Success"
+        results_summary.append(f"epss_kev: {outcome} ({len(vulnerability_findings)} enriched)")
         logger.info(f"[epss_kev] Enriched {len(vulnerability_findings)} vulnerability findings with EPSS/KEV data")
 
         if analysis_enrichment_total:
@@ -1094,6 +1105,7 @@ async def run_analysis(
 
     settings_repo = SystemSettingsRepository(db)
     system_settings = await settings_repo.get()
+    github_token = system_settings.github_token or await _get_github_instance_token(db)
 
     project_license_policy, project_analyzer_settings = await _load_project_settings_overrides(project_id, project_repo)
 
@@ -1123,6 +1135,7 @@ async def run_analysis(
             project_id=project_id,
             scan_type=scan_type,
             payload=payload,
+            github_token=github_token,
         )
         resolved_sboms[index] = None
         results_summary.extend(sbom_results)
@@ -1154,10 +1167,6 @@ async def run_analysis(
         aggregated_findings, scan_id, project_id, scan_created_at
     )
     total_findings_count = len(findings_to_insert)
-
-    github_token = system_settings.github_token
-    if not github_token:
-        github_token = await _get_github_instance_token(db)
 
     component_languages = await _run_vuln_enrichments(
         active_analyzers,
