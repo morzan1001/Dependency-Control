@@ -1,13 +1,15 @@
 """Tests for GitLabService multi-instance support."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from typing import ClassVar
+from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from app.models.gitlab_api import OIDCPayload
 from app.models.gitlab_instance import GitLabInstance
-from app.services.gitlab import GitLabService
+from app.services.gitlab import GitLabGroupLookup, GitLabService
 
 
 class TestGitLabServiceInitialization:
@@ -213,37 +215,75 @@ class TestGitLabServiceOIDC:
                         assert call_count == 2
 
 
+_GROUP = {
+    "id": 77,
+    "web_url": "https://gitlab-a.com/groups/mo/edge",
+    "name": "edge",
+    "path": "edge",
+    "full_path": "mo/edge",
+    "full_name": "mo / edge",
+    "visibility": "private",
+    "parent_id": 5,
+}
+
+
 class TestGroupLookup:
-    """A binding to a group the instance cannot resolve would silently own nothing, so the
+    """A binding or an owning group the instance cannot resolve would silently own nothing, so the
     lookup has to separate "no such group" from "the instance did not answer"."""
 
-    @staticmethod
-    def _lookup(service, response):
-        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
-            return asyncio.run(service.get_group(77))
+    _REFS: ClassVar = {
+        "by id": (lambda service: service.get_group(77), "/groups/77"),
+        "by path": (lambda service: service._lookup_group("mo/edge"), "/groups/mo%2Fedge"),
+    }
 
-    def test_a_group_the_instance_carries_is_returned(self, gitlab_instance_a):
-        response = MagicMock(status_code=200)
-        response.json.return_value = {"id": 77, "full_path": "mo/edge"}
+    @pytest.mark.parametrize("ref", ["by id", "by path"])
+    @pytest.mark.parametrize(
+        ("response", "expected"),
+        [
+            (httpx.Response(200, json=_GROUP), GitLabGroupLookup(reachable=True, group=_GROUP)),
+            (
+                httpx.Response(404, json={"message": "404 Group Not Found"}),
+                GitLabGroupLookup(reachable=True, group=None),
+            ),
+            (httpx.Response(403, json={"message": "403 Forbidden"}), GitLabGroupLookup(reachable=False, group=None)),
+            (None, GitLabGroupLookup(reachable=False, group=None)),
+        ],
+        ids=["carried", "absent", "refused", "unanswered"],
+    )
+    def test_absent_and_unreachable_stay_apart(self, gitlab_instance_a, ref, response, expected):
+        lookup, endpoint = self._REFS[ref]
+        service = GitLabService(gitlab_instance_a)
 
-        lookup = self._lookup(GitLabService(gitlab_instance_a), response)
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)) as api_get:
+            assert asyncio.run(lookup(service)) == expected
 
-        assert (lookup.reachable, lookup.group["full_path"]) == (True, "mo/edge")
+        # Without the flag GitLab embeds up to 200 of the group's projects in the answer.
+        api_get.assert_awaited_once_with(endpoint, params={"with_projects": "false"})
 
-    def test_a_group_the_instance_does_not_carry_is_reachable_and_absent(self, gitlab_instance_a):
-        lookup = self._lookup(GitLabService(gitlab_instance_a), MagicMock(status_code=404))
 
-        assert (lookup.reachable, lookup.group) == (True, None)
+class TestARejectedReadIsLogged:
+    """An expired token or a missing scope must not read like a project with no merge requests."""
 
-    def test_an_unanswered_request_is_not_an_absent_group(self, gitlab_instance_a):
-        lookup = self._lookup(GitLabService(gitlab_instance_a), None)
+    @pytest.mark.parametrize(
+        ("read", "endpoint", "unanswered"),
+        [
+            (lambda service: service.get_project_details(100), "/projects/100", None),
+            (
+                lambda service: service.get_merge_requests_for_commit(100, "9c1d2e3f"),
+                "/projects/100/repository/commits/9c1d2e3f/merge_requests",
+                [],
+            ),
+        ],
+        ids=["project details", "merge requests of a commit"],
+    )
+    def test_the_status_is_logged(self, gitlab_instance_a, caplog, read, endpoint, unanswered):
+        service = GitLabService(gitlab_instance_a)
+        response = httpx.Response(401, json={"message": "401 Unauthorized"})
 
-        assert (lookup.reachable, lookup.group) == (False, None)
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)), caplog.at_level("WARNING"):
+            assert asyncio.run(read(service)) == unanswered
 
-    def test_a_refused_request_is_not_an_absent_group(self, gitlab_instance_a):
-        lookup = self._lookup(GitLabService(gitlab_instance_a), MagicMock(status_code=403))
-
-        assert (lookup.reachable, lookup.group) == (False, None)
+        assert f"GitLab API GET {endpoint} returned HTTP 401" in [r.getMessage() for r in caplog.records]
 
 
 class TestGroupListing:

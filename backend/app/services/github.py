@@ -94,6 +94,14 @@ def _org_walk_gate(instance_id: str) -> asyncio.Semaphore:
     return gates.setdefault(instance_id, asyncio.Semaphore(_GITHUB_ORG_WALK_CONCURRENCY))
 
 
+def response_ok(provider: str, endpoint: str, response: httpx.Response) -> bool:
+    """True for 200. A rejected read must not be mistaken for an empty one, so a non-200 is logged here."""
+    if response.status_code == 200:
+        return True
+    logger.warning("%s API GET %s returned HTTP %d", provider, sanitize_for_log(endpoint), response.status_code)
+    return False
+
+
 def _json_document(response: httpx.Response) -> dict[str, Any]:
     """The response body as a document; ``{}`` for anything else, which reads as "GitHub did not say"."""
     try:
@@ -377,11 +385,12 @@ class GitHubService:
 
     async def get_default_branch(self, owner: str, repo: str) -> str | None:
         """The repository's default branch. Returns None on API failure."""
-        response = await self._api_get(f"/repos/{owner}/{repo}")
-        if response and response.status_code == 200:
-            branch = response.json().get("default_branch")
-            return str(branch) if branch else None
-        return None
+        endpoint = f"/repos/{owner}/{repo}"
+        response = await self._api_get(endpoint)
+        if response is None or not response_ok("GitHub", endpoint, response):
+            return None
+        branch = response.json().get("default_branch")
+        return str(branch) if branch else None
 
     async def _cached(
         self,
@@ -1093,7 +1102,7 @@ class GitHubService:
     async def _pull_requests_for_sha(self, owner: str, repo: str, sha: str) -> list[GitHubPullRequest]:
         endpoint = f"/repos/{owner}/{repo}/commits/{sha}/pulls"
         response = await self._api_get(endpoint)
-        if response is None or not self._ok(endpoint, response):
+        if response is None or not response_ok("GitHub", endpoint, response):
             return []
         return [GitHubPullRequest(**pr) for pr in response.json()]
 
@@ -1101,21 +1110,13 @@ class GitHubService:
         """Second parent of a two-parent merge commit. Parent order is a git convention, not an API guarantee."""
         endpoint = f"/repos/{owner}/{repo}/commits/{commit_sha}"
         response = await self._api_get(endpoint)
-        if response is None or not self._ok(endpoint, response):
+        if response is None or not response_ok("GitHub", endpoint, response):
             return None
         parents = response.json().get("parents") or []
         if len(parents) != 2:
             return None
         head_sha = parents[1].get("sha")
         return str(head_sha) if head_sha else None
-
-    @staticmethod
-    def _ok(endpoint: str, response: httpx.Response) -> bool:
-        """True for 200. A rejected read must not be mistaken for an empty one, so a non-200 is logged here."""
-        if response.status_code == 200:
-            return True
-        logger.warning("GitHub API GET %s returned HTTP %d", endpoint, response.status_code)
-        return False
 
     async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment]:
         """Issue comments on a pull request, uncapped so an old scan comment is never missed and duplicated."""

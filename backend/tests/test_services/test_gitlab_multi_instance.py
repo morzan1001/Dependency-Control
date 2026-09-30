@@ -565,7 +565,7 @@ class TestTeamSyncGroupMembers:
 
         with (
             patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members,
-            patch.object(service, "_resolve_group_by_path", new_callable=AsyncMock) as mock_resolve,
+            patch.object(service, "_lookup_group", new_callable=AsyncMock) as mock_resolve,
         ):
             mock_members.return_value = members
             mock_resolve.return_value = GitLabGroupLookup(reachable=True, group={"id": 10})
@@ -749,7 +749,7 @@ class TestTeamSyncResolveGroupFallback:
         with (
             make_repositories(user_doc={"_id": "uid", "username": "dev"}) as (team_repo, _),
             patch.object(service, "get_group_members", new=AsyncMock(return_value=members)),
-            patch.object(service, "_resolve_group_by_path", new=AsyncMock(return_value=lookup)),
+            patch.object(service, "_lookup_group", new=AsyncMock(return_value=lookup)),
         ):
             result = asyncio.run(
                 sync_team(

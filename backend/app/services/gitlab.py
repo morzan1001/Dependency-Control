@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import urllib.parse
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any, NamedTuple
@@ -33,6 +34,7 @@ from app.models.gitlab_instance import GitLabInstance
 from app.models.team import GitLabGroupBinding, Team, TeamMember, TeamSyncResult, binding_of
 from app.repositories.teams import MemberSubset, TeamRepository
 from app.repositories.users import UserRepository
+from app.services.github import response_ok
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
@@ -64,22 +66,21 @@ class GitLabGroupLookup(NamedTuple):
     group: dict[str, Any] | None
 
 
+def group_full_path(group: dict[str, Any], fallback: str = "") -> str:
+    """The path that tells two same-named subgroups apart."""
+    return str(group.get("full_path") or group.get("path") or fallback)
+
+
 def build_group_options(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The groups a human can bind to, with the full path that tells two same-named subgroups
-    apart. An entry that cannot address a group is left out, as it is everywhere else."""
+    """The groups a human can bind to. An entry that cannot address a group is left out, as it is
+    everywhere else."""
     options = []
     for group in groups:
         group_id = group.get("id")
-        full_path = group.get("full_path") or group.get("path")
+        full_path = group_full_path(group)
         if not isinstance(group_id, int) or not full_path:
             continue
-        options.append(
-            {
-                "id": group_id,
-                "full_path": str(full_path),
-                "name": str(group.get("name") or full_path),
-            }
-        )
+        options.append({"id": group_id, "full_path": full_path, "name": str(group.get("name") or full_path)})
     return options
 
 
@@ -364,10 +365,11 @@ class GitLabService:
 
     async def get_project_details(self, project_id: int) -> GitLabProjectDetails | None:
         """Fetches project details using the system token."""
-        response = await self._api_get(f"/projects/{project_id}")
-        if response and response.status_code == 200:
-            return GitLabProjectDetails(**response.json())
-        return None
+        endpoint = f"/projects/{project_id}"
+        response = await self._api_get(endpoint)
+        if response is None or not response_ok("GitLab", endpoint, response):
+            return None
+        return GitLabProjectDetails(**response.json())
 
     async def get_default_branch(self, project_id: int) -> str | None:
         """The project's default branch. Returns None on API failure."""
@@ -376,10 +378,11 @@ class GitLabService:
 
     async def get_merge_requests_for_commit(self, project_id: int, commit_sha: str) -> list[GitLabMergeRequest]:
         """Fetches merge requests associated with a specific commit."""
-        response = await self._api_get(f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests")
-        if response and response.status_code == 200:
-            return [GitLabMergeRequest(**mr) for mr in response.json()]
-        return []
+        endpoint = f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests"
+        response = await self._api_get(endpoint)
+        if response is None or not response_ok("GitLab", endpoint, response):
+            return []
+        return [GitLabMergeRequest(**mr) for mr in response.json()]
 
     async def post_merge_request_comment(self, project_id: int, mr_iid: int, body: str) -> bool:
         """Posts a comment to a merge request."""
@@ -482,36 +485,18 @@ class GitLabService:
 
     async def get_group(self, group_id: int) -> GitLabGroupLookup:
         """One group by its numeric id."""
-        response = await self._api_get(f"/groups/{group_id}")
-        if response is None:
-            return GitLabGroupLookup(reachable=False, group=None)
-        if response.status_code == 200:
-            group: dict[str, Any] = response.json()
-            return GitLabGroupLookup(reachable=True, group=group)
-        # 404 is also what GitLab answers for a group the token may not see, which is the same
-        # answer for a binding: this instance cannot resolve it.
-        if response.status_code == 404:
-            return GitLabGroupLookup(reachable=True, group=None)
-        logger.error("GitLab GET /groups/%s answered %s", group_id, response.status_code)
-        return GitLabGroupLookup(reachable=False, group=None)
+        return await self._lookup_group(str(group_id))
 
-    async def _resolve_group_by_path(self, group_path: str) -> GitLabGroupLookup:
-        """One group by its full path."""
-        import urllib.parse
-
-        encoded_path = urllib.parse.quote(group_path, safe="")
-        response = await self._api_get(f"/groups/{encoded_path}")
-        if response is None:
-            return GitLabGroupLookup(reachable=False, group=None)
-        if response.status_code == 200:
-            group: dict[str, Any] = response.json()
-            return GitLabGroupLookup(reachable=True, group=group)
-        # 404 is also what GitLab answers for a group the token may not see, which is the same
-        # answer here: this instance cannot resolve it.
-        if response.status_code == 404:
+    async def _lookup_group(self, ref: str) -> GitLabGroupLookup:
+        """One group by its numeric id or its full path."""
+        endpoint = f"/groups/{urllib.parse.quote(ref, safe='')}"
+        response = await self._api_get(endpoint, params={"with_projects": "false"})
+        # 404 is also what GitLab answers for a group the token may not see: this instance cannot resolve it.
+        if response is not None and response.status_code == 404:
             return GitLabGroupLookup(reachable=True, group=None)
-        logger.error("GitLab GET /groups/%s answered %s", group_path, response.status_code)
-        return GitLabGroupLookup(reachable=False, group=None)
+        if response is None or not response_ok("GitLab", endpoint, response):
+            return GitLabGroupLookup(reachable=False, group=None)
+        return GitLabGroupLookup(reachable=True, group=response.json())
 
     async def _resolve_sync_target_group(
         self,
@@ -523,7 +508,7 @@ class GitLabService:
         if not project or not project.namespace:
             logger.warning(
                 f"Skipping team sync for project_id={gitlab_project_id} ({gitlab_project_path}): "
-                f"no GitLab project details available (likely access denied or 404 on /projects/{gitlab_project_id})."
+                "no GitLab project details available."
             )
             return _UNDETERMINED_TARGET
 
@@ -551,7 +536,7 @@ class GitLabService:
         if len(parts) <= depth:
             return GitLabSyncTarget(_OwningGroup(group_id, truncated_path))
 
-        parent = await self._resolve_group_by_path(truncated_path)
+        parent = await self._lookup_group(truncated_path)
         if parent.group:
             return GitLabSyncTarget(_OwningGroup(parent.group["id"], truncated_path))
 

@@ -48,7 +48,7 @@ from app.schemas.team import (
     TeamUpdate,
 )
 from app.services.github import GitHubService, build_team_slug_map
-from app.services.gitlab import GitLabService
+from app.services.gitlab import GitLabService, group_full_path
 
 logger = logging.getLogger(__name__)
 
@@ -224,7 +224,7 @@ async def _gitlab_binding(request: TeamGitLabBindingRequest, db: AsyncIOMotorDat
             status_code=400,
             detail=f"GitLab instance '{instance.name}' has no group with id {request.external_id} that it can see.",
         )
-    path = str(lookup.group.get("full_path") or lookup.group.get("path") or request.external_id)
+    path = group_full_path(lookup.group, str(request.external_id))
     return GitLabGroupBinding(instance_id=request.instance_id, external_id=request.external_id, path=path)
 
 

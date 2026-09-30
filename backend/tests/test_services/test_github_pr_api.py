@@ -216,6 +216,17 @@ class TestRejectedLookupsAreLoud:
         assert endpoint in warnings[0]
         assert "429" in warnings[0]
 
+    def test_a_rejected_default_branch_read_warns_with_endpoint_and_status(self, caplog):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        routes = {"/repos/acme/widget": _json_response(_error_body("Bad credentials"), 401)}
+
+        with patch.object(service, "_api_get", _routed_api_get(routes)):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                assert asyncio.run(service.get_default_branch("acme", "widget")) is None
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert warnings == ["GitHub API GET /repos/acme/widget returned HTTP 401"]
+
 
 class TestGetPullRequestComments:
     def test_lists_issue_comments_uncapped(self):

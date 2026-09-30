@@ -128,7 +128,7 @@ class TestAnUnreachableGroupChangesNothing:
             patch.object(service, "get_group_members", new=AsyncMock()) as members,
             patch.object(
                 service,
-                "_resolve_group_by_path",
+                "_lookup_group",
                 new=AsyncMock(return_value=GitLabGroupLookup(reachable=False, group=None)),
             ),
         ):
@@ -158,7 +158,7 @@ class TestAnUnreachableGroupChangesNothing:
             patch.object(service, "get_group_members", new=AsyncMock()) as members,
             patch.object(
                 service,
-                "_resolve_group_by_path",
+                "_lookup_group",
                 new=AsyncMock(return_value=GitLabGroupLookup(reachable=True, group=None)),
             ),
         ):
@@ -386,29 +386,6 @@ class TestTheMemberFetchKeepsEmptyAndFailureApart:
 
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=paginated)):
             assert asyncio.run(service.get_project_members(42)) == expected
-
-
-class TestTheGroupLookupKeepsAbsentAndUnreachableApart:
-    @staticmethod
-    def _lookup(response):
-        service = _service()
-        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
-            return asyncio.run(service._resolve_group_by_path("org/edge"))
-
-    def test_a_group_the_instance_carries_is_returned(self):
-        response = MagicMock(status_code=200)
-        response.json.return_value = {"id": 10, "full_path": "org/edge"}
-
-        assert self._lookup(response) == GitLabGroupLookup(reachable=True, group={"id": 10, "full_path": "org/edge"})
-
-    def test_a_path_the_instance_does_not_carry_is_reachable_and_absent(self):
-        assert self._lookup(MagicMock(status_code=404)) == GitLabGroupLookup(reachable=True, group=None)
-
-    def test_an_unanswered_request_is_not_an_absent_group(self):
-        assert self._lookup(None) == GitLabGroupLookup(reachable=False, group=None)
-
-    def test_a_refused_request_is_not_an_absent_group(self):
-        assert self._lookup(MagicMock(status_code=403)) == GitLabGroupLookup(reachable=False, group=None)
 
 
 class TestTheOwnerBudget:
