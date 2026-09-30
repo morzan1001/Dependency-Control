@@ -1,6 +1,12 @@
 """Tests for the TyposquattingAnalyzer - detects potential typosquatting attacks."""
 
+import asyncio
+import difflib
+import json
 import logging
+import random
+import time
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import AsyncMock, patch
@@ -8,9 +14,21 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from app.core.cache import CacheKeys, CacheTTL
-from app.core.constants import ANALYZER_TIMEOUTS, TYPOSQUATTING_POPULAR_PACKAGE_RANKS
+from app.core.constants import (
+    ANALYZER_TIMEOUTS,
+    TYPOSQUATTING_CRITICAL_SIMILARITY,
+    TYPOSQUATTING_HIGH_SIMILARITY,
+    TYPOSQUATTING_POPULAR_PACKAGE_RANKS,
+    TYPOSQUATTING_SIMILARITY_THRESHOLD,
+)
 from app.services.analyzers import typosquatting
-from app.services.analyzers.typosquatting import _STATIC_NPM_PACKAGES, _STATIC_PYPI_FALLBACK, TyposquattingAnalyzer
+from app.services.analyzers.typosquatting import (
+    _STATIC_NPM_PACKAGES,
+    _STATIC_PYPI_FALLBACK,
+    TyposquattingAnalyzer,
+    _severity_for_ratio,
+)
+from app.services.sbom_parser import parse_sbom
 from tests.helpers.analyzers import analyze_cyclonedx
 
 
@@ -144,7 +162,7 @@ class TestSeverityThresholds:
 class TestCorpusMembershipDecidesWhoIsScanned:
     """The corpus names the packages being imitated; a component in it is the real thing."""
 
-    _CORPUS: ClassVar[dict[str, set[str]]] = {"npm": {"express", "react", "lodash"}}
+    _CORPUS: ClassVar[dict[str, list[str]]] = {"npm": ["express", "lodash", "react"]}
 
     async def _issues(self, *names):
         analyzer = TyposquattingAnalyzer()
@@ -192,7 +210,7 @@ class TestCorpusDepthIsDeclaredAndReported:
     @pytest.mark.asyncio
     async def test_the_result_names_the_corpus_each_ecosystem_was_compared_against(self):
         analyzer = TyposquattingAnalyzer()
-        corpus = {"pypi": {"requests", "flask"}, "npm": {"react"}}
+        corpus = {"pypi": ["flask", "requests"], "npm": ["react"]}
 
         with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=corpus)):
             result = await analyzer.analyze({"components": []})
@@ -255,7 +273,7 @@ class TestOnlyThePypiCorpusIsCached:
 
         corpus, _ = await self._corpus(monkeypatch, cache, payload={"rows": [{"project": "Requests"}]})
 
-        assert corpus == {"pypi": {"requests"}, "npm": set(_STATIC_NPM_PACKAGES)}
+        assert corpus == {"pypi": ["requests"], "npm": sorted(_STATIC_NPM_PACKAGES)}
         assert cache.writes == [(_PYPI_KEY, ["requests"], CacheTTL.POPULAR_PACKAGES)]
 
     @pytest.mark.asyncio
@@ -285,7 +303,7 @@ class TestOnlyThePypiCorpusIsCached:
         with caplog.at_level(logging.WARNING, logger="app.services.analyzers.typosquatting"):
             corpus, _ = await self._corpus(monkeypatch, cache, status_code, payload)
 
-        assert corpus["pypi"] == set(_STATIC_PYPI_FALLBACK)
+        assert corpus["pypi"] == sorted(_STATIC_PYPI_FALLBACK)
         assert cache.writes == [(_PYPI_KEY, {}, CacheTTL.NEGATIVE_RESULT)]
         assert reason in caplog.text
 
@@ -295,7 +313,7 @@ class TestOnlyThePypiCorpusIsCached:
 
         corpus, client_cls = await self._corpus(monkeypatch, cache)
 
-        assert corpus["pypi"] == set(_STATIC_PYPI_FALLBACK)
+        assert corpus["pypi"] == sorted(_STATIC_PYPI_FALLBACK)
         assert client_cls.call_count == 0
         assert cache.writes == []
 
@@ -303,7 +321,7 @@ class TestOnlyThePypiCorpusIsCached:
 class TestTheEcosystemComesFromThePurl:
     """The purl's registry is the ecosystem rule every analyzer shares, so a generic purl names none."""
 
-    _CORPUS: ClassVar[dict[str, set[str]]] = {"pypi": {"requests"}}
+    _CORPUS: ClassVar[dict[str, list[str]]] = {"pypi": ["requests"]}
 
     async def _issues(self, component):
         analyzer = TyposquattingAnalyzer()
@@ -327,3 +345,116 @@ class TestTheEcosystemComesFromThePurl:
         }
 
         assert await self._issues(component) == []
+
+
+class TestSeveralPassingPopularNames:
+    """Two popular names can both pass; the one that sorts first is reported, whatever the hash seed."""
+
+    _RANKING: ClassVar[list[str]] = [
+        "tomlkit",
+        "typing-extensions",
+        "botocore",
+        "mypy-extensions",
+        "tomli",
+        "aiobotocore",
+    ]
+
+    @pytest.mark.asyncio
+    async def test_the_first_popular_name_in_sorted_order_is_reported(self, monkeypatch):
+        monkeypatch.setattr(typosquatting, "cache_service", _CorpusCache({_PYPI_KEY: self._RANKING}))
+        components = [
+            {"type": "library", "name": name, "version": "1.0", "purl": f"pkg:pypi/{name}@1.0"}
+            for name in ("abotocore", "tomlki", "typin-extensions", "mypyi-extensions")
+        ]
+
+        result = await analyze_cyclonedx(TyposquattingAnalyzer(), components)
+
+        assert [
+            (issue["component"], issue["imitated_package"], issue["similarity"], issue["severity"])
+            for issue in result["typosquatting_issues"]
+        ] == [
+            ("abotocore", "aiobotocore", 0.9, "MEDIUM"),
+            ("tomlki", "tomli", 0.91, "HIGH"),
+            ("typin-extensions", "mypy-extensions", 0.84, "MEDIUM"),
+            ("mypyi-extensions", "mypy-extensions", 0.97, "CRITICAL"),
+        ]
+
+
+_UV_SBOM = Path(__file__).parents[2] / "fixtures" / "sbom" / "uvdev.syft.cdx.json"
+_SCANNED_COMPONENTS = 5000
+_PLANTED = 20
+_HEARTBEAT_SECONDS = 0.01
+_MAX_LOOP_GAP_SECONDS = 0.5
+
+
+def _names(rng: random.Random, letters: str, count: int) -> list[str]:
+    names: set[str] = set()
+    while len(names) < count:
+        names.add("".join(rng.choice(letters) for _ in range(rng.randint(5, 14))))
+    return sorted(names)
+
+
+def _cyclonedx_of(names: list[str]) -> dict[str, Any]:
+    """The uv fixture with its first component's syft record repeated under each name."""
+    sbom = json.loads(_UV_SBOM.read_text())
+    template = json.dumps(sbom["components"][0])
+    sbom["components"] = [json.loads(template.replace("anyio", name)) for name in names]
+    sbom["dependencies"] = []
+    return sbom
+
+
+async def _with_largest_loop_gap(awaitable):
+    """Await ``awaitable`` while a heartbeat measures the longest the event loop went unserved."""
+    gaps: list[float] = []
+    done = False
+
+    async def beat():
+        while not done:
+            started = time.perf_counter()
+            await asyncio.sleep(_HEARTBEAT_SECONDS)
+            gaps.append(time.perf_counter() - started)
+
+    beating = asyncio.create_task(beat())
+    await asyncio.sleep(0)
+    result = await awaitable
+    done = True
+    await beating
+    return result, max(gaps)
+
+
+class TestALargeSbomDoesNotStallTheLoop:
+    """The pairwise comparison runs in a thread, and only pairs that can pass get a full ratio."""
+
+    @pytest.mark.asyncio
+    async def test_5000_components_leave_the_loop_served_and_report_the_plain_ratios(self, monkeypatch):
+        rng = random.Random(20260930)
+        popular = _names(rng, "abcdefghijklm", TYPOSQUATTING_POPULAR_PACKAGE_RANKS)
+        swapped = (name[:2] + name[3] + name[2] + name[4:] for name in popular[::50] if len(name) >= 8)
+        planted = [name for name in swapped if name not in popular][:_PLANTED]
+        clean = _names(rng, "nopqrstuvwxyz", _SCANNED_COMPONENTS - _PLANTED)
+        parsed = [dep.to_dict() for dep in parse_sbom(_cyclonedx_of(clean + planted)).dependencies]
+        analyzer = TyposquattingAnalyzer()
+        payload = {"rows": [{"project": name} for name in reversed(popular)]}
+        monkeypatch.setattr(typosquatting, "cache_service", _CorpusCache())
+
+        with patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls:
+            _serve_corpus(ClientCls, 200, payload)
+            result, gap = await _with_largest_loop_gap(analyzer.analyze({}, parsed_components=parsed))
+
+        assert len(parsed) == _SCANNED_COMPONENTS
+        assert gap < _MAX_LOOP_GAP_SECONDS
+        assert {
+            issue["component"]: (issue["imitated_package"], issue["similarity"], issue["severity"])
+            for issue in result["typosquatting_issues"]
+        } == {name: _ungated_verdict(analyzer, name, popular) for name in planted}
+
+
+def _ungated_verdict(analyzer: TyposquattingAnalyzer, name: str, popular: list[str]) -> tuple[str, float, str]:
+    """The first popular name whose plain ratio passes, as a scan without the quick-ratio gate reports it."""
+    for candidate in popular:
+        ratio = difflib.SequenceMatcher(None, name, candidate).ratio()
+        passes = ratio > TYPOSQUATTING_SIMILARITY_THRESHOLD and analyzer._is_suspicious(name, candidate)
+        if abs(len(name) - len(candidate)) <= 2 and passes:
+            severity = _severity_for_ratio(ratio, TYPOSQUATTING_CRITICAL_SIMILARITY, TYPOSQUATTING_HIGH_SIMILARITY)
+            return candidate, round(ratio, 2), severity
+    raise AssertionError(f"{name} imitates no popular name")
