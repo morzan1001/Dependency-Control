@@ -191,9 +191,6 @@ class ProjectUpdate(BaseModel):
     gitlab_project_id: int | None = Field(None, description="GitLab project numeric ID")
     gitlab_project_path: str | None = Field(None, description="GitLab project path, e.g. group/subgroup/project")
     github_pr_comments_enabled: bool | None = Field(None, description="Post scan results as PR comments on GitHub")
-    enforce_notification_settings: bool | None = Field(
-        None, description="Enforce admin notification settings for all members"
-    )
     analyzer_settings: AnalyzerSettings | None = Field(
         None, description="Per-analyzer configuration overrides keyed by analyzer ID"
     )
@@ -205,7 +202,6 @@ class ProjectUpdate(BaseModel):
         "retention_action",
         "gitlab_mr_comments_enabled",
         "github_pr_comments_enabled",
-        "enforce_notification_settings",
     )(reject_null)
 
 

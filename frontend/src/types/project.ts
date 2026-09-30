@@ -65,7 +65,6 @@ export interface ProjectUpdate {
   retention_days?: number;
   retention_action?: RetentionAction;
   analyzer_settings?: Record<string, Record<string, unknown>>;
-  enforce_notification_settings?: boolean;
   default_branch?: string | null;
   rescan_enabled?: boolean;
   rescan_interval?: number;
