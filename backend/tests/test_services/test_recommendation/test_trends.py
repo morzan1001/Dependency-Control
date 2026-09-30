@@ -7,7 +7,9 @@ from app.models.finding_record import FindingRecord
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.aggregation.aggregator import ResultAggregator
 from app.services.analysis.engine import _prepare_finding_records
+from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN
 from app.services.recommendation.trends import (
+    _RECURRING_ROWS_SHOWN,
     PreviousScan,
     analyze_recurring_issues,
     analyze_regressions,
@@ -100,6 +102,16 @@ class TestAnalyzeRegressionsNewCriticalVuln:
     def test_new_critical_vuln_action_cves(self):
         rec = analyze_regressions([_vuln(_advisory("CVE-2024-999"))], PreviousScan())[0]
         assert rec.action["new_critical_cves"] == ["CVE-2024-999"]
+
+    def test_the_action_names_how_many_critical_cves_it_sampled(self):
+        population = AFFECTED_COMPONENTS_SHOWN + 2
+
+        rec = analyze_regressions(
+            [_vuln(*(_advisory(f"CVE-2024-{i:04d}") for i in range(population)))], PreviousScan()
+        )[0]
+
+        assert len(rec.action["new_critical_cves"]) == AFFECTED_COMPONENTS_SHOWN
+        assert rec.action["new_critical_cves_total"] == population
 
 
 class TestAnalyzeRegressionsNewHighVuln:
@@ -378,14 +390,32 @@ class TestAnalyzeRecurringIssuesPriority:
 
 class TestAnalyzeRecurringIssuesReporting:
     @pytest.mark.asyncio
-    async def test_affected_components_format(self):
+    async def test_the_action_row_names_the_components_and_scans_of_a_cve(self):
         rec = analyze_recurring_issues(await _recurrence(_across(3, component="lodash")), _WINDOW_SCANS)[0]
-        assert any("CVE-2024-001" in entry and "lodash" in entry for entry in rec.affected_components)
+
+        assert rec.affected_components == ["lodash"]
+        assert rec.action["cves"] == [{"cve": _CVE_DEFAULT, "components": ["lodash"], "scans": 3}]
+        assert rec.action["cves_total"] == 1
 
     @pytest.mark.asyncio
-    async def test_affected_components_include_scan_count(self):
-        rec = analyze_recurring_issues(await _recurrence(_across(3)), _WINDOW_SCANS)[0]
-        assert any("3 scans" in entry for entry in rec.affected_components)
+    async def test_every_component_carrying_a_cve_is_affected(self):
+        findings = _across(3, component="lodash") + _across(3, component="lodash-es")
+
+        rec = analyze_recurring_issues(await _recurrence(findings), _WINDOW_SCANS)[0]
+
+        assert rec.affected_components == ["lodash", "lodash-es"]
+        assert rec.action["cves"][0]["components"] == ["lodash", "lodash-es"]
+
+    @pytest.mark.asyncio
+    async def test_many_cves_in_one_package_affect_one_component(self):
+        population = _RECURRING_ROWS_SHOWN + 5
+        findings = [f for i in range(population) for f in _across(3, cve_id=f"CVE-2024-{i:04d}", component="lodash")]
+
+        rec = analyze_recurring_issues(await _recurrence(findings), _WINDOW_SCANS)[0]
+
+        assert (rec.affected_components, rec.affected_components_total) == (["lodash"], 1)
+        assert len(rec.action["cves"]) == _RECURRING_ROWS_SHOWN
+        assert rec.action["cves_total"] == population
 
     @pytest.mark.asyncio
     async def test_the_most_persistent_recurrence_is_named_first(self):
@@ -398,8 +428,13 @@ class TestAnalyzeRecurringIssuesReporting:
 
         rec = analyze_recurring_issues(await _recurrence(findings), _WINDOW_SCANS)[0]
 
-        assert rec.action["cves"] == ["CVE-2024-0005", "CVE-2024-0004", "CVE-2024-0003", "CVE-2024-0002"]
-        assert [entry.split()[0] for entry in rec.affected_components] == rec.action["cves"]
+        assert [row["cve"] for row in rec.action["cves"]] == [
+            "CVE-2024-0005",
+            "CVE-2024-0004",
+            "CVE-2024-0003",
+            "CVE-2024-0002",
+        ]
+        assert rec.affected_components == ["pkg-a", "pkg-b", "pkg-c", "pkg-d"]
 
     @pytest.mark.asyncio
     async def test_description_names_the_window_the_count_was_taken_over(self):

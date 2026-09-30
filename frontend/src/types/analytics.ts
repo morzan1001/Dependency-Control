@@ -351,6 +351,12 @@ export interface CrossProjectCve {
   affected_projects?: string[];
 }
 
+export interface RecurringCve {
+  cve: string;
+  components: string[];
+  scans: number;
+}
+
 export interface RecommendationAction {
   type: string;
   package?: string;
@@ -359,7 +365,7 @@ export interface RecommendationAction {
   current_image?: string;
   suggestion?: string;
   commands?: string[];
-  cves?: Array<string | CrossProjectCve>;
+  cves?: Array<string | CrossProjectCve | RecurringCve>;
   options?: string[];
   steps?: string[];
   file_path?: string;

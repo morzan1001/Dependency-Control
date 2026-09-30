@@ -43,7 +43,7 @@ def _graph_cards():
 
 
 def _recurring_cards():
-    recurrence = {"CVE-2024-0001": CveRecurrence(scans={"s1", "s2", "s3"}, severity="CRITICAL", component="pkg")}
+    recurrence = {"CVE-2024-0001": CveRecurrence(scans={"s1", "s2", "s3"}, severity="CRITICAL", components={"pkg"})}
     return analyze_recurring_issues(recurrence, 10)
 
 

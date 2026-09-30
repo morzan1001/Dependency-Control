@@ -46,10 +46,20 @@ describe('RecommendationCard CVE rendering', () => {
     renderExpanded(
       makeRecommendation({
         type: 'address_recurring',
-        cves: ['CVE-2021-0001'],
+        cves: [{ cve: 'CVE-2021-0001', components: ['lodash'], scans: 3 }],
       }),
     )
     expect(screen.getAllByText('CVE-2021-0001')).toHaveLength(1)
+  })
+
+  it('names the components and scans of each recurring CVE', () => {
+    renderExpanded(
+      makeRecommendation({
+        type: 'address_recurring',
+        cves: [{ cve: 'CVE-2021-0001', components: ['lodash', 'lodash-es'], scans: 4 }],
+      }),
+    )
+    expect(screen.getByText('lodash, lodash-es · 4 scans')).toBeInTheDocument()
   })
 
   it('renders each cross-project CVE only once', () => {

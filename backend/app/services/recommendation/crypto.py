@@ -7,7 +7,13 @@ from app.core.constants import max_severity
 from app.models.finding import FindingType
 from app.schemas.finding_details import all_rule_ids
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr, sampled, severity_impact
+from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
+    ModelOrDict,
+    get_attr,
+    sampled,
+    severity_impact,
+)
 
 # Findings quoted verbatim in the action block; `sampled` pairs the sample with its population.
 _EVIDENCE_SAMPLED = 3
@@ -131,8 +137,8 @@ def _build_recommendation(finding_type: str, asset_name: str, findings: list[Mod
     action: dict[str, object] = {
         "asset_name": asset_name,
         "finding_type": finding_type,
-        "bom_refs": bom_refs,
-        "rule_ids": rule_ids,
+        **sampled("bom_refs", bom_refs, AFFECTED_COMPONENTS_SHOWN),
+        **sampled("rule_ids", rule_ids, AFFECTED_COMPONENTS_SHOWN),
         **sampled("evidence", descriptions, _EVIDENCE_SAMPLED),
     }
     suggested = _suggested_replacement(finding_type, asset_name, findings)

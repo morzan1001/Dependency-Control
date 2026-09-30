@@ -6,7 +6,15 @@ from app.models.finding import Severity
 from app.models.license import CATEGORY_RESTRICTIVENESS, LicenseCategory
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
 from app.services.analyzers.license_compliance.constants import UNDETERMINED_LICENSE_ID
-from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components, severity_impact
+from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
+    ModelOrDict,
+    get_attr,
+    name_some,
+    sample_components,
+    sampled,
+    severity_impact,
+)
 
 _LICENSES_NAMED = 5
 
@@ -136,7 +144,7 @@ def detect_license_drift(
             affected_components_total=drift_total,
             action={
                 "type": "review_license_drift",
-                "drifted_components": drifted,
+                **sampled("drifted_components", drifted, AFFECTED_COMPONENTS_SHOWN),
                 "steps": [
                     "Review the license change for each affected component",
                     "Check if the new license is compatible with your project",

@@ -6,9 +6,12 @@ from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
     sample_components,
+    sampled,
     scorecard_details,
     scorecard_score,
 )
+
+_PACKAGES_SAMPLED = 10
 
 
 def _keep_lowest(entries: dict[str, dict[str, Any]], entry: dict[str, Any]) -> None:
@@ -87,14 +90,14 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         "Create a migration plan for each unmaintained dependency",
                         "Monitor OpenSSF Scorecard for updates to maintenance status",
                     ],
-                    "packages": [
-                        {
-                            "name": p["component"],
-                            "score": p["score"],
-                            "url": p.get("project_url"),
-                        }
-                        for p in unmaintained_packages[:10]
-                    ],
+                    **sampled(
+                        "packages",
+                        [
+                            {"name": p["component"], "score": p["score"], "url": p["project_url"]}
+                            for p in unmaintained_packages
+                        ],
+                        _PACKAGES_SAMPLED,
+                    ),
                 },
                 effort=Effort.HIGH,
             )
@@ -154,14 +157,14 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                         "Consider alternatives with higher scorecard ratings",
                         "For critical packages, contribute to improving their security practices",
                     ],
-                    "packages": [
-                        {
-                            "name": p["component"],
-                            "score": p["score"],
-                            "issues": p.get("critical_issues", []),
-                        }
-                        for p in sorted(low_score_packages, key=lambda x: x["score"])[:10]
-                    ],
+                    **sampled(
+                        "packages",
+                        [
+                            {"name": p["component"], "score": p["score"], "issues": p["critical_issues"]}
+                            for p in sorted(low_score_packages, key=lambda x: x["score"])
+                        ],
+                        _PACKAGES_SAMPLED,
+                    ),
                 },
                 effort=Effort.MEDIUM,
             )

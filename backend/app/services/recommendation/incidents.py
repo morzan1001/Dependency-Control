@@ -10,12 +10,14 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
     MALWARE_REMEDIATION_STEPS,
     ModelOrDict,
     get_attr,
     live_advisories,
     name_some,
     sample_components,
+    sampled,
     severity_impact,
 )
 
@@ -82,7 +84,7 @@ def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]
             affected_components_total=packages_total,
             action={
                 "type": "remove_malware",
-                "packages": packages,
+                **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
                 "urgency": "immediate",
                 "steps": list(MALWARE_REMEDIATION_STEPS),
             },
@@ -112,7 +114,7 @@ def process_hash_mismatch(findings: list[ModelOrDict]) -> list[Recommendation]:
             affected_components_total=packages_total,
             action={
                 "type": "verify_integrity",
-                "packages": packages,
+                **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
                 "steps": [
                     "Compare the lockfile integrity hash with the hash the registry publishes",
                     "Check whether the package came from a private registry, mirror, tarball or git source",
@@ -152,7 +154,7 @@ def process_typosquatting(typosquat_findings: list[ModelOrDict]) -> list[Recomme
             affected_components_total=packages_total,
             action={
                 "type": "verify_packages",
-                "packages": affected_packages,
+                **sampled("packages", affected_packages, AFFECTED_COMPONENTS_SHOWN),
                 "steps": [
                     "Verify each flagged package is the intended package",
                     "Check the package source repository",
@@ -215,8 +217,8 @@ def detect_known_exploits(
                 affected_components_total=packages_total,
                 action={
                     "type": "fix_ransomware_vulns",
-                    "cves": cves,
-                    "packages": packages,
+                    **sampled("cves", cves, AFFECTED_COMPONENTS_SHOWN),
+                    **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
                     "urgency": "immediate",
                     "steps": [
                         "Identify all systems running affected packages",
@@ -249,8 +251,8 @@ def detect_known_exploits(
                 affected_components_total=packages_total,
                 action={
                     "type": "fix_kev_vulns",
-                    "cves": sorted(kev_cves),
-                    "packages": packages,
+                    **sampled("cves", sorted(kev_cves), AFFECTED_COMPONENTS_SHOWN),
+                    **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
                     "steps": [
                         "Prioritize patching these vulnerabilities above all others",
                         "Check CISA KEV catalog for remediation deadlines",
@@ -285,8 +287,8 @@ def detect_known_exploits(
                 affected_components_total=packages_total,
                 action={
                     "type": "fix_high_epss_vulns",
-                    "cves": sorted(high_epss_cves),
-                    "packages": packages,
+                    **sampled("cves", sorted(high_epss_cves), AFFECTED_COMPONENTS_SHOWN),
+                    **sampled("packages", packages, AFFECTED_COMPONENTS_SHOWN),
                     "max_epss_percent": f"{max_epss * 100:.1f}%",
                     "steps": [
                         "Prioritize remediation before exploit code becomes public",

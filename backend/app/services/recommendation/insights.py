@@ -22,8 +22,6 @@ from app.services.recommendation.common import (
     severity_impact,
 )
 
-# Advisories named per risky package, and packages detailed in the replace action; each is
-# paired with its population by `sampled` or by an explicit total.
 _RISKY_PACKAGE_CVES_SAMPLED = 3
 _RISKY_PACKAGES_SAMPLED = 10
 
@@ -115,19 +113,22 @@ def correlate_scorecard_with_vulnerabilities(
                 affected_components_total=risky_total,
                 action={
                     "type": "replace_risky_packages",
-                    "packages": [
-                        {
-                            "name": v["component"],
-                            "version": v["version"],
-                            "scorecard_score": v["scorecard_score"],
-                            "unmaintained": v["unmaintained"],
-                            "cves": v["cves"],
-                            "cves_total": v["cves_total"],
-                            "project_url": v["project_url"],
-                        }
-                        for v in high_risk_vulns[:_RISKY_PACKAGES_SAMPLED]
-                    ],
-                    "packages_total": len(high_risk_vulns),
+                    **sampled(
+                        "packages",
+                        [
+                            {
+                                "name": v["component"],
+                                "version": v["version"],
+                                "scorecard_score": v["scorecard_score"],
+                                "unmaintained": v["unmaintained"],
+                                "cves": v["cves"],
+                                "cves_total": v["cves_total"],
+                                "project_url": v["project_url"],
+                            }
+                            for v in high_risk_vulns
+                        ],
+                        _RISKY_PACKAGES_SAMPLED,
+                    ),
                     "steps": [
                         "Find and migrate to actively maintained alternatives",
                         "If no alternative exists, evaluate forking the package",
@@ -154,7 +155,6 @@ def _build_cve_project_map(projects: list[dict[str, Any]]) -> dict[str, list[str
 
 # Projects named per shared CVE; total_affected carries the population.
 _AFFECTED_PROJECTS_SAMPLED = 5
-# Packages the two cross-project cards detail, paired with a packages_total.
 _WIDESPREAD_CVES_SAMPLED = 5
 _INCONSISTENT_PACKAGES_SAMPLED = 10
 _SHARED_CVES_HIGH_PRIORITY = 5
@@ -196,9 +196,6 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
     if not widespread_cves:
         return None
 
-    widespread_shown, widespread_total = sample_components(
-        f"{cve} ({len(proj_list)}/{len(projects)} projects compared)" for cve, proj_list in widespread_cves
-    )
     return Recommendation(
         type=RecommendationType.SHARED_VULNERABILITY,
         priority=Priority.HIGH if len(widespread_cves) > _SHARED_CVES_HIGH_PRIORITY else Priority.MEDIUM,
@@ -209,19 +206,21 @@ def _shared_vulnerability_card(projects: list[dict[str, Any]], scope_note: str) 
             "could benefit all affected projects."
         ),
         impact={"total": len(widespread_cves)},
-        affected_components=widespread_shown,
-        affected_components_total=widespread_total,
+        affected_components=[],
         action={
             "type": "fix_cross_project_vuln",
-            "cves": [
-                {
-                    "cve": cve,
-                    "affected_projects": proj_list[:_AFFECTED_PROJECTS_SAMPLED],
-                    "total_affected": len(proj_list),
-                }
-                for cve, proj_list in widespread_cves[:_WIDESPREAD_CVES_SAMPLED]
-            ],
-            "cves_total": len(widespread_cves),
+            **sampled(
+                "cves",
+                [
+                    {
+                        "cve": cve,
+                        "affected_projects": proj_list[:_AFFECTED_PROJECTS_SAMPLED],
+                        "total_affected": len(proj_list),
+                    }
+                    for cve, proj_list in widespread_cves
+                ],
+                _WIDESPREAD_CVES_SAMPLED,
+            ),
             "suggestion": "Consider creating a shared fix or updating your project templates",
         },
         effort=Effort.MEDIUM,
@@ -252,19 +251,22 @@ def _version_inconsistency_card(inconsistent_packages: list[dict[str, Any]], sco
         affected_components_total=inconsistent_total,
         action={
             "type": "standardize_versions",
-            "packages": [
-                {
-                    "name": p["name"],
-                    # $addToSet has no order, so rank before sampling: the newest versions
-                    # are the ones a reader standardising on one needs to see.
-                    "versions": newest_first(p["versions"])[:ACTION_VERSION_SAMPLE],
-                    "version_count": p["version_count"],
-                    "suggestion": newest_first(p["versions"])[0],
-                    "project_count": p["project_count"],
-                }
-                for p in inconsistent_packages[:_INCONSISTENT_PACKAGES_SAMPLED]
-            ],
-            "packages_total": len(inconsistent_packages),
+            **sampled(
+                "packages",
+                [
+                    {
+                        "name": p["name"],
+                        # $addToSet has no order, so rank before sampling: the newest versions
+                        # are the ones a reader standardising on one needs to see.
+                        "versions": newest_first(p["versions"])[:ACTION_VERSION_SAMPLE],
+                        "version_count": p["version_count"],
+                        "suggestion": newest_first(p["versions"])[0],
+                        "project_count": p["project_count"],
+                    }
+                    for p in inconsistent_packages
+                ],
+                _INCONSISTENT_PACKAGES_SAMPLED,
+            ),
             "steps": [
                 "Create a shared package.json or requirements.txt template",
                 "Use a monorepo with shared dependencies",
@@ -296,9 +298,7 @@ def _most_affected_projects_card(projects: list[dict[str, Any]]) -> Recommendati
             "on these projects."
         ),
         impact={"critical": critical, "high": high, "medium": 0, "low": 0, "total": critical + high},
-        affected_components=[
-            f"{p['project_name']}: {p['total_critical']} critical, {p['total_high']} high" for p in top_problematic
-        ],
+        affected_components=[],
         action={
             "type": "prioritize_projects",
             "priority_projects": [

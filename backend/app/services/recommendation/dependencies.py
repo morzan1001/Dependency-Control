@@ -20,6 +20,7 @@ from app.services.recommendation.common import (
     ModelOrDict,
     get_attr,
     sample_components,
+    sampled,
     severity_impact,
 )
 
@@ -79,15 +80,19 @@ def analyze_outdated_dependencies(
                 affected_components_total=direct_total,
                 action={
                     "type": "upgrade_outdated",
-                    "packages": [
-                        {
-                            "name": d["name"],
-                            "current": d["version"],
-                            "recommended_major": d["recommended_major"],
-                            "reason": d["message"],
-                        }
-                        for d in direct_outdated
-                    ],
+                    **sampled(
+                        "packages",
+                        [
+                            {
+                                "name": d["name"],
+                                "current": d["version"],
+                                "recommended_major": d["recommended_major"],
+                                "reason": d["message"],
+                            }
+                            for d in direct_outdated
+                        ],
+                        AFFECTED_COMPONENTS_SHOWN,
+                    ),
                 },
                 effort=Effort.MEDIUM,
             )
@@ -143,10 +148,7 @@ def analyze_version_fragmentation(
     if significant_fragmented:
         priority = Priority.MEDIUM if len(significant_fragmented) > _FRAGMENTED_PACKAGES_FOR_MEDIUM else Priority.LOW
 
-        fragmented_shown, fragmented_total = sample_components(
-            f"{f['name']} ({f['count']} versions)" for f in significant_fragmented
-        )
-        top_fragmented = significant_fragmented[:AFFECTED_COMPONENTS_SHOWN]
+        fragmented_shown, fragmented_total = sample_components(f["name"] for f in significant_fragmented)
 
         recommendations.append(
             Recommendation(
@@ -167,18 +169,21 @@ def analyze_version_fragmentation(
                 affected_components_total=fragmented_total,
                 action={
                     "type": "deduplicate_versions",
-                    "packages": [
-                        {
-                            "name": f["name"],
-                            # A set has no order, so rank before sampling: the newest versions are
-                            # what a reader pinning to one needs to see.
-                            "versions": newest_first(f["versions"])[:ACTION_VERSION_SAMPLE],
-                            "version_count": f["count"],
-                            "suggestion": f"Pin to {newest_first(f['versions'])[0]}",
-                        }
-                        for f in top_fragmented
-                    ],
-                    "packages_total": len(significant_fragmented),
+                    **sampled(
+                        "packages",
+                        [
+                            {
+                                "name": f["name"],
+                                # A set has no order, so rank before sampling: the newest versions are
+                                # what a reader pinning to one needs to see.
+                                "versions": newest_first(f["versions"])[:ACTION_VERSION_SAMPLE],
+                                "version_count": f["count"],
+                                "suggestion": f"Pin to {newest_first(f['versions'])[0]}",
+                            }
+                            for f in significant_fragmented
+                        ],
+                        AFFECTED_COMPONENTS_SHOWN,
+                    ),
                     "commands": [
                         "# For npm: npm dedupe",
                         "# For yarn: yarn dedupe",
@@ -234,7 +239,11 @@ def analyze_dev_in_production(
                 affected_components_total=dev_deps_total,
                 action={
                     "type": "review_dev_deps",
-                    "packages": [d["name"] for d in potential_dev_deps],
+                    **sampled(
+                        "packages",
+                        list(dict.fromkeys(d["name"] for d in potential_dev_deps)),
+                        AFFECTED_COMPONENTS_SHOWN,
+                    ),
                     "suggestion": "Review if these packages should be moved to devDependencies",
                 },
                 effort=Effort.LOW,
@@ -278,7 +287,7 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
             affected_components_total=eol_total,
             action={
                 "type": "upgrade_eol",
-                "packages": affected_packages,
+                **sampled("packages", affected_packages, AFFECTED_COMPONENTS_SHOWN),
                 "steps": [
                     "Identify supported versions for each EOL dependency",
                     "Review migration guides for major version upgrades",

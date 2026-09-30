@@ -2,6 +2,7 @@
 
 from app.core.constants import SCORECARD_POOR_QUALITY_THRESHOLD
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.recommendation import quality
 from app.services.recommendation.quality import process_quality
 
 
@@ -438,6 +439,30 @@ class TestProcessQualityActionStructure:
         recs = process_quality([finding])
         cr_rec = next(r for r in recs if "Code Review" in r.title)
         assert cr_rec.action["type"] == "code_review_concern"
+
+
+class TestQualityActionsNameHowManyPackagesTheySampled:
+    def _action(self, action_type, **kwargs):
+        population = quality._PACKAGES_SAMPLED + 2
+        findings = [
+            _quality(component=f"lib-{i:02d}", overall_score=float(i % 4), finding_id=f"q{i}", **kwargs)
+            for i in range(population)
+        ]
+        action = next(r for r in process_quality(findings) if r.action["type"] == action_type).action
+        return action, population
+
+    def test_the_unmaintained_action(self):
+        action, population = self._action("replace_unmaintained", critical_issues=["Maintained"])
+
+        assert len(action["packages"]) == quality._PACKAGES_SAMPLED
+        assert action["packages_total"] == population
+
+    def test_the_low_score_action(self):
+        action, population = self._action("review_quality")
+
+        assert len(action["packages"]) == quality._PACKAGES_SAMPLED
+        assert action["packages_total"] == population
+        assert action["packages"][0]["score"] == 0.0
 
 
 class TestUnmaintainedFromMaintenanceRollup:

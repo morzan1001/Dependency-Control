@@ -381,7 +381,8 @@ class TestAnalyzeDuplicatePackagesFound:
             _dep("got", version="12.0", direct=True),
         ]
         rec = analyze_duplicate_packages(deps)[0]
-        assert any("HTTP Clients" in c for c in rec.affected_components)
+        assert sorted(rec.affected_components) == ["axios", "got"]
+        assert rec.action["duplicates"][0]["category"] == "HTTP Clients"
 
     def test_date_libraries_duplicate(self):
         deps = [
@@ -428,9 +429,8 @@ class TestAnalyzeDuplicatePackagesMultipleCategories:
             _dep("dayjs", version="1.11.0", direct=True),
         ]
         rec = analyze_duplicate_packages(deps)[0]
-        components = " ".join(rec.affected_components)
-        assert "HTTP Clients" in components
-        assert "Date/Time Libraries" in components
+        assert sorted(rec.affected_components) == ["axios", "dayjs", "got", "moment"]
+        assert {d["category"] for d in rec.action["duplicates"]} == {"HTTP Clients", "Date/Time Libraries"}
 
 
 class TestDuplicatePackagesMatchTheQualifiedName:

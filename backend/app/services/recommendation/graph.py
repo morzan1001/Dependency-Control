@@ -9,7 +9,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import ModelOrDict, dependency_label, get_attr, sample_components
+from app.services.recommendation.common import ModelOrDict, dependency_label, get_attr, sample_components, sampled
 
 # Chains detailed in the action; paired with the population it was taken from.
 _DEEPEST_CHAINS_SAMPLED = 5
@@ -188,15 +188,18 @@ def _deep_chain_recommendation(
                 "Evaluate if some functionality can be implemented directly",
                 "Look for alternative packages with shallower dependency trees",
             ],
-            "deepest_chains": [
-                {
-                    "package": get_attr(edges.dep_by_key[key], "name"),
-                    "depth": depth,
-                    "chain_preview": _chain_preview(key, via, edges),
-                }
-                for key, depth in deep[:_DEEPEST_CHAINS_SAMPLED]
-            ],
-            "deepest_chains_total": len(deep),
+            **sampled(
+                "deepest_chains",
+                [
+                    {
+                        "package": get_attr(edges.dep_by_key[key], "name"),
+                        "depth": depth,
+                        "chain_preview": _chain_preview(key, via, edges),
+                    }
+                    for key, depth in deep
+                ],
+                _DEEPEST_CHAINS_SAMPLED,
+            ),
         },
         effort=Effort.HIGH,
     )
@@ -229,6 +232,7 @@ def analyze_duplicate_packages(
             )
 
     if duplicates_found:
+        duplicates_shown, duplicates_total = sample_components(p for d in duplicates_found for p in d["found"])
         recommendations.append(
             Recommendation(
                 type=RecommendationType.DUPLICATE_FUNCTIONALITY,
@@ -240,7 +244,8 @@ def analyze_duplicate_packages(
                     "and maintenance burden."
                 ),
                 impact={"total": 0},
-                affected_components=[f"{d['category']}: {', '.join(d['found'])}" for d in duplicates_found],
+                affected_components=duplicates_shown,
+                affected_components_total=duplicates_total,
                 action={
                     "type": "consolidate_packages",
                     "duplicates": duplicates_found,

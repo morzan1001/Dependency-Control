@@ -45,8 +45,8 @@ class VulnerabilityInfo:
         return is_actionable_vulnerability(epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable)
 
 
-# Components one recommendation lists. Every generator draws its evidence through
-# sample_components, so the cut is one number and the reader always gets the population.
+# Components one recommendation lists. Generators draw them through sample_components and cut
+# action lists with sampled, so every list travels with its population.
 AFFECTED_COMPONENTS_SHOWN = 20
 
 

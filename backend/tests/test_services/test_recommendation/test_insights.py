@@ -239,7 +239,10 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
         )
         result = analyze_cross_project_patterns(data)
         shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
-        assert any("CVE-2024-001" in c and "2/2 projects compared" in c for c in shared_recs[0].affected_components)
+        assert shared_recs[0].affected_components == []
+        assert shared_recs[0].action["cves"] == [
+            {"cve": "CVE-2024-001", "affected_projects": ["App1", "App2"], "total_affected": 2}
+        ]
         assert "compared across 2 of your 3 projects" in shared_recs[0].description
         # The per-project CVE lists carry no severity to break the count down by.
         assert shared_recs[0].impact == {"total": 1}
@@ -330,6 +333,8 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
         result = analyze_cross_project_patterns(data)
         priority_recs = [r for r in result if "Prioritize" in r.title or "prioritize" in r.title.lower()]
         assert priority_recs[0].priority == Priority.MEDIUM
+        assert priority_recs[0].affected_components == []
+        assert [p["name"] for p in priority_recs[0].action["priority_projects"]] == ["App1", "App2", "App3"]
 
 
 class TestAnalyzeCrossProjectPatternsMultipleRecommendations:

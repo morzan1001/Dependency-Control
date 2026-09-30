@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Recommendation, RecommendationAction, CrossProjectCve } from '@/types/analytics'
+import { Recommendation, RecommendationAction, CrossProjectCve, RecurringCve } from '@/types/analytics'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -468,17 +468,14 @@ export function RecommendationCard({ recommendation }: Readonly<{ recommendation
                   Recurring Issues
                 </h5>
                 <div className="bg-muted rounded-lg p-3 text-sm space-y-2">
-                  {recommendation.action.cves && (
-                    <div>
-                      <span className="text-muted-foreground">Recurring CVEs: </span>
-                      <div className="flex flex-wrap gap-1 mt-1">
-                        {recommendation.action.cves.map((cve) => {
-                          const cveStr = typeof cve === 'string' ? cve : cve.cve
-                          return <Badge key={cveStr} variant="outline">{cveStr}</Badge>
-                        })}
-                      </div>
+                  {(recommendation.action.cves as RecurringCve[] | undefined)?.map((row) => (
+                    <div key={row.cve} className="flex items-center gap-2">
+                      <Badge variant="outline">{row.cve}</Badge>
+                      <span className="text-xs text-muted-foreground">
+                        {`${row.components.join(', ')} · ${row.scans} scans`}
+                      </span>
                     </div>
-                  )}
+                  ))}
                 </div>
               </div>
             )}

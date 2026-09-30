@@ -334,7 +334,8 @@ async def test_recommendations_recurrence_window_holds_the_newest_scans(
     assert body["scan_id"] == scan_ids[-1]
     recurring = [r for r in body["recommendations"] if r["type"] == "recurring_vulnerability"]
     assert recurring, "the CVE recurs in the last three scans and must be reported as recurring"
-    assert "CVE-2026-7777" in recurring[0]["action"]["cves"]
+    assert recurring[0]["action"]["cves"] == [{"cve": "CVE-2026-7777", "components": ["lib"], "scans": 3}]
+    assert recurring[0]["affected_components"] == ["lib"]
 
 
 @pytest.mark.asyncio

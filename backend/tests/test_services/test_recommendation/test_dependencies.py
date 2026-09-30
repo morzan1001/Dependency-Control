@@ -151,10 +151,11 @@ class TestAnalyzeVersionFragmentationSignificant:
         rec = analyze_version_fragmentation(deps)[0]
         assert rec.type == RecommendationType.VERSION_FRAGMENTATION
 
-    def test_affected_components_show_version_count(self):
+    def test_affected_components_name_the_package_and_the_action_counts_its_versions(self):
         deps = [_dep(name="lodash", version=f"4.17.{15 + i}") for i in range(3)]
         rec = analyze_version_fragmentation(deps)[0]
-        assert any("lodash" in c and "3 versions" in c for c in rec.affected_components)
+        assert rec.affected_components == ["lodash"]
+        assert rec.action["packages"][0]["version_count"] == 3
 
 
 class TestAnalyzeVersionFragmentationCuts:

@@ -24,10 +24,12 @@ from app.services.analytics.findings_delta import (
     finding_identity_key,
 )
 from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
     live_advisories,
     sample_components,
+    sampled,
     severity_impact,
 )
 
@@ -102,7 +104,11 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
                 affected_components_total=regression_total,
                 action={
                     "type": "investigate_regression",
-                    "new_critical_cves": sorted(cve for cve, severity in new_cves.items() if severity == "CRITICAL"),
+                    **sampled(
+                        "new_critical_cves",
+                        sorted(cve for cve, severity in new_cves.items() if severity == "CRITICAL"),
+                        AFFECTED_COMPONENTS_SHOWN,
+                    ),
                     "suggestion": "Review recent dependency updates and code changes",
                 },
                 effort=Effort.MEDIUM,
@@ -126,11 +132,11 @@ def analyze_regressions(current_findings: list[ModelOrDict], previous: PreviousS
 
 @dataclass
 class CveRecurrence:
-    """The scans one CVE was found in, and a row describing it."""
+    """The scans and components one CVE was found in, and its severity."""
 
     scans: set[str] = field(default_factory=set)
+    components: set[str] = field(default_factory=set)
     severity: str | None = None
-    component: str | None = None
 
 
 async def build_cve_recurrence(vulnerability_findings: AsyncIterator[dict[str, Any]]) -> dict[str, CveRecurrence]:
@@ -142,9 +148,9 @@ async def build_cve_recurrence(vulnerability_findings: AsyncIterator[dict[str, A
         for cve in canonical_cves([finding.get("details")]) or ([str(fallback)] if fallback else []):
             row = recurrence[cve]
             row.scans.add(scan_id)
-            if row.component is None:
-                row.severity = finding.get("severity")
-                row.component = finding.get("component")
+            if component := finding.get("component"):
+                row.components.add(component)
+            row.severity = row.severity or finding.get("severity")
     return recurrence
 
 
@@ -168,9 +174,7 @@ def analyze_recurring_issues(
     )
 
     impact = severity_impact(row.severity for _, row in recurring)
-    recurring_shown, recurring_total = sample_components(
-        f"{cve} ({row.component or 'unknown'}) - {len(row.scans)} scans" for cve, row in recurring
-    )
+    recurring_shown, recurring_total = sample_components(c for _, row in recurring for c in sorted(row.components))
 
     return [
         Recommendation(
@@ -187,7 +191,14 @@ def analyze_recurring_issues(
             affected_components_total=recurring_total,
             action={
                 "type": "address_recurring",
-                "cves": [cve for cve, _row in recurring[:_RECURRING_ROWS_SHOWN]],
+                **sampled(
+                    "cves",
+                    [
+                        {"cve": cve, "components": sorted(row.components), "scans": len(row.scans)}
+                        for cve, row in recurring
+                    ],
+                    _RECURRING_ROWS_SHOWN,
+                ),
                 "steps": [
                     "Create waivers with documented justification for accepted risks",
                     "Look for alternative packages without these vulnerabilities",

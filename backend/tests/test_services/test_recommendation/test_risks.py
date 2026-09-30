@@ -2,7 +2,7 @@
 
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.aggregation import ResultAggregator
-from app.services.recommendation.common import MALWARE_REMEDIATION_STEPS
+from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN, MALWARE_REMEDIATION_STEPS
 from app.services.recommendation.risks import (
     CRITICAL_HOTSPOTS_SHOWN,
     TOXIC_DEPENDENCIES_SHOWN,
@@ -912,7 +912,28 @@ class TestAttackSurfaceImpactHoldsSeverities:
         [rec] = analyze_attack_surface(deps, [])
 
         assert rec.impact == {"total": 0}
+        assert rec.affected_components == []
         assert (rec.action["total_deps"], rec.action["direct_deps"]) == (501, 10)
+
+    def test_the_action_names_how_many_transitives_it_sampled(self):
+        population = AFFECTED_COMPONENTS_SHOWN + 2
+        findings = _trivy_findings(
+            *(
+                {
+                    "VulnerabilityID": f"CVE-2021-{i:05d}{n}",
+                    "PkgName": f"lib-{i:02d}",
+                    "InstalledVersion": "1.0",
+                    "Severity": "HIGH",
+                }
+                for i in range(population)
+                for n in range(2)
+            )
+        )
+
+        [rec] = analyze_attack_surface([_dep(f"lib-{i:02d}", direct=False) for i in range(population)], findings)
+
+        assert len(rec.action["transitive_deps"]) == AFFECTED_COMPONENTS_SHOWN
+        assert rec.action["transitive_deps_total"] == population
 
 
 class TestAttackSurfaceNamesTheParents:

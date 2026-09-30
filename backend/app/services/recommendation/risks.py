@@ -32,6 +32,7 @@ from app.services.recommendation.common import (
     malware_kind,
     name_some,
     sample_components,
+    sampled,
     scorecard_score,
     severity_impact,
     summarize_vulns,
@@ -403,7 +404,7 @@ def analyze_attack_surface(
                 affected_components_total=transitive_total,
                 action={
                     "type": "reduce_attack_surface",
-                    "transitive_deps": transitive_with_vulns[:AFFECTED_COMPONENTS_SHOWN],
+                    **sampled("transitive_deps", transitive_with_vulns, AFFECTED_COMPONENTS_SHOWN),
                     "steps": [
                         "Review which parent dependencies introduce vulnerable transitives",
                         "Check if parent dependencies have updates that use fixed versions",
@@ -429,7 +430,7 @@ def analyze_attack_surface(
                     f"This large transitive tree increases attack surface. Consider auditing heavy dependencies."
                 ),
                 impact={"total": 0},
-                affected_components=[f"Total: {total_deps} deps, Direct: {direct_deps} deps"],
+                affected_components=[],
                 action={
                     "type": "audit_dependencies",
                     "total_deps": total_deps,
