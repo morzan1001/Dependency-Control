@@ -13,9 +13,10 @@ Before the rollout, resolve each gate before the first new pod starts:
 7. Fix an empty or `local` OIDC provider name, and accounts with an empty provider.
 8. Clean stored values that the stricter write schemas refuse.
 9. Prepare stored waivers for the new matching rules, and set the expiry-sweep watermark.
-10. Review synced team members and active accounts that are not verified (a review, not a gate).
-11. Review accounts that hold only one of `project:update` and `project:delete` (a review).
-12. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 11 re-creates the listed waivers from it).
+10. Move stored licence policies into the analyzer settings.
+11. Review synced team members and active accounts that are not verified (a review, not a gate).
+12. Review accounts that hold only one of `project:update` and `project:delete` (a review).
+13. List waivers that name scoped npm packages by their bare name (a review; keep its output, after-rollout step 11 re-creates the listed waivers from it).
 
 Deploy blocker, also before the rollout: fill the allowlists of the github.com and gitlab.com instances, or switch their auto-create off.
 
@@ -36,6 +37,7 @@ After the rollout, once the last pod on the previous image has terminated:
 11. Rename scoped npm dependency rows, rescan what they feed, and re-create the listed waivers.
 12. Remove memberships of deleted users and leftovers of deleted projects.
 13. Watch the primary's load, and remove the Helm values the chart does not read.
+14. Review the crypto system policy after its seed bump (a review).
 
 Once 1.9.41 is confirmed stable, drop the old indexes. Four optional checks look for abuse of the fixed gaps from before the upgrade, and optional repairs clean up data older code left behind. The behaviour changes that users and operators will notice are listed at the end.
 
@@ -380,6 +382,78 @@ Last, set the expiry-sweep watermark. Without it, the first recalculation on the
 ```js
 db.waiver_recalc.updateOne({_id: "expiry_sweep"}, {$set: {swept_until: new Date()}}, {upsert: true})
 ```
+
+## Before the rollout (gate): move stored licence policies into the analyzer settings
+
+Scans and the License Audit now read the licence policy only from `analyzer_settings.license_compliance`, the entry the project settings page shows and saves. The top-level `license_policy` field is no longer read, and writing a nested `license_compliance.license_policy`, an unknown key or a non-boolean toggle answers 422. Without this step, a project that carries only a top-level `license_policy` is graded under the defaults (distributed, network-facing) on its next scan without notice, and a stored string boolean or unknown key makes the next save of its settings page answer 422.
+
+Run the script in-pod with mongosh before the first new pod starts. Run it twice: first as is, a dry run that prints the lists and counts and writes nothing, then with `APPLY = true`. For each project it:
+
+- copies a top-level `license_policy` into `analyzer_settings.license_compliance` when that entry holds no policy key yet
+- flattens a nested `license_compliance.license_policy` into its parent; the nested values win
+- stores lax booleans as booleans (`"false"` becomes false) and drops unknown keys, each printed as `NOTE`
+- removes `license_policy`, also where it is an explicit null
+
+Its output:
+
+- `SKIPPED` projects hold an invalid enum or boolean value, for example `"cli-batch"`, and are left untouched. Fix them by hand, then run the script again.
+- `CHANGED` projects are graded under a different policy from their next scan on, shown as the policy the old image read -> the policy 1.9.41 reads. They include projects whose top-level and settings-page policies disagreed, and projects whose stored `"false"` the old image read as true. Tell their owners.
+- `printjson(stats)` counts `legacy` (object `license_policy`), `nested`, `changed`, `skipped`, `updated` and `null_legacy_unset`.
+
+```js
+const APPLY = false;  // dry run first; set true to write
+const D = {distribution_model: "distributed", deployment_model: "network_facing", library_usage: "mixed",
+  allow_strong_copyleft: false, allow_network_copyleft: false, ignore_dev_dependencies: true, ignore_transitive: false};
+const K = Object.keys(D);
+const ENUMS = {distribution_model: ["internal_only", "distributed", "open_source"],
+  deployment_model: ["network_facing", "cli_batch", "desktop", "embedded"], library_usage: ["unmodified", "modified", "mixed"]};
+const TRUE = ["true", "1", "yes", "on", "t", "y"], FALSE = ["false", "0", "no", "off", "f", "n"];
+const toBool = v => typeof v === "boolean" ? v : TRUE.includes(String(v).toLowerCase()) ? true
+  : FALSE.includes(String(v).toLowerCase()) ? false : undefined;
+function oldScan(p) {  // what the pre-rollout analyzer read
+  const s = Object.assign(p.license_policy ? {license_policy: p.license_policy} : {}, (p.analyzer_settings || {}).license_compliance || {});
+  let raw = s.license_policy || {};
+  if (!Object.keys(raw).length && ["distribution_model", "deployment_model", "library_usage"].some(k => k in s)) raw = s;
+  return {distribution_model: raw.distribution_model ?? D.distribution_model, deployment_model: raw.deployment_model ?? D.deployment_model,
+    library_usage: raw.library_usage ?? D.library_usage,
+    allow_strong_copyleft: !!(raw.allow_strong_copyleft ?? s.allow_strong_copyleft), allow_network_copyleft: !!(raw.allow_network_copyleft ?? s.allow_network_copyleft),
+    ignore_dev_dependencies: !!(s.ignore_dev_dependencies ?? true), ignore_transitive: !!(s.ignore_transitive ?? false)};
+}
+function migrated(p) {  // the flat entry the new code reads
+  const {license_policy: nested, ...flat} = (p.analyzer_settings || {}).license_compliance || {};
+  const legacy = K.some(k => k in flat) ? {} : (p.license_policy || {});
+  const entry = {}, problems = [];
+  for (const [k, v] of Object.entries({...legacy, ...flat, ...(nested || {})})) {
+    if (!(k in D)) { problems.push(`dropped unknown key ${k}`); continue; }
+    const val = typeof D[k] === "boolean" ? toBool(v) : v;
+    if (val === undefined || (ENUMS[k] && !ENUMS[k].includes(val))) problems.push(`invalid ${k}=${JSON.stringify(v)}`);
+    else entry[k] = val;
+  }
+  return {entry, problems};
+}
+const stats = {legacy: 0, nested: 0, changed: 0, skipped: 0, updated: 0};
+db.projects.find({$or: [{license_policy: {$ne: null}}, {"analyzer_settings.license_compliance": {$exists: true}}]}).forEach(p => {
+  if (p.license_policy) stats.legacy++;
+  if (((p.analyzer_settings || {}).license_compliance || {}).license_policy) stats.nested++;
+  const {entry, problems} = migrated(p), before = oldScan(p), after = {...D, ...entry};
+  if (problems.some(x => x.startsWith("invalid"))) { stats.skipped++; print(`SKIPPED ${p._id} ${p.name}: ${problems}`); return; }
+  if (problems.length) print(`NOTE ${p._id} ${p.name}: ${problems}`);
+  if (K.some(k => before[k] !== after[k])) { stats.changed++; print(`CHANGED ${p._id} ${p.name}: ${JSON.stringify(before)} -> ${JSON.stringify(after)}`); }
+  const target = p.analyzer_settings ? {"analyzer_settings.license_compliance": entry} : {analyzer_settings: {license_compliance: entry}};
+  if (APPLY) { db.projects.updateOne({_id: p._id}, {$set: target, $unset: {license_policy: ""}}); stats.updated++; }
+});
+if (APPLY) stats.null_legacy_unset = db.projects.updateMany({license_policy: {$type: "null"}}, {$unset: {license_policy: ""}}).modifiedCount;
+printjson(stats);
+```
+
+Verify afterwards. Each count is 0, or at most the number of `SKIPPED` projects:
+
+```js
+db.projects.countDocuments({license_policy: {$exists: true}})
+db.projects.countDocuments({"analyzer_settings.license_compliance.license_policy": {$exists: true}})
+```
+
+The old image still accepts `license_policy` in `PUT /api/v1/projects/{id}`, so repeat the verify right before the rollout and re-run the script if a count grew.
 
 ## Before the rollout (review): synced members and accounts that are not verified
 
@@ -960,6 +1034,21 @@ Zero counts mean there is nothing to remove. Afterwards, check for teams and pro
 ## After the rollout: watch the primary's load, and remove unused Helm values
 
 Every MongoDB read now goes to the primary; a `readPreference` in the URI is overridden. Watch the primary's CPU and connection count on the replica set after the rollout, and during the first restamp, whose reads all go there. The chart no longer reads `backend.env.mongodbReadPreference`, and no template ever read `chat.rateLimitPerMinute` or `chat.rateLimitPerHour`; remove all three from the deployment values. Leaving them is harmless but misleading. The updated Grafana dashboard `chat-ai-assistant.json` ships with the chart and shows the new `dc_chat_tool_calls_total` statuses on its "Tool Error Rate" panel.
+
+## After the rollout (review): the crypto system policy after its seed bump
+
+The first start of 1.9.41 reseeds the system crypto policy once. A policy nobody edited takes the full seed. A policy a person edited keeps its rules and regains every seed rule_id it lacks, so seed rules an admin deleted come back. Review the policy on the crypto policy page, where every change is audited.
+
+Re-added seed rules: compare the policy with the audit entry before its `seed` entry, and disable or delete again the rules that were removed on purpose.
+
+The widened `pqc-quantum-vulnerable-pke` rule: the seed adds `ECDHE`, `X25519` and `X448` to its name patterns, so these key exchanges are reported as quantum-vulnerable. An edited policy keeps its own copy of the rule and does not get them. Add the three patterns to that rule on the page, and to every project override that holds its own copy of the rule. The first line below lists those overrides; the second updates the system policy directly, bypassing the audit and the version:
+
+```js
+db.crypto_policies.find({scope: "project", "rules.rule_id": "pqc-quantum-vulnerable-pke"}, {project_id: 1})
+db.crypto_policies.updateOne({scope: "system", project_id: null, "rules.rule_id": "pqc-quantum-vulnerable-pke"}, {$addToSet: {"rules.$.match_name_patterns": {$each: ["ECDHE", "X25519", "X448"]}}})
+```
+
+A customised policy that took the full seed: the seeder tells an edited policy by `updated_by`. For a policy whose last change before 1.9.41 was a revert, which stored no `updated_by`, it reads the editor from the newest audit entry instead. If audit retention pruned every entry of such a policy, the seed replaced it. Re-enter the rules, or revert to a surviving pre-seed entry in the policy's audit timeline. The revert records you as the editor, so later seed bumps only add missing rule_ids.
 
 ## Once 1.9.41 is confirmed stable: drop the old indexes
 
