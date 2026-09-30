@@ -91,12 +91,17 @@ class MaintainerRiskAnalyzer(Analyzer):
             )
 
         issues = []
+        skipped = 0
         for result in results:
             if isinstance(result, BaseException):
-                raise result
-            if result:
+                logger.warning(f"maintainer_risk component check failed: {result!r}")
+                skipped += 1
+            elif result:
                 issues.append(result)
-        return {"maintainer_issues": issues}
+        output: dict[str, Any] = {"maintainer_issues": issues}
+        if skipped:
+            output["partial_components_skipped"] = skipped
+        return output
 
     async def _check_component(
         self,

@@ -285,6 +285,26 @@ class TestAnalyze:
         assert _risk_types(recovered) == ["stale_package", "single_maintainer", "archived_repo"]
 
     @pytest.mark.asyncio
+    async def test_a_malformed_deps_dev_body_skips_only_its_component(self, fake_cache, monkeypatch):
+        _serve(
+            monkeypatch,
+            fake_cache,
+            {
+                f"{NPM_REGISTRY_URL}/left-pad/latest": _npm_latest(None, [{"name": "solo", "email": "s@acme.dev"}]),
+                f"{DEPS_DEV_API_URL}/systems/npm/packages/left-pad": {"versions": None},
+                f"{NPM_REGISTRY_URL}/is-odd/latest": _npm_latest(None, [{"name": "solo", "email": "s@acme.dev"}]),
+                f"{DEPS_DEV_API_URL}/systems/npm/packages/is-odd": _deps_dev_package(800),
+            },
+        )
+
+        result = await analyze_cyclonedx(
+            MaintainerRiskAnalyzer(), [_component("npm", "left-pad"), _component("npm", "is-odd")]
+        )
+
+        assert [issue["component"] for issue in result["maintainer_issues"]] == ["is-odd"]
+        assert result["partial_components_skipped"] == 1
+
+    @pytest.mark.asyncio
     async def test_a_later_sbom_naming_the_repository_gets_the_github_facts(self, fake_cache, monkeypatch):
         _serve(
             monkeypatch,
