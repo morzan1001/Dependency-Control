@@ -25,10 +25,10 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
 )
 from app.api.v1.helpers.sorting import SortOrderQuery, parse_sort_direction
-from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_SEPARATOR
+from app.core.constants import TEAM_ROLE_ADMIN, TEAM_SOURCE_GITHUB, TEAM_SOURCE_SEPARATOR, team_source
 from app.core.log_utils import sanitize_for_log
 from app.core.permissions import Permissions
-from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
+from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember, binding_of
 from app.models.user import User
 from app.repositories.base import and_filters
 from app.repositories.github_instances import GitHubInstanceRepository
@@ -296,17 +296,22 @@ async def clear_team_binding(
     current_user: deps.SystemManagerDep,
     db: DatabaseDep,
 ) -> TeamResponse:
-    """Remove a team's binding for one instance, leaving the ones it holds on the others. Its
-    projects keep the team they have; no later ingest from that instance resolves to it.
+    """Remove a team's binding for one instance, leaving the ones it holds on the others, and the
+    members that instance's sync added. Its projects keep the team they have; no later ingest from
+    that instance resolves to it.
 
     It stays cleared because no sync ever binds an existing team: a group left without one gets a
     team of its own, and only this endpoint's system:manage grants a team a group's projects.
     """
     team_repo = TeamRepository(db)
-    if not await team_repo.get_raw_by_id(team_id):
+    team = await team_repo.get_raw_by_id(team_id)
+    if not team:
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
-    if not await team_repo.remove_binding_for_instance(team_id, instance_id):
+    binding = binding_of(team, instance_id)
+    if binding is None or not await team_repo.remove_binding_for_instance(
+        team_id, instance_id, team_source(binding["provider"], instance_id)
+    ):
         raise HTTPException(status_code=404, detail=f"This team holds no binding for instance {instance_id}.")
 
     logger.info(

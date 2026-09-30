@@ -18,8 +18,8 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_502,
 )
+from app.core.constants import TEAM_SOURCE_GITHUB
 from app.models.github_instance import GitHubInstance
-from app.repositories.projects import ProjectRepository
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.schemas.github_instance import (
     AUTO_CREATE_NEEDS_OWNERS,
@@ -162,17 +162,12 @@ async def delete_instance(
     instance_id: str,
     db: DatabaseDep,
     current_user: deps.SystemManagerDep,
-    force: bool = False,
 ) -> None:
-    """Delete a GitHub instance; fails if projects are still linked unless force=true (which orphans them)."""
+    """Delete a GitHub instance no project links to, with its team bindings and the members its sync added."""
     instance_repo = GitHubInstanceRepository(db)
-    project_repo = ProjectRepository(db)
-
     instance = await get_or_404(instance_repo, instance_id, _LABEL)
 
-    await delete_guarded(
-        instance_repo, project_repo, instance, force=force, label=_LABEL, username=current_user.username
-    )
+    await delete_guarded(db, instance_repo, instance, provider=TEAM_SOURCE_GITHUB, username=current_user.username)
 
 
 class _Refusal(Enum):

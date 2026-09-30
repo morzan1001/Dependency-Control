@@ -14,6 +14,7 @@ from app.models.team import Team
 _USER_ID = "user_id"
 _MEMBERS = "members"
 _MEMBERS_USER_ID = f"{_MEMBERS}.{_USER_ID}"
+_MEMBERS_SOURCE = f"{_MEMBERS}.source"
 _BINDINGS = "bindings"
 _BINDING_KEY = f"{_BINDINGS}.key"
 _BINDING_INSTANCE = f"{_BINDINGS}.instance_id"
@@ -53,6 +54,14 @@ def _subset_members(subset: MemberSubset) -> dict[str, Any]:
         }
     }
     return {"$let": {"vars": {"kept": kept}, "in": {"$concatArrays": ["$$kept", added]}}}
+
+
+def _detach_instance(instance_id: str, source: str) -> dict[str, Any]:
+    """Pull the instance's binding and the members its sync added, which no sync would retire any more."""
+    return {
+        "$pull": {_BINDINGS: {"instance_id": instance_id}, _MEMBERS: {"source": source}},
+        "$set": {"updated_at": datetime.now(timezone.utc)},
+    }
 
 
 def _binding_restamp_stage(key: str, binding_fields: dict[str, Any]) -> dict[str, Any]:
@@ -133,16 +142,18 @@ class TeamRepository:
         )
         return bool(result.matched_count)
 
-    async def remove_binding_for_instance(self, team_id: str, instance_id: str) -> bool:
+    async def remove_binding_for_instance(self, team_id: str, instance_id: str, source: str) -> bool:
         """False when the team holds no binding for that instance."""
         result = await self.collection.update_one(
-            {"_id": team_id, _BINDING_INSTANCE: instance_id},
-            {
-                "$pull": {_BINDINGS: {"instance_id": instance_id}},
-                "$set": {"updated_at": datetime.now(timezone.utc)},
-            },
+            {"_id": team_id, _BINDING_INSTANCE: instance_id}, _detach_instance(instance_id, source)
         )
         return bool(result.matched_count)
+
+    async def remove_instance(self, instance_id: str, source: str) -> None:
+        await self.collection.update_many(
+            {"$or": [{_BINDING_INSTANCE: instance_id}, {_MEMBERS_SOURCE: source}]},
+            _detach_instance(instance_id, source),
+        )
 
     async def update_with_binding(
         self,

@@ -129,7 +129,7 @@ export function CICDInstancesManagement() {
   });
 
   const deleteGitLabMutation = useMutation({
-    mutationFn: (id: string) => gitlabInstancesApi.delete(id, false),
+    mutationFn: (id: string) => gitlabInstancesApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: gitlabInstanceKeys.all });
       toast.success("GitLab instance deleted successfully");
@@ -186,7 +186,7 @@ export function CICDInstancesManagement() {
   });
 
   const deleteGitHubMutation = useMutation({
-    mutationFn: (id: string) => githubInstancesApi.delete(id, false),
+    mutationFn: (id: string) => githubInstancesApi.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: githubInstanceKeys.all });
       toast.success("GitHub instance deleted successfully");

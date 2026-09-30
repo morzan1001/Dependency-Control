@@ -161,7 +161,7 @@ async def _assert_a_cleared_binding_stays_cleared(db) -> None:
     with org_reads, check_reads, member_reads, map_reads:
         owned = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
         assert owned == TeamSyncResult(["t-platform"])
-        assert await repo.remove_binding_for_instance("t-platform", "gh-1")
+        assert await repo.remove_binding_for_instance("t-platform", "gh-1", "github:gh-1")
         result = await service.sync_team_from_github(db, "acme/widgets", current_owner_ids=set())
 
     assert (await repo.get_raw_by_id("t-platform"))["bindings"] == []
