@@ -604,6 +604,7 @@ async def test_an_analyzer_that_never_ran_is_not_named_in_the_notes():
         ("end_of_life", "endoflife.date"),
         ("hash_verification", "pypi.org"),
         ("maintainer_risk", "api.github.com"),
+        ("maintainer_risk", "api.deps.dev"),
         ("os_malware", "api.opensourcemalware.com"),
     ],
 )

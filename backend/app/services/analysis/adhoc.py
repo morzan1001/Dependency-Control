@@ -187,7 +187,9 @@ _STAGE_NOTES: dict[str, str] = {
     "outdated_packages": _COORDINATES_SENT.format(hosts=_hosts(DEPS_DEV_API_URL)),
     "end_of_life": _COORDINATES_SENT.format(hosts=_hosts(EOL_API_URL)),
     "hash_verification": _COORDINATES_SENT.format(hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL)),
-    "maintainer_risk": _COORDINATES_SENT.format(hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL, GITHUB_API_URL)),
+    "maintainer_risk": _COORDINATES_SENT.format(
+        hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL, DEPS_DEV_API_URL, GITHUB_API_URL)
+    ),
     "os_malware": _COORDINATES_SENT.format(hosts=_hosts(MALWARE_API_URL)),
     # The odd one out: it downloads a list and matches against it here, so nothing posted leaves.
     "typosquatting": (

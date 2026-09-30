@@ -144,10 +144,10 @@ class TestCacheKeysDepsDev:
 
 class TestCacheKeysLatestVersion:
     def test_pypi_package(self):
-        assert CacheKeys.latest_version("pypi", "requests") == "latest:pypi:requests"
+        assert CacheKeys.latest_version("pypi", "requests") == "latest2:pypi:requests"
 
     def test_npm_package(self):
-        assert CacheKeys.latest_version("npm", "express") == "latest:npm:express"
+        assert CacheKeys.latest_version("npm", "express") == "latest2:npm:express"
 
 
 class TestCacheKeysEol:
@@ -176,10 +176,13 @@ class TestCacheKeysPopularPackages:
 
 class TestCacheKeysMaintainer:
     def test_basic_maintainer(self):
-        assert CacheKeys.maintainer("pypi", "requests") == "maintainer:pypi:requests"
+        assert CacheKeys.maintainer("pypi", "requests") == "maintainer2:pypi:requests"
 
     def test_npm_maintainer(self):
-        assert CacheKeys.maintainer("npm", "express") == "maintainer:npm:express"
+        assert CacheKeys.maintainer("npm", "express") == "maintainer2:npm:express"
+
+    def test_github_facts_share_one_entry_per_repository_whatever_the_spelling(self):
+        assert CacheKeys.maintainer_github("Vercel/Next.js") == "maintainer_gh:vercel/next.js"
 
 
 class TestCacheKeysMalware:

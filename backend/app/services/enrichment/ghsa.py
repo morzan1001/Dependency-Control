@@ -13,6 +13,7 @@ from app.core.constants import (
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.enrichment import GHSAData
+from app.services.github import github_api_headers
 
 logger = logging.getLogger(__name__)
 
@@ -39,15 +40,6 @@ class GHSAProvider:
             return GHSA_CONCURRENT_REQUESTS_AUTHENTICATED
         return GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED
 
-    def _get_github_headers(self) -> dict[str, str]:
-        headers = {
-            "Accept": "application/vnd.github+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        if self._github_token:
-            headers["Authorization"] = f"Bearer {self._github_token}"
-        return headers
-
     async def fetch_ghsa_advisory(self, client: InstrumentedAsyncClient, ghsa_id: str) -> GHSAData | None:
         """Fetch a single GHSA advisory, using a distributed lock so multiple pods don't fetch the same one."""
         cache_key = CacheKeys.ghsa(ghsa_id)
@@ -59,9 +51,7 @@ class GHSAProvider:
             for attempt in range(self._max_retries):
                 try:
                     url = f"{GHSA_API_URL}/{ghsa_id}"
-                    headers = self._get_github_headers()
-
-                    response = await client.get(url, headers=headers, timeout=timeout)
+                    response = await client.get(url, headers=github_api_headers(self._github_token), timeout=timeout)
 
                     if response.status_code == 404:
                         logger.debug(f"GHSA advisory not found: {ghsa_id}")

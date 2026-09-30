@@ -22,7 +22,6 @@ _NO_COMPONENTS: dict[str, Any] = {"components": []}
 _TIGHT_MAINTAINER = {"stale_after_days": 30, "warn_after_days": 15}
 _DEFAULT_MAINTAINER: dict[str, Any] = {}
 _DAYS_SINCE_RELEASE = 60
-_NPM = "npm"
 _STALE_PACKAGE = "stale_package"
 
 
@@ -70,5 +69,5 @@ async def test_two_projects_scanning_at_once_keep_their_own_maintainer_threshold
     )
 
     info = {"days_since_release": _DAYS_SINCE_RELEASE}
-    assert [risk["type"] for risk in tight._assess_risks(info, _NPM)] == [_STALE_PACKAGE]
-    assert [risk["type"] for risk in default._assess_risks(info, _NPM)] == []
+    assert [risk["type"] for risk in tight._assess_risks(info)] == [_STALE_PACKAGE]
+    assert [risk["type"] for risk in default._assess_risks(info)] == []

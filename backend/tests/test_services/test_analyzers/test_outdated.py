@@ -78,7 +78,7 @@ class TestMultipleVersionsOfSamePackage:
     @pytest.mark.asyncio
     async def test_both_versions_classified_from_shared_latest_warm_cache(self, fake_cache, monkeypatch) -> None:
         # The latest-version cache is a single package-level key; the older copy must still surface a card.
-        await fake_cache.set("latest:npm:lodash", {"default": "4.17.20"})
+        await fake_cache.set("latest2:npm:lodash", {"default": "4.17.20"})
         client = _serve(monkeypatch, fake_cache, {})
 
         result = await OutdatedAnalyzer().analyze(
@@ -114,7 +114,7 @@ class TestDepsDevStatusPolicy:
         result = await OutdatedAnalyzer().analyze({}, parsed_components=[_component("flaky", "1.0.0")])
 
         assert result == {"outdated_dependencies": [], "ahead_of_default": [], "partial_components_skipped": 1}
-        assert await fake_cache.get("latest:pypi:flaky") is None
+        assert await fake_cache.get("latest2:pypi:flaky") is None
 
     @pytest.mark.asyncio
     async def test_an_unknown_package_is_negative_cached_briefly(self, fake_cache, monkeypatch) -> None:
@@ -123,8 +123,8 @@ class TestDepsDevStatusPolicy:
         result = await OutdatedAnalyzer().analyze({}, parsed_components=[_component("typo-pkg", "1.0.0")])
 
         assert result == {"outdated_dependencies": [], "ahead_of_default": []}
-        assert await fake_cache.get("latest:pypi:typo-pkg") == {}
-        assert 0 < await fake_cache._client.ttl(fake_cache._make_key("latest:pypi:typo-pkg")) <= 3600
+        assert await fake_cache.get("latest2:pypi:typo-pkg") == {}
+        assert 0 < await fake_cache._client.ttl(fake_cache._make_key("latest2:pypi:typo-pkg")) <= 3600
 
 
 class TestDefaultVersionSelection:

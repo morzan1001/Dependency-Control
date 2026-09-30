@@ -145,7 +145,7 @@ class CacheKeys:
 
     @staticmethod
     def latest_version(system: str, package: str) -> str:
-        return f"latest:{system}:{package}"
+        return f"latest2:{system}:{package}"
 
     @staticmethod
     def eol(product: str) -> str:
@@ -161,7 +161,11 @@ class CacheKeys:
 
     @staticmethod
     def maintainer(system: str, package: str) -> str:
-        return f"maintainer:{system}:{package}"
+        return f"maintainer2:{system}:{package}"
+
+    @staticmethod
+    def maintainer_github(repo: str) -> str:
+        return f"maintainer_gh:{repo.lower()}"
 
     @staticmethod
     def malware(registry: str, package: str, version: str) -> str:

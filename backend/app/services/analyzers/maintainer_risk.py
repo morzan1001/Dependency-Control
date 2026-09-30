@@ -3,6 +3,7 @@
 import logging
 import re
 from datetime import datetime, timezone
+from email.utils import getaddresses
 from typing import Any, ClassVar
 
 import httpx
@@ -19,45 +20,27 @@ from app.core.constants import (
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
+from app.services.github import github_api_headers
 
 from .base import Analyzer, gather_bounded
+from .outdated import fetch_package_info
 from app.core.purl import parse_purl
 
 logger = logging.getLogger(__name__)
 
 
-# Risk types suppressed unless corroborating evidence is also present.
 _STALENESS_TYPES = ("stale_package", "infrequent_updates")
-_FREE_EMAIL_TYPE = "free_email_maintainer"
-_BUS_FACTOR_TYPE = "single_maintainer"
+_UNADDRESSED_ISSUES_MIN = 100
+# PyPI project_urls labels that name the source repository, most specific first.
+_REPOSITORY_LABELS = ("source", "source code", "repository", "github", "homepage")
+_GITHUB_REPO = re.compile(r"(?:github\.com[/:]|^github:)([^/]+)/([^/#?]+?)(?:\.git)?(?:[/#?]|$)")
 
 
-def correlate_maintainer_risks(
-    risks: list[dict[str, Any]],
-    github_active: bool | None,
-    maintainer_count: int | None = None,
-) -> list[dict[str, Any]]:
-    """Filter raw maintainer signals against corroborating evidence.
-
-    Drops staleness when the source repo is still active. Drops the free-email signal only
-    with positive evidence of multiple maintainers; ``None`` (couldn't check) keeps the signal.
-    """
-    if not risks:
-        return []
-
-    types_present = {r.get("type") for r in risks}
-    has_single_maintainer = _BUS_FACTOR_TYPE in types_present
-    multiple_maintainers_confirmed = maintainer_count is not None and maintainer_count > 1
-
-    out: list[dict[str, Any]] = []
-    for r in risks:
-        rtype = r.get("type")
-        if rtype in _STALENESS_TYPES and github_active is True:
-            continue
-        if rtype == _FREE_EMAIL_TYPE and not has_single_maintainer and multiple_maintainers_confirmed:
-            continue
-        out.append(r)
-    return out
+def correlate_maintainer_risks(risks: list[dict[str, Any]], github_active: bool | None) -> list[dict[str, Any]]:
+    """Drop staleness signals when the source repository is still active."""
+    if github_active is not True:
+        return risks
+    return [r for r in risks if r.get("type") not in _STALENESS_TYPES]
 
 
 class MaintainerRiskAnalyzer(Analyzer):
@@ -93,15 +76,11 @@ class MaintainerRiskAnalyzer(Analyzer):
         parsed_components: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """Analyze maintainer health for packages in the SBOM."""
-        issues = []
-        checked_count = 0
-
-        github_token = settings.get("github_token") if settings else None
-        timeout = ANALYZER_TIMEOUTS.get("maintainer_risk", ANALYZER_TIMEOUTS["default"])
-
         settings = settings or {}
+        github_token = settings.get("github_token")
         self._stale_after_days = int(settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS))
         self._warn_after_days = int(settings.get("warn_after_days", STALE_PACKAGE_WARNING_DAYS))
+        timeout = ANALYZER_TIMEOUTS.get("maintainer_risk", ANALYZER_TIMEOUTS["default"])
 
         async with InstrumentedAsyncClient("Maintainer Risk API", timeout=timeout) as client:
             results = await gather_bounded(
@@ -110,114 +89,89 @@ class MaintainerRiskAnalyzer(Analyzer):
                 ANALYZER_BATCH_SIZES["maintainer_risk"],
             )
 
+        issues = []
         for result in results:
             if isinstance(result, BaseException):
                 raise result
             if result:
-                checked_count += 1
-                if result.get("risks"):
-                    issues.append(result)
-
-        return {
-            "maintainer_issues": issues,
-            "summary": {"checked_count": checked_count, "issues_count": len(issues)},
-        }
+                issues.append(result)
+        return {"maintainer_issues": issues}
 
     async def _check_component(
         self,
         client: InstrumentedAsyncClient,
         component: dict[str, Any],
-        github_token: str | None = None,
+        github_token: str | None,
     ) -> dict[str, Any] | None:
-        """Check maintainer health for a single component."""
-
+        """One package's risks from its registry facts and the facts of its GitHub repository."""
         name = component.get("name", "")
-        version = component.get("version", "")
         purl = component.get("purl", "")
-        repo_url = component.get("_repository_url") or component.get("repository_url")
-
         parsed = parse_purl(purl)
-        registry = parsed.registry_system if parsed else None
-        if not registry:
+        if not parsed or not parsed.registry_system:
             return None
+        registry = parsed.registry_system
 
-        # Distributed lock prevents cache stampede across pods.
-        cached_info = await cache_service.get_or_fetch_with_lock(
-            key=CacheKeys.maintainer(registry, name),
-            fetch_fn=lambda: self._fetch_maintainer_data(client, registry, name, repo_url, github_token),
-            ttl_seconds=CacheTTL.MAINTAINER_INFO,
-        )
+        registry_info: dict[str, Any] = {}
+        if registry in ("pypi", "npm"):
+            registry_info = (
+                await cache_service.get_or_fetch_with_lock(
+                    key=CacheKeys.maintainer(registry, name),
+                    fetch_fn=lambda: (
+                        self._check_pypi(client, name)
+                        if registry == "pypi"
+                        else self._check_npm(client, name, parsed.deps_dev_name)
+                    ),
+                    ttl_seconds=CacheTTL.MAINTAINER_INFO,
+                )
+                or {}
+            )
 
-        if not cached_info:
-            return None
+        github_info = None
+        repo = self._resolve_github_repo(component, registry_info)
+        if repo:
+            try:
+                github_info = await cache_service.get_or_fetch_with_lock(
+                    key=CacheKeys.maintainer_github(repo),
+                    fetch_fn=lambda: self._check_github(client, repo, github_token),
+                    ttl_seconds=CacheTTL.MAINTAINER_INFO,
+                    reraise_fetch_errors=True,
+                )
+            except (httpx.HTTPError, ValueError) as e:
+                logger.debug(f"GitHub check failed for {repo}: {e}")
 
-        risks, maintainer_info = self._assess_all_risks(cached_info, registry)
+        risks = self._assess_risks(registry_info)
+        maintainer_info = dict(registry_info)
+        if github_info:
+            maintainer_info["github"] = github_info
+            risks.extend(self._assess_github_risks(github_info))
+        risks = correlate_maintainer_risks(risks, github_active=self._infer_github_active(github_info))
         if not risks:
             return None
 
         return {
             "component": name,
-            "version": version,
+            "version": component.get("version", ""),
             "purl": purl,
             "risks": risks,
             "severity": self._calculate_overall_severity(risks),
-            "message": self._create_summary_message(name, version, risks),
             "maintainer_info": maintainer_info,
         }
 
-    async def _fetch_maintainer_data(
-        self,
-        client: InstrumentedAsyncClient,
-        registry: str,
-        name: str,
-        repo_url: str | None,
-        github_token: str | None,
-    ) -> dict[str, Any] | None:
-        """Pull registry + GitHub data; ``{}`` is the negative-cache marker."""
-        cache_data: dict[str, Any] = {"maintainer_info": {}, "github_info": None}
-
-        if registry == "pypi":
-            info = await self._check_pypi(client, name)
-            if info:
-                cache_data["maintainer_info"] = info
-        elif registry == "npm":
-            info = await self._check_npm(client, name)
-            if info:
-                cache_data["maintainer_info"] = info
-
-        github_repo = self._extract_github_repo(repo_url)
-        if github_repo:
-            gh_info = await self._check_github(client, github_repo, github_token)
-            if gh_info:
-                cache_data["github_info"] = gh_info
-
-        if not cache_data["maintainer_info"] and not cache_data["github_info"]:
-            return {}
-        return cache_data
-
-    def _assess_all_risks(
-        self,
-        cached_info: dict[str, Any],
-        registry: str | None,
-    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
-        """Combine registry + GitHub risk assessment, then correlate signals."""
-        risks: list[dict[str, Any]] = []
-        maintainer_info: dict[str, Any] = cached_info.get("maintainer_info", {}) or {}
-
-        if maintainer_info and registry in ("pypi", "npm"):
-            risks.extend(self._assess_risks(maintainer_info, registry))
-
-        github_info = cached_info.get("github_info")
-        if github_info:
-            maintainer_info["github"] = github_info
-            risks.extend(self._assess_github_risks(github_info))
-
-        risks = correlate_maintainer_risks(
-            risks,
-            github_active=self._infer_github_active(github_info),
-            maintainer_count=maintainer_info.get("maintainer_count") if maintainer_info else None,
-        )
-        return risks, maintainer_info
+    @staticmethod
+    def _resolve_github_repo(component: dict[str, Any], registry_info: dict[str, Any]) -> str | None:
+        """owner/repo from the SBOM, then npm's repository, then PyPI's project URLs and home page."""
+        project_urls = {label.lower(): url for label, url in (registry_info.get("project_urls") or {}).items()}
+        candidates = [
+            component.get("repository_url"),
+            registry_info.get("repository"),
+            *(project_urls.get(label) for label in _REPOSITORY_LABELS),
+            registry_info.get("home_page"),
+        ]
+        for url in candidates:
+            match = _GITHUB_REPO.search(url) if isinstance(url, str) else None
+            if match:
+                return f"{match.group(1)}/{match.group(2)}"
+        return None
 
     def _calculate_overall_severity(self, risks: list[dict[str, Any]]) -> str:
         """Calculate overall severity from individual risk scores."""
@@ -231,25 +185,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         if max_severity >= 2:
             return Severity.MEDIUM.value
         return Severity.LOW.value
-
-    def _create_summary_message(self, name: str, version: str, risks: list[dict[str, Any]]) -> str:
-        """Create a human-readable summary message for maintainer risks."""
-        if not risks:
-            return ""
-
-        risk_types = [r.get("type", "") for r in risks]
-        risk_count = len(risks)
-
-        if "archived_repo" in risk_types:
-            return f"{name}@{version}: Repository is archived - no longer maintained"
-        if "stale_package" in risk_types:
-            return f"{name}@{version}: Package appears abandoned (no recent releases)"
-        if "inactive_repo" in risk_types:
-            return f"{name}@{version}: Repository has no recent activity"
-        if "single_maintainer" in risk_types:
-            return f"{name}@{version}: Single maintainer (bus factor risk)"
-
-        return f"{name}@{version} has {risk_count} maintainer risk{'s' if risk_count > 1 else ''}"
 
     async def _check_pypi(self, client: InstrumentedAsyncClient, name: str) -> dict[str, Any] | None:
         """Fetch maintainer info from PyPI."""
@@ -283,94 +218,60 @@ class MaintainerRiskAnalyzer(Analyzer):
                 "home_page": info.get("home_page"),
                 "project_urls": info.get("project_urls", {}),
             }
-        except httpx.TimeoutException:
-            logger.debug(f"PyPI API timeout for {name}")
-            return None
-        except httpx.ConnectError:
-            logger.debug(f"PyPI API connection error for {name}")
-            return None
         except Exception as e:
             logger.debug(f"PyPI check failed for {name}: {e}")
             return None
 
-    async def _check_npm(self, client: InstrumentedAsyncClient, name: str) -> dict[str, Any] | None:
-        """Fetch maintainer info from npm."""
+    async def _check_npm(self, client: InstrumentedAsyncClient, name: str, deps_dev_name: str) -> dict[str, Any] | None:
+        """Maintainers and repository of the latest npm release; its publish date comes from deps.dev."""
         try:
-            encoded_name = name.replace("/", "%2F") if "/" in name else name
-            response = await client.get(f"{NPM_REGISTRY_URL}/{encoded_name}")
+            response = await client.get(f"{NPM_REGISTRY_URL}/{name.replace('/', '%2F')}/latest")
             if response.status_code != 200:
                 return None
 
             data = response.json()
-
-            maintainers = data.get("maintainers", [])
-
-            time_info = data.get("time", {})
-            latest_release_date = self._parse_iso_datetime(time_info.get("modified"))
+            maintainers = data.get("maintainers") or []
+            repository = data.get("repository")
+            package = await fetch_package_info(client, "npm", deps_dev_name) or {}
+            latest_release_date = self._parse_iso_datetime(package.get("published_at"))
 
             return {
-                "maintainers": maintainers,
+                "maintainer": ", ".join(m.get("name", "") for m in maintainers),
+                "maintainer_email": ", ".join(m["email"] for m in maintainers if m.get("email")),
                 "maintainer_count": len(maintainers),
                 "latest_release_date": (latest_release_date.isoformat() if latest_release_date else None),
                 "days_since_release": (
                     (datetime.now(timezone.utc) - latest_release_date).days if latest_release_date else None
                 ),
-                "version_count": len(data.get("versions", {})),
-                "homepage": data.get("homepage"),
-                "repository": data.get("repository", {}).get("url"),
+                "repository": repository.get("url") if isinstance(repository, dict) else repository,
             }
-        except httpx.TimeoutException:
-            logger.debug(f"npm API timeout for {name}")
-            return None
-        except httpx.ConnectError:
-            logger.debug(f"npm API connection error for {name}")
-            return None
         except Exception as e:
             logger.debug(f"npm check failed for {name}: {e}")
             return None
 
     async def _check_github(
-        self, client: InstrumentedAsyncClient, repo: str, github_token: str | None = None
+        self, client: InstrumentedAsyncClient, repo: str, github_token: str | None
     ) -> dict[str, Any] | None:
-        """Fetch repository health from GitHub API, authenticating when a token is provided."""
-        try:
-            headers = {
-                "Accept": "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-            }
-            if github_token:
-                headers["Authorization"] = f"Bearer {github_token}"
-
-            response = await client.get(
-                f"{GITHUB_API_URL}/repos/{repo}",
-                headers=headers,
-            )
-            if response.status_code != 200:
-                return None
-
-            data = response.json()
-
-            pushed_at = self._parse_iso_datetime(data.get("pushed_at"))
-
-            return {
-                "stars": data.get("stargazers_count", 0),
-                "forks": data.get("forks_count", 0),
-                "open_issues": data.get("open_issues_count", 0),
-                "archived": data.get("archived", False),
-                "pushed_at": pushed_at.isoformat() if pushed_at else None,
-                "days_since_push": ((datetime.now(timezone.utc) - pushed_at).days if pushed_at else None),
-            }
-        except httpx.TimeoutException:
-            logger.debug(f"GitHub API timeout for {repo}")
+        """Repository health from the GitHub API; None when the repository is gone, any other failure raises."""
+        response = await client.get(
+            f"{GITHUB_API_URL}/repos/{repo}", headers=github_api_headers(github_token), follow_redirects=True
+        )
+        if response.status_code == 404:
             return None
-        except httpx.ConnectError:
-            logger.debug(f"GitHub API connection error for {repo}")
-            return None
-        except Exception as e:
-            logger.debug(f"GitHub check failed for {repo}: {e}")
-            return None
+        response.raise_for_status()
 
-    def _assess_risks(self, info: dict[str, Any], registry: str) -> list[dict[str, Any]]:
+        data = response.json()
+        pushed_at = self._parse_iso_datetime(data.get("pushed_at"))
+        return {
+            "stars": data.get("stargazers_count", 0),
+            "forks": data.get("forks_count", 0),
+            "open_issues": data.get("open_issues_count", 0),
+            "archived": data.get("archived", False),
+            "pushed_at": pushed_at.isoformat() if pushed_at else None,
+            "days_since_push": ((datetime.now(timezone.utc) - pushed_at).days if pushed_at else None),
+        }
+
+    def _assess_risks(self, info: dict[str, Any]) -> list[dict[str, Any]]:
         """Assess maintainer risks based on registry info."""
         risks = []
 
@@ -397,20 +298,23 @@ class MaintainerRiskAnalyzer(Analyzer):
                     }
                 )
 
-        email = info.get("maintainer_email") or info.get("author_email")
-        if email:
-            domain = email.split("@")[-1].lower() if "@" in email else ""
-            if domain and domain in self.FREE_EMAIL_PROVIDERS:
-                risks.append(
-                    {
-                        "type": "free_email_maintainer",
-                        "severity_score": 1,
-                        "message": "Maintainer uses free email provider",
-                        "detail": "Lower accountability compared to organizational emails",
-                    }
-                )
+        # Both registries give several maintainers as one "Name <addr>, Name2 <addr2>" string.
+        addresses = [
+            addr
+            for _, addr in getaddresses([info.get("maintainer_email") or info.get("author_email") or ""])
+            if "@" in addr
+        ]
+        if addresses and all(addr.rsplit("@", 1)[1].lower() in self.FREE_EMAIL_PROVIDERS for addr in addresses):
+            risks.append(
+                {
+                    "type": "free_email_maintainer",
+                    "severity_score": 1,
+                    "message": "Maintainer uses free email provider",
+                    "detail": "Lower accountability compared to organizational emails",
+                }
+            )
 
-        if registry == "npm" and info.get("maintainer_count", 0) == 1:
+        if info.get("maintainer_count") == 1:
             risks.append(
                 {
                     "type": "single_maintainer",
@@ -458,7 +362,8 @@ class MaintainerRiskAnalyzer(Analyzer):
                 }
             )
 
-        if gh_info.get("open_issues", 0) > 100 and days_since_push and days_since_push > 180:
+        idle = days_since_push is not None and days_since_push > self._warn_after_days
+        if gh_info.get("open_issues", 0) > _UNADDRESSED_ISSUES_MIN and idle:
             risks.append(
                 {
                     "type": "unaddressed_issues",
@@ -469,20 +374,3 @@ class MaintainerRiskAnalyzer(Analyzer):
             )
 
         return risks
-
-    def _extract_github_repo(self, url: str | None) -> str | None:
-        """Extract owner/repo from GitHub URL."""
-        if not url:
-            return None
-
-        patterns = [
-            r"github\.com[/:]([^/]+)/([^/\.]+)",
-            r"github\.com[/:]([^/]+)/([^/]+)\.git",
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, url)
-            if match:
-                return f"{match.group(1)}/{match.group(2)}"
-
-        return None

@@ -33,11 +33,30 @@ def _is_ahead_of(current: str, latest: str) -> bool:
         return False
 
 
+async def fetch_package_info(client: InstrumentedAsyncClient, system: str, deps_dev_name: str) -> dict[str, Any] | None:
+    """A package's deps.dev default version and its publish date, fetched once and cached; a failure raises."""
+
+    async def fetch() -> dict[str, Any] | None:
+        url = f"{DEPS_DEV_API_URL}/systems/{system}/packages/{quote(deps_dev_name, safe='')}"
+        document = await fetch_deps_dev_json(client, url)
+        if document is None:
+            return None
+        default: dict[str, Any] = next((v for v in document.get("versions", []) if v.get("isDefault")), {})
+        return {"default": default.get("versionKey", {}).get("version"), "published_at": default.get("publishedAt")}
+
+    info: dict[str, Any] | None = await cache_service.get_or_fetch_with_lock(
+        key=CacheKeys.latest_version(system, deps_dev_name),
+        fetch_fn=fetch,
+        ttl_seconds=CacheTTL.LATEST_VERSION,
+        reraise_fetch_errors=True,
+    )
+    return info
+
+
 class OutdatedAnalyzer(Analyzer):
     """Outdated and ahead-of-default detection against deps.dev's default version, cached once per package."""
 
     name = "outdated_packages"
-    base_url = f"{DEPS_DEV_API_URL}/systems"
 
     async def analyze(
         self,
@@ -94,37 +113,12 @@ class OutdatedAnalyzer(Analyzer):
             async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
                 fetched = await gather_bounded(
                     missing,
-                    lambda cache_key: self._fetch_package_info(client, cache_key, *key_targets[cache_key]),
+                    lambda cache_key: fetch_package_info(client, *key_targets[cache_key]),
                     ANALYZER_BATCH_SIZES["outdated"],
                 )
             infos.update(zip(missing, fetched, strict=True))
 
         return [infos.get(target[0]) if target else None for target in targets]
-
-    async def _fetch_package_info(
-        self,
-        client: InstrumentedAsyncClient,
-        cache_key: str,
-        system: str,
-        deps_dev_name: str,
-    ) -> dict[str, Any] | None:
-        """Fetch (once, cached, lock-protected) a package's default version."""
-
-        async def fetch() -> dict[str, Any] | None:
-            url = f"{self.base_url}/{system}/packages/{quote(deps_dev_name, safe='')}"
-            document = await fetch_deps_dev_json(client, url)
-            if document is None:
-                return None
-            return {"default": self._find_default_version(document.get("versions", []))}
-
-        # Distributed lock prevents multiple pods fetching the same package.
-        info: dict[str, Any] | None = await cache_service.get_or_fetch_with_lock(
-            key=cache_key,
-            fetch_fn=fetch,
-            ttl_seconds=CacheTTL.LATEST_VERSION,
-            reraise_fetch_errors=True,
-        )
-        return info
 
     def _classify_version(
         self,
@@ -164,11 +158,3 @@ class OutdatedAnalyzer(Analyzer):
                     ),
                 }
             )
-
-    def _find_default_version(self, versions_info: list[Any]) -> str | None:
-        """Find the version marked as default (usually the latest stable)."""
-        for v in versions_info:
-            if v.get("isDefault"):
-                version = v.get("versionKey", {}).get("version")
-                return str(version) if version is not None else None
-        return None

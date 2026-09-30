@@ -531,7 +531,8 @@ IMPACT_MAX_SCORE_BOOST: float = (
 # Threat intelligence
 EPSS_API_URL = "https://api.first.org/data/v1/epss"
 KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
-GHSA_API_URL = "https://api.github.com/advisories"
+GITHUB_API_URL = "https://api.github.com"
+GHSA_API_URL = f"{GITHUB_API_URL}/advisories"
 
 # Vulnerability databases
 # querybatch answers with {id, modified} only; the full record must be fetched per id.
@@ -547,7 +548,6 @@ NPM_REGISTRY_URL = "https://registry.npmjs.org"
 EOL_API_URL = "https://endoflife.date/api"
 MALWARE_API_URL = "https://api.opensourcemalware.com/functions/v1/check-malicious"
 TOP_PYPI_PACKAGES_URL = "https://hugovk.dev/top-pypi-packages/top-pypi-packages-30-days.json"
-GITHUB_API_URL = "https://api.github.com"
 
 # Mapping from package/component names to endoflife.date product IDs
 # See https://endoflife.date/api for all available products
