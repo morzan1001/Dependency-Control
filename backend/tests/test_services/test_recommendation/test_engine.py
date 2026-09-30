@@ -1,6 +1,7 @@
 """Tests for app.services.recommendations."""
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.aggregation import ResultAggregator
 from app.services.recommendation import risks
 from app.services.recommendation.trends import PreviousScan
 from app.services.recommendations import (
@@ -574,6 +575,77 @@ class TestGenerateRecommendationsTyposquatting:
         typo_recs = [r for r in result if r.type == RecommendationType.TYPOSQUAT_DETECTED]
         assert len(typo_recs) == 0
         assert any(r.type == RecommendationType.MALWARE_DETECTED for r in result)
+
+
+def _produced(**analyzer_results):
+    aggregator = ResultAggregator()
+    for analyzer, result in analyzer_results.items():
+        aggregator.aggregate(analyzer, result)
+    return [f.model_dump() for f in aggregator.get_findings()]
+
+
+_HASH_ISSUE = {
+    "component": "left-pad",
+    "version": "1.3.0",
+    "registry": "npm",
+    "algorithm": "SHA-512",
+    "sbom_hash": "3f1a",
+    "expected_hashes": ["9c2e"],
+    "severity": "CRITICAL",
+    "message": "Hash mismatch detected! Package may be tampered.",
+}
+_MALWARE_ISSUE = {
+    "component": "evil-pkg",
+    "version": "1.0.0",
+    "severity": "CRITICAL",
+    "malware_info": {"malicious": True, "threats": ["credential-theft"], "description": "Exfiltrates npm tokens"},
+}
+_EOL_ISSUE = {
+    "component": "evil-pkg",
+    "version": "1.0.0",
+    "product": "evil-pkg",
+    "severity": "HIGH",
+    "eol_info": {"cycle": "1", "eol": "2020-01-01", "latest": "1.9.0"},
+    "distro_build": False,
+}
+_TYPOSQUAT_ISSUE = {
+    "component": "reqeusts",
+    "version": "2.31.0",
+    "imitated_package": "requests",
+    "similarity": 0.92,
+    "severity": "HIGH",
+    "message": "Possible typosquatting detected! 'reqeusts' is 92.0% similar to popular package 'requests'",
+}
+
+
+class TestMalwareSignalsGetTheirOwnCards:
+    def test_a_failed_hash_check_is_an_integrity_card_not_malware(self):
+        findings = _produced(hash_verification={"hash_issues": [_HASH_ISSUE]})
+
+        types = {r.type for r in RecommendationEngine().generate_recommendations(findings=findings)}
+
+        assert RecommendationType.HASH_MISMATCH in types
+        assert RecommendationType.MALWARE_DETECTED not in types
+        assert RecommendationType.CRITICAL_HOTSPOT not in types
+
+    def test_a_typosquat_is_not_reported_as_known_malware(self):
+        findings = _produced(typosquatting={"typosquatting_issues": [_TYPOSQUAT_ISSUE]})
+
+        types = {r.type for r in RecommendationEngine().generate_recommendations(findings=findings)}
+
+        assert RecommendationType.TYPOSQUAT_DETECTED in types
+        assert RecommendationType.MALWARE_DETECTED not in types
+        assert RecommendationType.CRITICAL_HOTSPOT not in types
+
+    def test_a_malware_package_gets_one_playbook_and_no_toxic_card(self):
+        findings = _produced(os_malware={"malware_issues": [_MALWARE_ISSUE]}, end_of_life={"eol_issues": [_EOL_ISSUE]})
+
+        by_type = {r.type: r for r in RecommendationEngine().generate_recommendations(findings=findings)}
+
+        assert RecommendationType.TOXIC_DEPENDENCY not in by_type
+        malware, hotspot = by_type[RecommendationType.MALWARE_DETECTED], by_type[RecommendationType.CRITICAL_HOTSPOT]
+        assert malware.action["steps"] == hotspot.action["steps"]
+        assert malware.effort == hotspot.effort == "low"
 
 
 class TestTyposquatCollection:

@@ -1,6 +1,7 @@
 """Tests for risk detection: hotspots, toxic dependencies, and attack surface analysis."""
 
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.recommendation.common import MALWARE_REMEDIATION_STEPS
 from app.services.recommendation.risks import (
     CRITICAL_HOTSPOTS_SHOWN,
     TOXIC_DEPENDENCIES_SHOWN,
@@ -252,16 +253,14 @@ class TestDetectCriticalHotspotsSorting:
 
 class TestDetectCriticalHotspotsRemediation:
     def test_malware_remediation_steps(self):
-        findings = [_malware("evil")]
-        result = _hotspots(findings)
-        steps = result[0].action["steps"]
-        assert any("malware" in s.lower() for s in steps)
+        result = _hotspots([_malware("evil")])
+        assert result[0].action["steps"] == list(MALWARE_REMEDIATION_STEPS)
+        assert result[0].effort == "low"
 
     def test_kev_remediation_steps(self):
         findings = [_vuln("pkg", "CRITICAL", is_kev=True)]
         result = _hotspots(findings)
-        steps = result[0].action["steps"]
-        assert any("exploited" in s.lower() for s in steps)
+        assert result[0].action["steps"][0] == "Update to a fixed version immediately if available"
 
     def test_fixable_remediation_steps(self):
         # Need hotspot criteria: 3+ vulns with at least 1 critical
@@ -271,7 +270,7 @@ class TestDetectCriticalHotspotsRemediation:
             _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
         ]
         result = _hotspots(findings)
-        assert result[0].action["steps"][0] == "1. Update pkg to version 2.0 or later"
+        assert result[0].action["steps"][0] == "Update pkg to version 2.0 or later"
 
     def test_no_fix_remediation_steps(self):
         # 3 vulns with critical but no fixed_version
@@ -397,16 +396,13 @@ class TestDetectToxicDependenciesSingleFactor:
         assert result == []
 
 
-class TestDetectToxicDependenciesMalwareScore:
-    def test_malware_adds_100_to_score(self):
+class TestDetectToxicDependenciesSkipsMalware:
+    def test_a_malware_package_gets_no_toxic_card(self):
         findings = [
             _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
             _malware("pkg"),
         ]
-        result = _toxic(findings)
-        assert len(result) == 1
-        rec = result[0]
-        assert rec.impact["toxic_score"] >= 100
+        assert _toxic(findings) == []
 
 
 class TestDetectToxicDependenciesTop5Limit:
@@ -426,9 +422,9 @@ class TestDetectToxicDependenciesSortedByScore:
             # Low-score package: 1 vuln + eol
             _vuln("pkg-low", "LOW", finding_id="CVE-2024-001"),
             _eol("pkg-low"),
-            # High-score package: 1 vuln + malware (malware adds 100)
+            # High-score package: 1 critical vuln + eol
             _vuln("pkg-high", "CRITICAL", finding_id="CVE-2024-002"),
-            _malware("pkg-high"),
+            _eol("pkg-high"),
         ]
         result = _toxic(findings)
         assert len(result) == 2
@@ -669,7 +665,7 @@ class TestHotspotNamesEveryInstalledVersionAndOneTarget:
         [rec] = _hotspots(findings)
 
         assert rec.action["fixed_versions"] == ["2.0.1", "1.3.0", "1.2.5"]
-        assert rec.action["steps"][0] == "URGENT: This vulnerability is being actively exploited in the wild"
+        assert rec.action["steps"][0] == "Update to a fixed version immediately if available"
         assert "Available fix: Update to 2.0.1" in rec.description
 
     def test_a_fix_per_release_line_is_listed_as_single_versions(self):
@@ -685,8 +681,10 @@ class TestCardsWithoutVulnerabilitiesKeepTheirVersion:
 
         assert rec.affected_components == ["evil@0.1.0"]
 
-    def test_a_malware_and_eol_toxic_card_names_the_installed_version(self):
-        [rec] = _toxic([{**_malware("old"), "version": "1.2.3"}, {**_eol("old"), "version": "1.2.3"}])
+    def test_an_eol_and_scorecard_toxic_card_names_the_installed_version(self):
+        [rec] = _toxic(
+            [{**_quality("old", overall_score=2.0), "version": "1.2.3"}, {**_eol("old"), "version": "1.2.3"}]
+        )
 
         assert rec.affected_components == ["old@1.2.3"]
         assert rec.action["versions"] == ["1.2.3"]
@@ -723,9 +721,8 @@ class TestCardsNameTheFlaggedCopies:
         ]
 
         [hotspot] = _hotspots(findings)
-        [toxic] = _toxic(findings)
 
-        assert hotspot.affected_components == toxic.affected_components == ["event-stream@3.3.6", "event-stream@3.3.4"]
+        assert hotspot.affected_components == ["event-stream@3.3.6", "event-stream@3.3.4"]
 
 
 class TestPackageFindingsJoinAcrossSpellings:

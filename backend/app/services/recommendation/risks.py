@@ -21,11 +21,13 @@ from app.services.component_identity import (
 from app.services.recommendation.graph import build_dependency_edges
 from app.services.recommendation.common import (
     AFFECTED_COMPONENTS_SHOWN,
+    MALWARE_REMEDIATION_STEPS,
     ModelOrDict,
     VulnStats,
     dependency_label,
     live_cves,
     get_attr,
+    malware_kind,
     name_some,
     sample_components,
     scorecard_score,
@@ -89,7 +91,7 @@ def _record(pkg: _PackageRisks, finding: ModelOrDict) -> None:
         if not pkg.vulns:
             pkg.name = get_attr(finding, "component")
         pkg.vulns.append(vuln_info(finding))
-    elif finding_type == "malware":
+    elif finding_type == "malware" and malware_kind(finding) == "malware":
         pkg.has_malware = True
     elif finding_type == "eol":
         pkg.is_eol = True
@@ -131,8 +133,13 @@ def detect_critical_hotspots(packages: list[_PackageRisks]) -> list[Recommendati
 
 
 def detect_toxic_dependencies(packages: list[_PackageRisks]) -> list[Recommendation]:
+    # The malware and hotspot cards already tell the user to remove a malware package.
     toxic = [
-        (pkg, factors, score) for pkg in packages for factors, score in [_toxic_risk_factors(pkg)] if len(factors) >= 2
+        (pkg, factors, score)
+        for pkg in packages
+        if not pkg.has_malware
+        for factors, score in [_toxic_risk_factors(pkg)]
+        if len(factors) >= 2
     ]
     toxic.sort(key=lambda t: t[2], reverse=True)
     return [
@@ -173,34 +180,27 @@ def _hotspot_reasons(pkg: _PackageRisks) -> tuple[bool, list[str]]:
 def _hotspot_steps(pkg: _PackageRisks) -> list[str]:
     """Specific remediation steps for a hotspot."""
     if pkg.has_malware:
-        return [
-            "URGENT: This package contains known malware",
-            "1. Immediately remove this package from your project",
-            "2. Check if any malicious code was executed during installation",
-            "3. Audit your systems for signs of compromise",
-            "4. Find a legitimate alternative package",
-        ]
+        return list(MALWARE_REMEDIATION_STEPS)
     if pkg.stats.kev > 0:
         return [
-            "URGENT: This vulnerability is being actively exploited in the wild",
-            "1. Update to a fixed version immediately if available",
-            "2. If no fix exists, implement compensating controls",
-            "3. Monitor for signs of exploitation in your environment",
-            "4. Consider WAF rules or network segmentation as temporary mitigation",
+            "Update to a fixed version immediately if available",
+            "If no fix exists, implement compensating controls",
+            "Monitor for signs of exploitation in your environment",
+            "Consider WAF rules or network segmentation as temporary mitigation",
         ]
     if pkg.stats.fixed_versions:
         return [
-            f"1. Update {pkg.name} to version {pkg.stats.best_fix} or later",
-            "2. Run tests to ensure compatibility",
-            "3. Deploy the updated dependency",
-            "4. Verify the vulnerabilities are resolved in your next scan",
+            f"Update {pkg.name} to version {pkg.stats.best_fix} or later",
+            "Run tests to ensure compatibility",
+            "Deploy the updated dependency",
+            "Verify the vulnerabilities are resolved in your next scan",
         ]
     return [
-        "1. Evaluate if this package is essential to your application",
-        "2. Search for alternative packages with better security posture",
-        "3. If no alternatives exist, implement compensating controls",
-        "4. Monitor for security updates from the package maintainer",
-        "5. Consider contributing a fix if the package is open source",
+        "Evaluate if this package is essential to your application",
+        "Search for alternative packages with better security posture",
+        "If no alternatives exist, implement compensating controls",
+        "Monitor for security updates from the package maintainer",
+        "Consider contributing a fix if the package is open source",
     ]
 
 
@@ -246,7 +246,7 @@ def _hotspot_recommendation(pkg: _PackageRisks, reasons: list[str], rank: int, r
             "is_kev": stats.kev > 0,
             "steps": _hotspot_steps(pkg),
         },
-        effort="low" if stats.fixed_versions else "high",
+        effort="low" if pkg.has_malware or stats.fixed_versions else "high",
         rank=rank,
         ranked_out_of=ranked_out_of,
     )
@@ -265,9 +265,6 @@ def _toxic_risk_factors(pkg: _PackageRisks) -> tuple[list[dict[str, str]], int]:
     """A package's independent risk factors and the score ranking toxic packages."""
     factors: list[dict[str, str]] = []
     score = 0
-    if pkg.has_malware:
-        factors.append({"type": "malware", "severity": "CRITICAL", "description": "Known malware package"})
-        score += 100
     if pkg.is_eol:
         factors.append({"type": "eol", "severity": "HIGH", "description": "End-of-Life - no security updates"})
         score += 40
@@ -332,11 +329,11 @@ def _toxic_recommendation(
             "versions": pkg.versions,
             "risk_factors": factors,
             "steps": [
-                f"1. Evaluate if {pkg.name} is essential to your application",
-                "2. Search for alternative packages with better security posture",
-                "3. Check npm/pypi/crates.io for actively maintained alternatives",
-                "4. If essential, implement additional security controls",
-                "5. Plan migration to a safer alternative",
+                f"Evaluate if {pkg.name} is essential to your application",
+                "Search for alternative packages with better security posture",
+                "Check npm/pypi/crates.io for actively maintained alternatives",
+                "If essential, implement additional security controls",
+                "Plan migration to a safer alternative",
             ],
         },
         effort="high",
@@ -421,10 +418,10 @@ def analyze_attack_surface(
                     "type": "reduce_attack_surface",
                     "transitive_deps": transitive_with_vulns[:AFFECTED_COMPONENTS_SHOWN],
                     "steps": [
-                        "1. Review which parent dependencies introduce vulnerable transitives",
-                        "2. Check if parent dependencies have updates that use fixed versions",
-                        "3. Consider using dependency overrides to force specific versions",
-                        "4. Evaluate if parent dependencies are essential or could be removed",
+                        "Review which parent dependencies introduce vulnerable transitives",
+                        "Check if parent dependencies have updates that use fixed versions",
+                        "Consider using dependency overrides to force specific versions",
+                        "Evaluate if parent dependencies are essential or could be removed",
                     ],
                 },
                 effort="medium",
@@ -457,11 +454,11 @@ def analyze_attack_surface(
                     "total_deps": total_deps,
                     "direct_deps": direct_deps,
                     "steps": [
-                        "1. Run 'npm ls' or 'pip show' to understand dependency tree",
-                        "2. Identify 'heavy' packages that bring many transitive deps",
-                        "3. Consider lighter alternatives for heavy packages",
-                        "4. Remove unused dependencies",
-                        "5. Use tools like depcheck (npm) to find unused deps",
+                        "Run 'npm ls' or 'pip show' to understand dependency tree",
+                        "Identify 'heavy' packages that bring many transitive deps",
+                        "Consider lighter alternatives for heavy packages",
+                        "Remove unused dependencies",
+                        "Use tools like depcheck (npm) to find unused deps",
                     ],
                 },
                 effort="medium",

@@ -128,7 +128,9 @@ class RecommendationEngine:
             findings_by_type[finding_type].append(f)
         vulns = findings_by_type["vulnerability"]
         quality_findings = findings_by_type["quality"]
-        malware = findings_by_type["malware"]
+        malware_by_kind: dict[str, list[ModelOrDict]] = defaultdict(list)
+        for f in findings_by_type["malware"]:
+            malware_by_kind[common.malware_kind(f)].append(f)
 
         _safe_extend(
             recommendations,
@@ -211,18 +213,18 @@ class RecommendationEngine:
             "attack_surface",
         )
 
-        _safe_extend(recommendations, lambda: incidents.process_malware(malware), "malware")
+        _safe_extend(recommendations, lambda: incidents.process_malware(malware_by_kind["malware"]), "malware")
+        _safe_extend(
+            recommendations, lambda: incidents.process_hash_mismatch(malware_by_kind["hash_mismatch"]), "hash_mismatch"
+        )
+        _safe_extend(
+            recommendations, lambda: incidents.process_typosquatting(malware_by_kind["typosquat"]), "typosquatting"
+        )
         _safe_extend(
             recommendations,
             lambda: incidents.detect_known_exploits(vulns, threat_intel),
             "known_exploits",
         )
-        typosquat_findings = [
-            f
-            for f in malware
-            if isinstance(details := get_attr(f, "details", {}), dict) and details.get("imitated_package")
-        ]
-        _safe_extend(recommendations, lambda: incidents.process_typosquatting(typosquat_findings), "typosquatting")
 
         _safe_extend(
             recommendations,

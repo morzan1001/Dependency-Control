@@ -103,6 +103,23 @@ def dependency_label(dep: ModelOrDict) -> str:
     return f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
+MALWARE_REMEDIATION_STEPS = (
+    "Immediately remove the malicious package(s)",
+    "Check if npm install/pip install scripts ran malicious code",
+    "Rotate any credentials that may have been exposed",
+    "Audit your systems for signs of compromise",
+    "Report to your security team and follow your incident response procedures",
+)
+
+
+def malware_kind(finding: ModelOrDict) -> str:
+    """Typosquat heuristics and failed hash checks are stored as MALWARE findings beside confirmed malware."""
+    details = get_attr(finding, "details", {})
+    if details.get("imitated_package"):
+        return "typosquat"
+    return "hash_mismatch" if details.get("verification_failed") else "malware"
+
+
 def scorecard_score(details: Any) -> float | None:
     """A quality finding's OpenSSF Scorecard score; None when it carries maintainer risk only."""
     score = details.get("overall_score") if isinstance(details, dict) else None

@@ -117,6 +117,9 @@ class TestRecommendationTypeBonusesOrdering:
         assert self._bonus("known_exploit") > self._bonus("actively_exploited")
         assert self._bonus("actively_exploited") > self._bonus("critical_hotspot")
 
+    def test_an_integrity_mismatch_ranks_between_a_typosquat_and_confirmed_malware(self):
+        assert self._bonus("typosquat_detected") < self._bonus("hash_mismatch") < self._bonus("malware_detected")
+
     def test_regression_tier_below_impact_tier(self):
         regression_max = max(self._bonus(k) for k in ("regression_detected", "recurring_vulnerability"))
         impact_min = min(

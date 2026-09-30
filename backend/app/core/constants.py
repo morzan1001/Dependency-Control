@@ -321,6 +321,7 @@ RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     "actively_exploited": 2500,
     "critical_hotspot": 2000,
     "rotate_secrets": 2000,
+    "hash_mismatch": 1800,
     "typosquat_detected": 1500,
     "critical_risk": 1500,
     # High impact updates
