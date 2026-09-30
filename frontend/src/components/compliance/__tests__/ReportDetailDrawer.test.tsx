@@ -62,15 +62,14 @@ describe("ReportDetailDrawer", () => {
     expect(screen.queryByText(PARTIAL_WARNING)).not.toBeInTheDocument();
   });
 
-  it("says a report over findings alone covered the whole scope", () => {
+  it("claims no coverage for a report that recorded no bounded input", () => {
     const cveReport: ComplianceReportMeta = {
       ...sampleReport,
       coverage: { crypto_assets: null, plan_items: null, gaps: [] },
     };
     withClient(<ReportDetailDrawer report={cveReport} onClose={() => {}} />);
 
-    expect(screen.getByText("The verdicts cover the whole scope.")).toBeInTheDocument();
-    expect(screen.queryByText(/crypto assets|findings/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/whole scope|Evaluated|crypto assets|findings/i)).not.toBeInTheDocument();
   });
 
   it("states the plan items a migration plan report covered", () => {

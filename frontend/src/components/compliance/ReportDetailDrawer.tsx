@@ -46,6 +46,7 @@ function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage })
   const sentences = reads.flatMap(([input, subject]) => (input ? [inputSentence(input, subject)] : []));
   const gaps = coverage.gaps ?? [];
   if (gaps.length > 0) sentences.push(gapSentence(gaps));
+  if (sentences.length === 0) return null;
   const capped = reads.some(([input]) => input && !isComplete(input));
   if (capped) {
     sentences.push(
@@ -57,7 +58,7 @@ function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage })
     capped || gaps.length > 0
       ? "rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200"
       : "text-xs text-muted-foreground";
-  return <div className={tone}>{sentences.join(" ") || "The verdicts cover the whole scope."}</div>;
+  return <div className={tone}>{sentences.join(" ")}</div>;
 }
 
 const WITHHELD_KEY: ControlStatus = "not_evaluated";
