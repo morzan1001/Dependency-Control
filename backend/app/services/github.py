@@ -1251,7 +1251,7 @@ class GitHubService:
     async def get_current_user_id(self) -> int | None:
         """The id of the account the token belongs to; None when GET /user does not answer it."""
         response = await self._api_get("/user")
-        if response is None or not self._ok("/user", response):
+        if response is None or response.status_code != 200:
             return None
         user_id = _json_document(response).get("id")
         return user_id if isinstance(user_id, int) else None

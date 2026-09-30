@@ -3,6 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from app.models.gitlab_api import OIDCPayload
@@ -273,21 +274,16 @@ class TestGetCurrentUserId:
             return asyncio.run(service.get_current_user_id()), api_get
 
     def test_the_tokens_own_account_id(self, gitlab_instance_a):
-        response = MagicMock(status_code=200)
         # Shape of GET /user for the account the token belongs to.
-        response.json.return_value = {
-            "id": 4242,
-            "username": "dc-bot",
-            "name": "DC Bot",
-            "state": "active",
-            "bot": True,
-        }
+        response = httpx.Response(
+            200, json={"id": 4242, "username": "dc-bot", "name": "DC Bot", "state": "active", "bot": True}
+        )
 
         user_id, api_get = self._resolve(GitLabService(gitlab_instance_a), response)
 
         assert user_id == 4242
         api_get.assert_awaited_once_with("/user")
 
-    @pytest.mark.parametrize("response", [None, MagicMock(status_code=401)])
+    @pytest.mark.parametrize("response", [None, httpx.Response(401, json={"message": "401 Unauthorized"})])
     def test_an_unanswered_or_refused_lookup_resolves_no_one(self, gitlab_instance_a, response):
         assert self._resolve(GitLabService(gitlab_instance_a), response)[0] is None
