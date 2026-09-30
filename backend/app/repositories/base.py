@@ -104,7 +104,9 @@ class BaseRepository[T: BaseModel]:
         cursor = cursor.skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
-    async def find_all_raw(self, query: dict[str, Any], projection: dict[str, int]) -> list[dict[str, Any]]:
+    async def find_all_raw(
+        self, query: dict[str, Any], projection: dict[str, int] | None = None
+    ) -> list[dict[str, Any]]:
         """Every match, unbounded, for callers that fold the whole set."""
         return await self.collection.find(query, projection).to_list(None)
 

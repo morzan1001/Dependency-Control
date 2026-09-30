@@ -9,7 +9,7 @@ from app.core.permissions import Permissions
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
-from app.schemas.compliance import EvaluationCoverage, InputCoverage, ReportFormat, ReportFramework, ReportStatus
+from app.schemas.compliance import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
 from app.schemas.project import LicensePolicySchema
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.frameworks.base import EvaluationInput
@@ -17,14 +17,8 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.notifications.service import notification_service
 
 
-def full_coverage(n_assets: int = 0) -> EvaluationCoverage:
-    return EvaluationCoverage(
-        crypto_assets=InputCoverage(evaluated=n_assets, in_scope=n_assets, limit=max(n_assets, 1))
-    )
-
-
 def evaluation_input(**fields: Any) -> EvaluationInput:
-    """An input over one user-scoped project; `coverage` defaults to every asset read."""
+    """An input over one user-scoped project; `coverage` defaults to the whole scope."""
     values: dict[str, Any] = {
         "resolved": ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
         "scope_description": "user",
@@ -39,8 +33,7 @@ def evaluation_input(**fields: Any) -> EvaluationInput:
         "db": MagicMock(),
         **fields,
     }
-    values.setdefault("coverage", full_coverage(len(values["crypto_assets"])))
-    return EvaluationInput(**values)
+    return EvaluationInput(**{"coverage": EvaluationCoverage(), **values})
 
 
 async def generated_report(db: Any, monkeypatch: Any) -> ComplianceReport:

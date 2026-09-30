@@ -39,15 +39,12 @@ function gapSentence(gaps: readonly string[]): string {
 }
 
 function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage }) {
-  const reads = [
-    [coverage.crypto_assets, "crypto assets"],
-    [coverage.plan_items, "migration plan items"],
-  ] as const;
-  const sentences = reads.flatMap(([input, subject]) => (input ? [inputSentence(input, subject)] : []));
+  const plan = coverage.plan_items;
+  const sentences = plan ? [inputSentence(plan, "migration plan items")] : [];
   const gaps = coverage.gaps ?? [];
   if (gaps.length > 0) sentences.push(gapSentence(gaps));
   if (sentences.length === 0) return null;
-  const capped = reads.some(([input]) => input && !isComplete(input));
+  const capped = plan ? !isComplete(plan) : false;
   if (capped) {
     sentences.push(
       "Every verdict that would have rested on finding no match in a capped input is reported as " +

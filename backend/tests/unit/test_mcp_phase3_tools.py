@@ -131,7 +131,7 @@ async def test_the_chat_summary_reads_the_findings_the_report_reads(db):
 
     out = await _chat_summary(db, "nist-sp-800-131a")
 
-    assert out["coverage"] == "Evaluated all 1 crypto assets in scope."
+    assert out["coverage"] == "The verdicts cover the whole scope."
     assert out["summary"]["failed"] >= 1
     assert out["summary"]["not_evaluated"] == 0
 

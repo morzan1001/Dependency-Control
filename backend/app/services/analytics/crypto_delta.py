@@ -33,9 +33,7 @@ def _group_to_envelope_item(group: list[dict], change: str) -> CryptoDeltaItem:
 
 
 async def _side_assets(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> list[dict]:
-    return (
-        await db[CryptoAssetRepository.collection_name].find(scan_query(project_id, scan_id), _PROJECTION).to_list(None)
-    )
+    return await CryptoAssetRepository(db).find_all_raw(scan_query(project_id, scan_id), _PROJECTION)
 
 
 async def compare_crypto(

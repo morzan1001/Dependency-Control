@@ -409,10 +409,9 @@ async def test_the_pqc_plan_reads_neither_findings_nor_assets(db):
     await _store_project(db, "p1")
     finding_reads, asset_reads = _reads(db.findings), _reads(db.crypto_assets)
 
-    inputs = await _gather(db, _project_scope(), ReportFramework.PQC_MIGRATION_PLAN)
+    await _gather(db, _project_scope(), ReportFramework.PQC_MIGRATION_PLAN)
 
     assert finding_reads == asset_reads == []
-    assert inputs.coverage.crypto_assets is None
 
 
 @pytest.mark.asyncio
@@ -422,10 +421,9 @@ async def test_a_framework_without_crypto_controls_reads_no_assets(db, key):
     await _store_project(db, "p1")
     asset_reads = _reads(db.crypto_assets)
 
-    inputs = await _gather(db, _project_scope(), key)
+    await _gather(db, _project_scope(), key)
 
     assert asset_reads == []
-    assert inputs.coverage.crypto_assets is None
 
 
 def _rsa(pid, scan_id, key_size_bits):
@@ -456,7 +454,6 @@ async def test_the_inventory_comes_from_one_unsorted_read_across_the_scope(db):
     assert set(projection.values()) == {1}
     assert sorted(a.project_id for a in inputs.crypto_assets) == ["p1", "p2"]
     assert inputs.crypto_assets[0].occurrence_locations == []
-    assert inputs.coverage.crypto_assets.in_scope == 2
 
 
 @pytest.mark.asyncio

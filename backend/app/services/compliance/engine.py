@@ -13,13 +13,12 @@ from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.models.crypto_asset import CryptoAsset
 from app.models.user import User
-from app.repositories.base import find_window
 from app.repositories.compliance_report import ComplianceReportRepository
+from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
     EvaluationCoverage,
     FrameworkEvaluation,
-    InputCoverage,
     ReportFormat,
     ReportFramework,
     ReportStatus,
@@ -37,9 +36,6 @@ from app.services.compliance.renderers import RENDERER_REGISTRY
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
-
-# Per report across all its scans; a validated CryptoAsset measures 2.3 KiB, so the cap holds ~22 MiB.
-_CRYPTO_ASSETS_LIMIT = 10000
 
 _REPORT_SLOTS = asyncio.Semaphore(COMPLIANCE_REPORT_SLOTS)
 
@@ -145,13 +141,11 @@ class ComplianceReportEngine:
         scan_by_project, gaps = await self._pick_scan_ids(db, resolved, producers)
         scan_ids = list(scan_by_project.values())
         findings: list[dict] = []
-        assets_read = None
         if finding_query:
             findings = await self._collect_findings(db, scan_ids, clause, fields)
         assets: list[CryptoAsset] = []
         if framework.key not in _NON_CRYPTO_FRAMEWORKS:
-            assets, in_scope = await self._collect_crypto_assets(db, scan_by_project)
-            assets_read = InputCoverage(evaluated=len(assets), in_scope=in_scope, limit=_CRYPTO_ASSETS_LIMIT)
+            assets = await self._collect_crypto_assets(db, scan_by_project)
         project_ids = resolved.project_ids or []
         if resolved.scope == "project" and len(project_ids) == 1:
             effective = await CryptoPolicyResolver(db).resolve(project_ids[0])
@@ -174,7 +168,7 @@ class ComplianceReportEngine:
             iana_catalog_version=IANA_WEAKNESS_RULES_VERSION,
             scan_ids=scan_ids,
             db=db,
-            coverage=EvaluationCoverage(crypto_assets=assets_read, gaps=gaps),
+            coverage=EvaluationCoverage(gaps=gaps),
         )
 
     async def _pick_scan_ids(
@@ -214,20 +208,10 @@ class ComplianceReportEngine:
         self,
         db: AsyncIOMotorDatabase,
         scan_by_project: dict[str, str],
-    ) -> tuple[list[CryptoAsset], int]:
-        """The inventory and the scope's asset count; one budget for the whole report, not one per scan."""
+    ) -> list[CryptoAsset]:
         query = {"project_id": {"$in": list(scan_by_project)}, "scan_id": {"$in": list(scan_by_project.values())}}
-        docs, in_scope = await find_window(
-            db.crypto_assets, query, _CRYPTO_ASSETS_LIMIT, projection=dict.fromkeys(_CRYPTO_ASSET_FIELDS, 1)
-        )
-        if len(docs) < in_scope:
-            logger.warning(
-                "Compliance evaluation hit crypto-asset cap (%d of %d); "
-                "inventory-backed verdicts are withheld — consider narrowing the scope",
-                _CRYPTO_ASSETS_LIMIT,
-                in_scope,
-            )
-        return [CryptoAsset.model_validate(doc) for doc in docs], in_scope
+        docs = await CryptoAssetRepository(db).find_all_raw(query, dict.fromkeys(_CRYPTO_ASSET_FIELDS, 1))
+        return [CryptoAsset.model_validate(doc) for doc in docs]
 
     async def _collect_findings(
         self,

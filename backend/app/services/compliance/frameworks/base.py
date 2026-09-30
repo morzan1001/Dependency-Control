@@ -18,7 +18,6 @@ from app.schemas.compliance import (
     ControlStatus,
     EvaluationCoverage,
     FrameworkEvaluation,
-    InputCoverage,
     ReportFramework,
     ResidualRisk,
 )
@@ -32,10 +31,6 @@ from app.services.recommendation.common import name_some
 
 logger = logging.getLogger(__name__)
 
-_WITHHELD_REASON = (
-    "Withheld: {evaluated} of {in_scope} {subject} in scope were read, and this verdict would "
-    "have rested on finding no match among the {missing} that were not."
-)
 _GAPS_REASON = "Withheld: the {subject} this verdict rests on do not cover the whole scope: {gaps}."
 
 # Gaps or assets one sentence names before it only counts the rest.
@@ -44,7 +39,7 @@ NAMES_SHOWN = 5
 
 class _Applicability(Enum):
     APPLICABLE = auto()
-    # No asset of the control's kind was found, which a truncated inventory can fake.
+    # No asset of the control's kind was found, which a scope gap can fake.
     NO_ASSET_IN_SCOPE = auto()
     # The policy disabled every backing rule, so no inventory can change the answer.
     RULES_DISABLED = auto()
@@ -56,25 +51,11 @@ class _Applicability(Enum):
     KEY_SIZE_UNKNOWN = auto()
 
 
-def _withheld(
-    status: ControlStatus,
-    coverage: EvaluationCoverage,
-    read: InputCoverage | None,
-    subject: str,
-) -> tuple[ControlStatus, str | None]:
-    """`status` unless gaps or a cut input could hide a match; not for FAILED, which a cut input cannot invent."""
-    if coverage.gaps:
-        return ControlStatus.NOT_EVALUATED, _GAPS_REASON.format(
-            subject=subject, gaps=name_some(coverage.gaps, NAMES_SHOWN)
-        )
-    if read is None or read.complete:
+def _withheld(status: ControlStatus, coverage: EvaluationCoverage, subject: str) -> tuple[ControlStatus, str | None]:
+    """`status` unless gaps could hide a match; not for FAILED, which a partial scope cannot invent."""
+    if not coverage.gaps:
         return status, None
-    return ControlStatus.NOT_EVALUATED, _WITHHELD_REASON.format(
-        subject=subject,
-        evaluated=read.evaluated,
-        in_scope=read.in_scope,
-        missing=read.in_scope - read.evaluated,
-    )
+    return ControlStatus.NOT_EVALUATED, _GAPS_REASON.format(subject=subject, gaps=name_some(coverage.gaps, NAMES_SHOWN))
 
 
 def findings_verdict(
@@ -82,7 +63,7 @@ def findings_verdict(
     coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, str | None]:
     """`status`, or NOT_EVALUATED, for a verdict resting on the findings holding no match."""
-    return _withheld(status, coverage, None, "findings")
+    return _withheld(status, coverage, "findings")
 
 
 def crypto_assets_verdict(
@@ -90,7 +71,7 @@ def crypto_assets_verdict(
     coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, str | None]:
     """`status`, or NOT_EVALUATED, for a verdict resting on the inventory holding no such asset."""
-    return _withheld(status, coverage, coverage.crypto_assets, "crypto assets")
+    return _withheld(status, coverage, "crypto assets")
 
 
 @dataclass
@@ -160,7 +141,7 @@ def _applicability(
     data: EvaluationInput,
     matching: list[dict[str, Any]],
 ) -> tuple[_Applicability, str | None]:
-    """Only NO_ASSET_IN_SCOPE rests on the inventory, so only it is unsafe over a truncated one."""
+    """Only NO_ASSET_IN_SCOPE rests on the inventory, so only it is unsafe over a scope with gaps."""
     rules = [rule for rule in data.policy_rules if rule.rule_id in control.maps_to_rule_ids]
     if not rules:
         unresolved = (

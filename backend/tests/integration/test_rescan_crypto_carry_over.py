@@ -24,6 +24,7 @@ from app.services.analysis.registry import CRYPTO_ANALYZERS
 from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.rescan import RESCAN_SOURCE_PROJECTION, build_rescan
 from app.services.scan_manager import ScanManager
+from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, store_cbom
 
 _PROJECT_ID = "cbom-rescan-project"
 _WORKER = "pod-a/worker-0"
@@ -171,3 +172,24 @@ async def test_a_rescan_reruns_the_crypto_analyzers_instead_of_carrying_their_ro
     expected = sorted([*CRYPTO_ANALYZERS, "trufflehog"])
 
     assert await _rescan_an_analysed_cbom_scan(db, monkeypatch) == (expected, expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_carry_over_past_the_old_asset_cap_copies_every_asset_once(db):
+    await create_indexes(db)
+    await store_cbom(db, _PROJECT_ID, "scan-original", cbom_of(filler_components(range(OLD_ASSET_CAP + 1))))
+    source_ids = await db.crypto_assets.distinct("_id", {"scan_id": "scan-original"})
+    repo = CryptoAssetRepository(db)
+
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+    carried = await db.crypto_assets.find({"scan_id": "scan-rescan"}).sort("_id").to_list(None)
+    await repo.carry_over_to_scan(_PROJECT_ID, "scan-original", "scan-rescan")
+
+    assert [a["_id"] for a in carried] == sorted(f"scan-rescan:{i}" for i in source_ids)
+    assert await db.crypto_assets.find({"scan_id": "scan-rescan"}).sort("_id").to_list(None) == carried
+    first = carried[0]
+    embedded = CryptoAsset.model_validate({**first, "_id": "embedded", "name": "SHA-512"})
+    await repo.bulk_upsert(_PROJECT_ID, "scan-rescan", [embedded])
+    assert await db.crypto_assets.count_documents({"scan_id": "scan-rescan"}) == OLD_ASSET_CAP + 1
+    assert (await db.crypto_assets.find_one({"_id": first["_id"]}))["name"] == "SHA-512"

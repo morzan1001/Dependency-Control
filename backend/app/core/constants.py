@@ -1118,9 +1118,6 @@ RELEASE_FLAG_RECONCILE_BATCH_SIZE = 1000
 ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 
 # CBOM / Crypto
-# Also the budget of every read that wants one scan whole: 50 000 assets validate in 0.95 s and
-# 182 MiB, and a scan cannot be ingested past this in one upload.
-MAX_CRYPTO_ASSETS_PER_SCAN: int = 50_000
 MAX_CBOM_BODY_BYTES: int = 25 * 1024 * 1024
 MAX_ADHOC_BODY_BYTES: int = 25 * 1024 * 1024
 ADHOC_MAX_FINDINGS: int = 5000

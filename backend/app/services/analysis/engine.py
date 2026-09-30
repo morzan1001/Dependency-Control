@@ -16,7 +16,6 @@ from pymongo.errors import DocumentTooLarge
 from app.core.constants import (
     ANALYSIS_MAX_RETRIES,
     DETAILS_KEY_IN_KEV,
-    MAX_CRYPTO_ASSETS_PER_SCAN,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
@@ -142,14 +141,9 @@ async def _carry_over_crypto_assets(scan_id: str, scan_doc: Optional["Scan"], db
         return
 
     try:
-        carried = await CryptoAssetRepository(db).carry_over_to_scan(
-            scan_doc.project_id, scan_doc.original_scan_id, scan_id
-        )
+        await CryptoAssetRepository(db).carry_over_to_scan(scan_doc.project_id, scan_doc.original_scan_id, scan_id)
     except Exception as e:
         logger.exception("Failed to carry over crypto assets to rescan %s: %s", scan_id, e)
-        return
-    if carried:
-        logger.info("Carried over %d crypto assets from %s to rescan %s", carried, scan_doc.original_scan_id, scan_id)
 
 
 # Analyzer result keys reporting incomplete coverage, with how to phrase each.
@@ -241,8 +235,9 @@ async def process_analyzer(
 
 
 def _evaluate_crypto(
-    assets: list[CryptoAsset], policy: EffectivePolicy, catalog: dict[str, CipherSuiteEntry]
+    docs: list[dict[str, Any]], policy: EffectivePolicy, catalog: dict[str, CipherSuiteEntry]
 ) -> dict[str, dict[str, Any]]:
+    assets = [CryptoAsset.model_validate(d) for d in docs]
     results: dict[str, dict[str, Any]] = {}
     for name, evaluate in crypto_evaluators(catalog).items():
         started = time.time()
@@ -260,25 +255,14 @@ def _evaluate_crypto(
 
 async def _run_crypto_analyzers(project_id: str, scan_id: str, db: Database, aggregator: ResultAggregator) -> list[str]:
     """Evaluate the scan's stored crypto assets once, after every SBOM's embedded assets are persisted."""
-    repo = CryptoAssetRepository(db)
     try:
-        assets = await repo.find_many(scan_query(project_id, scan_id), limit=MAX_CRYPTO_ASSETS_PER_SCAN)
+        docs = await CryptoAssetRepository(db).find_all_raw(scan_query(project_id, scan_id))
         policy = await CryptoPolicyResolver(db).resolve(project_id)
-        has_protocols = any(a.asset_type == CryptoAssetType.PROTOCOL for a in assets)
+        has_protocols = any(d.get("asset_type") == CryptoAssetType.PROTOCOL for d in docs)
         catalog = await load_iana_catalog() if has_protocols else {}
-        # CPU-bound matching over up to MAX_CRYPTO_ASSETS_PER_SCAN assets; keeps the shared event loop free.
-        results = await asyncio.to_thread(_evaluate_crypto, assets, policy, catalog)
-        skipped = (
-            await repo.count_by_scan(project_id, scan_id) - len(assets)
-            if len(assets) == MAX_CRYPTO_ASSETS_PER_SCAN
-            else 0
-        )
+        results = await asyncio.to_thread(_evaluate_crypto, docs, policy, catalog)
     except Exception as e:
         return [_analyzer_failed(name, e, aggregator) for name in sorted(CRYPTO_ANALYZERS)]
-    if skipped:
-        logger.warning("Scan %s: %d crypto assets beyond the per-scan budget were not evaluated", scan_id, skipped)
-        for result in results.values():
-            result["partial_components_skipped"] = skipped
 
     summary: list[str] = []
     for name, result in results.items():

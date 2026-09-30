@@ -3,10 +3,20 @@
 import json
 from pathlib import Path
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from prometheus_client import REGISTRY
 
+from app.core.constants import SCAN_STATUS_COMPLETED
+from app.core.init_db import create_indexes
+from app.models.crypto_policy import CryptoPolicy
+from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.crypto_policy import CryptoPolicyRepository
+from app.services.analysis import engine
+from app.services.crypto_policy.seeder import load_seed_rules
+from tests.helpers.cbom import OLD_ASSET_CAP, cbom_of, filler_components, fixture_component
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
@@ -126,8 +136,6 @@ async def test_a_queueing_failure_after_the_store_announces_nothing_and_leaves_t
     client, db, api_key_headers
 ):
     """The assets are stored, so the retry must find the scan claimable and announce the ingest once."""
-    from unittest.mock import AsyncMock, patch
-
     before = _ingests("error")
     with (
         patch(
@@ -166,8 +174,6 @@ async def test_another_scanner_of_the_pipeline_keeps_the_cbom_tag(client, db, ap
 @pytest.mark.asyncio
 async def test_a_failed_asset_store_leaves_the_shared_pipeline_scan_readable(client, db, api_key_headers):
     """The pipeline's SBOM analysis lives in the same scan, so a CBOM write error must not fail it."""
-    from unittest.mock import AsyncMock, patch
-
     pipeline = {"pipeline_id": 9, "commit_hash": "abc123", "cbom": _load("legacy_crypto_mixed.json")}
     first = await client.post("/api/v1/ingest/cbom", json=pipeline, headers=api_key_headers)
     await db.scans.update_one({"_id": first.json()["scan_id"]}, {"$set": {"status": "completed"}})
@@ -220,3 +226,80 @@ async def test_a_retried_cbom_upload_replaces_its_own_assets_and_keeps_the_embed
     stored = await db.crypto_assets.find({"scan_id": scan_id}).to_list(None)
     assert sorted(a["bom_ref"] for a in stored) == sorted(["algo-aes", "algo-rsa4096", "proto-tls13", embedded.bom_ref])
     assert retry.json()["assets_stored"] == 4
+
+
+@pytest.mark.asyncio
+async def test_a_cbom_is_persisted_before_the_response_returns(client, db, api_key_headers):
+    resp = await client.post(
+        "/api/v1/ingest/cbom", json={"cbom": cbom_of(filler_components(range(5)))}, headers=api_key_headers
+    )
+
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert await db.crypto_assets.count_documents({"scan_id": body["scan_id"]}) == 5
+    assert (body["assets_received"], body["assets_stored"]) == (5, 5)
+
+
+@pytest.mark.asyncio
+async def test_duplicate_bom_refs_report_the_actually_stored_count(client, db, api_key_headers):
+    """Upserts keyed on bom_ref collapse in-payload duplicates; assets_stored must say so."""
+    cbom = cbom_of(filler_components(range(3)))
+    cbom["components"][1]["bom-ref"] = cbom["components"][0]["bom-ref"]
+
+    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": cbom}, headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    assert await db.crypto_assets.count_documents({"scan_id": body["scan_id"]}) == 2
+    assert body["assets_stored"] == 2, "assets_stored must reflect persisted docs, not submitted ops"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_asset_store_leaves_no_scan_and_no_release(client, db, api_key_headers):
+    payload = {
+        "pipeline_id": 12,
+        "commit_hash": "abc123",
+        "branch": "main",
+        "is_release": True,
+        "commit_tag": "v1.0.0",
+        "cbom": _load("legacy_crypto_mixed.json"),
+    }
+
+    with patch.object(CryptoAssetRepository, "bulk_upsert", AsyncMock(side_effect=RuntimeError("write failed"))):
+        resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
+
+    assert resp.status_code == 500
+    assert await db.scans.count_documents({}) == 0
+    assert await db.releases.count_documents({}) == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.live_mongo
+async def test_a_cbom_past_the_old_asset_cap_is_stored_and_evaluated_whole(client, db, api_key_headers):
+    await create_indexes(db)
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", rules=list(load_seed_rules()), version=1)
+    )
+    md5 = fixture_component("legacy_crypto_mixed.json", "algo-md5")
+    cbom = cbom_of([*filler_components(range(OLD_ASSET_CAP)), md5])
+
+    resp = await client.post("/api/v1/ingest/cbom", json={"cbom": cbom}, headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    scan_id = resp.json()["scan_id"]
+    assert resp.json()["assets_stored"] == OLD_ASSET_CAP + 1
+    scan = await db.scans.find_one_and_update(
+        {"_id": scan_id}, {"$set": {"status": "processing", "worker_id": "pod-a/worker-0"}}, return_document=True
+    )
+    status = await engine.run_analysis(
+        scan_id, [], [], db, worker_id="pod-a/worker-0", sbom_generation=scan["sbom_generation"]
+    )
+    assert status == SCAN_STATUS_COMPLETED
+    findings = await db.findings.find({"scan_id": scan_id}).to_list(None)
+    assert [(f["type"], f["component"]) for f in findings] == [("crypto_weak_algorithm", "MD5 [bom-ref:algo-md5]")]
+    repo = AnalysisResultRepository(db)
+    results = [
+        await repo.load_result(row) for row in await db.analysis_results.find({"scan_id": scan_id}).to_list(None)
+    ]
+    assert results
+    assert not [r for r in results if "partial_components_skipped" in r]

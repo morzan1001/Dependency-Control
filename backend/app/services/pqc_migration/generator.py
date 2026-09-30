@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN, SCAN_USABLE_STATUSES
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import QUANTUM_VULNERABLE_PRIMITIVES
@@ -125,20 +125,18 @@ class PQCMigrationPlanGenerator:
         """Quantum-vulnerable assets from the head build of each resolved project."""
         from app.services.releases import resolve_scan_ids
 
-        out: list[CryptoAsset] = []
         # None project_ids means global scope (all projects); an explicit [] means none.
         if resolved.project_ids is None:
             project_ids = await self._all_project_ids()
         else:
             project_ids = resolved.project_ids
-        repo = CryptoAssetRepository(self.db)
-        for pid, scan_id in (await resolve_scan_ids(self.db, project_ids, projects=resolved.projects)).items():
-            assets = await repo.list_by_scan(pid, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
-            out.extend(self._filter_vulnerable(assets))
-        return out
-
-    def _filter_vulnerable(self, assets: list[CryptoAsset]) -> list[CryptoAsset]:
-        return [a for a in assets if a.primitive in QUANTUM_VULNERABLE_PRIMITIVES and resolve_family(a, self.mappings)]
+        scan_ids = await resolve_scan_ids(self.db, project_ids, projects=resolved.projects)
+        query = {
+            "project_id": {"$in": list(scan_ids)},
+            "scan_id": {"$in": list(scan_ids.values())},
+            "primitive": {"$in": sorted(QUANTUM_VULNERABLE_PRIMITIVES)},
+        }
+        return [a async for a in CryptoAssetRepository(self.db).iterate(query) if resolve_family(a, self.mappings)]
 
     async def _all_project_ids(self) -> list[str]:
         """Distinct project ids that have at least one usable scan."""

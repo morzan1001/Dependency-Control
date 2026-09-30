@@ -4,8 +4,8 @@ from typing import Any
 
 import pytest
 
-from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
-from app.repositories.crypto_asset import CryptoAssetRepository
+from app.models.crypto_asset import CryptoAsset
+from app.repositories.crypto_asset import CryptoAssetRepository, scan_query
 from app.services.analysis import registry
 from app.services.analyzers import Analyzer
 from app.services.analyzers.crypto.catalogs.loader import CipherSuiteEntry, _load_fallback_yaml, _materialize
@@ -40,6 +40,7 @@ def bundled_iana_catalog() -> dict[str, CipherSuiteEntry]:
 
 async def evaluate_crypto(name: str, db: Any, project_id: str = "p", scan_id: str = "s") -> dict[str, Any]:
     """What the engine's crypto pass records for ``name`` over the stored assets and the resolved policy."""
-    assets = await CryptoAssetRepository(db).list_by_scan(project_id, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
+    docs = await CryptoAssetRepository(db).find_all_raw(scan_query(project_id, scan_id))
+    assets = [CryptoAsset.model_validate(doc) for doc in docs]
     policy = await CryptoPolicyResolver(db).resolve(project_id)
     return registry.crypto_evaluators(bundled_iana_catalog())[name](assets, policy)

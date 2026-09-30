@@ -42,9 +42,8 @@ async def test_ingested_assets_reach_the_rescan(db):
     repo = CryptoAssetRepository(db)
     await _seed(repo, _ORIGINAL_SCAN, ["ref-a", "ref-b", "ref-c"])
 
-    carried = await repo.carry_over_to_scan(_PROJECT, _ORIGINAL_SCAN, _RESCAN)
+    await repo.carry_over_to_scan(_PROJECT, _ORIGINAL_SCAN, _RESCAN)
 
-    assert carried == 3
     assert await repo.count_by_scan(_PROJECT, _RESCAN) == 3
     assert {a.bom_ref for a in await repo.list_by_scan(_PROJECT, _RESCAN, limit=10)} == {"ref-a", "ref-b", "ref-c"}
 
@@ -94,7 +93,7 @@ async def test_only_the_named_scan_is_copied(db):
 
 
 def _repo_spy(monkeypatch):
-    spy = SimpleNamespace(carry_over_to_scan=AsyncMock(return_value=0))
+    spy = SimpleNamespace(carry_over_to_scan=AsyncMock())
     monkeypatch.setattr("app.services.analysis.engine.CryptoAssetRepository", lambda _db: spy)
     return spy
 
