@@ -99,5 +99,5 @@ def get_analytics_cache() -> TTLCache:
 
 @functools.cache
 def get_delta_cache() -> TTLCache:
-    """Scan-delta comparisons, weighed by their items since one can hold up to two capped sides' worth."""
+    """Scan-delta comparisons, weighed by their item count."""
     return TTLCache(_DELTA_ROW_BUDGET, _TTL_SECONDS, size_of=lambda comparison: 1 + len(comparison.items))

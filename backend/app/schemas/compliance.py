@@ -100,7 +100,6 @@ class InputCoverage(BaseModel):
 class EvaluationCoverage(BaseModel):
     """What the control verdicts were computed over, per input the framework reads; None for one it never reads."""
 
-    findings: InputCoverage | None = None
     crypto_assets: InputCoverage | None = None
     # Set only by a framework that builds one control per row of a bounded plan.
     plan_items: InputCoverage | None = None
@@ -109,7 +108,7 @@ class EvaluationCoverage(BaseModel):
 
     @property
     def complete(self) -> bool:
-        inputs = (self.findings, self.crypto_assets, self.plan_items)
+        inputs = (self.crypto_assets, self.plan_items)
         return not self.gaps and all(read.complete for read in inputs if read is not None)
 
 

@@ -82,7 +82,7 @@ def findings_verdict(
     coverage: EvaluationCoverage,
 ) -> tuple[ControlStatus, str | None]:
     """`status`, or NOT_EVALUATED, for a verdict resting on the findings holding no match."""
-    return _withheld(status, coverage, coverage.findings, "findings")
+    return _withheld(status, coverage, None, "findings")
 
 
 def crypto_assets_verdict(

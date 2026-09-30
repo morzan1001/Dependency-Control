@@ -1,11 +1,9 @@
 """The frameworks share base's `_classify` and `_waiver_reasons` instead of keeping copies."""
 
-from app.schemas.compliance import ControlStatus, EvaluationCoverage, InputCoverage
+from app.schemas.compliance import ControlStatus, EvaluationCoverage
 from app.services.compliance.frameworks import base, cve_remediation_sla, license_audit
 
-_EVALUATED = 12
-_WHOLE = InputCoverage(evaluated=_EVALUATED, in_scope=_EVALUATED, limit=_EVALUATED)
-_COMPLETE = EvaluationCoverage(findings=_WHOLE, crypto_assets=_WHOLE)
+_COMPLETE = EvaluationCoverage()
 
 
 def test_classify_is_shared_from_base():

@@ -76,7 +76,7 @@ async def _critical_control(db, scan_id: str):
     framework = CveRemediationSlaFramework()
     resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
     clause, fields, _ = engine._finding_type_filter(framework)
-    findings, _ = await engine._collect_findings(db, resolved, [scan_id], clause, fields)
+    findings = await engine._collect_findings(db, [scan_id], clause, fields)
     evaluation = await framework.evaluate(
         evaluation_input(resolved=resolved, findings=findings, scan_ids=[scan_id], db=db)
     )

@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 from collections import Counter
 from collections.abc import Callable, Iterable
@@ -15,7 +14,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.constants import get_severity_value
 from app.core.cve import display_vulnerability_id
 from app.models.finding import CRYPTO_FINDING_TYPES
-from app.repositories.base import find_window
 from app.schemas.scan_delta import (
     DeltaCategory,
     FindingDeltaItem,
@@ -23,18 +21,8 @@ from app.schemas.scan_delta import (
     ScanDeltaTotals,
 )
 from app.services.component_identity import extract_artifact_name
-from app.services.analytics._delta_pagination import (
-    MAX_FETCH,
-    both_sides,
-    by_side,
-    delta_truncation,
-    pair_versions,
-)
+from app.services.analytics._delta_pagination import both_sides, by_side, pair_versions
 from app.services.recommendation.common import live_cves
-
-# Served by the {scan_id, component, version} index, so a capped side is cut at the same point in
-# the identity space on both sides instead of at two arbitrary points in natural order.
-_SIDE_SORT: list[tuple[str, int]] = [("component", 1), ("version", 1)]
 
 
 def _first_id(details: dict[str, Any], *keys: str) -> str:
@@ -160,20 +148,15 @@ FINDING_IDENTITY_PROJECTION: dict[str, int] = dict.fromkeys(
 )
 IDENTITY_FIELDS = tuple(dict.fromkeys(path.split(".")[0] for path in FINDING_IDENTITY_PROJECTION))
 
-# The identity fields plus what _to_item renders.
+# The identity fields, what _to_item renders and the flag that splits live from waived.
 _FETCH_PROJECTION: dict[str, int] = {
     **FINDING_IDENTITY_PROJECTION,
+    "waived": 1,
     "severity": 1,
     "first_seen_at": 1,
     "details.vulnerabilities.resolved_cve": 1,
     "details.vulnerabilities.aliases": 1,
 }
-
-
-# The delivered risk, as in every other metric; documents predating the flag lack the key and count as unwaived.
-_LIVE = {"waived": {"$ne": True}}
-# A per-CVE waiver leaves the document-level flag unset.
-_WAIVER_TOUCHED = {"$or": [{"waived": True}, {"details.vulnerabilities.waived": True}]}
 
 
 def _side_query(project_id: str, scan_id: str, finding_type: Iterable[str] | None) -> dict:
@@ -184,21 +167,18 @@ def _side_query(project_id: str, scan_id: str, finding_type: Iterable[str] | Non
     return query
 
 
-async def _fetch_side(db: AsyncIOMotorDatabase, query: dict) -> tuple[list[dict], int]:
-    return await find_window(db["findings"], query, MAX_FETCH, projection=_FETCH_PROJECTION, sort=_SIDE_SORT)
+def _waiver_touched(doc: dict) -> bool:
+    """A per-CVE waiver leaves the document-level flag unset."""
+    entries = (doc.get("details") or {}).get("vulnerabilities") or []
+    return doc.get("waived") is True or any(isinstance(e, dict) and e.get("waived") is True for e in entries)
 
 
-async def _read_side(db: AsyncIOMotorDatabase, query: dict) -> tuple[list[dict], list[dict], int, int]:
-    """The side's live records, every record read, how many it holds and how many a waiver touches."""
-    # Waived docs get their own MAX_FETCH budget so they cannot push delivered risk out of the window.
-    (live, live_total), (touched, touched_total) = await asyncio.gather(
-        _fetch_side(db, query | _LIVE), _fetch_side(db, query | _WAIVER_TOUCHED)
-    )
-    # The two reads overlap on partially waived records.
-    read = list({doc["_id"]: doc for doc in (*live, *touched)}.values())
-    if len(live) == live_total and len(touched) == touched_total:
-        return live, read, len(read), touched_total
-    return live, read, await db["findings"].count_documents(query), touched_total
+async def _read_side(db: AsyncIOMotorDatabase, query: dict) -> tuple[list[dict], list[dict], int]:
+    """The side's live records, every record and how many a waiver touches."""
+    read = await db["findings"].find(query, _FETCH_PROJECTION).to_list(None)
+    # The delivered risk, as in every other metric; documents predating the flag lack the key and count as unwaived.
+    live = [doc for doc in read if doc.get("waived") is not True]
+    return live, read, sum(map(_waiver_touched, read))
 
 
 def _doc_severity(doc: dict) -> str:
@@ -294,7 +274,7 @@ async def compare_findings(
     severity: list[str] | None,
     finding_type: list[str] | None,
 ) -> ScanDeltaResponse:
-    (from_live, from_read, from_total, from_waived), (to_live, to_read, to_total, to_waived) = await both_sides(
+    (from_live, from_read, from_waived), (to_live, to_read, to_waived) = await both_sides(
         lambda scan_id: _read_side(db, _side_query(project_id, scan_id, finding_type)), from_scan, to_scan
     )
 
@@ -333,11 +313,4 @@ async def compare_findings(
         from_waived_excluded=from_waived,
         to_waived_excluded=to_waived,
         waiver_only_changes=_waiver_only_changes(removed, added, changed, from_read, to_read),
-        truncation=delta_truncation(
-            MAX_FETCH,
-            from_compared=len(from_read),
-            from_total=from_total,
-            to_compared=len(to_read),
-            to_total=to_total,
-        ),
     )

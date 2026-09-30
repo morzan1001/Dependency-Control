@@ -40,7 +40,6 @@ function gapSentence(gaps: readonly string[]): string {
 
 function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage }) {
   const reads = [
-    [coverage.findings, "findings"],
     [coverage.crypto_assets, "crypto assets"],
     [coverage.plan_items, "migration plan items"],
   ] as const;
@@ -58,7 +57,7 @@ function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage })
     capped || gaps.length > 0
       ? "rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200"
       : "text-xs text-muted-foreground";
-  return <div className={tone}>{sentences.join(" ")}</div>;
+  return <div className={tone}>{sentences.join(" ") || "The verdicts cover the whole scope."}</div>;
 }
 
 const WITHHELD_KEY: ControlStatus = "not_evaluated";

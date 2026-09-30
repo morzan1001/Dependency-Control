@@ -1,14 +1,8 @@
 """A compliance report may not claim a verdict it did not compute over the whole scope.
 
-Against a live MongoDB, a project holding 20 050 findings — 50 of them criticals 400 days past
-their SLA — produced a report whose CVE-SLA-CRITICAL control read `passed`, because the 50 sat
-past the engine's 20 000-finding cap. The same project holding 10 001 crypto assets, the last of
-them MD5, produced a FIPS-140-3 report whose hash-function control read `passed`.
-
-A verdict whose evidence is the absence of a match is withheld as `not_evaluated` once the input
-it rests on stops covering the scope; a failure stands, because a cut input can under-report a
-violation but cannot invent one. Which input a verdict rests on is per control, so a truncated
-finding set may not suppress a verdict read off a complete inventory, or the other way round.
+A verdict whose evidence is the absence of a match is withheld as `not_evaluated` once a gap or a
+cut crypto inventory leaves part of the scope unread; a failure stands, because a cut input can
+under-report a violation but cannot invent one.
 """
 
 import json
@@ -56,9 +50,6 @@ _CAP = 4
 _POPULATION = 6
 _TEMPLATE_DIR = Path(engine_module.__file__).resolve().parent / "templates"
 
-_EVALUATED = 20000
-_IN_SCOPE = 20050
-_MISSING = _IN_SCOPE - _EVALUATED
 _ASSET_CAP = 10000
 _ASSETS_IN_SCOPE = 10001
 _ASSETS_MISSING = _ASSETS_IN_SCOPE - _ASSET_CAP
@@ -69,27 +60,12 @@ _PLAN_ITEM_STATEMENT = f"Evaluated {_PLAN_ITEMS_EVALUATED} of {_PLAN_ITEMS_IN_SC
 _FIPS = FRAMEWORK_REGISTRY[ReportFramework.FIPS_140_3]
 
 
-def _findings_coverage(evaluated: int) -> InputCoverage:
-    return InputCoverage(evaluated=evaluated, in_scope=_IN_SCOPE, limit=_EVALUATED)
-
-
 def _assets_coverage(evaluated: int) -> InputCoverage:
     return InputCoverage(evaluated=evaluated, in_scope=_ASSETS_IN_SCOPE, limit=_ASSET_CAP)
 
 
-def _partial() -> EvaluationCoverage:
-    """The findings stop short of the scope; the inventory covers it."""
-    return EvaluationCoverage(
-        findings=_findings_coverage(_EVALUATED),
-        crypto_assets=_assets_coverage(_ASSETS_IN_SCOPE),
-    )
-
-
 def _complete() -> EvaluationCoverage:
-    return EvaluationCoverage(
-        findings=_findings_coverage(_IN_SCOPE),
-        crypto_assets=_assets_coverage(_ASSETS_IN_SCOPE),
-    )
+    return EvaluationCoverage(crypto_assets=_assets_coverage(_ASSETS_IN_SCOPE))
 
 
 def _plan_items_coverage() -> InputCoverage:
@@ -101,11 +77,7 @@ def _plan_items_coverage() -> InputCoverage:
 
 
 def _assets_partial() -> EvaluationCoverage:
-    """The inventory stops short of the scope; the findings cover it."""
-    return EvaluationCoverage(
-        findings=_findings_coverage(_IN_SCOPE),
-        crypto_assets=_assets_coverage(_ASSET_CAP),
-    )
+    return EvaluationCoverage(crypto_assets=_assets_coverage(_ASSET_CAP))
 
 
 def _finding(index: int) -> dict:
@@ -132,43 +104,24 @@ def _render_report(evaluation, disclaimer: str | None = None) -> str:
 
 
 @pytest.mark.asyncio
-async def test_a_capped_collection_reports_the_scope_it_did_not_read(db, monkeypatch):
-    monkeypatch.setattr(engine_module, "_FINDINGS_LIMIT", _CAP)
+async def test_the_collection_reads_every_finding_in_scope(db):
     for index in range(_POPULATION):
         doc = _finding(index)
         db.findings._docs[doc["_id"]] = doc
-    resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
 
     engine = ComplianceReportEngine()
     clause, fields, _ = engine._finding_type_filter(CveRemediationSlaFramework())
 
-    findings, in_scope = await engine._collect_findings(db, resolved, [_SCAN], clause, fields)
-
-    assert len(findings) == _CAP
-    assert in_scope == _POPULATION
-
-
-@pytest.mark.asyncio
-async def test_an_uncapped_collection_counts_what_it_read(db):
-    for index in range(_POPULATION):
-        doc = _finding(index)
-        db.findings._docs[doc["_id"]] = doc
-    resolved = ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT])
-
-    engine = ComplianceReportEngine()
-    clause, fields, _ = engine._finding_type_filter(CveRemediationSlaFramework())
-
-    findings, in_scope = await engine._collect_findings(db, resolved, [_SCAN], clause, fields)
+    findings = await engine._collect_findings(db, [_SCAN], clause, fields)
 
     assert len(findings) == _POPULATION
-    assert in_scope == _POPULATION
 
 
 @pytest.mark.asyncio
 async def test_the_engine_hands_the_coverage_to_the_renderer_and_to_the_stored_report():
     report = _report()
     report.framework = ReportFramework.CVE_REMEDIATION_SLA
-    inputs = _sla_input([], _partial())
+    inputs = _sla_input([], _assets_partial())
     update_status = AsyncMock()
     engine = ComplianceReportEngine()
     rendered: dict = {}
@@ -192,37 +145,22 @@ async def test_the_engine_hands_the_coverage_to_the_renderer_and_to_the_stored_r
     ):
         await engine.generate(report=report, db=MagicMock(), user=MagicMock(id="u1", permissions=frozenset()))
 
-    assert rendered["coverage"] == _partial()
-    assert update_status.call_args_list[-1].kwargs["coverage"] == _partial()
-
-
-def test_the_partial_statement_names_the_verdicts_it_withholds():
-    statement = coverage_statement(_partial())
-
-    assert str(_EVALUATED) in statement
-    assert str(_IN_SCOPE) in statement
-    assert str(_MISSING) in statement
-    assert _WITHHELD_STATEMENT in statement
+    assert rendered["coverage"] == _assets_partial()
+    assert update_status.call_args_list[-1].kwargs["coverage"] == _assets_partial()
 
 
 def test_the_partial_statement_counts_the_unread_remainder_against_the_scope():
     """A cut input has read exactly its cap, so a remainder measured against the cap is always zero."""
-    assert f"the remaining {_MISSING} were not read" in coverage_statement(_partial())
     assert f"the remaining {_ASSETS_MISSING} were not read" in coverage_statement(_assets_partial())
 
 
 def test_the_complete_statement_says_the_scope_was_covered():
-    statement = coverage_statement(_complete())
-
-    assert statement == (
-        f"Evaluated all {_IN_SCOPE} findings in scope. Evaluated all {_ASSETS_IN_SCOPE} crypto assets in scope."
-    )
+    assert coverage_statement(_complete()) == f"Evaluated all {_ASSETS_IN_SCOPE} crypto assets in scope."
 
 
 def test_the_statement_names_whichever_input_was_capped():
     statement = coverage_statement(_assets_partial())
 
-    assert f"Evaluated all {_IN_SCOPE} findings in scope." in statement
     assert f"Evaluated {_ASSET_CAP} of {_ASSETS_IN_SCOPE} crypto assets" in statement
     assert _WITHHELD_STATEMENT in statement
 
@@ -234,24 +172,23 @@ def test_the_statement_names_the_plan_items_left_out():
 
 
 def test_json_carries_the_statement_and_the_numbers():
-    body, _, _ = JsonRenderer().render(_evaluation_with(_partial()), _report())
+    body, _, _ = JsonRenderer().render(_evaluation_with(_assets_partial()), _report())
     payload = json.loads(body)
 
     assert payload["coverage"]["complete"] is False
-    assert payload["coverage"]["findings"]["in_scope"] == _IN_SCOPE
     assert payload["coverage"]["crypto_assets"]["in_scope"] == _ASSETS_IN_SCOPE
     assert _WITHHELD_STATEMENT in payload["coverage"]["statement"]
 
 
 def test_csv_states_coverage_even_without_a_disclaimer():
     """The '#' header block used to be written only when a disclaimer existed."""
-    body, _, _ = CsvRenderer().render(_evaluation_with(_partial()), _report())
+    body, _, _ = CsvRenderer().render(_evaluation_with(_assets_partial()), _report())
 
-    assert f"# Coverage: {coverage_statement(_partial())}" in body.decode()
+    assert f"# Coverage: {coverage_statement(_assets_partial())}" in body.decode()
 
 
 def test_sarif_carries_the_statement_on_the_run():
-    body, _, _ = SarifRenderer().render(_evaluation_with(_partial()), _report())
+    body, _, _ = SarifRenderer().render(_evaluation_with(_assets_partial()), _report())
     payload = json.loads(body)
 
     assert _WITHHELD_STATEMENT in payload["runs"][0]["properties"]["coverage"]
@@ -259,7 +196,7 @@ def test_sarif_carries_the_statement_on_the_run():
 
 @pytest.mark.parametrize(
     ("coverage", "expects_alarm"),
-    [(_partial(), True), (_complete(), False)],
+    [(_assets_partial(), True), (_complete(), False)],
     ids=["partial-is-alarming", "complete-is-not"],
 )
 def test_the_pdf_cover_prints_the_coverage_banner(coverage, expects_alarm):
@@ -271,7 +208,7 @@ def test_the_pdf_cover_prints_the_coverage_banner(coverage, expects_alarm):
 
 
 _SLA_OVERDUE_DAYS = 400
-_WITHHELD_REASON_FRAGMENT = "would have rested on finding no match"
+_GAP = "project 'payments' has no usable scan"
 
 
 def _sla_input(findings: list[dict], coverage: EvaluationCoverage) -> EvaluationInput:
@@ -298,16 +235,6 @@ def _by_id(evaluation) -> dict[str, ControlResult]:
 
 
 @pytest.mark.asyncio
-async def test_a_pass_over_a_truncated_finding_set_is_withheld():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
-
-    critical = _by_id(evaluation)["CVE-SLA-CRITICAL"]
-    assert critical.status == ControlStatus.NOT_EVALUATED.value
-    assert _WITHHELD_REASON_FRAGMENT in (critical.status_reason or "")
-    assert str(_MISSING) in (critical.status_reason or "")
-
-
-@pytest.mark.asyncio
 async def test_the_same_pass_stands_when_the_scope_was_fully_read():
     evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _complete()))
 
@@ -317,46 +244,11 @@ async def test_the_same_pass_stands_when_the_scope_was_fully_read():
 
 
 @pytest.mark.asyncio
-async def test_a_failure_survives_truncation_because_a_cut_list_cannot_invent_a_finding():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([_overdue_critical()], _partial()))
-
-    assert _by_id(evaluation)["CVE-SLA-CRITICAL"].status == ControlStatus.FAILED.value
-
-
-@pytest.mark.asyncio
-async def test_a_waived_verdict_is_withheld_because_it_rests_on_no_active_match():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([_overdue_critical(waived=True)], _partial()))
-
-    assert _by_id(evaluation)["CVE-SLA-CRITICAL"].status == ControlStatus.NOT_EVALUATED.value
-
-
-@pytest.mark.asyncio
 async def test_the_summary_counts_the_withheld_verdicts():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
+    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
     assert evaluation.summary["not_evaluated"] == evaluation.summary["total"]
     assert evaluation.summary["passed"] == 0
-
-
-@pytest.mark.asyncio
-async def test_a_verdict_read_from_the_asset_inventory_survives_a_truncated_finding_set():
-    """The findings cap says nothing about the crypto assets FIPS reads, so blanket-suppressing
-    every absence-backed status would claim the report skipped work it actually did."""
-    asset = CryptoAsset(
-        _id="a1",
-        project_id=_PROJECT,
-        scan_id=_SCAN,
-        bom_ref="ref-a",
-        name="AES",
-        asset_type=CryptoAssetType.ALGORITHM,
-        primitive=CryptoPrimitive.BLOCK_CIPHER,
-    )
-    data = _sla_input([], _partial())
-    data.crypto_assets = [asset]
-
-    evaluation = await _FIPS.evaluate(data)
-
-    assert _by_id(evaluation)["FIPS-140-3-SYMMETRIC_CIPHERS"].status == ControlStatus.PASSED.value
 
 
 def _algorithm(name: str, primitive: CryptoPrimitive) -> CryptoAsset:
@@ -406,7 +298,7 @@ async def test_a_fips_failure_survives_a_truncated_inventory():
 
 @pytest.mark.asyncio
 async def test_the_same_fips_pass_stands_when_the_inventory_covered_the_scope():
-    evaluation = await _fips_input([_algorithm("SHA-256", CryptoPrimitive.HASH)], _partial())
+    evaluation = await _fips_input([_algorithm("SHA-256", CryptoPrimitive.HASH)], _complete())
 
     assert _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"].status == ControlStatus.PASSED.value
 
@@ -511,38 +403,38 @@ async def test_an_uncapped_asset_collection_counts_what_it_read(db):
 
 @pytest.mark.asyncio
 async def test_sarif_reports_a_withheld_verdict_as_open_rather_than_pass():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
+    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
     body, _, _ = SarifRenderer().render(evaluation, _report())
     results = json.loads(body)["runs"][0]["results"]
 
     assert {r["kind"] for r in results} == {"open"}
-    assert all(_WITHHELD_REASON_FRAGMENT in r["message"]["text"] for r in results)
+    assert all(_GAP in r["message"]["text"] for r in results)
 
 
 @pytest.mark.asyncio
 async def test_csv_and_json_carry_the_reason_beside_the_withheld_status():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
+    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
     csv_body, _, _ = CsvRenderer().render(evaluation, _report())
     json_body, _, _ = JsonRenderer().render(evaluation, _report())
 
     assert "status_reason" in csv_body.decode().splitlines()[1]
-    assert _WITHHELD_REASON_FRAGMENT in csv_body.decode()
+    assert _GAP in csv_body.decode()
     controls = json.loads(json_body)["controls"]
     assert all(c["status"] == ControlStatus.NOT_EVALUATED.value for c in controls)
-    assert all(_WITHHELD_REASON_FRAGMENT in c["status_reason"] for c in controls)
+    assert all(_GAP in c["status_reason"] for c in controls)
 
 
 @pytest.mark.asyncio
 async def test_the_pdf_prints_the_withheld_count_and_the_per_control_reason():
-    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _partial()))
+    evaluation = await CveRemediationSlaFramework().evaluate(_sla_input([], _with_gaps(_GAP)))
 
     html = _render_report(evaluation)
 
     assert "Not Evaluated" in html
     assert 'class="status-reason"' in html
-    assert _WITHHELD_REASON_FRAGMENT in html
+    assert "has no usable scan" in html
 
 
 def _control(control_id: str, status: ControlStatus) -> ControlResult:
@@ -571,14 +463,11 @@ def test_residual_risks_lists_the_failed_control_and_nothing_else():
     assert [risk.control_id for risk in risks] == ["c-failed"]
 
 
-def test_the_statement_leaves_out_an_input_the_framework_never_read():
-    coverage = EvaluationCoverage(findings=_findings_coverage(_IN_SCOPE))
+def test_a_report_over_findings_alone_states_that_it_covered_the_whole_scope():
+    coverage = EvaluationCoverage()
 
     assert coverage.complete is True
-    assert coverage_statement(coverage) == f"Evaluated all {_IN_SCOPE} findings in scope."
-
-
-_GAP = "project 'payments' has no usable scan"
+    assert coverage_statement(coverage) == "The verdicts cover the whole scope."
 
 
 def _with_gaps(*gaps: str) -> EvaluationCoverage:

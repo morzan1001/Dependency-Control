@@ -371,7 +371,6 @@ async def test_cve_sla_reads_only_the_severities_it_has_a_deadline_for(db):
 
     assert [f["severity"] for f in inputs.findings] == [Severity.CRITICAL.value]
     assert inputs.findings[0]["first_seen_at"] is not None
-    assert inputs.coverage.findings.in_scope == 1
 
 
 @pytest.mark.asyncio
@@ -413,7 +412,6 @@ async def test_the_pqc_plan_reads_neither_findings_nor_assets(db):
     inputs = await _gather(db, _project_scope(), ReportFramework.PQC_MIGRATION_PLAN)
 
     assert finding_reads == asset_reads == []
-    assert inputs.coverage.findings is None
     assert inputs.coverage.crypto_assets is None
 
 
@@ -428,7 +426,6 @@ async def test_a_framework_without_crypto_controls_reads_no_assets(db, key):
 
     assert asset_reads == []
     assert inputs.coverage.crypto_assets is None
-    assert inputs.coverage.findings is not None
 
 
 def _rsa(pid, scan_id, key_size_bits):

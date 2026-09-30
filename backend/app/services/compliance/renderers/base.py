@@ -39,7 +39,6 @@ def _input_statement(coverage: InputCoverage, subject: str) -> str:
 def coverage_statement(coverage: EvaluationCoverage) -> str:
     """The sentence a reader needs to know whether the verdicts cover the scope."""
     reads = {
-        "findings": coverage.findings,
         "crypto assets": coverage.crypto_assets,
         "migration plan items": coverage.plan_items,
     }
@@ -48,7 +47,7 @@ def coverage_statement(coverage: EvaluationCoverage) -> str:
         parts.append(_GAPS_STATEMENT.format(gaps=name_some(coverage.gaps, NAMES_SHOWN)))
     if any(read is not None and not read.complete for read in reads.values()):
         parts.append(_WITHHELD_EXPLANATION)
-    return " ".join(parts)
+    return " ".join(parts) or "The verdicts cover the whole scope."
 
 
 class Renderer(Protocol):

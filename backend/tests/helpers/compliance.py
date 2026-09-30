@@ -17,15 +17,14 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 from app.services.notifications.service import notification_service
 
 
-def full_coverage(n_findings: int = 0, n_assets: int = 0) -> EvaluationCoverage:
+def full_coverage(n_assets: int = 0) -> EvaluationCoverage:
     return EvaluationCoverage(
-        findings=InputCoverage(evaluated=n_findings, in_scope=n_findings, limit=max(n_findings, 1)),
-        crypto_assets=InputCoverage(evaluated=n_assets, in_scope=n_assets, limit=max(n_assets, 1)),
+        crypto_assets=InputCoverage(evaluated=n_assets, in_scope=n_assets, limit=max(n_assets, 1))
     )
 
 
 def evaluation_input(**fields: Any) -> EvaluationInput:
-    """An input over one user-scoped project; `coverage` defaults to every finding and asset read."""
+    """An input over one user-scoped project; `coverage` defaults to every asset read."""
     values: dict[str, Any] = {
         "resolved": ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
         "scope_description": "user",
@@ -40,7 +39,7 @@ def evaluation_input(**fields: Any) -> EvaluationInput:
         "db": MagicMock(),
         **fields,
     }
-    values.setdefault("coverage", full_coverage(len(values["findings"]), len(values["crypto_assets"])))
+    values.setdefault("coverage", full_coverage(len(values["crypto_assets"])))
     return EvaluationInput(**values)
 
 

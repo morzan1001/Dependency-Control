@@ -30,34 +30,16 @@ const sampleReport: ComplianceReportMeta = {
   summary: {},
 } as ComplianceReportMeta;
 
-const EVALUATED = 20000;
-const IN_SCOPE = 20050;
-const NOT_EVALUATED = IN_SCOPE - EVALUATED;
 const ASSET_CAP = 10000;
 const ASSETS_IN_SCOPE = 10001;
 const PARTIAL_WARNING = /rested on finding no match in a capped input/i;
 const WITHHELD = 3;
 
 describe("ReportDetailDrawer", () => {
-  it("says no verdict over a subset may report passed or waived", () => {
-    const partial: ComplianceReportMeta = {
-      ...sampleReport,
-      coverage: {
-        findings: { evaluated: EVALUATED, in_scope: IN_SCOPE, limit: EVALUATED },
-        crypto_assets: { evaluated: ASSETS_IN_SCOPE, in_scope: ASSETS_IN_SCOPE, limit: ASSET_CAP },
-      },
-    };
-    withClient(<ReportDetailDrawer report={partial} onClose={() => {}} />);
-
-    expect(screen.getByText(PARTIAL_WARNING)).toBeInTheDocument();
-    expect(screen.getByText(new RegExp(NOT_EVALUATED.toLocaleString()))).toBeInTheDocument();
-  });
-
   it("names the crypto inventory when that is the input the cap cut", () => {
     const partial: ComplianceReportMeta = {
       ...sampleReport,
       coverage: {
-        findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED },
         crypto_assets: { evaluated: ASSET_CAP, in_scope: ASSETS_IN_SCOPE, limit: ASSET_CAP },
       },
     };
@@ -71,7 +53,6 @@ describe("ReportDetailDrawer", () => {
     const complete: ComplianceReportMeta = {
       ...sampleReport,
       coverage: {
-        findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED },
         crypto_assets: { evaluated: ASSETS_IN_SCOPE, in_scope: ASSETS_IN_SCOPE, limit: ASSET_CAP },
       },
     };
@@ -81,26 +62,21 @@ describe("ReportDetailDrawer", () => {
     expect(screen.queryByText(PARTIAL_WARNING)).not.toBeInTheDocument();
   });
 
-  it("leaves out an input the framework never read", () => {
+  it("says a report over findings alone covered the whole scope", () => {
     const cveReport: ComplianceReportMeta = {
       ...sampleReport,
-      coverage: {
-        findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED },
-        crypto_assets: null,
-        plan_items: null,
-        gaps: [],
-      },
+      coverage: { crypto_assets: null, plan_items: null, gaps: [] },
     };
     withClient(<ReportDetailDrawer report={cveReport} onClose={() => {}} />);
 
-    expect(screen.getByText(`Evaluated all ${IN_SCOPE.toLocaleString()} findings in scope.`)).toBeInTheDocument();
-    expect(screen.queryByText(/crypto assets/i)).not.toBeInTheDocument();
+    expect(screen.getByText("The verdicts cover the whole scope.")).toBeInTheDocument();
+    expect(screen.queryByText(/crypto assets|findings/i)).not.toBeInTheDocument();
   });
 
   it("states the plan items a migration plan report covered", () => {
     const pqcReport: ComplianceReportMeta = {
       ...sampleReport,
-      coverage: { findings: null, crypto_assets: null, plan_items: { evaluated: 1000, in_scope: 4200, limit: 1000 }, gaps: [] },
+      coverage: { crypto_assets: null, plan_items: { evaluated: 1000, in_scope: 4200, limit: 1000 }, gaps: [] },
     };
     withClient(<ReportDetailDrawer report={pqcReport} onClose={() => {}} />);
 
@@ -110,11 +86,7 @@ describe("ReportDetailDrawer", () => {
   it("warns about the part of the scope no input covered", () => {
     const gapped: ComplianceReportMeta = {
       ...sampleReport,
-      coverage: {
-        findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED },
-        crypto_assets: null,
-        gaps: ["project 'payments' has no usable scan"],
-      },
+      coverage: { crypto_assets: null, gaps: ["project 'payments' has no usable scan"] },
     };
     withClient(<ReportDetailDrawer report={gapped} onClose={() => {}} />);
 
@@ -127,7 +99,7 @@ describe("ReportDetailDrawer", () => {
     const gaps = ["a", "b", "c", "d", "e", "f", "g"].map((name) => `project '${name}' has no usable scan`);
     const gapped: ComplianceReportMeta = {
       ...sampleReport,
-      coverage: { findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED }, gaps },
+      coverage: { gaps },
     };
     withClient(<ReportDetailDrawer report={gapped} onClose={() => {}} />);
 
@@ -138,10 +110,7 @@ describe("ReportDetailDrawer", () => {
   it("shows how many verdicts the cap withheld", () => {
     const withheld: ComplianceReportMeta = {
       ...sampleReport,
-      coverage: {
-        findings: { evaluated: EVALUATED, in_scope: IN_SCOPE, limit: EVALUATED },
-        crypto_assets: { evaluated: ASSETS_IN_SCOPE, in_scope: ASSETS_IN_SCOPE, limit: ASSET_CAP },
-      },
+      coverage: { crypto_assets: { evaluated: ASSET_CAP, in_scope: ASSETS_IN_SCOPE, limit: ASSET_CAP } },
       summary: { passed: 0, failed: 0, waived: 0, not_applicable: 0, not_evaluated: WITHHELD, total: WITHHELD },
     };
     withClient(<ReportDetailDrawer report={withheld} onClose={() => {}} />);
