@@ -29,6 +29,7 @@ export interface Waiver {
   id: string;
   project_id?: string;
   finding_id?: string;
+  vulnerability_id?: string;
   package_name?: string;
   package_version?: string;
   finding_type?: FindingType;
