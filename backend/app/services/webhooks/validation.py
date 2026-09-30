@@ -19,6 +19,7 @@ from app.core.constants import (
     WEBHOOK_VALID_EVENTS,
     WebhookType,
 )
+from app.core.http_utils import SSL_CONTEXT
 
 IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
@@ -144,15 +145,15 @@ class _PinnedIPTransport(httpx.AsyncHTTPTransport):
         return await super().handle_async_request(request)
 
 
-async def build_pinned_transport(url: str, **transport_kwargs: Any) -> httpx.AsyncHTTPTransport:
+async def build_pinned_transport(url: str) -> httpx.AsyncHTTPTransport:
     """Return an httpx transport pinned to ``url``'s vetted IP (defeats DNS rebinding); raises if the host resolves to a blocked address; plain transport for loopback/unpinnable targets."""
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     safe_ip = await _resolve_and_vet(url)
     if safe_ip is None:
         # Reached only for empty/loopback hosts (pin-exempt).
-        return httpx.AsyncHTTPTransport(**transport_kwargs)
-    return _PinnedIPTransport(host, safe_ip, **transport_kwargs)
+        return httpx.AsyncHTTPTransport(verify=SSL_CONTEXT)
+    return _PinnedIPTransport(host, safe_ip, verify=SSL_CONTEXT)
 
 
 def validate_webhook_events(events: list[str], allow_empty: bool = False) -> list[str]:

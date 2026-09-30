@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from app.core.constants import WEBHOOK_VALID_EVENTS
+from app.core.http_utils import InstrumentedAsyncClient
 from app.services.webhooks.validation import (
     _PinnedIPTransport,
     assert_safe_webhook_target,
@@ -266,6 +267,16 @@ class TestBuildPinnedTransport:
         transport = await build_pinned_transport("http://localhost:8080/hook")
         assert type(transport) is httpx.AsyncHTTPTransport
         assert not isinstance(transport, _PinnedIPTransport)
+
+    @pytest.mark.asyncio
+    async def test_pinned_and_plain_transports_reuse_the_http_clients_ssl_context(self):
+        pinned = await build_pinned_transport("https://93.184.216.34/hook")
+        plain = await build_pinned_transport("http://localhost:8080/hook")
+
+        async with InstrumentedAsyncClient("SslShared") as client:
+            shared = client._client._transport._pool._ssl_context
+        assert pinned._pool._ssl_context is shared
+        assert plain._pool._ssl_context is shared
 
     @pytest.mark.asyncio
     async def test_unpinnable_resolution_does_not_fall_back_to_plain_transport(self):
