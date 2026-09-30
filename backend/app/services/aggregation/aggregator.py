@@ -90,6 +90,37 @@ def _adopt_smallest_spelling(existing: Finding, finding: Finding, id_prefix: str
     existing.id = f"{id_prefix}{existing.component}:{existing.version}"
 
 
+def _record_license(enrichment: DependencyEnrichment, entry: dict[str, Any]) -> None:
+    """Record a license once per (spdx_id, source): every SBOM of a scan feeds the same enrichment."""
+    if not any(e["spdx_id"] == entry["spdx_id"] and e["source"] == entry["source"] for e in enrichment.licenses):
+        enrichment.licenses.append(entry)
+
+
+def _deps_dev_block(metadata: dict[str, Any]) -> dict[str, Any]:
+    """The persisted deps_dev block, copied key by key so cached metadata cannot add stray fields."""
+    project = metadata.get("project") or {}
+    dependents = metadata.get("dependents") or {}
+    scorecard = metadata.get("scorecard") or {}
+    block: dict[str, Any] = {"project_url": project["url"]} if project.get("url") else {}
+    block |= {key: project[key] for key in ("stars", "forks", "open_issues") if project.get(key) is not None}
+    if dependents.get("total") is not None:
+        block["dependents"] = {key: dependents.get(key) for key in ("total", "direct", "indirect")}
+    if scorecard.get("overall_score") is not None:
+        block["scorecard"] = {key: scorecard.get(key) for key in ("overall_score", "date", "checks_count")}
+    # homepage and repository persist as the flat enrichment fields.
+    links = {key: url for key, url in (metadata.get("links") or {}).items() if key not in ("homepage", "repository")}
+    if links:
+        block["links"] = links
+    if metadata.get("published_at"):
+        block["published_at"] = metadata["published_at"]
+    if metadata.get("is_deprecated"):
+        block["is_deprecated"] = True
+    if metadata.get("known_advisories"):
+        block["known_advisories"] = metadata["known_advisories"]
+    block |= {flag: True for flag in ("has_attestations", "has_slsa_provenance") if metadata.get(flag)}
+    return block
+
+
 class ResultAggregator:
     def __init__(self) -> None:
         self.findings: dict[str, Finding] = {}
@@ -130,95 +161,35 @@ class ResultAggregator:
         return None
 
     @staticmethod
-    def _apply_deps_dev_project(enrichment: DependencyEnrichment, project: dict[str, Any]) -> None:
-        """Apply deps.dev project block to enrichment."""
-        if not project:
-            return
-        enrichment.project_url = project.get("url")
-        enrichment.stars = project.get("stars")
-        enrichment.forks = project.get("forks")
-        enrichment.open_issues = project.get("open_issues")
-        if project.get("description"):
-            enrichment.description = project.get("description")
-        if project.get("url"):
-            enrichment.repository_url = project.get("url")
-        project_license = ResultAggregator._sanitize_deps_dev_license(project.get("license"))
-        if project_license and not enrichment.primary_license:
-            enrichment.primary_license = project_license
-            enrichment.licenses.append({"spdx_id": project_license, "source": "deps_dev_project"})
-
-    @staticmethod
-    def _apply_deps_dev_links(enrichment: DependencyEnrichment, links: dict[str, Any]) -> None:
-        """Apply deps.dev links block to enrichment."""
-        if not links:
-            return
-        if links.get("homepage") and not enrichment.homepage:
-            enrichment.homepage = links.get("homepage")
-        if links.get("repository") and not enrichment.repository_url:
-            enrichment.repository_url = links.get("repository")
-        if links.get("documentation"):
-            enrichment.documentation_url = links.get("documentation")
-        if links.get("issues"):
-            enrichment.issues_url = links.get("issues")
-        if links.get("changelog"):
-            enrichment.changelog_url = links.get("changelog")
-        known_keys = {"homepage", "repository", "documentation", "issues", "changelog"}
-        for key, url in links.items():
-            if key not in known_keys:
-                enrichment.additional_links[key] = url
-
-    @staticmethod
-    def _apply_deps_dev_flags(enrichment: DependencyEnrichment, metadata: dict[str, Any]) -> None:
-        """Apply deps.dev top-level flag fields to enrichment."""
-        if metadata.get("published_at"):
-            enrichment.published_at = metadata.get("published_at")
-        if metadata.get("is_deprecated"):
-            enrichment.is_deprecated = True
-        if metadata.get("known_advisories"):
-            enrichment.known_advisories = metadata.get("known_advisories", [])
-        if metadata.get("has_attestations"):
-            enrichment.has_attestations = True
-        if metadata.get("has_slsa_provenance"):
-            enrichment.has_slsa_provenance = True
-
-    @staticmethod
-    def _apply_deps_dev_licenses(enrichment: DependencyEnrichment, licenses: list[Any]) -> None:
-        """Apply deps.dev license list to enrichment."""
-        for lic in licenses:
-            spdx_id = ResultAggregator._sanitize_deps_dev_license(lic)
-            if spdx_id:
-                enrichment.licenses.append({"spdx_id": spdx_id, "source": "deps_dev"})
-                if not enrichment.primary_license:
-                    enrichment.primary_license = spdx_id
+    def _record_deps_dev_license(enrichment: DependencyEnrichment, lic: Any, source: str) -> None:
+        spdx_id = ResultAggregator._sanitize_deps_dev_license(lic)
+        if spdx_id:
+            _record_license(enrichment, {"spdx_id": spdx_id, "source": source})
+            enrichment.primary_license = enrichment.primary_license or spdx_id
 
     def enrich_from_deps_dev(self, name: str, version: str, metadata: dict[str, Any]) -> None:
-        """Enrich dependency with data from deps.dev."""
+        """Enrich dependency with data from deps.dev; the version's own license beats the repository's."""
         enrichment = self._get_or_create_enrichment(name, version, metadata.get("purl"))
         if "deps_dev" not in enrichment.sources:
             enrichment.sources.append("deps_dev")
 
-        self._apply_deps_dev_project(enrichment, metadata.get("project", {}))
-
-        dependents = metadata.get("dependents", {})
-        if dependents:
-            enrichment.dependents_total = dependents.get("total")
-            enrichment.dependents_direct = dependents.get("direct")
-            enrichment.dependents_indirect = dependents.get("indirect")
-
-        scorecard = metadata.get("scorecard", {})
-        if scorecard:
-            enrichment.scorecard_score = scorecard.get("overall_score")
-            enrichment.scorecard_date = scorecard.get("date")
-            enrichment.scorecard_checks_count = scorecard.get("checks_count")
-
-        self._apply_deps_dev_links(enrichment, metadata.get("links", {}))
-        self._apply_deps_dev_flags(enrichment, metadata)
-        self._apply_deps_dev_licenses(enrichment, metadata.get("licenses", []))
+        project = metadata.get("project") or {}
+        links = metadata.get("links") or {}
+        for lic in metadata.get("licenses") or []:
+            self._record_deps_dev_license(enrichment, lic, "deps_dev")
+        self._record_deps_dev_license(enrichment, project.get("license"), "deps_dev_project")
 
         # The version-level links homepage is more specific than the project one.
-        project_homepage = (metadata.get("project") or {}).get("homepage")
-        if project_homepage and not enrichment.homepage:
-            enrichment.homepage = project_homepage
+        enrichment.homepage = enrichment.homepage or links.get("homepage") or project.get("homepage")
+        enrichment.repository_url = project.get("url") or enrichment.repository_url or links.get("repository")
+        if project.get("description"):
+            enrichment.description = project["description"]
+
+        block = _deps_dev_block(metadata)
+        new_links = block.pop("links", {})
+        enrichment.deps_dev.update(block)
+        if new_links:
+            enrichment.deps_dev.setdefault("links", {}).update(new_links)
 
     def record_scorecard(self, component_key: str, data: dict[str, Any]) -> None:
         """Cache OpenSSF Scorecard data (keyed by ``name@version``) applied to findings during finalization."""
@@ -250,19 +221,15 @@ class ResultAggregator:
         if license_info.get("spdx_expression"):
             enrichment.license_expression = license_info["spdx_expression"]
 
-        already_recorded = any(
-            entry.get("spdx_id") == spdx_id and entry.get("source") == "license_compliance"
-            for entry in enrichment.licenses
+        _record_license(
+            enrichment,
+            {
+                "spdx_id": spdx_id,
+                "source": "license_compliance",
+                "category": category,
+                "explanation": license_info.get("explanation"),
+            },
         )
-        if not already_recorded:
-            enrichment.licenses.append(
-                {
-                    "spdx_id": spdx_id,
-                    "source": "license_compliance",
-                    "category": category,
-                    "explanation": license_info.get("explanation"),
-                }
-            )
 
         for risk in license_info.get("risks") or []:
             if risk not in enrichment.license_risks:

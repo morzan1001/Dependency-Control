@@ -88,29 +88,8 @@ class DependencyEnrichment(BaseModel):
 
     homepage: str | None = None
     repository_url: str | None = None
-    documentation_url: str | None = None
-    issues_url: str | None = None
-    changelog_url: str | None = None
-    additional_links: dict[str, str] = Field(default_factory=dict)
-
-    project_url: str | None = None
-    stars: int | None = None
-    forks: int | None = None
-    open_issues: int | None = None
-    dependents_total: int | None = None
-    dependents_direct: int | None = None
-    dependents_indirect: int | None = None
-
-    scorecard_score: float | None = None
-    scorecard_date: str | None = None
-    scorecard_checks_count: int | None = None
-
-    published_at: str | None = None
-    is_deprecated: bool = False
-
-    known_advisories: list[str] = Field(default_factory=list)
-    has_attestations: bool = False
-    has_slsa_provenance: bool = False
+    # Persisted as-is; aggregator._deps_dev_block picks its keys.
+    deps_dev: dict[str, Any] = Field(default_factory=dict)
 
     description: str | None = None
 
@@ -125,9 +104,8 @@ class DependencyEnrichment(BaseModel):
         if self.repository_url:
             result["repository_url"] = self.repository_url
 
-        deps_dev = self._deps_dev_fields()
-        if deps_dev:
-            result["deps_dev"] = deps_dev
+        if self.deps_dev:
+            result["deps_dev"] = self.deps_dev
 
         if self.description:
             result["description"] = self.description
@@ -152,54 +130,3 @@ class DependencyEnrichment(BaseModel):
         if self.license_obligations:
             fields["license_obligations"] = self.license_obligations
         return fields
-
-    def _deps_dev_fields(self) -> dict[str, Any]:
-        deps_dev: dict[str, Any] = {}
-        if self.project_url:
-            deps_dev["project_url"] = self.project_url
-        if self.stars is not None:
-            deps_dev["stars"] = self.stars
-        if self.forks is not None:
-            deps_dev["forks"] = self.forks
-        if self.open_issues is not None:
-            deps_dev["open_issues"] = self.open_issues
-        if self.dependents_total is not None:
-            deps_dev["dependents"] = {
-                "total": self.dependents_total,
-                "direct": self.dependents_direct,
-                "indirect": self.dependents_indirect,
-            }
-
-        if self.scorecard_score is not None:
-            deps_dev["scorecard"] = {
-                "overall_score": self.scorecard_score,
-                "date": self.scorecard_date,
-                "checks_count": self.scorecard_checks_count,
-            }
-
-        links = self._deps_dev_links()
-        if links:
-            deps_dev["links"] = links
-
-        if self.published_at:
-            deps_dev["published_at"] = self.published_at
-        if self.is_deprecated:
-            deps_dev["is_deprecated"] = True
-        if self.known_advisories:
-            deps_dev["known_advisories"] = self.known_advisories
-        if self.has_attestations:
-            deps_dev["has_attestations"] = True
-        if self.has_slsa_provenance:
-            deps_dev["has_slsa_provenance"] = True
-        return deps_dev
-
-    def _deps_dev_links(self) -> dict[str, str]:
-        links: dict[str, str] = {}
-        if self.documentation_url:
-            links["documentation"] = self.documentation_url
-        if self.issues_url:
-            links["issues"] = self.issues_url
-        if self.changelog_url:
-            links["changelog"] = self.changelog_url
-        links.update(self.additional_links)
-        return links
