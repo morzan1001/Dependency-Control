@@ -11,6 +11,7 @@ from app.models.project import Project, Scan
 from app.repositories.findings import FindingRepository
 from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
+from app.services.crypto_policy.seeder import seed_crypto_policies
 from tests.helpers.analyzers import serve_analyzer
 
 _PROJECT_ID = "test-project-id"
@@ -78,13 +79,14 @@ def _gridfs_patched(monkeypatch):
     return fs
 
 
-async def _seed_scan(db, sbom_refs: list[dict]) -> str:
+async def _seed_scan(db, sbom_refs: list[dict], scan_type: str | None = None) -> str:
     scan = Scan(
         project_id=_PROJECT_ID,
         branch="main",
         sbom_refs=sbom_refs,
         status="processing",
         worker_id=_WORKER,
+        scan_type=scan_type,
     )
     await db.scans.insert_one(scan.model_dump(by_alias=True))
     return scan.id
@@ -112,13 +114,6 @@ class _CliTimeoutAnalyzer:
 
     async def analyze(self, sbom, settings=None, parsed_components=None):
         return {"error": "grype analysis failed", "details": "grype timed out after 300 seconds"}
-
-
-class _EmptyMessageAnalyzer:
-    """A failure path returning ``{"error": str(e), "findings": []}``; asyncio.TimeoutError() has no message."""
-
-    async def analyze(self, sbom, settings=None, parsed_components=None):
-        return {"error": str(TimeoutError()), "findings": []}
 
 
 class _GrypeVulnAnalyzer:
@@ -298,18 +293,26 @@ async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, 
 
 
 @pytest.mark.asyncio
-async def test_an_error_result_with_an_empty_message_still_counts_as_failed(db, _gridfs_patched, monkeypatch):
-    serve_analyzer(monkeypatch, "osv", _EmptyMessageAnalyzer())
-    await _seed_project(db)
-    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+async def test_a_crypto_evaluator_failing_with_an_empty_message_still_counts_as_failed(
+    db, _gridfs_patched, monkeypatch
+):
+    real_evaluators = engine.crypto_evaluators
 
-    assert (
-        await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["osv"], db, worker_id=_WORKER)
-        == SCAN_STATUS_COMPLETED_WITH_ERRORS
-    )
+    def _weak_key_times_out(catalog):
+        def _raise(_assets, _policy):
+            raise TimeoutError()  # str() of a bare TimeoutError is ""
+
+        return {**real_evaluators(catalog), "crypto_weak_key": _raise}
+
+    monkeypatch.setattr(engine, "crypto_evaluators", _weak_key_times_out)
+    await seed_crypto_policies(db)
+    await _seed_project(db)
+    scan_id = await _seed_scan(db, sbom_refs=[], scan_type="cbom")
+
+    assert await run_analysis(scan_id, [], [], db, worker_id=_WORKER) == SCAN_STATUS_COMPLETED_WITH_ERRORS
 
     scan = await db.scans.find_one({"_id": scan_id})
-    assert scan["failed_analyzers"] == ["osv"]
+    assert scan["failed_analyzers"] == ["crypto_weak_key"]
 
 
 @pytest.mark.asyncio

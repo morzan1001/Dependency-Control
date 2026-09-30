@@ -1566,7 +1566,7 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
 - Findings-delta severity keys are uppercase, as stored. Scan delta answers 404 for an unknown project and 404 "No scan found for this project" for a scan of another project. An empty `?scan_id=` on the dependency tree and on recommendations answers the same 404 instead of falling back to head.
 - Analytics search reports `page: 1` for an empty result. Vulnerability search filters CVE rows, not documents, and each CVE row shows only its own KEV, EPSS and fix.
 - The inventory licence tile counts `unknown`, and a component without an ecosystem counts as `unknown`. The three scorecard "severity below" settings are gone.
-- The inputs fingerprint of every crypto compliance report changes once, for unchanged inputs too.
+- The inputs fingerprint of every crypto compliance report except the PQC migration plan changes once, for unchanged inputs too.
 - Chat and MCP finding tools answer per advisory. `get_vulnerability_details` returns `advisories`, and `get_cve_details` returns `in_kev` and `scanners`.
 
 ### Webhooks, notifications and chat
@@ -1603,7 +1603,7 @@ db.findings.countDocuments({finding_id: /^SAST-AGG-/})
   - more than 200 rules, or a list over 50 entries
 
   A disabled rule is checked only against the list bound, so a draft saves, and a rule added in the editor starts disabled.
-- `analysis_results` rows of the built-in analyzers carry `source` `SBOM #n` and are replaced on every analysis. A rescan copies its original's scanner rows server-side under `_id` `<rescan id>:<original row id>`, and an analysis aggregates every scanner row of its scan, not only the first 10 000.
+- `analysis_results` rows of the built-in analyzers are replaced on every analysis. Rows of the per-SBOM analyzers carry `source` `SBOM #n`; the scan-wide rows of the crypto analyzers, `epss_kev` and `reachability` carry none. A rescan copies its original's scanner rows server-side under `_id` `<rescan id>:<original row id>`, and an analysis aggregates every scanner row of its scan, not only the first 10 000.
 - Ad-hoc `analyzers.skipped_inputs` keys read `SBOM #N` instead of `sbom#N`.
 
 ### Monitoring
