@@ -945,8 +945,8 @@ REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
 # Upper bound on the entries one callgraph upload carries, counted before parsing: imports,
 # calls, the symbols each import names, madge dependencies and the analyzed-modules list.
-# At this cap a madge graph of 100-character paths, each dependency a distinct package, stays under 16 MiB.
-CALLGRAPH_MAX_ENTRIES = 65_000
+# It bounds parse cost only; whether the parsed graph fits one document is checked on write.
+CALLGRAPH_MAX_ENTRIES = 200_000
 
 GITLAB_ACCESS_GUEST = 10
 GITLAB_ACCESS_REPORTER = 20
