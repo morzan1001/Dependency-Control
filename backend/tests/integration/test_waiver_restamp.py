@@ -4,11 +4,11 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.core.init_db import create_indexes
 from app.core.metrics import analysis_waivers_applied_total
 from app.models.finding import Finding, FindingType, Severity
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
-from app.models.stats import Stats
 from app.repositories.findings import FindingRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.waivers import WaiverRepository
@@ -18,6 +18,7 @@ from app.services.analysis.engine import (
     _persist_findings_and_waivers,
     _prepare_finding_records,
 )
+from app.services.analysis.stats import calculate_comprehensive_stats
 from app.services.stats import recalculate_project_stats
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -26,6 +27,7 @@ pytestmark = pytest.mark.asyncio
 _PROJECT = "p-restamp"
 _HEAD = "scan-head"
 _FEATURE = "scan-feature"
+_RESCAN = "scan-head-rescan"
 _CVE_CRITICAL = "CVE-2024-0001"
 _CVE_LOW = "CVE-2024-0002"
 _FIELD_REASON = "accepted component"
@@ -147,14 +149,15 @@ async def _persist(db, scan_id: str, *findings: Finding) -> list[dict]:
 async def _finalize(db, scan_id: str) -> None:
     scan_repo = ScanRepository(db)
     await db.scans.update_one({"_id": scan_id}, {"$set": {"status": "processing", "worker_id": _WORKER}})
+    stats = (await calculate_comprehensive_stats(db, scan_id)).stats
     await _finalize_scan_and_project(
         scan_id,
         await scan_repo.get_by_id(scan_id),
         _PROJECT,
         1,
         0,
-        Stats(),
-        {"scan_id": scan_id},
+        stats,
+        {"scan_id": scan_id, "status": "completed", "findings_count": 1, "stats": stats.model_dump()},
         scan_repo,
         worker_id=_WORKER,
         external_load_start=datetime.now(timezone.utc),
@@ -341,6 +344,36 @@ async def test_heads_analysis_records_each_waivers_outcome_and_leaves_the_recalc
     stored = await db.waivers.find_one({})
     assert (stored["last_eval_scan_id"], stored["last_match_count"]) == (_HEAD, 1)
     assert restamped == []
+
+
+@pytest.mark.parametrize("_database", _DATABASES)
+async def test_a_waiver_reaches_every_run_that_reports_the_restamped_scan(db, _database):
+    """The rescan's run sits on the rescan and on its root; the root's own restamp leaves that run alone."""
+    await create_indexes(db)
+    await _seed_project(db)
+    await db.scans.insert_one(
+        {
+            "_id": _RESCAN,
+            "project_id": _PROJECT,
+            "branch": "main",
+            "status": "completed",
+            "is_rescan": True,
+            "original_scan_id": _HEAD,
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+    await _persist(db, _HEAD, _secret("aaaa1111"))
+    await _persist(db, _RESCAN, _vulnerable_component())
+    await _finalize(db, _RESCAN)
+    await WaiverRepository(db).create(_field_waiver())
+
+    await recalculate_project_stats(_PROJECT, db, restamp=[_HEAD, _RESCAN])
+
+    rescan = await db.scans.find_one({"_id": _RESCAN})
+    root = await db.scans.find_one({"_id": _HEAD})
+    assert rescan["stats"]["critical"] == 0
+    assert rescan["latest_run"]["stats"] == rescan["stats"]
+    assert root["latest_run"]["stats"] == rescan["stats"] != root["stats"]
 
 
 async def test_another_branchs_analysis_leaves_each_waivers_outcome_to_head():

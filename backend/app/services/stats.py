@@ -48,15 +48,8 @@ async def _restamp_scan(
     """Restamp one scan and rewrite its stats; ``waiver_repo`` also records each waiver's outcome."""
     await restamp_waivers(finding_repo, waiver_repo, scan_id, waivers)
     tally = await calculate_comprehensive_stats(db, scan_id)
-    await ScanRepository(db).update_raw(
-        scan_id,
-        {
-            "$set": {
-                "stats": tally.stats.model_dump(),
-                "ignored_count": tally.ignored_count,
-                "waiver_fingerprint": fingerprint,
-            }
-        },
+    await ScanRepository(db).set_stats(
+        scan_id, tally.stats, {"ignored_count": tally.ignored_count, "waiver_fingerprint": fingerprint}
     )
     return tally.stats
 
@@ -176,7 +169,7 @@ async def refresh_scan_stats(
     try:
         scan_repo = ScanRepository(db)
         tally = await calculate_comprehensive_stats(db, scan_id, component_languages)
-        await scan_repo.update_raw(scan_id, {"$set": {"stats": tally.stats.model_dump()}})
+        await scan_repo.set_stats(scan_id, tally.stats)
         await scan_repo.sync_project_head(project_id)
     finally:
         await lock_repo.release_lock(lock_name, holder_id)

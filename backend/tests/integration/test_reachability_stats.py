@@ -109,6 +109,7 @@ async def test_deferred_run_recomputes_and_persists_scan_stats(db):
     await _seed_dependencies(db)
     for finding in (_finding("CVE-1", "requests"), _finding("CVE-2", "urllib3")):
         await db.findings.insert_one(finding)
+    frozen = {"critical": 0, "high": 2, "reachability": {"analyzed_count": 0, "reachable_count": 0}}
     await db.scans.insert_one(
         {
             "_id": _SCAN_ID,
@@ -117,7 +118,8 @@ async def test_deferred_run_recomputes_and_persists_scan_stats(db):
             "status": "completed",
             "created_at": datetime.now(timezone.utc),
             "reachability_pending": True,
-            "stats": {"critical": 0, "high": 2, "reachability": {"analyzed_count": 0, "reachable_count": 0}},
+            "stats": frozen,
+            "latest_run": {"scan_id": _SCAN_ID, "status": "completed", "findings_count": 2, "stats": frozen},
         }
     )
     await db.projects.insert_one({"_id": _PROJECT_ID, "name": "p", "latest_scan_id": _SCAN_ID, "stats": {"high": 2}})
@@ -127,6 +129,7 @@ async def test_deferred_run_recomputes_and_persists_scan_stats(db):
     scan = await db.scans.find_one({"_id": _SCAN_ID})
     assert scan["stats"]["reachability"]["analyzed_count"] == 2
     assert scan["stats"]["reachability"]["reachable_count"] == 1
+    assert scan["latest_run"]["stats"] == scan["stats"]
 
     project = await db.projects.find_one({"_id": _PROJECT_ID})
     assert project["stats"]["reachability"]["analyzed_count"] == 2
