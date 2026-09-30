@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from typing import Any
 
 from app.core import abatched
@@ -14,8 +13,6 @@ from app.services.notifications.mattermost_provider import MattermostProvider
 from app.services.notifications.slack_provider import SlackProvider
 
 logger = logging.getLogger(__name__)
-
-_LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "static", "logo.png")
 
 # A permission fan-out has no response to disclose a cut in, so the ceiling bounds how many
 # recipients are held at once rather than how many are reached.
@@ -51,7 +48,6 @@ class NotificationService:
                     message,
                     system_settings=system_settings,
                     html_message=html_message,
-                    logo_path=_LOGO_PATH,
                 )
             )
 

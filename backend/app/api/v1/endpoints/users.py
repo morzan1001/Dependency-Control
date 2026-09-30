@@ -1,6 +1,5 @@
 import base64
 import io
-import logging
 import re
 from datetime import datetime, timezone
 from typing import Annotated, Any
@@ -16,10 +15,15 @@ from app.api.v1.helpers import (
     check_admin_or_self,
     ensure_can_manage_target,
     fetch_updated_user,
-    get_logo_path,
     get_user_or_404,
     is_2fa_setup_mode,
+)
+from app.api.v1.helpers.auth import (
+    require_email_configured,
+    send_2fa_disabled_email,
+    send_2fa_enabled_email,
     send_email_change_email,
+    send_password_changed_email,
     send_password_reset_email,
 )
 from app.api.v1.helpers.responses import (
@@ -51,11 +55,8 @@ from app.schemas.user import (
     UserUpdate,
     UserUpdateMe,
 )
-from app.services.notifications import templates
-from app.services.notifications.service import notification_service
 
 router = CustomAPIRouter()
-logger = logging.getLogger(__name__)
 
 
 def _ensure_can_set_permissions(caller: User, existing: set[str], requested: set[str]) -> None:
@@ -159,8 +160,7 @@ async def request_email_change(
         raise HTTPException(status_code=400, detail="Your email is managed by your identity provider")
 
     system_settings = await deps.get_system_settings(db)
-    if not system_settings.email_configured:
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Email server not configured")
+    require_email_configured(system_settings)
 
     if email_in.email == current_user.email.lower():
         raise HTTPException(status_code=400, detail="This is already your email address")
@@ -280,7 +280,7 @@ async def reset_user_password(
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     """Admin only: email the user a password reset link; the link is never returned to the caller."""
     user = await get_user_or_404(user_id, db)
     ensure_can_manage_target(current_user, user)
@@ -292,11 +292,10 @@ async def reset_user_password(
         )
 
     system_settings = await deps.get_system_settings(db)
-    if not system_settings.email_configured:
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="Email server not configured")
+    require_email_configured(system_settings)
 
-    await send_password_reset_email(background_tasks, user["email"], user["username"], system_settings=system_settings)
-    return {"message": "Password reset email sent"}
+    email_queued = send_password_reset_email(background_tasks, user["email"], user["username"], system_settings)
+    return {"message": "Password reset email queued", "email_queued": email_queued}
 
 
 @router.post("/me/password", response_model=UserResponse, responses=RESP_AUTH_400)
@@ -321,25 +320,9 @@ async def update_password_me(
     user_repo = UserRepository(db)
     await user_repo.update(current_user.id, {"hashed_password": hashed_password})
 
-    if settings.SMTP_HOST:
-        system_settings = await deps.get_system_settings(db)
-        background_tasks.add_task(
-            notification_service.email_provider.send,
-            destination=current_user.email,
-            subject="Security Alert: Password Changed",
-            message=(
-                f"Hello {current_user.username},\n\nYour password for {settings.PROJECT_NAME} "
-                "was successfully changed.\n\nIf you did not initiate this change, "
-                "please contact your administrator immediately."
-            ),
-            html_message=templates.get_password_changed_template(
-                username=current_user.username,
-                login_link=f"{settings.FRONTEND_BASE_URL}/login",
-                project_name=settings.PROJECT_NAME,
-            ),
-            logo_path=get_logo_path(),
-            system_settings=system_settings,
-        )
+    send_password_changed_email(
+        background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db)
+    )
 
     return await fetch_updated_user(current_user.id, db)
 
@@ -409,23 +392,9 @@ async def enable_2fa(
     user_repo = UserRepository(db)
     await user_repo.update(current_user.id, {"totp_enabled": True})
 
-    if settings.SMTP_HOST:
-        system_settings = await deps.get_system_settings(db)
-        background_tasks.add_task(
-            notification_service.email_provider.send,
-            destination=current_user.email,
-            subject="Security Alert: 2FA Enabled",
-            message=(
-                f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) "
-                "has been enabled for your account.\n\nIf you did not initiate this change, "
-                "please contact your administrator immediately."
-            ),
-            html_message=templates.get_2fa_enabled_template(
-                username=current_user.username, project_name=settings.PROJECT_NAME
-            ),
-            logo_path=get_logo_path(),
-            system_settings=system_settings,
-        )
+    send_2fa_enabled_email(
+        background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db)
+    )
 
     return await fetch_updated_user(current_user.id, db)
 
@@ -449,23 +418,9 @@ async def disable_2fa(
     user_repo = UserRepository(db)
     await user_repo.update(current_user.id, {"totp_enabled": False, "totp_secret": None})
 
-    if settings.SMTP_HOST:
-        system_settings = await deps.get_system_settings(db)
-        background_tasks.add_task(
-            notification_service.email_provider.send,
-            destination=current_user.email,
-            subject="Security Alert: 2FA Disabled",
-            message=(
-                f"Hello {current_user.username},\n\nTwo-Factor Authentication (2FA) "
-                "has been disabled for your account.\n\nIf you did not initiate this change, "
-                "please contact your administrator immediately."
-            ),
-            html_message=templates.get_2fa_disabled_template(
-                username=current_user.username, project_name=settings.PROJECT_NAME
-            ),
-            logo_path=get_logo_path(),
-            system_settings=system_settings,
-        )
+    send_2fa_disabled_email(
+        background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db), by_admin=False
+    )
 
     return await fetch_updated_user(current_user.id, db)
 
@@ -487,26 +442,9 @@ async def admin_disable_2fa(
     user_repo = UserRepository(db)
     await user_repo.update(user_id, {"totp_enabled": False, "totp_secret": None})
 
-    if settings.SMTP_HOST:
-        try:
-            system_settings = await deps.get_system_settings(db)
-            background_tasks.add_task(
-                notification_service.email_provider.send,
-                destination=user["email"],
-                subject="Security Alert: 2FA Disabled by Admin",
-                message=(
-                    f"Hello {user['username']},\n\nTwo-Factor Authentication (2FA) "
-                    "has been disabled for your account by an administrator.\n\n"
-                    "If you did not request this, please contact your administrator immediately."
-                ),
-                html_message=templates.get_2fa_disabled_template(
-                    username=user["username"], project_name=settings.PROJECT_NAME
-                ),
-                logo_path=get_logo_path(),
-                system_settings=system_settings,
-            )
-        except Exception as e:
-            logger.exception("Failed to send 2FA disable email: %s", e)
+    send_2fa_disabled_email(
+        background_tasks, user["email"], user["username"], await deps.get_system_settings(db), by_admin=True
+    )
 
     return await fetch_updated_user(user_id, db)
 

@@ -23,7 +23,7 @@ from jose import jwt
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.auth import send_password_reset_email, send_verification_email
+from app.api.v1.helpers.auth import require_email_configured, send_password_reset_email, send_verification_email
 from app.api.v1.helpers.responses import (
     RESP_400,
     RESP_400_401_500,
@@ -70,7 +70,6 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
-_MSG_EMAIL_NOT_CONFIGURED = "Email server not configured"
 _MSG_USER_INACTIVE = "User account is inactive"
 
 
@@ -262,7 +261,12 @@ async def refresh_token(
     }
 
 
-@router.post("/signup", response_model=UserResponse, summary="Register a new user", responses=RESP_400_403)
+@router.post(
+    "/signup",
+    response_model=UserResponse,
+    summary="Register a new user",
+    responses={**RESP_400_403, 503: {"description": "Signup needs a verification email nobody can send"}},
+)
 async def create_user(
     background_tasks: BackgroundTasks,
     user_in: UserSignup,
@@ -276,6 +280,12 @@ async def create_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Signup is currently disabled.",
+        )
+
+    if system_config.enforce_email_verification and not system_config.email_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Registration is temporarily unavailable.",
         )
 
     new_user = User(
@@ -292,7 +302,7 @@ async def create_user(
     )
     await UserRepository(db).create(new_user)
 
-    await send_verification_email(background_tasks, new_user.email, system_settings=system_config)
+    send_verification_email(background_tasks, new_user.email, system_config)
 
     if auth_signups_total:
         auth_signups_total.labels(status="success").inc()
@@ -352,13 +362,8 @@ async def request_verification_email(
             detail="Email already verified",
         )
 
-    if not system_config.email_configured:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail=_MSG_EMAIL_NOT_CONFIGURED,
-        )
-
-    await send_verification_email(background_tasks, current_user.email, system_settings=system_config)
+    require_email_configured(system_config)
+    send_verification_email(background_tasks, current_user.email, system_config)
 
     return VerificationEmailResponse(message="Verification email sent")
 
@@ -438,18 +443,14 @@ async def resend_verification_email_public(
         message="If an account with this email exists, a verification email has been sent."
     )
 
-    if not system_config.email_configured:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail=_MSG_EMAIL_NOT_CONFIGURED,
-        )
+    require_email_configured(system_config)
 
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
 
     # Return a generic response regardless to prevent email enumeration.
     if user and user.get("is_active", True) and not user.get("is_verified"):
-        await send_verification_email(background_tasks, user["email"], system_settings=system_config)
+        send_verification_email(background_tasks, user["email"], system_config)
 
     return generic_response
 
@@ -762,22 +763,13 @@ async def forgot_password(
     )
 
     system_config = await deps.get_system_settings(db)
-    if not system_config.email_configured:
-        raise HTTPException(
-            status_code=status.HTTP_501_NOT_IMPLEMENTED,
-            detail=_MSG_EMAIL_NOT_CONFIGURED,
-        )
+    require_email_configured(system_config)
 
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
 
     if user and user.get("is_active", True) and is_local_account(user.get("auth_provider")):
-        await send_password_reset_email(
-            background_tasks,
-            user["email"],
-            user.get("username", "User"),
-            system_settings=system_config,
-        )
+        send_password_reset_email(background_tasks, user["email"], user.get("username", "User"), system_config)
 
     # Pad to a constant ~200ms so response time never reveals whether the email exists.
     elapsed = time.monotonic() - start_time

@@ -1,4 +1,4 @@
-"""Auth endpoint security: refresh-token must not bypass the enforced-2FA setup gate, and email endpoints must gate on the DB system settings (system_config.smtp_host), not env SMTP_HOST."""
+"""Auth endpoint security: refresh-token must not bypass the enforced-2FA setup gate, and email endpoints must gate on the stored system settings."""
 
 import asyncio
 import time
@@ -254,30 +254,28 @@ class TestForgotPasswordSmtpGate:
             )
 
     def test_db_smtp_unset_returns_501(self):
-        """Even with env SMTP set, an empty DB smtp_host must surface 501 rather than claim success."""
-        send_mock = AsyncMock()
-        with patch.object(settings, "SMTP_HOST", "smtp.env-set.example.com"):
-            with pytest.raises(HTTPException) as exc_info:
-                self._run_forgot(_make_settings(smtp_host=None), send_mock)
+        """An empty stored smtp_host must surface 501 rather than claim success."""
+        send_mock = MagicMock()
+        with pytest.raises(HTTPException) as exc_info:
+            self._run_forgot(_make_settings(smtp_host=None), send_mock)
 
         assert exc_info.value.status_code == 501
         send_mock.assert_not_called()
 
     def test_db_smtp_set_sends_email_with_system_settings(self):
         """Contract only (helper mocked): with DB smtp_host set, the endpoint forwards DB system settings to send_password_reset_email."""
-        send_mock = AsyncMock()
+        send_mock = MagicMock()
         system_config = _make_settings(smtp_host="smtp.db.example.com")
         user = {"email": "user@test.com", "username": "user", "is_active": True, "auth_provider": "local"}
 
-        with patch.object(settings, "SMTP_HOST", None):
-            result = self._run_forgot(system_config, send_mock, user=user)
+        result = self._run_forgot(system_config, send_mock, user=user)
 
         assert "password reset email has been sent" in result.message
-        send_mock.assert_awaited_once()
-        assert send_mock.call_args.kwargs["system_settings"] is system_config
+        send_mock.assert_called_once()
+        assert send_mock.call_args.args[-1] is system_config
 
     def test_db_smtp_set_actually_schedules_email_via_real_helper(self):
-        """With env SMTP_HOST unset but DB smtp_host set, the real send_password_reset_email helper must still schedule the email (gates on effective DB smtp_host)."""
+        """With the stored smtp_host set, the real send_password_reset_email helper schedules the email."""
         from app.api.v1.endpoints.auth import forgot_password
 
         request = MagicMock()
@@ -293,7 +291,6 @@ class TestForgotPasswordSmtpGate:
             patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get,
             patch(f"{MODULE}.UserRepository", return_value=mock_repo),
             patch("app.api.v1.helpers.auth.EmailProvider"),
-            patch.object(settings, "SMTP_HOST", None),
         ):
             mock_get.return_value = system_config
             asyncio.run(
@@ -341,7 +338,7 @@ def _run_forgot_password(user=None, cache=None, host="1.2.3.4", send_mock=None):
         rate_limit_patch,
         patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get,
         patch(f"{MODULE}.UserRepository", return_value=mock_repo),
-        patch(f"{MODULE}.send_password_reset_email", send_mock or AsyncMock()),
+        patch(f"{MODULE}.send_password_reset_email", send_mock or MagicMock()),
     ):
         mock_get.return_value = _make_settings(smtp_host="smtp.db.example.com")
         return asyncio.run(
@@ -397,16 +394,15 @@ class TestResendVerificationSmtpGate:
     def test_db_smtp_unset_returns_501(self):
         from app.api.v1.endpoints.auth import resend_verification_email_public
 
-        with patch.object(settings, "SMTP_HOST", "smtp.env-set.example.com"):
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(
-                    resend_verification_email_public(
-                        background_tasks=MagicMock(),
-                        email="user@test.com",
-                        db=MagicMock(),
-                        system_config=_make_settings(smtp_host=None),
-                    )
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                resend_verification_email_public(
+                    background_tasks=MagicMock(),
+                    email="user@test.com",
+                    db=MagicMock(),
+                    system_config=_make_settings(smtp_host=None),
                 )
+            )
 
         assert exc_info.value.status_code == 501
 
@@ -416,15 +412,14 @@ class TestRequestVerificationSmtpGate:
         from app.api.v1.endpoints.auth import request_verification_email
 
         regular_user.is_verified = False
-        with patch.object(settings, "SMTP_HOST", "smtp.env-set.example.com"):
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(
-                    request_verification_email(
-                        background_tasks=MagicMock(),
-                        current_user=regular_user,
-                        system_config=_make_settings(smtp_host=None),
-                    )
+        with pytest.raises(HTTPException) as exc_info:
+            asyncio.run(
+                request_verification_email(
+                    background_tasks=MagicMock(),
+                    current_user=regular_user,
+                    system_config=_make_settings(smtp_host=None),
                 )
+            )
 
         assert exc_info.value.status_code == 501
 
@@ -434,12 +429,9 @@ class TestRequestVerificationSmtpGate:
 
         regular_user.is_verified = False
         system_config = _make_settings(smtp_host="smtp.db.example.com")
-        send_mock = AsyncMock()
+        send_mock = MagicMock()
 
-        with (
-            patch.object(settings, "SMTP_HOST", None),
-            patch(f"{MODULE}.send_verification_email", send_mock),
-        ):
+        with patch(f"{MODULE}.send_verification_email", send_mock):
             result = asyncio.run(
                 request_verification_email(
                     background_tasks=MagicMock(),
@@ -449,21 +441,18 @@ class TestRequestVerificationSmtpGate:
             )
 
         assert result.message == "Verification email sent"
-        send_mock.assert_awaited_once()
-        assert send_mock.call_args.kwargs["system_settings"] is system_config
+        send_mock.assert_called_once()
+        assert send_mock.call_args.args[-1] is system_config
 
     def test_db_smtp_set_actually_schedules_verification_via_real_helper(self, regular_user):
-        """With env SMTP_HOST unset but DB smtp_host set, the real send_verification_email helper must still schedule the email (gates on effective DB smtp_host)."""
+        """With the stored smtp_host set, the real send_verification_email helper schedules the email."""
         from app.api.v1.endpoints.auth import request_verification_email
 
         regular_user.is_verified = False
         system_config = _make_settings(smtp_host="smtp.db.example.com")
         background_tasks = MagicMock()
 
-        with (
-            patch.object(settings, "SMTP_HOST", None),
-            patch("app.api.v1.helpers.auth.EmailProvider"),
-        ):
+        with patch("app.api.v1.helpers.auth.EmailProvider"):
             result = asyncio.run(
                 request_verification_email(
                     background_tasks=background_tasks,
@@ -479,7 +468,7 @@ class TestRequestVerificationSmtpGate:
 
 class TestForgotPasswordLocalAccountsOnly:
     def test_an_sso_account_with_a_password_gets_no_reset_mail(self):
-        send_mock = AsyncMock()
+        send_mock = MagicMock()
         sso_user = {
             "email": "user@test.com",
             "username": "user",
@@ -490,4 +479,4 @@ class TestForgotPasswordLocalAccountsOnly:
 
         _run_forgot_password(user=sso_user, send_mock=send_mock)
 
-        send_mock.assert_not_awaited()
+        send_mock.assert_not_called()

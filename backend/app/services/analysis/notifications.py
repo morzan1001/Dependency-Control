@@ -165,7 +165,6 @@ async def send_scan_notifications(
             scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
             html_content = get_analysis_completed_template(
                 analysis_link=scan_link,
-                project_name=settings.PROJECT_NAME,
                 project_name_scanned=project.name,
                 total_findings=len(aggregated_findings),
                 severity_critical=severity_counts["CRITICAL"],
@@ -257,7 +256,6 @@ async def send_scan_notifications(
 
         vuln_html = get_vulnerability_found_template(
             report_link=scan_link,
-            project_name=settings.PROJECT_NAME,
             project_name_scanned=project.name,
             vulnerabilities=top_vulns,
             priority_count=len(priority_vulns),

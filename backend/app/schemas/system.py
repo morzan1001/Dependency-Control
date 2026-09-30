@@ -1,4 +1,4 @@
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, StringConstraints, computed_field
 
@@ -31,6 +31,7 @@ class SystemSettingsUpdate(SystemSettingsFields):
     # Narrowed only on the way in: the response shares these fields and must stay able to render a
     # setting that predates this constraint.
     oidc_provider_name: OidcProviderName = "GitLab"
+    smtp_encryption: Literal["starttls", "ssl", "none"] = "starttls"
     retention_mode: SettingsMode = SETTINGS_MODE_PROJECT
     global_retention_days: int = Field(DEFAULT_RETENTION_DAYS, ge=0, le=MAX_RETENTION_DAYS)
     global_retention_action: RetentionAction = RETENTION_ACTION_DELETE

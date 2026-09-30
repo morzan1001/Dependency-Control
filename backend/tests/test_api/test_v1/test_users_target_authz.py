@@ -7,7 +7,6 @@ import pytest
 from fastapi import BackgroundTasks, HTTPException
 
 from app.api.v1.endpoints import users
-from app.core.config import settings
 from app.core.permissions import Permissions
 from app.models.system import SystemSettings
 from app.models.user import User
@@ -79,7 +78,6 @@ def _call(run, target, smtp_host="smtp.test"):
         patch(f"{MODULE}.fetch_updated_user", new=AsyncMock(return_value=target)),
         patch(f"{MODULE}.UserRepository", return_value=repo),
         patch(f"{MODULE}.deps.get_system_settings", new=AsyncMock(return_value=SystemSettings(smtp_host=smtp_host))),
-        patch.object(settings, "SMTP_HOST", None),
     ):
         try:
             result = asyncio.run(run(background_tasks))

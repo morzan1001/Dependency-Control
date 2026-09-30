@@ -1,12 +1,12 @@
-import asyncio
 import logging
-import os
+from email.charset import QP, Charset
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from email.utils import formataddr
+from email.utils import formataddr, formatdate, make_msgid
 from pathlib import Path
-from typing import cast
+
+import aiosmtplib
 
 from app.core.constants import SMTP_TIMEOUT_SECONDS
 from app.core.metrics import notifications_failed_total, notifications_sent_total
@@ -15,90 +15,44 @@ from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
-try:
-    import aiosmtplib
-except ImportError as e:
-    logger.exception("aiosmtplib is required for async SMTP. Install with: poetry install")
-    raise ImportError("aiosmtplib is required") from e
+_LOGO = (Path(__file__).resolve().parents[2] / "static" / "logo.png").read_bytes()
+
+# Quoted-printable keeps every body line under the SMTP limit and leaves ASCII readable.
+_UTF8_QP = Charset("utf-8")
+_UTF8_QP.body_encoding = QP
 
 
 class EmailProvider(NotificationProvider):
     def _build_message(
         self,
-        emails_from: str,
+        settings: SystemSettings,
         destination: str,
         subject: str,
         message: str,
         html_message: str | None,
-        has_logo: bool,
     ) -> MIMEMultipart:
-        """Build the MIME message; a logo mail nests the body in a related part for the inline image."""
-        msg = MIMEMultipart("related" if has_logo else "alternative")
-
-        msg["From"] = emails_from
+        """Build the MIME message; HTML that shows the logo nests the body in a related part for the inline image."""
+        with_logo = bool(html_message and "cid:logo" in html_message)
+        msg = MIMEMultipart("related" if with_logo else "alternative")
+        sender_name = " ".join((settings.emails_from_name or "").splitlines())
+        msg["From"] = formataddr((sender_name, settings.emails_from_email))
         msg["To"] = destination
-        msg["Subject"] = subject
+        msg["Subject"] = " ".join(subject.splitlines())
+        msg["Date"] = formatdate()
+        msg["Message-ID"] = make_msgid(domain=settings.emails_from_email.rpartition("@")[2])
 
-        if has_logo:
-            msg_alternative = MIMEMultipart("alternative")
-            msg.attach(msg_alternative)
-            msg_alternative.attach(MIMEText(message, "plain"))
-            if html_message:
-                msg_alternative.attach(MIMEText(html_message, "html"))
-        else:
-            msg.attach(MIMEText(message, "plain"))
-            if html_message:
-                msg.attach(MIMEText(html_message, "html"))
-
+        body = MIMEMultipart("alternative") if with_logo else msg
+        # typeshed types _charset as str, but MIMEText documents Charset instances as accepted.
+        body.attach(MIMEText(message, "plain", _UTF8_QP))  # type: ignore[arg-type]
+        if html_message:
+            body.attach(MIMEText(html_message, "html", _UTF8_QP))  # type: ignore[arg-type]
+        if with_logo:
+            msg.attach(body)
+            logo = MIMEImage(_LOGO, "png")
+            logo.add_header("Content-ID", "<logo>")
+            logo.add_header("Content-Disposition", "inline", filename="logo.png")
+            msg.attach(logo)
         return msg
-
-    async def _attach_logo(self, msg: MIMEMultipart, logo_path: str) -> None:
-        img_data = await asyncio.to_thread(Path(logo_path).read_bytes)
-        image = MIMEImage(img_data)
-        image.add_header("Content-ID", "<logo>")
-        image.add_header("Content-Disposition", "inline", filename="logo.png")
-        msg.attach(image)
-
-    async def _send_async(
-        self,
-        smtp_host: str,
-        smtp_port: int,
-        smtp_user: str | None,
-        smtp_password: str | None,
-        encryption: str,
-        msg: MIMEMultipart,
-    ) -> None:
-        """Send email via async SMTP without blocking the event loop."""
-        timeout = SMTP_TIMEOUT_SECONDS
-
-        try:
-            if encryption == "ssl":
-                smtp = aiosmtplib.SMTP(
-                    hostname=smtp_host,
-                    port=smtp_port,
-                    use_tls=True,
-                    timeout=timeout,
-                )
-            else:
-                smtp = aiosmtplib.SMTP(
-                    hostname=smtp_host,
-                    port=smtp_port,
-                    use_tls=False,
-                    timeout=timeout,
-                )
-
-            async with smtp:
-                if encryption == "starttls":
-                    await smtp.starttls()
-
-                if smtp_user and smtp_password:
-                    await smtp.login(smtp_user, smtp_password)
-
-                await smtp.send_message(msg)
-
-        except Exception as e:
-            logger.exception("Async SMTP send failed: %s", e)
-            raise
 
     async def send(  # type: ignore[override]
         self,
@@ -106,53 +60,29 @@ class EmailProvider(NotificationProvider):
         subject: str,
         message: str,
         html_message: str | None = None,
-        logo_path: str | None = None,
         system_settings: SystemSettings | None = None,
     ) -> bool:
-        if not system_settings:
-            logger.warning("System settings not provided. Skipping email.")
-            return False
-
-        if not system_settings.email_configured:
+        if not (system_settings and system_settings.email_configured):
             logger.warning("SMTP host or sender address not configured. Skipping email.")
             return False
 
-        smtp_host = cast(str, system_settings.smtp_host)  # email_configured implies a host
-        smtp_port = system_settings.smtp_port
-        smtp_user = system_settings.smtp_user
-        smtp_password = system_settings.smtp_password
-        smtp_encryption = system_settings.smtp_encryption
-        emails_from_email = system_settings.emails_from_email
-        emails_from_name = system_settings.emails_from_name
-
-        if emails_from_name:
-            sanitized_name = emails_from_name.replace("\r", "").replace("\n", "")
-            emails_from = formataddr((sanitized_name, emails_from_email))
-        else:
-            emails_from = emails_from_email
-
         try:
-            logo_exists = await asyncio.to_thread(os.path.exists, logo_path) if logo_path else False
-            logo = logo_path if logo_exists else None
-            msg = self._build_message(emails_from, destination, subject, message, html_message, logo is not None)
-            if logo is not None:
-                await self._attach_logo(msg, logo)
-
-            await self._send_async(
-                smtp_host,
-                smtp_port,
-                smtp_user,
-                smtp_password,
-                smtp_encryption,
-                msg,
-            )
-
-            logger.info(f"Email sent to {destination}")
-            if notifications_sent_total:
-                notifications_sent_total.labels(type="email").inc()
-            return True
+            msg = self._build_message(system_settings, destination, subject, message, html_message)
+            async with aiosmtplib.SMTP(
+                hostname=system_settings.smtp_host,
+                port=system_settings.smtp_port,
+                use_tls=system_settings.smtp_encryption == "ssl",
+                start_tls=system_settings.smtp_encryption == "starttls",
+                timeout=SMTP_TIMEOUT_SECONDS,
+            ) as smtp:
+                if system_settings.smtp_user and system_settings.smtp_password:
+                    await smtp.login(system_settings.smtp_user, system_settings.smtp_password)
+                await smtp.send_message(msg)
         except Exception as e:
             logger.exception("Failed to send email to %s: %s", destination, e)
-            if notifications_failed_total:
-                notifications_failed_total.labels(type="email").inc()
+            notifications_failed_total.labels(type="email").inc()
             return False
+
+        logger.info("Email sent to %s", destination)
+        notifications_sent_total.labels(type="email").inc()
+        return True

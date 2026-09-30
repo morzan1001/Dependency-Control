@@ -68,7 +68,7 @@ async def create_system_invitation(
 
     try:
         system_config = await deps.get_system_settings(db)
-        await send_system_invitation_email(
+        send_system_invitation_email(
             background_tasks=background_tasks,
             email=email,
             invitation_link=link,

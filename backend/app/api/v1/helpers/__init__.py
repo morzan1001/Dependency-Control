@@ -14,13 +14,6 @@ from app.api.v1.helpers.analytics import (
     process_cve_enrichments,
     require_analytics_permission,
 )
-from app.api.v1.helpers.auth import (
-    get_logo_path,
-    send_email_change_email,
-    send_password_reset_email,
-    send_system_invitation_email,
-    send_verification_email,
-)
 from app.api.v1.helpers.callgraph import (
     detect_format,
     parse_generic_format,
@@ -154,8 +147,6 @@ __all__ = [
     "get_category_for_type",
     "get_category_type_filter",
     "get_latest_scan_ids",
-    # Auth helpers
-    "get_logo_path",
     "get_projects_with_scans",
     "get_sort_field",
     "get_team_with_access",
@@ -177,10 +168,6 @@ __all__ = [
     "require_analytics_permission",
     "resolve_sbom_refs",
     "resolve_team_names",
-    "send_email_change_email",
-    "send_password_reset_email",
-    "send_system_invitation_email",
-    "send_verification_email",
     "team_refs",
     "visible_teams_filter",
 ]
