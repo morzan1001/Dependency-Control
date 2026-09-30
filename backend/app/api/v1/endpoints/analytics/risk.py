@@ -19,7 +19,7 @@ from app.api.v1.helpers.analytics import (
     extract_fix_versions,
     get_projects_with_scans,
     get_user_projects,
-    historical_first_seen,
+    impact_pre_score,
     process_cve_enrichments,
     require_analytics_permission,
     select_impact_candidates,
@@ -43,7 +43,7 @@ from app.services.component_identity import (
     lookup_component,
 )
 from app.services.analytics.cache import get_analytics_cache
-from app.services.aggregation.versions import newest_first
+from app.services.aggregation.versions import newest_first, normalize_version
 from app.services.enrichment.service import vulnerability_enrichment_service
 from app.services.recommendation.common import live_cves
 
@@ -68,6 +68,9 @@ _AFFECTED_PROJECTS_SHOWN = 5
 _HOTSPOT_PROJECTS_SHOWN = 10
 _FIX_VERSIONS_SHOWN = 3
 _CVES_SHOWN = 5
+
+# first_seen_at carries a finding's earliest detection in its project past retention; older rows lack it.
+_FIRST_SEEN = {"$min": {"$ifNull": ["$first_seen_at", "$scan_created_at"]}}
 
 
 @router.get("/impact", responses=RESP_AUTH)
@@ -106,6 +109,7 @@ async def get_impact_analysis(
                 "project_id": 1,
                 "severity": 1,
                 "finding_id": 1,
+                "first_seen_at": 1,
                 "scan_created_at": 1,
                 "details": SLIM_DETAILS_EXPR,
             }
@@ -114,7 +118,7 @@ async def get_impact_analysis(
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
-                "first_seen": {"$min": "$scan_created_at"},
+                "first_seen": _FIRST_SEEN,
                 # $addToSet collapses the (usually identical) per-project advisory lists to the
                 # distinct variants; distinct-CVE counts, severity and enrichment derive from these.
                 "details_list": {"$addToSet": "$details"},
@@ -136,14 +140,12 @@ async def get_impact_analysis(
     results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
 
     # Severity/vuln counts come from the advisory lists (finding_id is only component:version).
-    for r in results:
-        r["_severity_counts"] = severity_counts_from_details(r.get("details_list", []))
+    counted = [(r, severity_counts_from_details(r["details_list"])) for r in results]
+    candidates = select_impact_candidates(
+        [(impact_pre_score(counts, r["affected_projects"]), (r, counts)) for r, counts in counted], limit
+    )
 
-    # Rank/limit happen in Python on fix_impact_score; enrich only the groups that can still reach
-    # the top `limit` by boosted score.
-    candidates = select_impact_candidates(results, limit)
-
-    all_cves = list({cve for r in candidates for cve in live_cves(r.get("details_list", []))})
+    all_cves = list({cve for r, _ in candidates for cve in live_cves(r["details_list"])})
 
     enrichments = {}
     if all_cves:
@@ -152,19 +154,15 @@ async def get_impact_analysis(
         except Exception as e:
             logger.warning(f"Failed to enrich CVEs: {e}")
 
-    first_seen_map = await historical_first_seen(finding_repo, [r["component"] for r in candidates])
-
     impact_results = []
-    for r in candidates:
-        severity_counts = r["_severity_counts"]
+    for r, severity_counts in candidates:
         total_findings = sum(severity_counts.values())
-        fix_versions = extract_fix_versions(r.get("details_list", []), r.get("version"))
+        fix_versions = extract_fix_versions(r["details_list"], r.get("version"))
         has_fix = len(fix_versions) > 0
 
-        enrichment_data = process_cve_enrichments(live_cves(r.get("details_list", [])), enrichments)
+        enrichment_data = process_cve_enrichments(live_cves(r["details_list"]), enrichments)
 
-        first_seen = first_seen_map.get((r["component"], r.get("version") or "unknown"), r.get("first_seen"))
-        days_known = calculate_days_known(first_seen)
+        days_known = calculate_days_known(r["first_seen"])
         days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
         enrichment_data.days_until_due = days_until_due
 
@@ -337,6 +335,7 @@ async def get_vulnerability_hotspots(
                 "component": 1,
                 "version": 1,
                 "project_id": 1,
+                "first_seen_at": 1,
                 "scan_created_at": 1,
                 "details": SLIM_DETAILS_EXPR,
             }
@@ -345,7 +344,7 @@ async def get_vulnerability_hotspots(
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
-                "first_seen": {"$min": "$scan_created_at"},
+                "first_seen": _FIRST_SEEN,
                 # $addToSet collapses the (usually identical) per-project advisory lists; counts,
                 # severity and enrichment derive from these in Python.
                 "details_list": {"$addToSet": "$details"},
@@ -384,8 +383,8 @@ async def get_vulnerability_hotspots(
     types_by_version: dict[str, dict[str, set[str]]] = {}
     types_by_name: dict[str, set[str]] = {}
     for row in await dep_repo.aggregate(type_pipeline):
-        name, version = row["_id"]["name"], row["_id"]["version"]
-        types_by_version.setdefault(version, {})[name] = set(row["types"])
+        name, version = row["_id"]["name"], normalize_version(row["_id"]["version"])
+        types_by_version.setdefault(version, {}).setdefault(name, set()).update(row["types"])
         types_by_name.setdefault(name, set()).update(row["types"])
     type_index_by_version = {version: build_component_index(types) for version, types in types_by_version.items()}
     type_index = build_component_index(types_by_name)
@@ -394,7 +393,7 @@ async def get_vulnerability_hotspots(
         _build_hotspot(
             r,
             enrichments,
-            type_index_by_version.get(r["_id"].get("version") or "unknown", {}),
+            type_index_by_version.get(normalize_version(r["_id"].get("version")), {}),
             type_index,
             project_name_map,
             project_ids,
@@ -410,15 +409,6 @@ async def get_vulnerability_hotspots(
     if post_sort_by:
         hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=sort_direction == -1)
         hotspots = hotspots[skip : skip + limit]
-
-    # first_seen/days_known off the active scans is only the current scan's age; replace it on the
-    # displayed page with the vulnerability's true first detection across all scans.
-    first_seen_map = await historical_first_seen(finding_repo, [h.component for h in hotspots])
-    for h in hotspots:
-        hist = first_seen_map.get((h.component, h.version))
-        if hist is not None:
-            h.first_seen = _format_first_seen(hist)
-            h.days_known = calculate_days_known(hist)
 
     cache.set(cache_key, [h.model_dump() for h in hotspots])
     return hotspots

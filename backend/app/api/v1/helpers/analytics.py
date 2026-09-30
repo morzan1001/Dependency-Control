@@ -95,10 +95,7 @@ def require_analytics_permission(user: User, permission: str) -> None:
 
 async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> list[str]:
     """Get list of project IDs the user has access to."""
-    from app.services.analytics.scopes import ScopeResolver
-
-    resolved = await ScopeResolver(db, user).resolve(scope="user", scope_id=None)
-    return resolved.project_ids or []
+    return [p.id for p in await get_user_projects(user, db)]
 
 
 async def get_user_projects(user: User, db: AsyncIOMotorDatabase) -> list[ProjectWithScanId]:
@@ -143,31 +140,6 @@ def scope_resolution_counts(project_ids: Sequence[str], scan_ids: Sequence[str])
     return resolved, len(project_ids) - resolved
 
 
-async def historical_first_seen(finding_repo: Any, components: list[str]) -> dict[tuple[str, str], datetime]:
-    """Earliest scan_created_at per (component, version) across ALL scans — a vulnerability's true
-    first detection, not the current scan's age (which is all the active-scan pipelines can see).
-
-    Global (not project-scoped) so the (component, version, type, scan_created_at) index carries the
-    whole query: the $sort matches the index order, so $group takes the earliest as an index min
-    instead of scanning every historical finding. Version is normalized to "unknown" when absent,
-    matching how the endpoints key their rows.
-    """
-    if not components:
-        return {}
-    pipeline = [
-        {"$match": {"component": {"$in": components}, "type": "vulnerability"}},
-        {"$sort": {"component": 1, "version": 1, "scan_created_at": 1}},
-        {
-            "$group": {
-                "_id": {"component": "$component", "version": "$version"},
-                "first_seen": {"$first": "$scan_created_at"},
-            }
-        },
-    ]
-    rows = await finding_repo.aggregate(pipeline, allow_disk_use=True)
-    return {(r["_id"].get("component"), r["_id"].get("version") or "unknown"): r.get("first_seen") for r in rows}
-
-
 def calculate_days_until_due(kev_due_date: str | None) -> int | None:
     """Calculate days until KEV due date (negative = overdue)."""
     if not kev_due_date:
@@ -181,9 +153,7 @@ def calculate_days_until_due(kev_due_date: str | None) -> int | None:
 
 def calculate_days_known(first_seen: datetime | None) -> int | None:
     """Calculate how many days a vulnerability has been known."""
-    if not isinstance(first_seen, datetime):
-        return None
-    return (datetime.now(timezone.utc) - first_seen).days
+    return (datetime.now(timezone.utc) - first_seen).days if first_seen else None
 
 
 def extract_fix_versions(details_list: list[Any], installed_version: str | None) -> set[str]:
@@ -251,36 +221,23 @@ def impact_pre_score(severity_counts: dict[str, int], affected_projects: int) ->
     """Un-boosted severity*reach base of the impact score. Every boost is >= 1.0, so this
     is a provable lower bound on the final fix_impact_score (and base * IMPACT_MAX_SCORE_BOOST
     its upper bound)."""
-    # severity_counts may use lowercase or original-case keys
     severity_score = sum(
-        severity_counts.get(sev.lower(), severity_counts.get(sev, 0)) * weight
-        for sev, weight in IMPACT_SEVERITY_WEIGHTS.items()
+        severity_counts.get(sev.lower(), 0) * weight for sev, weight in IMPACT_SEVERITY_WEIGHTS.items()
     )
     reach_multiplier = min(affected_projects, IMPACT_REACH_MULTIPLIER_CAP)
     return float(severity_score * reach_multiplier)
 
 
-def _row_pre_score(row: dict[str, Any]) -> float:
-    counts = row.get("_severity_counts") or {}
-    return impact_pre_score(counts, int(row.get("affected_projects") or 0))
+def select_impact_candidates[T](scored: list[tuple[float, T]], limit: int) -> list[T]:
+    """Payloads, scored by impact_pre_score, whose boosted ceiling can still beat the limit-th pre-score.
 
-
-def select_impact_candidates(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
-    """Group rows that can still reach the top `limit` by fix_impact_score.
-
-    Ranking is by the final boosted score, but the boosts (KEV/EPSS/maturity) come from
-    enrichment, not Mongo — so enriching every group is what made the old endpoint drop
-    severe-but-narrow fixes once a blast-radius $limit truncated the set first. Instead we
-    rank by the pre-score lower bound and keep every row whose boosted ceiling
-    (pre_score * IMPACT_MAX_SCORE_BOOST) could still beat the limit-th pre-score. Enrichment
-    then runs only on real contenders, and no true top-`limit` fix is ever excluded.
+    The boosts come from enrichment, so only these contenders need enriching and no true top-`limit` fix is lost.
     """
-    scored = sorted(((_row_pre_score(r), r) for r in rows), key=lambda t: t[0], reverse=True)
-    if len(scored) <= limit:
-        return [r for _, r in scored]
-    p_limit = scored[limit - 1][0]
-    threshold = p_limit / IMPACT_MAX_SCORE_BOOST
-    return [r for score, r in scored if score >= threshold]
+    ranked = sorted(scored, key=lambda t: t[0], reverse=True)
+    if len(ranked) <= limit:
+        return [payload for _, payload in ranked]
+    threshold = ranked[limit - 1][0] / IMPACT_MAX_SCORE_BOOST
+    return [payload for score, payload in ranked if score >= threshold]
 
 
 def calculate_impact_score(

@@ -450,6 +450,34 @@ async def test_hotspot_type_comes_from_the_hotspot_s_own_scans_and_version(clien
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
+async def test_hotspot_type_matches_the_version_whatever_its_v_prefix(client, db, seeded):
+    await db.dependencies.insert_one(
+        {
+            **_dependency("net-old", name="golang.org/x/net"),
+            "group": None,
+            "version": "v0.17.0",
+            "type": "golang",
+            "purl": "pkg:golang/golang.org/x/net@v0.17.0",
+        }
+    )
+    await db.dependencies.insert_one(
+        {
+            **_dependency("net-new", name="golang.org/x/net"),
+            "group": None,
+            "version": "v0.23.0",
+            "type": "library",
+            "purl": None,
+        }
+    )
+    await db.findings.insert_one({**_finding("f-net", "golang.org/x/net"), "version": "0.17.0"})
+
+    types = {row["component"]: row["type"] for row in await _analytics(client, "hotspots", seeded)}
+
+    assert types["golang.org/x/net"] == "golang"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
 async def test_the_vulnerability_filter_tells_a_package_s_versions_apart(client, db, seeded):
     await db.dependencies.insert_one({**_dependency("lodash-old", name="lodash"), "version": "4.17.15", "type": "npm"})
     await db.dependencies.insert_one({**_dependency("lodash-new", name="lodash"), "version": "4.17.21", "type": "npm"})
