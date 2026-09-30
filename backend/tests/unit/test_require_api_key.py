@@ -331,6 +331,21 @@ async def test_a_key_used_within_the_last_minute_is_not_stamped_again(monkeypatc
     assert touch.await_count == int(stamped)
 
 
+# A plain-JSON mongoimport or a hand edit stores the moment as a string or a number.
+@pytest.mark.parametrize("last_used_at", ["2026-09-30T12:00:00Z", 1759233600000], ids=["iso-string", "epoch-millis"])
+@pytest.mark.asyncio
+async def test_a_damaged_last_use_still_authenticates_and_is_stamped_afresh(monkeypatch, last_used_at):
+    doc = _key_doc([API_KEY_SURFACE_MCP])
+    doc["last_used_at"] = last_used_at
+    db, _ = _db_with_key(doc)
+    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
+    touch = _patch_touch_last_used(monkeypatch)
+
+    await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+
+    touch.assert_awaited_once_with(_KEY_ID)
+
+
 @pytest.mark.asyncio
 async def test_authentication_reaches_no_collection_beyond_keys_and_users(monkeypatch):
     db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))

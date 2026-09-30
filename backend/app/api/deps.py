@@ -641,7 +641,7 @@ async def _admit_unified_key(
 
     last_used_at = key_doc.get("last_used_at")
     if touch and (
-        last_used_at is None
+        not isinstance(last_used_at, datetime)
         or (datetime.now(timezone.utc) - last_used_at).total_seconds() >= API_KEY_LAST_USED_RESOLUTION_SECONDS
     ):
         await key_repo.touch_last_used(key_doc.get("_id", ""))
