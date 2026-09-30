@@ -1,6 +1,6 @@
 """Pydantic models for GitLab API responses and OIDC token payloads (extra="ignore" discards unused fields)."""
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import AliasPath, BaseModel, ConfigDict, Field
 
 
 class OIDCPayload(BaseModel):
@@ -42,6 +42,7 @@ class GitLabMergeRequest(BaseModel):
     state: str
     draft: bool = False
     work_in_progress: bool = False
+    sha: str | None = None
 
 
 class GitLabNote(BaseModel):
@@ -51,6 +52,7 @@ class GitLabNote(BaseModel):
 
     id: int
     body: str = ""
+    author_id: int | None = Field(None, validation_alias=AliasPath("author", "id"))
 
 
 class GitLabMember(BaseModel):

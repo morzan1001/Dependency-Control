@@ -79,7 +79,6 @@ async def test_toggling_rescan_off_takes_effect(client, db, owner_auth_headers_p
         "retention_action",
         "gitlab_mr_comments_enabled",
         "github_pr_comments_enabled",
-        "enforce_notification_settings",
     ],
 )
 async def test_a_null_the_stored_project_cannot_hold_is_refused_before_the_write(
@@ -92,3 +91,16 @@ async def test_a_null_the_stored_project_cannot_hold_is_refused_before_the_write
 
     assert resp.status_code == 422, resp.text
     assert await db.projects.find_one({"_id": "p"}) == before
+
+
+@pytest.mark.asyncio
+async def test_the_project_update_cannot_switch_on_enforcement_without_the_preferences_to_enforce(
+    client, db, owner_auth_headers_proj
+):
+    """Only the notification settings route stores what is enforced, and enforcing nothing silences the project."""
+    resp = await client.put(
+        "/api/v1/projects/p", json={"enforce_notification_settings": True}, headers=owner_auth_headers_proj
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert (await db.projects.find_one({"_id": "p"}))["enforce_notification_settings"] is False

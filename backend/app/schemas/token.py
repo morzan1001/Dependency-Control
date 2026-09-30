@@ -8,6 +8,9 @@ class Token(BaseModel):
 
 
 class TokenPayload(BaseModel):
-    sub: str | None = None
+    sub: str
+    type: str
+    jti: str
+    iat: float
+    exp: int
     permissions: list[str] = []
-    type: str | None = None

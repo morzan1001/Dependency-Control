@@ -1,14 +1,22 @@
 """Scan-completion notification building/sending: top-priority sort ordering and report-URL rendering."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from app.core.config import settings
-from app.core.constants import EPSS_HIGH_THRESHOLD, NOTIFICATION_EVENT_ANALYSIS_COMPLETED
+from app.core.constants import (
+    EPSS_HIGH_THRESHOLD,
+    NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
+    SCAN_STATUS_COMPLETED,
+    SCAN_STATUS_COMPLETED_WITH_ERRORS,
+)
 from app.models.project import Project, ProjectMember
-from app.services.analysis import notifications
+from app.models.stats import Stats
+from app.services.aggregation import ResultAggregator
+from app.services.analysis import engine, notifications
 from app.services.analysis.notifications import (
     _build_vulnerability_message,
     send_scan_notifications,
@@ -25,8 +33,9 @@ class TestBuildVulnerabilityMessageReportLink:
             kev_vulns=[],
             high_epss_vulns=[],
             priority_vulns=[{"severity": "CRITICAL"}],
+            critical_count=1,
             top_vulns=[],
-            scan_link=scan_link,
+            link=scan_link,
         )
         assert f"View full report: {scan_link}" in message
         # a bare UUID with no scheme/path must not be emitted
@@ -34,26 +43,40 @@ class TestBuildVulnerabilityMessageReportLink:
 
 
 def _finding(fid, severity, epss=None, in_kev=False, aliases=None):
+    """An enriched vulnerability record as the engine persists and announces it."""
     details = {"id": fid, "severity": severity, "aliases": aliases or []}
     if epss is not None:
         details["epss_score"] = epss
     if in_kev:
         details["in_kev"] = True
-    return SimpleNamespace(
-        id=fid,
-        type="vulnerability",
-        severity=severity,
-        component="pkg",
-        version="1.0.0",
-        model_dump=lambda details=details, fid=fid, severity=severity: {
-            "type": "vulnerability",
-            "severity": severity,
-            "component": "pkg",
-            "version": "1.0.0",
-            "id": f"pkg:1.0.0:{fid}",
-            "details": {"vulnerabilities": [details]},
-        },
-    )
+    return {
+        "_id": f"rec-{fid}",
+        "type": "vulnerability",
+        "severity": severity,
+        "component": "pkg",
+        "version": "1.0.0",
+        "id": f"pkg:1.0.0:{fid}",
+        "details": {"vulnerabilities": [details]},
+    }
+
+
+def _outcome(**overrides):
+    """The run outcome the engine hands the notifier; defaults describe a clean one-analyzer scan."""
+    outcome = {
+        "stats": Stats(),
+        "status": SCAN_STATUS_COMPLETED,
+        "failed_analyzers": [],
+        "analyzer_outcomes": {"osv": "Success"},
+        "analyzer_count": 1,
+    }
+    outcome.update(overrides)
+    return outcome
+
+
+def _trivy_findings(*vulnerabilities):
+    aggregator = ResultAggregator()
+    aggregator.aggregate("trivy", {"Results": [{"Target": "app", "Vulnerabilities": list(vulnerabilities)}]})
+    return engine._prepare_finding_records(aggregator.get_findings(), "scan-abc-123", "proj-1", None)[0]
 
 
 async def _db_with_scan(scan_id: str = "scan-abc-123") -> FakeDatabase:
@@ -64,7 +87,7 @@ async def _db_with_scan(scan_id: str = "scan-abc-123") -> FakeDatabase:
 
 async def _capture_vuln_message(findings):
     """Drive send_scan_notifications and return the vulnerability_found message and webhook call."""
-    project = SimpleNamespace(id="proj-1", name="MyProject")
+    project = Project(id="proj-1", name="MyProject")
     captured = {}
 
     async def _notify(**kwargs):
@@ -85,9 +108,9 @@ async def _capture_vuln_message(findings):
         await send_scan_notifications(
             scan_id="scan-abc-123",
             project=project,
-            aggregated_findings=findings,
-            results_summary=["osv: ok"],
+            findings=findings,
             db=await _db_with_scan(),
+            **_outcome(),
         )
     webhook_call = fake_webhook.trigger_vulnerability_found.call_args
     captured["webhook"] = webhook_call.kwargs if webhook_call else None
@@ -168,6 +191,22 @@ class TestPriorityVulnerabilities:
         assert "GHSA-35jh-r3h4-6jhm" not in captured["message"]
 
 
+class TestVersionlessVulnerability:
+    @pytest.mark.asyncio
+    async def test_a_finding_without_a_version_does_not_suppress_the_alert(self):
+        """Trivy omits InstalledVersion when it is empty, which leaves the aggregated finding's version None."""
+        findings = _trivy_findings(
+            {"VulnerabilityID": "CVE-2026-1", "PkgName": "left-pad", "Severity": "CRITICAL"},
+            {"VulnerabilityID": "CVE-2026-2", "PkgName": "lodash", "InstalledVersion": "4.17.20", "Severity": "HIGH"},
+        )
+
+        captured = await _capture_vuln_message(findings)
+
+        assert "CVE-2026-1 (CRITICAL) - left-pad\n" in captured["message"]
+        assert "CVE-2026-2 (HIGH) - lodash@4.17.20" in captured["message"]
+        assert captured["webhook"]["top_vulnerabilities"][0]["version"] == ""
+
+
 class TestVulnerabilityWebhookCounters:
     @pytest.mark.asyncio
     async def test_the_webhook_counts_criticals_and_highs_separately(self):
@@ -183,18 +222,29 @@ class TestVulnerabilityWebhookCounters:
 
         assert captured["webhook"]["critical_count"] == 2
         assert captured["webhook"]["high_count"] == 1
+        assert captured["webhook"]["priority_count"] == 3
+
+
+class TestAlertWording:
+    @pytest.mark.asyncio
+    async def test_an_alert_without_criticals_is_not_called_critical(self):
+        captured = await _capture_vuln_message([_finding("CVE-1", "HIGH")])
+
+        assert captured["subject"] == "[SECURITY ALERT] High-Priority Vulnerabilities in MyProject"
+        assert captured["message"].startswith("Security scan detected high-priority vulnerabilities in MyProject.")
 
 
 class TestAnalysisCompletedSeverityCounts:
     @pytest.mark.asyncio
-    async def test_a_scanner_error_is_not_counted_as_a_high_finding(self):
-        findings = [
-            SimpleNamespace(type="system_warning", severity="HIGH"),
-            SimpleNamespace(type="vulnerability", severity="CRITICAL"),
-        ]
+    async def test_the_counts_are_the_runs_stats(self):
+        """Every channel shows the numbers stored on the scan, not a recount of the findings list."""
+        findings = _trivy_findings(
+            {"VulnerabilityID": "CVE-2026-1", "PkgName": "a", "InstalledVersion": "1", "Severity": "CRITICAL"},
+            {"VulnerabilityID": "CVE-2026-2", "PkgName": "b", "InstalledVersion": "1", "Severity": "HIGH"},
+        )
         blocks = patch.object(notifications, "build_analysis_completed_blocks", return_value=[])
         fake_notify = SimpleNamespace(notify_project_members=AsyncMock())
-        fake_webhook = SimpleNamespace(trigger_scan_completed=AsyncMock())
+        fake_webhook = SimpleNamespace(trigger_scan_completed=AsyncMock(), trigger_vulnerability_found=AsyncMock())
         with (
             blocks as build_blocks,
             patch.object(notifications, "notification_service", fake_notify),
@@ -202,12 +252,72 @@ class TestAnalysisCompletedSeverityCounts:
         ):
             await send_scan_notifications(
                 scan_id="scan-abc-123",
-                project=SimpleNamespace(id="proj-1", name="MyProject"),
-                aggregated_findings=findings,
-                results_summary=["osv: Partial"],
+                project=Project(id="proj-1", name="MyProject"),
+                findings=findings,
                 db=await _db_with_scan(),
+                **_outcome(stats=Stats(critical=1, low=2)),
             )
-        assert build_blocks.call_args.kwargs["severity_counts"] == {"CRITICAL": 1, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        assert build_blocks.call_args.kwargs["severity_counts"] == {"CRITICAL": 1, "HIGH": 0, "MEDIUM": 0, "LOW": 2}
+
+
+class TestAnalysisCompletedAnalyzers:
+    @pytest.mark.asyncio
+    async def test_every_channel_lists_and_counts_each_analyzer_once(self):
+        outcomes = {
+            "grype": "Success",
+            "osv": "Partial (7 component(s) were not scanned)",
+            "epss_kev": "Success (3 enriched)",
+        }
+        notify = SimpleNamespace(notify_project_members=AsyncMock())
+        with (
+            patch.object(notifications, "notification_service", notify),
+            patch.object(notifications, "webhook_service", SimpleNamespace(trigger_scan_completed=AsyncMock())),
+        ):
+            await send_scan_notifications(
+                scan_id="scan-abc-123",
+                project=Project(id="proj-1", name="MyProject"),
+                findings=[],
+                db=await _db_with_scan(),
+                **_outcome(analyzer_outcomes=outcomes, analyzer_count=2),
+            )
+
+        sent = notify.notify_project_members.await_args.kwargs
+        assert "2 analyzers ran" in sent["html_message"]
+        assert "*Analyzers (2)*" in json.dumps(sent["slack_blocks"])
+        assert "**Analyzers (2)**" in sent["mattermost_props"]["attachments"][0]["text"]
+        assert sent["message"].count("osv: Partial (7 component(s) were not scanned)") == 1
+
+
+class TestScanCompletedWebhook:
+    @pytest.mark.asyncio
+    async def test_the_webhook_reports_the_runs_outcome_not_the_stored_scan(self):
+        db = FakeDatabase()
+        await db.scans.insert_one({"_id": "scan-abc-123", "status": "processing", "stats": {"critical": 99}})
+        webhooks = SimpleNamespace(trigger_scan_completed=AsyncMock())
+        stats = Stats(critical=1, risk_score=10.0)
+        with (
+            patch.object(notifications, "notification_service", SimpleNamespace(notify_project_members=AsyncMock())),
+            patch.object(notifications, "webhook_service", webhooks),
+        ):
+            await send_scan_notifications(
+                scan_id="scan-abc-123",
+                project=Project(id="proj-1", name="MyProject"),
+                findings=[],
+                db=db,
+                **_outcome(
+                    stats=stats,
+                    status=SCAN_STATUS_COMPLETED_WITH_ERRORS,
+                    failed_analyzers=["grype"],
+                    analyzer_outcomes={"grype": "Failed"},
+                ),
+            )
+
+        sent = webhooks.trigger_scan_completed.await_args.kwargs
+        assert (sent["scan_status"], sent["failed_analyzers"], sent["stats"]) == (
+            SCAN_STATUS_COMPLETED_WITH_ERRORS,
+            ["grype"],
+            stats.model_dump(),
+        )
 
 
 class TestAnalysisCompletedReachesSubscribers:
@@ -244,9 +354,9 @@ class TestAnalysisCompletedReachesSubscribers:
             await send_scan_notifications(
                 scan_id="scan-abc-123",
                 project=project,
-                aggregated_findings=[],
-                results_summary=["osv: ok"],
+                findings=[],
                 db=db,
+                **_outcome(),
             )
 
         send.assert_awaited_once()
@@ -255,13 +365,13 @@ class TestAnalysisCompletedReachesSubscribers:
 
 
 def _sast_finding(fid):
-    return SimpleNamespace(id=fid, type="sast", severity="HIGH", component="app.py", version="")
+    return {"_id": f"rec-{fid}", "id": fid, "type": "sast", "severity": "HIGH", "component": "app.py", "version": ""}
 
 
 async def _announce_twice(first, second):
     """Two analyses of one scan, as a late scanner result that reopens it produces."""
     db = await _db_with_scan()
-    project = SimpleNamespace(id="proj-1", name="MyProject")
+    project = Project(id="proj-1", name="MyProject")
     notify = SimpleNamespace(notify_project_members=AsyncMock())
     webhooks = SimpleNamespace(trigger_scan_completed=AsyncMock(), trigger_vulnerability_found=AsyncMock())
     with (
@@ -269,7 +379,9 @@ async def _announce_twice(first, second):
         patch.object(notifications, "webhook_service", webhooks),
     ):
         for findings in (first, second):
-            await send_scan_notifications("scan-abc-123", project, findings, ["osv: ok"], db)
+            await send_scan_notifications(
+                scan_id="scan-abc-123", project=project, findings=findings, db=db, **_outcome()
+            )
     events = [call.kwargs["event_type"] for call in notify.notify_project_members.await_args_list]
     return events, webhooks
 
@@ -301,3 +413,38 @@ class TestReAnalysisAnnouncements:
 
         assert events.count("vulnerability_found") == 2
         assert webhooks.trigger_vulnerability_found.await_count == 2
+
+
+class TestScanWebhookScope:
+    @pytest.mark.asyncio
+    async def test_both_scan_events_reach_the_owning_teams_webhooks(self):
+        db = await _db_with_scan()
+        await db.webhooks.insert_one(
+            {
+                "_id": "team-hook",
+                "url": "https://example.com/team",
+                "team_id": "alpha",
+                "project_id": None,
+                "events": ["scan.completed", "vulnerability.found"],
+                "is_active": True,
+            }
+        )
+        project = Project(id="proj-1", name="MyProject", team_ids=["alpha"])
+        send = AsyncMock(return_value=True)
+
+        with (
+            patch.object(notifications, "notification_service", SimpleNamespace(notify_project_members=AsyncMock())),
+            patch.object(notifications.webhook_service, "_send_webhook", send),
+        ):
+            await send_scan_notifications(
+                scan_id="scan-abc-123",
+                project=project,
+                findings=[_finding("CVE-1", "CRITICAL")],
+                db=db,
+                **_outcome(),
+            )
+
+        assert [(c.args[1].id, c.args[3]) for c in send.await_args_list] == [
+            ("team-hook", "scan.completed"),
+            ("team-hook", "vulnerability.found"),
+        ]

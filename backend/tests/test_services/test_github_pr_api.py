@@ -80,21 +80,22 @@ class TestGetPullRequestsForCommit:
             ]
         )
         with patch.object(service, "_api_get", new_callable=AsyncMock, return_value=response) as api_get:
-            prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", "deadbeef"))
+            matched, prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", "deadbeef"))
 
         api_get.assert_awaited_once_with("/repos/acme/widget/commits/deadbeef/pulls")
+        assert matched == "deadbeef"
         assert [(p.number, p.state, p.draft) for p in prs] == [(7, "open", False), (5, "closed", False)]
 
     def test_returns_empty_list_on_api_failure(self):
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         with patch.object(service, "_api_get", new_callable=AsyncMock, return_value=None):
-            assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", "deadbeef")) == []
+            assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", "deadbeef")) == ("deadbeef", [])
 
     def test_draft_defaults_false_when_github_omits_it(self):
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         response = _json_response([{"number": 7, "state": "open"}])
         with patch.object(service, "_api_get", new_callable=AsyncMock, return_value=response):
-            prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", "deadbeef"))
+            _, prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", "deadbeef"))
         assert prs[0].draft is False
 
 
@@ -110,8 +111,9 @@ class TestMergeCommitFallback:
             f"/repos/acme/widget/commits/{_HEAD_SHA}/pulls": _json_response([_PULL_REQUEST]),
         }
         with patch.object(service, "_api_get", _routed_api_get(routes)) as api_get:
-            prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA))
+            matched, prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA))
 
+        assert matched == _HEAD_SHA
         assert [(p.number, p.state, p.draft) for p in prs] == [(42, "open", False)]
         assert _requested(api_get) == [
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls",
@@ -137,9 +139,9 @@ class TestMergeCommitFallback:
             routes[f"/repos/acme/widget/commits/{sha}/pulls"] = _json_response([_PULL_REQUEST])
 
         with patch.object(service, "_api_get", _routed_api_get(routes)) as api_get:
-            prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA))
+            result = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA))
 
-        assert prs == []
+        assert result == (_MERGE_SHA, [])
         assert _requested(api_get) == [
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls",
             f"/repos/acme/widget/commits/{_MERGE_SHA}",
@@ -155,7 +157,7 @@ class TestMergeCommitFallback:
         }
         with patch.object(service, "_api_get", _routed_api_get(routes)):
             with caplog.at_level("INFO", logger="app.services.github"):
-                prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA))
+                _, prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA))
 
         assert [p.number for p in prs] == [42]
         messages = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
@@ -173,7 +175,10 @@ class TestMergeCommitFallback:
         }
         with patch.object(service, "_api_get", _routed_api_get(routes)):
             with caplog.at_level("INFO", logger="app.services.github"):
-                assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA)) == []
+                assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA)) == (
+                    _MERGE_SHA,
+                    [],
+                )
 
         messages = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
         assert len(messages) == 1, messages
@@ -192,7 +197,10 @@ class TestRejectedLookupsAreLoud:
 
         with patch.object(service, "_api_get", _routed_api_get(routes)):
             with caplog.at_level("WARNING", logger="app.services.github"):
-                assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA)) == []
+                assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA)) == (
+                    _MERGE_SHA,
+                    [],
+                )
 
         warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
         assert len(warnings) == 1, warnings
@@ -209,7 +217,10 @@ class TestRejectedLookupsAreLoud:
 
         with patch.object(service, "_api_get", _routed_api_get(routes)):
             with caplog.at_level("WARNING", logger="app.services.github"):
-                assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA)) == []
+                assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA)) == (
+                    _MERGE_SHA,
+                    [],
+                )
 
         warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
         assert len(warnings) == 1, warnings
@@ -280,3 +291,23 @@ class TestWritePullRequestComments:
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         with patch.object(service, "_api_patch", new_callable=AsyncMock, return_value=None):
             assert asyncio.run(service.update_pull_request_comment("acme", "widget", 99, "new")) is False
+
+
+# Shape of GET /user for the account the token belongs to.
+_TOKEN_USER = {"login": "dc-bot", "id": 4242, "node_id": "U_kgDOABCDEF", "type": "User", "site_admin": False}
+
+
+class TestGetCurrentUserId:
+    def test_the_tokens_own_account_id(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        with patch.object(service, "_api_get", new_callable=AsyncMock, return_value=_json_response(_TOKEN_USER)) as g:
+            assert asyncio.run(service.get_current_user_id()) == 4242
+        g.assert_awaited_once_with("/user")
+
+    @pytest.mark.parametrize(
+        "response", [None, _json_response(_error_body("Resource not accessible by integration"), status_code=403)]
+    )
+    def test_an_unanswered_or_refused_lookup_resolves_no_one(self, response):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        with patch.object(service, "_api_get", new_callable=AsyncMock, return_value=response):
+            assert asyncio.run(service.get_current_user_id()) is None

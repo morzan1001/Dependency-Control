@@ -298,34 +298,31 @@ def _count_gridfs_refs(sboms_to_process: list[Any]) -> int:
     return len(extract_gridfs_ids_from_refs(sboms_to_process))
 
 
-def _failed_analyzer_names(results_summary: list[str]) -> list[str]:
-    """Analyzer names whose summary entry reports a failure or partial coverage.
+def _outcome_rank(status: str) -> int:
+    return 2 if status.startswith("Failed") else int(status.startswith("Partial"))
 
-    Post-processor enrichments (EPSS/KEV, reachability) are excluded: their failure loses
-    metadata, not findings, and produces no traceable SCAN-ERROR finding — a transient
-    external-API outage must not downgrade the scan status.
-    """
-    names = set()
+
+def _analyzer_outcomes(results_summary: list[str]) -> dict[str, str]:
+    """Worst reported status per analyzer; run_analysis repeats each analyzer's entry once per SBOM."""
+    outcomes: dict[str, str] = {}
     for entry in results_summary:
-        name, sep, rest = entry.partition(": ")
-        if sep and rest.startswith(("Failed", "Partial")) and name not in _POST_PROCESSOR_ANALYZERS:
-            names.add(name)
-    return sorted(names)
+        name, _, status = entry.partition(": ")
+        if name not in outcomes or _outcome_rank(status) > _outcome_rank(outcomes[name]):
+            outcomes[name] = status
+    return outcomes
 
 
-def _enrichment_failure_names(results_summary: list[str]) -> list[str]:
-    """Post-processor enrichments that failed or ran partially.
+def _failed_analyzer_names(outcomes: dict[str, str]) -> tuple[list[str], list[str]]:
+    """(analyzers, enrichments) that failed or ran partially.
 
-    Recorded on the scan without touching its status (see ``_failed_analyzer_names``): an
-    org-wide EPSS/KEV or reachability outage otherwise leaves no trace outside pod logs,
-    because their result documents are only written on the success path.
+    An enrichment (EPSS/KEV, reachability) loses metadata, not findings, so it is recorded on the
+    scan without downgrading its status.
     """
-    names = set()
-    for entry in results_summary:
-        name, sep, rest = entry.partition(": ")
-        if sep and rest.startswith(("Failed", "Partial")) and name in _POST_PROCESSOR_ANALYZERS:
-            names.add(name)
-    return sorted(names)
+    failed = sorted(name for name, status in outcomes.items() if _outcome_rank(status))
+    return (
+        [name for name in failed if name not in _POST_PROCESSOR_ANALYZERS],
+        [name for name in failed if name in _POST_PROCESSOR_ANALYZERS],
+    )
 
 
 async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> dict[str, Any] | None:
@@ -905,30 +902,28 @@ async def _finalize_scan_and_project(
     return status
 
 
-async def _filter_out_waived_findings(aggregated_findings: list[Any], scan_id: str, db: Database) -> list[Any]:
-    """Drop findings waived in this scan so notifications/webhooks match the waiver-aware stats.
+async def _filter_out_waived_findings(
+    findings: list[dict[str, Any]], scan_id: str, db: Database
+) -> list[dict[str, Any]]:
+    """Drop the records waived in this scan so notifications/webhooks match the waiver-aware stats.
 
-    Waivers are applied only as DB updates; in-memory Finding objects are never marked waived,
-    so re-read the persisted waived finding_ids and exclude them before notifying.
+    Waivers are applied only as DB updates, so the persisted waived ``_id``s are re-read.
     """
-    waived_ids = set()
-    async for doc in FindingRepository(db).iterate_raw({"scan_id": scan_id, "waived": True}, {"finding_id": 1}):
-        fid = doc.get("finding_id")
-        if fid is not None:
-            waived_ids.add(fid)
-
-    if not waived_ids:
-        return aggregated_findings
-    return [f for f in aggregated_findings if getattr(f, "id", None) not in waived_ids]
+    finding_repo = FindingRepository(db)
+    waived = {doc["_id"] async for doc in finding_repo.iterate_raw({"scan_id": scan_id, "waived": True}, {"_id": 1})}
+    return [record for record in findings if record["_id"] not in waived]
 
 
 async def _send_integrations_and_notifications(
     project_id: str | None,
     scan_id: str,
     scan_doc: Any,
-    stats: Any,
-    aggregated_findings: list[Any],
-    results_summary: list[str],
+    stats: Stats,
+    status: ScanStatus,
+    error: str | None,
+    failed_analyzers: list[str],
+    findings: list[dict[str, Any]],
+    analyzer_outcomes: dict[str, str],
     db: Database,
 ) -> None:
     if not project_id:
@@ -936,9 +931,19 @@ async def _send_integrations_and_notifications(
     project = await ProjectRepository(db).get_by_id(project_id)
     if not project:
         return
-    await decorate_gitlab_mr(scan_id, stats, scan_doc, project, db)
-    await decorate_github_pr(scan_id, stats, scan_doc, project, db)
-    await send_scan_notifications(scan_id, project, aggregated_findings, results_summary, db)
+    await decorate_gitlab_mr(scan_id, stats, status, error, scan_doc, project, db)
+    await decorate_github_pr(scan_id, stats, status, error, scan_doc, project, db)
+    await send_scan_notifications(
+        scan_id,
+        project,
+        findings,
+        stats,
+        status,
+        failed_analyzers,
+        analyzer_outcomes,
+        analyzer_count=sum(1 for name in analyzer_outcomes if name not in _POST_PROCESSOR_ANALYZERS),
+        db=db,
+    )
 
 
 def _release_memory_to_os() -> None:
@@ -989,12 +994,13 @@ def _final_scan_status(scan_id: str, sboms_unusable: bool, partial_reasons: list
 async def _announce_outcome(
     status: ScanStatus,
     error: str | None,
+    failed_analyzers: list[str],
     project_id: str | None,
     scan_id: str,
     scan_doc: Scan,
     stats: Stats,
-    aggregated_findings: list[Any],
-    results_summary: list[str],
+    findings: list[dict[str, Any]],
+    analyzer_outcomes: dict[str, str],
     db: Database,
 ) -> None:
     """Best effort: the scan is already final, so a failure here is logged and never changes it."""
@@ -1003,9 +1009,18 @@ async def _announce_outcome(
         if status == SCAN_STATUS_FAILED:
             await notify_analysis_failed(db, scan_id, project_id, error or status)
             return
-        notify_findings = await _filter_out_waived_findings(aggregated_findings, scan_id, db)
+        notify_findings = await _filter_out_waived_findings(findings, scan_id, db)
         await _send_integrations_and_notifications(
-            project_id, scan_id, scan_doc, stats, notify_findings, results_summary, db
+            project_id,
+            scan_id,
+            scan_doc,
+            stats,
+            status,
+            error,
+            failed_analyzers,
+            notify_findings,
+            analyzer_outcomes,
+            db,
         )
     except Exception:
         logger.exception("Scan %s: announcing the finished analysis failed", scan_id)
@@ -1148,6 +1163,7 @@ async def run_analysis(
     findings_to_insert, vulnerability_findings = _prepare_finding_records(
         aggregated_findings, scan_id, project_id, scan_created_at
     )
+    del aggregated_findings
     total_findings_count = len(findings_to_insert)
 
     component_languages = await _run_vuln_enrichments(
@@ -1185,7 +1201,8 @@ async def run_analysis(
             sbom_parse_failures,
         )
 
-    failed_analyzers = _failed_analyzer_names(results_summary)
+    analyzer_outcomes = _analyzer_outcomes(results_summary)
+    failed_analyzers, enrichment_failures = _failed_analyzer_names(analyzer_outcomes)
     partial_reasons = _partial_run_reasons(
         failed_analyzers,
         sbom_load_failures,
@@ -1223,18 +1240,27 @@ async def run_analysis(
         error=final_error,
         findings_summary=_build_findings_summary(vulnerability_findings),
         failed_analyzers=failed_analyzers,
-        enrichment_failures=_enrichment_failure_names(results_summary),
+        enrichment_failures=enrichment_failures,
         sbom_generation=sbom_generation,
     )
     if outcome != final_status:
-        del aggregated_findings
+        del findings_to_insert, vulnerability_findings
         _release_memory_to_os()
         return outcome
 
     await _announce_outcome(
-        final_status, final_error, project_id, scan_id, scan_doc, stats, aggregated_findings, results_summary, db
+        final_status,
+        final_error,
+        failed_analyzers,
+        project_id,
+        scan_id,
+        scan_doc,
+        stats,
+        findings_to_insert,
+        analyzer_outcomes,
+        db,
     )
-    del aggregated_findings
+    del findings_to_insert, vulnerability_findings
 
     # Runs on the released findings: the rollup holds two dependency maps of its own.
     await record_scan_update_delta(db, scan_id)

@@ -59,7 +59,8 @@ async def test_a_completed_report_announces_its_summary_and_tells_the_members(db
     assert stored.status == ReportStatus.COMPLETED
     payload = webhooks.await_args.kwargs["payload"]
     assert (payload["status"], payload["summary"]) == ("completed", stored.summary)
-    assert notifications.await_args.kwargs["subject"] == "Compliance report ready (bsi-tr-02102)"
+    _project, _event, subject, *_ = notifications.await_args.args
+    assert subject == "Compliance report ready (bsi-tr-02102)"
 
 
 @pytest.mark.asyncio

@@ -187,7 +187,7 @@ class SlackProvider(NotificationProvider):
             "Content-Type": "application/json",
         }
 
-        from app.services.notifications.slack_formatter import build_generic_blocks
+        from app.services.notifications.slack_formatter import _escape_mrkdwn, build_generic_blocks
 
         blocks = kwargs.get("blocks")
         if not blocks:
@@ -196,7 +196,7 @@ class SlackProvider(NotificationProvider):
         # text is the fallback for notifications and accessibility
         payload: dict[str, Any] = {
             "channel": destination,
-            "text": f"*{subject}*\n{message}",
+            "text": f"*{_escape_mrkdwn(subject)}*\n{_escape_mrkdwn(message)}",
             "blocks": blocks,
         }
 
@@ -207,15 +207,12 @@ class SlackProvider(NotificationProvider):
                 response = await client.post(url, headers=headers, json=payload)
                 if response.status_code == 200 and response.json().get("ok"):
                     logger.info(f"Slack message sent to {destination}")
-                    if notifications_sent_total:
-                        notifications_sent_total.labels(type="slack").inc()
+                    notifications_sent_total.labels(type="slack").inc()
                     return True
                 logger.error(f"Failed to send Slack message: {response.text}")
-                if notifications_failed_total:
-                    notifications_failed_total.labels(type="slack").inc()
+                notifications_failed_total.labels(type="slack").inc()
                 return False
         except Exception as e:
             logger.exception("Error sending Slack message: %s", e)
-            if notifications_failed_total:
-                notifications_failed_total.labels(type="slack").inc()
+            notifications_failed_total.labels(type="slack").inc()
             return False

@@ -4,6 +4,7 @@ import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.core import worker
 from app.core.worker import AnalysisWorkerManager
 from app.services.analysis.notifications import notify_analysis_failed
 from tests.mocks.fake_mongo import FakeDatabase
@@ -62,10 +63,35 @@ class TestHandleRescheduled:
         with patch("app.core.worker.notify_analysis_failed", new=AsyncMock()) as notify:
             asyncio.run(mgr._handle_rescheduled(scan, db, time.time()))
 
-        notify.assert_awaited_once()
-        _, scan_id, project_id, error = notify.await_args.args
+        notify.assert_called_once()
+        _, scan_id, project_id, error = notify.call_args.args
         assert (scan_id, project_id) == ("scan-1", "proj-1")
         assert "retry attempts" in error
+
+    def test_the_worker_moves_on_while_the_failure_is_still_being_announced(self):
+        """A blackholed webhook host holds its delivery for tens of seconds; the analysis slot must not wait."""
+        mgr = _build_manager()
+        db = _db_with_requeued_scan()
+        scan = {"_id": "scan-1", "project_id": "proj-1", "retry_count": 4}
+        delivered: list[str] = []
+
+        async def _run() -> None:
+            release = asyncio.Event()
+
+            async def _slow_notice(_db, scan_id, _project_id, _error):
+                await release.wait()
+                delivered.append(scan_id)
+
+            with patch("app.core.worker.notify_analysis_failed", _slow_notice):
+                await asyncio.wait_for(mgr._handle_rescheduled(scan, db, time.time()), timeout=1)
+                assert delivered == []
+                release.set()
+                await asyncio.gather(*worker._failure_notices)
+
+        asyncio.run(_run())
+
+        assert delivered == ["scan-1"]
+        assert worker._failure_notices == set()
 
 
 class TestNotifyAnalysisFailed:
@@ -105,3 +131,13 @@ class TestNotifyAnalysisFailed:
 
         db.projects.find_one = AsyncMock(side_effect=RuntimeError("primary stepped down"))
         asyncio.run(notify_analysis_failed(db, "scan-1", "proj-1", "boom"))
+
+    def test_a_failed_webhook_lookup_still_notifies_the_members(self):
+        db = FakeDatabase()
+        asyncio.run(db.projects.insert_one({"_id": "proj-1", "name": "My Project"}))
+        db.webhooks.find = MagicMock(side_effect=RuntimeError("primary stepped down"))
+
+        with patch("app.services.analysis.notifications.safe_notify_project_event", AsyncMock()) as notify:
+            asyncio.run(notify_analysis_failed(db, "scan-1", "proj-1", "boom"))
+
+        assert notify.await_args.kwargs["event_type"] == "analysis_failed"

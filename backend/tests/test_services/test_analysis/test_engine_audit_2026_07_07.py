@@ -42,26 +42,23 @@ class _FakeFindings:
 
 
 class TestFilterOutWaivedFindings:
-    def test_waived_finding_is_excluded(self):
-        findings = [SimpleNamespace(id="F1"), SimpleNamespace(id="F2"), SimpleNamespace(id="F3")]
-        db = {"findings": _FakeFindings([{"finding_id": "F2"}])}
+    def test_waived_record_is_excluded(self):
+        findings = [{"_id": "R1"}, {"_id": "R2"}, {"_id": "R3"}]
+        db = {"findings": _FakeFindings([{"_id": "R2"}])}
 
         result = asyncio.run(_filter_out_waived_findings(findings, "scan-1", db))
 
-        ids = [f.id for f in result]
-        assert ids == ["F1", "F3"], f"waived F2 must be dropped, got {ids}"
+        assert [f["_id"] for f in result] == ["R1", "R3"]
 
-    def test_no_waivers_returns_original(self):
-        findings = [SimpleNamespace(id="F1")]
+    def test_without_waivers_every_record_is_kept(self):
+        findings = [{"_id": "R1"}]
         db = {"findings": _FakeFindings([])}
 
-        result = asyncio.run(_filter_out_waived_findings(findings, "scan-1", db))
-
-        assert result is findings  # same object: no filtering performed
+        assert asyncio.run(_filter_out_waived_findings(findings, "scan-1", db)) == findings
 
     def test_query_filters_on_scan_and_waived(self):
-        db = {"findings": _FakeFindings([{"finding_id": "F1"}])}
-        asyncio.run(_filter_out_waived_findings([SimpleNamespace(id="F1")], "scan-9", db))
+        db = {"findings": _FakeFindings([])}
+        asyncio.run(_filter_out_waived_findings([{"_id": "R1"}], "scan-9", db))
         assert db["findings"].last_query == {"scan_id": "scan-9", "waived": True}
 
 

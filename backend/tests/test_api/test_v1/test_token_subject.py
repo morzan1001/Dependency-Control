@@ -3,9 +3,10 @@ naming one would outlive a rename and open whichever account takes the name next
 
 import time
 from datetime import datetime, timedelta, timezone
+from http.cookies import SimpleCookie
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import urlsplit
 
 import pytest
 from fastapi import HTTPException
@@ -104,7 +105,13 @@ async def test_ending_every_session_refuses_a_token_minted_for_a_username_equal_
     db = await _db_with(_BOB, {"_id": "u-eve", "username": "eve", "email": "eve@test.com", "is_active": True})
     minted_before = datetime.now(timezone.utc) - timedelta(hours=1)
     token = jwt.encode(
-        {"sub": "u-bob", "type": "refresh", "iat": minted_before, "exp": minted_before + timedelta(days=7)},
+        {
+            "sub": "u-bob",
+            "type": "refresh",
+            "jti": "jti-before-the-switch",
+            "iat": minted_before,
+            "exp": minted_before + timedelta(days=7),
+        },
         settings.SECRET_KEY,
         algorithm=settings.ALGORITHM,
     )
@@ -116,15 +123,16 @@ async def test_ending_every_session_refuses_a_token_minted_for_a_username_equal_
     assert exc_info.value.status_code == _FORBIDDEN
 
 
-async def _oidc_callback(user_info: dict, db: FakeDatabase):
+async def _oidc_callback(user_info: dict, db: FakeDatabase, cache):
     from app.api.v1.endpoints.auth import login_oidc_callback
 
     with (
         patch(f"{MODULE}.deps.get_system_settings", new=AsyncMock(return_value=_OIDC_SETTINGS)),
-        patch(f"{MODULE}._validate_oidc_state", new_callable=AsyncMock),
+        patch(f"{MODULE}._consume_oidc_state", new_callable=AsyncMock),
         patch(f"{MODULE}._fetch_oidc_user_info", new=AsyncMock(return_value=user_info)),
+        patch(f"{MODULE}.cache_service", cache),
     ):
-        return await login_oidc_callback(request=MagicMock(), code="code", db=db, state="state")
+        return await login_oidc_callback(request=MagicMock(), db=db, code="code", state="state")
 
 
 @pytest.mark.asyncio
@@ -133,13 +141,12 @@ async def _oidc_callback(user_info: dict, db: FakeDatabase):
     [False, "false", "False", "FALSE", " false ", "0", 0],
     ids=["boolean", "string", "capitalised", "upper", "padded", "zero-string", "zero"],
 )
-async def test_an_oidc_login_whose_email_the_provider_has_not_verified_is_refused(claim):
+async def test_an_oidc_login_whose_email_the_provider_has_not_verified_is_refused(claim, fake_cache):
     db = await _db_with()
 
-    with pytest.raises(HTTPException) as exc_info:
-        await _oidc_callback({"email": "new@corp.com", "email_verified": claim}, db)
+    response = await _oidc_callback({"email": "new@corp.com", "email_verified": claim}, db, fake_cache)
 
-    assert exc_info.value.status_code == _BAD_REQUEST
+    assert urlsplit(response.headers["location"]).fragment == "error=email_unverified"
     assert await db.users.find_one({"email": "new@corp.com"}) is None
 
 
@@ -149,12 +156,15 @@ async def test_an_oidc_login_whose_email_the_provider_has_not_verified_is_refuse
     [{}, {"email_verified": True}, {"email_verified": "True"}, {"email_verified": None}],
     ids=["claim-absent", "claim-true", "claim-true-string", "claim-null"],
 )
-async def test_an_oidc_login_names_the_account_by_id(claims):
+async def test_an_oidc_login_names_the_account_by_id(claims, fake_cache):
     db = await _db_with()
 
-    response = await _oidc_callback({"email": "new@corp.com", "preferred_username": "newbie", **claims}, db)
+    response = await _oidc_callback({"email": "new@corp.com", "preferred_username": "newbie", **claims}, db, fake_cache)
 
+    cookies: SimpleCookie = SimpleCookie()
+    for header in response.headers.getlist("set-cookie"):
+        cookies.load(header)
+    tokens = await fake_cache.pop(f"oidc_handoff:{cookies['oidc_handoff'].value}")
     created = await db.users.find_one({"email": "new@corp.com"})
-    fragment = parse_qs(urlsplit(response.headers["location"]).fragment)
-    assert _subject(fragment["access_token"][0]) == str(created["_id"])
-    assert _subject(fragment["refresh_token"][0]) == str(created["_id"])
+    assert _subject(tokens["access_token"]) == str(created["_id"])
+    assert _subject(tokens["refresh_token"]) == str(created["_id"])

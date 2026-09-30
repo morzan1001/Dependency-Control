@@ -136,7 +136,7 @@ export default function Broadcasts() {
         target_teams: announcementTarget === "teams" ? selectedTeams : undefined,
         subject: announcementSubject,
         message: announcementMessage,
-        channels: channels.length > 0 ? channels : undefined,
+        channels,
         dry_run: false
       })
       setImpactCount(null)
@@ -162,7 +162,7 @@ export default function Broadcasts() {
         packages: validPackages,
         subject: advisorySubject,
         message: advisoryMessage,
-        channels: channels.length > 0 ? channels : undefined,
+        channels,
         dry_run: false
       })
       setImpactCount(null)
@@ -210,7 +210,7 @@ export default function Broadcasts() {
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Channel Selection</CardTitle>
-              <CardDescription>Force the message to be sent via selected channels (overrides user preferences)</CardDescription>
+              <CardDescription>Send the message via the selected channels</CardDescription>
             </CardHeader>
           <CardContent className="flex gap-6">
              {(availableChannels || ["email"]).map((c) => (
@@ -317,7 +317,7 @@ export default function Broadcasts() {
                 </div>
                 <Button
                    onClick={handleSendAnnouncement}
-                   disabled={isPending || !announcementSubject || !announcementMessage || (announcementTarget === 'teams' && selectedTeams.length === 0)}
+                   disabled={isPending || channels.length === 0 || !announcementSubject || !announcementMessage || (announcementTarget === 'teams' && selectedTeams.length === 0)}
                 >
                   {isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Send className="h-4 w-4 mr-2" />}
                   {isPending ? "Sending..." : "Send Announcement"}
@@ -440,7 +440,7 @@ export default function Broadcasts() {
                 <Button
                     variant="destructive"
                     onClick={handleSendAdvisory}
-                    disabled={isPending || !advisorySubject || !advisoryMessage || packages.every(p => !p.name)}
+                    disabled={isPending || channels.length === 0 || !advisorySubject || !advisoryMessage || packages.every(p => !p.name)}
                 >
                   {isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <ShieldAlert className="h-4 w-4 mr-2" />}
                   {isPending ? "Sending..." : "Broadcast Security Advisory"}

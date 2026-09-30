@@ -100,8 +100,12 @@ export function UserDetailsDialog({ user, open, onOpenChange }: Readonly<UserDet
 
   const handleResetPassword = (userId: string) => {
       resetPasswordMutation.mutate(userId, {
-          onSuccess: () => {
-            toast.success("Password Reset Initiated", { description: "An email with the reset link has been sent to the user." });
+          onSuccess: ({ email_queued }) => {
+            if (email_queued) {
+              toast.success("Password Reset Initiated", { description: "A reset email has been queued for the user." });
+            } else {
+              toast.error("Reset Failed", { description: "No reset email could be queued for the user." });
+            }
           },
           onError: (error) => {
               toast.error("Reset Failed", { description: getErrorMessage(error) });

@@ -48,7 +48,7 @@ def _webhook() -> SimpleNamespace:
 
 
 async def _deliver(transport: httpx.MockTransport) -> tuple[bool, AsyncMock, float]:
-    service = ws_module.WebhookService(timeout=_DEADLINE, max_retries=1)
+    service = ws_module.WebhookService(timeout=_DEADLINE, max_attempts=1)
     log = AsyncMock()
     with (
         patch.object(ws_module, "build_pinned_transport", new=AsyncMock(return_value=transport)),
@@ -64,7 +64,7 @@ async def _deliver(transport: httpx.MockTransport) -> tuple[bool, AsyncMock, flo
 
 
 async def _test_button(transport: httpx.MockTransport) -> dict:
-    service = ws_module.WebhookService(timeout=_DEADLINE, max_retries=1)
+    service = ws_module.WebhookService(timeout=_DEADLINE, max_attempts=1)
     with patch.object(ws_module, "build_pinned_transport", new=AsyncMock(return_value=transport)):
         async with asyncio.timeout(_TEST_GUARD):
             return await service.test_webhook(_webhook())
@@ -111,7 +111,7 @@ class TestSlowDrip:
 
         assert delivered is False
         assert log.await_args.kwargs["success"] is False
-        assert log.await_args.kwargs["error"] == "Timeout"
+        assert log.await_args.kwargs["error"] == f"Request timed out after {_DEADLINE}s"
         assert elapsed < _DEADLINE + 1.0
 
     @pytest.mark.asyncio

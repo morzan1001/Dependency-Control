@@ -181,8 +181,6 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>(() => {
     if (!project || !user) return {};
 
-    // Enforcement resolves to the first admin member's preferences, matching the notification
-    // service; every other member reads their own entry.
     if (project.enforce_notification_settings) {
       return enforcedPreferences(project) || {};
     }
@@ -814,12 +812,16 @@ export function ProjectSettings({ project, projectId, user }: Readonly<ProjectSe
                     </TableBody>
                 </Table>
             </div>
-            {isMember && (
+            {(isMember || canEnforce) && (
                 <Button
                     onClick={() => updateNotificationSettingsMutation.mutate({
                         id: project.id,
                         settings: {
-                            notification_preferences: notificationPrefs,
+                            // Every event is sent, so an all-unchecked matrix is stored as a mute rather than as no override.
+                            notification_preferences: {
+                                ...Object.fromEntries(NOTIFICATION_EVENTS.map(event => [event.id, []])),
+                                ...notificationPrefs,
+                            },
                             enforce_notification_settings: enforceNotificationSettings
                         }
                     }, {

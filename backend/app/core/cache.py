@@ -443,6 +443,59 @@ class CacheService:
                 cache_operation_duration_seconds.labels(operation="mset").observe(time.time() - _start)
         return success
 
+    async def incr(self, key: str, ttl_seconds: int) -> int | None:
+        """Count one hit atomically in a window the first hit opens; None while Redis is unreachable."""
+        if not await self._ensure_available():
+            return None
+
+        _start = time.time()
+        try:
+            client = await self.get_client()
+            full_key = self._make_key(key)
+            pipe = client.pipeline(transaction=True)
+            pipe.incr(full_key)
+            pipe.expire(full_key, ttl_seconds, nx=True)
+            count, _ = await asyncio.wait_for(pipe.execute(), timeout=REDIS_OPERATION_TIMEOUT_SECONDS)
+            return int(count)
+        except (redis.ConnectionError, asyncio.TimeoutError):
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
+            self._mark_unavailable()
+            return None
+        except Exception as e:
+            logger.warning(f"Cache incr error: {e}")
+            return None
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="incr").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="incr").observe(time.time() - _start)
+
+    async def pop(self, key: str) -> Any | None:
+        """Read and delete in one step, so only one caller receives the value; None if absent or unreachable."""
+        if not await self._ensure_available():
+            return None
+
+        _start = time.time()
+        try:
+            client = await self.get_client()
+            data = await asyncio.wait_for(
+                client.getdel(self._make_key(key)),
+                timeout=REDIS_OPERATION_TIMEOUT_SECONDS,
+            )
+            return json.loads(data) if data else None
+        except (redis.ConnectionError, asyncio.TimeoutError):
+            logger.warning(REDIS_CONNECTION_LOST_MSG)
+            self._mark_unavailable()
+            return None
+        except Exception as e:
+            logger.warning(f"Cache pop error: {e}")
+            return None
+        finally:
+            if cache_operations_total:
+                cache_operations_total.labels(operation="pop").inc()
+            if cache_operation_duration_seconds:
+                cache_operation_duration_seconds.labels(operation="pop").observe(time.time() - _start)
+
     async def get_or_fetch_with_lock(
         self,
         key: str,

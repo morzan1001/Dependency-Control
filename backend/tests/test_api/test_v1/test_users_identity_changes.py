@@ -319,10 +319,10 @@ OIDC = SystemSettings(
 async def _oidc_login(db, **claims):
     with (
         _system(OIDC),
-        patch("app.api.v1.endpoints.auth._validate_oidc_state", new_callable=AsyncMock),
+        patch("app.api.v1.endpoints.auth._consume_oidc_state", new_callable=AsyncMock),
         patch("app.api.v1.endpoints.auth._fetch_oidc_user_info", new=AsyncMock(return_value=claims)),
     ):
-        return await auth.login_oidc_callback(request=MagicMock(), code="code", db=db, state="state")
+        return await auth.login_oidc_callback(request=MagicMock(), db=db, code="code", state="state")
 
 
 class TestUsernames:

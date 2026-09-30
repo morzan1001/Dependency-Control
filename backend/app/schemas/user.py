@@ -4,7 +4,7 @@ from typing import Annotated
 from pydantic import AfterValidator, BaseModel, ConfigDict, EmailStr, Field, StringConstraints, field_validator
 
 from app.core.constants import AUTH_PROVIDER_LOCAL
-from app.core.notification_prefs import NotificationPreferences
+from app.core.notification_prefs import NotificationPreferences, StrictNotificationPreferences
 from app.models.types import PyObjectId
 from app.schemas._not_null import reject_null
 
@@ -47,7 +47,7 @@ class UserCreate(BaseModel):
     permissions: list[str] = []
     slack_username: str | None = None
     mattermost_username: str | None = None
-    notification_preferences: NotificationPreferences = None
+    notification_preferences: StrictNotificationPreferences = None
 
     @field_validator("password")
     @classmethod
@@ -61,7 +61,7 @@ class UserSignup(BaseModel):
     password: str
     slack_username: str | None = None
     mattermost_username: str | None = None
-    notification_preferences: NotificationPreferences = None
+    notification_preferences: StrictNotificationPreferences = None
 
     @field_validator("password")
     @classmethod
@@ -78,7 +78,7 @@ class UserUpdate(BaseModel):
     permissions: list[str] | None = None
     slack_username: str | None = None
     mattermost_username: str | None = None
-    notification_preferences: NotificationPreferences = None
+    notification_preferences: StrictNotificationPreferences = None
 
     _not_null = field_validator("email", "username", "is_active", "permissions")(reject_null)
 
@@ -88,7 +88,7 @@ class UserUpdateMe(BaseModel):
 
     slack_username: str | None = None
     mattermost_username: str | None = None
-    notification_preferences: NotificationPreferences = None
+    notification_preferences: StrictNotificationPreferences = None
 
 
 class UserEmailChange(BaseModel):

@@ -3,14 +3,12 @@
 import asyncio
 import contextlib
 import hashlib
-import threading
 
-import fakeredis.aioredis
 import pytest
 import redis.asyncio as redis
-from fakeredis import TcpFakeServer
+import fakeredis
 
-from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, settings, suppress_cache_writes
+from app.core.cache import CacheKeys, CacheService, CacheTTL, scope_digest, suppress_cache_writes
 
 
 class TestCacheTTLValues:
@@ -207,16 +205,6 @@ class TestCacheKeysMalware:
 
     def test_npm_malware(self):
         assert CacheKeys.malware("npm", "lodash", "4.17.21") == "malware:npm:lodash:4.17.21"
-
-
-@pytest.fixture
-def fake_cache():
-    """A CacheService backed by an in-memory fakeredis async client."""
-    svc = CacheService()
-    svc._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
-    svc._pool = object()  # non-None so get_client() short-circuits to the fake
-    svc._available = True
-    return svc
 
 
 class TestStampedeLockRelease:
@@ -425,18 +413,6 @@ class TestSuppressCacheWrites:
         assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
 
 
-@pytest.fixture
-def tcp_redis(monkeypatch):
-    """A Redis speaking RESP over a real socket, so the service builds its own connection pool."""
-    server = TcpFakeServer(("127.0.0.1", 0), server_type="redis")
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    host, port = server.server_address[:2]
-    monkeypatch.setattr(settings, "REDIS_URL", f"redis://{host}:{port}/0")
-    yield
-    server.shutdown()
-    server.server_close()
-
-
 class TestConnectionPoolBursts:
     @pytest.mark.asyncio
     async def test_more_concurrent_misses_than_pooled_connections_are_all_cached(self, tcp_redis):
@@ -487,3 +463,36 @@ class TestFetchFailuresReachTheCaller:
         with pytest.raises(RuntimeError, match="503"):
             await fake_cache.get_or_fetch_with_lock(key, fetch, max_wait_seconds=0.3, reraise_fetch_errors=True)
         assert calls == ["fetch"]
+
+
+class TestAtomicPrimitives:
+    @pytest.mark.asyncio
+    async def test_incr_counts_inside_the_window_the_first_hit_opened(self, fake_cache):
+        full_key = fake_cache._make_key("rate_limit:k")
+
+        assert await fake_cache.incr("rate_limit:k", 60) == 1
+        await fake_cache._client.expire(full_key, 5)
+
+        assert await fake_cache.incr("rate_limit:k", 60) == 2
+        assert await fake_cache._client.ttl(full_key) <= 5
+
+    @pytest.mark.asyncio
+    async def test_incr_continues_a_count_the_json_cache_wrote(self, fake_cache):
+        await fake_cache.set("rate_limit:k", 2, ttl_seconds=60)
+
+        assert await fake_cache.incr("rate_limit:k", 60) == 3
+
+    @pytest.mark.asyncio
+    async def test_incr_reports_no_count_while_redis_is_unreachable(self, fake_cache):
+        server = fakeredis.FakeServer()
+        server.connected = False
+        fake_cache._client = fakeredis.aioredis.FakeRedis(server=server)
+
+        assert await fake_cache.incr("rate_limit:k", 60) is None
+
+    @pytest.mark.asyncio
+    async def test_pop_hands_a_value_out_once(self, fake_cache):
+        await fake_cache.set("oidc_state:s", True, ttl_seconds=60)
+
+        assert await fake_cache.pop("oidc_state:s") is True
+        assert await fake_cache.pop("oidc_state:s") is None

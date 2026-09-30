@@ -41,7 +41,7 @@ async def test_every_permission_holder_past_the_batch_is_notified(db):
     recorded: list[list[str]] = []
 
     await _recording_service(recorded).notify_users_with_permission(
-        db, permission=_PERMISSION, event_type=_EVENT, subject="s", message="m"
+        db, permission=[_PERMISSION], event_type=_EVENT, subject="s", message="m"
     )
 
     assert sum(len(batch) for batch in recorded) == _MORE_THAN_ONE_BATCH
@@ -53,7 +53,7 @@ async def test_the_fan_out_is_split_into_bounded_batches(db):
     recorded: list[list[str]] = []
 
     await _recording_service(recorded).notify_users_with_permission(
-        db, permission=_PERMISSION, event_type=_EVENT, subject="s", message="m"
+        db, permission=[_PERMISSION], event_type=_EVENT, subject="s", message="m"
     )
 
     assert len(recorded) == _BATCHES_FOR_ONE_OVER
@@ -65,7 +65,7 @@ async def test_no_holders_means_no_batch_at_all(db):
     recorded: list[list[str]] = []
 
     await _recording_service(recorded).notify_users_with_permission(
-        db, permission=_PERMISSION, event_type=_EVENT, subject="s", message="m"
+        db, permission=[_PERMISSION], event_type=_EVENT, subject="s", message="m"
     )
 
     assert recorded == []
@@ -82,7 +82,7 @@ async def test_a_deactivated_holder_of_the_permission_is_not_reached(db):
     recorded: list[list[str]] = []
 
     await _recording_service(recorded).notify_users_with_permission(
-        db, permission=_PERMISSION, event_type=_EVENT, subject="s", message="m"
+        db, permission=[_PERMISSION], event_type=_EVENT, subject="s", message="m"
     )
 
     assert [user for batch in recorded for user in batch] == ["admin-1"]
@@ -95,7 +95,7 @@ async def test_a_fan_out_to_only_deactivated_holders_sends_nothing(db):
     recorded: list[list[str]] = []
 
     await _recording_service(recorded).notify_users_with_permission(
-        db, permission=_PERMISSION, event_type=_EVENT, subject="s", message="m"
+        db, permission=[_PERMISSION], event_type=_EVENT, subject="s", message="m"
     )
 
     assert recorded == []

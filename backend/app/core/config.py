@@ -1,3 +1,4 @@
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -21,18 +22,16 @@ class Settings(BaseSettings):
     # External APIs
     OPEN_SOURCE_MALWARE_API_KEY: str = ""
 
-    # Email
-    SMTP_HOST: str | None = None
-    SMTP_PORT: int | None = None
-    SMTP_USER: str | None = None
-    SMTP_PASSWORD: str | None = None
-    SMTP_FROM_EMAIL: str = "noreply@dependency-control.com"
-
     # Worker Settings
     WORKER_COUNT: int = 2
 
     # Frontend
     FRONTEND_BASE_URL: str = "http://localhost:3000"
+
+    @field_validator("FRONTEND_BASE_URL")
+    @classmethod
+    def _strip_trailing_slash(cls, value: str) -> str:
+        return value.rstrip("/")
 
     # Time (seconds) a scan can be in 'processing' before considered stuck
     # Increase this if your analysis typically takes longer
@@ -110,3 +109,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def scan_link(project_id: str, scan_id: str) -> str:
+    return f"{settings.FRONTEND_BASE_URL}/projects/{project_id}/scans/{scan_id}"

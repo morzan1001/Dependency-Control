@@ -267,7 +267,7 @@ def _breaking_risk(current: str | None, target: str | None) -> str:
 
 def _inject_urls(node: Any) -> None:
     """Set a 'url' deep-link on any dict in the result tree, most-specific id path wins."""
-    base = settings.FRONTEND_BASE_URL.rstrip("/")
+    base = settings.FRONTEND_BASE_URL
     if isinstance(node, list):
         for item in node:
             _inject_urls(item)

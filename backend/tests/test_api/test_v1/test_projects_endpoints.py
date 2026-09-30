@@ -102,7 +102,12 @@ class TestUpdateNotificationSettingsAdmin:
         self._run(user, project, settings, project_repo)
 
         project_repo.update_raw.assert_awaited_once()
-        assert project_repo.update_raw.await_args.args[1] == {"$set": {"enforce_notification_settings": True}}
+        assert project_repo.update_raw.await_args.args[1] == {
+            "$set": {
+                "enforce_notification_settings": True,
+                "enforced_notification_preferences": {"analysis_completed": ["email"]},
+            }
+        }
         project_repo.update_member.assert_awaited_once()
 
 
@@ -394,7 +399,7 @@ class TestCreateProjectStoresWhatTheDialogChose:
 
         with (
             patch.object(webhook_service, "_send_webhook", AsyncMock(return_value=True)) as sent,
-            patch.object(notification_service, "_send_based_on_prefs", AsyncMock()) as notified,
+            patch.object(notification_service, "_deliver", AsyncMock()) as notified,
         ):
             self._create(
                 ProjectCreate(
@@ -406,7 +411,10 @@ class TestCreateProjectStoresWhatTheDialogChose:
             )
 
         assert [call.args[1].id for call in sent.call_args_list] == ["team-hook"]
-        assert sorted(call.args[0].username for call in notified.call_args_list) == ["creator", "teammate"]
+        assert sorted(user.username for call in notified.call_args_list for user, _ in call.args[1]) == [
+            "creator",
+            "teammate",
+        ]
 
 
 class TestHideHistoricalSecretsNarrowsTheResult:

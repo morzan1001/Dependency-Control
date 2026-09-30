@@ -21,8 +21,6 @@ from app.api.v1.helpers.teams import (
     visible_teams_filter,
 )
 from app.api.v1.helpers.webhooks import (
-    check_team_webhook_list_permission,
-    check_webhook_list_permission,
     check_webhook_permission,
 )
 from app.core.constants import (
@@ -1474,12 +1472,15 @@ class ChatToolRegistry:
 
     async def _tool_list_project_webhooks(self, ctx: _ToolContext) -> dict[str, Any]:
         project = await self._require_project(ctx)
-        await _gated(check_webhook_list_permission(project["_id"], ctx.user, ctx.db), _ERR_PROJECT_NOT_FOUND)
+        await _gated(
+            check_webhook_permission(ctx.user, ctx.db, Permissions.WEBHOOK_READ, project_id=project["_id"]),
+            _ERR_PROJECT_NOT_FOUND,
+        )
         # Every hook that fires for the project's events: its own, its owning teams', the global ones.
         scopes: list[dict[str, Any]] = [{"project_id": project["_id"]}]
         for team_id in project.get("team_ids") or []:
             try:
-                await check_team_webhook_list_permission(team_id, ctx.user, ctx.db)
+                await check_webhook_permission(ctx.user, ctx.db, Permissions.WEBHOOK_READ, team_id=team_id)
             except HTTPException:
                 continue
             scopes.append({"team_id": team_id})
@@ -1509,7 +1510,10 @@ class ChatToolRegistry:
         if webhook.project_id:
             await self._require_project(ctx, webhook.project_id, refusal=_ERR_WEBHOOK_NOT_FOUND)
         await _gated(
-            check_webhook_permission(webhook, ctx.user, ctx.db, Permissions.WEBHOOK_READ), _ERR_WEBHOOK_NOT_FOUND
+            check_webhook_permission(
+                ctx.user, ctx.db, Permissions.WEBHOOK_READ, project_id=webhook.project_id, team_id=webhook.team_id
+            ),
+            _ERR_WEBHOOK_NOT_FOUND,
         )
         deliveries, deliveries_total = await bounded_read(
             ctx.db["webhook_deliveries"],

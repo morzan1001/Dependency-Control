@@ -50,7 +50,7 @@ vi.mock('axios', async () => {
 });
 
 // Importing the module registers the interceptors on instances[0].
-import { setLogoutCallback } from '@/api/client';
+import { refreshAccessToken, setLogoutCallback } from '@/api/client';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const api = instances[0] as any;
@@ -110,6 +110,27 @@ describe('client 401 interceptor + token refresh', () => {
     expect(localStorage.getItem('refresh_token')).toBeNull();
     expect(localStorage.getItem('token')).toBeNull();
     expect(logout).toHaveBeenCalledTimes(1);
+  });
+
+  it('adopts the tokens another tab rotated in when its own refresh token was just exchanged', async () => {
+    const logout = vi.fn();
+    setLogoutCallback(logout);
+    const siblingRotatesMeanwhile = async () => {
+      localStorage.setItem('token', 'sibling-access');
+      localStorage.setItem('refresh_token', 'sibling-refresh');
+      throw { isAxiosError: true, response: { status: 403 } };
+    };
+
+    refreshClient.post.mockImplementationOnce(siblingRotatesMeanwhile);
+    await expect(refreshAccessToken()).resolves.toBe('sibling-access');
+
+    localStorage.setItem('refresh_token', 'valid-refresh');
+    refreshClient.post.mockImplementationOnce(siblingRotatesMeanwhile);
+    await onRejected(make401()).catch(() => undefined);
+
+    expect(localStorage.getItem('token')).toBe('sibling-access');
+    expect(localStorage.getItem('refresh_token')).toBe('sibling-refresh');
+    expect(logout).not.toHaveBeenCalled();
   });
 
   it('retries the original request with the new token on a successful refresh', async () => {

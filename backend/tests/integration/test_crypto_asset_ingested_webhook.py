@@ -14,7 +14,7 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 async def test_crypto_asset_ingested_dispatches_webhook(client, db, api_key_headers):
     dispatched_calls: list = []
 
-    def _capture_trigger(inner_db, event_type, payload, project_id=None):
+    def _capture_trigger(inner_db, event_type, payload, project_id=None, team_ids=None):
         dispatched_calls.append({"event": event_type, "payload": payload, "project_id": project_id})
 
     cbom_data = json.loads((FIXTURES / "legacy_crypto_mixed.json").read_text())

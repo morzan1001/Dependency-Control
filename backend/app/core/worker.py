@@ -37,6 +37,9 @@ DEFAULT_SHUTDOWN_TIMEOUT_SECONDS = 25
 # Far below HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS, so a live run is never taken for a stuck one.
 _CLAIM_RENEW_SECONDS = 60
 
+# Strong references: the event loop keeps only weak ones to running tasks.
+_failure_notices: set[asyncio.Task[None]] = set()
+
 
 async def _keep_claim(scan_repo: ScanRepository, scan_id: str, worker_id: str) -> None:
     while True:
@@ -64,10 +67,12 @@ async def _fail_scan(
     status: ScanStatus = SCAN_STATUS_PROCESSING,
     worker_id: str | None = None,
 ) -> None:
-    """Fail the scan while it is still in ``status`` (and ``worker_id``'s), then count and announce the failure."""
+    """Fail the scan while it is still in ``status`` (and ``worker_id``'s); count and announce it in the background."""
     if await ScanRepository(db).mark_failed(scan["_id"], error, status=status, worker_id=worker_id):
         _record_job("failed", started)
-        await notify_analysis_failed(db, scan["_id"], scan.get("project_id"), error)
+        notice = asyncio.create_task(notify_analysis_failed(db, scan["_id"], scan.get("project_id"), error))
+        _failure_notices.add(notice)
+        notice.add_done_callback(_failure_notices.discard)
 
 
 class AnalysisWorkerManager:

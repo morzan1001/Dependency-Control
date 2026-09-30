@@ -87,6 +87,7 @@ async def _broadcast(client, headers, *packages: dict, dry_run: bool = True) -> 
             "packages": list(packages),
             "subject": "s",
             "message": "m",
+            "channels": ["email"],
             "dry_run": dry_run,
         },
         headers=headers,

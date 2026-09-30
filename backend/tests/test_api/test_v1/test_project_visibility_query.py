@@ -133,7 +133,7 @@ async def test_the_analytics_scope_refuses_a_member_holding_no_project_read_perm
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("permissions", [(), ("auth:setup_2fa",), (Permissions.TEAM_READ,)])
+@pytest.mark.parametrize("permissions", [(), (Permissions.AUTH_SETUP_2FA,), (Permissions.TEAM_READ,)])
 async def test_the_analytics_team_scope_refuses_a_member_holding_no_project_read_permission(permissions):
     db = await _seeded_db()
 

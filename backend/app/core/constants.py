@@ -238,6 +238,8 @@ ApiKeySurface = Literal["mcp", "adhoc"]
 API_KEY_SURFACE_MCP: ApiKeySurface = "mcp"
 API_KEY_SURFACE_ADHOC: ApiKeySurface = "adhoc"
 API_KEY_SURFACES: frozenset[str] = frozenset(get_args(ApiKeySurface))
+# The UI shows a key's last use to the minute, so stamping it more often only adds primary writes.
+API_KEY_LAST_USED_RESOLUTION_SECONDS = 60
 
 # Per-finding base of the impact pre-score, before reach and threat-intel boosts.
 IMPACT_SEVERITY_WEIGHTS: dict[str, float] = {
@@ -774,6 +776,7 @@ PASSWORD_RESET_TOKEN_EXPIRE_HOURS: int = 1
 
 # OIDC State TTL in seconds (5 minutes for authorization flow)
 OIDC_STATE_TTL_SECONDS = 300
+OIDC_HANDOFF_TTL_SECONDS = 60
 
 # TOTP (2FA) settings
 TOTP_VALID_WINDOW: int = 1  # Accept codes from 1 interval before/after current
@@ -797,8 +800,7 @@ WEBHOOK_EVENT_LICENSE_POLICY_CHANGED = "license_policy.changed"
 WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report.generated"
 WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan.generated"
 
-# snake_case event names clients may still send; validation stores their canonical form, and
-# dispatch also matches subscriptions stored before it did.
+# snake_case event names clients may still send; validation stores their canonical form.
 WEBHOOK_EVENT_ALIASES: dict[str, str] = {
     "scan_completed": WEBHOOK_EVENT_SCAN_COMPLETED,
     "vulnerability_found": WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -819,6 +821,8 @@ WEBHOOK_VALID_EVENTS = [
 
 WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.keys()]
 
+WebhookType = Literal["generic", "teams"]
+
 # Webhook HTTP headers
 WEBHOOK_HEADER_CONTENT_TYPE = "Content-Type"
 WEBHOOK_HEADER_USER_AGENT = "User-Agent"
@@ -826,7 +830,8 @@ WEBHOOK_HEADER_EVENT = "X-Webhook-Event"
 WEBHOOK_HEADER_TIMESTAMP = "X-Webhook-Timestamp"
 WEBHOOK_HEADER_ID = "X-Webhook-ID"
 WEBHOOK_HEADER_SIGNATURE = "X-Webhook-Signature"
-WebhookType = Literal["generic", "teams"]
+WEBHOOK_HEADER_SIGNATURE_V2 = "X-Webhook-Signature-V2"
+WEBHOOK_HEADER_DELIVERY = "X-Webhook-Delivery"
 WEBHOOK_HEADER_TEST = "X-Webhook-Test"
 WEBHOOK_USER_AGENT_VALUE = "DependencyControl-Webhook/1.0"
 

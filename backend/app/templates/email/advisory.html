@@ -6,21 +6,17 @@
 <h2>Security Advisory</h2>
 
 <div style="background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 4px; border: 1px solid #ffeeba; margin-bottom: 20px;">
-    <strong>Attention Required for {{ project_name_scanned }}</strong>
+    {{ message }}
 </div>
 
-<p>{{ message }}</p>
-
-<h3>Affected Dependencies</h3>
+<h3>Your Projects Using the Package ({{ projects|length }})</h3>
 <ul>
-    {% for finding in findings %}
-    <li><code>{{ finding }}</code></li>
+    {% for project in projects %}
+    <li><strong><a href="{{ link }}/projects/{{ project.id }}">{{ project.name }}</a></strong>: {{ project.findings|join(", ") }}</li>
     {% endfor %}
 </ul>
 
-{% if link %}
 <div style="margin-top: 30px;">
-    <a href="{{ link }}" class="button" style="display: inline-block; background-color: #dc3545; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">View Project</a>
+    <a href="{{ link }}" class="button" style="display: inline-block; background-color: #dc3545; color: white; padding: 12px 25px; text-decoration: none; border-radius: 4px; font-weight: bold;">View Dashboard</a>
 </div>
-{% endif %}
 {% endblock %}

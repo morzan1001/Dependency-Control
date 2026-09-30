@@ -32,6 +32,7 @@ export interface Project {
   analyzer_settings?: Record<string, Record<string, unknown>>;
   default_branch?: string;
   enforce_notification_settings?: boolean;
+  enforced_notification_preferences?: Record<string, string[]>;
   rescan_enabled?: boolean;
   rescan_interval?: number;
   gitlab_mr_comments_enabled?: boolean;
@@ -64,7 +65,6 @@ export interface ProjectUpdate {
   retention_days?: number;
   retention_action?: RetentionAction;
   analyzer_settings?: Record<string, Record<string, unknown>>;
-  enforce_notification_settings?: boolean;
   default_branch?: string | null;
   rescan_enabled?: boolean;
   rescan_interval?: number;

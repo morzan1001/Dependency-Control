@@ -1,11 +1,9 @@
-import html
 import logging
 import re
 from collections import defaultdict
 from datetime import datetime
 from typing import Annotated, Any
 
-import markdown
 from fastapi import BackgroundTasks, Depends, HTTPException, Query
 from pymongo.errors import ExecutionTimeout
 
@@ -38,7 +36,7 @@ from app.services.notifications.mattermost_formatter import build_advisory_props
 from app.services.notifications.service import notification_service
 from app.services.notifications.slack_formatter import build_advisory_blocks
 from app.services.component_identity import artifact_segment
-from app.services.notifications.templates import get_announcement_template
+from app.services.notifications.templates import get_advisory_template, get_announcement_template
 from app.services.releases import resolve_scan_ids
 
 router = CustomAPIRouter()
@@ -73,8 +71,8 @@ async def get_broadcast_history(
             all_team_ids.extend(h.teams)
     teams_map: dict[str, str] = {}
     if all_team_ids:
-        team_repo = TeamRepository(db)
-        found_teams = await team_repo.find_many({"_id": {"$in": list(set(all_team_ids))}}, limit=100)
+        unique_team_ids = list(set(all_team_ids))
+        found_teams = await TeamRepository(db).find_many({"_id": {"$in": unique_team_ids}}, limit=len(unique_team_ids))
         teams_map = {str(t.id): t.name for t in found_teams}
 
     return [
@@ -129,80 +127,34 @@ async def suggest_packages(
 
 
 def _queue_announcement(
-    background_tasks: BackgroundTasks,
-    users: list[User],
-    subject: str,
-    message: str,
-    message_html: str,
-    frontend_url: str,
-    db: Any,
-    forced_channels: Any,
+    background_tasks: BackgroundTasks, query: dict[str, Any], payload: BroadcastRequest, db: Any
 ) -> None:
-    """Queue an announcement notification for a list of users."""
-    html_msg = get_announcement_template(message=message_html, link=frontend_url)
-    blocks = build_advisory_blocks(subject=subject, message=message, dashboard_link=frontend_url)
-    mm_props = mm_advisory_props(subject=subject, message=message, dashboard_link=frontend_url)
+    """Queue an announcement to every user the query matches."""
+    frontend_url = settings.FRONTEND_BASE_URL
     background_tasks.add_task(
-        notification_service.notify_users,
-        users,
-        NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
-        subject,
-        message,
-        db=db,
-        forced_channels=forced_channels,
-        html_message=html_msg,
-        slack_blocks=blocks,
-        mattermost_props=mm_props,
+        notification_service._notify_matching,
+        db,
+        query,
+        event_type=NOTIFICATION_EVENT_ANALYSIS_COMPLETED,
+        subject=payload.subject,
+        message=payload.message,
+        forced_channels=payload.channels,
+        html_message=get_announcement_template(message=payload.message, link=frontend_url),
+        slack_blocks=build_advisory_blocks(
+            subject=payload.subject, message=payload.message, dashboard_link=frontend_url
+        ),
+        mattermost_props=mm_advisory_props(
+            subject=payload.subject, message=payload.message, dashboard_link=frontend_url
+        ),
     )
 
 
-async def _handle_global_broadcast(
-    payload: "BroadcastRequest",
-    background_tasks: BackgroundTasks,
-    user_repo: UserRepository,
-    message_html: str,
-    frontend_url: str,
-    db: Any,
-    forced_channels: Any,
-) -> tuple[int, int]:
-    """Handle global broadcast. Returns (unique_user_count, project_count)."""
-    users = await user_repo.find_many({"is_active": True}, limit=2000)
-    if users and not payload.dry_run:
-        _queue_announcement(
-            background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels
-        )
-    return len(users), 0
-
-
-async def _handle_teams_broadcast(
-    payload: "BroadcastRequest",
-    background_tasks: BackgroundTasks,
-    user_repo: UserRepository,
-    team_repo: "TeamRepository",
-    message_html: str,
-    frontend_url: str,
-    db: Any,
-    forced_channels: Any,
-) -> tuple[int, int]:
-    """Handle teams broadcast. Returns (unique_user_count, project_count)."""
-    if not payload.target_teams:
-        return 0, 0
-
-    teams = await team_repo.find_many({"_id": {"$in": payload.target_teams}}, limit=100)
-    user_ids: set[str] = set()
-    for t in teams:
-        for m in t.members:
-            user_ids.add(m.user_id)
-
-    if not user_ids:
-        return 0, 0
-
-    users = await user_repo.find_many({"_id": {"$in": list(user_ids)}, "is_active": True}, limit=2000)
-    if users and not payload.dry_run:
-        _queue_announcement(
-            background_tasks, users, payload.subject, payload.message, message_html, frontend_url, db, forced_channels
-        )
-    return len(users), 0
+async def _announcement_audience(payload: BroadcastRequest, team_repo: TeamRepository) -> dict[str, Any]:
+    """The users query a global or teams announcement goes to."""
+    if payload.target_type == "global":
+        return {"is_active": True}
+    teams = (await team_repo.members_by_team(payload.target_teams or [])).values()
+    return {"_id": {"$in": sorted({m["user_id"] for members in teams for m in members})}, "is_active": True}
 
 
 def _segment_key(name: str) -> str:
@@ -248,48 +200,6 @@ async def _find_affected_projects(db: Any, rules: list[AdvisoryPackage]) -> dict
     return affected
 
 
-def _build_advisory_html(
-    message_html: str,
-    projects_data: list,
-    frontend_url: str,
-) -> tuple[str, str]:
-    """Build HTML and plain-text messages for an advisory notification. Returns (html, text)."""
-    projects_html_parts = []
-    projects_text_parts = []
-
-    for p in projects_data:
-        safe_name = html.escape(p["name"])
-        safe_findings = html.escape(", ".join(p["findings"]))
-        p_link = f"{frontend_url}/projects/{p['id']}"
-        projects_html_parts.append(f"<li><strong><a href='{p_link}'>{safe_name}</a></strong>: {safe_findings}</li>")
-        projects_text_parts.append(f"- {p['name']}: {', '.join(p['findings'])}")
-
-    findings_list_html = "<ul>" + "".join(projects_html_parts) + "</ul>"
-    findings_text_block = "\n".join(projects_text_parts)
-
-    btn_style = (
-        "background-color: #dc3545; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px;"
-    )
-    div_style = (
-        "background-color: #fff3cd; border: 1px solid #ffeeba; padding: 15px; margin-bottom: 20px; border-radius: 4px;"
-    )
-    dashboard_button = (
-        f'<p style="margin-top: 20px;"><a href="{frontend_url}" style="{btn_style}">View Dashboard</a></p>'
-    )
-
-    final_html = f"""
-    <div style="font-family: Arial, sans-serif; color: #333;">
-        <h2>Security Advisory</h2>
-        <div style="{div_style}">{message_html}</div>
-        <h3>Your Affected Projects ({len(projects_data)})</h3>
-        <p>The following projects you own are using the affected package versions:</p>
-        {findings_list_html}
-        {dashboard_button}
-    </div>
-    """
-    return final_html, findings_text_block
-
-
 def _group_projects_by_admin(
     projects: list[Project],
     admins_by_project: dict[str, set[str]],
@@ -317,45 +227,27 @@ def _group_projects_by_admin(
     return user_notification_map
 
 
-def _queue_advisory_for_user(
-    data: dict,
-    payload: "BroadcastRequest",
-    background_tasks: BackgroundTasks,
-    message_html: str,
-    frontend_url: str,
-    db: Any,
-    forced_channels: Any,
-) -> None:
-    """Build and queue an advisory notification background task for a single user."""
+def _queue_advisory_for_user(data: dict, payload: BroadcastRequest, background_tasks: BackgroundTasks, db: Any) -> None:
+    """Queue one admin's advisory, listing that admin's projects."""
     projects_data = data["projects"]
-    final_html, findings_text = _build_advisory_html(message_html, projects_data, frontend_url)
-    context_message = f"{payload.message}\n\n--- Affected Projects ---\n{findings_text}\n"
-
-    advisory_subject = f"ACTION REQUIRED: {payload.subject}"
-    advisory_blocks = build_advisory_blocks(
-        subject=advisory_subject,
-        message=payload.message,
-        affected_projects=projects_data,
-        dashboard_link=frontend_url,
-    )
-    advisory_mm = mm_advisory_props(
-        subject=advisory_subject,
-        message=payload.message,
-        affected_projects=projects_data,
-        dashboard_link=frontend_url,
-    )
-
+    frontend_url = settings.FRONTEND_BASE_URL
+    subject = f"ACTION REQUIRED: {payload.subject}"
+    findings_text = "\n".join(f"- {p['name']}: {', '.join(p['findings'])}" for p in projects_data)
     background_tasks.add_task(
         notification_service.notify_users,
         [data["user"]],
         NOTIFICATION_EVENT_VULNERABILITY_FOUND,
-        advisory_subject,
-        context_message,
+        subject,
+        f"{payload.message}\n\n--- Your Projects Using the Package ---\n{findings_text}\n",
         db=db,
-        forced_channels=forced_channels,
-        html_message=final_html,
-        slack_blocks=advisory_blocks,
-        mattermost_props=advisory_mm,
+        forced_channels=payload.channels,
+        html_message=get_advisory_template(payload.message, projects_data, frontend_url),
+        slack_blocks=build_advisory_blocks(
+            subject=subject, message=payload.message, affected_projects=projects_data, dashboard_link=frontend_url
+        ),
+        mattermost_props=mm_advisory_props(
+            subject=subject, message=payload.message, affected_projects=projects_data, dashboard_link=frontend_url
+        ),
     )
 
 
@@ -363,33 +255,21 @@ async def _notify_advisory_admins(
     projects: list[Project],
     affected: dict[str, dict[str, bool]],
     user_repo: UserRepository,
-    payload: "BroadcastRequest",
+    payload: BroadcastRequest,
     background_tasks: BackgroundTasks,
-    message_html: str,
-    frontend_url: str,
     db: Any,
-    forced_channels: Any,
 ) -> int:
-    """Group affected projects by admin members and queue advisory notifications. Returns unique user count."""
+    """Group affected projects by admin and queue one advisory per active admin. Returns that admin count."""
     admins_by_project = await project_admin_ids(projects, TeamRepository(db))
-    all_admin_ids = set().union(*admins_by_project.values())
-
-    admin_users = await user_repo.find_many({"_id": {"$in": list(all_admin_ids)}, "is_active": True}, limit=2000)
+    admin_ids = list(set().union(*admins_by_project.values()))
+    admin_users = await user_repo.find_many({"_id": {"$in": admin_ids}, "is_active": True}, limit=len(admin_ids))
     users_dict = {str(u.id): u for u in admin_users}
 
     user_notification_map = _group_projects_by_admin(projects, admins_by_project, affected, users_dict)
 
     if not payload.dry_run:
         for data in user_notification_map.values():
-            _queue_advisory_for_user(
-                data,
-                payload,
-                background_tasks,
-                message_html,
-                frontend_url,
-                db,
-                forced_channels,
-            )
+            _queue_advisory_for_user(data, payload, background_tasks, db)
 
     return len(user_notification_map)
 
@@ -413,38 +293,11 @@ async def broadcast_message(
     unique_user_count = 0
     uncomparable: list[str] = []
 
-    frontend_url = settings.FRONTEND_BASE_URL.rstrip("/")
+    # Channels are forced so a broadcast never borrows another event's preferences.
+    if not payload.channels and not payload.dry_run:
+        raise HTTPException(status_code=400, detail="At least one channel required")
 
-    forced_channels = payload.channels if payload.channels else None
-
-    # Escape raw HTML before Markdown to prevent XSS via embedded tags.
-    safe_message = html.escape(payload.message)
-    message_html_content = markdown.markdown(safe_message)
-
-    if payload.target_type == "global":
-        unique_user_count, project_count = await _handle_global_broadcast(
-            payload,
-            background_tasks,
-            user_repo,
-            message_html_content,
-            frontend_url,
-            db,
-            forced_channels,
-        )
-
-    elif payload.target_type == "teams":
-        unique_user_count, project_count = await _handle_teams_broadcast(
-            payload,
-            background_tasks,
-            user_repo,
-            team_repo,
-            message_html_content,
-            frontend_url,
-            db,
-            forced_channels,
-        )
-
-    elif payload.target_type == "advisory":
+    if payload.target_type == "advisory":
         if not payload.packages:
             raise HTTPException(status_code=400, detail="At least one package required for advisory")
 
@@ -454,16 +307,13 @@ async def broadcast_message(
         if affected:
             projects = await project_repo.find_many({"_id": {"$in": list(affected)}}, limit=len(affected))
             unique_user_count = await _notify_advisory_admins(
-                projects,
-                affected,
-                user_repo,
-                payload,
-                background_tasks,
-                message_html_content,
-                frontend_url,
-                db,
-                forced_channels,
+                projects, affected, user_repo, payload, background_tasks, db
             )
+    else:
+        query = await _announcement_audience(payload, team_repo)
+        unique_user_count = await user_repo.count(query)
+        if unique_user_count and not payload.dry_run:
+            _queue_announcement(background_tasks, query, payload, db)
 
     if not payload.dry_run:
         history_entry = Broadcast(

@@ -1,24 +1,29 @@
 """Mattermost message attachment formatting."""
 
+import re
 from typing import Any
 
 from app.core.epss import HIGH_EPSS_LABEL
-from app.schemas.notification import PRIORITY_VULNS_LABEL
-
-_AFFECTED_PROJECTS_SHOWN = 15
-_PROJECT_FINDINGS_SHOWN = 5
+from app.schemas.notification import PRIORITY_VULNS_LABEL, AlertVulnerability, scan_alert_level
+from app.services.notifications.slack_formatter import (
+    AFFECTED_PROJECTS_SHOWN,
+    SEVERITY_EMOJI,
+    format_vuln_line,
+    project_findings_summary,
+)
 
 _COLOR_SUCCESS = "#36a64f"
 _COLOR_DANGER = "#dc3545"
 _COLOR_WARNING = "#ffc107"
 _COLOR_INFO = "#2196f3"
+_ALERT_COLOR = {"critical": _COLOR_DANGER, "warning": _COLOR_WARNING, "ok": _COLOR_SUCCESS}
 
-_SEVERITY_EMOJI = {
-    "CRITICAL": "\U0001f534",
-    "HIGH": "\U0001f7e0",
-    "MEDIUM": "\U0001f7e1",
-    "LOW": "\U0001f535",
-}
+_MARKDOWN_CONTROL = re.compile(r"([\\`*_\[\]()!>])")
+
+
+def _escape_markdown(text: str) -> str:
+    """Mattermost renders [label](url), ![](url) and emphasis from any text that reaches it."""
+    return _MARKDOWN_CONTROL.sub(r"\\\1", text)
 
 
 def build_generic_props(subject: str, message: str) -> dict[str, Any]:
@@ -28,7 +33,7 @@ def build_generic_props(subject: str, message: str) -> dict[str, Any]:
             {
                 "color": _COLOR_INFO,
                 "title": subject,
-                "text": message,
+                "text": _escape_markdown(message),
             }
         ]
     }
@@ -40,42 +45,41 @@ def build_analysis_completed_props(
     total_findings: int,
     severity_counts: dict[str, int],
     results_summary: list[str],
+    analyzer_count: int,
     scan_link: str,
 ) -> dict[str, Any]:
     """Build Mattermost attachment props for analysis completed notification."""
     critical = severity_counts.get("CRITICAL", 0)
     high = severity_counts.get("HIGH", 0)
 
-    color = _COLOR_DANGER if critical > 0 else (_COLOR_WARNING if high > 0 else _COLOR_SUCCESS)
-
     fields = [
-        {"short": True, "title": f"{_SEVERITY_EMOJI['CRITICAL']} Critical", "value": str(critical)},
-        {"short": True, "title": f"{_SEVERITY_EMOJI['HIGH']} High", "value": str(high)},
+        {"short": True, "title": f"{SEVERITY_EMOJI['CRITICAL']} Critical", "value": str(critical)},
+        {"short": True, "title": f"{SEVERITY_EMOJI['HIGH']} High", "value": str(high)},
         {
             "short": True,
-            "title": f"{_SEVERITY_EMOJI['MEDIUM']} Medium",
+            "title": f"{SEVERITY_EMOJI['MEDIUM']} Medium",
             "value": str(severity_counts.get("MEDIUM", 0)),
         },
         {
             "short": True,
-            "title": f"{_SEVERITY_EMOJI['LOW']} Low",
+            "title": f"{SEVERITY_EMOJI['LOW']} Low",
             "value": str(severity_counts.get("LOW", 0)),
         },
         {"short": True, "title": "Total", "value": str(total_findings)},
     ]
 
-    text = f"Scan `{scan_id[:12]}` completed for **{project_name}**."
+    text = f"Scan `{scan_id[:12]}` completed for **{_escape_markdown(project_name)}**."
 
     if results_summary:
-        analyzer_lines = "\n".join(f"- {r}" for r in results_summary)
-        text += f"\n\n**Analyzers ({len(results_summary)})**\n{analyzer_lines}"
+        analyzer_lines = "\n".join(f"- {_escape_markdown(r)}" for r in results_summary)
+        text += f"\n\n**Analyzers ({analyzer_count})**\n{analyzer_lines}"
 
     text += f"\n\n[View Report \u2192]({scan_link})"
 
     return {
         "attachments": [
             {
-                "color": color,
+                "color": _ALERT_COLOR[scan_alert_level(critical, high)],
                 "title": f"\U0001f4ca Analysis Completed: {project_name}",
                 "title_link": scan_link,
                 "text": text,
@@ -85,30 +89,13 @@ def build_analysis_completed_props(
     }
 
 
-def _format_vuln_line(index: int, vuln: dict[str, Any]) -> str:
-    """Format a single vulnerability line for Mattermost markdown."""
-    emoji = _SEVERITY_EMOJI.get(vuln.get("severity", ""), "\u26aa")
-    line = f"{index}. `{vuln['id']}` {emoji} {vuln['severity']} \u2014 {vuln['package']}"
-    if vuln.get("version"):
-        line += f"@{vuln['version']}"
-
-    tags = []
-    if vuln.get("in_kev"):
-        tags.append("KEV")
-    if vuln.get("epss_score"):
-        tags.append(f"EPSS: {vuln['epss_score'] * 100:.1f}%")
-    if tags:
-        line += f"  *[{', '.join(tags)}]*"
-
-    return line
-
-
 def build_vulnerability_found_props(
     project_name: str,
     kev_count: int,
     high_epss_count: int,
     priority_count: int,
-    top_vulns: list[dict[str, Any]],
+    critical_count: int,
+    top_vulns: list[AlertVulnerability],
     scan_link: str,
 ) -> dict[str, Any]:
     """Build Mattermost attachment props for vulnerability found notification."""
@@ -120,13 +107,14 @@ def build_vulnerability_found_props(
             {"short": True, "title": f"\U0001f4c8 High EPSS ({HIGH_EPSS_LABEL})", "value": str(high_epss_count)}
         )
     fields.append(
-        {"short": True, "title": f"{_SEVERITY_EMOJI['CRITICAL']} {PRIORITY_VULNS_LABEL}", "value": str(priority_count)}
+        {"short": True, "title": f"{SEVERITY_EMOJI['CRITICAL']} {PRIORITY_VULNS_LABEL}", "value": str(priority_count)}
     )
 
-    text = f"Security scan detected critical vulnerabilities in **{project_name}**."
+    lead = "critical" if critical_count else "high-priority"
+    text = f"Security scan detected {lead} vulnerabilities in **{_escape_markdown(project_name)}**."
 
     if top_vulns:
-        vuln_lines = [_format_vuln_line(i, v) for i, v in enumerate(top_vulns, 1)]
+        vuln_lines = [format_vuln_line(i, v, "*", _escape_markdown) for i, v in enumerate(top_vulns, 1)]
         text += f"\n\n**Top Priority Vulnerabilities ({len(top_vulns)} of {priority_count})**\n"
         text += "\n".join(vuln_lines)
 
@@ -155,16 +143,13 @@ def build_advisory_props(
     text = message
 
     if affected_projects:
-        shown = affected_projects[:_AFFECTED_PROJECTS_SHOWN]
-        project_lines = []
-        for p in shown:
-            findings = p.get("findings", [])
-            findings_str = ", ".join(findings[:_PROJECT_FINDINGS_SHOWN])
-            if len(findings) > _PROJECT_FINDINGS_SHOWN:
-                findings_str += f", +{len(findings) - _PROJECT_FINDINGS_SHOWN} more"
-            project_lines.append(f"- **{p['name']}**: {findings_str}")
+        shown = affected_projects[:AFFECTED_PROJECTS_SHOWN]
+        project_lines = [
+            f"- **{_escape_markdown(p['name'])}**: {_escape_markdown(project_findings_summary(p['findings']))}"
+            for p in shown
+        ]
 
-        text += f"\n\n**Affected Projects ({len(shown)} of {len(affected_projects)})**\n"
+        text += f"\n\n**Your Projects Using the Package ({len(shown)} of {len(affected_projects)})**\n"
         text += "\n".join(project_lines)
 
     if dashboard_link:

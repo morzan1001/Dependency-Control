@@ -5,6 +5,8 @@ roles (viewer < editor < admin) — enforced by ``check_project_access`` in
 ``app/api/v1/helpers/projects.py``. Canonical model: ``docs/superpowers/specs/authz-model.md``.
 """
 
+from collections.abc import Sequence
+
 
 class Permissions:
     """All available permissions in the system."""
@@ -68,9 +70,18 @@ class Permissions:
     # Ad-hoc analysis (stateless /analyze endpoint)
     ANALYZE_ADHOC = "analyze:adhoc"
 
+    # The only scope of a session that must enrol in 2FA first; never granted to an account.
+    AUTH_SETUP_2FA = "auth:setup_2fa"
 
-# auth:setup_2fa is an internal marker, not a grantable permission, so it is not a class attribute.
-ALL_PERMISSIONS: list[str] = [v for k, v in vars(Permissions).items() if k.isupper()]
+
+ALL_PERMISSIONS: list[str] = [
+    v for k, v in vars(Permissions).items() if k.isupper() and v != Permissions.AUTH_SETUP_2FA
+]
+
+
+def is_setup_2fa_scope(permissions: Sequence[str]) -> bool:
+    """Whether a token carries the 2FA-enrolment scope and nothing else."""
+    return list(permissions) == [Permissions.AUTH_SETUP_2FA]
 
 
 def has_permission(user_permissions: list[str], required: str | list[str]) -> bool:

@@ -27,7 +27,7 @@ export function SecuritySettingsTab({
             <div className="space-y-0.5">
               <Label className="text-base">Allow Public Registration</Label>
               <p className="text-sm text-muted-foreground">
-                If enabled, anyone can create an account.
+                If enabled, anyone can sign up with a password. SSO accounts follow the OIDC setting below.
               </p>
             </div>
             <Switch 
@@ -92,6 +92,20 @@ export function SecuritySettingsTab({
           
           {formData.oidc_enabled && (
             <div className="space-y-4 mt-4 border-t pt-4">
+              <div className="flex items-center justify-between space-x-2">
+                <div className="space-y-0.5">
+                  <Label htmlFor="oidc-auto-provision" className="text-base">Create Accounts on First SSO Login</Label>
+                  <p className="text-sm text-muted-foreground">
+                    Users without an account get one when they first log in through the provider.
+                  </p>
+                </div>
+                <Switch
+                  id="oidc-auto-provision"
+                  checked={formData.oidc_auto_provision ?? true}
+                  onCheckedChange={(checked) => handleInputChange('oidc_auto_provision', checked)}
+                />
+              </div>
+
               <div className="grid gap-2">
                 <Label htmlFor="oidc-provider-name">Provider Name</Label>
                 <Input 

@@ -14,6 +14,7 @@ from app.services.webhooks.webhook_service import WebhookService
 
 _PROJECT = "p-fanout"
 _EVENT = "scan.completed"
+_PREFS_EVENT = "analysis_completed"
 
 
 async def _seed_teams(db) -> None:
@@ -31,7 +32,7 @@ async def _seed_users(db) -> None:
                 "email": f"{uid}@test.com",
                 "is_active": True,
                 "permissions": [],
-                "notification_preferences": {},
+                "notification_preferences": {_PREFS_EVENT: ["email"]},
             }
         )
 
@@ -47,26 +48,23 @@ def _project(owners: list[str]) -> Project:
     )
 
 
-def _recording_service(reached: list[str]) -> NotificationService:
+def _recording_service(reached: dict[str, str]) -> NotificationService:
     service = NotificationService()
 
-    async def record(user, *_args, **_kwargs):
-        reached.append(user.username)
+    def recorder(channel: str):
+        async def send(destination, *_args, **_kwargs):
+            reached[destination.removesuffix("@test.com")] = channel
 
-    service._send_based_on_prefs = record  # type: ignore[method-assign]
+        return send
+
+    service.email_provider.send = recorder("email")  # type: ignore[method-assign]
+    service.slack_provider.send = recorder("slack")  # type: ignore[method-assign]
     return service
 
 
 async def _notified(db, owners: list[str]) -> set[str]:
-    reached: list[str] = []
-    await _recording_service(reached).notify_project_members(
-        project=_project(owners),
-        event_type=_EVENT,
-        subject="s",
-        message="m",
-        db=db,
-        forced_channels=["email"],
-    )
+    reached: dict[str, str] = {}
+    await _recording_service(reached).notify_project_members(_project(owners), _PREFS_EVENT, "s", "m", db)
     return set(reached)
 
 
@@ -94,7 +92,6 @@ async def test_an_unowned_project_notifies_only_its_own_members(db):
     assert await _notified(db, []) == {"u-direct"}
 
 
-_PREFS_EVENT = "analysis_completed"
 _PROJECT_OVERRIDE = {_PREFS_EVENT: ["slack"]}
 _ACCOUNT_DEFAULT = {_PREFS_EVENT: ["email"]}
 
@@ -106,6 +103,7 @@ async def _seed_member_of_alpha(db) -> None:
             "_id": "u-both",
             "username": "u-both",
             "email": "u-both@test.com",
+            "slack_username": "u-both",
             "is_active": True,
             "permissions": [],
             "notification_preferences": _ACCOUNT_DEFAULT,
@@ -113,22 +111,12 @@ async def _seed_member_of_alpha(db) -> None:
     )
 
 
-def _prefs_recording_service(seen: dict[str, dict]) -> NotificationService:
-    service = NotificationService()
-
-    async def record(user, prefs, *_args, **_kwargs):
-        seen[user.username] = prefs
-
-    service._send_based_on_prefs = record  # type: ignore[method-assign]
-    return service
-
-
 @pytest.mark.asyncio
 async def test_a_project_channel_override_survives_the_same_users_team_membership(db):
     await _seed_member_of_alpha(db)
-    seen: dict[str, dict] = {}
+    seen: dict[str, str] = {}
 
-    await _prefs_recording_service(seen).notify_project_members(
+    await _recording_service(seen).notify_project_members(
         project=Project(
             id=_PROJECT,
             name="fanout",
@@ -142,7 +130,7 @@ async def test_a_project_channel_override_survives_the_same_users_team_membershi
         db=db,
     )
 
-    assert seen == {"u-both": _PROJECT_OVERRIDE}
+    assert seen == {"u-both": "slack"}
 
 
 async def _seed_webhooks(db) -> None:

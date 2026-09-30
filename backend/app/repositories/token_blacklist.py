@@ -3,6 +3,7 @@
 from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 
 
 class TokenBlacklistRepository:
@@ -10,7 +11,7 @@ class TokenBlacklistRepository:
         self.db = db
         self.collection = db.token_blacklist
 
-    async def blacklist_token(self, jti: str, expires_at: datetime, reason: str = "logout") -> bool:
+    async def blacklist_token(self, jti: str, expires_at: datetime, reason: str) -> bool:
         """Returns False if the token is already blacklisted."""
         try:
             await self.collection.insert_one(
@@ -23,8 +24,7 @@ class TokenBlacklistRepository:
                 }
             )
             return True
-        except Exception:
-            # Token already blacklisted (duplicate key error)
+        except DuplicateKeyError:
             return False
 
     async def is_blacklisted(self, jti: str) -> bool:

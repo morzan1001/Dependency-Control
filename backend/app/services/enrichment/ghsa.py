@@ -11,7 +11,6 @@ from app.core.constants import (
     GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED,
 )
 from app.core.http_utils import InstrumentedAsyncClient, gather_bounded
-from app.core.metrics import external_api_rate_limit_hits_total
 from app.schemas.enrichment import GHSAData
 from app.services.github import github_api_headers
 
@@ -58,8 +57,6 @@ class GHSAProvider:
                     if retry_after
                     else float(response.headers.get("X-RateLimit-Reset") or 0)
                 )
-                if response.status_code == 403:
-                    external_api_rate_limit_hits_total.labels(service=client.service_name).inc()
             response.raise_for_status()
             return _parse_ghsa_advisory(response.json(), ghsa_id).model_dump()
 

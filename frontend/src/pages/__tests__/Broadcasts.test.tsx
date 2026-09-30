@@ -124,3 +124,34 @@ describe('Broadcasts - advisory impact', () => {
     expect(screen.getByText(/could not be compared/i)).toBeInTheDocument()
   })
 })
+
+describe('Broadcasts - channel selection', () => {
+  it('sends an announcement only once a channel is chosen, on exactly that channel', async () => {
+    render(<Broadcasts />)
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'Maintenance' } })
+    fireEvent.change(screen.getByLabelText('Message'), { target: { value: 'Tonight' } })
+    const send = screen.getByRole('button', { name: /Send Announcement/i })
+    const email = screen.getByRole('checkbox', { name: /email/i })
+
+    fireEvent.click(email)
+    expect(send).toBeDisabled()
+
+    fireEvent.click(email)
+    fireEvent.click(send)
+
+    await waitFor(() => expect(mockSendBroadcast).toHaveBeenCalled())
+    expect(mockSendBroadcast.mock.calls[0][0].channels).toEqual(['email'])
+  })
+
+  it('keeps the advisory send disabled without a channel', () => {
+    render(<Broadcasts />)
+    fireEvent.click(screen.getByRole('tab', { name: /Security Advisory/i }))
+    fireEvent.change(screen.getByLabelText('Advisory Subject'), { target: { value: 'log4j' } })
+    fireEvent.change(screen.getByLabelText('Advisory Details'), { target: { value: 'Upgrade' } })
+    fireEvent.change(screen.getByTestId('pkg-name'), { target: { value: 'log4j-core' } })
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /email/i }))
+
+    expect(screen.getByRole('button', { name: /Broadcast Security Advisory/i })).toBeDisabled()
+  })
+})

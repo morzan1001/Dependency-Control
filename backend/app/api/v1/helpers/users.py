@@ -40,8 +40,3 @@ def ensure_can_manage_target(caller: User, target: dict[str, Any]) -> None:
         return
     if not set(target.get("permissions") or []) <= set(caller.permissions):
         raise HTTPException(status_code=403, detail="Cannot manage a user who holds permissions you don't hold")
-
-
-def is_2fa_setup_mode(user: User) -> bool:
-    """True if the user holds only 'auth:setup_2fa' (must finish 2FA setup for full access)."""
-    return "auth:setup_2fa" in user.permissions and len(user.permissions) == 1

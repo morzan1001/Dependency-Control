@@ -9,10 +9,6 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
     build_pagination_response,
-    check_team_webhook_create_permission,
-    check_team_webhook_list_permission,
-    check_webhook_create_permission,
-    check_webhook_list_permission,
     check_webhook_permission,
     get_webhook_or_404,
 )
@@ -26,16 +22,33 @@ from app.schemas.webhook import (
     WebhookTestRequest,
     WebhookTestResponse,
     WebhookUpdate,
+    detect_webhook_type,
 )
-from app.services.webhooks.validation import detect_webhook_type
 from app.services.webhooks.webhook_service import webhook_service
 
 router = CustomAPIRouter()
 
 
-def _response_items(webhooks: list[Webhook]) -> list[dict[str, Any]]:
-    """Project stored webhooks onto the response schema, which withholds the HMAC signing secret."""
-    return [WebhookResponse.model_validate(w).model_dump() for w in webhooks]
+async def _create_scoped(
+    webhook_in: WebhookCreate, db: DatabaseDep, *, project_id: str | None = None, team_id: str | None = None
+) -> Webhook:
+    webhook_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
+    webhook = Webhook(
+        project_id=project_id,
+        team_id=team_id,
+        webhook_type=webhook_type,
+        **webhook_in.model_dump(exclude={"webhook_type"}),
+    )
+    return await WebhookRepository(db).create(webhook)
+
+
+async def _list_scoped(db: DatabaseDep, scope: dict[str, Any], skip: int, limit: int) -> dict[str, Any]:
+    """The response schema withholds the HMAC signing secret."""
+    repo = WebhookRepository(db)
+    total = await repo.count(scope)
+    webhooks = await repo.list_scope(scope, skip=skip, limit=limit)
+    items = [WebhookResponse.model_validate(w).model_dump() for w in webhooks]
+    return build_pagination_response(items, total, skip, limit)
 
 
 @router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201, responses=RESP_AUTH)
@@ -46,14 +59,8 @@ async def create_webhook(
     db: DatabaseDep,
 ) -> Webhook:
     """Create a webhook for a project."""
-    await check_webhook_create_permission(project_id, current_user, db)
-
-    resolved_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
-    webhook_data = webhook_in.model_dump(exclude={"webhook_type"})
-    webhook = Webhook(project_id=project_id, webhook_type=resolved_type, **webhook_data)
-
-    webhook_repo = WebhookRepository(db)
-    return await webhook_repo.create(webhook)
+    await check_webhook_permission(current_user, db, Permissions.WEBHOOK_CREATE, project_id=project_id)
+    return await _create_scoped(webhook_in, db, project_id=project_id)
 
 
 @router.get("/project/{project_id}", responses=RESP_AUTH)
@@ -65,15 +72,8 @@ async def list_webhooks(
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
 ) -> dict[str, Any]:
     """List all webhooks for a project with pagination."""
-    await check_webhook_list_permission(project_id, current_user, db)
-
-    webhook_repo = WebhookRepository(db)
-    scope = {"project_id": project_id}
-    total = await webhook_repo.count(scope)
-    webhooks = await webhook_repo.list_scope(scope, skip=skip, limit=limit)
-
-    items = _response_items(webhooks)
-    return build_pagination_response(items, total, skip, limit)
+    await check_webhook_permission(current_user, db, Permissions.WEBHOOK_READ, project_id=project_id)
+    return await _list_scoped(db, {"project_id": project_id}, skip, limit)
 
 
 @router.post("/global/", response_model=WebhookResponse, status_code=201, responses=RESP_AUTH)
@@ -83,12 +83,7 @@ async def create_global_webhook(
     db: DatabaseDep,
 ) -> Webhook:
     """Create a global webhook, triggered for all projects."""
-    resolved_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
-    webhook_data = webhook_in.model_dump(exclude={"webhook_type"})
-    webhook = Webhook(project_id=None, webhook_type=resolved_type, **webhook_data)
-
-    webhook_repo = WebhookRepository(db)
-    return await webhook_repo.create(webhook)
+    return await _create_scoped(webhook_in, db)
 
 
 @router.get("/global/", responses=RESP_AUTH)
@@ -99,12 +94,7 @@ async def list_global_webhooks(
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
 ) -> dict[str, Any]:
     """List global webhooks with pagination."""
-    webhook_repo = WebhookRepository(db)
-    total = await webhook_repo.count(GLOBAL_WEBHOOK_SCOPE)
-    webhooks = await webhook_repo.list_scope(GLOBAL_WEBHOOK_SCOPE, skip=skip, limit=limit)
-
-    items = _response_items(webhooks)
-    return build_pagination_response(items, total, skip, limit)
+    return await _list_scoped(db, GLOBAL_WEBHOOK_SCOPE, skip, limit)
 
 
 @router.post("/team/{team_id}", response_model=WebhookResponse, status_code=201, responses=RESP_AUTH)
@@ -115,14 +105,8 @@ async def create_team_webhook(
     db: DatabaseDep,
 ) -> Webhook:
     """Create a webhook for a team, triggered for all projects belonging to the team."""
-    await check_team_webhook_create_permission(team_id, current_user, db)
-
-    resolved_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
-    webhook_data = webhook_in.model_dump(exclude={"webhook_type"})
-    webhook = Webhook(team_id=team_id, webhook_type=resolved_type, **webhook_data)
-
-    webhook_repo = WebhookRepository(db)
-    return await webhook_repo.create(webhook)
+    await check_webhook_permission(current_user, db, Permissions.WEBHOOK_CREATE, team_id=team_id)
+    return await _create_scoped(webhook_in, db, team_id=team_id)
 
 
 @router.get("/team/{team_id}", responses=RESP_AUTH)
@@ -134,15 +118,8 @@ async def list_team_webhooks(
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
 ) -> dict[str, Any]:
     """List all webhooks for a team with pagination."""
-    await check_team_webhook_list_permission(team_id, current_user, db)
-
-    webhook_repo = WebhookRepository(db)
-    scope = {"team_id": team_id}
-    total = await webhook_repo.count(scope)
-    webhooks = await webhook_repo.list_scope(scope, skip=skip, limit=limit)
-
-    items = _response_items(webhooks)
-    return build_pagination_response(items, total, skip, limit)
+    await check_webhook_permission(current_user, db, Permissions.WEBHOOK_READ, team_id=team_id)
+    return await _list_scoped(db, {"team_id": team_id}, skip, limit)
 
 
 @router.get("/{webhook_id}", response_model=WebhookResponse, responses=RESP_AUTH_404)
@@ -154,7 +131,9 @@ async def get_webhook(
     """Get a specific webhook by ID."""
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
-    await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_READ)
+    await check_webhook_permission(
+        current_user, db, Permissions.WEBHOOK_READ, project_id=webhook.project_id, team_id=webhook.team_id
+    )
     return webhook
 
 
@@ -168,7 +147,9 @@ async def update_webhook(
     """Update a webhook configuration; only provided fields are changed."""
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
-    await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_UPDATE)
+    await check_webhook_permission(
+        current_user, db, Permissions.WEBHOOK_UPDATE, project_id=webhook.project_id, team_id=webhook.team_id
+    )
 
     update_data = webhook_update.model_dump(exclude_unset=True)
     if not update_data:
@@ -190,7 +171,9 @@ async def delete_webhook(
     """Delete a webhook."""
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
-    await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_DELETE)
+    await check_webhook_permission(
+        current_user, db, Permissions.WEBHOOK_DELETE, project_id=webhook.project_id, team_id=webhook.team_id
+    )
 
     await webhook_repo.delete(webhook_id)
 
@@ -206,7 +189,9 @@ async def test_webhook(
     test_request = test_request or WebhookTestRequest()
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
-    await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_UPDATE)
+    await check_webhook_permission(
+        current_user, db, Permissions.WEBHOOK_UPDATE, project_id=webhook.project_id, team_id=webhook.team_id
+    )
 
     result = await webhook_service.test_webhook(webhook, test_request.event_type)
 
