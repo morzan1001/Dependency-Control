@@ -5,7 +5,6 @@ from typing import Annotated, Any
 from urllib.parse import urlencode
 
 import httpx
-import pyotp
 from fastapi import (
     BackgroundTasks,
     Body,
@@ -40,7 +39,6 @@ from app.core.constants import (
     AUTH_PROVIDER_LOCAL,
     OIDC_HTTP_TIMEOUT_SECONDS,
     OIDC_STATE_TTL_SECONDS,
-    TOTP_VALID_WINDOW,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import (
@@ -95,7 +93,7 @@ async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> di
     return user
 
 
-def _verify_totp_or_raise(user: dict, otp: str | None) -> None:
+async def _verify_totp_or_raise(user_repo: UserRepository, user: dict, otp: str | None) -> None:
     """Verify TOTP code. Raises HTTPException on failure."""
     if not otp:
         raise HTTPException(
@@ -112,8 +110,8 @@ def _verify_totp_or_raise(user: dict, otp: str | None) -> None:
             detail="2FA configuration error. Please contact support.",
         )
 
-    totp = pyotp.TOTP(totp_secret)
-    if not totp.verify(otp, valid_window=TOTP_VALID_WINDOW):
+    step = security.verify_totp(totp_secret, otp)
+    if step is None or not await user_repo.claim_totp_step(user["_id"], step):
         if auth_2fa_verifications_total:
             auth_2fa_verifications_total.labels(result="failed").inc()
         raise HTTPException(
@@ -189,7 +187,7 @@ async def login_access_token(
     system_config = await deps.get_system_settings(db)
     _ensure_email_verified(user, system_config)
     if user.get("totp_enabled", False):
-        _verify_totp_or_raise(user, otp)
+        await _verify_totp_or_raise(user_repo, user, otp)
 
     if auth_login_attempts_total:
         auth_login_attempts_total.labels(status="success").inc()

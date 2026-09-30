@@ -61,6 +61,7 @@ def _mock_repo(target):
     repo.exists_by_email = AsyncMock(return_value=False)
     repo.exists_by_username = AsyncMock(return_value=False)
     repo.update = AsyncMock()
+    repo.update_raw = AsyncMock()
     repo.delete = AsyncMock()
     return repo
 
@@ -89,7 +90,9 @@ def _call(run, target, smtp_host="smtp.test"):
 def _act(action, caller, target_permissions):
     target = _target(target_permissions, auth_provider="oidc" if action == "migrate" else "local")
     error, _, repo, background_tasks = _call(lambda bg: ACTIONS[action](caller, bg), target)
-    acted = bool(repo.update.await_count or repo.delete.await_count or background_tasks.tasks)
+    acted = bool(
+        repo.update.await_count or repo.update_raw.await_count or repo.delete.await_count or background_tasks.tasks
+    )
     return error, acted
 
 

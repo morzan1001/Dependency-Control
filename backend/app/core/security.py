@@ -5,6 +5,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+import pyotp
 from jose import ExpiredSignatureError, JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import ValidationError
@@ -13,6 +14,7 @@ from app.core.config import settings
 from app.core.constants import (
     EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS,
     PASSWORD_RESET_TOKEN_EXPIRE_HOURS,
+    TOTP_VALID_WINDOW,
 )
 from app.schemas.token import TokenPayload
 
@@ -105,6 +107,14 @@ def verify_password(plain_password: str, hashed_password: str | None) -> bool:
 def get_password_hash(password: str) -> str:
     """Hash a password using Argon2."""
     return pwd_context.hash(password)
+
+
+def verify_totp(secret: str, code: str) -> int | None:
+    """The time step ``code`` belongs to within TOTP_VALID_WINDOW, or None."""
+    totp = pyotp.TOTP(secret)
+    current = totp.timecode(datetime.now(timezone.utc))
+    steps = range(current - TOTP_VALID_WINDOW, current + TOTP_VALID_WINDOW + 1)
+    return next((step for step in steps if pyotp.utils.strings_equal(code, totp.generate_otp(step))), None)
 
 
 def create_email_verification_token(email: str) -> str:

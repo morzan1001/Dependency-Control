@@ -343,7 +343,7 @@ async def setup_2fa(
 
     # Store the secret but leave 2FA disabled until verified.
     user_repo = UserRepository(db)
-    await user_repo.update(current_user.id, {"totp_secret": secret})
+    await user_repo.update_raw(current_user.id, {"$set": {"totp_secret": secret}, "$unset": {"totp_last_step": ""}})
 
     totp_uri = pyotp.totp.TOTP(secret).provisioning_uri(name=current_user.email, issuer_name=settings.PROJECT_NAME)
 
@@ -379,12 +379,12 @@ async def enable_2fa(
     if not secret:
         raise HTTPException(status_code=400, detail="2FA setup not initiated")
 
-    totp = pyotp.TOTP(secret)
-    if not totp.verify(verify_in.code, valid_window=1):
+    step = security.verify_totp(secret, verify_in.code)
+    if step is None:
         raise HTTPException(status_code=400, detail="Invalid OTP code")
 
     user_repo = UserRepository(db)
-    await user_repo.update(current_user.id, {"totp_enabled": True})
+    await user_repo.update(current_user.id, {"totp_enabled": True, "totp_last_step": step})
 
     send_2fa_enabled_email(
         background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db)
@@ -410,7 +410,9 @@ async def disable_2fa(
         raise HTTPException(status_code=400, detail="Invalid password")
 
     user_repo = UserRepository(db)
-    await user_repo.update(current_user.id, {"totp_enabled": False, "totp_secret": None})
+    await user_repo.update_raw(
+        current_user.id, {"$set": {"totp_enabled": False, "totp_secret": None}, "$unset": {"totp_last_step": ""}}
+    )
 
     send_2fa_disabled_email(
         background_tasks, current_user.email, current_user.username, await deps.get_system_settings(db), by_admin=False
@@ -434,7 +436,9 @@ async def admin_disable_2fa(
         raise HTTPException(status_code=400, detail="2FA is not enabled for this user")
 
     user_repo = UserRepository(db)
-    await user_repo.update(user_id, {"totp_enabled": False, "totp_secret": None})
+    await user_repo.update_raw(
+        user_id, {"$set": {"totp_enabled": False, "totp_secret": None}, "$unset": {"totp_last_step": ""}}
+    )
 
     send_2fa_disabled_email(
         background_tasks, user["email"], user["username"], await deps.get_system_settings(db), by_admin=True

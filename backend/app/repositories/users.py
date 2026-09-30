@@ -53,6 +53,12 @@ class UserRepository(BaseRepository[User]):
         with _unique_index_as_identity_taken():
             return await super().update(id, update_data)
 
+    async def claim_totp_step(self, user_id: str, step: int) -> bool:
+        """Spend ``step``; False when it or a later step was already spent."""
+        return await self.update_raw(
+            user_id, {"$set": {"totp_last_step": step}}, guard={"totp_last_step": {"$not": {"$gte": step}}}
+        )
+
     async def get_raw_by_username(self, username: str) -> dict[str, Any] | None:
         return await self.find_one_raw({"username": username})
 

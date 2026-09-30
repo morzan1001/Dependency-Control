@@ -1,11 +1,12 @@
-"""Tokens end where the account says they end: an exchanged refresh token, a superseded reset link
-and a logged-out bearer stop working, whatever state the cache is in."""
+"""Tokens end where the account says they end: an exchanged refresh token, a spent one-time code, a
+superseded reset link and a logged-out bearer stop working, whatever state the cache is in."""
 
 import asyncio
 import re
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
+import pyotp
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
@@ -24,8 +25,10 @@ _SECOND_NEW_PASSWORD = "Tr0ub4dor-and-3"
 _OK = 200
 _CREATED = 201
 _BAD_REQUEST = 400
+_UNAUTHORIZED = 401
 _FORBIDDEN = 403
 _MAIL_SETTINGS = {"smtp_host": "smtp.example.com", "emails_from_email": "dc@example.com"}
+_TOTP_SECRET = pyotp.random_base32()
 
 
 class _UnavailableCache:
@@ -100,8 +103,8 @@ async def _stored_hash(db):
     return (await db.users.find_one({"_id": _BOB_ID}))["hashed_password"]
 
 
-async def _login(api, username, password):
-    return await api.post(f"{_API}/login/access-token", data={"username": username, "password": password})
+async def _login(api, username, password, otp=""):
+    return await api.post(f"{_API}/login/access-token", data={"username": username, "password": password, "otp": otp})
 
 
 @pytest.mark.asyncio
@@ -131,6 +134,46 @@ async def test_two_concurrent_exchanges_of_one_refresh_token_mint_one_pair(api, 
     responses = await asyncio.gather(_refresh(api, presented), _refresh(api, presented))
 
     assert sorted(r.status_code for r in responses) == [_OK, _FORBIDDEN]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_one_time_code_logs_in_once(api, db):
+    await _add_bob(db, totp_enabled=True, totp_secret=_TOTP_SECRET)
+    code = pyotp.TOTP(_TOTP_SECRET).now()
+
+    first = await _login(api, "bob", _PASSWORD, code)
+    replay = await _login(api, "bob", _PASSWORD, code)
+
+    assert first.status_code == _OK
+    assert replay.status_code == _UNAUTHORIZED
+    assert replay.json()["detail"] == "Invalid OTP code"
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_two_concurrent_logins_with_one_code_open_one_session(api, db):
+    await _add_bob(db, totp_enabled=True, totp_secret=_TOTP_SECRET)
+    code = pyotp.TOTP(_TOTP_SECRET).now()
+
+    responses = await asyncio.gather(_login(api, "bob", _PASSWORD, code), _login(api, "bob", _PASSWORD, code))
+
+    assert sorted(r.status_code for r in responses) == [_OK, _UNAUTHORIZED]
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_code_that_enabled_2fa_does_not_also_log_in(api, db):
+    await _add_bob(db)
+    auth = {"Authorization": f"Bearer {security.create_access_token(_BOB_ID)}"}
+    secret = (await api.post(f"{_API}/users/me/2fa/setup", headers=auth)).json()["secret"]
+    code = pyotp.TOTP(secret).now()
+
+    enabled = await api.post(f"{_API}/users/me/2fa/enable", json={"code": code, "password": _PASSWORD}, headers=auth)
+    login = await _login(api, "bob", _PASSWORD, code)
+
+    assert enabled.status_code == _OK
+    assert login.status_code == _UNAUTHORIZED
 
 
 @pytest.mark.asyncio

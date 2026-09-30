@@ -51,7 +51,7 @@ def _run(action: str, system_settings: SystemSettings) -> BackgroundTasks:
     doc = _user_doc()
     background_tasks = BackgroundTasks()
     with (
-        patch(f"{MODULE}.UserRepository", return_value=MagicMock(update=AsyncMock())),
+        patch(f"{MODULE}.UserRepository", return_value=MagicMock(update=AsyncMock(), update_raw=AsyncMock())),
         patch(f"{MODULE}.get_user_or_404", new=AsyncMock(return_value=doc)),
         patch(f"{MODULE}.fetch_updated_user", new=AsyncMock(return_value=doc)),
         patch(f"{MODULE}.deps.get_system_settings", new=AsyncMock(return_value=system_settings)),
