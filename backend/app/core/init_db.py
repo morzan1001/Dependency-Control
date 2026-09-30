@@ -266,7 +266,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         sparse=True,  # null purl is permitted, won't conflict on uniqueness
     )
     await database["dependencies"].create_index([("project_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
-    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
+    await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
     # Bounds the anchored purl-prefix match of the per-scan enrichment copy to one scan's range.
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("purl", pymongo.ASCENDING)])
